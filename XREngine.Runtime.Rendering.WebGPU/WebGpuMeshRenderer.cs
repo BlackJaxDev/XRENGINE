@@ -133,7 +133,7 @@ public sealed partial class WebGpuMeshRenderer(WebGpuRendererHost renderer, XRMe
     public void Render(Matrix4x4 modelMatrix, Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
         RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode,
         bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
-        Vector4 sourceFlatDirection)
+        Vector4 sourceFlatDirection, uint editorHighlightBits)
     {
         if (instances == 0) return;
         RetireUnusedDirectDraws();

@@ -4203,6 +4203,7 @@ namespace XREngine.Rendering
                 }
             }
             sb.AppendLine("uniform int UseInstanceTransformBuffer; // XRENGINE_FREQUENCY(RuntimeCallback)");
+            sb.AppendLine("uniform int ClipSpaceYDirection;");
             sb.AppendLine();
 
             sb.AppendLine("uint LoadTransformId(uint drawID)");

@@ -47,8 +47,19 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
     uint RangeCapacity,
     uint IndexedInstanceGroupCount,
     uint IndirectArgumentCapacity,
-    AdvancedVisibilityFamilyReservation Reservation = default)
+    AdvancedVisibilityFamilyReservation Reservation = default,
+    VkBufferHandle MeshletHistoryBuffer = default,
+    ulong MeshletHistoryByteLength = 0u)
 {
+    /// <summary>Byte length of one <c>VkDrawIndexedIndirectCommand</c> in the argument streams.</summary>
+    internal const uint IndexedIndirectArgumentByteLength = 20u;
+
+    /// <summary>
+    /// Byte length of one late visibility test dispatch record: a
+    /// <c>VkDispatchIndirectCommand</c> and one padding word.
+    /// </summary>
+    internal const uint LateDispatchArgumentByteLength = 16u;
+
     internal bool IsValid
     {
         get
@@ -59,6 +70,7 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
                 PersistentStateBuffer.Handle != 0 && PersistentStateByteLength != 0u &&
                 PersistentStateTopologyGeneration != 0u &&
                 PersistentStateContentGeneration != 0u &&
+                MeshletHistoryBuffer.Handle != 0 && MeshletHistoryByteLength != 0u &&
                 DeferredIndices.IsValid && VisibleIndices.IsValid && Producers.IsValid &&
                 RangeIndices.IsValid && RangeOffsets.IsValid && RangeCounts.IsValid &&
                 Counters.IsValid && IndirectArguments.IsValid && MeshArguments.IsValid &&
@@ -109,6 +121,48 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
         {
             payloadBase = 0u;
             rangeBase = 0u;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// True when every view segment can be addressed from the view 0 segment
+    /// with the strides that the multi-view preparation shaders use
+    /// (<c>VisibilityPreparationViews.glslinc</c>): payload streams advance by
+    /// <see cref="PayloadCapacity"/>, and range counters advance by the length
+    /// of the shared range offset table, which must equal
+    /// <see cref="RangeCapacity"/>.
+    /// </summary>
+    internal bool SupportsMultiViewPreparation
+        => ViewCount != 0u &&
+           TryGetViewSegment(ViewCount - 1u, out _, out _) &&
+           RangeOffsets.Length == (ulong)RangeCapacity * sizeof(uint);
+
+    /// <summary>
+    /// Returns the buffer offset of the late visibility test dispatch record of
+    /// one view. <c>BuildVisibilityIndirect.comp</c> writes one record for each
+    /// view after the indexed arguments of all views, so the late test can
+    /// dispatch over the live early and deferred counts instead of
+    /// <see cref="PayloadCapacity"/>.
+    /// </summary>
+    internal bool TryGetLateDispatchArgumentOffset(uint viewIndex, out ulong bufferOffset)
+    {
+        bufferOffset = 0u;
+        if (viewIndex >= ViewCount || !IndirectArguments.IsValid)
+            return false;
+
+        try
+        {
+            ulong recordOffset = checked(
+                (ulong)ViewCount * PayloadCapacity * IndexedIndirectArgumentByteLength +
+                (ulong)viewIndex * LateDispatchArgumentByteLength);
+            if (checked(recordOffset + LateDispatchArgumentByteLength) > IndirectArguments.Length)
+                return false;
+            bufferOffset = checked(IndirectArguments.Offset + recordOffset);
+            return true;
+        }
+        catch (OverflowException)
+        {
             return false;
         }
     }

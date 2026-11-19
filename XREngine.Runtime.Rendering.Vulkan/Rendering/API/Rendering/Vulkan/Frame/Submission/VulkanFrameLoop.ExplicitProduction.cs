@@ -314,6 +314,13 @@ internal sealed partial class VulkanFrameLoop
                 // profiling-scope disposal or diagnostics can throw, and never
                 // reopen these slots through the unsubmitted cancellation path.
                 submitted = receipt.SubmissionAccepted;
+                if (submitted && acceptedPlan is not null)
+                {
+                    if (receipt.LifetimePinsTransferred)
+                        acceptedPlan.ReleaseDeformationReadLeasesAfterLifetimePinsTransferred();
+                    else
+                        acceptedPlan.MarkNativeSubmissionAcceptedWithoutLifetimePins();
+                }
                 SettlePrimaryDiagnosticSubmission(submittedCommandBuffer, submitted ? graphicsSignalValue : 0UL);
                 if (submitted)
                 {

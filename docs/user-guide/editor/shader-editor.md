@@ -11,7 +11,7 @@ The ImGui editor includes a unified shader editor under **Tools > Shader Editor*
 - Displays compiler diagnostics in a table and a read-only annotated source view with underlined diagnostic lines.
 - Estimates shader operation cost in the **Analysis** tab, with source selection for original, resolved, generated variant, or preview-instrumented source.
 - Builds local completion suggestions from GLSL keywords, builtin functions/types, uniforms, inputs, outputs, functions, and local declarations.
-- Requests OpenAI completions from the Responses API using the same OpenAI key/model preferences as the MCP assistant, with `OPENAI_API_KEY` as a fallback.
+- Requests completions through the selected assistant connection. API mode uses OpenAI Responses; subscription mode uses the selected installed client and its account sign-in.
 - Generates preview instrumentation source that writes an expression at a selected line to a fragment output variable.
 - Selects engine snippets, relative include files, and absolute include files in the **Includes** tab. The tab shows the exact directive to insert and a disabled read-only preview of the code that will be loaded.
 - Generates non-destructive variants in the **Variants** tab. Presets include shadow caster, depth-normal pre-pass, weighted blended OIT, per-pixel linked-list OIT, depth peeling, custom define injection, and optimized locked variants.
@@ -43,9 +43,37 @@ Use **Save** in the **Variants** tab, or **File > Save Generated Variant...**, t
 
 The optimized locked variant embeds the old shader locking flow into the unified panel. It can mark uniforms as runtime-animated or locked constants, preserve animated name patterns, and run the existing dead-code, constant-evaluation, unused-uniform, and single-use-constant passes before export.
 
-## OpenAI Configuration
+## Completion Connection
 
-The shader editor uses `Engine.EditorPreferences.McpAssistantOpenAiApiKey` and `Engine.EditorPreferences.McpAssistantOpenAiModel`. If the preference key is empty, it reads `OPENAI_API_KEY` from the process environment.
+The shader editor uses the assistant connection. API mode remains the default
+for existing preferences. It uses
+`Engine.EditorPreferences.McpAssistantOpenAiApiKey` and
+`Engine.EditorPreferences.McpAssistantOpenAiModel`. If the preference key is
+empty, it reads `OPENAI_API_KEY` from the process environment.
+
+Select **Subscription** access and a brand to use Codex, Claude, Gemini, or Copilot. The model menu uses that client's account catalog. Open **Manage account** for authentication. Advanced contains only the executable picker.
+
+Gemini uses Google's Antigravity client. The old Gemini CLI no longer supports personal Google plans. Antigravity confirms the selected model but does not report the model that generated the reply. Each shader request sends the current shader and instructions as a fresh session.
+
+Codex uses the installed Codex CLI with a
+ChatGPT account. Use **Sign in to ChatGPT** in the editor to start the native
+sign-in flow, or **Cancel** to stop it. XRENGINE keeps this sign-in under
+`%LOCALAPPDATA%/XREngine/AgentRuntimes/Codex/profile`. The broker and editor
+share it for the same Windows user. It is separate from a normal Codex CLI
+login. A normal `codex login` command uses the dedicated profile only if that
+terminal first sets `CODEX_HOME` to this directory. Do not copy account
+tokens. The current pinned Codex CLI version is `0.167.0-alpha.3.2`.
+
+The shader editor shows a model menu for the signed-in account. Select a model
+from that menu; the editor accepts only models that support its response setting.
+The shader editor uses the same per-brand connections as **Tools > Assistant**, and
+can keep a separate model selection for shader completions.
+
+Subscription mode uses the exact model offered by the signed-in account's
+runtime catalog. It does not use an API key or fall back to API mode. Completion
+text remains a suggestion until you apply it in the shader editor. CLI access does
+not expose enforceable native turn, retry, or output-token caps in this
+integration; the editor still bounds the request and can cancel it.
 
 ## Preview Notes
 

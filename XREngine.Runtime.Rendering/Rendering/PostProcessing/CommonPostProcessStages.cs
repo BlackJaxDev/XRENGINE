@@ -135,7 +135,7 @@ public static class CommonPostProcessStages
         stage.AddParameter(
             PostProcessParameterNames.TonemappingOperator,
             PostProcessParameterKind.Int,
-            (int)ETonemappingType.Mobius,
+            (int)TonemappingSettings.HostDefaultTonemapping,
             displayName: "Operator",
             enumOptions: BuildEnumOptions<ETonemappingType>());
 
@@ -178,6 +178,14 @@ public static class CommonPostProcessStages
 
         bool IsAutoExposure(object o) => ((ColorGradingSettings)o).AutoExposure;
         bool IsManualExposure(object o) => IsArtistMode(o) && !((ColorGradingSettings)o).AutoExposure;
+
+        // Two-pass VR eyes only: off shares one headset exposure, on adapts each eye on its own.
+        stage.AddParameter(
+            nameof(ColorGradingSettings.IndependentEyeExposure),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Independent Eye Exposure",
+            visibilityCondition: IsAutoExposure);
         bool IsIgnoreTopPercent(object o)
             => IsAutoExposure(o)
             && ((ColorGradingSettings)o).AutoExposureMetering == ColorGradingSettings.AutoExposureMeteringMode.IgnoreTopPercent;
@@ -369,7 +377,7 @@ public static class CommonPostProcessStages
         stage.AddParameter(
             nameof(ColorGradingSettings.Contrast),
             PostProcessParameterKind.Float,
-            1.0f,
+            0.0f,
             displayName: "Contrast",
             min: -50.0f,
             max: 50.0f,
@@ -1047,6 +1055,13 @@ public static class CommonPostProcessStages
             visibilityCondition: IsGTAO);
 
         stage.AddParameter(
+            AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.UseMaterialNormals)),
+            PostProcessParameterKind.Bool,
+            GroundTruthAmbientOcclusionSettings.DefaultUseMaterialNormals,
+            displayName: "Normal-Map Micro-Occlusion",
+            visibilityCondition: IsGTAO);
+
+        stage.AddParameter(
             AoPath(nameof(AmbientOcclusionSettings.GroundTruth), nameof(GroundTruthAmbientOcclusionSettings.Resolution)),
             PostProcessParameterKind.Int,
             (int)GroundTruthAmbientOcclusionSettings.DefaultResolution,
@@ -1714,6 +1729,12 @@ public static class CommonPostProcessStages
             PostProcessParameterKind.Bool,
             false,
             displayName: "Meshlet Debug Display");
+
+        stage.AddParameter(
+            nameof(GpuBvhDebugSettings.OcclusionCulledBoundsEnabled),
+            PostProcessParameterKind.Bool,
+            false,
+            displayName: "Occlusion-Culled Bounds");
 
         stage.AddParameter(
             nameof(GpuBvhDebugSettings.Enabled),

@@ -491,18 +491,10 @@
             => List[Index] = OldValue;
 
         public override string DisplayChangeAsRedo()
-        {
-            return string.Format("{0}[{1}] {2} -> {3}",
-                List.ToString(), Index.ToString(),
-              OldValue?.ToString() ?? "null", NewValue?.ToString() ?? "null");
-        }
+            => $"{List}[{Index}] {OldValue ?? "null"} -> {NewValue ?? "null"}";
 
         public override string DisplayChangeAsUndo()
-        {
-            return string.Format("{0}[{1}] {2} <- {3}",
-                List.ToString(), Index.ToString(),
-                OldValue?.ToString() ?? "null", NewValue?.ToString() ?? "null");
-        }
+            => $"{List}[{Index}] {OldValue ?? "null"} <- {NewValue ?? "null"}";
     }
     [Serializable]
     public class LocalValueChangeField : LocalValueChange
@@ -522,16 +514,10 @@
             => FieldInfo.SetValue(FieldOwner, OldValue);
 
         public override string DisplayChangeAsRedo()
-            => string.Format("{0}.{1} {2} -> {3}",
-              FieldOwner.ToString(), FieldInfo.Name.ToString(),
-              OldValue is null ? "null" : OldValue.ToString(),
-              NewValue is null ? "null" : NewValue.ToString());
+            => $"{FieldOwner}.{FieldInfo.Name} {OldValue ?? "null"} -> {NewValue ?? "null"}";
 
         public override string DisplayChangeAsUndo()
-            => string.Format("{0}.{1} {2} <- {3}",
-              FieldOwner.ToString(), FieldInfo.Name.ToString(),
-              OldValue is null ? "null" : OldValue.ToString(),
-              NewValue is null ? "null" : NewValue.ToString());
+            => $"{FieldOwner}.{FieldInfo.Name} {OldValue ?? "null"} <- {NewValue ?? "null"}";
     }
     [Serializable]
     public class LocalValueChangeProperty : LocalValueChange
@@ -551,16 +537,10 @@
             => PropertyInfo.SetValue(PropertyOwner, OldValue);
 
         public override string DisplayChangeAsRedo()
-            => string.Format("{0}.{1} {2} -> {3}",
-              PropertyOwner.ToString(), PropertyInfo.Name.ToString(),
-              OldValue is null ? "null" : OldValue.ToString(),
-              NewValue is null ? "null" : NewValue.ToString());
+            => $"{PropertyOwner}.{PropertyInfo.Name} {OldValue ?? "null"} -> {NewValue ?? "null"}";
 
         public override string DisplayChangeAsUndo()
-            => string.Format("{0}.{1} {2} <- {3}",
-              PropertyOwner.ToString(), PropertyInfo.Name.ToString(),
-              OldValue is null ? "null" : OldValue.ToString(),
-              NewValue is null ? "null" : NewValue.ToString());
+            => $"{PropertyOwner}.{PropertyInfo.Name} {OldValue ?? "null"} <- {NewValue ?? "null"}";
     }
     [Serializable]
     public class LocalValueChangeIDictionary : LocalValueChange
@@ -612,16 +592,10 @@
         }
 
         public override string DisplayChangeAsRedo()
-            => string.Format("{0}.{1} {2} -> {3}",
-              DictionaryOwner.ToString(), KeyForValue.ToString(),
-              OldValue is null ? "null" : OldValue.ToString(),
-              NewValue is null ? "null" : NewValue.ToString());
+            => $"{DictionaryOwner}.{KeyForValue} {OldValue ?? "null"} -> {NewValue ?? "null"}";
 
         public override string DisplayChangeAsUndo()
-            => string.Format("{0}.{1} {2} <- {3}",
-              DictionaryOwner.ToString(), KeyForValue.ToString(),
-              OldValue is null ? "null" : OldValue.ToString(),
-              NewValue is null ? "null" : NewValue.ToString());
+            => $"{DictionaryOwner}.{KeyForValue} {OldValue ?? "null"} <- {NewValue ?? "null"}";
     }
 #endif
 }

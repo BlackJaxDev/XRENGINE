@@ -5,6 +5,7 @@ using System.Threading;
 using System.Linq;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
@@ -29,7 +30,7 @@ public static partial class RuntimeEngine
             {
                 public EngineSettings()
                 {
-                    AttachRenderSubSettings(_execution, _openGL, _vulkan, _browserWebGpuQuality);
+                    AttachRenderSubSettings(_execution, _openGL, _vulkan, _browserWebGpuQuality, _vrEyeFeatures);
                     TrackOverrideableSettings();
                 }
 
@@ -69,7 +70,7 @@ public static partial class RuntimeEngine
                     base.OnPropertyChanged(propName, prev, field);
 
                     if (propName == nameof(Execution) || propName == nameof(OpenGL) || propName == nameof(Vulkan) ||
-                        propName == nameof(BrowserWebGpuQuality))
+                        propName == nameof(BrowserWebGpuQuality) || propName == nameof(VrEyeFeatures))
                         RefreshRenderSubSettings(prev, field);
                 }
 
@@ -671,8 +672,8 @@ public static partial class RuntimeEngine
 
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
-                private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Fxaa;
-                private float _tsrRenderScale = 0.67f;
+                private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Tsr;
+                private float _tsrRenderScale = 0.75f;
                 private bool _enableNvidiaDlss = false;
                 private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;
                 private float _dlssCustomScale = 0.77f;
@@ -803,6 +804,8 @@ public static partial class RuntimeEngine
                 private EAdvancedRenderPipelineMode _advancedRenderPipelineMode = EAdvancedRenderPipelineMode.Available;
                 private ERvcPipelineMode _rvcPipelineMode = ERvcPipelineMode.Off;
                 private bool _rvcQuadViewEnabled = false;
+                private float _rvcQuadViewWideResolutionScale = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcQuadViewWideResolutionScale;
+                private bool _rvcQuadViewSharedVisibilityEnabled = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcQuadViewSharedVisibilityEnabled;
                 private bool _rvcStereoReuseEnabled = false;
                 private bool _rvcInsetWideReuseEnabled = true;
                 private bool _rvcTemporalReuseEnabled = false;
@@ -840,6 +843,7 @@ public static partial class RuntimeEngine
                 private OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXrTrackingLossPolicy.FreezeLastValid;
                 private OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXrActionSyncPolicy.PredictedOnly;
                 private OpenXrRenderPacingMode _openXrRenderPacingMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+                private bool _openXrCollectPacing = false;
                 private Vector2 _vrFoveationCenterUv = new(0.5f, 0.5f);
                 private float _vrFoveationInnerRadius = 0.35f;
                 private float _vrFoveationOuterRadius = 0.85f;
@@ -847,6 +851,9 @@ public static partial class RuntimeEngine
                 private float _vrFoveationVisibilityMargin = 0.05f;
                 private bool _vrFoveationForceFullResForUiAndNearField = true;
                 private float _vrFoveationFullResNearDistanceMeters = 1.5f;
+                private bool _vrAdvancedEdgeHalfRateShading = false;
+                private float _vrAdvancedEdgeHalfRateRadius = 0.6f;
+                private bool _vrAdvancedEdgeHalfRateDebugTint = false;
                 private bool _populateVertexDataInParallel = true;
                 private bool _processMeshImportsAsynchronously = true;
                 private bool _useInterleavedMeshBuffer = false;
@@ -871,6 +878,12 @@ public static partial class RuntimeEngine
                 private float _maxShadowRenderMilliseconds = 2.0f;
                 private int _maxDirectionalCascadeAtlasStaleFrames = 4;
                 private bool _holdDirectionalCascadesWhileCameraMoves;
+                private int _maxDirectionalCascadeRefreshesPerFrame = 1;
+                private float _directionalCascadeRefitMarginFraction = 0.1f;
+                private bool _directionalShadowStaticCacheEnabled = true;
+                private bool _emulatedVrEyesUseHmdDirectionalCascades;
+                private EDirectionalCascadeFitCentre _desktopDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
+                private EDirectionalCascadeFitCentre _hmdDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
                 private uint _minShadowAtlasTileResolution = 128u;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
@@ -1086,6 +1099,88 @@ public static partial class RuntimeEngine
                 }
 
                 [Category("Shadows")]
+                [Description("Maximum number of directional cascades of one light and source that refresh in one frame when only the camera moved. The cascades with the oldest rendered tiles refresh first; the others keep their stale tiles, which shading reprojects with the matrix they were rendered with. A caster change, a cascade without a rendered tile, a large fit jump and a cascade at the stale limit always refresh. 0 removes the limit.")]
+                public int MaxDirectionalCascadeRefreshesPerFrame
+                {
+                    get => Volatile.Read(ref _maxDirectionalCascadeRefreshesPerFrame);
+                    set
+                    {
+                        int clamped = Math.Clamp(value, 0, 8);
+                        if (!SetField(ref _maxDirectionalCascadeRefreshesPerFrame, clamped))
+                            return;
+
+                        Volatile.Write(ref _maxDirectionalCascadeRefreshesPerFrame, clamped);
+                    }
+                }
+
+                [Category("Shadows")]
+                [Description("Margin of a directional cascade fit, as a fraction of the cascade radius. A fit grows by this margin on each side, and the cascade keeps its fit while the camera's slice stays inside it, so a small camera move does not re-render the cascade. A refit happens when the slice leaves the fit, the light rotates, or the fit resolution changes. The texel size grows by the same fraction. 0 turns the margin off and refits in every frame in which the slice moves.")]
+                public float DirectionalCascadeRefitMarginFraction
+                {
+                    get => Volatile.Read(ref _directionalCascadeRefitMarginFraction);
+                    set
+                    {
+                        float clamped = float.IsFinite(value) ? Math.Clamp(value, 0.0f, 0.5f) : 0.0f;
+                        if (!SetField(ref _directionalCascadeRefitMarginFraction, clamped))
+                            return;
+
+                        Volatile.Write(ref _directionalCascadeRefitMarginFraction, clamped);
+                    }
+                }
+
+                [Category("Shadows")]
+                [Description("Caches the static shadow casters of each directional cascade (desktop source) that has dynamic casters in a separate depth tile. A refresh caused only by dynamic casters (skinned meshes and moving objects) copies that tile into the cascade tile and draws only the dynamic casters over it. It works in the Advanced directional shadow lane for CPU-direct and meshlet frames. The environment variable XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0 turns it off for the process.")]
+                public bool DirectionalShadowStaticCacheEnabled
+                {
+                    get => Volatile.Read(ref _directionalShadowStaticCacheEnabled) &&
+                        !s_directionalShadowStaticCacheDisabledByEnvironment;
+                    set
+                    {
+                        if (!SetField(ref _directionalShadowStaticCacheEnabled, value))
+                            return;
+
+                        Volatile.Write(ref _directionalShadowStaticCacheEnabled, value);
+                    }
+                }
+
+                private static readonly bool s_directionalShadowStaticCacheDisabledByEnvironment =
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
+
+                [Category("Shadows")]
+                [Description("Makes the emulated VR eye viewports use the cascaded HMD directional shadow source, as headset eyes do: the HMD cascades fit both eye frusta and the combined eye frustum. Default-pipeline eyes read them. Advanced eyes in SequentialViews still read the desktop cascades, because their views carry the desktop view kind. Use it to test the HMD cascade source (fit, lane groups, static tiles) without a headset. The environment variable XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1 turns it on for the process.")]
+                public bool EmulatedVrEyesUseHmdDirectionalCascades
+                {
+                    get => Volatile.Read(ref _emulatedVrEyesUseHmdDirectionalCascades) ||
+                        s_emulatedVrHmdDirectionalCascadesEnabledByEnvironment;
+                    set
+                    {
+                        if (!SetField(ref _emulatedVrEyesUseHmdDirectionalCascades, value))
+                            return;
+
+                        Volatile.Write(ref _emulatedVrEyesUseHmdDirectionalCascades, value);
+                    }
+                }
+
+                private static readonly bool s_emulatedVrHmdDirectionalCascadesEnabledByEnvironment =
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EmulatedVrHmdDirectionalCascades) is "1" or "true" or "True";
+
+                [Category("Shadows")]
+                [Description("Centre of the directional cascade fit for the desktop camera. CameraPosition centres each cascade sphere on the camera, so turning the camera does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the camera: finer texels, but a turn refits the cascades.")]
+                public EDirectionalCascadeFitCentre DesktopDirectionalCascadeFitCentre
+                {
+                    get => _desktopDirectionalCascadeFitCentre;
+                    set => SetField(ref _desktopDirectionalCascadeFitCentre, value);
+                }
+
+                [Category("Shadows")]
+                [Description("Centre of the directional cascade fit for the HMD (both eyes share the cascades). CameraPosition centres each cascade sphere on the head, so head rotation does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the head: finer texels, but every head turn refits the cascades.")]
+                public EDirectionalCascadeFitCentre HmdDirectionalCascadeFitCentre
+                {
+                    get => _hmdDirectionalCascadeFitCentre;
+                    set => SetField(ref _hmdDirectionalCascadeFitCentre, value);
+                }
+
+                [Category("Shadows")]
                 [Description("Minimum dynamic shadow atlas tile resolution in texels.")]
                 public uint MinShadowAtlasTileResolution
                 {
@@ -1178,6 +1273,7 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// Selects which anti-aliasing technique to use, including temporal AA (TAA) and temporal super resolution (TSR).
+                /// The default is TSR at 0.75 internal scale (<see cref="TsrRenderScale"/>).
                 /// </summary>
                 [Category("Performance")]
                 [Description("Selects which anti-aliasing technique to use.")]
@@ -1193,6 +1289,9 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// When TSR is enabled, scales the internal render resolution before temporal upscaling.
+                /// The default 0.75 renders each axis at 75 percent of the output size, and TSR upscales
+                /// the result to the output size. At 1.0, TSR renders at full resolution and acts as
+                /// temporal anti-aliasing.
                 /// </summary>
                 [Category("Performance")]
                 [Description("Internal resolution scale used by temporal super-resolution (TSR). Values below 1.0 render below native and upscale temporally.")]
@@ -2367,6 +2466,22 @@ public static partial class RuntimeEngine
                     set => SetField(ref _preferNVStereo, value);
                 }
 
+                private VrEyeFeatureProfile _vrEyeFeatures = new();
+
+                /// <summary>
+                /// Selects the optional rendering features of every VR eye frame (single-pass stereo
+                /// and per-eye, all VR pipelines, OpenXR and OpenVR). Both eyes use this one profile;
+                /// the desktop does not read it. A feature also needs the eye camera's own settings.
+                /// </summary>
+                [Category("VR")]
+                [DisplayName("VR Eye Features")]
+                [Description("Optional rendering features of VR eye frames, shared by both eyes and separate from the desktop. Depth of field and motion blur are off by default for comfort.")]
+                public VrEyeFeatureProfile VrEyeFeatures
+                {
+                    get => _vrEyeFeatures;
+                    set => SetField(ref _vrEyeFeatures, value ?? new VrEyeFeatureProfile());
+                }
+
                 /// <summary>
                 /// Selects the VR view rendering strategy.
                 /// </summary>
@@ -2711,6 +2826,25 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Paces the collect loop to OpenXR frames: one collect and one publication for
+                /// each XR frame. The collect for the next frame starts when the render thread
+                /// enters <c>xrEndFrame</c> for the current frame, so the collect and the swap run
+                /// while the runtime blocks in <c>xrEndFrame</c> or <c>xrWaitFrame</c>. It applies
+                /// only to true single-pass stereo with the dedicated pacing thread, while a focused
+                /// OpenXR session renders eyes. Otherwise the loop collects again after each render
+                /// dispatch (render pacing). Off by default: it raises the XR rate when the render
+                /// thread is the limit, but on Monado it lowered the rate when the eye GPU time was
+                /// more than two display periods. See the VR output pacing documentation.
+                /// </summary>
+                [Category("VR")]
+                [Description("Collects and publishes one visibility generation for each OpenXR frame (true single-pass stereo only). Faster when the render thread is the limit; slower on Monado when the eye GPU time is more than two display periods. Off by default.")]
+                public bool OpenXrCollectPacing
+                {
+                    get => _openXrCollectPacing;
+                    set => SetField(ref _openXrCollectPacing, value);
+                }
+
+                /// <summary>
                 /// Enables extra OpenXR OpenGL diagnostics.
                 /// </summary>
                 [Category("Debug")]
@@ -2833,6 +2967,97 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Makes Advanced eye outputs shade one pixel for each 2x2 block of the same triangle
+                /// outside <see cref="VrAdvancedEdgeHalfRateRadius"/>. A fill pass then copies the
+                /// result to the other pixels of the block. Depth, visibility and shadows stay at full
+                /// resolution. Vulkan eyes without MSAA only; the desktop view is never affected.
+                /// </summary>
+                [Category("VR")]
+                [Description("Makes Advanced eye outputs shade one pixel for each 2x2 block of the same triangle outside the edge radius, and copy it to the rest of the block. Depth, visibility and shadows stay at full resolution. Vulkan eyes without MSAA only; the desktop view is never affected.")]
+                public bool VrAdvancedEdgeHalfRateShading
+                {
+                    get => _vrAdvancedEdgeHalfRateShading;
+                    set => SetField(ref _vrAdvancedEdgeHalfRateShading, value);
+                }
+
+                /// <summary>
+                /// Radius of the full-rate region for <see cref="VrAdvancedEdgeHalfRateShading"/>.
+                /// The region is centered on the lens center of each eye (the point where the view
+                /// direction meets the image), not on the texture center. The value is a fraction of
+                /// the half extent of the eye image on each axis: 1 reaches the image edge on an axis
+                /// of a symmetric eye. The shader uses steps of 0.05.
+                /// </summary>
+                [Category("VR")]
+                [Description("Radius of the full-rate region for Advanced edge half-rate shading, centered on the lens center of each eye. A fraction of the half extent of the eye image on each axis, in steps of 0.05.")]
+                public float VrAdvancedEdgeHalfRateRadius
+                {
+                    get => _vrAdvancedEdgeHalfRateRadius;
+                    set => SetField(ref _vrAdvancedEdgeHalfRateRadius, Math.Clamp(value, 0.05f, 1.55f));
+                }
+
+                /// <summary>
+                /// Tints the 2x2 blocks that <see cref="VrAdvancedEdgeHalfRateShading"/> shades at half
+                /// rate. Pixels in the edge region that shade at full rate, because their block shows
+                /// more than one triangle, keep their normal color. Diagnostic only.
+                /// </summary>
+                [Category("VR")]
+                [Description("Diagnostic: tints the 2x2 blocks that Advanced edge half-rate shading shades at half rate. Pixels at triangle edges keep their normal color.")]
+                public bool VrAdvancedEdgeHalfRateDebugTint
+                {
+                    get => _vrAdvancedEdgeHalfRateDebugTint;
+                    set => SetField(ref _vrAdvancedEdgeHalfRateDebugTint, value);
+                }
+
+                private int _vrAdvancedShadowFilterTaps = 0;
+
+                /// <summary>
+                /// Filter tap count of the headset shadow cascades of the primary directional light
+                /// (the first directional light of the world) in Advanced native shading. The value
+                /// replaces the filter sample count and the Vogel tap count of the light in the headset
+                /// records only. 0 uses the values of the light. The desktop view is never affected.
+                /// </summary>
+                [Category("VR")]
+                [Description("Filter tap count of the headset shadow cascades of the primary directional light in Advanced native shading. 0 uses the values of the light. The desktop view is never affected.")]
+                public int VrAdvancedShadowFilterTaps
+                {
+                    get => _vrAdvancedShadowFilterTaps;
+                    set => SetField(ref _vrAdvancedShadowFilterTaps, Math.Clamp(value, 0, 32));
+                }
+
+                private bool _advancedVirtualGeometry;
+
+                /// <summary>
+                /// Vulkan Advanced visibility (desktop and VR eyes) selects a cluster cut for static
+                /// meshlet draws of models cooked with a cluster hierarchy: the task stage draws
+                /// coarser clusters where their projected error is at or below
+                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. Off draws the level-0
+                /// clusters only. The value is read once, at the first Advanced frame; a change
+                /// takes effect at the next start.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Vulkan Advanced visibility draws a cluster cut of models cooked with a cluster hierarchy. Read once at the first Advanced frame; a change takes effect at the next start.")]
+                public bool AdvancedVirtualGeometry
+                {
+                    get => _advancedVirtualGeometry;
+                    set => SetField(ref _advancedVirtualGeometry, value);
+                }
+
+                private float _advancedVirtualGeometryPixelThreshold = 1.0f;
+
+                /// <summary>
+                /// The cluster cut threshold of <see cref="AdvancedVirtualGeometry"/>, in render
+                /// pixels of projected simplification error (0.25 to 16). A larger value draws
+                /// coarser clusters. Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Cluster cut threshold of Advanced virtual geometry, in render pixels of projected error (0.25 to 16). Read once at the first Advanced frame.")]
+                public float AdvancedVirtualGeometryPixelThreshold
+                {
+                    get => _advancedVirtualGeometryPixelThreshold;
+                    set => SetField(ref _advancedVirtualGeometryPixelThreshold, float.IsFinite(value) ? Math.Clamp(value, 0.25f, 16.0f) : 1.0f);
+                }
+
+                /// <summary>
                 /// Controls disabled, capability-gated, required, and diagnostic selection
                 /// of the advanced render pipeline for desktop and offscreen outputs.
                 /// VR eyes use <see cref="VrRenderPipeline"/> instead.
@@ -2867,6 +3092,31 @@ public static partial class RuntimeEngine
                 {
                     get => _rvcQuadViewEnabled;
                     set => SetField(ref _rvcQuadViewEnabled, value);
+                }
+
+                /// <summary>
+                /// Multiplies the eye resolution of the quad-view wide pair. The inset pair covers the
+                /// center of the view at full resolution, so the wide pair can render at a lower
+                /// resolution. Valid range is 0.1x to 1.0x. A change recreates the OpenXR swapchains.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Multiplies the eye resolution of the quad-view wide pair. The inset pair keeps full resolution. Valid range is 0.1x to 1.0x.")]
+                public float RvcQuadViewWideResolutionScale
+                {
+                    get => _rvcQuadViewWideResolutionScale;
+                    set => SetField(ref _rvcQuadViewWideResolutionScale, Math.Clamp(value, 0.1f, 1.0f));
+                }
+
+                /// <summary>
+                /// If true, the quad-view inset pair draws only the objects that the wide pair drew in
+                /// the same frame, inside the inset frustum, and runs no late visibility of its own.
+                /// </summary>
+                [Category("RVC")]
+                [Description("If true, the quad-view inset pair reuses the wide pair's visibility and runs no late visibility of its own.")]
+                public bool RvcQuadViewSharedVisibilityEnabled
+                {
+                    get => _rvcQuadViewSharedVisibilityEnabled;
+                    set => SetField(ref _rvcQuadViewSharedVisibilityEnabled, value);
                 }
 
                 /// <summary>

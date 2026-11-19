@@ -44,7 +44,7 @@ public sealed partial class McpAssistantWindow
             usage.ToolChoice = "auto";
         }
 
-        bool requestLikelyNeedsTools = IsLikelySceneMutationPrompt(prompt);
+        bool requestLikelyNeedsTools = !IsReadOnlyRequest && IsLikelySceneMutationPrompt(prompt);
         usage.RequireToolUse = requestLikelyNeedsTools;
 
         string model = string.IsNullOrWhiteSpace(AnthropicModel) ? "claude-sonnet-4-5" : AnthropicModel;
@@ -283,9 +283,10 @@ public sealed partial class McpAssistantWindow
                 // Execute the tool call
                 var tcEntry = new ToolCallEntry
                 {
-                    ToolName = FormatToolName(toolName),
+                    ToolName = toolName,
                     ArgsSummary = SummarizeToolArguments(toolName, inputStr),
                 };
+                tcEntry.SetInvocation(inputStr);
                 AddToolCallSegmented(target, tcEntry);
 
                 var toolResult = await ExecuteMcpToolCallAsync(toolName, inputStr, ct);
@@ -296,6 +297,7 @@ public sealed partial class McpAssistantWindow
                 tcEntry.IsError = toolResult.IsError;
                 tcEntry.ResultFilePath = toolResult.ImagePath;
                 tcEntry.IsComplete = true;
+                tcEntry.UpdateOutcome(toolResult.Text);
 
                 if (toolResult.IsError)
                     Debug.LogWarning($"MCP tool call '{toolName}' failed: {toolResult.Text}");

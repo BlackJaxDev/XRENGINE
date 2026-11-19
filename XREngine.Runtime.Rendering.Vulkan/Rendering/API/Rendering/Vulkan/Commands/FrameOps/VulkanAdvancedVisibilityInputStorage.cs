@@ -282,8 +282,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         {
             _copyTelemetry?.RecordRejectedCopy();
             throw new VulkanPlanPreconditionException(
-                "The advanced visibility authoring lease does not match the frame-operation family: " +
-                authoringInput.DescribeRequestMismatch(in request) + ".");
+                $"The advanced visibility authoring lease does not match the frame-operation family: {authoringInput.DescribeRequestMismatch(in request)}.");
         }
 
         ReadOnlySpan<AdvancedVisibilityPayload> payloads =

@@ -266,6 +266,13 @@ namespace XREngine.Rendering
             set => GroundTruth.SpecularOcclusionEnabled = value;
         }
 
+        /// <summary>Mirrors <see cref="GroundTruthAmbientOcclusionSettings.UseMaterialNormals"/>.</summary>
+        public bool GTAOUseMaterialNormals
+        {
+            get => GroundTruth.UseMaterialNormals;
+            set => GroundTruth.UseMaterialNormals = value;
+        }
+
         public GroundTruthAmbientOcclusionSettings.EResolution GTAOResolution
         {
             get => GroundTruth.Resolution;

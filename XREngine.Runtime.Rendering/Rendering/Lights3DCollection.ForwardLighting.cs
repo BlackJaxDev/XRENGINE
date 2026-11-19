@@ -42,10 +42,26 @@ namespace XREngine.Scene
         private XRDataBuffer? _emptyForwardPlusLocalLightsBuffer;
         private XRDataBuffer? _emptyForwardPlusVisibleIndicesBuffer;
         private readonly DirectionalShadowGpuRecord[] _forwardDirectionalShadowRecords = new DirectionalShadowGpuRecord[ForwardDirectionalShadowRecordCount];
-        private ReadOnlyStoragePublication? _forwardDirectionalShadowRecordPublication;
-        private ulong _forwardDirectionalShadowRecordGeneration;
+        // The buffer that forward programs bind at binding 39: the buffer of the shadow source of
+        // the current camera. It does not own the buffer.
+        private XRDataBuffer? _forwardDirectionalShadowRecordBuffer;
+        // One stable buffer for each directional shadow source of the rendering camera (slot 0
+        // desktop, slot 1 HMD). Desktop views and eye views read different cascade records, and
+        // the HMD records change with the head pose on most frames. Each buffer keeps its GPU
+        // buffer and is written in place (like the light lists) when the records of its source
+        // change. A new buffer for each change gave the Vulkan mesh renderers a new resource
+        // identity in their descriptor allocation key, so every forward draw that samples
+        // directional shadows built a new descriptor set on most frames.
+        private readonly XRDataBuffer?[] _forwardDirectionalShadowRecordBuffersBySource = new XRDataBuffer?[2];
+        // The bytes last written to each source buffer, to skip unchanged uploads.
+        private readonly byte[][] _forwardDirectionalShadowRecordBytesBySource =
+        [
+            new byte[ForwardDirectionalShadowRecordCount * DirectionalShadowGpuRecordSize],
+            new byte[ForwardDirectionalShadowRecordCount * DirectionalShadowGpuRecordSize],
+        ];
+        private readonly bool[] _forwardDirectionalShadowRecordsWrittenBySource = new bool[2];
+        private static readonly int DirectionalShadowGpuRecordSize = Unsafe.SizeOf<DirectionalShadowGpuRecord>();
         private const uint ForwardDirectionalShadowRecordsBinding = 39;
-        private const ulong ForwardDirectionalShadowRecordsAbiSignature = 0x4453_4852_3232_3442UL;
 
         [ThreadStatic] private static DirectionalLightComponent[]? t_forwardDirectionalLightSnapshot;
         [ThreadStatic] private static PointLightComponent[]? t_forwardPointLightSnapshot;
@@ -247,10 +263,16 @@ namespace XREngine.Scene
             program.BindBuffer(_forwardSpotLightsBuffer!, ForwardSpotLightsBinding);
             program.BindBuffer(_forwardPointShadowMetadataBuffer!, ForwardPointShadowMetadataBinding);
             program.BindBuffer(_forwardSpotShadowMetadataBuffer!, ForwardSpotShadowMetadataBinding);
-            if (_forwardDirectionalShadowRecordPublication is not null)
-                program.BindReadOnlyStorage(_forwardDirectionalShadowRecordPublication.Value, ForwardDirectionalShadowRecordsBinding);
+            if (_forwardDirectionalShadowRecordBuffer is not null)
+                program.BindBuffer(_forwardDirectionalShadowRecordBuffer, ForwardDirectionalShadowRecordsBinding);
         }
 
+        /// <summary>
+        /// Copies the published cascade records of each directional light for the camera's shadow
+        /// source into that source's stable buffer. The buffer is written in place only when the
+        /// bytes differ from the last upload of the same source; the buffer identity never changes
+        /// after creation.
+        /// </summary>
         private void UploadForwardDirectionalShadowRecords(
             DirectionalLightComponent[] directionalLights,
             int directionalLightCount,
@@ -267,16 +289,34 @@ namespace XREngine.Scene
             }
 
             ReadOnlySpan<byte> bytes = MemoryMarshal.AsBytes(_forwardDirectionalShadowRecords.AsSpan());
-            if (_forwardDirectionalShadowRecordPublication is { } current && current.ByteContentEquals(bytes))
+            int sourceSlot = DirectionalLightComponent.GetCascadeSourceForCamera(directionalShadowCamera) == ShadowRequestSource.Hmd
+                ? 1
+                : 0;
+            XRDataBuffer buffer = _forwardDirectionalShadowRecordBuffersBySource[sourceSlot] ??=
+                CreateForwardLightBuffer<DirectionalShadowGpuRecord>(
+                    sourceSlot == 1 ? "ForwardDirectionalShadowRecordsHmd" : "ForwardDirectionalShadowRecordsDesktop",
+                    ForwardDirectionalShadowRecordCount);
+            _forwardDirectionalShadowRecordBuffer = buffer;
+            byte[] written = _forwardDirectionalShadowRecordBytesBySource[sourceSlot];
+            if (_forwardDirectionalShadowRecordsWrittenBySource[sourceSlot] && bytes.SequenceEqual(written))
                 return;
 
-            ReadOnlyStoragePublication next = ReadOnlyStoragePublication.CopyFrom(
-                bytes,
-                (ulong)RuntimeHelpers.GetHashCode(this),
-                ++_forwardDirectionalShadowRecordGeneration,
-                ForwardDirectionalShadowRecordsAbiSignature);
-            _forwardDirectionalShadowRecordPublication?.Dispose();
-            _forwardDirectionalShadowRecordPublication = next;
+            bytes.CopyTo(written);
+            _forwardDirectionalShadowRecordsWrittenBySource[sourceSlot] = true;
+            for (int i = 0; i < _forwardDirectionalShadowRecords.Length; i++)
+                buffer.Set((uint)i, _forwardDirectionalShadowRecords[i]);
+            buffer.PushSubData();
+        }
+
+        /// <summary>Retires the directional shadow record buffers of both shadow sources.</summary>
+        private void ReleaseForwardDirectionalShadowRecordBuffers()
+        {
+            for (int i = 0; i < _forwardDirectionalShadowRecordBuffersBySource.Length; ++i)
+            {
+                RetireForwardBuffer(ref _forwardDirectionalShadowRecordBuffersBySource[i]);
+                _forwardDirectionalShadowRecordsWrittenBySource[i] = false;
+            }
+            _forwardDirectionalShadowRecordBuffer = null;
         }
 
         private void EnsureEmptyForwardPlusBuffers()
@@ -1252,8 +1292,8 @@ namespace XREngine.Scene
                 directionalLights,
                 directionalLightCount,
                 directionalShadowCamera);
-            if (_forwardDirectionalShadowRecordPublication is not null)
-                program.BindReadOnlyStorage(_forwardDirectionalShadowRecordPublication.Value, ForwardDirectionalShadowRecordsBinding);
+            if (_forwardDirectionalShadowRecordBuffer is not null)
+                program.BindBuffer(_forwardDirectionalShadowRecordBuffer, ForwardDirectionalShadowRecordsBinding);
 
             program.Uniform("DirectionalShadowMapEnabled", _directionalShadowMapEnabled);
             program.Uniform("DirectionalUseCascadedShadows", _directionalUseCascadedShadows);

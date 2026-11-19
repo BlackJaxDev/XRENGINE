@@ -778,8 +778,8 @@ namespace XREngine.Editor.Mcp
         {
             // Try to find the backing field for the event
             var backingField = type.GetField(eventInfo.Name, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-                ?? type.GetField("_" + char.ToLowerInvariant(eventInfo.Name[0]) + eventInfo.Name[1..], BindingFlags.Instance | BindingFlags.NonPublic)
-                ?? type.GetField(char.ToLowerInvariant(eventInfo.Name[0]) + eventInfo.Name[1..], BindingFlags.Instance | BindingFlags.NonPublic);
+                ?? type.GetField($"_{char.ToLowerInvariant(eventInfo.Name[0])}{eventInfo.Name[1..]}", BindingFlags.Instance | BindingFlags.NonPublic)
+                ?? type.GetField($"{char.ToLowerInvariant(eventInfo.Name[0])}{eventInfo.Name[1..]}", BindingFlags.Instance | BindingFlags.NonPublic);
 
             if (backingField is null)
             {

@@ -231,12 +231,15 @@ public partial class GLTexture2D
                 Api.TextureStorage2D(BindingId, levels, ToGLEnum(Data.SizedInternalFormat), width, height);
             }
 
-            internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
+            // Record the immutable storage before any later step can throw. If the state stays
+            // unset, the next upload calls glTextureStorage2D again, which is GL_INVALID_OPERATION
+            // on an immutable texture, and no mip data reaches the texture.
             StorageSet = true;
             _allocatedLevels = levels;
             _allocatedWidth = width;
             _allocatedHeight = height;
             _allocatedInternalFormat = Data.SizedInternalFormat;
+            internalFormatForce = ToBaseInternalFormat(Data.SizedInternalFormat);
             int storageGeneration = AdvanceStorageGeneration();
 
             _allocatedVRAMBytes = CalculateTextureVRAMSize(width, height, levels, Data.SizedInternalFormat, Data.MultiSample ? Data.MultiSampleCount : 1u);

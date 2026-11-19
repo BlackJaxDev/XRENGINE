@@ -245,7 +245,7 @@ public static unsafe class GpuRecordSpirvValidator
     private static string GetUintReadExpression(Type type, string value)
     {
         FieldInfo field = GpuRecordIncludeGenerator.GetStorageFields(type)[0];
-        string expression = value + "." + GpuRecordIncludeGenerator.GetGlslMemberName(type, GpuRecordIncludeGenerator.GetStorageFieldName(field));
+        string expression = $"{value}.{GpuRecordIncludeGenerator.GetGlslMemberName(type, GpuRecordIncludeGenerator.GetStorageFieldName(field))}";
         Type memberType = field.FieldType.IsEnum ? Enum.GetUnderlyingType(field.FieldType) : field.FieldType;
         if (memberType.GetCustomAttribute<GpuRecordAttribute>() is not null)
             return GetUintReadExpression(memberType, expression);

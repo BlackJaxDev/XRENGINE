@@ -14,6 +14,9 @@ internal sealed class VulkanOpenXrBackend
 {
     private static readonly VulkanOpenXrThreadExecutionState DisposedFallbackThreadExecutionState = new();
     private const int EyeResourcePlannerStateCount = 2;
+    // Each eye owns two frame-data slots, so the next frame of an eye can record while the GPU
+    // still reads the previous one. Must match VulkanFrameLoop.OpenXrEyeFrameDataSlotsPerEye.
+    private const int EyeFrameDataSlotsPerEye = 2;
     private readonly ThreadLocal<VulkanOpenXrThreadExecutionState> _threadExecutionState =
         new(static () => new VulkanOpenXrThreadExecutionState(), trackAllValues: false);
     private volatile bool _threadExecutionStateDisposed;
@@ -67,8 +70,11 @@ internal sealed class VulkanOpenXrBackend
         _threadExecutionState.Dispose();
     }
 
-    /// <summary>Number of reserved eye-planner frame-data slots.</summary>
-    internal int EyeFrameDataSlotCount => EyeResourcePlannerStateCount;
+    /// <summary>
+    /// Number of reserved eye frame-data slots: two for each eye. The eye render targets, depth
+    /// targets and temporal history stay per eye; only per-frame CPU-written data uses these slots.
+    /// </summary>
+    internal int EyeFrameDataSlotCount => EyeResourcePlannerStateCount * EyeFrameDataSlotsPerEye;
 
     internal Dictionary<ulong, TOwner> GetPrimaryCommandArtifactOwners<TOwner>()
         where TOwner : class

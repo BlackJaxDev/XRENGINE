@@ -29,9 +29,9 @@ internal static class TextureStreamingSourceFactory
         string authorityPath = XRTexture2D.ResolveTextureStreamingAuthorityPathInternal(filePath, usage, out string? originalSourcePath);
 
         if (XRTexture2D.HasAssetExtensionInternal(authorityPath))
-            return new AssetTextureStreamingSource(authorityPath, originalSourcePath);
+            return new AssetTextureStreamingSource(authorityPath, originalSourcePath, usage);
 
-        return new ThirdPartyTextureStreamingSource(authorityPath);
+        return new ThirdPartyTextureStreamingSource(authorityPath, usage);
     }
 
     /// <summary>
@@ -118,11 +118,14 @@ internal sealed class CacheUpgradingTextureStreamingSource(
     }
 }
 
-internal sealed class AssetTextureStreamingSource(string assetPath, string? fallbackSourcePath = null) : ITextureStreamingSource
+internal sealed class AssetTextureStreamingSource(
+    string assetPath,
+    string? fallbackSourcePath = null,
+    ETextureImportUsage? usage = null) : ITextureStreamingSource
 {
     private readonly ThirdPartyTextureStreamingSource? _fallbackSource = string.IsNullOrWhiteSpace(fallbackSourcePath)
         ? null
-        : new ThirdPartyTextureStreamingSource(Path.GetFullPath(fallbackSourcePath));
+        : new ThirdPartyTextureStreamingSource(Path.GetFullPath(fallbackSourcePath), usage);
     private int _preferFallback;
 
     public string SourcePath => assetPath;
@@ -266,7 +269,9 @@ internal sealed class AssetTextureStreamingSource(string assetPath, string? fall
     }
 }
 
-internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITextureStreamingSource
+internal sealed class ThirdPartyTextureStreamingSource(
+    string sourcePath,
+    ETextureImportUsage? usage = null) : ITextureStreamingSource
 {
     public string SourcePath => sourcePath;
 
@@ -306,7 +311,8 @@ internal sealed class ThirdPartyTextureStreamingSource(string sourcePath) : ITex
             includeMipChain,
             sourcePath,
             decodeMilliseconds,
-            read.CancellationToken);
+            read.CancellationToken,
+            usage);
         try
         {
             using IDisposable publication = read.BeginPublication();

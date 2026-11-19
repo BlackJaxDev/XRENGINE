@@ -113,7 +113,7 @@ namespace XREngine.Animation
 
         public override string WriteToString()
         {
-            return string.Format("{0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} {13} {14} {15} {16} {17}", Second, InValue.X, InValue.Y, InValue.Z, InValue.W, OutValue.X, OutValue.Y, OutValue.Z, OutValue.W, InTangent.X, InTangent.Y, InTangent.Z, InTangent.W, OutTangent.X, OutTangent.Y, OutTangent.Z, OutTangent.W, InterpolationTypeOut);
+            return $"{Second} {InValue.X} {InValue.Y} {InValue.Z} {InValue.W} {OutValue.X} {OutValue.Y} {OutValue.Z} {OutValue.W} {InTangent.X} {InTangent.Y} {InTangent.Z} {InTangent.W} {OutTangent.X} {OutTangent.Y} {OutTangent.Z} {OutTangent.W} {InterpolationTypeOut}";
             //return string.Format("{0} {1} {2} {3} {4} {5}", Second, InValue.WriteToString(), OutValue.WriteToString(), InTangent.WriteToString(), OutTangent.WriteToString(), InterpolationType);
         }
         public override void ReadFromString(string str)

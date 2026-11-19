@@ -58,7 +58,6 @@ public static partial class OutlinePassVariantFactory
         {
             UberOutlineSourceMaterial = sourceMaterial,
             Name = string.Concat(sourceMaterial.Name, " [Outline]"),
-            Parameters = sourceMaterial.Parameters,
             Textures = sourceMaterial.Textures,
             RenderPass = pass.RenderPass,
             BillboardMode = sourceMaterial.BillboardMode,
@@ -68,6 +67,8 @@ public static partial class OutlinePassVariantFactory
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
             UberAuthoredState = sourceMaterial.UberAuthoredState,
             RenderOptions = pass.RenderOptions,
+            // Attach source parameters after pass setters update their own values.
+            Parameters = sourceMaterial.Parameters,
         };
 
         // Set the source before shaders. Material initialization must keep the
@@ -94,7 +95,6 @@ public static partial class OutlinePassVariantFactory
         {
             UberOutlineSourceMaterial = source,
             Name = string.Concat(source.Name, " [Soft Outline]"),
-            Parameters = source.Parameters,
             Textures = source.Textures,
             RenderPass = pass.RenderPass,
             BillboardMode = source.BillboardMode,
@@ -109,6 +109,8 @@ public static partial class OutlinePassVariantFactory
             {
                 TemporalUnsupportedReason = "The soft outline has no coverage-matching temporal shader variants.",
             },
+            // Attach source parameters after the alpha-blend setter runs.
+            Parameters = source.Parameters,
         };
         variant.Shaders = [vertex, geometry, fragment];
         variant.EngineSemantic = EngineMaterialSemanticIdentity.UberSoftOutlineV2;

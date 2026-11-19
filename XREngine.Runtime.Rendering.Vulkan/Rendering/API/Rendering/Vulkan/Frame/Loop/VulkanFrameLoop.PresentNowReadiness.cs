@@ -16,6 +16,7 @@ internal sealed partial class VulkanFrameLoop
     private long _presentNowFailureDiagnosticSequence;
     private long _presentNowRecoveryRequestSequence;
     private long _presentNowConsumedRecoveryRequestSequence;
+    private ulong _presentNowConsumedPipelineCompileActivityGeneration;
     private string _presentNowRecoveryRequestReason = "renderer state changed";
     private int _presentNowRecoveryProbeAttempts;
     private int _presentNowAutomaticRecoveryPending;
@@ -140,6 +141,14 @@ internal sealed partial class VulkanFrameLoop
     /// CPU frame slot. No WSI image is owned while shadows, meshes, descriptors,
     /// frame operations, resource bindings, and pipeline requirements converge.
     /// </summary>
+    /// <summary>
+    /// Consecutive desktop attempts that found the planner state of a changed output not yet
+    /// published. A pass or generation change needs one render for the publication, so a small
+    /// limit is enough; more consecutive attempts mean a publication that does not arrive.
+    /// </summary>
+    private const int MaxPlannerPublicationPendingRetries = 8;
+    private int _plannerPublicationPendingRetries;
+
     private bool TryAcceptDesktopPresentNowPlan(
         ref VulkanFrameAttempt attempt,
         ref VulkanPresentNowReadinessWatchdog watchdog,
@@ -590,6 +599,26 @@ internal sealed partial class VulkanFrameLoop
                 exception.Message);
             return false;
         }
+        catch (VulkanPlannerPublicationPendingException exception)
+        {
+            // A pass or generation change of an existing output: retry the frame, for a
+            // bounded number of consecutive attempts. A publication that stays pending longer
+            // fails loudly, as a missing publication did before.
+            if (++_plannerPublicationPendingRetries > MaxPlannerPublicationPendingRetries)
+            {
+                _plannerPublicationPendingRetries = 0;
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPlannerPublicationPendingFailure();
+                throw;
+            }
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPlannerPublicationPendingRetry();
+            retry = watchdog.CreateRetry(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "planner-publication-pending",
+                "DesktopScene -> resource planner publication",
+                exception.Message);
+            return false;
+        }
+        _plannerPublicationPendingRetries = 0;
         FramePacingTimeline.Mark(EFramePacingMark.DesktopReadyPlanSealed);
         logicalPlan.PrepareRecordingPlannerGenerations(in plannerState);
         if (!logicalPlan.HasAnyExecutableOutput)
@@ -1360,14 +1389,23 @@ internal sealed partial class VulkanFrameLoop
             Volatile.Read(ref _presentNowRecoveryRequestSequence);
         long consumedSequence =
             Volatile.Read(ref _presentNowConsumedRecoveryRequestSequence);
+        ulong compileActivityGeneration =
+            _resourceRuntime.PipelineManager.CompileActivityGeneration;
+        ulong previousCompileActivityGeneration =
+            _presentNowConsumedPipelineCompileActivityGeneration;
+        bool pipelineCompletionProbe =
+            recoverableFailure.Stage == EVulkanPresentNowReadinessStage.PipelineCompilation &&
+            compileActivityGeneration != previousCompileActivityGeneration;
         bool automaticProbe =
             Interlocked.Exchange(ref _presentNowAutomaticRecoveryPending, 0) != 0;
-        if (!automaticProbe && requestedSequence <= consumedSequence)
+        bool explicitRequest = requestedSequence > consumedSequence;
+        if (!automaticProbe && !explicitRequest && !pipelineCompletionProbe)
             return false;
 
         Volatile.Write(
             ref _presentNowConsumedRecoveryRequestSequence,
             requestedSequence);
+        _presentNowConsumedPipelineCompileActivityGeneration = compileActivityGeneration;
         _presentNowRecoverableFailure = null;
         _presentNowRecoverySourceFailure = recoverableFailure;
         _presentNowRecoveryProbeAttempts = 0;
@@ -1376,12 +1414,18 @@ internal sealed partial class VulkanFrameLoop
             "PresentNow state-change recovery probe");
 
         Debug.VulkanWarning(
-            "[Vulkan][PresentNow][RecoveryProbe] frame={0} sourceFrame={1} stage={2} request={3} automatic={4} reason={5}",
+            "[Vulkan][PresentNow][RecoveryProbe] frame={0} sourceFrame={1} stage={2} " +
+            "request={3} automatic={4} explicit={5} pipelineCompletion={6} " +
+            "previousCompileGeneration={7} compileGeneration={8} reason={9}",
             attempt.FrameNumber,
             recoverableFailure.FrameId,
             recoverableFailure.Stage,
             requestedSequence,
             automaticProbe,
+            explicitRequest,
+            pipelineCompletionProbe,
+            previousCompileActivityGeneration,
+            compileActivityGeneration,
             Volatile.Read(ref _presentNowRecoveryRequestReason));
         return true;
     }

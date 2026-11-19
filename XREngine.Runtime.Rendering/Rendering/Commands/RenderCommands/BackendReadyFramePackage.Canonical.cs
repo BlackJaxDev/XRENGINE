@@ -44,9 +44,12 @@ public sealed partial class BackendReadyFramePackage
 
     private EAdvancedViewRecordFlags _canonicalViewPolicyFlags;
 
-    /// <summary>Preserves collection policy when authoring freezes newer camera or eye matrices.</summary>
+    /// <summary>
+    /// Preserves collection policy when authoring freezes newer camera or eye matrices, and
+    /// sets the internal render size of a view that renders below its output size.
+    /// </summary>
     internal BackendReadyCanonicalViewRecord ApplyCanonicalViewPolicy(BackendReadyCanonicalViewRecord view)
-        => view with { Flags = view.Flags | _canonicalViewPolicyFlags };
+        => ApplyInternalRenderSize(view with { Flags = view.Flags | _canonicalViewPolicyFlags });
     public ReadOnlySpan<BackendReadyCanonicalPassRecord> CanonicalPasses => _canonicalPasses.AsSpan(0, _canonicalPassCount);
     public ReadOnlySpan<BackendReadyCanonicalDirtyOwnerRange> CanonicalDirtyOwnerRanges => _canonicalDirtyOwnerRanges.AsSpan(0, _canonicalDirtyOwnerRangeCount);
     public ReadOnlySpan<BackendReadyDiagnosticReadbackRequest> DiagnosticReadbackRequests => _canonicalDiagnosticReadbackRequests.AsSpan(0, _canonicalDiagnosticReadbackRequestCount);
@@ -269,6 +272,11 @@ public sealed partial class BackendReadyFramePackage
     /// resident pass set and template deltas come from the scene publication;
     /// only compact CPU-visible rows and ordered exceptions use visible selections.
     /// </summary>
+    /// <param name="pipelineViewPolicyFlags">
+    /// View record flags that the render pipeline derives from the camera (for example
+    /// <see cref="EAdvancedViewRecordFlags.GtaoMaterialNormals"/>). Every canonical view of the
+    /// package gets them.
+    /// </param>
     internal void PrepareCanonicalFromScene(
         GPUScene? scene,
         XRCamera? camera,
@@ -276,7 +284,8 @@ public sealed partial class BackendReadyFramePackage
         int viewportHeight,
         bool excludeProjectiveMirrors,
         EMeshSubmissionStrategy submissionStrategy,
-        int viewPair = RenderFrameViewSetPublication.AllViews)
+        int viewPair = RenderFrameViewSetPublication.AllViews,
+        EAdvancedViewRecordFlags pipelineViewPolicyFlags = EAdvancedViewRecordFlags.None)
     {
         // A late package preparation only has command membership. It must not
         // discard the already captured canonical publication and its lease.
@@ -305,9 +314,9 @@ public sealed partial class BackendReadyFramePackage
 
         ResetCanonical();
         _canonicalPublicationLease = lease;
-        _canonicalViewPolicyFlags = excludeProjectiveMirrors
+        _canonicalViewPolicyFlags = pipelineViewPolicyFlags | (excludeProjectiveMirrors
             ? EAdvancedViewRecordFlags.ExcludeProjectiveMirrors
-            : EAdvancedViewRecordFlags.None;
+            : EAdvancedViewRecordFlags.None);
 
         AdvancedGpuScenePublication identity = publication.Publication;
         CanonicalScenePublication = new BackendReadyCanonicalScenePublication(
@@ -349,10 +358,29 @@ public sealed partial class BackendReadyFramePackage
         PopulateCanonicalDiagnosticReadbackRequests();
         BuildDiagnosticReadbackPlan();
 
+
         // Keep the package lease through prepared-frame capture.  The native
         // consumer obtains its own completion-owned lease there; releasing this
         // one early made the supposedly canonical stream fall back to mutable
         // GPUScene state between package production and primary recording.
+    }
+
+    /// <summary>
+    /// Sets the internal render size of a view that renders below its output size. The view
+    /// set describes each view by its output rectangle (for OpenXR, the swapchain size), but
+    /// the pipeline renders its native targets at the internal size of the package viewport
+    /// (a render scale with an upscale). Only a view whose rectangle is the package viewport
+    /// gets the internal size, so a view that already carries its render size, or a view of
+    /// another size, is not scaled twice.
+    /// </summary>
+    private BackendReadyCanonicalViewRecord ApplyInternalRenderSize(in BackendReadyCanonicalViewRecord view)
+    {
+        BackendReadyFramePackageIdentity identity = Identity;
+        if (identity.InternalWidth <= 0 || identity.InternalHeight <= 0 ||
+            (identity.InternalWidth == identity.ViewportWidth && identity.InternalHeight == identity.ViewportHeight) ||
+            view.ViewportWidth != identity.ViewportWidth || view.ViewportHeight != identity.ViewportHeight)
+            return view;
+        return view with { RenderWidth = identity.InternalWidth, RenderHeight = identity.InternalHeight };
     }
 
     /// <summary>

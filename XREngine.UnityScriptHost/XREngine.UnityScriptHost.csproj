@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../XREngine.UnityScriptHost.Contracts/XREngine.UnityScriptHost.Contracts.csproj" />
+    <ProjectReference Include="../XREngine.UnityScriptHost.Compatibility/Runtime/XREngine.UnityScriptHost.Compatibility.Runtime.csproj" />
+  </ItemGroup>
+</Project>

@@ -133,9 +133,7 @@ internal readonly record struct VulkanRenderBinKey(
     {
         VulkanPreparedMeshPrimitive primitive = nativeState.Primitive0;
         uint acceptedViewMask = viewMask == 0u ? 1u : viewMask;
-        var bindingGeometry = producer == EAdvancedGeometryProducer.IndirectIndexed
-            ? default
-            : payload.Geometry;
+        var bindingGeometry = AdvancedIndirectRangeKey.RangeGeometry(producer, payload.Geometry);
         return new(
             Mix(unchecked((ulong)(uint)(passIndex + 1)), acceptedViewMask),
             Mix(payload.RasterStateClass, checked((ulong)payload.Coverage),

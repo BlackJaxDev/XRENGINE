@@ -352,7 +352,8 @@ namespace XREngine.Rendering.OpenGL
                 EMeshBillboardMode billboardMode,
                 bool forceNoStereo,
                 in XREngine.Rendering.Commands.AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
-                Vector4 sourceFlatDirection)
+                Vector4 sourceFlatDirection,
+                uint editorHighlightBits)
                 => Render(modelMatrix, previousModelMatrix, materialOverride, renderOptionsOverride,
                     instances, billboardMode, forceNoStereo, sourceFlatDirection);
 

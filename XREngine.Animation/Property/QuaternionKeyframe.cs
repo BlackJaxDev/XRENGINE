@@ -215,7 +215,7 @@ namespace XREngine.Animation
                 time);
 
         public override string WriteToString()
-            => string.Format("{0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10}", Second, InValue.X, InValue.Y, InValue.Z, InValue.W, OutValue.X, OutValue.Y, OutValue.Z, OutValue.W, InterpolationTypeIn, InterpolationTypeOut);
+            => $"{Second} {InValue.X} {InValue.Y} {InValue.Z} {InValue.W} {OutValue.X} {OutValue.Y} {OutValue.Z} {OutValue.W} {InterpolationTypeIn} {InterpolationTypeOut}";
 
         public override void ReadFromString(string str)
         {

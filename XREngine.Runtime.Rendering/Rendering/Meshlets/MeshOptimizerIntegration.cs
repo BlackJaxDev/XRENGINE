@@ -17,7 +17,7 @@ public sealed class MeshletBuildResult
     public required MeshletPayload Payload { get; init; }
 }
 
-public static class MeshOptimizerIntegration
+public static partial class MeshOptimizerIntegration
 {
     private static long s_meshletBuildInvocationCount;
 
@@ -104,6 +104,8 @@ public static class MeshOptimizerIntegration
         ValidateNativeBuildSettings(settings, sourceIndices.Length);
 
         MeshletVertex[] vertices = BuildMeshletVertices(mesh);
+        if (settings.BuildClusterHierarchy)
+            return BuildClusterHierarchyPayloadForMesh(mesh, settings, lodSettings, sourceMeshIdentity, sourceIndices, vertices);
 
         uint minTriangles = settings.BuildMode is MeshletBuildMode.Flex or MeshletBuildMode.Spatial
             ? Math.Clamp(settings.MinTriangles, 1u, settings.MaxTriangles)
@@ -266,7 +268,10 @@ public static class MeshOptimizerIntegration
         CpuMeshletDescriptor[] descriptors,
         uint[] vertexIndices,
         byte[] triangleIndices,
-        MeshOptimizerMeshletStats stats)
+        MeshOptimizerMeshletStats stats,
+        int clusterLevel0Count = 0,
+        MeshletClusterLodRecord[]? clusterLods = null,
+        MeshletLodGroupRecord[]? lodGroups = null)
     {
         MeshletGenerationSettingsSnapshot meshletSnapshot = MeshletGenerationSettingsSnapshot.From(settings);
         MeshLodGenerationSettingsSnapshot lodSnapshot = MeshLodGenerationSettingsSnapshot.From(lodSettings);
@@ -297,6 +302,10 @@ public static class MeshOptimizerIntegration
             VertexIndices = vertexIndices.ToImmutableArray(),
             TriangleIndices = triangleIndices.ToImmutableArray(),
             Stats = stats,
+            PayloadVersion = MeshletPayload.ExpectedPayloadVersion(clusterLods is { Length: > 0 }),
+            ClusterLevel0Count = clusterLevel0Count,
+            ClusterLods = (clusterLods ?? []).ToImmutableArray(),
+            LodGroups = (lodGroups ?? []).ToImmutableArray(),
         };
         payload.ValidatePortablePayload();
         return payload;

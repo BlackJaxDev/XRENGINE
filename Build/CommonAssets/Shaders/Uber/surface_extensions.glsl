@@ -127,52 +127,6 @@ vec3 uberApplyExtendedColorAdjustments(vec3 color)
 #endif
 }
 
-uint uberGlobalMaskOverrideBits = 0u;
-vec4 uberGlobalMaskOverrides[4];
-
-void uberResetGlobalMaskOverrides()
-{
-    uberGlobalMaskOverrideBits = 0u;
-    uberGlobalMaskOverrides[0] = vec4(1.0);
-    uberGlobalMaskOverrides[1] = vec4(1.0);
-    uberGlobalMaskOverrides[2] = vec4(1.0);
-    uberGlobalMaskOverrides[3] = vec4(1.0);
-}
-
-float uberReadGlobalMaskOverride(int zeroBased)
-{
-    int group = zeroBased / 4;
-    int channel = zeroBased % 4;
-    vec4 vec = group == 0 ? uberGlobalMaskOverrides[0]
-        : group == 1 ? uberGlobalMaskOverrides[1]
-        : group == 2 ? uberGlobalMaskOverrides[2]
-        : uberGlobalMaskOverrides[3];
-    if (channel == 0) return vec.r;
-    if (channel == 1) return vec.g;
-    if (channel == 2) return vec.b;
-    return vec.a;
-}
-
-void uberWriteGlobalMaskOverride(int zeroBased, float value)
-{
-    int clamped = clamp(zeroBased, 0, 15);
-    uberGlobalMaskOverrideBits |= (1u << uint(clamped));
-    int group = clamped / 4;
-    int channel = clamped % 4;
-    vec4 vec = group == 0 ? uberGlobalMaskOverrides[0]
-        : group == 1 ? uberGlobalMaskOverrides[1]
-        : group == 2 ? uberGlobalMaskOverrides[2]
-        : uberGlobalMaskOverrides[3];
-    if (channel == 0) vec.r = value;
-    else if (channel == 1) vec.g = value;
-    else if (channel == 2) vec.b = value;
-    else vec.a = value;
-    if (group == 0) uberGlobalMaskOverrides[0] = vec;
-    else if (group == 1) uberGlobalMaskOverrides[1] = vec;
-    else if (group == 2) uberGlobalMaskOverrides[2] = vec;
-    else uberGlobalMaskOverrides[3] = vec;
-}
-
 vec3 uberResolveThemeColor(int themeIndex, vec3 authoredColor)
 {
 #ifdef XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES
@@ -186,12 +140,11 @@ vec3 uberResolveThemeColor(int themeIndex, vec3 authoredColor)
     else if (themeIndex == 4) { theme = _GlobalThemeColor3; adjustment = _GlobalThemeAdjust3; }
     else return authoredColor;
 
-    float exposure = max(1.0, max(theme.r, max(theme.g, theme.b)));
-    vec3 hsv = rgbToHsv(theme.rgb / exposure);
+    vec3 hsv = rgbToHsv(theme.rgb);
     hsv.x = fract(hsv.x + adjustment.x);
     hsv.y = saturate(hsv.y + adjustment.y);
     hsv.z = saturate(hsv.z + adjustment.z);
-    return hsvToRgb(hsv) * exposure;
+    return hsvToRgb(hsv);
 #endif
 }
 
@@ -240,9 +193,6 @@ float uberGlobalMask(int encodedIndex, ToonMesh mesh, float timeScale)
     // potentially negative even after the guard above and reject the variant as
     // an out-of-bounds access.
     int zeroBased = clamp(encodedIndex - 1, 0, 15);
-    if ((uberGlobalMaskOverrideBits & (1u << uint(zeroBased))) != 0u)
-        return uberReadGlobalMaskOverride(zeroBased);
-
     int channel = zeroBased % 4;
     vec4 mask = uberSampleGlobalMaskTexture(zeroBased / 4, mesh, timeScale);
     if (channel == 0)
@@ -331,13 +281,14 @@ float uberApplyExtendedAlpha(float alpha, ToonMesh mesh)
 
     if (_AlphaFresnel > 0.5)
     {
-        float vDotN = abs(dot(mesh.worldNormal, mesh.viewDir));
-        float edge0 = min(_AlphaFresnelSharpness, _AlphaFresnelWidth);
-        float edge1 = max(_AlphaFresnelWidth, edge0 + 1.0e-5);
-        float holoRim = saturate(1.0 - smoothstep(edge0, edge1, vDotN));
-        holoRim = abs(mix(1.0, holoRim, _AlphaFresnelAlpha));
-        holoRim = _AlphaFresnelInvert > 0.5 ? (1.0 - holoRim) : holoRim;
-        alpha *= holoRim;
+        float viewNormalDot = abs(dot(mesh.worldNormal, mesh.viewDir));
+        float fresnel = saturate(1.0 - smoothstep(
+            min(_AlphaFresnelSharpness, _AlphaFresnelWidth),
+            _AlphaFresnelWidth,
+            viewNormalDot));
+        float alphaMultiplier = abs(mix(1.0, fresnel, _AlphaFresnelAlpha));
+        alphaMultiplier = _AlphaFresnelInvert > 0.5 ? 1.0 - alphaMultiplier : alphaMultiplier;
+        alpha *= alphaMultiplier;
     }
 
     if (_AlphaAngular > 0.5)
@@ -373,165 +324,114 @@ vec3 uberCorrectNormal(vec3 normal, ToonMesh mesh)
 }
 
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_DECALS
-void uberApplyDecalSlot(
-    inout FragmentData fragData,
+vec4 uberSampleDecal(
     sampler2D decalTexture,
-    vec4 decalSt,
     vec4 decalColor,
     vec2 position,
     vec2 scale,
-    vec4 sideOffset,
     vec2 pan,
     float rotation,
     float rotationSpeed,
     int uvMode,
-    int defaultMaskChannel,
+    int maskChannel,
     vec4 modifiers,
     vec4 effects,
-    vec4 blendParams,
-    vec4 slotMask,
-    vec4 slotGlobalMask,
-    ToonMesh mesh)
+    vec4 sourceAlphaParams,
+    ToonMesh mesh,
+    out vec3 alphaControl)
 {
-    bool isSourceDecal = slotMask.x > 0.5;
-    if (!isSourceDecal && blendParams.y <= 0.0)
-        return;
-
-    if (!isSourceDecal)
-    {
-        vec2 uv = getUV(uvMode, mesh);
-        int mirrorMode = int(modifiers.z + 0.5);
-        if (mirrorMode == 1 || (mirrorMode == 4 && mesh.viewDir.x < 0.0))
-            uv.x = 1.0 - uv.x;
-        uv = panUV(uv, pan, u_Time);
-        uv = (uv - position) / max(abs(scale), vec2(EPSILON)) + vec2(0.5);
-        uv = rotateUV(uv, radians(rotation + rotationSpeed * u_Time), vec2(0.5));
-        float bounds = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
-        vec4 sampled = texture(decalTexture, uv);
-        if (effects.z != 0.0)
-        {
-            vec2 chromaOffset = vec2(effects.z) / vec2(textureSize(decalTexture, 0));
-            sampled.r = texture(decalTexture, uv + chromaOffset).r;
-            sampled.b = texture(decalTexture, uv - chromaOffset).b;
-        }
-        sampled.rgb = hueShift(sampled.rgb, effects.x + effects.y * u_Time);
-        vec4 themedColor = vec4(uberResolveThemeColor(int(effects.w + 0.5), decalColor.rgb), decalColor.a);
-        vec4 decal = sampled * themedColor;
-        vec2 maskUv = panUV(transformUV(getUV(_DecalMaskUV, mesh), _DecalMask_ST), _DecalMaskPan, u_Time);
-        float faceMask = modifiers.x == 1.0
-            ? step(0.0, mesh.isFrontFace)
-            : (modifiers.x == 2.0 ? step(mesh.isFrontFace, 0.0) : 1.0);
-        float globalMask = uberGlobalMask(int(modifiers.y + 0.5), mesh);
-        float depthFade = modifiers.w == 0.0
-            ? 1.0
-            : smoothstep(-0.5, 2.0, modifiers.w + dot(mesh.worldNormal, mesh.viewDir));
-        decal.a *= uberChannel(texture(_DecalMask, maskUv), defaultMaskChannel) * bounds * faceMask * globalMask * depthFade;
-        int blendMode = int(blendParams.x + 0.5);
-        float opacity = saturate(decal.a * blendParams.y);
-        vec3 blended = uberBlendRgb(fragData.baseColor, decal.rgb, blendMode);
-        fragData.baseColor = mix(fragData.baseColor, blended, opacity);
-        fragData.alpha = mix(fragData.alpha, decal.a, saturate(blendParams.z) * opacity);
-        fragData.emission += decal.rgb * max(blendParams.w, 0.0) * opacity;
-        return;
-    }
-
-    vec2 engineUv = getUV(uvMode, mesh);
-    vec2 uv = vec2(engineUv.x, 1.0 - engineUv.y);
-    vec4 adj = vec4(-sideOffset.x, sideOffset.y, -sideOffset.z, sideOffset.w);
-    int symmetryMode = int(slotMask.w + 0.5);
-    if (symmetryMode == 1)
-        uv.x = abs(uv.x - 0.5) + 0.5;
-    else if (symmetryMode == 2 && uv.x < 0.5)
-        uv.x += 0.5;
-
+    vec2 uv = getUV(uvMode, mesh);
     int mirrorMode = int(modifiers.z + 0.5);
-    if (mirrorMode == 3 || mirrorMode == 4)
-        uv.x = -1.0;
-
-    vec2 decalCenter = position + 0.5 * vec2(adj.x + adj.y, adj.z + adj.w);
-    float theta = radians(rotation + (u_Time * 2.0) * rotationSpeed);
-    float cs = cos(theta);
-    float sn = sin(theta);
-    mat2 rot = mat2(cs, sn, -sn, cs);
-    vec2 low = position - 0.5 * scale + adj.xz;
-    vec2 span = scale + adj.yw - adj.xz;
-    vec2 safeSpan = vec2(
-        abs(span.x) < 1.0e-6 ? 1.0e-6 : span.x,
-        abs(span.y) < 1.0e-6 ? 1.0e-6 : span.y);
-    uv = (rot * (uv - decalCenter) + decalCenter - low) / safeSpan;
-
-    bool inBounds = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
-    float tiled = slotMask.z;
-    float clipMask = (tiled > 0.5 || inBounds) ? 1.0 : 0.0;
-
-    vec2 rawDx = dFdx(uv);
-    vec2 rawDy = dFdy(uv);
-    bool wrapJump = any(greaterThan(abs(rawDx) + abs(rawDy), vec2(0.5)));
-    vec2 unitySampleUv = uv * decalSt.xy + decalSt.zw + pan * (u_Time * 0.05);
-    vec2 texUv = vec2(unitySampleUv.x, 1.0 - unitySampleUv.y);
-    vec2 gradDx = wrapJump ? vec2(0.001) : rawDx * vec2(decalSt.x, -decalSt.y);
-    vec2 gradDy = wrapJump ? vec2(0.001) : rawDy * vec2(decalSt.x, -decalSt.y);
-    vec4 sampled = textureGrad(decalTexture, texUv, gradDx, gradDy);
-
+    if (mirrorMode == 1 || (mirrorMode == 4 && mesh.viewDir.x < 0.0))
+        uv.x = 1.0 - uv.x;
+    uv = panUV(uv, pan, u_Time);
+    uv = (uv - position) / max(abs(scale), vec2(EPSILON)) + vec2(0.5);
+    uv = rotateUV(uv, radians(rotation + rotationSpeed * u_Time), vec2(0.5));
+    float bounds = step(0.0, uv.x) * step(uv.x, 1.0) * step(0.0, uv.y) * step(uv.y, 1.0);
+    float strictBounds = float(uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0);
+    vec4 sampled = texture(decalTexture, uv);
+    if (effects.z != 0.0)
+    {
+        vec2 chromaOffset = vec2(effects.z) / vec2(textureSize(decalTexture, 0));
+        sampled.r = texture(decalTexture, uv + chromaOffset).r;
+        sampled.b = texture(decalTexture, uv - chromaOffset).b;
+    }
+    sampled.rgb = hueShift(sampled.rgb, effects.x + effects.y * u_Time);
     vec4 themedColor = vec4(uberResolveThemeColor(int(effects.w + 0.5), decalColor.rgb), decalColor.a);
     vec4 decal = sampled * themedColor;
-    if (effects.x != 0.0 || effects.y != 0.0)
-        decal.rgb = hueShift(decal.rgb, effects.x + effects.y * (u_Time * 0.05));
-
-    vec2 maskBaseUv = getUV(_DecalMaskUV, mesh);
-    vec2 maskUnityUv = vec2(maskBaseUv.x, 1.0 - maskBaseUv.y) * _DecalMask_ST.xy + _DecalMask_ST.zw + _DecalMaskPan * (u_Time * 0.05);
-    vec2 maskUv = vec2(maskUnityUv.x, 1.0 - maskUnityUv.y);
-    int maskChannel = int(slotMask.y + 0.5);
-    decal.a *= uberChannel(texture(_DecalMask, maskUv), maskChannel) * clipMask;
-
-    int readGlobalMaskIndex = int(modifiers.y + 0.5);
-    if (readGlobalMaskIndex > 0)
+    vec2 maskUv = panUV(transformUV(getUV(_DecalMaskUV, mesh), _DecalMask_ST), _DecalMaskPan, u_Time);
+    float faceMask = modifiers.x == 1.0
+        ? step(0.0, mesh.isFrontFace)
+        : (modifiers.x == 2.0 ? step(mesh.isFrontFace, 0.0) : 1.0);
+    float globalMask = uberGlobalMask(int(modifiers.y + 0.5), mesh);
+    float depthFade = modifiers.w == 0.0
+        ? 1.0
+        : smoothstep(-0.5, 2.0, modifiers.w + dot(mesh.worldNormal, mesh.viewDir));
+    float localMask = uberChannel(texture(_DecalMask, maskUv), maskChannel);
+    float tileCoverage = sourceAlphaParams.w > 0.5 && sourceAlphaParams.z > 0.5 ? 1.0 : bounds;
+    decal.a *= localMask * tileCoverage * faceMask * depthFade;
+    float maskWeight = localMask;
+    if (sourceAlphaParams.w > 0.5 && modifiers.y > 0.5)
     {
-        float globalMask = uberGlobalMask(readGlobalMaskIndex, mesh, 0.05);
-        decal.a = uberBlendMask(decal.a, globalMask, int(slotGlobalMask.x + 0.5));
+        int blendType = int(sourceAlphaParams.w + 0.5) - 1;
+        decal.a = uberBlendMask(decal.a, globalMask, blendType);
+        maskWeight = uberBlendMask(localMask, globalMask, blendType);
     }
-    if (mirrorMode == 3 || mirrorMode == 4)
-        decal.a = 0.0;
-    if (modifiers.x == 1.0 && mesh.isFrontFace < 0.0)
-        decal.a = 0.0;
-    else if (modifiers.x == 2.0 && mesh.isFrontFace > 0.0)
-        decal.a = 0.0;
-
-    float decalAlphaMixed = decal.a * saturate(blendParams.y);
-    int overrideAlpha = int(blendParams.z + 0.5);
-    int overrideAlphaMode = int(slotGlobalMask.w + 0.5);
-    bool inStrictBounds = uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0;
-    if (overrideAlpha > 0 && (overrideAlphaMode == 0 || tiled > 0.5 || inStrictBounds))
-    {
-        if (overrideAlpha == 1) fragData.alpha = decalAlphaMixed;
-        else if (overrideAlpha == 2) fragData.alpha = saturate(fragData.alpha * decalAlphaMixed);
-        else if (overrideAlpha == 3) fragData.alpha = saturate(fragData.alpha + decalAlphaMixed);
-        else if (overrideAlpha == 4) fragData.alpha = saturate(fragData.alpha - decalAlphaMixed);
-        else if (overrideAlpha == 5) fragData.alpha = min(fragData.alpha, decalAlphaMixed);
-        else if (overrideAlpha == 6) fragData.alpha = max(fragData.alpha, decalAlphaMixed);
-    }
-
-    int applyGlobalMaskIndex = int(slotGlobalMask.y + 0.5);
-    if (applyGlobalMaskIndex > 0)
-    {
-        float currentGlobal = uberGlobalMask(applyGlobalMaskIndex, mesh, 0.05);
-        float updatedGlobal = uberBlendMask(currentGlobal, decalAlphaMixed, int(slotGlobalMask.z + 0.5));
-        uberWriteGlobalMaskOverride(applyGlobalMaskIndex - 1, updatedGlobal);
-    }
-
-    int blendMode = int(blendParams.x + 0.5);
-    fragData.baseColor = mix(fragData.baseColor, uberBlendRgb(fragData.baseColor, decal.rgb, blendMode), decalAlphaMixed);
-    fragData.emission += decal.rgb * decal.a * max(blendParams.w, 0.0);
+    else
+        decal.a *= globalMask;
+    alphaControl = vec3(maskWeight, strictBounds, faceMask);
+    return decal;
 }
+
+void uberBlendDecal(
+    inout FragmentData fragData,
+    vec4 decal,
+    vec4 parameters,
+    vec4 sourceAlphaParams,
+    vec3 alphaControl)
+{
+    int blendMode = int(parameters.x + 0.5);
+    float opacity = saturate(decal.a * parameters.y);
+    vec3 blended = uberBlendRgb(fragData.baseColor, decal.rgb, blendMode);
+    fragData.baseColor = mix(fragData.baseColor, blended, opacity);
+    if (sourceAlphaParams.w > 0.5)
+    {
+        int operation = int(sourceAlphaParams.x + 0.5);
+        int selector = int(sourceAlphaParams.y + 0.5);
+        if (operation != 0 && alphaControl.z > 0.5 &&
+            (sourceAlphaParams.z > 0.5 || (selector != 1 && selector != 3) || alphaControl.y > 0.5))
+        {
+            float finalAlpha = saturate(decal.a * parameters.y);
+            float weight = selector == 2 || selector == 3 ? alphaControl.x : 1.0;
+            float changedAlpha = fragData.alpha;
+            if (operation == 1) changedAlpha = finalAlpha;
+            else if (operation == 2) changedAlpha = saturate(fragData.alpha * finalAlpha);
+            else if (operation == 3) changedAlpha = saturate(fragData.alpha + finalAlpha);
+            else if (operation == 4) changedAlpha = saturate(fragData.alpha - finalAlpha);
+            else if (operation == 5) changedAlpha = min(fragData.alpha, finalAlpha);
+            else if (operation == 6) changedAlpha = max(fragData.alpha, finalAlpha);
+            fragData.alpha = mix(fragData.alpha, changedAlpha, weight);
+        }
+    }
+    else
+        fragData.alpha = mix(fragData.alpha, decal.a, saturate(parameters.z) * opacity);
+    fragData.emission += decal.rgb * max(parameters.w, 0.0) * opacity;
+}
+
 #endif
 
 void uberApplyDecals(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_DECALS
-    uberApplyDecalSlot(fragData, _DecalTexture, _DecalTexture_ST, _DecalColor, _DecalPosition, _DecalScale, _DecalSideOffset, _DecalTexturePan, _DecalRotation, _DecalRotationSpeed, _DecalUvMode0, 0, _DecalSlotModifiers0, _DecalSlotFx0, _DecalBlendParams0, _DecalSlotMask0, _DecalSlotGlobalMask0, mesh);
-    uberApplyDecalSlot(fragData, _DecalTexture1, _DecalTexture1_ST, _DecalColor1, _DecalPosition1, _DecalScale1, _DecalSideOffset1, _DecalTexturePan1, _DecalRotation1, _DecalRotationSpeed1, _DecalUvMode1, 1, _DecalSlotModifiers1, _DecalSlotFx1, _DecalBlendParams1, _DecalSlotMask1, _DecalSlotGlobalMask1, mesh);
-    uberApplyDecalSlot(fragData, _DecalTexture2, _DecalTexture2_ST, _DecalColor2, _DecalPosition2, _DecalScale2, _DecalSideOffset2, _DecalTexturePan2, _DecalRotation2, _DecalRotationSpeed2, _DecalUvMode2, 2, _DecalSlotModifiers2, _DecalSlotFx2, _DecalBlendParams2, _DecalSlotMask2, _DecalSlotGlobalMask2, mesh);
-    uberApplyDecalSlot(fragData, _DecalTexture3, _DecalTexture3_ST, _DecalColor3, _DecalPosition3, _DecalScale3, _DecalSideOffset3, _DecalTexturePan3, _DecalRotation3, _DecalRotationSpeed3, _DecalUvMode3, 3, _DecalSlotModifiers3, _DecalSlotFx3, _DecalBlendParams3, _DecalSlotMask3, _DecalSlotGlobalMask3, mesh);
+    vec3 alphaControl;
+    vec4 decal = uberSampleDecal(_DecalTexture, _DecalColor, _DecalPosition, _DecalScale, _DecalTexturePan, _DecalRotation, _DecalRotationSpeed, _DecalUvMode0, 0, _DecalSlotModifiers0, _DecalSlotFx0, _SourceDecalAlphaParams0, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams0, _SourceDecalAlphaParams0, alphaControl);
+    decal = uberSampleDecal(_DecalTexture1, _DecalColor1, _DecalPosition1, _DecalScale1, _DecalTexturePan1, _DecalRotation1, _DecalRotationSpeed1, _DecalUvMode1, 1, _DecalSlotModifiers1, _DecalSlotFx1, _SourceDecalAlphaParams1, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams1, _SourceDecalAlphaParams1, alphaControl);
+    decal = uberSampleDecal(_DecalTexture2, _DecalColor2, _DecalPosition2, _DecalScale2, _DecalTexturePan2, _DecalRotation2, _DecalRotationSpeed2, _DecalUvMode2, 2, _DecalSlotModifiers2, _DecalSlotFx2, _SourceDecalAlphaParams2, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams2, _SourceDecalAlphaParams2, alphaControl);
+    decal = uberSampleDecal(_DecalTexture3, _DecalColor3, _DecalPosition3, _DecalScale3, _DecalTexturePan3, _DecalRotation3, _DecalRotationSpeed3, _DecalUvMode3, 3, _DecalSlotModifiers3, _DecalSlotFx3, _SourceDecalAlphaParams3, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams3, _SourceDecalAlphaParams3, alphaControl);
 #endif
 }
 
@@ -545,76 +445,42 @@ void uberEmissionSlot(
     vec4 color,
     vec4 parameters,
     vec2 pan,
-    vec2 maskPan,
     int uvMode,
+    vec2 maskPan,
+    int maskUvMode,
+    float centerOutSpeed,
     vec4 modifiers,
     vec4 sampling,
-    vec4 extra,
     ToonMesh mesh,
     vec3 directColor)
 {
-    bool isSourceEmission = _SourceLayeredEmission > 0.5;
-    float timeScale = isSourceEmission ? 0.05 : 1.0;
     vec2 baseUv = getUV(uvMode, mesh);
-    vec2 uv;
-    if (isSourceEmission)
-    {
-        vec2 unityUv = vec2(baseUv.x, 1.0 - baseUv.y) * sourceTransform.xy + sourceTransform.zw + pan * (u_Time * timeScale);
-        uv = vec2(unityUv.x, 1.0 - unityUv.y);
-    }
-    else
-    {
-        uv = panUV(transformUV(baseUv, sourceTransform), pan, u_Time);
-    }
-
-    int maskUvMode = isSourceEmission ? int(extra.z + 0.5) : uvMode;
-    vec2 maskBaseUv = getUV(maskUvMode, mesh);
-    vec2 maskUv;
-    if (isSourceEmission)
-    {
-        vec2 unityMaskUv = vec2(maskBaseUv.x, 1.0 - maskBaseUv.y) * maskTransform.xy + maskTransform.zw + maskPan * (u_Time * timeScale);
-        maskUv = vec2(unityMaskUv.x, 1.0 - unityMaskUv.y);
-    }
-    else
-    {
-        maskUv = panUV(transformUV(maskBaseUv, maskTransform), maskPan, u_Time);
-    }
-
-    vec4 texel;
-    if (isSourceEmission && modifiers.y > 0.5)
+    vec2 uv = panUV(transformUV(baseUv, sourceTransform), pan, u_Time);
+    bool sourceLayered = _SourceLayeredEmission > 0.5;
+    if (sourceLayered && modifiers.y > 0.5)
     {
         float nDotV = abs(dot(mesh.worldNormal, mesh.viewDir));
-        vec2 centerUv = (0.5 + nDotV * 0.5) * sourceTransform.xy + vec2(u_Time * timeScale * parameters.z);
-        texel = texture(source, vec2(centerUv.x, 1.0 - centerUv.y));
+        uv = vec2(0.5 + nDotV * 0.5) * sourceTransform.xy +
+            vec2(centerOutSpeed * u_Time * 0.05);
     }
-    else
-    {
-        texel = texture(source, uv);
-    }
-
+    vec2 maskBaseUv = sourceLayered ? getUV(maskUvMode, mesh) : baseUv;
+    vec2 maskUv = panUV(transformUV(maskBaseUv, maskTransform), sourceLayered ? maskPan : vec2(0.0), u_Time * 0.05);
+    vec4 texel = texture(source, uv);
     vec4 maskTexel = texture(maskTexture, maskUv);
     float mask = maskTexel[int(clamp(sampling.y, 0.0, 3.0) + 0.5)];
     mask = mix(mask, 1.0 - mask, saturate(sampling.z));
     float pulse = mix(1.0, 0.5 + 0.5 * sin(u_Time * parameters.z), saturate(parameters.y));
-    vec3 sourceColor = isSourceEmission
+    vec3 sourceColor = _SourceLayeredEmission > 0.5
         ? texel.rgb * mix(vec3(1.0), fragData.baseColor, saturate(sampling.x))
         : mix(texel.rgb, fragData.baseColor, saturate(sampling.x));
-    float hueOffset = isSourceEmission ? extra.y + parameters.w * (u_Time * timeScale) : parameters.w * u_Time;
-    vec3 shifted = (extra.y == 0.0 && parameters.w == 0.0) ? sourceColor : hueShift(sourceColor, hueOffset);
+    vec3 shifted = parameters.w == 0.0 ? sourceColor : hueShift(sourceColor, parameters.w * u_Time);
     vec3 themedColor = uberResolveThemeColor(int(modifiers.w + 0.5), color.rgb);
-    float centerOut = (!isSourceEmission && modifiers.y > 0.5)
+    float centerOut = !sourceLayered && modifiers.y > 0.5
         ? smoothstep(0.0, 0.5, abs(fract(uv.x + u_Time * parameters.z) - 0.5))
         : 1.0;
-    int globalMaskIndex = int(modifiers.z + 0.5);
-    if (globalMaskIndex > 0)
-    {
-        float globalMask = uberGlobalMask(globalMaskIndex, mesh, timeScale);
-        mask = isSourceEmission
-            ? uberBlendMask(mask, globalMask, int(extra.x + 0.5))
-            : mask * globalMask;
-    }
-    float sourceAlpha = isSourceEmission ? texel.a : 1.0;
-    vec3 emission = shifted * themedColor * max(parameters.x, 0.0) * sourceAlpha * mask * pulse * centerOut;
+    float globalMask = uberGlobalMask(int(modifiers.z + 0.5), mesh);
+    float sourceAlpha = _SourceLayeredEmission > 0.5 ? texel.a : 1.0;
+    vec3 emission = shifted * themedColor * max(parameters.x, 0.0) * sourceAlpha * mask * pulse * centerOut * globalMask;
     emission *= xrSourceEmissionFluorescence(directColor, sampling.w);
     fragData.emission += emission;
     fragData.baseColor = mix(fragData.baseColor, emission, saturate(modifiers.x) * mask);
@@ -624,10 +490,10 @@ void uberEmissionSlot(
 void uberApplyEmissionSlots(inout FragmentData fragData, ToonMesh mesh, vec3 directColor)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_EMISSION
-    uberEmissionSlot(fragData, _Emission0Tex, _Emission0Mask, _Emission0Tex_ST, _Emission0Mask_ST, _EmissionSlotColor0, _EmissionSlotParams0, _EmissionSlotPan0, _Emission0MaskPan, _EmissionSlotUv0, _EmissionSlotModifiers0, _EmissionSlotSampling0, _EmissionSlotExtra0, mesh, directColor);
-    uberEmissionSlot(fragData, _Emission1Tex, _Emission1Mask, _Emission1Tex_ST, _Emission1Mask_ST, _EmissionSlotColor1, _EmissionSlotParams1, _EmissionSlotPan1, _Emission1MaskPan, _EmissionSlotUv1, _EmissionSlotModifiers1, _EmissionSlotSampling1, _EmissionSlotExtra1, mesh, directColor);
-    uberEmissionSlot(fragData, _Emission2Tex, _Emission2Mask, _Emission2Tex_ST, _Emission2Mask_ST, _EmissionSlotColor2, _EmissionSlotParams2, _EmissionSlotPan2, _Emission2MaskPan, _EmissionSlotUv2, _EmissionSlotModifiers2, _EmissionSlotSampling2, _EmissionSlotExtra2, mesh, directColor);
-    uberEmissionSlot(fragData, _Emission3Tex, _Emission3Mask, _Emission3Tex_ST, _Emission3Mask_ST, _EmissionSlotColor3, _EmissionSlotParams3, _EmissionSlotPan3, _Emission3MaskPan, _EmissionSlotUv3, _EmissionSlotModifiers3, _EmissionSlotSampling3, _EmissionSlotExtra3, mesh, directColor);
+    uberEmissionSlot(fragData, _Emission0Tex, _Emission0Mask, _Emission0Tex_ST, _Emission0Mask_ST, _EmissionSlotColor0, _EmissionSlotParams0, _EmissionSlotPan0, _EmissionSlotUv0, _Emission0MaskPan, _Emission0MaskUV, _EmissionSlotCenterOutSpeed0, _EmissionSlotModifiers0, _EmissionSlotSampling0, mesh, directColor);
+    uberEmissionSlot(fragData, _Emission1Tex, _Emission1Mask, _Emission1Tex_ST, _Emission1Mask_ST, _EmissionSlotColor1, _EmissionSlotParams1, _EmissionSlotPan1, _EmissionSlotUv1, _Emission1MaskPan, _Emission1MaskUV, _EmissionSlotCenterOutSpeed1, _EmissionSlotModifiers1, _EmissionSlotSampling1, mesh, directColor);
+    uberEmissionSlot(fragData, _Emission2Tex, _Emission2Mask, _Emission2Tex_ST, _Emission2Mask_ST, _EmissionSlotColor2, _EmissionSlotParams2, _EmissionSlotPan2, _EmissionSlotUv2, _Emission2MaskPan, _Emission2MaskUV, _EmissionSlotCenterOutSpeed2, _EmissionSlotModifiers2, _EmissionSlotSampling2, mesh, directColor);
+    uberEmissionSlot(fragData, _Emission3Tex, _Emission3Mask, _Emission3Tex_ST, _Emission3Mask_ST, _EmissionSlotColor3, _EmissionSlotParams3, _EmissionSlotPan3, _EmissionSlotUv3, _Emission3MaskPan, _Emission3MaskUV, _EmissionSlotCenterOutSpeed3, _EmissionSlotModifiers3, _EmissionSlotSampling3, mesh, directColor);
 #endif
 }
 
@@ -769,26 +635,18 @@ vec4 uberMatcapSlot(
     return vec4(sampleColor.rgb, mask);
 }
 
-void uberBlendMatcapSlot(inout vec3 finalColor, inout vec3 grabTransmission, vec4 slot, vec4 blend, float mixed)
+void uberBlendMatcapSlot(inout vec3 finalColor, vec4 slot, vec4 blend, float mixed)
 {
     float mask = saturate(slot.a);
-    float replaceFactor = saturate(blend.x) * mask * 0.999999;
-    float multiplyFactor = saturate(blend.y) * mask;
-    float screenFactor = saturate(blend.w) * mask;
-    float mixedFactor = saturate(mixed) * mask;
-    finalColor = mix(finalColor, slot.rgb, replaceFactor);
-    finalColor *= mix(vec3(1.0), slot.rgb, multiplyFactor);
+    finalColor = mix(finalColor, slot.rgb, saturate(blend.x) * mask * 0.999999);
+    finalColor *= mix(vec3(1.0), slot.rgb, saturate(blend.y) * mask);
     finalColor += slot.rgb * max(blend.z, 0.0) * mask;
-    finalColor = mix(finalColor, uberBlendRgb(finalColor, slot.rgb, 6), screenFactor);
-    finalColor = mix(finalColor, finalColor + finalColor * slot.rgb, mixedFactor);
-    grabTransmission *= (1.0 - replaceFactor);
-    grabTransmission *= mix(vec3(1.0), slot.rgb, multiplyFactor);
-    grabTransmission *= (1.0 - clamp(slot.rgb, 0.0, 1.0) * screenFactor);
-    grabTransmission *= (1.0 + slot.rgb * mixedFactor);
+    finalColor = mix(finalColor, uberBlendRgb(finalColor, slot.rgb, 6), saturate(blend.w) * mask);
+    finalColor = mix(finalColor, finalColor + finalColor * slot.rgb, saturate(mixed) * mask);
 }
 #endif
 
-void uberApplyMatcapSlotsWithTransmission(inout vec3 finalColor, inout vec3 emission, inout vec3 lightAdd, inout vec3 grabTransmission, ToonMesh mesh, ToonLight light)
+void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3 lightAdd, ToonMesh mesh, ToonLight light)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
     bool audioActive = false;
@@ -806,7 +664,7 @@ void uberApplyMatcapSlotsWithTransmission(inout vec3 finalColor, inout vec3 emis
             _MatcapSlotAudioBands0, _MatcapSlotAudioAlpha0, _MatcapSlotAudioEmission0, _MatcapSlotAudioIntensity0,
             _Matcap0Tex_ST, _Matcap0TexPan, _Matcap0Mask_ST, _Matcap0MaskPan,
             mesh, light, finalColor, emission, lightAdd);
-        uberBlendMatcapSlot(finalColor, grabTransmission, value, _MatcapSlotBlend0, _MatcapSlotExtra0.x);
+        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend0, _MatcapSlotExtra0.x);
     }
     if (_MatcapSlotParams1.x > 0.0 || (audioActive && _MatcapSlotAudioBands1.x > 0.5 &&
         (max(_MatcapSlotAudioIntensity1.x, _MatcapSlotAudioIntensity1.y) > 0.0 ||
@@ -819,7 +677,7 @@ void uberApplyMatcapSlotsWithTransmission(inout vec3 finalColor, inout vec3 emis
             _MatcapSlotAudioBands1, _MatcapSlotAudioAlpha1, _MatcapSlotAudioEmission1, _MatcapSlotAudioIntensity1,
             _Matcap1Tex_ST, _Matcap1TexPan, _Matcap1Mask_ST, _Matcap1MaskPan,
             mesh, light, finalColor, emission, lightAdd);
-        uberBlendMatcapSlot(finalColor, grabTransmission, value, _MatcapSlotBlend1, _MatcapSlotExtra1.x);
+        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend1, _MatcapSlotExtra1.x);
     }
     if (_MatcapSlotParams2.x > 0.0 || (audioActive && _MatcapSlotAudioBands2.x > 0.5 &&
         (max(_MatcapSlotAudioIntensity2.x, _MatcapSlotAudioIntensity2.y) > 0.0 ||
@@ -832,7 +690,7 @@ void uberApplyMatcapSlotsWithTransmission(inout vec3 finalColor, inout vec3 emis
             _MatcapSlotAudioBands2, _MatcapSlotAudioAlpha2, _MatcapSlotAudioEmission2, _MatcapSlotAudioIntensity2,
             _Matcap2Tex_ST, _Matcap2TexPan, _Matcap2Mask_ST, _Matcap2MaskPan,
             mesh, light, finalColor, emission, lightAdd);
-        uberBlendMatcapSlot(finalColor, grabTransmission, value, _MatcapSlotBlend2, _MatcapSlotExtra2.x);
+        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend2, _MatcapSlotExtra2.x);
     }
     if (_MatcapSlotParams3.x > 0.0 || (audioActive && _MatcapSlotAudioBands3.x > 0.5 &&
         (max(_MatcapSlotAudioIntensity3.x, _MatcapSlotAudioIntensity3.y) > 0.0 ||
@@ -845,15 +703,9 @@ void uberApplyMatcapSlotsWithTransmission(inout vec3 finalColor, inout vec3 emis
             _MatcapSlotAudioBands3, _MatcapSlotAudioAlpha3, _MatcapSlotAudioEmission3, _MatcapSlotAudioIntensity3,
             _Matcap3Tex_ST, _Matcap3TexPan, _Matcap3Mask_ST, _Matcap3MaskPan,
             mesh, light, finalColor, emission, lightAdd);
-        uberBlendMatcapSlot(finalColor, grabTransmission, value, _MatcapSlotBlend3, _MatcapSlotExtra3.x);
+        uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend3, _MatcapSlotExtra3.x);
     }
 #endif
-}
-
-void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3 lightAdd, ToonMesh mesh, ToonLight light)
-{
-    vec3 unusedGrabTransmission = vec3(1.0);
-    uberApplyMatcapSlotsWithTransmission(finalColor, emission, lightAdd, unusedGrabTransmission, mesh, light);
 }
 
 vec3 uberApplySecondRim(ToonMesh mesh, ToonLight light)
@@ -861,14 +713,14 @@ vec3 uberApplySecondRim(ToonMesh mesh, ToonLight light)
 #ifdef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
     return vec3(0.0);
 #else
-    if (_SourceRim2Settings.x > 0.5 || _Rim2Params.w <= 0.0)
+    if (_SourceRim2Settings.x > 0.5)
         return vec3(0.0);
     float fresnel = pow(1.0 - saturate(dot(mesh.worldNormal, mesh.viewDir)),
         max(_Rim2Params.y, EPSILON));
     float rim = smoothstep(1.0 - _Rim2Params.x, 1.0, fresnel);
     rim *= texture(_Rim2Mask, transformUV(mesh.uv[0], _Rim2Mask_ST)).r;
     rim *= mix(1.0, saturate(light.lightMap), saturate(_Rim2Params.z));
-    return _Rim2Color.rgb * rim * _Rim2Params.w;
+    return _Rim2Color.rgb * rim * max(_Rim2Params.w, 0.0);
 #endif
 }
 
@@ -962,6 +814,10 @@ vec3 uberApplyCubemap(
     vec3 environment = cubeSample.rgb * _CubeMapColor.rgb * max(_CubeMapStrength, 0.0);
     vec4 cubeMaskTexel = texture(_CubeMapMask, transformUV(mesh.uv[0], _CubeMapMask_ST));
     float cubeMask = cubeMaskTexel[clamp(_CubeMapMaskChannel, 0, 3)];
+    if (sourceComposition && _CubeMapMaskGlobalMask > 0)
+        cubeMask = uberBlendMask(cubeMask,
+            uberGlobalMask(_CubeMapMaskGlobalMask, mesh, 0.05),
+            _CubeMapMaskGlobalMaskBlendType);
     cubeMask = mix(cubeMask, 1.0 - cubeMask, saturate(_CubeMapMaskInvert));
     float lightMask = mix(1.0, saturate(light.lightMap), saturate(_CubeMapLightMask));
     cubeMask = sourceComposition ? min(cubeMask, lightMask) : cubeMask * lightMask;
@@ -1039,9 +895,8 @@ vec3 uberApplySourceEnviroRim(ToonMesh mesh, vec3 baseColor,
     if (_SourceEnviroRim.x < 0.5 || _RimEnviroIntensity <= 0.0)
         return vec3(0.0);
     float width = _RimEnviroWidth;
-    float edge0 = min(_RimEnviroSharpness, width);
-    float edge = saturate(1.0 - smoothstep(edge0,
-        max(width, edge0 + 1.0e-5), abs(dot(mesh.worldNormal, mesh.viewDir))));
+    float edge = saturate(1.0 - smoothstep(min(_RimEnviroSharpness, width),
+        width, abs(dot(mesh.worldNormal, mesh.viewDir))));
     vec2 uv = panUV(transformUV(getUV(_RimEnviroMaskUV, mesh),
         _RimEnviroMask_ST), _RimEnviroMaskPan, u_Time);
     float mask = texture(_RimEnviroMask, uv)[clamp(int(_SourceEnviroRim.w + 0.5), 0, 3)];
@@ -1140,36 +995,6 @@ void uberApplyFlipbookArray(inout FragmentData fragData, ToonMesh mesh)
         fragData.baseColor = flipbook.rgb;
         fragData.alpha = flipbook.a;
     }
-#endif
-}
-
-vec3 uberApplySourcePostProcess(vec3 color)
-{
-#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
-    if (_SourcePostProcess.x <= 0.5)
-        return color;
-
-    vec3 col = color;
-    if (_SourcePostProcessHue.x != 0.0)
-        col = _SourcePostProcessHue.w < 0.5
-            ? hueShiftOklab(col, _SourcePostProcessHue.x)
-            : hueShift(col, _SourcePostProcessHue.x);
-    col = mix(vec3(dot(col, vec3(0.3, 0.59, 0.11))), col, _SourcePostProcess.w);
-    if (_SourcePostProcessHue.z != 0.0)
-    {
-        vec3 clampedCol = max(col, vec3(0.0));
-        vec3 hdrCol = vec3(
-            clampedCol.r <= 0.04045 ? clampedCol.r / 12.92 : pow((clampedCol.r + 0.055) / 1.055, 2.4),
-            clampedCol.g <= 0.04045 ? clampedCol.g / 12.92 : pow((clampedCol.g + 0.055) / 1.055, 2.4),
-            clampedCol.b <= 0.04045 ? clampedCol.b / 12.92 : pow((clampedCol.b + 0.055) / 1.055, 2.4));
-        col = mix(col, hdrCol, _SourcePostProcessHue.z);
-    }
-    col = mix(vec3(0.5), col, _SourcePostProcess.z);
-    col *= _SourcePostProcess.y;
-    col += vec3(_SourcePostProcessHue.y);
-    return col;
-#else
-    return color;
 #endif
 }
 

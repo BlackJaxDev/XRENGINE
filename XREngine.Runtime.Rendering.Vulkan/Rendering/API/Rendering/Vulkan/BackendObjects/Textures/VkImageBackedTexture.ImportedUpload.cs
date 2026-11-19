@@ -872,6 +872,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         RetiredImageResources previousResources;
         VulkanBindlessMaterialTextureSlotTransfer retainedResourceTransfer;
         EVulkanTextureDescriptorPublicationDisposition disposition;
+        long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        long probeLockedStart;
+        long probeLockedEnd;
         lock (texture.ImportedSourceMetadataWriteSync)
         {
             lock (_imageStateLock)
@@ -891,6 +894,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                     return EVulkanTextureDescriptorPublicationDisposition.StaleBeforePublication;
                 }
 
+                probeLockedStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 texture.BeginImportedResidentPublication();
                 try
                 {
@@ -911,6 +915,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 {
                     texture.CompleteImportedResidentPublication();
                 }
+                probeLockedEnd = System.Diagnostics.Stopwatch.GetTimestamp();
             }
         }
 
@@ -918,6 +923,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             && (!requireExactDescriptorPublication
                 || disposition == EVulkanTextureDescriptorPublicationDisposition.ExactPublished))
             RetireImportedUploadPreviousResources(in previousResources, in retainedResourceTransfer);
+        long probeEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+        VulkanTextureUploadTimingProbe.DescriptorLockAndCheckMs = VulkanTextureUploadTimingProbe.Ms(probeStart, probeLockedStart);
+        VulkanTextureUploadTimingProbe.DescriptorRetireMs = VulkanTextureUploadTimingProbe.Ms(probeLockedEnd, probeEnd);
+        VulkanTextureUploadTimingProbe.DescriptorDetailValid = true;
         return disposition;
     }
 
@@ -968,6 +977,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             pendingUpload.Extent,
             Math.Max(pendingUpload.ArrayLayers, 1u),
             Math.Max(pendingUpload.MipLevels, 1u));
+        long probeActivateStart = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!IsActive)
         {
             PreGenerated();
@@ -987,6 +997,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             }
         }
 
+        long probeCommitStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        VulkanTextureUploadTimingProbe.DescriptorActivateMs = VulkanTextureUploadTimingProbe.Ms(probeActivateStart, probeCommitStart);
         ulong publishedWrapperDescriptorGeneration =
             unchecked(DescriptorGeneration + 1UL);
         EVulkanTextureDescriptorPublicationDisposition descriptorPublication =
@@ -999,6 +1011,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 publishedWrapperDescriptorGeneration,
                 out retainedResourceTransfer,
                 out failureDetail);
+        long probeCommitEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+        VulkanTextureUploadTimingProbe.DescriptorCommitMs = VulkanTextureUploadTimingProbe.Ms(probeCommitStart, probeCommitEnd);
+        VulkanTextureUploadTimingProbe.DescriptorWrapperSwapMs = 0.0;
         if (descriptorPublication ==
                 EVulkanTextureDescriptorPublicationDisposition.Failed ||
             requireExactDescriptorPublication && descriptorPublication !=
@@ -1036,6 +1051,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         // From this point cleanup cannot release the newly published handles.
         pendingUpload.DetachPublishedImageHandles();
+        VulkanTextureUploadTimingProbe.DescriptorWrapperSwapMs = VulkanTextureUploadTimingProbe.Ms(probeCommitEnd, System.Diagnostics.Stopwatch.GetTimestamp());
 
         // Compatible content publication preserves binding identity.
         return descriptorPublication;

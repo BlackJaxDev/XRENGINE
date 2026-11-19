@@ -13,6 +13,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.EditorHighlight.Contracts;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.Integration;
@@ -28,6 +29,29 @@ namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider, IAdvancedRenderStageFamilyHost
 {
+    /// <summary>
+    /// Gets the optional editor highlight module installed when this pipeline was created.
+    /// </summary>
+    private readonly IEditorHighlightModule? _editorHighlightModule;
+    private bool _enableEditorHighlightModule = true;
+
+    /// <summary>
+    /// Enables this pipeline instance to use the installed editor highlight module.
+    /// </summary>
+    public bool EnableEditorHighlightModule
+    {
+        get => _enableEditorHighlightModule;
+        set
+        {
+            if (!SetField(ref _enableEditorHighlightModule, value))
+                return;
+            InvalidateStereoResourceProfile();
+            RebuildCommandChain();
+        }
+    }
+
+    public IEditorHighlightModule? EditorHighlightModule
+        => EnableEditorHighlightModule && OffscreenProfile is null ? _editorHighlightModule : null;
     internal override bool RequiresCanonicalGpuScenePublication => true;
 
     public enum DeferredDebugViewMode
@@ -168,28 +192,10 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     protected static EMeshSubmissionStrategy MeshSubmissionStrategy
         => RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy();
 
-    internal static bool UseOpenXrVulkanDesktopStartupSafePath
-        => UseOpenXrVulkanDesktopStartupSafePathForViewport(null);
-
-    internal static bool UseOpenXrVulkanDesktopStartupSafePathForViewport(XRViewport? viewport)
-        => IsVulkanRuntimeActiveOrExpected() &&
-           IsOpenXrRuntimeRequestedOrExpected() &&
-           !RuntimeEngine.Rendering.State.IsStereoPass &&
-           IsOpenXrExternalSwapchainTargetPass(viewport);
-
-    private static bool IsOpenXrExternalSwapchainTargetPass(XRViewport? explicitViewport)
-    {
-        XRViewport? viewport = explicitViewport ??
-            RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport ??
-            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport;
-
-        // Resource and command generation have no active viewport. Keep their
-        // full graph so pass conditions can select the eye path at render time.
-        return viewport?.RendersToExternalSwapchainTarget == true &&
-            !RuntimeEngine.Rendering.State.IsSceneCapturePass &&
-            !RuntimeEngine.Rendering.State.IsLightProbePass;
-    }
-
+    /// <summary>
+    /// True when the active backend is Vulkan, or when the unit-testing world asks for Vulkan
+    /// before the renderer exists. Resource keys use it for Vulkan-only output choices.
+    /// </summary>
     private static bool IsVulkanRuntimeActiveOrExpected()
     {
         if (RuntimeEngine.Rendering.State.IsVulkan ||
@@ -202,39 +208,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         return string.Equals(unitTestRenderApi, "Vulkan", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool IsOpenXrRuntimeRequestedOrExpected()
-    {
-        if (RuntimeRenderingHostServices.Presentation.IsOpenXrRuntimeRequested ||
-            RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
-            RuntimeEngine.VRState.IsOpenXRActive ||
-            RuntimeEngine.VRState.OpenXRApi is not null)
-        {
-            return true;
-        }
-
-        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
-        if (string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
-    }
-
-    private static bool IsTruthyEnvironmentValue(string? value)
-        => !string.IsNullOrWhiteSpace(value) &&
-           (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
-
-    private static bool EnableComputeDependentPasses
-        => VulkanFeatureProfile.EnableComputeDependentPasses &&
-           !UseOpenXrVulkanDesktopStartupSafePath;
-
+    /// <summary>
+    /// True unless a VR eye frame runs with order-independent transparency off in the eye
+    /// feature profile (<see cref="VrEyeFrameRules"/>).
+    /// </summary>
     private static bool EnableWeightedBlendedOitPasses
-        => !UseOpenXrVulkanDesktopStartupSafePath;
+        => VrEyeFrameRules.AllowsOrderIndependentTransparency();
 
     private bool EnableTransparencySceneCopyResources
         => EnableWeightedBlendedOitPasses || ExactTransparencyEnabled;
@@ -397,20 +376,28 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
     {
         EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
-        return GetRequestedInternalResolutionForCamera(camera, mode);
+        return GetRequestedInternalResolutionForCamera(camera, mode, allowVendorUpscale: true);
     }
 
-    internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
+    /// <summary>
+    /// Returns the internal render scale that the anti-aliasing mode requests for <paramref name="camera"/>.
+    /// The caller (<see cref="XRRenderPipelineInstance"/>) decides whether TSR history is available for the
+    /// view and does not call this method for TSR without history. The vendor (DLSS or XeSS) scale applies
+    /// only when <paramref name="allowVendorUpscale"/> is true.
+    /// </summary>
+    internal override float? GetRequestedInternalResolutionForCamera(
+        XRCamera? camera,
+        EAntiAliasingMode effectiveAntiAliasingMode,
+        bool allowVendorUpscale)
     {
         EAntiAliasingMode mode = effectiveAntiAliasingMode;
-        if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))
+        if (allowVendorUpscale &&
+            !IsRenderingExternalSwapchainTarget() &&
+            TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
 
         if (mode == EAntiAliasingMode.Dlaa)
             return 1.0f;
-
-        if (mode == EAntiAliasingMode.Tsr && DisableHistoryBasedVrEffects())
-            return null;
 
         return mode == EAntiAliasingMode.Tsr
             ? Math.Clamp(camera?.TsrRenderScaleOverride ?? RuntimeEngine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)
@@ -869,7 +856,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 8)
+        if (textures.Count != (EditorHighlightModule is null ? 7 : 8))
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(FinalPostProcessOutputTextureName))
@@ -877,9 +864,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName))
-            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(StencilViewTextureName))
-            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
-            || !ReferenceEquals(textures[7], GetTexture<XRTexture>(TsrHistoryMetadataTextureName)))
+            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(TsrHistoryMetadataTextureName)))
+            return true;
+
+        if (EditorHighlightModule is not null &&
+            !ReferenceEquals(textures[7], GetTexture<XRTexture>(EditorHighlightMaskTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -910,22 +900,32 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        int expectedCount = Stereo ? 6 : 8;
+        bool web = Shaders.Compilation.WebPipelineRasterProgram.IsActive;
+        int baseCount = Stereo ? 4 : 6;
+        int expectedCount = web ? (Stereo ? 6 : 8) : baseCount + (EditorHighlightModule is null ? 0 : 1);
         if (textures.Count != expectedCount)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(HDRSceneTextureName))
             || !ReferenceEquals(textures[1], GetTexture<XRTexture>(BloomBlurTextureName))
-            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
-            || !ReferenceEquals(textures[3], GetTexture<XRTexture>(StencilViewTextureName))
-            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(AutoExposureTextureName)))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName)))
             return true;
 
-        if (!Stereo && (!ReferenceEquals(textures[5], GetTexture<XRTexture>(AtmosphereColorTextureName))
-            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(VolumetricFogColorTextureName))))
+        int exposureSlot = web ? 4 : 3;
+        if (!ReferenceEquals(textures[exposureSlot], GetTexture<XRTexture>(AutoExposureTextureName)))
+            return true;
+        if (!Stereo && (!ReferenceEquals(textures[exposureSlot + 1], GetTexture<XRTexture>(AtmosphereColorTextureName))
+            || !ReferenceEquals(textures[exposureSlot + 2], GetTexture<XRTexture>(VolumetricFogColorTextureName))))
             return true;
 
-        if (!ReferenceEquals(textures[Stereo ? 5 : 7], GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)))
+        if (web)
+        {
+            if (!ReferenceEquals(textures[3], GetTexture<XRTexture>(StencilViewTextureName))
+                || !ReferenceEquals(textures[Stereo ? 5 : 7], GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)))
+                return true;
+        }
+        else if (EditorHighlightModule is not null &&
+            !ReferenceEquals(textures[baseCount], GetTexture<XRTexture>(EditorHighlightMaskTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -1511,10 +1511,15 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string LightingAccumFBOName = "LightingAccumFBO";
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
+    public const string EditorHighlightMaskTextureName = "EditorHighlightMask";
+    public const string EditorPickingIdentityTextureName = "EditorPickingIdentity";
+    public const string EditorHighlightOutputTextureName = "EditorHighlightOutput";
+    public const string EditorHighlightOutputFBOName = "EditorHighlightOutputFBO";
     public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
     public const string ForwardPassMsaaColorRenderBufferName = "ForwardPassMSAAColor";
     public const string SceneCopyFBOName = "SceneCopyFBO";
     public const string TransparentSceneCopyFBOName = "TransparentSceneCopyFBO";
+    public const string SourceOrderedSceneCopyFBOName = "SourceOrderedSceneCopyFBO";
     public const string DeferredTransparencyBlurFBOName = "DeferredTransparencyBlurFBO";
     public const string TransparentAccumulationFBOName = "TransparentAccumulationFBO";
     public const string TransparentResolveFBOName = "TransparentResolveFBO";
@@ -1578,6 +1583,13 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string ForwardContactPrePassCopyFBOName = "ForwardContactPrePassCopyFBO";
     public const string DeferredGBufferPreForwardCopyFBOName = "DeferredGBufferPreForwardCopyFBO";
     public const string FxaaOutputTextureName = "FxaaOutputTexture";
+    /// <summary>
+    /// Output-size color target of the vendor upscaler (DLSS or DLAA) on mono views. The native
+    /// evaluate writes into it, and the window present samples it, the same as the TSR output.
+    /// </summary>
+    public const string VendorOutputTextureName = "VendorOutputTexture";
+    /// <summary>Framebuffer of <see cref="VendorOutputTextureName"/>.</summary>
+    public const string VendorOutputFBOName = "VendorOutputFBO";
     public const string SmaaOutputTextureName = "SmaaOutputTexture";
     public const string SmaaEdgeTextureName = SmaaFBOName + "_EdgeTexture";
     public const string SmaaBlendTextureName = SmaaFBOName + "_BlendTexture";
@@ -1621,6 +1633,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
     public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
+    public const string SourceOrderedSceneCopyTextureName = "SourceOrderedSceneCopyTex";
     public const string TransparentAccumTextureName = "TransparentAccumTex";
     public const string TransparentRevealageTextureName = "TransparentRevealageTex";
     public const string FullOverdrawCountTextureName = "FullOverdrawCountTex";
@@ -1640,6 +1653,75 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string DepthOfFieldTextureName = "DepthOfField";
     public const string TsrHistoryColorTextureName = "TsrHistoryColor";
     public const string TsrHistoryMetadataTextureName = "TsrHistoryMetadata";
+    /// <summary>
+    /// R8 edge mask at internal resolution. The edge-mask pass writes 1 where the internal pixel
+    /// passes the current-frame TSR coverage classification as a 3x3 center. The classify pass
+    /// reads it to mark the output pixels of the full resolve in <see cref="TsrEdgeStencilTextureName"/>.
+    /// </summary>
+    public const string TsrEdgeMaskTextureName = "TsrEdgeMask";
+    public const string TsrEdgeMaskQuadFBOName = "TsrEdgeMaskQuadFBO";
+    public const string TsrEdgeMaskFBOName = "TsrEdgeMaskFBO";
+    /// <summary>
+    /// Output-size stencil of the TSR edge split. The classify pass sets bit 0x01 on pixels whose
+    /// source 3x3 center is an edge; the lean resolve draws where the bit is clear and the full
+    /// resolve where it is set.
+    /// </summary>
+    public const string TsrEdgeStencilTextureName = "TsrEdgeStencil";
+    /// <summary>Full TSR resolve FBO: the same color attachments as <see cref="TsrUpscaleFBOName"/> plus the edge stencil.</summary>
+    public const string TsrUpscaleEdgeFBOName = "TsrUpscaleEdgeFBO";
+    /// <summary>Quad of the edge stencil classify pass; it draws into <see cref="TsrUpscaleEdgeFBOName"/>.</summary>
+    public const string TsrEdgeClassifyQuadFBOName = "TsrEdgeClassifyQuadFBO";
+    /// <summary>Stencil bit that marks TSR edge pixels.</summary>
+    public const uint TsrEdgeStencilBit = 0x01u;
+
+    private static AbstractRenderer? s_tsrEdgeStencilFormatRenderer;
+    private static ESizedInternalFormat s_tsrEdgeStencilFormat;
+    /// <summary>Edge stencil format that the current resource layout declared.</summary>
+    private ESizedInternalFormat _tsrEdgeStencilFormat = ESizedInternalFormat.Depth24Stencil8;
+
+    /// <summary>
+    /// Form of the TSR resolve of this pipeline. Single-pass stereo on Vulkan uses the edge stencil
+    /// split: it records the extra mask and classify passes once for both eyes, and the GPU is the
+    /// limit. Mono views (per-eye eyes and the desktop) use one resolve pass. Per-eye eyes are
+    /// limited by render-thread recording, and two extra passes per eye cost more recording time
+    /// than the split saves on the GPU. Other backends use one resolve pass, because the split is
+    /// validated on Vulkan only.
+    /// </summary>
+    public EAdvancedTsrResolveForm TsrResolveForm
+        => Stereo && ResolveCurrentBackend() == RuntimeGraphicsApiKind.Vulkan
+            ? EAdvancedTsrResolveForm.EdgeStencilSplit
+            : EAdvancedTsrResolveForm.Single;
+
+    /// <summary>Backend of the current renderer, or of the capability result when no renderer is current.</summary>
+    private RuntimeGraphicsApiKind ResolveCurrentBackend()
+        => RuntimeRenderingHostServices.FrameTiming.CurrentRenderer?.GetAdvancedRenderPipelineCapabilities().Backend
+        ?? CapabilityResult.Capabilities.Backend;
+
+    /// <summary>
+    /// Format of the TSR edge stencil: S8 when the current renderer supports it as a depth-stencil
+    /// attachment, otherwise D24S8. The choice is logged and cached for that renderer.
+    /// </summary>
+    private static ESizedInternalFormat ResolveTsrEdgeStencilFormat()
+    {
+        // The layout can build off the render thread, where AbstractRenderer.Current is null; the
+        // frame-timing host falls back to the renderer of the first window.
+        AbstractRenderer? renderer = RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as AbstractRenderer
+            ?? AbstractRenderer.Current;
+        if (renderer is not null && ReferenceEquals(renderer, s_tsrEdgeStencilFormatRenderer))
+            return s_tsrEdgeStencilFormat;
+        bool stencilOnly = renderer?.SupportsDepthStencilAttachmentFormat(ESizedInternalFormat.StencilIndex8) == true;
+        ESizedInternalFormat format = stencilOnly ? ESizedInternalFormat.StencilIndex8 : ESizedInternalFormat.Depth24Stencil8;
+        if (renderer is not null)
+        {
+            s_tsrEdgeStencilFormat = format;
+            s_tsrEdgeStencilFormatRenderer = renderer;
+        }
+        Debug.Rendering(
+            "[TSR] Edge stencil format {0}: S8 depth-stencil attachment {1}.",
+            format,
+            renderer is null ? "unknown (no current renderer)" : stencilOnly ? "supported" : "unsupported");
+        return format;
+    }
 
     // MSAA deferred GBuffer texture names
     public const string MsaaAlbedoOpacityTextureName = "MsaaAlbedoOpacity";
@@ -1664,7 +1746,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     /// </summary>
     internal static bool RuntimeEnableMsaaDeferred
         => RuntimeEnableMsaa
-        && !UseOpenXrVulkanDesktopStartupSafePath
+        && VrEyeFrameRules.AllowsDeferredMsaa()
         && RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.ResolveAdvancedStageFamily()?.EnableDeferredMsaa == true;
 
     private const string TonemappingStageKey = CommonPostProcessStages.StageKeys.Tonemapping;
@@ -1718,6 +1800,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         if (debugMode >= 0 && debugMode <= 18)
             _deferredDebugView = (DeferredDebugViewMode)debugMode;
         GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
+        _editorHighlightModule = EditorHighlightModuleRegistry.Create();
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
@@ -2260,7 +2343,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         if (camera is null)
             return null;
 
-        var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>(this);
+        var stage = camera.GetPostProcessStageState<AmbientOcclusionSettings>(
+            ResolvePostProcessSettingsPipeline(currentPipeline));
         if (stage is null)
             return null;
 
@@ -2268,6 +2352,45 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return null;
 
         return settings;
+    }
+
+    /// <summary>
+    /// Returns the pipeline whose camera post-process state holds the settings of this render.
+    /// A camera keeps one state per pipeline ID. An RVC eye runs this pipeline as its Advanced
+    /// stage family, but the camera and the post-process tools write the state of the RVC
+    /// pipeline (the assigned pipeline of the instance). The family must read that state;
+    /// a state keyed by the family itself only ever holds defaults.
+    /// </summary>
+    private RenderPipeline ResolvePostProcessSettingsPipeline(XRRenderPipelineInstance? instance)
+        => instance?.AssignedPipeline is { } assigned && ReferenceEquals(assigned.ResolveAdvancedStageFamily(), this)
+            ? assigned
+            : this;
+
+    internal override EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera)
+        => ResolveCanonicalViewPolicyFlags(camera, this);
+
+    /// <summary>
+    /// Sets <see cref="EAdvancedViewRecordFlags.GtaoMaterialNormals"/> when the camera uses GTAO with
+    /// <see cref="GroundTruthAmbientOcclusionSettings.UseMaterialNormals"/>. Native shading reads the
+    /// flag from the view record and adds normal-map micro-occlusion to the GTAO value.
+    /// </summary>
+    /// <param name="camera">The camera of the views.</param>
+    /// <param name="settingsPipeline">
+    /// The pipeline that keys the camera post-process state: this pipeline, or the RVC pipeline that
+    /// runs this pipeline as its stage family.
+    /// </param>
+    internal EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera, RenderPipeline settingsPipeline)
+    {
+        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(settingsPipeline) is not { } stage ||
+            !stage.TryGetBacking(out AmbientOcclusionSettings? settings) ||
+            settings is not { Enabled: true } ||
+            AmbientOcclusionSettings.NormalizeType(settings.Type) != AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion ||
+            !settings.GroundTruth.UseMaterialNormals)
+        {
+            return EAdvancedViewRecordFlags.None;
+        }
+
+        return EAdvancedViewRecordFlags.GtaoMaterialNormals;
     }
 
     private AmbientOcclusionSettings? ResolveAmbientOcclusionSettings(
@@ -2279,7 +2402,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             ?? instance.LastSceneCamera
             ?? instance.LastRenderingCamera
             ?? viewport?.ActiveCamera;
-        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(this) is not { } stage ||
+        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(
+                ResolvePostProcessSettingsPipeline(instance)) is not { } stage ||
             !stage.TryGetBacking(out AmbientOcclusionSettings? settings))
             return null;
 
@@ -2679,66 +2803,16 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const int StencilRefSelection = 2;
 
     /// <summary>
-    /// This pipeline is set up to use the stencil buffer to highlight objects.
-    /// This will highlight the given material.
-    /// </summary>
-    /// <param name="material">The material to highlight.</param>
-    /// <param name="enabled">Whether to enable or disable highlighting.</param>
-    /// <param name="isSelection">If true, uses the selection stencil value; otherwise uses hover stencil value.</param>
-    public static void SetHighlighted(XRMaterial? material, bool enabled, bool isSelection = false)
-    {
-        if (material is null)
-            return;
-
-        // Preserve both highlight bits so hover and selection can coexist on the same material.
-        int bit = isSelection ? StencilRefSelection : StencilRefHover;
-        var stencil = material.RenderOptions.StencilTest;
-        int currentRef = stencil.FrontFace.Reference;
-        int currentBits = currentRef & 0x3;
-        int nextBits = enabled ? (currentBits | bit) : (currentBits & ~bit);
-
-        if (nextBits == 0)
-        {
-            stencil.Enabled = ERenderParamUsage.Disabled;
-            return;
-        }
-
-        stencil.Enabled = ERenderParamUsage.Enabled;
-        stencil.FrontFace = new StencilTestFace()
-        {
-            Function = EComparison.Always,
-            Reference = nextBits,
-            ReadMask = 3,
-            WriteMask = 3,
-            BothFailOp = EStencilOp.Keep,
-            StencilPassDepthFailOp = EStencilOp.Keep,
-            BothPassOp = EStencilOp.Replace,
-        };
-        stencil.BackFace = new StencilTestFace()
-        {
-            Function = EComparison.Always,
-            Reference = nextBits,
-            ReadMask = 3,
-            WriteMask = 3,
-            BothFailOp = EStencilOp.Keep,
-            StencilPassDepthFailOp = EStencilOp.Keep,
-            BothPassOp = EStencilOp.Replace,
-        };
-    }
-
-    /// <summary>
-    /// This pipeline is set up to use the stencil buffer to highlight objects.
-    /// This will highlight the given renderable mesh without mutating its shared source material.
+    /// Publishes highlight flags on the renderable mesh without changing its material stencil state.
     /// </summary>
     /// <param name="mesh">The renderable mesh to highlight.</param>
     /// <param name="enabled">Whether to enable or disable highlighting.</param>
     /// <param name="isSelection">If true, uses the selection stencil value; otherwise uses hover stencil value.</param>
     public static void SetHighlighted(RenderableMesh? mesh, bool enabled, bool isSelection = false)
-        => mesh?.SetHighlightStencilBit(isSelection ? StencilRefSelection : StencilRefHover, enabled);
+        => mesh?.SetEditorHighlightBit(isSelection ? StencilRefSelection : StencilRefHover, enabled);
 
     /// <summary>
-    /// This pipeline is set up to use the stencil buffer to highlight objects.
-    /// This will highlight the given model.
+    /// Publishes highlight flags on each renderable mesh in the model.
     /// </summary>
     /// <param name="model">The model component to highlight.</param>
     /// <param name="enabled">Whether to enable or disable highlighting.</param>
@@ -2747,8 +2821,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         => model?.Meshes.ForEach(m => SetHighlighted(m, enabled, isSelection));
 
     /// <summary>
-    /// This pipeline is set up to use the stencil buffer to highlight objects.
-    /// This will highlight the model representing the given rigid body.
+    /// Publishes highlight flags on the model for the given rigid body.
     /// The model component must be a sibling component of the rigid body, or this will do nothing.
     /// </summary>
     /// <param name="body">The rigid body whose model to highlight.</param>

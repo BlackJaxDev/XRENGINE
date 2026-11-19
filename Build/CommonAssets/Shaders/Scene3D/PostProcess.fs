@@ -8,7 +8,12 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2D HDRSceneTex; //HDR scene color
 uniform sampler2D BloomBlurTexture; //Bloom
 uniform sampler2D DepthView; //Depth
-uniform usampler2D StencilView; //Stencil
+#ifndef XR_SCENE_STENCIL_AUTHORED
+uniform usampler2D StencilView;
+#endif
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+uniform sampler2D EditorHighlightMask;
+#endif
 
 // 1x1 R32F texture containing the current exposure value (GPU-driven auto exposure)
 uniform sampler2D AutoExposureTex;
@@ -20,9 +25,6 @@ uniform sampler2D AtmosphereColor;
 // Produced by VolumetricFogScatter.fs; early-outs to (0,0,0,1) when the effect
 // is disabled so the composite becomes a no-op.
 uniform sampler2D VolumetricFogColor;
-#ifdef XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA
-uniform usampler2D AdvancedVisibilityMetadata;
-#endif
 uniform bool UseGpuAutoExposure; // XRENGINE_FREQUENCY(View)
 uniform vec3 CameraPosition;
 uniform mat4 ViewMatrix;
@@ -31,9 +33,11 @@ uniform mat4 InverseProjMatrix;
 uniform int DirLightCount;
 uniform float RenderTime;
 
+#ifndef XR_SCENE_STENCIL_AUTHORED
 uniform vec3 HoverOutlineColor = vec3(1.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(View)
 uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(View)
 uniform bool EnableEditorOutline = true; // XRENGINE_FREQUENCY(View)
+#endif
 uniform bool OutputHDR; // XRENGINE_FREQUENCY(View)
 
 struct VignetteStruct
@@ -212,6 +216,7 @@ vec2 SceneSourceUv(vec2 uv)
   return ApplyLensDistortionByMode(uv);
 }
 
+#ifndef XR_SCENE_STENCIL_AUTHORED
 uint SampleSceneStencilSource(vec2 sourceUv)
 {
   return texture(StencilView, clamp(sourceUv, vec2(0.0f), vec2(1.0f))).r;
@@ -219,14 +224,7 @@ uint SampleSceneStencilSource(vec2 sourceUv)
 
 uint SampleSceneEditorHighlightSource(vec2 sourceUv)
 {
-  uint stencilFlags = SampleSceneStencilSource(sourceUv) & 3u;
-#ifdef XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA
-  uint metadata = texture(AdvancedVisibilityMetadata, clamp(sourceUv, vec2(0.0f), vec2(1.0f))).r;
-  uint metadataFlags = metadata == 0xFFFFFFFFu ? 0u : (metadata >> 25u) & 3u;
-  return stencilFlags | metadataFlags;
-#else
-  return stencilFlags;
-#endif
+  return SampleSceneStencilSource(sourceUv) & 3u;
 }
 
 float GetStencilMaskBit(uint stencilValue, uint bit)
@@ -283,6 +281,18 @@ vec2 GetStencilOutlineIntensity(vec2 sourceUv)
     }
 
   return vec2(hoverOutline, selectionOutline);
+}
+#endif
+
+bool IsEditorGizmo(vec2 sourceUv)
+{
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+  return texture(EditorHighlightMask, clamp(sourceUv, vec2(0.0), vec2(1.0))).b > 0.5;
+#elif !defined(XR_SCENE_STENCIL_AUTHORED)
+  return (SampleSceneStencilSource(sourceUv) & 0x80u) != 0u;
+#else
+  return false;
+#endif
 }
 
 // Tonemapping selector and shared tonemap operators
@@ -401,10 +411,8 @@ void main()
       vec2(1.0f));
   vec2 sceneUv = SceneSourceUv(uv);
 
-  // Gizmo bypass: pixels tagged with the gizmo stencil bit (0x80) skip tonemap,
-  // color grading, vignette, exposure, atmosphere, fog, and bloom add. They are
-  // emitted as raw HDR scene color so editor gizmos look unprocessed.
-  if ((SampleSceneStencilSource(sceneUv) & 0x80u) != 0u)
+  // Keep editor gizmo colors outside scene color grading.
+  if (IsEditorGizmo(sceneUv))
   {
       OutColor = vec4(SafeColor(texture(HDRSceneTex, sceneUv).rgb), 1.0f);
       return;
@@ -544,16 +552,14 @@ void main()
 	sceneColor = ApplyHsvColorGrade(sceneColor);
 	sceneColor = (sceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
+#ifndef XR_SCENE_STENCIL_AUTHORED
   vec2 outline = EnableEditorOutline ? GetStencilOutlineIntensity(sceneUv) : vec2(0.0f);
   float hoverOutline = outline.x;
   float selectionOutline = outline.y;
   float outlineWeight = max(hoverOutline, selectionOutline);
   vec3 outlineColor = mix(SelectionOutlineColor, HoverOutlineColor, hoverOutline);
   sceneColor = mix(sceneColor, outlineColor, outlineWeight);
-
-  // DEBUG: Visualize raw stencil value - uncomment to see stencil data
-  // uint rawStencil = texture(StencilView, uv).r;
-  // if ((rawStencil & 1) != 0) sceneColor = vec3(1.0, 0.0, 0.0); // Red where stencil bit 0 is set
+#endif
 
 	sceneColor = ApplyVignette(sceneColor, uv);
   sceneColor = SafeColor(sceneColor);

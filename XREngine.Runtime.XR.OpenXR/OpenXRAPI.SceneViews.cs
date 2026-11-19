@@ -63,6 +63,11 @@ public unsafe partial class OpenXRAPI
             _openXrStereoViewport.SetInternalResolution((int)width, (int)height, correctAspect: false);
     }
 
+    /// <summary>
+    /// Creates the viewport of one per-eye OpenXR view. The viewport allows an automatic internal
+    /// size, so the TSR render scale renders the eye below the swapchain size when the eye pipeline
+    /// has TSR history. The frame profile of the pipeline instance decides the internal size.
+    /// </summary>
     private static XRViewport CreateOpenXrViewport()
         => new(null)
         {
@@ -71,7 +76,7 @@ public unsafe partial class OpenXRAPI
             AutomaticallySwapBuffers = false,
             AllowUIRender = false,
             SetRenderPipelineFromCamera = false,
-            AllowAutomaticInternalResolution = false,
+            AllowAutomaticInternalResolution = true,
             RendersToExternalSwapchainTarget = true
         };
 
@@ -120,6 +125,13 @@ public unsafe partial class OpenXRAPI
             _openXrEyePublicationAdmissionOpen = true;
     }
 
+    /// <summary>
+    /// Sets the display extent of a per-eye viewport to the swapchain extent of its eye.
+    /// The internal extent is set to the full swapchain extent only when the display extent
+    /// changes or no internal extent exists. Between those changes the frame profile of the eye
+    /// pipeline owns the internal extent (the TSR render scale), so this per-frame call does not
+    /// reset it and does not start a new resource generation every frame.
+    /// </summary>
     private static void EnsureOpenXrViewportExtent(XRViewport viewport, uint width, uint height)
     {
         if (width > int.MaxValue || height > int.MaxValue)
@@ -131,15 +143,17 @@ public unsafe partial class OpenXRAPI
         int widthInt = (int)width;
         int heightInt = (int)height;
         viewport.Window = null;
-        viewport.AllowAutomaticInternalResolution = false;
+        viewport.AllowAutomaticInternalResolution = true;
         viewport.SetFullScreen();
 
         if (viewport.Width != widthInt || viewport.Height != heightInt)
         {
             viewport.Resize(width, height, setInternalResolution: false);
+            // Start from the full extent. The next frame profile of the eye pipeline applies
+            // the TSR scale against the new display extent when the eye has TSR history.
             viewport.SetInternalResolution(widthInt, heightInt, correctAspect: false);
         }
-        else if (viewport.InternalWidth != widthInt || viewport.InternalHeight != heightInt)
+        else if (viewport.InternalWidth <= 0 || viewport.InternalHeight <= 0)
         {
             viewport.SetInternalResolution(widthInt, heightInt, correctAspect: false);
         }
@@ -156,7 +170,7 @@ public unsafe partial class OpenXRAPI
         {
             _openXrLeftEyeCamera = null;
             _openXrRightEyeCamera = null;
-            UpdateOpenXrEyeSettingsSubscriptions(null, null);
+            DetachOpenXrEyeSettings();
             Debug.RenderingWarningEvery(
                 "OpenXR.EyeCameras.NoRequiredVrRig",
                 TimeSpan.FromSeconds(1),

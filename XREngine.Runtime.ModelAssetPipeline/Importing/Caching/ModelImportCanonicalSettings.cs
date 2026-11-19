@@ -31,6 +31,7 @@ public static class ModelImportCanonicalSettings
         writer.WriteBoolean(25, options.ImportBlendShapeNormals);
         writer.WriteInt32(26, (int)options.SurfaceDetailMapMode);
         writer.WriteInt32(27, (int)options.DecalMaterialMode);
+        writer.WriteInt32(28, (int)options.TangentImportPolicy);
 
         // MultiThread, native worker count, ProcessMeshesAsynchronously,
         // GenerateMeshRenderersAsync, batch publication, and ProgressCallback affect only

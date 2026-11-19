@@ -66,7 +66,7 @@ Rules for provider code:
 
 - Camera-wide edits are allowed only when `context.IsActivePipeline` is true. Selecting another pipeline for inspection never rebinds the camera.
 - Pipeline settings affect every instance that uses the selected pipeline asset. Camera settings stay local to the camera.
-- `AdvancedRenderPipelineEditorUI` draws the `ShadingDebugView` selector in the Debug tab. `DefaultPipelineEditorUI` draws the shared camera settings and the Forward+ debug controls.
+- `AdvancedRenderPipelineEditorUI` draws the `ShadingDebugView` selector in the Debug tab. It also states, for the current frame's effective submission strategy, what the meshlet view and the occlusion-culled bounds overlay can show. Both toggles live in the camera's `Debug Visualization` stage. `DefaultPipelineEditorUI` draws the shared camera settings and the Forward+ debug controls.
 
 ## Add A Custom Stage Drawer
 

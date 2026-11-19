@@ -266,6 +266,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
         _luminanceComputeProgram?.Destroy();
         _luminanceComputeProgram = null;
         _luminanceComputeInitialized = false;
+        DestroyHeadsetExposureResources(ShouldOrphanGLHandlesForShutdown);
         DisposeAdvancedRuntimeForShutdown(orphanGLHandles);
         DisposeLayeredBlitFramebuffers(orphanGLHandles);
         RetireGpuFences(orphanGLHandles);

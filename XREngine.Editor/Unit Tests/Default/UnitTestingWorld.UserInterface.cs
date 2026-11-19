@@ -820,10 +820,7 @@ public static partial class EditorUnitTests
                     ? "-" + new string('9', width - 1)
                     : new string('9', width);
 
-            return (negative ? "-" : string.Empty) +
-                new string('9', integerDigits) +
-                "." +
-                new string('9', fractionalDigits);
+            return $"{(negative ? "-" : string.Empty)}{new string('9', integerDigits)}.{new string('9', fractionalDigits)}";
         }
 
         private static string FormatCompactCountValue(int value, int width)

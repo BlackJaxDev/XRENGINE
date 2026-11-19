@@ -162,7 +162,6 @@ public static class ForwardDepthNormalVariantFactory
 
         XRMaterial variant = new(shaders)
         {
-            Parameters = sourceMaterial.Parameters,
             Textures = sourceMaterial.Textures,
             RenderPass = sourceMaterial.RenderPass,
             BillboardMode = sourceMaterial.BillboardMode,
@@ -171,6 +170,8 @@ public static class ForwardDepthNormalVariantFactory
             TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
+            // Attach source parameters after pass setters update their own values.
+            Parameters = sourceMaterial.Parameters,
         };
 
         sourceMaterial.ShareUniformSourcesWith(variant);

@@ -52,6 +52,8 @@ Backend implementations:
 
 The `XRTS` payload stores a preview mip and per-mip offsets. Streamability checks read only the header and manifest. They do not hydrate mip blobs. See [Cooked Texture Payloads](../assets/cooked-texture-payloads.md) for payload layout, cache-key rules, compression plans, and known limits.
 
+Imported Data and Normal textures resize each RGBA channel independently. This keeps packed mask values in RGB when alpha is zero. The rule applies to resident downsize and CPU mip generation. Versioned Data and Normal cache folders prevent reuse of older cooked mips that lost those values. Color textures keep the standard resize rule.
+
 ## Residency Rules
 
 - Each texture starts at its preview residency (`XRTexture2D.GetPreviewResidentSize`). Promotion raises the resident size to the policy target; demotion lowers it.
@@ -204,6 +206,12 @@ Vulkan imported textures never use one-shot layout transitions or copies for liv
 Foreground readiness: when an accepted frame references an exact texture generation, the upload becomes foreground-required. The service drains `VisibleNow` preparation without background caps, but completion still follows the normal fence or timeline path. It never forces a device idle.
 
 `VulkanResidentRehydrationUploadScheduler` sends retained resident mips through the same service.
+When a published source-backed texture has released its CPU pixels, a general
+worker reloads them before the upload enters that service. Backend idleness does
+not show whether this source job is active. The source job's exact owner callback
+clears its transition. Generic stuck cleanup checks the snapshot upload
+generation and transition frame under the record lock before it clears any
+other pending transition.
 
 ### Coupled Metadata And Native Publication
 
@@ -249,6 +257,7 @@ Runtime textures that are not imported, such as an HDR skybox loaded from an EXR
 
 - The texture enters `ImportedTextureStreamingManager.TryScheduleRawResidentDataForVulkan` without a streaming source. The manager does not release its CPU pixels and does not stream it again from the source file.
 - When the texture requests `AutoGenerateMipmaps` and has only a base level, the resident data sets `GenerateMipChainOnGpu`. The service allocates the full mip chain, copies the base level in bounded staging chunks, and fills the other levels with linear blits in the final upload batch. The format must support linear blits; otherwise the upload fails.
+- Native residency restoration keeps `GenerateMipChainOnGpu` for a retained single base level when `AutoGenerateMipmaps` remains enabled.
 - If the service reports a failure, the texture uses the single render-thread upload and logs an `[UploadMipmaps]` warning.
 - Textures under the size limit, and textures with `PreferSynchronousGpuUpload`, keep the single render-thread upload.
 
@@ -264,7 +273,7 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 | `XRE_VULKAN_TEXTURE_UPLOAD_PREP_BUDGET_MS` | Render-thread time budget, in milliseconds, for upload preparation work. |
 | `XRE_VULKAN_TEXTURE_UPLOAD_TRACE=1` | Verbose upload lifecycle logs. |
 | `XRE_VULKAN_TEXTURE_UPLOAD_TRANSFER_QUEUE` | Requests a dedicated transfer queue. Currently logs a `[Vulkan Compat]` message; uploads stay on the graphics queue. |
-| `XRE_TEXTURE_COOK_COMPRESSION` | `Bcn`, `Bc7`, or `None`. Overrides `CookedTextureCompression` for the texture cook. The cache key includes the effective mode (and the texture role for `Bcn`). |
+| `XRE_TEXTURE_COOK_COMPRESSION` | `Bcn`, `Bc7`, or `None`. Overrides `CookedTextureCompression` for the texture cook. The cache key includes the effective mode. Data and Normal use versioned role folders for independent channel mips; Color uses a role folder for `Bcn`. |
 | `XRE_VULKAN_ASYNC_TEXTURE_UPLOAD`, `XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER` | Disabling either is ignored for imported uploads and logs a `[Vulkan Compat]` message. Preparation stays worker-only. |
 
 ## Diagnostics
@@ -275,6 +284,7 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 - MCP: `get_texture_streaming_summary` and `list_texture_streaming_textures`.
 - Vulkan upload timing (Debug and editor builds): `[VkTextureUpload.DrainSlow]` splits a transfer drain step of 4 ms or more into submit, poll, batch completion, and child completion. `[VkTextureUpload.Publish]` reports a publication of 4 ms or more, with its mip level count and whether the GPU generates its mips. A faster publication builds no log text. `[UploadMipmaps] ... scheduling ... took` reports a large runtime texture whose scheduling took 4 ms or more.
 - Cook compression, in the `texture-compression.log` auxiliary log in every build configuration: one line per cooked texture with its format, size, mip count, role, the reason for the format, RGBA8 and compressed byte counts, and encode time, and one line for each texture that stays RGBA8 with the reason.
+- Vulkan upload timing, in the `texture-upload-timing.log` auxiliary log in every build configuration: `[VkTextureUpload.DrainSlow]` splits a transfer drain step of 4 ms or more into submit, poll, batch completion, and child completion. `[VkTextureUpload.Publish]` reports a publication of 4 ms or more, and every publication with GPU-generated mips, with its mip level count. `[UploadMipmaps] ... scheduling ... took` reports a large runtime texture whose scheduling took 4 ms or more.
 
 ## Known Limits
 
@@ -284,6 +294,13 @@ The constants are in `XREngineEnvironmentVariables`. Each flag has an editor pre
 - The decode width controller reads the gate one time in each frame, so a decode that starts and ends between two frames does not count as active, and a scrub that signals a discontinuity in each frame keeps it in a relearn without back-offs.
 - An unsignaled scene step to a heavier scene makes every work frame go over the rule until a probe or an idle frame measures the new scene, so the lane backs off for a short time. A camera cut must call `NotifySceneDiscontinuity` (the cutscene player does).
 - On a scene with jitter larger than the tolerance, frames with work go over the rule a little more often than frames without work, and each such frame backs off. This lowers throughput on jittery machines, but it keeps the frame-time rule.
+
+Streaming records retain the decoded mip format. The resolved GPU storage
+format is separate: an RGBA8 source can use sRGB GPU storage. Registry lookups
+must not replace the decoded format with that resolved storage format.
+Only source-backed RGBA8 chains can release their CPU pixels after a Vulkan
+upload. Other formats retain their upload data for renderer recreation until
+their source reload contract is supported.
 
 - Partial sparse page residency is disabled by policy on OpenGL. Vulkan sparse images are not implemented.
 - Cooked payloads are not page-addressable. Compressed (BC7, BC5, BC4) payloads use dense residency only.

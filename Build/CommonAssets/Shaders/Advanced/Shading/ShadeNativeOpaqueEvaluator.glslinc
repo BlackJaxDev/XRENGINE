@@ -51,6 +51,39 @@ float shadowVisibility = 1.0;
 vec3 directDiffuse = vec3(0.0);
 vec3 directSpecular = vec3(0.0);
 
+// EAdvancedShadingDebugView.MeshletId.
+#define XR_ADV_SHADING_DEBUG_MESHLET_ID 11u
+
+// Returns a stable color for the meshlet of a visibility sample. Meshlet
+// producers store (global meshlet index << 8) | local triangle in identity.y, so
+// the color depends only on the meshlet index and does not change between
+// frames. Samples of indexed producers have no meshlet and get neutral grey.
+vec3 XR_ADV_MeshletDebugColor(uvec2 identity, uint metadata)
+{
+    uint producer = metadata & XR_ADV_VIS_PRODUCER_MASK;
+    if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
+        producer != XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
+        return vec3(0.18);
+    // PCG hash of the meshlet index, mapped to a saturated hue.
+    uint state = (identity.y >> 8u) * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    word = (word >> 22u) ^ word;
+    float hue = float(word & 0xFFFFu) / 65535.0;
+    vec3 rgb = clamp(abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    float value = 0.55 + 0.45 * float((word >> 16u) & 255u) / 255.0;
+    return rgb * value;
+}
+
+// Push flag: the shading diagnostics image is not allocated (an OpenXR eye output without a
+// shading debug view). Its binding then holds another R32UI image, so no pass may store to it.
+// Matches ShadingDiagnosticsDisabledFlag on the CPU.
+#define XR_ADV_SHADING_DIAGNOSTICS_DISABLED (1u << 31u)
+
+bool XR_ADV_StoresShadingDiagnostics()
+{
+    return (u_Push.flags & XR_ADV_SHADING_DIAGNOSTICS_DISABLED) == 0u;
+}
+
 bool XR_ADV_ExportsMaterialSurfaceInputs()
 {
     return (u_Push.flags & 16u) != 0u;
@@ -108,7 +141,8 @@ void XR_ADV_StoreOpaqueSampleResult(
         vec4(max(result.radiance, vec3(0.0)), result.opacity));
     imageStore(Velocity, XR_ADV_PIXEL(pixel, viewIndex), vec4(result.velocity, 0.0, 0.0));
     imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(result.reactive));
-    imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(result.diagnostics));
+    if (XR_ADV_StoresShadingDiagnostics())
+        imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(result.diagnostics));
     XR_ADV_StoreMaterialSurfaceInputs(pixel, viewIndex, result);
 }
 
@@ -155,6 +189,19 @@ bool XR_ADV_SourceSH(uint viewIndex, out vec4 ar, out vec4 ag, out vec4 ab,
     return enabled;
 }
 
+// Adds one selected probe to the weighted irradiance and prefiltered sums.
+void XR_ADV_AccumulateProbeSlot(float weight, uint index, vec3 worldPosition, vec3 N, vec3 V,
+    float roughness, inout vec3 irradiance, inout vec3 prefiltered, inout float sum)
+{
+    if (weight <= 0.0) return;
+    vec3 probeDiffuse, probeSpecular;
+    if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(index), worldPosition, N, V,
+        roughness, false, probeDiffuse, probeSpecular)) return;
+    irradiance += probeDiffuse * weight;
+    prefiltered += probeSpecular * weight;
+    sum += weight;
+}
+
 void XR_ADV_EvaluateProbeIblWithSelection(
     uint viewIndex,
     vec3 worldPosition,
@@ -165,16 +212,16 @@ void XR_ADV_EvaluateProbeIblWithSelection(
     float metallic,
     out vec3 diffuseIndirect,
     out vec3 specularIndirect,
-    out float weights[4],
-    out uint indices[4])
+    out vec4 weights,
+    out uvec4 indices)
 {
+    // The four strongest probes, strongest first. Vectors with a fixed insertion order
+    // replace float[4] and uint[4]: a dynamically indexed local array goes to per-invocation
+    // local memory (a register spill), while vector components stay in registers.
     diffuseIndirect = vec3(0.0);
     specularIndirect = vec3(0.0);
-    for (uint slot = 0u; slot < 4u; ++slot)
-    {
-        weights[slot] = 0.0;
-        indices[slot] = 0u;
-    }
+    weights = vec4(0.0);
+    indices = uvec4(0u);
     for (uint index = 0u; index < uint(XR_ADV_Probes.records.length()); ++index)
     {
         XRAdvancedProbeRecord probe = XR_ADV_LoadProbe(index);
@@ -185,32 +232,34 @@ void XR_ADV_EvaluateProbeIblWithSelection(
                 (viewIndex >= 64u || (probe.viewMaskHi & (1u << (viewIndex - 32u))) == 0u))) continue;
         float weight = XR_ADV_ProbeWeight(probe, worldPosition);
         if (weight <= 0.0) continue;
-        for (uint slot = 0u; slot < 4u; ++slot)
+        if (weight > weights.x)
         {
-            if (weight <= weights[slot]) continue;
-            for (uint shift = 3u; shift > slot; --shift)
-            {
-                weights[shift] = weights[shift - 1u];
-                indices[shift] = indices[shift - 1u];
-            }
-            weights[slot] = weight;
-            indices[slot] = index;
-            break;
+            weights = vec4(weight, weights.xyz);
+            indices = uvec4(index, indices.xyz);
+        }
+        else if (weight > weights.y)
+        {
+            weights.yzw = vec3(weight, weights.yz);
+            indices.yzw = uvec3(index, indices.yz);
+        }
+        else if (weight > weights.z)
+        {
+            weights.zw = vec2(weight, weights.z);
+            indices.zw = uvec2(index, indices.z);
+        }
+        else if (weight > weights.w)
+        {
+            weights.w = weight;
+            indices.w = index;
         }
     }
     float sum = 0.0;
     vec3 irradiance = vec3(0.0);
     vec3 prefiltered = vec3(0.0);
-    for (uint slot = 0u; slot < 4u; ++slot)
-    {
-        if (weights[slot] <= 0.0) continue;
-        vec3 probeDiffuse, probeSpecular;
-        if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(indices[slot]), worldPosition, N, V,
-            roughness, false, probeDiffuse, probeSpecular)) continue;
-        irradiance += probeDiffuse * weights[slot];
-        prefiltered += probeSpecular * weights[slot];
-        sum += weights[slot];
-    }
+    XR_ADV_AccumulateProbeSlot(weights.x, indices.x, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+    XR_ADV_AccumulateProbeSlot(weights.y, indices.y, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+    XR_ADV_AccumulateProbeSlot(weights.z, indices.z, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+    XR_ADV_AccumulateProbeSlot(weights.w, indices.w, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
     if (sum <= 0.0) return;
     irradiance /= sum;
     prefiltered /= sum;
@@ -227,44 +276,55 @@ void XR_ADV_EvaluateProbeIbl(uint viewIndex, vec3 worldPosition, vec3 N,
     vec3 V, vec3 albedo, float roughness, float metallic,
     out vec3 diffuseIndirect, out vec3 specularIndirect)
 {
-    float weights[4];
-    uint indices[4];
+    vec4 weights;
+    uvec4 indices;
     XR_ADV_EvaluateProbeIblWithSelection(viewIndex, worldPosition, N, V,
         albedo, roughness, metallic, diffuseIndirect, specularIndirect,
         weights, indices);
 }
 
+void XR_ADV_AccumulateRawPrefilterSlot(float weight, uint index, vec3 worldPosition, vec3 N, vec3 V,
+    float perceptualRoughness, inout vec3 radiance, inout float sum)
+{
+    if (weight <= 0.0) return;
+    vec3 diffuse, prefiltered;
+    if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(index), worldPosition,
+        N, V, perceptualRoughness, true, diffuse, prefiltered)) return;
+    radiance += prefiltered * weight;
+    sum += weight;
+}
+
 vec3 XR_ADV_SampleSelectedRawPrefilter(vec3 worldPosition, vec3 N, vec3 V,
-    float perceptualRoughness, float weights[4], uint indices[4])
+    float perceptualRoughness, vec4 weights, uvec4 indices)
 {
     vec3 radiance = vec3(0.0);
     float sum = 0.0;
-    for (uint slot = 0u; slot < 4u; ++slot)
-    {
-        if (weights[slot] <= 0.0) continue;
-        vec3 diffuse, prefiltered;
-        if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(indices[slot]), worldPosition,
-            N, V, perceptualRoughness, true, diffuse, prefiltered)) continue;
-        radiance += prefiltered * weights[slot];
-        sum += weights[slot];
-    }
+    XR_ADV_AccumulateRawPrefilterSlot(weights.x, indices.x, worldPosition, N, V, perceptualRoughness, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterSlot(weights.y, indices.y, worldPosition, N, V, perceptualRoughness, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterSlot(weights.z, indices.z, worldPosition, N, V, perceptualRoughness, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterSlot(weights.w, indices.w, worldPosition, N, V, perceptualRoughness, radiance, sum);
     return sum > 0.0 ? radiance / sum : vec3(0.0);
 }
 
+void XR_ADV_AccumulateRawPrefilterNormalSlot(float weight, uint index, vec3 normal, float blur,
+    inout vec3 radiance, inout float sum)
+{
+    if (weight <= 0.0) return;
+    vec3 sampleColor;
+    if (!XR_ADV_TrySampleProbeNormal(XR_ADV_LoadProbe(index), normal, blur, sampleColor)) return;
+    radiance += sampleColor * weight;
+    sum += weight;
+}
+
 vec3 XR_ADV_SampleSelectedRawPrefilterNormal(vec3 normal,
-    float blur, float weights[4], uint indices[4])
+    float blur, vec4 weights, uvec4 indices)
 {
     vec3 radiance = vec3(0.0);
     float sum = 0.0;
-    for (uint slot = 0u; slot < 4u; ++slot)
-    {
-        if (weights[slot] <= 0.0) continue;
-        vec3 sampleColor;
-        if (!XR_ADV_TrySampleProbeNormal(XR_ADV_LoadProbe(indices[slot]),
-            normal, blur, sampleColor)) continue;
-        radiance += sampleColor * weights[slot];
-        sum += weights[slot];
-    }
+    XR_ADV_AccumulateRawPrefilterNormalSlot(weights.x, indices.x, normal, blur, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterNormalSlot(weights.y, indices.y, normal, blur, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterNormalSlot(weights.z, indices.z, normal, blur, radiance, sum);
+    XR_ADV_AccumulateRawPrefilterNormalSlot(weights.w, indices.w, normal, blur, radiance, sum);
     return sum > 0.0 ? radiance / sum : vec3(0.0);
 }
 
@@ -300,26 +360,32 @@ vec3 XR_ADV_EvaluateLight(
     else return vec3(0.0);
     uint reason;
     float visibility = XR_ADV_EvaluateShadow(light, surface, N, L, reason);
+#if !defined(XR_ADV_SHADE_LEAN)
     shadowReason = max(shadowReason, reason);
     shadowVisibility = min(shadowVisibility, visibility);
+#endif
     vec3 radiance = light.colorAndIntensity.rgb * light.colorAndIntensity.w * attenuation * visibility;
     vec3 diffuse, specular;
     vec3 result = XR_ADV_EvaluatePBRDirect(N, V, L, radiance, albedo,
         roughness, metallic, diffuse, specular);
+#if !defined(XR_ADV_SHADE_LEAN)
     directDiffuse += diffuse;
     directSpecular += specular;
+#endif
     return result;
 }
 
+// XR_ADV_SHADE_LEAN builds the standard kernel without the paths that a frame with no shading
+// debug view never runs: the debug views and the per-light debug globals (direct diffuse and
+// specular, shadow reason and visibility).
+// The unused code still costs registers in the generic kernel. The lean kernel writes no
+// shadow bits into the shading diagnostics image; the generic kernel does.
 // XR_ADV_NATIVE_SHADING_FAMILY selects one material family per kernel:
 // XR_ADV_NATIVE_SHADING_FAMILY_STANDARD (standard and projective-mirror materials) or
 // XR_ADV_NATIVE_SHADING_FAMILY_UBER (native Uber materials). Without it, the kernel shades
 // every family. The standard kernel does not include the Uber code, which keeps it small.
 #define XR_ADV_NATIVE_SHADING_FAMILY_STANDARD 1
 #define XR_ADV_NATIVE_SHADING_FAMILY_UBER 2
-// The standard kernel shades Uber pixels with a base-color fallback while the Uber kernel
-// is not ready. Matches NativeUberFallbackShadingFlag on the CPU.
-#define XR_ADV_SHADING_UBER_FALLBACK (1u << 29u)
 
 #if !defined(XR_ADV_NATIVE_SHADING_FAMILY) || XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_UBER
 #include "Advanced/Shading/ShadeNativeUber.glslinc"
@@ -327,6 +393,23 @@ vec3 XR_ADV_EvaluateLight(
 
 /// Returns true for a native Uber material row. Same test as XR_UBER_IsMaterial, without
 /// the Uber shading code.
+// Evaluates the lights of one froxel light-index range in list order.
+vec3 XR_ADV_EvaluateFroxelLightRange(uint offset, uint count, uint lightCount,
+    XRAdvancedSurface surface, vec3 N, vec3 V, vec3 albedo, float roughness, float metallic)
+{
+    vec3 color = vec3(0.0);
+    uint available = offset < uint(XR_ADV_LightIndexList.indices.length())
+        ? uint(XR_ADV_LightIndexList.indices.length()) - offset
+        : 0u;
+    for (uint j = 0u; j < min(count, available); ++j)
+    {
+        uint i = XR_ADV_LightIndexList.indices[offset + j];
+        if (i < lightCount)
+            color += XR_ADV_EvaluateLight(i, surface, N, V, albedo, roughness, metallic);
+    }
+    return color;
+}
+
 bool XR_ADV_IsNativeUberLayout(XRAdvancedMaterialRecord material)
 {
     return material.constantWordCount == XR_UBER_WORD_COUNT &&
@@ -344,49 +427,12 @@ bool XR_ADV_KernelShadesMaterialFamily(uint materialDense)
 #if XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_UBER
     return uber;
 #else
-    return !uber || (u_Push.flags & XR_ADV_SHADING_UBER_FALLBACK) != 0u;
+    return !uber;
 #endif
 #else
     return true;
 #endif
 }
-
-#if defined(XR_ADV_NATIVE_SHADING_FAMILY) && XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_STANDARD
-/// Cheap shading for a native Uber pixel while the Uber kernel compiles: the authored
-/// base color and base texture as a rough dielectric, lit by the world ambient and the
-/// directional lights.
-/// It uses the scene lighting, so it follows exposure like other surfaces. It is never
-/// magenta, so an Uber material that is still loading does not flash the frame.
-void XR_ADV_ShadeUberFallback(uvec2 pixel, XRAdvancedMaterialRecord material, XRAdvancedSurface surface,
-    XRAdvancedViewRecord view, uint viewIndex, float ambientOcclusion,
-    inout XRAdvancedOpaqueSampleResult result)
-{
-#if defined(XR_UBER_WORD_Color)
-    vec3 baseColor = clamp(XR_ADV_StandardVector(material, XR_UBER_WORD_Color).rgb, vec3(0.0), vec3(1.0));
-#else
-    vec3 baseColor = vec3(0.7);
-#endif
-#if defined(XR_UBER_TEX_MainTex)
-    // UV0 without the source UV transform: close enough for a short-lived fallback.
-    baseColor *= XR_ADV_StandardTexture(material, XR_UBER_TEX_MainTex, surface.texCoord0,
-        surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0)).rgb;
-#endif
-    float fallbackRoughness = 0.8;
-    float fallbackMetallic = 0.0;
-    XR_ADV_ApplyDecalBuffer(pixel, baseColor, fallbackRoughness, fallbackMetallic);
-    vec3 N = normalize(surface.shadingNormal);
-    vec3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
-    vec3 color = XR_ADV_WorldAmbient(viewIndex) * baseColor *
-        XR_ADV_DiffuseOcclusion(u_Push.flags, ambientOcclusion, baseColor);
-    uint lightCount = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
-    for (uint i = 0u; i < lightCount; ++i)
-        if (XR_ADV_Lights.records[i].type == 0u)
-            color += XR_ADV_EvaluateLight(i, surface, N, V, baseColor, fallbackRoughness, fallbackMetallic);
-    result.radiance = color;
-    result.opacity = 1.0;
-    result.reactive = 1.0;
-}
-#endif
 
 void XR_ADV_EvaluateNativeOpaqueSample(
     uvec2 pixel,
@@ -456,14 +502,22 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         return;
     }
 
+    // Meshlet debug view: replaces the material result for every material
+    // family, so the meshlet layout shows on all opaque surfaces.
+    if (((u_Push.flags >> 8u) & 255u) == XR_ADV_SHADING_DEBUG_MESHLET_ID)
+    {
+        result.radiance = XR_ADV_MeshletDebugColor(identity, metadata);
+        result.opacity = 1.0;
+        result.velocity = surface.motionNdc;
+        return;
+    }
+
     XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
     XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
     if (XR_ADV_IsNativeUberLayout(material))
     {
 #if !defined(XR_ADV_NATIVE_SHADING_FAMILY) || XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_UBER
         XR_UBER_Shade(pixel, surface, view, material, ambientOcclusion, result);
-#else
-        XR_ADV_ShadeUberFallback(pixel, material, surface, view, viewIndex, ambientOcclusion, result);
 #endif
         return;
     }
@@ -503,8 +557,16 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy,
         base.rgb, rmse.w);
     if ((materialFlags & 4u) != 0u)
-        rmse.xy *= XR_ADV_StandardTexture(material, 2u, surface.texCoord0,
-            surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0)).rg;
+        rmse.xy *= XR_ADV_StandardRoughnessMetallic(materialFlags,
+            XR_ADV_StandardTexture(material, 2u, surface.texCoord0,
+                surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0)));
+    // The material occlusion texture multiplies the screen-space AO (product, as the glTF
+    // and engine forward paths do). ambientOcclusion reaches only indirect light: ambient and
+    // probe diffuse, and probe specular through the specular occlusion function.
+    if ((materialFlags & XR_ADV_STANDARD_OCCLUSION_TEXTURE_FLAG) != 0u)
+        ambientOcclusion *= XR_ADV_StandardOcclusion(material,
+            surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy,
+            surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy);
     vec3 N = normalize(surface.shadingNormal);
     if ((materialFlags & 2u) != 0u &&
         XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT))
@@ -525,8 +587,13 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             normalTex = XR_ADV_DecodeTangentNormal(XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
                 surface.texCoord0Dx, surface.texCoord0Dy,
                 vec4(0.5, 0.5, 1.0, 1.0)));
-        N = normalize(surface.tangent * normalTex.x +
+        vec3 mappedN = normalize(surface.tangent * normalTex.x +
             surface.bitangent * normalTex.y + N * normalTex.z);
+        // GTAO normal-map micro-occlusion. The view flag comes from the camera GTAO settings,
+        // so the branch is uniform for the dispatch. N still holds the surface normal here.
+        if ((view.flags & XR_ADV_VIEW_GTAO_MATERIAL_NORMALS) != 0u)
+            ambientOcclusion *= XR_ADV_NormalMapMicroOcclusion(dot(mappedN, N));
+        N = mappedN;
     }
     vec3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
     float roughness = clamp(rmse.x, 0.04, 1.0);
@@ -592,21 +659,12 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         }
         else
         {
-            uint offsets[2] = uint[2](froxel.pointLightOffset, froxel.spotLightOffset);
-            uint counts[2] = uint[2](froxel.pointLightCount, froxel.spotLightCount);
-            for (uint type = 0u; type < 2u; ++type)
-            {
-                uint available = offsets[type] < uint(XR_ADV_LightIndexList.indices.length())
-                    ? uint(XR_ADV_LightIndexList.indices.length()) - offsets[type]
-                    : 0u;
-                for (uint j = 0u; j < min(counts[type], available); ++j)
-                {
-                    uint i = XR_ADV_LightIndexList.indices[offsets[type] + j];
-                    if (i < lightCount)
-                        color += XR_ADV_EvaluateLight(i, surface, N, V,
-                            base.rgb, roughness, metallic);
-                }
-            }
+            // Point lights, then spot lights. Two calls instead of a two-entry offset and
+            // count array keep the arrays out of per-invocation local memory.
+            color += XR_ADV_EvaluateFroxelLightRange(froxel.pointLightOffset, froxel.pointLightCount,
+                lightCount, surface, N, V, base.rgb, roughness, metallic);
+            color += XR_ADV_EvaluateFroxelLightRange(froxel.spotLightOffset, froxel.spotLightCount,
+                lightCount, surface, N, V, base.rgb, roughness, metallic);
         }
         if ((u_Push.flags & 8u) != 0u)
         {
@@ -621,6 +679,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         }
     }
 
+#if !defined(XR_ADV_SHADE_LEAN)
     uint debugView = (u_Push.flags >> 8u) & 255u;
     if (debugView == 1u) color = directDiffuse;
     else if (debugView == 2u) color = directSpecular;
@@ -652,6 +711,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             shadowReason == XR_ADV_SHADOW_OUTSIDE ? vec3(0.0, 0.0, 0.5) :
             vec3(1.0, 0.0, float(shadowReason) / 6.0);
     else if (debugView == 10u) color = vec3(ambientOcclusion);
+#endif
 
     result.radiance = max(color, vec3(0.0));
     result.opacity = base.a;

@@ -569,8 +569,11 @@ internal sealed partial class VulkanFrameLoop
     {
         slot.Callback = callback;
         slot.AdvancedPickingCallback = null;
+        slot.EditorPickingCallback = null;
+        slot.IsEditorPicking = false;
+        slot.EditorPickingToken = 0UL;
         slot.IsAdvancedPicking = false;
-        slot.AdvancedPickingIdentitySource = null;
+        slot.PickingIdentitySource = null;
         slot.AdvancedPickingMetadataSource = null;
         slot.AdvancedPickingSelectionSource = null;
         slot.SourceFormat = sourceFormat;
@@ -918,9 +921,9 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        if (slot.IsAdvancedPicking)
+        if (slot.IsAdvancedPicking || slot.IsEditorPicking)
         {
-            ProcessAdvancedPickingReadback(slot, rawPixels);
+            ProcessPickingReadback(slot, rawPixels);
             return true;
         }
 
@@ -1074,8 +1077,22 @@ internal sealed partial class VulkanFrameLoop
 
         Action<AdvancedVisibilityEncodedSurface>? pickingCallback =
             Interlocked.Exchange(ref slot.AdvancedPickingCallback, null);
+        Action<ulong, EditorPickingEncodedPixel>? editorPickingCallback =
+            Interlocked.Exchange(ref slot.EditorPickingCallback, null);
         Action<ScreenshotReadbackResult>? callback = Interlocked.Exchange(ref slot.Callback, null);
         Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackFailedCount);
+        if (editorPickingCallback is not null)
+        {
+            try
+            {
+                editorPickingCallback(slot.EditorPickingToken, default);
+            }
+            catch (Exception ex)
+            {
+                Debug.VulkanWarning("[Vulkan] Editor picking readback failure callback threw: {0}", ex.Message);
+            }
+            return;
+        }
         if (pickingCallback is not null)
         {
             try
@@ -1138,7 +1155,10 @@ internal sealed partial class VulkanFrameLoop
         ReleaseScreenshotReadbackReservation(slot);
         slot.Callback = null;
         slot.AdvancedPickingCallback = null;
-        slot.AdvancedPickingIdentitySource = null;
+        slot.EditorPickingCallback = null;
+        slot.IsEditorPicking = false;
+        slot.EditorPickingToken = 0UL;
+        slot.PickingIdentitySource = null;
         slot.AdvancedPickingMetadataSource = null;
         slot.AdvancedPickingSelectionSource = null;
 
@@ -1208,8 +1228,11 @@ internal sealed partial class VulkanFrameLoop
     {
         slot.Callback = null;
         slot.AdvancedPickingCallback = null;
+        slot.EditorPickingCallback = null;
+        slot.IsEditorPicking = false;
+        slot.EditorPickingToken = 0UL;
         slot.IsAdvancedPicking = false;
-        slot.AdvancedPickingIdentitySource = null;
+        slot.PickingIdentitySource = null;
         slot.AdvancedPickingMetadataSource = null;
         slot.AdvancedPickingSelectionSource = null;
         slot.RawByteCount = 0;
@@ -1287,7 +1310,10 @@ internal sealed partial class VulkanFrameLoop
 
             slot.Callback = null;
             slot.AdvancedPickingCallback = null;
-            slot.AdvancedPickingIdentitySource = null;
+            slot.EditorPickingCallback = null;
+            slot.IsEditorPicking = false;
+            slot.EditorPickingToken = 0UL;
+            slot.PickingIdentitySource = null;
             slot.AdvancedPickingMetadataSource = null;
             slot.AdvancedPickingSelectionSource = null;
             slot.Fence = default;

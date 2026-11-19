@@ -52,6 +52,24 @@ Renderer backends
   adoption, and backend telemetry. They consume generated source; they do not
   rebuild Uber material intent.
 
+## Imported Source Toon Texture Coordinates
+
+The source Toon importer maps Unity mesh UV channels 0 through 3 to the
+imported mesh UVs. The mesh importer reflects V: `nativeV = 1 - sourceV`.
+For a texture that reads a mesh UV channel, the material importer keeps the
+source U scale and offset. It maps the V offset to
+`1 - sourceScaleY - sourceOffsetY` and negates V pan. The Uber shader then
+samples the imported texture at the source coordinate. An identity source
+transform stays an identity transform.
+
+This conversion applies to mapped mesh textures, masks, normal maps, detail
+maps, emission maps, and their mesh UV pan values. Procedural matcap textures,
+toon ramps, and cubemap directions keep their separate coordinate contracts.
+The source flipbook array shader restores source V before it applies its
+placement and texture transform. Its array transform stays in source space;
+its separate mesh UV mask uses the reflected V mapping.
+The generic material and LilToon import paths keep their existing transforms.
+
 ## Native Advanced Material Rows
 
 Recognized Unity Poiyomi imports carry `EngineMaterialSemanticIdentity.NativeUberV1`.
@@ -78,6 +96,18 @@ generated source stamps, the resolved dependency graph, source owner, and snippe
 version. Authored revisions differ from compile revisions. An unchanged manual
 reload can retain this proof. A generated marker or matching source text alone
 cannot establish ownership.
+
+`XRMaterial.TryGetUberMaterialState` parses the canonical manifest and publishes
+an immutable `UberSourceIdentityProof` only while its `UberShaderSourceStamp`,
+`ShaderSourceProviderOwner`, and snippet version remain current. The material
+reuses that proof while the same source is current. Advanced late-pass admission
+and transparent sorting call `XRMaterial.HasCurrentVerifiedUberSourceIdentity`.
+This check reads the proof, `NativeUberV1` semantic, active fragment, and any
+builder-owned variant provenance in memory. It does not check file timestamps
+for each draw. Shader list changes, authored source changes, and reloads clear
+the material semantic. Shader preparation parses the changed source and can
+publish a new proof. The source importer must certify the material again before
+late-pass admission uses that proof.
 
 Internal fragment replacement can preserve identity only through a one-use
 transition proof. It checks the exact old and new shader lists, canonical owner,
@@ -133,7 +163,11 @@ cutout require masked publication before depth writes. Missing UV1 uses UV0 in
 both raster and reconstruction. UV2 and UV3 use the two former reserved words
 in the 64-byte packed vertex. Missing UV2 and UV3 remain zero, as in the forward
 shader. Active vertex UDIM discard and alpha-to-coverage
-remain explicit unsupported operations. A view stores frozen render-time bits
+remain explicit unsupported operations in native visibility. The forward Vulkan
+path preserves the material alpha-to-coverage state for both single-sample and
+multisample targets. A single sample can still reject a fragment with zero alpha;
+the sample count must not silently disable the authored coverage state.
+A view stores frozen render-time bits
 at byte offset 940 without changing its 944-byte stride.
 
 The Unity importer preserves transparent source blend and depth state and sets
@@ -328,11 +362,37 @@ live validation.
 
 ### Source Layered Emission
 
+Vulkan authored raster draws require a generated Uber variant before program
+acquisition or warm prepared-state reuse. If source preparation is missing,
+the renderer requests it asynchronously and defers the draw. A failed variant
+reports its failure through preparation diagnostics. The canonical source's
+disabled feature defaults must not replace authored material features.
+
 Poiyomi emission slots use `_SourceLayeredEmission`. Each slot multiplies its
 emission map RGB by the selected amount of base color and by the emission map
 alpha. The slot mask and strength then scale the result. Generic engine
 emission slots keep their base-color blend rule. The raster and native
 evaluators use the same source calculation.
+
+Source emission masks use their own UV selector, texture transform, and pan.
+Mask pan uses source time scaling (`u_Time * 0.05`). It does not inherit the
+emission map's UV selector. Each global mask selector uses the indexed source
+name `_EmissionMask{slot}GlobalMask`, including slot zero. The importer accepts
+the older `_EmissionMaskGlobalMask` name only when the indexed slot-zero name
+is absent.
+
+Source center-out emission uses the absolute dot product of the mapped normal
+and view direction to select the emission texture sample. Each slot keeps its
+own center-out speed with source time scaling. It does not use blink speed for
+this sample or apply the engine-authored UV pulse to source emission.
+
+The source second rim keeps its own `_EnableRim2Lighting` switch. For supported
+style 0 materials, it changes the base color before lighting and adds emission
+once. The forward and native evaluators use the same rim response, theme, and
+global mask. The importer requires white defaults for unassigned source rim
+textures and reports active unsupported options. The engine-authored second
+rim retains its separate late additive path. A matcap does not enable an
+unauthored source second rim.
 
 ### Source Glitter
 

@@ -23,25 +23,41 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
     internal VulkanAdvancedComputePipeline FoveatedQuadFill { get; init; }
 
     /// <summary>
-    /// Native Uber shading kernel. It is prepared only for scenes with Uber kernels, after
-    /// the standard kernels are ready. While it is not current, the standard kernel shades
-    /// Uber pixels with a base-color fallback. It is not part of <see cref="IsCurrent"/>.
+    /// Standard single-sample shading kernel without the debug views and the per-light debug
+    /// globals (XR_ADV_SHADE_LEAN). Frames with no shading debug view use it instead of
+    /// <see cref="Shade"/>, because the unused paths still cost registers. Prepared with the
+    /// family.
+    /// </summary>
+    internal VulkanAdvancedComputePipeline ShadeLean { get; init; }
+
+    /// <summary>
+    /// Native Uber shading kernel. A single-sample scene with Uber materials
+    /// requires this kernel before the native closure is admitted.
     /// </summary>
     internal VulkanAdvancedComputePipeline ShadeUber { get; init; }
 
     /// <summary>
     /// Combined multisample kernel (standard and Uber in one pass, because one pixel can
-    /// hold samples of both families). It is prepared only for scenes with Uber kernels.
-    /// While it is not current, <see cref="ShadeMultisample"/> shades Uber samples with the
-    /// base-color fallback. It is not part of <see cref="IsCurrent"/>.
+    /// hold samples of both families). A multisample scene with Uber materials
+    /// requires this kernel before the native closure is admitted.
     /// </summary>
     internal VulkanAdvancedComputePipeline ShadeMultisampleCombined { get; init; }
 
+    /// <summary>
+    /// Occlusion-culled bounds overlay kernel. It is requested only while the
+    /// overlay is on and is not part of <see cref="IsCurrent"/>. While it compiles,
+    /// shading records no overlay.
+    /// </summary>
+    internal VulkanAdvancedComputePipeline OcclusionCulledBounds { get; init; }
+
     internal bool IsCurrent => Classify.IsCurrent && BuildArguments.IsCurrent && AmbientOcclusion.IsCurrent &&
-        BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent &&
+        BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent && ShadeLean.IsCurrent &&
         RvcShadeletTelemetry.IsCurrent && FoveatedQuadFill.IsCurrent;
 
     /// <summary>Checks the shading program selected by the sealed visibility mode.</summary>
-    internal bool IsCurrentFor(bool multisampleVisibility)
-        => IsCurrent && (!multisampleVisibility || ShadeMultisample.IsCurrent);
+    internal bool IsCurrentFor(bool multisampleVisibility, bool requiresUber)
+        => IsCurrent &&
+           (multisampleVisibility
+               ? requiresUber ? ShadeMultisampleCombined.IsCurrent : ShadeMultisample.IsCurrent
+               : !requiresUber || ShadeUber.IsCurrent);
 }

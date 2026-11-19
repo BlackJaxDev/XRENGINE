@@ -1,0 +1,50 @@
+#include "../Snippets/LensDistortion.glsl"
+
+layout(location = 0) in vec3 FragPos;
+layout(location = 0) out vec4 OutColor;
+#ifdef XR_EDITOR_HIGHLIGHT_STEREO
+uniform sampler2DArray SceneColorTexture;
+uniform sampler2DArray EditorHighlightMask;
+#define XR_EDITOR_UV(uv) vec3(uv, gl_ViewID_OVR)
+#else
+uniform sampler2D SceneColorTexture;
+uniform sampler2D EditorHighlightMask;
+#define XR_EDITOR_UV(uv) uv
+#endif
+uniform vec3 HoverOutlineColor; // XRENGINE_FREQUENCY(View)
+uniform vec3 SelectionOutlineColor; // XRENGINE_FREQUENCY(View)
+uniform bool HoverOutlineEnabled; // XRENGINE_FREQUENCY(View)
+uniform bool SelectionOutlineEnabled; // XRENGINE_FREQUENCY(View)
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform vec2 ScreenOrigin;
+
+vec2 SampleHighlight(vec2 outputUv)
+{
+    vec2 sourceUv = clamp(ApplyLensDistortionByMode(outputUv), vec2(0.0), vec2(1.0));
+    return step(vec2(0.5), texture(EditorHighlightMask, XR_EDITOR_UV(sourceUv)).rg);
+}
+
+void main()
+{
+    if (FragPos.x > 1.0 || FragPos.y > 1.0)
+        discard;
+    vec2 size = max(vec2(ScreenWidth, ScreenHeight), vec2(1.0));
+    vec2 uv = clamp(XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, size), vec2(0.0), vec2(1.0));
+    vec4 scene = texture(SceneColorTexture, XR_EDITOR_UV(uv));
+    vec2 current = SampleHighlight(uv);
+    vec2 neighbor = vec2(0.0);
+    // Measure the outline in output pixels after anti-aliasing and scaling.
+    for (int offset = 1; offset <= 3; ++offset)
+    {
+        vec2 stepUv = float(offset) / size;
+        neighbor = max(neighbor, SampleHighlight(uv + vec2(stepUv.x, 0.0)));
+        neighbor = max(neighbor, SampleHighlight(uv - vec2(stepUv.x, 0.0)));
+        neighbor = max(neighbor, SampleHighlight(uv + vec2(0.0, stepUv.y)));
+        neighbor = max(neighbor, SampleHighlight(uv - vec2(0.0, stepUv.y)));
+    }
+    vec2 outline = neighbor * (vec2(1.0) - current);
+    outline *= vec2(HoverOutlineEnabled ? 1.0 : 0.0, SelectionOutlineEnabled ? 1.0 : 0.0);
+    vec3 color = mix(SelectionOutlineColor, HoverOutlineColor, outline.x);
+    OutColor = vec4(mix(scene.rgb, color, max(outline.x, outline.y)), scene.a);
+}

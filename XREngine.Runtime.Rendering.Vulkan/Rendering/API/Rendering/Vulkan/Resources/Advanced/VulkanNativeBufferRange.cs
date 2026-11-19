@@ -25,4 +25,14 @@ internal readonly record struct VulkanNativeBufferRange(
            LifetimeSlot.Generation == other.LifetimeSlot.Generation &&
            NativeGeneration == other.NativeGeneration &&
            Usage == other.Usage;
+
+    /// <summary>
+    /// Compares all fields. The check compares the native handle by value, so it does not box
+    /// the Silk.NET handle struct (bin keys that contain this range are compared in each frame).
+    /// </summary>
+    public bool Equals(VulkanNativeBufferRange other) => Matches(other);
+
+    /// <summary>Combines the fields without boxing, consistent with <see cref="Equals(VulkanNativeBufferRange)"/>.</summary>
+    public override int GetHashCode()
+        => HashCode.Combine(Owner, Buffer.Handle, Offset, Length, LifetimeSlot.Index, LifetimeSlot.Generation, NativeGeneration, Usage);
 }

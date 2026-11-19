@@ -6,7 +6,7 @@ namespace XREngine.AgentOrchestration;
 /// <summary>
 /// Executes a bounded provider/tool loop independently of any UI or host process.
 /// </summary>
-public sealed class AgentOrchestrator(IAgentModelClient modelClient)
+public sealed class AgentOrchestrator(IAgentModelClient modelClient) : IAgentRunExecutor
 {
     private readonly IAgentModelClient _modelClient =
         modelClient ?? throw new ArgumentNullException(nameof(modelClient));
@@ -21,6 +21,9 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
         ArgumentException.ThrowIfNullOrWhiteSpace(runId);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(toolProvider);
+
+        if (request.ExecutionMode != AgentExecutionMode.Api)
+            throw new ArgumentException("The API orchestrator requires API execution mode.", nameof(request));
 
         observer ??= NullAgentRunObserver.Instance;
         Stopwatch stopwatch = Stopwatch.StartNew();
@@ -586,9 +589,7 @@ public sealed class AgentOrchestrator(IAgentModelClient modelClient)
             bool hasPath = !string.IsNullOrWhiteSpace(result.ImagePath);
             result = result with
             {
-                Content = result.Content
-                    + "\n[inline image omitted by broker budget"
-                    + (hasPath ? "; use the evidence path]" : "]"),
+                Content = $"{result.Content}\n[inline image omitted by broker budget{(hasPath ? "; use the evidence path]" : "]")}",
                 ImageDataUri = null,
                 IsError = result.IsError || !hasPath,
                 IsTruncated = true,

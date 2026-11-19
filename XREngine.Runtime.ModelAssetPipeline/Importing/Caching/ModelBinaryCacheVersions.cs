@@ -9,7 +9,7 @@ public static class ModelBinaryCacheVersions
     public const uint Payload = 1;
     public const uint ContainerCodec = 1;
     public const uint CookPolicy = 2;
-    public const uint ImportSettingsProjection = 1;
+    public const uint ImportSettingsProjection = 2;
     public const uint SourceIdentityPolicy = 1;
     public const uint CachePathPolicy = 1;
     public const uint VariantFingerprint = 1;

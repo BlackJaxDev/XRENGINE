@@ -119,6 +119,18 @@ internal unsafe partial class VkMeshRenderer
             BackendContext.Resources.MappedFrameArena is not { IsActive: true } frameArena)
             return false;
 
+        // Check the binding kinds before any buffer is resolved. A layout with any binding that
+        // is not a local dynamic uniform buffer (a sampler, an image or a snapshot buffer) never
+        // gets a local identity, and no memo entry is stored for it. Without this check, such a
+        // draw resolves the uniform buffers that come before the first other binding on every
+        // call (two resolves per binding and frame slot) and then returns false.
+        if (!LocalDynamicUniformSourcesRemainEligible(
+                program,
+                bindings,
+                activeSetMask,
+                bindingSnapshot))
+            return false;
+
         bindingSnapshot.ResolvePublishedResourceSignatures(
             viewFamilyIdentity,
             out _,
@@ -155,13 +167,8 @@ internal unsafe partial class VkMeshRenderer
             if (!entry.Valid || !entry.Key.Matches(in key))
                 continue;
             // Ambient buffer routing can change without replacing the captured
-            // snapshot. A memo hit still has to prove the resolver source.
-            if (!LocalDynamicUniformSourcesRemainEligible(
-                    program,
-                    bindings,
-                    activeSetMask,
-                    bindingSnapshot) ||
-                BackendContext.Resources.NativeBufferBindingRevision != bufferRevision)
+            // snapshot. The check above proves the resolver source for a memo hit too.
+            if (BackendContext.Resources.NativeBufferBindingRevision != bufferRevision)
                 return false;
             fingerprint = entry.Fingerprint;
             return true;

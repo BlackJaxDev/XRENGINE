@@ -666,6 +666,12 @@ internal sealed partial class RenderWorkBatch
         // Record first so an owner that observes quiescence also observes its time.
         RecordAsynchronousQuiescence();
         _terminalEvent.Set();
+        // The owner of a synchronous batch waits on lane 0 in ExecuteAndWait and checks
+        // IsQuiesced between waits. Wake it now: when a background lane finished the last
+        // item, it would otherwise sleep until its wait timeout, which can last a full
+        // system timer tick. Read the batch kind before the lease can return to the pool.
+        if (!IsAsynchronous)
+            _domain.WakeLaneZeroForBatchQuiescence();
         TryReturnReleasedLease();
     }
 

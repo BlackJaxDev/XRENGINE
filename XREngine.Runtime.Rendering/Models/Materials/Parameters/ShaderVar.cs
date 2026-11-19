@@ -80,6 +80,13 @@ namespace XREngine.Rendering.Models.Materials
 
         public event Action<ShaderVar>? ValueChanged;
 
+        /// <summary>
+        /// Raised after <see cref="Name"/> changes. The owning material uses it to clear its
+        /// name lookup cache and to advance its binding layout version, because the uniform
+        /// name decides which program slot and which encoded material word the value feeds.
+        /// </summary>
+        public event Action<ShaderVar>? NameChanged;
+
         //Determines if this var's components can be moved around
         protected bool _canSwizzle = true;
         protected Dictionary<string, ShaderVar> _fields = [];
@@ -96,7 +103,11 @@ namespace XREngine.Rendering.Models.Materials
         public string Name
         {
             get => _name;
-            set => SetField(ref _name, (value ?? "").ReplaceWhitespace(""));
+            set
+            {
+                if (SetField(ref _name, (value ?? "").ReplaceWhitespace("")))
+                    NameChanged?.Invoke(this);
+            }
         }
 
         [Browsable(false)]
@@ -133,15 +144,12 @@ namespace XREngine.Rendering.Models.Materials
         /// Ex: layout (location = 0) uniform float potato;
         /// </summary>
         internal string GetUniformDeclaration(int bindingLocation = -1)
-        {
-            string line = "";
-            if (bindingLocation >= 0)
-                line = string.Format("layout (location = {0}) ", bindingLocation);
-            return line + string.Format("uniform {0};", GetDeclaration());
-        }
+            => bindingLocation >= 0
+                ? $"layout (location = {bindingLocation}) uniform {GetDeclaration()};"
+                : $"uniform {GetDeclaration()};";
 
         internal string GetDeclaration()
-            => string.Format("{0} {1}", TypeName.ToString()[1..], Name);
+            => $"{TypeName.ToString()[1..]} {Name}";
 
         internal abstract string GetShaderValueString();
         /// <summary>

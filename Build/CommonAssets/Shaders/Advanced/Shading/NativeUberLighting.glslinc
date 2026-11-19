@@ -158,7 +158,7 @@ float XR_UBER_SourceMaskLightMap(XRUberCoordinates c, vec3 N, vec3 Nx, vec3 Ny, 
 vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
     vec3 V, vec3 L, vec3 radiance, vec3 ambient, float visibility, float mask,
     bool primary, vec3 rawPrimary, vec3 rawSelectedDirect,
-    XrSourceShCoefficients sh)
+    XrSourceShCoefficients sh, vec3 worldDiffuseOcclusion)
 {
     if (UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMode) == 1 &&
         (primary || UBER_V(_SourceAdditiveColor).z >= 1.5))
@@ -232,7 +232,8 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
             return xrSourceWrappedDiffuse(base, N, L, rawPrimary, sh,
                 UBER_V(_SourceWrappedColor).rgb,
                 UBER_V(_LightingShadowColor).rgb, wrapAmount, normalization,
-                materialAo, visibility, castedShadows, 1.0, monochromatic,
+                materialAo, worldDiffuseOcclusion, visibility,
+                castedShadows, 1.0, monochromatic,
                 UBER_F(_ShadowStrength), UBER_F(_LightingIgnoreAmbientColor),
                 UBER_F(_LightingGradientStart), UBER_F(_LightingGradientEnd),
                 UBER_F(_LightingMinLightBrightness), UBER_F(_LightingCapEnabled),
@@ -350,7 +351,8 @@ vec3 XR_UBER_Specular(vec3 N, vec3 V, vec3 L, vec3 tangent, vec3 radiance, vec3 
     return tint * radiance * highlight * nl * strength * mix(0.5, 2.0, clamp(UBER_F(_StylizedSpecular), 0.0, 1.0));
 }
 
-vec3 XR_UBER_ApplyCubemap(XRUberCoordinates c, vec3 N, vec3 V, float lightMap,
+vec3 XR_UBER_ApplyCubemap(XRUberCoordinates c, vec3 N, vec3 V,
+    vec3 cameraPosition, float lightMap,
     bool sourceComposition, inout vec3 color, inout vec3 emission)
 {
     vec3 direction = reflect(-V, N);
@@ -361,6 +363,15 @@ vec3 XR_UBER_ApplyCubemap(XRUberCoordinates c, vec3 N, vec3 V, float lightMap,
     vec4 cube = XR_UBER_Cube(UBER_T(_CubeMap), direction, cubeRoughness * cubeRoughness * 8.0);
     vec3 environment = cube.rgb * UBER_V(_CubeMapColor).rgb * max(UBER_F(_CubeMapStrength), 0.0);
     float mask = UBER_SAMPLE(c, _CubeMapMask, vec4(1.0))[clamp(UBER_I(_CubeMapMaskChannel), 0, 3)];
+    if (sourceComposition && UBER_I(_CubeMapMaskGlobalMask) > 0)
+    {
+        float globalMask = XR_UBER_GlobalMask(c, UBER_I(_CubeMapMaskGlobalMask),
+            uvec4(UBER_T(_GlobalMaskTexture0), UBER_T(_GlobalMaskTexture1),
+                UBER_T(_GlobalMaskTexture2), UBER_T(_GlobalMaskTexture3)),
+            cameraPosition, N, V);
+        mask = XR_UBER_MatcapMaskBlend(mask, globalMask,
+            UBER_I(_CubeMapMaskGlobalMaskBlendType));
+    }
     mask = mix(mask, 1.0 - mask, clamp(UBER_F(_CubeMapMaskInvert), 0.0, 1.0));
     float lightMask = mix(1.0, clamp(lightMap, 0.0, 1.0), clamp(UBER_F(_CubeMapLightMask), 0.0, 1.0));
     mask = sourceComposition ? min(mask, lightMask) : mask * lightMask;
@@ -372,7 +383,8 @@ vec3 XR_UBER_ApplyCubemap(XRUberCoordinates c, vec3 N, vec3 V, float lightMap,
     return environment;
 }
 
-vec3 XR_UBER_AdvancedPbr(XRUberCoordinates c, vec3 N, vec3 V, vec3 L, vec3 tangent,
+vec3 XR_UBER_AdvancedPbr(XRUberCoordinates c, vec3 N, vec3 V,
+    vec3 cameraPosition, vec3 L, vec3 tangent,
     vec3 bitangent, vec3 lightColor, float lightMap, vec3 specularColor, vec3 color, inout vec3 emission)
 {
     if (!XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_PBR)) return color;
@@ -385,7 +397,8 @@ vec3 XR_UBER_AdvancedPbr(XRUberCoordinates c, vec3 N, vec3 V, vec3 L, vec3 tange
     color += pow(clamp(dot(N, H), 0.0, 1.0), mix(16.0, 1024.0, clamp(UBER_F(_ClearCoatSmoothness), 0.0, 1.0))) * clamp(dot(N, L), 0.0, 1.0) * UBER_F(_ClearCoat);
     vec3 environment = vec3(0.0);
     if (UBER_I(_SourceCubeMap) == 0 && UBER_V(_SourceEnviroRim).x < 0.5)
-        environment = XR_UBER_ApplyCubemap(c, N, V, lightMap, false, color, emission);
+        environment = XR_UBER_ApplyCubemap(c, N, V, cameraPosition, lightMap,
+            false, color, emission);
     vec3 direction = reflect(-V, N);
     if (UBER_I(_SourceCubeMap) != 0 && UBER_V(_SourceEnviroRim).x < 0.5 &&
         UBER_F(_RimEnviroIntensity) > 0.0)

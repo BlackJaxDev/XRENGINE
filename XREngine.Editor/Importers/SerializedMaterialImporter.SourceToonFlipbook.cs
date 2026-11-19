@@ -82,7 +82,7 @@ public static partial class SerializedMaterialImporter
             Vector4 value = Vector(name, Vector4.Zero);
             SetVector2(material, name, new Vector2(value.X, value.Y));
         }
-        ApplyTextureTransform(material, document, "_FlipbookMask", "_FlipbookMask");
+        ApplySourceToonMeshTextureTransform(material, document, "_FlipbookMask", "_FlipbookMask");
         if (document.Textures.TryGetValue("_FlipbookTexArray", out SerializedTexturePropertyDocument? texture))
             SetVector4(material, "_FlipbookScaleOffset", new Vector4(texture.Scale.X, texture.Scale.Y, texture.Offset.X, texture.Offset.Y));
 

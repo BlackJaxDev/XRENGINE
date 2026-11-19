@@ -6,6 +6,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Profiling;
 using XREngine.Data.Runtime.Memory;
 using XREngine.Execution;
+using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Timers
 {
@@ -135,6 +136,12 @@ namespace XREngine.Timers
         /// </summary>
         public XREvent? PreCollectVisible;
         /// <summary>
+        /// Subscribe to this event to decide the output pacing of a viewport for the new collect frame.
+        /// It runs sequentially on the collect visible thread after <see cref="CollectFrameId"/> advances and
+        /// before <see cref="PreCollectVisible"/>, so the lights can read the decisions when they plan shadow work.
+        /// </summary>
+        public XREvent? PrepareFrameOutputs;
+        /// <summary>
         /// Subscribe to this event to execute parallel visibility collection on the collect visible thread.
         /// </summary>
         public XREvent? CollectVisible;
@@ -180,6 +187,24 @@ namespace XREngine.Timers
         /// clears it to measure the time from the render start to that release.
         /// </summary>
         private long _renderUntilCollectReleaseStartTicks;
+        /// <summary>
+        /// Stopwatch timestamp at which the collect of the last published generation started.
+        /// Written by the collect thread before it publishes; the render thread reads it after it
+        /// takes that publication, to record the publication age.
+        /// </summary>
+        private long _publishedCollectStartTimestamp;
+        /// <summary>
+        /// Start and end (stopwatch timestamps) of the XR frame wait that held the last published
+        /// generation (XR collect pacing), or 0 when the publication did not wait. The render
+        /// thread subtracts the overlap with its own publication wait, so that "render waits for
+        /// collect" excludes the time in which it waited for the XR frame.
+        /// </summary>
+        private long _publishedXrFrameWaitStartTimestamp;
+        private long _publishedXrFrameWaitEndTimestamp;
+        /// <summary>Collect-thread state: start of the last paced collect (0 after a render-paced collect).</summary>
+        private long _lastPacedCollectStartTimestamp;
+        /// <summary>Collect-thread state: fraction of a display period carried to the next paced collect.</summary>
+        private double _pacedBudgetPeriodCarry;
         private long _fixedUpdateAccumulatorTicks;
         private long _fixedUpdateClockTimestampTicks;
         private ECollectVisibleLatePolicy _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
@@ -471,6 +496,9 @@ namespace XREngine.Timers
         private void RunCollectVisibleIteration()
         {
             long collectGeneration;
+            // XR collect pacing: with a focused OpenXR session that renders eyes, the collect for
+            // the next XR frame starts when the render thread ends the current one.
+            IOpenXrCollectPacing? xrPacing = RuntimeEngine.VRState.OpenXRApi as IOpenXrCollectPacing;
 #if !XRE_PUBLISHED
             long allocStart = 0;
             Engine.AllocationScope allocationScope = default;
@@ -486,6 +514,20 @@ namespace XREngine.Timers
             {
                 using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
+                    EOpenXrCollectPacingWait releaseWait = EOpenXrCollectPacingWait.NotPaced;
+                    if (xrPacing is not null)
+                    {
+                        Volatile.Write(ref _collectVisiblePhase, "WaitForXrCollectRelease");
+                        long releaseWaitStart = Stopwatch.GetTimestamp();
+                        releaseWait = xrPacing.WaitForCollectRelease();
+                        if (releaseWait is not (EOpenXrCollectPacingWait.NotPaced or EOpenXrCollectPacingWait.Ready))
+                            RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordCollectWaitForXrSubmit(Stopwatch.GetTimestamp() - releaseWaitStart);
+                        if (!IsRunning)
+                            return;
+                    }
+                    SetCollectBudgetPeriods(releaseWait == EOpenXrCollectPacingWait.NotPaced ? null : xrPacing);
+
+                    long collectStartTimestamp = Stopwatch.GetTimestamp();
                     //Collects visible object and generates render commands for the game's current state
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
@@ -527,14 +569,19 @@ namespace XREngine.Timers
 
                     // The shared publication path pumps frame-swap jobs, then swaps world and
                     // viewport buffers, and publishes only after every callback succeeds.
-                    if (!TryPublishCollectVisibleGeneration(collectGeneration))
+                    if (!TryPublishCollectVisibleGeneration(collectGeneration, collectStartTimestamp, xrPacing))
                     {
                         Stop();
                         return;
                     }
                     XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.CollectPublished);
                     // The stage total and the phase total share one end timestamp, so they agree exactly.
+                    // The XR frame wait before the publication is not swap work, so the swap phase
+                    // starts later by that wait.
                     long swapPhaseEndTicks = Stopwatch.GetTimestamp();
+                    long xrFrameWaitTicks = Volatile.Read(ref _publishedXrFrameWaitEndTimestamp) -
+                        Volatile.Read(ref _publishedXrFrameWaitStartTimestamp);
+                    swapPhaseStartTicks += Math.Clamp(xrFrameWaitTicks, 0L, swapPhaseEndTicks - swapPhaseStartTicks);
                     RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordSwapPhase(swapPhaseEndTicks - swapPhaseStartTicks);
                     XREngine.Rendering.CollectVisibleStageTimings.EndSwap(swapPhaseStartTicks, swapPhaseEndTicks);
                 }
@@ -614,6 +661,8 @@ namespace XREngine.Timers
             {
                 if (_visibilityGenerationGate.TryConsumeFresh(out _))
                 {
+                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordPublicationAge(
+                        Stopwatch.GetTimestamp() - Volatile.Read(ref _publishedCollectStartTimestamp));
                     break;
                 }
 
@@ -637,11 +686,11 @@ namespace XREngine.Timers
                     }
                 }
 
-                long waitStartTicks = TimeTicks();
+                long waitStartTimestamp = Stopwatch.GetTimestamp();
                 XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.RenderWaitCollectStart);
                 bool publicationAvailable = WaitForPublicationWithService(publicationWaitMilliseconds);
                 XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.RenderWaitCollectEnd);
-                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(TimeTicks() - waitStartTicks);
+                RecordRenderPublicationWait(waitStartTimestamp, Stopwatch.GetTimestamp());
                 if (!publicationAvailable)
                     return;
             }
@@ -664,6 +713,47 @@ namespace XREngine.Timers
                 return;
 
             MarkRenderFrameReadyForCollect();
+        }
+
+        /// <summary>
+        /// Sets <see cref="XREngine.Rendering.CollectBudgetPeriods"/> for the collect that starts now.
+        /// A render-paced collect is one period. A paced collect stands for the XR display periods
+        /// since the last paced collect; the fraction carries over, so the sum follows real time.
+        /// </summary>
+        private void SetCollectBudgetPeriods(IOpenXrCollectPacing? pacedBy)
+        {
+            long now = Stopwatch.GetTimestamp();
+            long periodTicks = pacedBy?.DisplayPeriodTicks ?? 0L;
+            if (pacedBy is null || periodTicks <= 0L || _lastPacedCollectStartTimestamp == 0L)
+            {
+                _lastPacedCollectStartTimestamp = pacedBy is null ? 0L : now;
+                _pacedBudgetPeriodCarry = 0.0;
+                XREngine.Rendering.CollectBudgetPeriods.Set(1);
+                return;
+            }
+
+            double carry = _pacedBudgetPeriodCarry + (now - _lastPacedCollectStartTimestamp) / (double)periodTicks;
+            int periods = Math.Clamp((int)Math.Floor(carry), 1, XREngine.Rendering.CollectBudgetPeriods.Maximum);
+            _pacedBudgetPeriodCarry = Math.Clamp(carry - periods, -1.0, 1.0);
+            _lastPacedCollectStartTimestamp = now;
+            XREngine.Rendering.CollectBudgetPeriods.Set(periods);
+        }
+
+        /// <summary>
+        /// Splits one render-thread publication wait into the part in which the collect thread held
+        /// the publication for <c>xrWaitFrame</c> (XR collect pacing) and the rest (collect and swap).
+        /// </summary>
+        private void RecordRenderPublicationWait(long waitStartTimestamp, long waitEndTimestamp)
+        {
+            long xrStart = Volatile.Read(ref _publishedXrFrameWaitStartTimestamp);
+            long xrEnd = Volatile.Read(ref _publishedXrFrameWaitEndTimestamp);
+            long total = Math.Max(0L, waitEndTimestamp - waitStartTimestamp);
+            long xrOverlap = xrEnd > xrStart
+                ? Math.Clamp(Math.Min(waitEndTimestamp, xrEnd) - Math.Max(waitStartTimestamp, xrStart), 0L, total)
+                : 0L;
+            if (xrOverlap > 0L)
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForXrFrame(xrOverlap);
+            RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(total - xrOverlap);
         }
 
         /// <summary>
@@ -965,6 +1055,7 @@ namespace XREngine.Timers
                 }
                 try
                 {
+                    PrepareFrameOutputs?.Invoke();
                     PreCollectVisible?.Invoke();
                     XREngine.Rendering.CollectVisibleStageTimings.Mark(ref stageMark, XREngine.Rendering.ECollectVisibleStage.PreCollectEvent);
                     CollectVisible?.Invoke();

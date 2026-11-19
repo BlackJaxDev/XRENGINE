@@ -1135,7 +1135,7 @@ public static partial class EditorImGuiUI
 
     private static string GetHtmlAttribute(string attributes, string name)
     {
-        Match match = Regex.Match(attributes, "(?is)\\b" + Regex.Escape(name) + "\\s*=\\s*[\"'](?<value>.*?)[\"']", ExternalTextureRegexOptions);
+        Match match = Regex.Match(attributes, $"(?is)\\b{Regex.Escape(name)}\\s*=\\s*[\"'](?<value>.*?)[\"']", ExternalTextureRegexOptions);
         return match.Success ? HtmlDecode(match.Groups["value"].Value) : string.Empty;
     }
 

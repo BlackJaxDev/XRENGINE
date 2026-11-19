@@ -294,7 +294,7 @@ namespace XREngine.Rendering.OpenGL
                     if (!HasVaryings)
                         return "TransformFeedback=<none>";
 
-                    return "TransformFeedback=" + BufferMode + ":" + string.Join("|", Varyings!);
+                    return $"TransformFeedback={BufferMode}:{string.Join("|", Varyings!)}";
                 }
             }
 
@@ -1523,8 +1523,7 @@ namespace XREngine.Rendering.OpenGL
                     $"compileMs={state.CompileMilliseconds:F2} linkMs={linkMilliseconds:F2} error={linkError ?? "<none>"}");
                 Debug.OpenGL(
                     $"[ShaderLinkQueue] Deferred program link {(linkStatus != 0 ? "completed" : "failed")} programId={state.ProgramId} " +
-                    $"compileMs={state.CompileMilliseconds:F2} linkMs={linkMilliseconds:F2}" +
-                    (string.IsNullOrWhiteSpace(linkError) ? "." : $" error='{linkError}'."));
+                    $"compileMs={state.CompileMilliseconds:F2} linkMs={linkMilliseconds:F2}{(string.IsNullOrWhiteSpace(linkError) ? "." : $" error='{linkError}'.")}");
 
                 PublishCompletedResult(
                     state.ProgramId,

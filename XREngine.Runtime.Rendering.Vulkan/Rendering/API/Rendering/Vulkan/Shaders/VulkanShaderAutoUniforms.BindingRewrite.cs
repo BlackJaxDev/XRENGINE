@@ -493,27 +493,8 @@ internal static partial class VulkanShaderAutoUniforms
             _ => 32u
         };
 
-    private const uint AutoUniformBindingBase = 64u;
-    private const uint AutoUniformBindingWindowSize = 16u;
-
-    private static uint FindAvailableAutoUniformBinding(string source, EShaderType shaderType)
-    {
-        uint binding = GetAutoUniformBindingBase(shaderType);
-        uint bindingEnd = binding + AutoUniformBindingWindowSize;
-        HashSet<uint> usedBindings = CollectLayoutBindings(source, VulkanDescriptorManager.GlobalsSetIndex);
-
-        while (binding < bindingEnd && usedBindings.Contains(binding))
-            binding++;
-
-        if (binding < bindingEnd)
-            return binding;
-
-        binding = Math.Max(FindNextBinding(source, VulkanDescriptorManager.GlobalsSetIndex), bindingEnd);
-        while (usedBindings.Contains(binding))
-            binding++;
-
-        return binding;
-    }
+    private const uint AutoUniformBindingBase = 256u;
+    private const uint AutoUniformBindingWindowSize = 8u;
 
     private static uint GetAutoUniformBindingBase(EShaderType shaderType)
     {
@@ -527,19 +508,13 @@ internal static partial class VulkanShaderAutoUniforms
             EShaderType.Compute => 5u,
             EShaderType.Task => 6u,
             EShaderType.Mesh => 7u,
-            _ => 1u,
+            _ => throw new ArgumentOutOfRangeException(nameof(shaderType), shaderType, "Unsupported Vulkan auto-uniform shader stage."),
         };
 
         return AutoUniformBindingBase + (stageSlot * AutoUniformBindingWindowSize);
     }
 
-    /// <summary>
-    /// Collects layout binding indices declared in <paramref name="source"/>. When <paramref name="targetSet"/>
-    /// is specified, only layout declarations in that descriptor set (including declarations that omit <c>set</c>
-    /// and therefore default to set 0 in Vulkan GLSL) are included so resources in other sets cannot push
-    /// stage auto-uniform UBOs into another stage's set-0 binding window.
-    /// </summary>
-    private static HashSet<uint> CollectLayoutBindings(string source, uint? targetSet = null)
+    private static HashSet<uint> CollectLayoutBindings(string source)
     {
         HashSet<uint> used = [];
         foreach (Match match in LayoutQualifierRegex.Matches(source))
@@ -548,17 +523,8 @@ internal static partial class VulkanShaderAutoUniforms
                 continue;
 
             string qualifiers = match.Groups["qualifiers"].Value;
-            if (!TryParseQualifier(qualifiers, "binding", out uint value))
-                continue;
-
-            if (targetSet.HasValue)
-            {
-                uint declaredSet = TryParseQualifier(qualifiers, "set", out uint parsedSet) ? parsedSet : 0u;
-                if (declaredSet != targetSet.Value)
-                    continue;
-            }
-
-            used.Add(value);
+            if (TryParseQualifier(qualifiers, "binding", out uint value))
+                used.Add(value);
         }
 
         return used;
@@ -576,7 +542,7 @@ internal static partial class VulkanShaderAutoUniforms
             || glslType.StartsWith("subpass", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static uint FindNextBinding(string source, uint? targetSet = null)
+    private static uint FindNextBinding(string source)
     {
         uint max = 0;
         foreach (Match match in LayoutQualifierRegex.Matches(source))
@@ -587,13 +553,6 @@ internal static partial class VulkanShaderAutoUniforms
             string qualifiers = match.Groups["qualifiers"].Value;
             if (!TryParseQualifier(qualifiers, "binding", out uint value))
                 continue;
-
-            if (targetSet.HasValue)
-            {
-                uint declaredSet = TryParseQualifier(qualifiers, "set", out uint parsedSet) ? parsedSet : 0u;
-                if (declaredSet != targetSet.Value)
-                    continue;
-            }
 
             if (value >= max)
                 max = value + 1;

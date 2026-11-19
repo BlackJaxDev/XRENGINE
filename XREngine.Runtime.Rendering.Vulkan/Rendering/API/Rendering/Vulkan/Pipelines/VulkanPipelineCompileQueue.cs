@@ -179,7 +179,8 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal bool TryCompleteComputePipelineForForeground(
         in VulkanComputePipelineCompileKey key,
         out VulkanComputePipelineCompileResult result,
-        out string reason)
+        out string reason,
+        out bool retryable)
     {
         long waitStart = Stopwatch.GetTimestamp();
         try
@@ -187,6 +188,7 @@ internal sealed unsafe partial class VulkanPipelineManager
         Interlocked.Increment(ref _foregroundPipelineWaitCount);
         result = default;
         reason = string.Empty;
+        retryable = false;
 
         VulkanComputePipelineCompileJob? job;
         using (VulkanFrameLockScope.Enter(
@@ -194,11 +196,18 @@ internal sealed unsafe partial class VulkanPipelineManager
                    EVulkanFrameWaitReason.PipelineCompilerLock))
         {
             if (_vulkanComputePipelineCompletedResults.TryGetValue(key, out result))
-                return result.Success && result.Pipeline.Handle != 0;
+            {
+                if (result.Success && result.Pipeline.Handle != 0)
+                    return true;
+                reason = result.ErrorMessage ?? "compute pipeline compilation failed";
+                retryable = result.Retryable;
+                return false;
+            }
 
             if (!_vulkanComputePipelineCompileJobs.TryGetValue(key, out job))
             {
                 reason = "compute pipeline compile was not admitted";
+                retryable = true;
                 return false;
             }
         }
@@ -207,12 +216,14 @@ internal sealed unsafe partial class VulkanPipelineManager
         if (!job.Task.Wait(ForegroundPipelineCompileTimeout))
         {
             reason = $"compute pipeline compile exceeded {ForegroundPipelineCompileTimeout.TotalSeconds:F0}s foreground timeout";
+            retryable = true;
             return false;
         }
 
         if (!TryTakeCompletedComputePipeline(key, out result))
         {
             reason = "compute pipeline compile completed but could not be published";
+            retryable = true;
             return false;
         }
 
@@ -220,6 +231,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             return true;
 
         reason = result.ErrorMessage ?? "compute pipeline compilation failed";
+        retryable = result.Retryable;
         return false;
         }
         finally
@@ -283,6 +295,7 @@ internal sealed unsafe partial class VulkanPipelineManager
         if (!job.Task.Wait(ForegroundPipelineCompileTimeout))
         {
             reason = $"pipeline compile exceeded {ForegroundPipelineCompileTimeout.TotalSeconds:F0}s foreground timeout";
+            retryable = true;
             return false;
         }
 

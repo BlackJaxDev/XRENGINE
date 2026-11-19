@@ -201,13 +201,14 @@ public sealed class RenderProfileComparisonTests
         public ComparisonExecution Run(params string[] extraArguments)
         {
             string script = Path.Combine(_repoRoot, "Tools", "Benchmarks", "Invoke-RenderProfileComparison.ps1");
-            string Quote(string value) => "'" + value.Replace("'", "''", StringComparison.Ordinal) + "'";
-            string ArrayLiteral(string[] paths) => "@(" + string.Join(",", paths.Select(Quote)) + ")";
+            string Quote(string value) => $"'{value.Replace("'", "''", StringComparison.Ordinal)}'";
+            string ArrayLiteral(string[] paths) => $"@({string.Join(",", paths.Select(Quote))})";
+            string laneArgument = _presentationlessProxy ? "-Lane presentationless " : string.Empty;
+            string extra = string.Join(" ", extraArguments.Select(value => value.StartsWith("-", StringComparison.Ordinal) ? value : Quote(value)));
             string command = $"& {Quote(script)} -RunRoot {Quote(RunRoot)} " +
                 $"-BaselineRecipePath {Quote(_baselineRecipePath)} -CandidateRecipePath {Quote(_candidateRecipePath)} " +
                 $"-BaselineResultPaths {ArrayLiteral(_baselinePaths)} -CandidateResultPaths {ArrayLiteral(_candidatePaths)} " +
-                (_presentationlessProxy ? "-Lane presentationless " : string.Empty) +
-                string.Join(" ", extraArguments.Select(value => value.StartsWith("-", StringComparison.Ordinal) ? value : Quote(value)));
+                $"{laneArgument}{extra}";
             ProcessStartInfo info = new("pwsh")
             {
                 UseShellExecute = false,

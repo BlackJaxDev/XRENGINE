@@ -15,8 +15,10 @@ internal static class RenderCommandSortPriority
             (material.EngineSemantic.IsColorCoverage() ||
              material.EngineSemantic == EngineMaterialSemanticIdentity.UberSoftOutlineV2 ||
              material.ResolveAdvancedLatePassMetadata() is { } metadata &&
-             AdvancedLatePassEligibilityValidator.IsVerifiedSoftOutlineBase(
-                 material, command.RenderPass, metadata))
+             (AdvancedLatePassEligibilityValidator.IsVerifiedSoftOutlineBase(
+                 material, command.RenderPass, metadata) ||
+              AdvancedLatePassEligibilityValidator.IsVerifiedSourceOrderedBase(
+                  material, command.RenderPass, metadata)))
             ? material.TransparentSortPriority
             : 0;
     }

@@ -166,7 +166,7 @@ public static partial class BrowserContentPackageBuilder
     private static void AtomicWrite(string destination, byte[] bytes, bool overwrite)
     {
         RejectLinks(destination);
-        string temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        string temporary = $"{destination}.{Guid.NewGuid():N}.tmp";
         try
         {
             using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))

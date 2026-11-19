@@ -232,7 +232,9 @@ namespace XREngine
                     public readonly ConcurrentQueue<(Vector3 pos0, Vector3 pos1, Vector3 pos2, ColorF4 color)> DepthTestedTriangleQueue = [];
                     public readonly ConcurrentQueue<DebugShapeInstance> ShapeInstanceQueue = [];
 
-                    public readonly ConcurrentDictionary<int, (UIText text, float lastUpdatedTime)> Texts = new();
+                    // The render thread owns text objects. Other threads use TextUpdateQueue.
+                    public readonly Dictionary<int, (UIText text, float lastUpdatedTime)> Texts = new();
+                    public readonly List<int> TextKeys = [];
                     public readonly ConcurrentQueue<(Vector3 pos, string text, ColorF4 color, float scale)> TextUpdateQueue = [];
 
                     public readonly InstancedDebugVisualizer Visualizer = new();
@@ -497,7 +499,64 @@ namespace XREngine
                 }
 
                 private static readonly Lock _debugShapeQueueLock = new();
-                public static void RenderShapes(bool depthTested)
+                private static EDebugPrimitivePreparationStatus _lastDebugTextFontPreparationStatus =
+                    EDebugPrimitivePreparationStatus.Ready;
+                private static string _lastDebugTextFontPreparationDetail = string.Empty;
+                private static EDebugPrimitivePreparationStatus _lastDebugTextGpuPreparationStatus =
+                    EDebugPrimitivePreparationStatus.Ready;
+                private static string _lastDebugTextGpuPreparationDetail = string.Empty;
+                public static EDebugPrimitivePreparationStatus LastDebugTextPreparationStatus
+                    => _lastDebugTextFontPreparationStatus is EDebugPrimitivePreparationStatus.Pending or
+                        EDebugPrimitivePreparationStatus.Failed
+                        ? _lastDebugTextFontPreparationStatus
+                        : _lastDebugTextGpuPreparationStatus;
+                public static string LastDebugTextPreparationDetail
+                    => _lastDebugTextFontPreparationStatus is EDebugPrimitivePreparationStatus.Pending or
+                        EDebugPrimitivePreparationStatus.Failed
+                        ? _lastDebugTextFontPreparationDetail
+                        : _lastDebugTextGpuPreparationDetail;
+                public static EDebugPrimitivePreparationStatus LastPointLinePreparationStatus { get; private set; }
+                    = EDebugPrimitivePreparationStatus.Ready;
+                public static string LastPointLinePreparationDetail { get; private set; } = string.Empty;
+
+                /// <summary>Returns the last optional debug draw preparation result.</summary>
+                public static object GetDebugShapePreparationDiagnostics()
+                    => new
+                    {
+                        PointLineStatus = LastPointLinePreparationStatus.ToString(),
+                        PointLineDetail = LastPointLinePreparationDetail,
+                        TextStatus = LastDebugTextPreparationStatus.ToString(),
+                        TextDetail = LastDebugTextPreparationDetail,
+                        TextFontStatus = _lastDebugTextFontPreparationStatus.ToString(),
+                        TextFontDetail = _lastDebugTextFontPreparationDetail,
+                        TextGpuStatus = _lastDebugTextGpuPreparationStatus.ToString(),
+                        TextGpuDetail = _lastDebugTextGpuPreparationDetail,
+                    };
+                /// <summary>
+                /// Prepares scene debug points and lines while the Advanced forward
+                /// framebuffer and Gizmos camera scope are active.
+                /// </summary>
+                public static bool PrepareShapeResources(bool depthTested)
+                {
+                    if (depthTested ||
+                        !RuntimeEngine.Rendering.State.IsMainPass ||
+                        RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?
+                            .ResolveAdvancedStageFamily() is null)
+                        return true;
+
+                    if (RuntimeEngine.Rendering.State.RenderingCamera is { } camera &&
+                        !camera.CullingMask.Contains(XREngine.Components.Scene.Transforms.DefaultLayers.GizmosIndex))
+                        return true;
+
+                    InstancedDebugVisualizer visualizer =
+                        ResolveDebugPrimitiveSceneState().Visualizer;
+                    bool ready = visualizer.TryPreparePointAndLineDraws();
+                    LastPointLinePreparationStatus = visualizer.PointLinePreparationStatus;
+                    LastPointLinePreparationDetail = visualizer.PointLinePreparationDetail;
+                    return ready;
+                }
+
+                public static void RenderShapes(bool depthTested, bool renderPointLines = true)
                 {
                     if (!RuntimeEngine.Rendering.State.IsMainPass)
                         return;
@@ -510,21 +569,42 @@ namespace XREngine
                     if (!depthTested)
                         DequeueDebugTextItems(scene);
 
-                    if (!depthTested && !scene.Texts.IsEmpty)
+                    if (!depthTested && scene.Texts.Count != 0)
                     {
-                        var hashes = scene.Texts.Keys.ToArray();
-                        for (int i = 0; i < hashes.Length; i++)
+                        List<int> hashes = scene.TextKeys;
+                        hashes.Clear();
+                        foreach (int hash in scene.Texts.Keys)
+                            hashes.Add(hash);
+                        for (int i = 0; i < hashes.Count; i++)
                         {
                             var hash = hashes[i];
                             if (!scene.Texts.TryGetValue(hash, out var text))
                                 continue;
 
-                            text.text.Render();
+                            bool renderText = _lastDebugTextFontPreparationStatus ==
+                                EDebugPrimitivePreparationStatus.Ready;
+                            if (renderText && RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?
+                                    .ResolveAdvancedStageFamily() is not null &&
+                                AbstractRenderer.Current is IDebugPrimitivePreparationBackendCapability
+                                    { CanPrepareDebugPrimitives: true } backend &&
+                                text.text.HasRenderableGlyphs)
+                            {
+                                EDebugPrimitivePreparationStatus status =
+                                    backend.TryPrepareDebugPrimitives(
+                                        text.text.PreparationRenderAction, 1,
+                                        idle: false, out string detail);
+                                _lastDebugTextGpuPreparationStatus = status;
+                                _lastDebugTextGpuPreparationDetail = detail;
+                                renderText = status is EDebugPrimitivePreparationStatus.Ready or
+                                    EDebugPrimitivePreparationStatus.Unsupported;
+                            }
+                            if (renderText)
+                                text.text.Render();
 
                             float nowTime = RuntimeRenderingHostServices.FrameTiming.ElapsedTime;
                             float lastTime = text.lastUpdatedTime;
                             if (nowTime - lastTime > RuntimeRenderingHostServices.FrameTiming.DebugTextMaxLifespan &&
-                                scene.Texts.TryRemove(hash, out (UIText text, float lastUpdatedTime) item))
+                                scene.Texts.Remove(hash, out (UIText text, float lastUpdatedTime) item))
                                 TextPool.Release(item.text);
                         }
                     }
@@ -538,7 +618,7 @@ namespace XREngine
                         else
                         {
                             scene.BaseOverlayLines.Render();
-                            scene.Visualizer.Render();
+                            scene.Visualizer.Render(renderPointLines);
                             scene.HighlightOverlayLines.Render();
                         }
                     }
@@ -1440,26 +1520,24 @@ namespace XREngine
 
                 private static void UpdateDebugText(DebugPrimitiveSceneState scene, Vector3 worldPosition, string text, ColorF4 color, float scale = DefaultDebugTextScale)
                 {
+                    EDebugPrimitivePreparationStatus fontStatus =
+                        FontGlyphSet.TryGetPreparedDefaultWorldFont(out FontGlyphSet? font, out string fontDetail);
+                    _lastDebugTextFontPreparationStatus = fontStatus;
+                    _lastDebugTextFontPreparationDetail = fontDetail;
+                    if (fontStatus != EDebugPrimitivePreparationStatus.Ready || font is null)
+                        return;
+
                     int hash = HashCode.Combine(text.GetHashCode(), worldPosition.GetHashCode());
-                    scene.Texts.AddOrUpdate(hash, _ =>
-                    {
-                        UIText t = TextPool.Take();
-                        t.Text = text;
-                        t.Color = color;
-                        t.LocalTranslation = worldPosition;
-                        //textObject.FontSize = 1.0f;
-                        t.Scale = scale;
-                        return (t, RuntimeRenderingHostServices.FrameTiming.ElapsedTime);
-                    }, (_, pair) =>
-                    {
-                        var t = pair.text;
-                        t.Text = text;
-                        t.Color = color;
-                        t.LocalTranslation = worldPosition;
-                        t.Scale = scale;
-                        t.InvalidateTextMatrix();
-                        return pair;
-                    });
+                    UIText t = scene.Texts.TryGetValue(hash, out var pair)
+                        ? pair.text
+                        : TextPool.Take();
+                    t.Font = font;
+                    t.Text = text;
+                    t.Color = color;
+                    t.LocalTranslation = worldPosition;
+                    t.Scale = scale;
+                    t.InvalidateTextMatrix();
+                    scene.Texts[hash] = (t, RuntimeRenderingHostServices.FrameTiming.ElapsedTime);
                 }
 
                 public static void RenderFrustum(Frustum frustum, ColorF4 color)

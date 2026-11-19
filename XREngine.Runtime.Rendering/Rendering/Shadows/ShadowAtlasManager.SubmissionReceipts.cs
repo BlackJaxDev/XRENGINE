@@ -1,3 +1,5 @@
+using XREngine.Components.Lights;
+
 namespace XREngine.Rendering.Shadows;
 
 public sealed partial class ShadowAtlasManager
@@ -7,13 +9,25 @@ public sealed partial class ShadowAtlasManager
     private const int InitialSubmissionCandidateCapacity = 32;
 
     private readonly HashSet<ShadowRequestKey> _submissionRetryKeys = new();
-    private readonly HashSet<ShadowRequestKey> _submissionCandidateKeySet = new();
+    // Copy of _submissionRetryKeys for the planning thread. The render thread owns the retry keys;
+    // the planning thread reads this copy when it groups the cascades of the next render plan,
+    // so a cascade that only waits for a retry still joins its cascade group.
+    private readonly HashSet<ShadowRequestKey> _planningSubmissionRetryKeys = new();
+    private readonly object _planningSubmissionRetrySync = new();
+    // Index of each candidate key in _submissionCandidateKeys for this tracking frame.
+    private readonly Dictionary<ShadowRequestKey, int> _submissionCandidateIndexByKey = new();
     private readonly Dictionary<ShadowRequestKey, ulong> _latestSubmissionFrameByKey = new();
     private readonly XRGpuFence?[] _pendingSubmissionFences = new XRGpuFence?[PendingSubmissionReceiptCapacity];
     private readonly ulong[] _pendingSubmissionFrameIds = new ulong[PendingSubmissionReceiptCapacity];
     private readonly int[] _pendingSubmissionKeyCounts = new int[PendingSubmissionReceiptCapacity];
     private readonly ShadowRequestKey[][] _pendingSubmissionKeysByReceipt = CreatePendingSubmissionKeyStorage();
     private ShadowRequestKey[] _submissionCandidateKeys = new ShadowRequestKey[InitialSubmissionCandidateCapacity];
+    // Revert state of each candidate key, at the same index as _submissionCandidateKeys.
+    private SubmissionRevert[] _submissionCandidateReverts = new SubmissionRevert[InitialSubmissionCandidateCapacity];
+    // Revert state of each key of each pending receipt, at the same index as its key.
+    private readonly SubmissionRevert[][] _pendingSubmissionRevertsByReceipt = CreatePendingSubmissionRevertStorage();
+    // Atlas writer commits that a failed or unavailable submission receipt reverted.
+    private long _submissionReverts;
     private int _submissionCandidateCount;
     private int _pendingSubmissionReceiptCount;
     private int _nextPendingSubmissionReceiptSlot;
@@ -27,6 +41,30 @@ public sealed partial class ShadowAtlasManager
             storage[i] = new ShadowRequestKey[InitialSubmissionCandidateCapacity];
         return storage;
     }
+
+    private static SubmissionRevert[][] CreatePendingSubmissionRevertStorage()
+    {
+        SubmissionRevert[][] storage = new SubmissionRevert[PendingSubmissionReceiptCapacity][];
+        for (int i = 0; i < storage.Length; i++)
+            storage[i] = new SubmissionRevert[InitialSubmissionCandidateCapacity];
+        return storage;
+    }
+
+    /// <summary>
+    /// State that undoes one atlas writer commit when its submission does not reach the GPU.
+    /// <paramref name="Committed"/> is the completion that the writer committed (its frame identifies
+    /// the commit). <paramref name="Previous"/> is the planned allocation before the write, with the
+    /// content version and last render frame of the content that the tile still holds.
+    /// <paramref name="HasCascadeSlot"/> is true for a directional cascade whose light slot the writer
+    /// committed; <paramref name="PreviousSlot"/> and <paramref name="PreviousSample"/> are the light's
+    /// slot and rendered sample before that commit.
+    /// </summary>
+    private readonly record struct SubmissionRevert(
+        ShadowTileCompletion Committed,
+        ShadowAtlasAllocation Previous,
+        bool HasCascadeSlot,
+        DirectionalLightComponent.DirectionalCascadeAtlasSlot PreviousSlot,
+        DirectionalCascadeSampleState PreviousSample);
 
     private ulong SubmissionTrackingRenderFrameId
     {
@@ -48,13 +86,21 @@ public sealed partial class ShadowAtlasManager
             Math.Max(MaxGroupedSubmissionCandidateCount, renderCandidateCapacity));
 
         _submissionRetryKeys.EnsureCapacity(maxRequestCount);
+        lock (_planningSubmissionRetrySync)
+            _planningSubmissionRetryKeys.EnsureCapacity(maxRequestCount);
         _latestSubmissionFrameByKey.EnsureCapacity(maxRequestCount);
-        _submissionCandidateKeySet.EnsureCapacity(candidateCapacity);
+        _submissionCandidateIndexByKey.EnsureCapacity(candidateCapacity);
         if (_submissionCandidateKeys.Length < candidateCapacity)
             Array.Resize(ref _submissionCandidateKeys, candidateCapacity);
+        if (_submissionCandidateReverts.Length < candidateCapacity)
+            Array.Resize(ref _submissionCandidateReverts, candidateCapacity);
         for (int i = 0; i < _pendingSubmissionKeysByReceipt.Length; i++)
+        {
             if (_pendingSubmissionKeysByReceipt[i].Length < candidateCapacity)
                 Array.Resize(ref _pendingSubmissionKeysByReceipt[i], candidateCapacity);
+            if (_pendingSubmissionRevertsByReceipt[i].Length < candidateCapacity)
+                Array.Resize(ref _pendingSubmissionRevertsByReceipt[i], candidateCapacity);
+        }
     }
 
     /// <summary>
@@ -80,7 +126,7 @@ public sealed partial class ShadowAtlasManager
         _lastSubmissionTrackingFrameId = renderFrameId;
         ResolvePendingSubmissionReceipts();
         _submissionCandidateCount = 0;
-        _submissionCandidateKeySet.Clear();
+        _submissionCandidateIndexByKey.Clear();
         _trackingSubmissionCandidates = true;
         return true;
     }
@@ -101,7 +147,7 @@ public sealed partial class ShadowAtlasManager
         }
 
         _submissionCandidateCount = 0;
-        _submissionCandidateKeySet.Clear();
+        _submissionCandidateIndexByKey.Clear();
         _trackingSubmissionCandidates = true;
         return true;
     }
@@ -124,6 +170,7 @@ public sealed partial class ShadowAtlasManager
             ulong submissionFrameId = _pendingSubmissionFrameIds[slot];
             int keyCount = _pendingSubmissionKeyCounts[slot];
             ShadowRequestKey[] keys = _pendingSubmissionKeysByReceipt[slot];
+            SubmissionRevert[] reverts = _pendingSubmissionRevertsByReceipt[slot];
             bool submitted = status == EGpuFenceSubmissionStatus.Submitted;
             int retryCount = 0;
             for (int i = 0; i < keyCount; i++)
@@ -138,11 +185,13 @@ public sealed partial class ShadowAtlasManager
                 _latestSubmissionFrameByKey.Remove(key);
                 if (submitted)
                 {
-                    _submissionRetryKeys.Remove(key);
+                    RemoveSubmissionRetryKey(key);
                     continue;
                 }
 
-                _submissionRetryKeys.Add(key);
+                AddSubmissionRetryKey(key);
+                InvalidateDirectionalStaticCascadeTile(key, submissionFrameId);
+                RevertFailedSubmission(in reverts[i]);
                 retryCount++;
             }
 
@@ -159,6 +208,42 @@ public sealed partial class ShadowAtlasManager
 
             ReleasePendingSubmissionReceipt(slot, fence, keyCount);
         }
+    }
+
+    /// <summary>Adds a retry key on the render thread and to the planning copy.</summary>
+    private void AddSubmissionRetryKey(ShadowRequestKey key)
+    {
+        if (!_submissionRetryKeys.Add(key))
+            return;
+        lock (_planningSubmissionRetrySync)
+            _planningSubmissionRetryKeys.Add(key);
+    }
+
+    /// <summary>Removes a retry key on the render thread and from the planning copy.</summary>
+    private void RemoveSubmissionRetryKey(ShadowRequestKey key)
+    {
+        if (!_submissionRetryKeys.Remove(key))
+            return;
+        lock (_planningSubmissionRetrySync)
+            _planningSubmissionRetryKeys.Remove(key);
+    }
+
+    /// <summary>Clears the retry keys on the render thread and the planning copy.</summary>
+    private void ClearSubmissionRetryKeys()
+    {
+        _submissionRetryKeys.Clear();
+        lock (_planningSubmissionRetrySync)
+            _planningSubmissionRetryKeys.Clear();
+    }
+
+    /// <summary>
+    /// True on the planning thread when the last render-thread state holds a submission retry for
+    /// <paramref name="key"/>.
+    /// </summary>
+    private bool IsSubmissionRetryPendingForPlanning(in ShadowRequestKey key)
+    {
+        lock (_planningSubmissionRetrySync)
+            return _planningSubmissionRetryKeys.Count != 0 && _planningSubmissionRetryKeys.Contains(key);
     }
 
     private bool RequiresSubmissionRetry(
@@ -188,25 +273,72 @@ public sealed partial class ShadowAtlasManager
         return false;
     }
 
-    private void TrackSubmissionCandidate(ShadowRequestKey key)
+    /// <summary>
+    /// Registers an atlas writer commit of this frame for the submission receipt. Call it after the
+    /// commit. A key that commits twice in one frame keeps the state before its first commit and
+    /// the latest commit, so a failed receipt restores the content that the tile still holds.
+    /// </summary>
+    private void TrackSubmissionCandidate(in SubmissionRevert revert)
     {
         if (!_trackingSubmissionCandidates)
             return;
 
-        _submissionRetryKeys.Remove(key);
-        if (!_submissionCandidateKeySet.Add(key))
-            return;
-
-        if (_submissionCandidateCount >= _submissionCandidateKeys.Length)
+        ShadowRequestKey key = revert.Committed.Key;
+        RemoveSubmissionRetryKey(key);
+        if (_submissionCandidateIndexByKey.TryGetValue(key, out int existing))
         {
-            _submissionCandidateKeySet.Remove(key);
-            _latestSubmissionFrameByKey.Remove(key);
-            _submissionRetryKeys.Add(key);
-            _queueOverflowCount++;
+            _submissionCandidateReverts[existing] = _submissionCandidateReverts[existing] with
+            {
+                Committed = revert.Committed,
+            };
             return;
         }
 
+        if (_submissionCandidateCount >= _submissionCandidateKeys.Length)
+        {
+            _latestSubmissionFrameByKey.Remove(key);
+            AddSubmissionRetryKey(key);
+            _queueOverflowCount++;
+            RevertFailedSubmission(in revert);
+            return;
+        }
+
+        _submissionCandidateIndexByKey.Add(key, _submissionCandidateCount);
+        _submissionCandidateReverts[_submissionCandidateCount] = revert;
         _submissionCandidateKeys[_submissionCandidateCount++] = key;
+    }
+
+    /// <summary>
+    /// Undoes one atlas writer commit whose submission did not reach the GPU, so no consumer samples
+    /// content that was never written. Removes the rendered overlay of the commit, queues a revert
+    /// completion that gives the resident allocation its content version and last render frame from
+    /// before the write (0 for a tile that was never valid), and gives a directional light its
+    /// cascade slot and rendered sample from before the commit. Each step applies only while the
+    /// failed commit is still the latest one for its key.
+    /// </summary>
+    private void RevertFailedSubmission(in SubmissionRevert revert)
+    {
+        ShadowTileCompletion committed = revert.Committed;
+        if (committed.Light is null)
+            return;
+
+        RemoveRenderedCompletionOverlay(committed.Key, committed.FrameId);
+        EnqueueTileCompletion(committed with
+        {
+            Allocation = revert.Previous,
+            Revert = true,
+        });
+        if (revert.HasCascadeSlot && committed.Light is DirectionalLightComponent light)
+        {
+            light.RevertRenderedCascadeAtlasSlot(
+                committed.Key.Source,
+                committed.Key.FaceOrCascadeIndex,
+                committed.Allocation,
+                committed.DirectionalCascadeSample,
+                revert.PreviousSlot,
+                revert.PreviousSample);
+        }
+        _submissionReverts++;
     }
 
     /// <summary>
@@ -231,7 +363,8 @@ public sealed partial class ShadowAtlasManager
                     {
                         ShadowRequestKey key = _submissionCandidateKeys[i];
                         _latestSubmissionFrameByKey.Remove(key);
-                        _submissionRetryKeys.Add(key);
+                        AddSubmissionRetryKey(key);
+                        RevertFailedSubmission(in _submissionCandidateReverts[i]);
                     }
 
                     XREngine.Debug.LightingWarningEvery(
@@ -252,7 +385,8 @@ public sealed partial class ShadowAtlasManager
                 {
                     ShadowRequestKey key = _submissionCandidateKeys[i];
                     _latestSubmissionFrameByKey.Remove(key);
-                    _submissionRetryKeys.Add(key);
+                    AddSubmissionRetryKey(key);
+                    RevertFailedSubmission(in _submissionCandidateReverts[i]);
                 }
 
                 XREngine.Debug.LightingWarningEvery(
@@ -271,6 +405,10 @@ public sealed partial class ShadowAtlasManager
                 _submissionCandidateKeys,
                 pendingKeys,
                 _submissionCandidateCount);
+            Array.Copy(
+                _submissionCandidateReverts,
+                _pendingSubmissionRevertsByReceipt[receiptSlot],
+                _submissionCandidateCount);
             _pendingSubmissionKeyCounts[receiptSlot] = _submissionCandidateCount;
             _pendingSubmissionFrameIds[receiptSlot] = submissionFrameId;
             _pendingSubmissionFences[receiptSlot] = fence;
@@ -281,7 +419,8 @@ public sealed partial class ShadowAtlasManager
         finally
         {
             Array.Clear(_submissionCandidateKeys, 0, _submissionCandidateCount);
-            _submissionCandidateKeySet.Clear();
+            Array.Clear(_submissionCandidateReverts, 0, _submissionCandidateCount);
+            _submissionCandidateIndexByKey.Clear();
             _submissionCandidateCount = 0;
             _trackingSubmissionCandidates = false;
         }
@@ -314,6 +453,7 @@ public sealed partial class ShadowAtlasManager
         _pendingSubmissionFrameIds[slot] = 0u;
         _pendingSubmissionKeyCounts[slot] = 0;
         Array.Clear(_pendingSubmissionKeysByReceipt[slot], 0, keyCount);
+        Array.Clear(_pendingSubmissionRevertsByReceipt[slot], 0, keyCount);
         _pendingSubmissionReceiptCount--;
     }
 
@@ -330,13 +470,14 @@ public sealed partial class ShadowAtlasManager
         }
 
         Array.Clear(_submissionCandidateKeys, 0, _submissionCandidateCount);
+        Array.Clear(_submissionCandidateReverts, 0, _submissionCandidateCount);
         _pendingSubmissionReceiptCount = 0;
         _nextPendingSubmissionReceiptSlot = 0;
         _submissionCandidateCount = 0;
         _lastSubmissionTrackingFrameId = ulong.MaxValue;
         _trackingSubmissionCandidates = false;
-        _submissionRetryKeys.Clear();
-        _submissionCandidateKeySet.Clear();
+        ClearSubmissionRetryKeys();
+        _submissionCandidateIndexByKey.Clear();
         _latestSubmissionFrameByKey.Clear();
     }
 }

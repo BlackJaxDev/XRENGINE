@@ -53,10 +53,10 @@ internal static class WindowsContainedProcess
                 },
                 Attributes = attributes,
             };
-            string block = string.Join('\0', start.Environment.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
-                .Select(pair => pair.Key + "=" + pair.Value)) + "\0\0";
+            string block = $"{string.Join('\0', start.Environment.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair => $"{pair.Key}={pair.Value}"))}\0\0";
             environment = Marshal.StringToHGlobalUni(block);
-            Check(CreateProcessW(start.FileName, new StringBuilder('"' + start.FileName + '"'), 0, 0, true,
+            Check(CreateProcessW(start.FileName, new StringBuilder($"\"{start.FileName}\""), 0, 0, true,
                 0x08000000 | 0x00000400 | 0x00080000, environment, start.WorkingDirectory, ref startup, out info));
             var process = Process.GetProcessById(checked((int)info.ProcessId));
             _ = process.Handle; // Acquire the owned handle while the original creation handle pins its identity.

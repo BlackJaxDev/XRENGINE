@@ -713,8 +713,7 @@ public sealed partial class AdvancedGpuScenePublisher
         string[] messages = new string[(int)EAdvancedPreparedGateOutcome.Count];
         for (int index = 0; index < messages.Length; ++index)
             messages[index] =
-                "[CanonicalPublication] The prepared unchanged-row verdict passed, but the swap-time gate failed. Witness: " +
-                ((EAdvancedPreparedGateOutcome)index).ToString() + ".";
+                $"[CanonicalPublication] The prepared unchanged-row verdict passed, but the swap-time gate failed. Witness: {(EAdvancedPreparedGateOutcome)index}.";
         return messages;
     }
 }

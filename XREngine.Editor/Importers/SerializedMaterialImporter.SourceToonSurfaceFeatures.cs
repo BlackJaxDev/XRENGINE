@@ -39,14 +39,16 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_SourceCubeMap", IsCubemapEnabled(document) ? 1 : 0);
 
         BindExactSurfaceParameters(material, document);
+        BindSourceCubemapMask(material, document, resolver);
         BindSourceToonGlitter(material, document, resolver, sourceVersion, diagnostics);
         BindSourceToonFlipbook(material, document);
         BindSourceToonDissolve(material, document, diagnostics);
         MapInt(document, material, "_RimLightColorThemeIndex", "_RimLightColorThemeIndex");
         BindCompositeSurfaceParameters(material, document, resolver, sourceVersion);
         BindSourceAnisotropy(material, document, resolver, warnings);
-        BindSourceUtsSpecular(material, document);
         BindSourceRimParameters(material, document, diagnostics, warnings);
+        BindSourceRim2Parameters(material, document, resolver);
+        BindSourceStylizedSpecular(material, document, resolver, warnings);
         BindSourceLightingParameters(material, document, diagnostics, warnings);
         BindSourceClearCoatParameters(material, document, diagnostics, warnings);
         BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings, sourceVersion);
@@ -66,13 +68,7 @@ public static partial class SerializedMaterialImporter
             "_GlobalMaskTexture1",
             "_GlobalMaskTexture2",
             "_GlobalMaskTexture3") ||
-            document.TryGetPositive("_GlobalMaskTexturesEnable") ||
-            HasAnyPositive(
-                document,
-                "_Decal0ApplyGlobalMaskIndex",
-                "_Decal1ApplyGlobalMaskIndex",
-                "_Decal2ApplyGlobalMaskIndex",
-                "_Decal3ApplyGlobalMaskIndex"))
+            document.TryGetPositive("_GlobalMaskTexturesEnable"))
         {
             return true;
         }
@@ -114,56 +110,49 @@ public static partial class SerializedMaterialImporter
             "_Specular2Enabled",
             "_EnableEnvironmentalRim",
             "_BacklightEnabled") ||
-           IsSourceUtsSpecularActive(document) ||
            HasExternalTexture(document, "_MochieMetallicMaps") ||
            IsCubemapEnabled(document) && HasExternalTexture(document, "_CubeMap");
 
     private static bool IsCubemapEnabled(SerializedMaterialDocument document)
         => document.TryGetPositive("_CubeMapEnabled");
 
-    private static bool IsSourceUtsSpecularActive(SerializedMaterialDocument document)
-        => document.TryGetPositive("_StylizedSpecular") &&
-           GetInt(document, "_StylizedReflectionMode") == 0;
-
-    private static void BindSourceUtsSpecular(
+    private static void BindSourceCubemapMask(
         XRMaterial material,
-        SerializedMaterialDocument document)
+        SerializedMaterialDocument document,
+        SourceAssetResolver resolver)
     {
-        if (!IsSourceUtsSpecularActive(document))
-        {
-            SetVector4(material, "_SourceUtsSettings", Vector4.Zero);
+        if (!IsCubemapEnabled(document))
             return;
+
+        int globalMask = GetInt(document, "_CubeMapMaskGlobalMask");
+        int globalBlend = GetInt(document, "_CubeMapMaskGlobalMaskBlendType", 2);
+        bool globalMasksEnabled = document.TryGetPositive("_GlobalMaskTexturesEnable");
+        if (globalMask > 0)
+        {
+            if (globalMask > 16 || globalBlend is < 0 or > 7)
+                throw new SourceVisualImportException($"Source cubemap global mask is outside its supported range on '{document.Name}'.");
+
+            string maskName = $"_GlobalMaskTexture{(globalMask - 1) / 4}";
+            bool hasGlobalTexture = HasExternalTexture(document, maskName) ||
+                globalMask <= 4 && HasExternalTexture(document, "_GlobalMaskTexture") ||
+                HasWhiteShaderTextureDefault(resolver.Resolve(document.Shader.Guid), maskName);
+            if (globalMasksEnabled && !hasGlobalTexture || !globalMasksEnabled && globalBlend != 2)
+                throw new SourceVisualImportException($"Source cubemap global mask has no supported texture or blend on '{document.Name}'.");
+            if (!globalMasksEnabled)
+                globalMask = 0;
         }
+        else if (globalMask < 0)
+            throw new SourceVisualImportException($"Source cubemap global mask index is invalid on '{document.Name}'.");
 
-        float strength = GetFloat(document, "_StylizedSpecularStrength", 1.0f);
-        float normalStrength = GetFloat(document, "_StylizedSpecularNormalStrength", 1.0f);
-        float specularToHighColor = GetFloat(document, "_Is_SpecularToHighColor");
-        float blendMode = GetInt(document, "_Is_BlendAddToHiColor");
-        SetVector4(material, "_SourceUtsSettings", new Vector4(strength, normalStrength, specularToHighColor, blendMode));
+        if (GetInt(document, "_CubeMapMaskUV") != 0 ||
+            document.TryGetVector("_CubeMapMaskPan", out Vector4 pan) && pan != Vector4.Zero)
+            throw new SourceVisualImportException($"Source cubemap mask UV or pan is not supported on '{document.Name}'.");
+        if (!HasExternalTexture(document, "_CubeMapMask") &&
+            !HasWhiteShaderTextureDefault(resolver.Resolve(document.Shader.Guid), "_CubeMapMask"))
+            throw new SourceVisualImportException($"Source cubemap mask has no white default on '{document.Name}'.");
 
-        SetVector4(material, "_SourceUtsLayer1", new Vector4(
-            GetFloat(document, "_HighColor_Power"),
-            GetFloat(document, "_StylizedSpecularFeather"),
-            GetFloat(document, "_Layer1Strength", 1.0f),
-            GetFloat(document, "_UseLightColor", 1.0f)));
-
-        SetVector4(material, "_SourceUtsLayer2", new Vector4(
-            GetFloat(document, "_Layer2Size"),
-            GetFloat(document, "_StylizedSpecular2Feather"),
-            GetFloat(document, "_Layer2Strength"),
-            GetFloat(document, "_Tweak_HighColorMaskLevel")));
-
-        Vector4 highColor = document.TryGetVector("_HighColor", out Vector4 rawHighColor)
-            ? rawHighColor
-            : Vector4.One;
-        float themeIndex = GetInt(document, "_HighColorThemeIndex");
-        SetVector4(material, "_SourceUtsColor", new Vector4(highColor.X, highColor.Y, highColor.Z, themeIndex));
-
-        SetVector4(material, "_SourceUtsFlags", new Vector4(
-            GetFloat(document, "_StylizedSpecularIgnoreShadow"),
-            GetFloat(document, "_StylizedSpecularIgnoreNormal"),
-            GetFloat(document, "_SSIgnoreCastedShadows"),
-            GetFloat(document, "_StylizedSpecularInvertMask")));
+        SetInt(material, "_CubeMapMaskGlobalMask", globalMask);
+        SetInt(material, "_CubeMapMaskGlobalMaskBlendType", globalBlend);
     }
 
     private static void BindSourceAnisotropy(
@@ -200,7 +189,7 @@ public static partial class SerializedMaterialImporter
         if (colorMap is not null)
         {
             ReplaceMaterialSampler(material, "_AnisoColorMap", colorMap);
-            ApplyTextureTransform(material, document, "_AnisoColorMap", "_AnisoColorMap");
+            ApplySourceToonMeshTextureTransform(material, document, "_AnisoColorMap", "_AnisoColorMap");
         }
         SetInt(material, "_AnisoColorMapUV", colorMapUv);
         SetVector4(material, "_SourceAnisoMapSettings", new Vector4(
@@ -350,99 +339,52 @@ public static partial class SerializedMaterialImporter
             material,
             "_CubeMapCoordinateZSign",
             IsCubemapEnabled(document) && HasExternalTexture(document, "_CubeMap") ? -1.0f : 1.0f);
-        SetFloat(material, "_SourceGrabPassBlendMode", GetFloat(document, "_SourceGrabPassBlendMode"));
-        SetFloat(material, "_SourceGrabPassBlendFactor", GetFloat(document, "_SourceGrabPassBlendFactor", 1.0f));
 
         for (int slot = 0; slot < 4; ++slot)
         {
             string suffix = slot == 0 ? string.Empty : slot.ToString();
             string indexedPrefix = $"_Decal{slot}";
-            bool decalEnabled = document.TryGetPositive($"_DecalEnabled{suffix}");
             SetVector4(
                 material,
                 $"_DecalBlendParams{slot}",
                 new Vector4(
                     GetInt(document, $"_DecalBlendType{suffix}"),
-                    decalEnabled
+                    document.TryGetPositive($"_DecalEnabled{suffix}")
                         ? GetFloat(document, $"_DecalBlendAlpha{suffix}", 1.0f)
                         : 0.0f,
-                    GetInt(document, $"_DecalOverrideAlpha{suffix}"),
+                    GetFloat(document, $"_DecalAlphaIntensity{suffix}", 1.0f),
                     GetFloat(document, $"_DecalEmissionStrength{suffix}")));
+            // The fourth value identifies source decals and stores one plus the mask blend mode.
+            SetVector4(
+                material,
+                $"_SourceDecalAlphaParams{slot}",
+                new Vector4(
+                    document.TryGetPositive($"_DecalEnabled{suffix}")
+                        ? GetInt(document, $"_DecalOverrideAlpha{suffix}")
+                        : 0,
+                    GetInt(document, $"{indexedPrefix}OverrideAlphaMode"),
+                    GetInt(document, $"_DecalTiled{suffix}"),
+                    1.0f + GetInt(document, $"{indexedPrefix}GlobalMaskBlendType", 2)));
             SetInt(material, $"_DecalUvMode{slot}", GetInt(document, $"_DecalTexture{suffix}UV"));
-            bool globalMasksEnabled = document.TryGetPositive("_GlobalMaskTexturesEnable");
-            int decalGlobalMask = globalMasksEnabled
-                ? GetInt(document, $"{indexedPrefix}GlobalMask")
-                : 0;
-            int decalApplyGlobalMask = globalMasksEnabled
-                ? GetInt(document, $"{indexedPrefix}ApplyGlobalMaskIndex")
-                : 0;
             SetVector4(
                 material,
                 $"_DecalSlotModifiers{slot}",
                 new Vector4(
                     GetInt(document, $"{indexedPrefix}FaceMask"),
-                    decalGlobalMask,
+                    GetInt(document, $"{indexedPrefix}GlobalMask"),
                     GetInt(document, $"_DecalMirroredUVMode{suffix}"),
                     GetFloat(document, $"{indexedPrefix}Depth")));
-            bool decalHueEnabled = document.TryGetPositive($"_DecalHueShiftEnabled{suffix}");
-            bool decalChromaEnabled =
-                !document.HasAnyProperty($"{indexedPrefix}ChannelSeparationEnable") ||
-                document.TryGetPositive($"{indexedPrefix}ChannelSeparationEnable");
             SetVector4(
                 material,
                 $"_DecalSlotFx{slot}",
                 new Vector4(
-                    decalHueEnabled ? GetFloat(document, $"_DecalHueShift{suffix}") : 0.0f,
-                    decalHueEnabled ? GetFloat(document, $"_DecalHueShiftSpeed{suffix}") : 0.0f,
-                    decalChromaEnabled ? GetFloat(document, $"{indexedPrefix}ChannelSeparation") : 0.0f,
+                    GetFloat(document, $"_DecalHueShift{suffix}"),
+                    GetFloat(document, $"_DecalHueShiftSpeed{suffix}"),
+                    GetFloat(document, $"{indexedPrefix}ChannelSeparation"),
                     GetInt(document, $"_DecalColor{suffix}ThemeIndex")));
-            int decalMaskChannel = document.TryGetInt($"{indexedPrefix}MaskChannel", out int authoredDecalMaskChan)
-                ? authoredDecalMaskChan
-                : document.TryGetFloat($"{indexedPrefix}MaskChannel", out float authoredDecalMaskChanFloat)
-                    ? (int)MathF.Round(authoredDecalMaskChanFloat)
-                    : slot;
-            SetVector4(
-                material,
-                $"_DecalSlotMask{slot}",
-                new Vector4(
-                    decalEnabled ? 1.0f : 0.0f,
-                    Math.Clamp(decalMaskChannel, 0, 3),
-                    GetFloat(document, $"_DecalTiled{suffix}"),
-                    GetInt(document, $"_DecalSymmetryMode{suffix}")));
-            SetVector4(
-                material,
-                $"_DecalSlotGlobalMask{slot}",
-                new Vector4(
-                    NormalizeSourceGlobalMaskBlendType(
-                        GetInt(document, $"{indexedPrefix}GlobalMaskBlendType", 2),
-                        sourceVersion),
-                    decalApplyGlobalMask,
-                    NormalizeSourceGlobalMaskBlendType(
-                        GetInt(document, $"{indexedPrefix}ApplyGlobalMaskBlendType"),
-                        sourceVersion),
-                    GetInt(document, $"{indexedPrefix}OverrideAlphaMode")));
-            Vector4 sideOffset = document.TryGetVector($"_DecalSideOffset{suffix}", out Vector4 authoredSideOffset)
-                ? authoredSideOffset
-                : Vector4.Zero;
-            SetVector4(material, $"_DecalSideOffset{suffix}", sideOffset);
-            if (document.Textures.TryGetValue($"_DecalTexture{suffix}", out SerializedTexturePropertyDocument? decalTexProp) &&
-                decalTexProp is not null)
-            {
-                SetVector4(
-                    material,
-                    $"_DecalTexture{suffix}_ST",
-                    new Vector4(decalTexProp.Scale.X, decalTexProp.Scale.Y, decalTexProp.Offset.X, decalTexProp.Offset.Y));
-            }
-            else if (material.Parameter<ShaderVector4>($"_DecalTexture{suffix}_ST") is null)
-            {
-                SetVector4(material, $"_DecalTexture{suffix}_ST", new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
-            }
 
             string emissionSuffix = slot == 0 ? string.Empty : slot.ToString();
             bool emissionEnabled = document.TryGetPositive($"_EnableEmission{emissionSuffix}");
-            bool emissionHueEnabled =
-                !document.HasAnyProperty($"_EmissionHueShiftEnabled{emissionSuffix}") ||
-                document.TryGetPositive($"_EmissionHueShiftEnabled{emissionSuffix}");
             SetVector4(
                 material,
                 $"_EmissionSlotParams{slot}",
@@ -450,59 +392,18 @@ public static partial class SerializedMaterialImporter
                     emissionEnabled ? GetFloat(document, $"_EmissionStrength{emissionSuffix}") : 0.0f,
                     GetFloat(document, $"_EmissionBlinkingEnabled{emissionSuffix}"),
                     GetFloat(document, $"_EmissiveBlink_Velocity{emissionSuffix}"),
-                    emissionHueEnabled ? GetFloat(document, $"_EmissionHueShiftSpeed{emissionSuffix}") : 0.0f));
-            SetVector4(
-                material,
-                $"_EmissionSlotColor{slot}",
-                document.TryGetVector($"_EmissionColor{emissionSuffix}", out Vector4 authoredEmissionColor)
-                    ? authoredEmissionColor
-                    : Vector4.One);
-            SetVector2(
-                material,
-                $"_EmissionSlotPan{slot}",
-                document.TryGetVector($"_EmissionMap{emissionSuffix}Pan", out Vector4 authoredEmissionPan)
-                    ? new Vector2(authoredEmissionPan.X, authoredEmissionPan.Y)
-                    : Vector2.Zero);
-            Vector2 emissionMaskPan =
-                document.TryGetVector($"_EmissionMask{emissionSuffix}Pan", out Vector4 authoredMaskPan) ||
-                document.TryGetVector($"_EmissionMask{slot}Pan", out authoredMaskPan)
-                    ? new Vector2(authoredMaskPan.X, authoredMaskPan.Y)
-                    : Vector2.Zero;
-            SetVector2(material, $"_Emission{slot}MaskPan", emissionMaskPan);
+                    GetFloat(document, $"_EmissionHueShiftSpeed{emissionSuffix}")));
+            MapVector4(document, material, $"_EmissionSlotColor{slot}", $"_EmissionColor{emissionSuffix}");
+            MapSourceToonMeshPan(document, material, $"_EmissionSlotPan{slot}", $"_EmissionMap{emissionSuffix}Pan");
             MapInt(document, material, $"_EmissionSlotUv{slot}", $"_EmissionMap{emissionSuffix}UV");
-            if (material.Parameter<ShaderVector4>($"_Emission{slot}Tex_ST") is null)
-                SetVector4(material, $"_Emission{slot}Tex_ST", new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
-            if (material.Parameter<ShaderVector4>($"_Emission{slot}Mask_ST") is null)
-                SetVector4(material, $"_Emission{slot}Mask_ST", new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
-            float emissionReplace = document.TryGetFloat($"_EmissionReplace{slot}", out float authoredEmissionReplace)
-                ? authoredEmissionReplace
-                : GetFloat(document, $"_EmissionReplace{emissionSuffix}");
-            int emissionGlobalMask = globalMasksEnabled
-                ? ResolveIndexedOrSuffixedInt(
-                    document,
-                    $"_EmissionMask{slot}GlobalMask",
-                    $"_EmissionMask{emissionSuffix}GlobalMask")
-                : 0;
-            int emissionGlobalMaskBlend = NormalizeSourceGlobalMaskBlendType(
-                ResolveIndexedOrSuffixedInt(
-                    document,
-                    $"_EmissionMask{slot}GlobalMaskBlendType",
-                    $"_EmissionMask{emissionSuffix}GlobalMaskBlendType",
-                    fallback: 2),
-                sourceVersion);
-            int emissionMaskChannel = ResolveIndexedOrSuffixedInt(
-                document,
-                $"_EmissionMask{slot}Channel",
-                $"_EmissionMask{emissionSuffix}Channel");
-            int emissionMaskUv = ResolveIndexedOrSuffixedInt(
-                document,
-                $"_EmissionMask{slot}UV",
-                $"_EmissionMask{emissionSuffix}UV");
+            MapFloat(document, material, $"_EmissionSlotCenterOutSpeed{slot}", $"_EmissionCenterOutSpeed{emissionSuffix}");
+            int emissionGlobalMask = GetInt(document, $"_EmissionMask{slot}GlobalMask",
+                slot == 0 ? GetInt(document, "_EmissionMaskGlobalMask") : 0);
             SetVector4(
                 material,
                 $"_EmissionSlotModifiers{slot}",
                 new Vector4(
-                    emissionReplace,
+                    GetFloat(document, $"_EmissionReplace{emissionSuffix}"),
                     GetFloat(document, $"_EmissionCenterOutEnabled{emissionSuffix}"),
                     emissionGlobalMask,
                     GetInt(document, $"_EmissionColor{emissionSuffix}ThemeIndex")));
@@ -511,17 +412,9 @@ public static partial class SerializedMaterialImporter
                 $"_EmissionSlotSampling{slot}",
                 new Vector4(
                     GetFloat(document, $"_EmissionBaseColorAsMap{emissionSuffix}"),
-                    emissionMaskChannel,
+                    GetInt(document, $"_EmissionMask{emissionSuffix}Channel"),
                     GetFloat(document, $"_EmissionMaskInvert{emissionSuffix}"),
                     GetFloat(document, $"_EmissionFluorescence{emissionSuffix}")));
-            SetVector4(
-                material,
-                $"_EmissionSlotExtra{slot}",
-                new Vector4(
-                    emissionGlobalMaskBlend,
-                    emissionHueEnabled ? GetFloat(document, $"_EmissionHueShift{emissionSuffix}") : 0.0f,
-                    emissionMaskUv,
-                    0.0f));
 
             string matcapPrefix = slot switch
             {
@@ -556,9 +449,7 @@ public static partial class SerializedMaterialImporter
                     GetFloat(document, "_Matcap2Normal", 1.0f) != 1.0f))
                     throw new SourceVisualImportException($"A source matcap custom normal is not supported on '{document.Name}'.");
                 int globalMask = GetInt(document, $"{matcapPrefix}MaskGlobalMask");
-                int globalBlend = NormalizeSourceGlobalMaskBlendType(
-                    GetInt(document, $"{matcapPrefix}MaskGlobalMaskBlendType", 2),
-                    sourceVersion);
+                int globalBlend = GetInt(document, $"{matcapPrefix}MaskGlobalMaskBlendType", 2);
                 bool hasGlobalMaskTexture = false;
                 if (globalMask is >= 1 and <= 16)
                 {
@@ -566,6 +457,7 @@ public static partial class SerializedMaterialImporter
                     hasGlobalMaskTexture = HasExternalTexture(document, maskName) ||
                         HasWhiteShaderTextureDefault(resolver.Resolve(document.Shader.Guid), maskName);
                 }
+                bool globalMasksEnabled = document.TryGetPositive("_GlobalMaskTexturesEnable");
                 if (globalMask != 0 && (globalMask < 1 || globalMask > 16 ||
                     globalBlend < 0 || globalBlend > 7 ||
                     !hasGlobalMaskTexture && globalMasksEnabled ||
@@ -655,35 +547,17 @@ public static partial class SerializedMaterialImporter
                 GetInt(document, $"{matcapPrefix}MaskUV")));
         }
 
-        bool rim2Enabled = document.TryGetPositive("_EnableRim2Lighting");
-        int rim2Style = GetInt(document, "_Rim2Style");
-        if (rim2Style is 0 or 1)
-            MapVector4(document, material, "_Rim2Color", "_Rim2LightColor", "_Rim2Color");
-        else
-            MapVector4(document, material, "_Rim2Color", "_Rim2Color", "_Rim2LightColor");
-
-        float rim2Sharpness = rim2Style == 0
-            ? GetFloat(document, "_Rim2Power", 1.0f)
-            : GetFloat(document, "_Rim2Sharpness", 1.0f);
-        float rim2Intensity = 0.0f;
-        if (rim2Enabled)
-        {
-            rim2Intensity = document.TryGetFloat("_Rim2Intensity", out float authoredRim2Intensity)
-                ? authoredRim2Intensity
-                : GetFloat(document, "_Rim2BlendStrength", 1.0f);
-        }
-
-        SetInt(material, "_Rim2Enable", rim2Enabled ? 1 : 0);
-        SetInt(material, "_Rim2MaskChannel", GetInt(document, "_Rim2MaskChannel"));
-        SetInt(material, "_Rim2LightColorThemeIndex", GetInt(document, "_Rim2LightColorThemeIndex"));
+        MapVector4(document, material, "_Rim2Color", "_Rim2Color", "_Rim2LightColor");
         SetVector4(
             material,
             "_Rim2Params",
             new Vector4(
                 GetFloat(document, "_Rim2Width"),
-                rim2Sharpness,
+                GetFloat(document, "_Rim2Sharpness", 1.0f),
                 GetFloat(document, "_Rim2HideInShadow"),
-                rim2Intensity));
+                document.TryGetPositive("_EnableRim2Lighting")
+                    ? GetFloat(document, "_Rim2Intensity", 1.0f)
+                    : 0.0f));
     }
 
     private static void BindSourceRimParameters(
@@ -713,41 +587,11 @@ public static partial class SerializedMaterialImporter
             GetInt(document, "_RimPoiBlendMode"),
             // Zero selects the older sharpness edge. Other values store the source blur plus one.
             rimBlur >= 0.0f ? rimBlur + 1.0f : 0.0f));
-
-        bool rim2Enabled = document.TryGetPositive("_EnableRim2Lighting");
-        string? unsupportedRim2Option = rim2Enabled ? GetUnsupportedSourceRim2Option(document) : null;
-        if (unsupportedRim2Option is not null)
-        {
-            AddDiagnostic(diagnostics, warnings,
-                MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
-                $"Source second rim option '{unsupportedRim2Option}' on '{document.Name}' uses the approximate Uber shading path.",
-                unsupportedRim2Option);
-        }
-        SetVector4(material, "_SourceRim2Settings", new Vector4(
-            rim2Enabled && unsupportedRim2Option is null ? 1.0f : 0.0f,
-            GetFloat(document, "_Rim2LightingInvert"),
-            GetFloat(document, "_Rim2Power", 1.0f),
-            GetFloat(document, "_Is_NormalMapToRim2Light", 1.0f)));
-        float rim2Blur = GetFloat(document, "_Rim2Blur", -1.0f);
-        SetVector4(material, "_SourceRim2ColorSettings", new Vector4(
-            GetFloat(document, "_Rim2BaseColorMix"),
-            GetFloat(document, "_Rim2Brightness", 1.0f),
-            GetInt(document, "_RimPoi2BlendMode"),
-            rim2Blur >= 0.0f ? rim2Blur + 1.0f : 0.0f));
-        SetVector4(material, "_SourceRim2Params", new Vector4(
-            GetFloat(document, "_Rim2Width"),
-            GetFloat(document, "_Rim2Sharpness"),
-            GetFloat(document, "_Rim2BlendStrength", 1.0f),
-            GetFloat(document, "_Rim2Strength")));
     }
 
     private static bool SupportsExactSourceRim(SerializedMaterialDocument document)
         => document.TryGetPositive("_EnableRimLighting") &&
            GetUnsupportedSourceRimOption(document) is null;
-
-    private static bool SupportsExactSourceRim2(SerializedMaterialDocument document)
-        => document.TryGetPositive("_EnableRim2Lighting") &&
-           GetUnsupportedSourceRim2Option(document) is null;
 
     private static string? GetUnsupportedSourceRimOption(SerializedMaterialDocument document)
     {
@@ -776,74 +620,6 @@ public static partial class SerializedMaterialImporter
         return null;
     }
 
-    private static string? GetUnsupportedSourceRim2Option(SerializedMaterialDocument document)
-    {
-        if (GetInt(document, "_Rim2Style") != 0)
-            return "_Rim2Style";
-        foreach (string property in new[]
-        {
-            "_Rim2ShadowToggle", "_Rim2GlobalMask", "_Rim2ApplyAlpha",
-            "_Rim2ApplyGlobalMaskIndex", "_Rim2BiasIntensity", "_Rim2MaskInvert"
-        })
-        {
-            if (document.TryGetPositive(property))
-                return property;
-        }
-        if (document.TryGetPositive("_Rim2HueShiftEnabled") &&
-            (MathF.Abs(GetFloat(document, "_Rim2HueShift")) > 0.0001f ||
-             MathF.Abs(GetFloat(document, "_Rim2HueShiftSpeed")) > 0.0001f ||
-             GetInt(document, "_Rim2HueSelectOrShift", 1) != 1))
-            return "_Rim2HueShiftEnabled";
-        foreach (string property in new[] { "_Rim2MaskPan", "_Rim2TexPan" })
-        {
-            if (document.TryGetVector(property, out Vector4 pan) &&
-                (MathF.Abs(pan.X) > 0.0001f || MathF.Abs(pan.Y) > 0.0001f))
-                return property;
-        }
-        return null;
-    }
-
-    private static int ResolveIndexedOrSuffixedInt(
-        SerializedMaterialDocument document,
-        string indexedName,
-        string suffixedName,
-        int fallback = 0)
-    {
-        if (document.TryGetInt(indexedName, out int indexedValue))
-            return indexedValue;
-        if (document.TryGetFloat(indexedName, out float indexedFloat))
-            return (int)MathF.Round(indexedFloat);
-        if (document.TryGetInt(suffixedName, out int suffixedValue))
-            return suffixedValue;
-        if (document.TryGetFloat(suffixedName, out float suffixedFloat))
-            return (int)MathF.Round(suffixedFloat);
-        return fallback;
-    }
-
-    /// <summary>
-    /// Converts source toon 8.x 20-entry <c>customBlend</c> global-mask blend values into the
-    /// canonical 8-entry <c>maskBlend</c> table used by source toon 9.x and XRENGINE shaders.
-    /// </summary>
-    private static int NormalizeSourceGlobalMaskBlendType(int rawBlend, SourceToonShaderVersion? sourceVersion)
-    {
-        if (sourceVersion == SourceToon81Catalog.Version || rawBlend > 7)
-        {
-            return rawBlend switch
-            {
-                0 => 0,
-                1 => 4,
-                2 => 2,
-                5 => 5,
-                8 => 7,
-                18 => 1,
-                19 => 3,
-                _ => rawBlend,
-            };
-        }
-
-        return rawBlend;
-    }
-
     private static void BindGlobalThemeParameters(XRMaterial material, SerializedMaterialDocument document)
     {
         for (int theme = 0; theme < 4; ++theme)
@@ -857,32 +633,6 @@ public static partial class SerializedMaterialImporter
                     GetFloat(document, $"_GlobalThemeSaturation{theme}"),
                     GetFloat(document, $"_GlobalThemeValue{theme}")));
         }
-
-        SetVector4(material, "_GlobalMaskMin", Vector4.Zero);
-        SetVector4(material, "_GlobalMaskMax", Vector4.One);
-        SetVector4(material, "_GlobalMaskInvert", Vector4.Zero);
-
-        bool postProcessEnabled =
-            document.TryGetPositive("_PostProcess") ||
-            document.ValidKeywords.Contains("POSTPROCESS");
-        if (postProcessEnabled)
-            material.SetUberFeatureEnabled("surface-extensions", true);
-        SetVector4(
-            material,
-            "_SourcePostProcess",
-            new Vector4(
-                postProcessEnabled ? 1.0f : 0.0f,
-                GetFloat(document, "_PPBrightness", 1.0f),
-                GetFloat(document, "_PPContrast", 1.0f),
-                GetFloat(document, "_PPSaturation", 1.0f)));
-        SetVector4(
-            material,
-            "_SourcePostProcessHue",
-            new Vector4(
-                GetFloat(document, "_PPHue"),
-                GetFloat(document, "_PPLightness"),
-                GetFloat(document, "_PPHDR"),
-                GetFloat(document, "_PPHueShiftColorSpace")));
     }
 
     private static float GetFloat(SerializedMaterialDocument document, string property, float fallback = 0.0f)
@@ -930,7 +680,6 @@ public static partial class SerializedMaterialImporter
             ("_Matcap3Tex", ["_Matcap4"]),
             ("_Matcap3Mask", ["_Matcap4Mask"]),
             ("_Rim2Mask", ["_Rim2Mask"]),
-            ("_Rim2ColorTexture", SupportsExactSourceRim2(document) ? ["_Rim2Tex"] : ["_Rim2ColorTex", "_Rim2Tex"]),
             ("_Emission0Tex", ["_EmissionMap"]),
             ("_Emission0Mask", ["_EmissionMask"]),
             ("_Emission1Tex", ["_EmissionMap1"]),
@@ -942,13 +691,8 @@ public static partial class SerializedMaterialImporter
             ("_FlipbookMask", ["_FlipbookMask"]),
         ];
 
-        bool globalMasksEnabled = document.TryGetPositive("_GlobalMaskTexturesEnable");
         foreach ((string destination, string[] sources) in bindings)
         {
-            if (!globalMasksEnabled &&
-                destination is "_GlobalMaskTexture0" or "_GlobalMaskTexture1" or "_GlobalMaskTexture2" or "_GlobalMaskTexture3")
-                continue;
-
             foreach (string source in sources)
             {
                 bool sourceMatcapSampler = (destination is
@@ -960,7 +704,10 @@ public static partial class SerializedMaterialImporter
                     continue;
 
                 ReplaceMaterialSampler(material, destination, texture);
-                ApplyTextureTransform(material, document, source, destination);
+                if (destination is "_Matcap0Tex" or "_Matcap1Tex" or "_Matcap2Tex" or "_Matcap3Tex")
+                    ApplyTextureTransform(material, document, source, destination);
+                else
+                    ApplySourceToonMeshTextureTransform(material, document, source, destination);
                 break;
             }
         }
@@ -1028,7 +775,10 @@ public static partial class SerializedMaterialImporter
             CubeMipmap[] mipmaps = CreateCubemapMipChain(
                 baseMipmap,
                 settings?.GenerateMipMaps is not false);
-            bool isSrgb = !mirroredBall && settings?.IsSrgb is true;
+            // Unity imports HDR sources (.hdr, .exr) as linear float data and ignores the sRGB
+            // flag. The faces then hold float texels, so an 8-bit sRGB format would not match them.
+            bool floatSource = baseMipmap.Sides[0].PixelType is EPixelType.Float or EPixelType.HalfFloat;
+            bool isSrgb = !mirroredBall && !floatSource && settings?.IsSrgb is true;
             var cubemap = new XRTextureCube(mipmaps)
             {
                 Name = Path.GetFileNameWithoutExtension(texturePath),

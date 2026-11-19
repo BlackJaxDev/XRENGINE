@@ -633,12 +633,15 @@ internal partial class Program
                 bool validationLayersEnabled = RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationLayersEnabled;
                 bool synchronizationValidationEnabled = RuntimeEngine.Rendering.Stats.Vulkan.VulkanSynchronizationValidationEnabled;
                 int validationErrorCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationErrorCount;
+                // The per-frame count misses errors from earlier frames, so the lifetime check
+                // reads the process total.
+                long lifetimeValidationErrorCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanValidationLifetimeErrorCount;
                 int queueSubmitCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanQueueSubmitCount;
                 int presentAttemptCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPresentAttemptCount;
                 int presentAcceptedCount = RuntimeEngine.Rendering.Stats.Vulkan.VulkanPresentAcceptedCount;
                 int lastPresentResult = RuntimeEngine.Rendering.Stats.Vulkan.VulkanLastPresentResult;
                 bool lifetimeValidationPassed = validationLayersEnabled &&
-                    validationErrorCount == 0 &&
+                    lifetimeValidationErrorCount == 0 &&
                     outputWork.SubmissionRejectionCount == 0;
                 bool desktopFinalWriteObserved =
                     (RuntimeEngine.Rendering.Stats.Vulkan.VulkanSceneSwapchainWriters > 0 ||

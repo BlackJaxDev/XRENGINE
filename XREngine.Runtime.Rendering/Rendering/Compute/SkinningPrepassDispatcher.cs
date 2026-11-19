@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Runtime.CompilerServices;
 using System.Numerics;
 using XREngine.Data.Geometry;
@@ -29,6 +30,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     private const string BlendshapePrecombineShaderPath = "Compute/Animation/BlendshapePrecombine.comp";
     private const string SkinnedBoundsReduceShaderPath = "Compute/Animation/SkinnedBoundsReduce.comp";
     private const uint ThreadGroupSize = 256u;
+    internal const int VulkanReceiptPoolCapacity = 256;
 
     internal enum BlendshapePrecombineRendererPath
     {
@@ -84,8 +86,55 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     private static readonly Lazy<SkinningPrepassDispatcher> _instance = new(() => new SkinningPrepassDispatcher());
     public static SkinningPrepassDispatcher Instance => _instance.Value;
 
+    internal readonly record struct OutputAllocationIdentity(
+        GpuBufferAllocationIdentity? Positions,
+        GpuBufferAllocationIdentity? Normals,
+        GpuBufferAllocationIdentity? Tangents,
+        GpuBufferAllocationIdentity? Interleaved)
+    {
+        public bool Matches(in OutputAllocationIdentity other)
+            => Matches(Positions, other.Positions) &&
+               Matches(Normals, other.Normals) &&
+               Matches(Tangents, other.Tangents) &&
+               Matches(Interleaved, other.Interleaved);
+
+        private static bool Matches(
+            GpuBufferAllocationIdentity? left,
+            GpuBufferAllocationIdentity? right)
+            => left.HasValue == right.HasValue &&
+               (!left.HasValue || left.Value.Matches(right!.Value));
+    }
+
+    internal readonly record struct DeformationCohortToken(ulong AttemptId)
+    {
+        public bool IsValid => AttemptId != 0UL;
+    }
+
     private readonly object _syncRoot = new();
     private readonly ConditionalWeakTable<XRMeshRenderer, RendererResources> _resources = new();
+    private readonly List<XRMeshRenderer> _visibleRenderers = new();
+    private readonly List<RendererResources> _visibleOutputResources = new();
+    private readonly VulkanOutputReceipt[] _vulkanReceiptPool = CreateVulkanReceiptPool();
+    private readonly Func<bool> _runVisibleProducer;
+    [ThreadStatic]
+    private static ulong _activeProducerAttemptId;
+    [ThreadStatic]
+    private static ulong _activeDeformationCohortAttemptId;
+    private long _nextProducerAttemptId;
+    private bool _collectingVisibleOutputs;
+    private bool _visibleProducerFailed;
+    private string? _visibleProducerFailureReason;
+    private OutputReuseFailureSnapshot? _lastOutputReuseFailure;
+    private XRRenderProgram? _directDispatchProgram;
+    private AbstractRenderer? _directDispatchRenderer;
+    private RendererResources? _directDispatchResources;
+    private XRMesh? _directDispatchMesh;
+    private uint _directDispatchGroupsX;
+    private uint _directDispatchVertexCount;
+    private bool _directDispatchInterleaved;
+    private bool _directDispatchUpdateBounds;
+    private bool _directDispatchReduceBounds;
+    private readonly Func<bool> _dispatchDirectProducer;
 
     private XRShader? _shader;
     private XRRenderProgram? _program;
@@ -105,6 +154,100 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
 
     private SkinningPrepassDispatcher()
     {
+        _runVisibleProducer = RunVisibleProducer;
+        _dispatchDirectProducer = DispatchDirectProducer;
+    }
+
+    internal static ulong ActiveProducerAttemptId => _activeProducerAttemptId;
+
+    internal static DeformationCohortScope PushDeformationCohort()
+    {
+        DeformationCohortToken token = _activeDeformationCohortAttemptId != 0UL
+            ? new DeformationCohortToken(_activeDeformationCohortAttemptId)
+            : CreateDeformationCohortToken();
+        return PushDeformationCohort(token);
+    }
+
+    internal static DeformationCohortToken CreateDeformationCohortToken()
+        => new(Instance.NextProducerAttemptId());
+
+    internal static DeformationCohortScope PushDeformationCohort(
+        DeformationCohortToken token)
+    {
+        if (!token.IsValid)
+            throw new ArgumentException("A deformation cohort token must be valid.", nameof(token));
+
+        ulong previousAttemptId = _activeProducerAttemptId;
+        ulong previousCohortAttemptId = _activeDeformationCohortAttemptId;
+        ulong cohortAttemptId = token.AttemptId;
+        _activeDeformationCohortAttemptId = cohortAttemptId;
+        _activeProducerAttemptId = cohortAttemptId;
+        return new DeformationCohortScope(
+            previousAttemptId,
+            previousCohortAttemptId,
+            cohortAttemptId);
+    }
+
+    internal readonly struct DeformationCohortScope(
+        ulong previousAttemptId,
+        ulong previousCohortAttemptId,
+        ulong cohortAttemptId) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (_activeProducerAttemptId == cohortAttemptId)
+                _activeProducerAttemptId = previousAttemptId;
+            if (_activeDeformationCohortAttemptId == cohortAttemptId)
+                _activeDeformationCohortAttemptId = previousCohortAttemptId;
+        }
+    }
+
+    internal DeformationInvocationScope PushDeformationInvocation()
+    {
+        ulong previousAttemptId = _activeProducerAttemptId;
+        ulong nextAttemptId = _activeDeformationCohortAttemptId != 0UL
+            ? _activeDeformationCohortAttemptId
+            : NextProducerAttemptId();
+        _activeProducerAttemptId = nextAttemptId;
+        return new DeformationInvocationScope(previousAttemptId, nextAttemptId);
+    }
+
+    private ulong NextProducerAttemptId()
+    {
+        ulong nextAttemptId = unchecked((ulong)Interlocked.Increment(ref _nextProducerAttemptId));
+        if (nextAttemptId == 0UL)
+            nextAttemptId = unchecked((ulong)Interlocked.Increment(ref _nextProducerAttemptId));
+        return nextAttemptId;
+    }
+
+    internal readonly struct DeformationInvocationScope(
+        ulong previousAttemptId,
+        ulong attemptId) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (_activeProducerAttemptId == attemptId)
+                _activeProducerAttemptId = previousAttemptId;
+        }
+    }
+
+    private static VulkanOutputReceipt[] CreateVulkanReceiptPool()
+    {
+        VulkanOutputReceipt[] receipts = new VulkanOutputReceipt[VulkanReceiptPoolCapacity];
+        for (int index = 0; index < receipts.Length; index++)
+            receipts[index] = new VulkanOutputReceipt();
+        return receipts;
+    }
+
+    private VulkanOutputReceipt? ReserveVulkanReceipt()
+    {
+        foreach (VulkanOutputReceipt receipt in _vulkanReceiptPool)
+        {
+            if (receipt.TryReserve())
+                return receipt;
+        }
+
+        return null;
     }
 
     public void Dispose()
@@ -263,35 +406,42 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             diagnostic = "The active backend's packed deformation outputs do not implement the canonical GPU mesh BVH buffer layout.";
             return false;
         }
-        Run(renderer, forceSkinning: true, forceBlendshapes: forceBlendshapeOutput);
-
-        lock (_syncRoot)
+        DeformationInvocationScope invocationScope = ActiveProducerAttemptId == 0UL
+            ? PushDeformationInvocation()
+            : default;
+        using (invocationScope)
         {
-            if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
-                !resources.HasCurrentFrameOutput(State.RenderFrameId))
-            {
-                diagnostic = "GPU deformation output has not been produced for the current render frame.";
-                return false;
-            }
+            Run(renderer, forceSkinning: true, forceBlendshapes: forceBlendshapeOutput);
 
-            XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
-                renderer.CaptureSkinnedOutputResources();
-            XRDataBuffer? positions = outputState.Positions;
-            XRDataBuffer? interleaved = outputState.Interleaved;
-            if (positions is null && interleaved is null)
+            lock (_syncRoot)
             {
-                diagnostic = "GPU deformation output has no position buffer.";
-                return false;
-            }
+                if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
+                    !resources.HasCurrentFrameOutput(State.RenderFrameId))
+                {
+                    diagnostic = "GPU deformation output has not been produced for the current render frame.";
+                    return false;
+                }
 
-            buffers = (positions, interleaved);
-            return true;
+                XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+                    renderer.CaptureSkinnedOutputResources();
+                XRDataBuffer? positions = outputState.Positions;
+                XRDataBuffer? interleaved = outputState.Interleaved;
+                if (positions is null && interleaved is null)
+                {
+                    diagnostic = "GPU deformation output has no position buffer.";
+                    return false;
+                }
+
+                buffers = (positions, interleaved);
+                return true;
+            }
         }
     }
 
     /// <summary>
-    /// Runs compute deformation for live surface splat emission and returns the current frame's
-    /// deformed vertex buffers when skinning or active blendshapes wrote output for this frame.
+    /// Runs compute deformation for live surface splat emission and returns the deformed vertex buffers that this
+    /// render frame produced. The splat compute pass reads the skinned positions, normals, and tangents of each
+    /// submesh, so it needs output of the current frame, not output that an earlier frame left in the buffers.
     /// </summary>
     internal bool TryRunForLiveSurfaceSplats(
         XRMeshRenderer renderer,
@@ -307,25 +457,31 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return false;
         }
 
-        Run(renderer, forceSkinning: true, forceBlendshapes: true);
-
-        lock (_syncRoot)
+        DeformationInvocationScope invocationScope = ActiveProducerAttemptId == 0UL
+            ? PushDeformationInvocation()
+            : default;
+        using (invocationScope)
         {
-            if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
-                !resources.HasCurrentFrameOutput(State.RenderFrameId))
-            {
-                diagnostic = "Compute deformation did not produce output for the current render frame.";
-                return false;
-            }
+            Run(renderer, forceSkinning: true, forceBlendshapes: true);
 
-            outputs = renderer.CaptureSkinnedOutputResources();
-            if (outputs.Positions is null && outputs.Interleaved is null)
+            lock (_syncRoot)
             {
-                diagnostic = "Compute deformation output contains no position buffer.";
-                return false;
-            }
+                if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
+                    !resources.HasCurrentFrameOutput(State.RenderFrameId))
+                {
+                    diagnostic = "Compute deformation did not produce output for the current render frame.";
+                    return false;
+                }
 
-            return true;
+                outputs = renderer.CaptureSkinnedOutputResources();
+                if (outputs.Positions is null && outputs.Interleaved is null)
+                {
+                    diagnostic = "Compute deformation output contains no position buffer.";
+                    return false;
+                }
+
+                return true;
+            }
         }
     }
 
@@ -335,7 +491,13 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         public ulong OutputChangeSequence { get; set; }
 
         public bool HasCurrentFrameOutput(ulong frameId)
-            => LastDispatchedFrameId == frameId && _hasValidOutput;
+            => RuntimeEngine.Rendering.State.IsVulkan
+                ? HasVulkanOutputForCurrentAttempt(
+                    SkinningPrepassDispatcher.ActiveProducerAttemptId,
+                    _lastDidSkinning,
+                    _lastDidBlendshapes,
+                    _lastUsedPrecombinedBlendshapes)
+                : LastComputePrepassFrameId == frameId && _hasValidOutput;
     }
 
     /// <summary>
@@ -366,23 +528,29 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
             return false;
 
-        Run(
-            renderer,
-            forceSkinning: true,
-            forceBlendshapes: true,
-            requireLiveBounds: false,
-            requireCommittedOutput: true,
-            currentSequence,
-            committedSequence,
-            allowOutputReuse: false);
-        lock (_syncRoot)
+        DeformationInvocationScope invocationScope = ActiveProducerAttemptId == 0UL
+            ? PushDeformationInvocation()
+            : default;
+        using (invocationScope)
         {
-            if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
-                !resources.HasCurrentFrameOutput(State.RenderFrameId))
-                return false;
+            Run(
+                renderer,
+                forceSkinning: true,
+                forceBlendshapes: true,
+                requireLiveBounds: false,
+                requireCommittedOutput: true,
+                currentSequence,
+                committedSequence,
+                allowOutputReuse: false);
+            lock (_syncRoot)
+            {
+                if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
+                    !resources.HasCurrentFrameOutput(State.RenderFrameId))
+                    return false;
 
-            positions = renderer.CaptureSkinnedOutputResources().Positions;
-            return positions is not null;
+                positions = renderer.CaptureSkinnedOutputResources().Positions;
+                return positions is not null;
+            }
         }
     }
 
@@ -542,9 +710,17 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             }
 
             if (activeProgram is null)
+            {
+                if (RuntimeEngine.Rendering.State.IsVulkan)
+                    FailVulkanProducer("Vulkan skinning compute program is not ready.");
                 return;
+            }
             if (!EnsureProgramReadyForDispatch(activeProgram))
+            {
+                if (RuntimeEngine.Rendering.State.IsVulkan)
+                    FailVulkanProducer("Vulkan skinning compute program is not linked.");
                 return;
+            }
 
             // Per-renderer resources own transient output buffers and the reuse/residency state
             // that decides whether a dispatch is necessary this frame.
@@ -563,7 +739,11 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             }
 
             if (!resources.Validate(mesh, doSkinning, doBlendshapes, isInterleaved, usePrecombinedBlendshapes))
+            {
+                if (RuntimeEngine.Rendering.State.IsVulkan)
+                    FailVulkanProducer("Vulkan skinning output resources are not ready.");
                 return;
+            }
 
             bool canReuseOutput = allowOutputReuse &&
                 !needsLiveSkinnedBounds &&
@@ -571,36 +751,29 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             if (requireCommittedOutput)
             {
                 if (!canReuseOutput)
-                {
                     resources.OutputChangeSequence = currentSequence;
-                }
                 else if (resources.OutputChangeSequence == 0UL || committedSequence < resources.OutputChangeSequence)
-                {
                     canReuseOutput = false;
-                    resources.OutputChangeSequence = currentSequence;
-                }
             }
 
             if (canReuseOutput)
             {
-                if (resources.LastComputePrepassFrameId != frameId)
-                {
-                    resources.LastComputePrepassFrameId = frameId;
-                    RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
-                        0L,
-                        0L,
-                        skippedSkinningDispatches: doSkinning ? 1 : 0,
-                        skippedBlendshapeDispatches: doBlendshapes ? 1 : 0,
-                        reusedSkinnedOutputBuffers: 1,
-                        blendshapeAuthoredShapeCount: doBlendshapes ? (int)mesh.BlendshapeCount : 0,
-                        blendshapeActiveShapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
-                        blendshapeAffectedVertexCount: doBlendshapes ? mesh.BlendshapeAffectedVertexCount : 0,
-                        compactedActiveBlendshapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
-                        liveBlendshapeShaderPermutations: doBlendshapes && mesh.BlendshapeShaderVariant != BlendshapeShaderVariant.None ? 1 : 0);
-                }
-
+                resources.LastComputePrepassFrameId = frameId;
+                RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
+                    0L,
+                    0L,
+                    skippedSkinningDispatches: doSkinning ? 1 : 0,
+                    skippedBlendshapeDispatches: doBlendshapes ? 1 : 0,
+                    reusedSkinnedOutputBuffers: 1,
+                    blendshapeAuthoredShapeCount: doBlendshapes ? (int)mesh.BlendshapeCount : 0,
+                    blendshapeActiveShapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
+                    blendshapeAffectedVertexCount: doBlendshapes ? mesh.BlendshapeAffectedVertexCount : 0,
+                    compactedActiveBlendshapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
+                    liveBlendshapeShaderPermutations: doBlendshapes && mesh.BlendshapeShaderVariant != BlendshapeShaderVariant.None ? 1 : 0);
                 return;
             }
+
+            resources.LastComputePrepassFrameId = frameId;
 
             // One-shot: re-seed the per-renderer skin palette from the CURRENT bone render
             // state before the first real dispatch. The palette is initially seeded in the
@@ -671,6 +844,15 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             // result can be lost and the later draw may read zero-initialized client data. This only
             // allocates (and pushes the zeroed client data once); once allocated it never re-pushes,
             // so it cannot clobber compute results.
+            if (RuntimeEngine.Rendering.State.IsVulkan &&
+                !resources.TrySelectWritableOutput(
+                    AbstractRenderer.Current!, mesh, isInterleaved,
+                    out string? overwriteFailure, out OutputReuseFailureSnapshot reuseFailure))
+            {
+                _lastOutputReuseFailure = reuseFailure;
+                FailVulkanProducer(overwriteFailure ?? "Vulkan deformation output is still in use by GPU work.");
+                return;
+            }
             resources.EnsureSkinningOutputResident(isInterleaved, doSkinning);
             bool updateLiveBounds = needsLiveSkinnedBounds &&
                 resources.ResetSkinnedBoundsInOutput(mesh, isInterleaved);
@@ -728,12 +910,118 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
                 EMemoryBarrierMask barrierMask = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray;
 
-                activeProgram.DispatchCompute(groupsX, 1u, 1u, barrierMask);
-                resources.MarkOutputValid(frameId, doSkinning, doBlendshapes, usePrecombinedBlendshapes, dispatchedVersion);
+                AbstractRenderer activeRenderer = AbstractRenderer.Current
+                    ?? throw new InvalidOperationException("Compute deformation requires an active renderer.");
+                if (RuntimeEngine.Rendering.State.IsVulkan)
+                {
+                    DeformationInvocationScope invocationScope = _activeProducerAttemptId == 0UL
+                        ? PushDeformationInvocation()
+                        : default;
+                    using (invocationScope)
+                    {
+                        if (!resources.TryCaptureOutputAllocationIdentity(
+                                activeRenderer,
+                                out OutputAllocationIdentity outputIdentity))
+                        {
+                            resources.MarkOutputAttemptUnfenced(
+                                _activeProducerAttemptId,
+                                activeRenderer,
+                                dispatchedVersion,
+                                doSkinning,
+                                doBlendshapes,
+                                usePrecombinedBlendshapes);
+                            FailVulkanProducer("Vulkan deformation output has no exact native allocation identity.");
+                            return;
+                        }
+
+                        if (_collectingVisibleOutputs)
+                        {
+                            ERendererComputeEnqueueStatus dispatchStatus = activeRenderer.TryDispatchCompute(
+                                activeProgram,
+                                groupsX,
+                                1u,
+                                1u);
+                            if (dispatchStatus != ERendererComputeEnqueueStatus.Enqueued)
+                            {
+                                FailVulkanProducer("Vulkan deformation compute dispatch was not enqueued.");
+                                return;
+                            }
+
+                            resources.MarkOutputAttemptAuthored(
+                                _activeProducerAttemptId,
+                                activeRenderer,
+                                outputIdentity,
+                                doSkinning,
+                                doBlendshapes,
+                                usePrecombinedBlendshapes,
+                                dispatchedVersion);
+                            _visibleOutputResources.Add(resources);
+                        }
+                        else
+                        {
+                            VulkanOutputReceipt? receipt = ReserveVulkanReceipt();
+                            if (receipt is null)
+                                throw new RenderResourcePreparationPendingException(
+                                    "Vulkan deformation has no free producer receipt slot.");
+
+                            resources.MarkOutputAttemptAuthored(
+                                _activeProducerAttemptId,
+                                activeRenderer,
+                                outputIdentity,
+                                doSkinning,
+                                doBlendshapes,
+                                usePrecombinedBlendshapes,
+                                dispatchedVersion);
+                            _directDispatchProgram = activeProgram;
+                            _directDispatchRenderer = activeRenderer;
+                            _directDispatchResources = resources;
+                            _directDispatchMesh = mesh;
+                            _directDispatchGroupsX = groupsX;
+                            _directDispatchVertexCount = vertexCount;
+                            _directDispatchInterleaved = isInterleaved;
+                            _directDispatchUpdateBounds = updateLiveBounds;
+                            _directDispatchReduceBounds = needsLiveSkinnedBounds && !updateLiveBounds;
+                            bool accepted;
+                            XRGpuFence? receiptFence;
+                            Exception? failure;
+                            try
+                            {
+                                accepted = activeRenderer.TryExecuteRequiredGpuProducerBatch(
+                                    _dispatchDirectProducer,
+                                    out receiptFence,
+                                    out failure);
+                            }
+                            catch
+                            {
+                                resources.MarkOutputReceiptUnavailable();
+                                receipt.CancelReservation();
+                                throw;
+                            }
+                            receipt.Publish(activeRenderer, _activeProducerAttemptId, receiptFence, accepted);
+                            resources.AttachOutputReceipt(receipt);
+                            if (!accepted || receiptFence is null)
+                                throw new RenderResourcePreparationPendingException(
+                                    failure?.Message ?? "Vulkan deformation was not accepted as a complete producer batch.");
+                        }
+                    }
+                }
+                else
+                {
+                    activeProgram.DispatchCompute(groupsX, 1u, 1u, barrierMask);
+                    resources.MarkOutputValid(doSkinning, doBlendshapes, usePrecombinedBlendshapes, dispatchedVersion);
+                }
                 if (updateLiveBounds)
                     resources.MarkSkinnedBoundsValid();
-                else if (needsLiveSkinnedBounds)
-                    TryUpdateSkinnedBoundsFromOutput(resources, mesh, isInterleaved, vertexCount);
+                else if (needsLiveSkinnedBounds &&
+                    !(RuntimeEngine.Rendering.State.IsVulkan && !_collectingVisibleOutputs) &&
+                    (RuntimeEngine.Rendering.State.IsVulkan &&
+                        AbstractRenderer.Current?.TryMemoryBarrier(EMemoryBarrierMask.ShaderStorage) !=
+                        ERendererComputeEnqueueStatus.Enqueued ||
+                     !TryUpdateSkinnedBoundsFromOutput(resources, mesh, isInterleaved, vertexCount)))
+                {
+                    FailVulkanProducer("Vulkan deformation bounds reduction or its memory barrier was not enqueued.");
+                    return;
+                }
                 if (doSkinning && RenderDiagnosticsFlags.SkinningPrepassDiag)
                     resources.DebugReadbackSkinnedOutput(mesh);
                 RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
@@ -791,11 +1079,27 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         program.Uniform("positionOffsetBytes", mesh.PositionOffset);
 
         uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
-        program.DispatchCompute(
-            groupsX,
-            1u,
-            1u,
-            EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray | EMemoryBarrierMask.ClientMappedBuffer);
+        if (RuntimeEngine.Rendering.State.IsVulkan)
+        {
+            AbstractRenderer renderer = AbstractRenderer.Current
+                ?? throw new InvalidOperationException("Skinned bounds reduction requires an active renderer.");
+            if (renderer.TryDispatchCompute(program, groupsX, 1u, 1u) != ERendererComputeEnqueueStatus.Enqueued ||
+                renderer.TryMemoryBarrier(
+                    EMemoryBarrierMask.ShaderStorage |
+                    EMemoryBarrierMask.VertexAttribArray |
+                    EMemoryBarrierMask.ClientMappedBuffer) != ERendererComputeEnqueueStatus.Enqueued)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            program.DispatchCompute(
+                groupsX,
+                1u,
+                1u,
+                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray | EMemoryBarrierMask.ClientMappedBuffer);
+        }
 
         resources.MarkSkinnedBoundsValid();
         return true;
@@ -1050,19 +1354,113 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         return vrEyeRender == vrOwnsDeformation;
     }
 
-    [ThreadStatic]
-    private static HashSet<XRMeshRenderer>? _runVisibleDispatched;
-    [ThreadStatic]
-    private static List<XRMeshRenderer>? _runVisibleRenderers;
+    internal static bool UsesComputeSkinning(XRMesh? mesh)
+        => mesh is not null &&
+           mesh.HasSkinning &&
+           RuntimeEngine.Rendering.Settings.AllowSkinning &&
+           RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+           MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
 
-    public void RunVisible(
-        RenderCommandCollection commands,
-        bool requireCommittedOutput = false,
-        ulong currentSequence = 0UL,
-        ulong committedSequence = 0UL)
+    internal static bool UsesComputeBlendshapes(XRMesh? mesh)
+        => mesh is not null &&
+           mesh.HasBlendshapeDeformation &&
+           RuntimeEngine.Rendering.Settings.AllowBlendshapes &&
+           RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
+           MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
+
+    internal static bool RequiresComputeDeformationOutput(XRMeshRenderer renderer)
+    {
+        XRMesh? mesh = renderer.Mesh;
+        if (mesh is null)
+            return false;
+
+        bool computeSkinning = UsesComputeSkinning(mesh);
+        bool computeBlendshapes = UsesComputeBlendshapes(mesh) ||
+            (computeSkinning && mesh.HasBlendshapeDeformation &&
+             RuntimeEngine.Rendering.Settings.AllowBlendshapes);
+        return computeSkinning || computeBlendshapes;
+    }
+
+    internal static bool TryCaptureVulkanOutputWitness(
+        XRMeshRenderer renderer,
+        out DeformationOutputWitness witness,
+        out bool outputRequired)
+    {
+        ArgumentNullException.ThrowIfNull(renderer);
+        witness = default;
+        XRMesh? mesh = renderer.Mesh;
+        bool computeSkinning = UsesComputeSkinning(mesh);
+        bool computeBlendshapes = UsesComputeBlendshapes(mesh) ||
+                                  (computeSkinning && mesh?.HasBlendshapeDeformation == true &&
+                                   RuntimeEngine.Rendering.Settings.AllowBlendshapes);
+        outputRequired = computeSkinning || computeBlendshapes;
+        if (!outputRequired)
+            return true;
+
+        if (AbstractRenderer.Current is not { } backendOwner ||
+            !RuntimeEngine.Rendering.State.IsVulkan)
+        {
+            return false;
+        }
+
+        bool doBlendshapes = computeBlendshapes &&
+            renderer.CaptureBlendshapeResources().ActiveCount > 0;
+        bool usePrecombined = doBlendshapes && mesh is not null &&
+            ShouldUseBlendshapePrecombine(
+                renderer,
+                mesh,
+                BlendshapePrecombineRendererPath.ComputePrepass);
+        ulong activeAttemptId = ActiveProducerAttemptId;
+
+        lock (Instance._syncRoot)
+        {
+            if (!Instance._resources.TryGetValue(renderer, out RendererResources? resources) ||
+                !resources.TryCaptureConsumerWitness(
+                    activeAttemptId,
+                    backendOwner,
+                    computeSkinning,
+                    doBlendshapes,
+                    usePrecombined,
+                    out witness))
+            {
+                return false;
+            }
+
+            return true;
+        }
+    }
+
+    internal static bool ValidateVulkanOutputWitness(
+        XRMeshRenderer renderer,
+        in DeformationOutputWitness witness)
+    {
+        if (!witness.IsValid)
+            return !RequiresComputeDeformationOutput(renderer);
+
+        if (
+            !ReferenceEquals(AbstractRenderer.Current, witness.BackendOwner))
+        {
+            return false;
+        }
+
+        lock (Instance._syncRoot)
+        {
+            return Instance._resources.TryGetValue(renderer, out RendererResources? resources) &&
+                   resources.ValidateConsumerWitness(in witness);
+        }
+    }
+
+    public void RunVisible(RenderCommandCollection commands)
     {
         if (commands is null)
             return;
+
+        lock (_syncRoot)
+            RunVisibleCore(commands);
+    }
+
+    private void RunVisibleCore(RenderCommandCollection commands)
+    {
 
         // The backend owns its output layout and records the producer at the first
         // raster consumer, inside its atomic frame. This is a responsibility handoff,
@@ -1087,92 +1485,269 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return;
         }
 
-        HashSet<XRMeshRenderer> dispatched = _runVisibleDispatched ??=
-            new HashSet<XRMeshRenderer>(ReferenceEqualityComparer.Instance);
-        List<XRMeshRenderer> renderers = _runVisibleRenderers ??= [];
-        dispatched.Clear();
+        // RunVisible runs on the render thread, one view at a time, so the scratch containers
+        // are reused from call to call. _visibleRenderers receives the renderers to dispatch.
+        List<XRMeshRenderer> visible = _runVisibleRenderers;
+        HashSet<XRMeshRenderer> seen = _runVisibleSeen;
+        HashSet<XRMeshRenderer> traditional = _runVisibleTraditional;
+        List<XRMeshRenderer> renderers = _visibleRenderers;
+        visible.Clear();
+        seen.Clear();
+        traditional.Clear();
         renderers.Clear();
-        foreach (var meshCmd in commands.EnumerateRenderingMeshCommands())
+        commands.CollectSkinningPrepassRenderers(visible, seen, traditional);
+
+        // Skip renderers whose prepass output no consumer reads (see SkinningPrepassDemand).
+        // The Advanced canonical path draws them from the aggregate deformation arena.
+        ulong frameId = State.RenderFrameId;
+        bool liveBoundsReaders = RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader;
+        for (int index = 0; index < visible.Count; index++)
         {
-            if (meshCmd.Mesh is not XRMeshRenderer renderer)
+            XRMeshRenderer renderer = visible[index];
+            if (liveBoundsReaders ||
+                traditional.Contains(renderer) ||
+                renderer.IsSkinningPrepassDemanded(frameId) ||
+                renderer.Mesh is not { } mesh ||
+                !(mesh.HasSkinning || mesh.HasBlendshapes))
+            {
+                renderer.MarkSkinningPrepassRun();
+                renderers.Add(renderer);
                 continue;
+            }
 
-            if (!dispatched.Add(renderer))
-                continue;
-
-            renderers.Add(renderer);
+            renderer.MarkSkinningPrepassSkipped(frameId);
+            SkinningPrepassDemand.RecordSkip();
         }
 
         if (renderers.Count == 0)
+            return;
+
+        // Optionally pre-pack all visible renderers into global buffers for this frame.
+        bool globalSkinPalette = RuntimeEngine.Rendering.Settings.UseGlobalSkinPaletteBufferForComputeSkinning;
+        bool globalBlend = false;
+        if (globalSkinPalette || globalBlend)
         {
-            dispatched.Clear();
+            lock (_syncRoot)
+            {
+                _globalInputs.BeginFrame(State.RenderFrameId);
+                bool anyChanged = false;
+                foreach (var renderer in _visibleRenderers)
+                {
+                    var mesh = renderer.Mesh;
+                    if (mesh is null)
+                        continue;
+
+                    bool skinningInCompute = computeSkinningEnabledForBackend
+                        && mesh.HasSkinning
+                        && RuntimeEngine.Rendering.Settings.AllowSkinning;
+                    bool needsSkinPalette = globalSkinPalette
+                        && !renderer.HasExternalSkinPaletteSource
+                        && !renderer.HasGpuDrivenBoneSource
+                        && skinningInCompute;
+                    bool blendshapePathRequested = mesh.HasBlendshapeDeformation
+                        && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+                        && (computeBlendshapesEnabledForBackend
+                            || skinningInCompute
+                            || precombineEnabledForBackend);
+                    if (blendshapePathRequested)
+                        renderer.EnsureBlendshapeBuffers(logWarnings: false);
+                    bool needsBlend = globalBlend
+                        && blendshapePathRequested
+                        && renderer.HasActiveBlendshapes;
+                    if (!needsSkinPalette && !needsBlend)
+                        continue;
+
+                    anyChanged |= _globalInputs.EnsurePackedForRenderer(renderer, needsSkinPalette, needsBlend);
+                }
+
+                if (anyChanged)
+                    _globalInputs.PushIfDirty(pushSkinPalette: globalSkinPalette, pushBlendshapeWeights: globalBlend);
+            }
+        }
+
+        if (!RuntimeEngine.Rendering.State.IsVulkan)
+        {
+            foreach (var renderer in _visibleRenderers)
+                Run(renderer);
             return;
         }
 
-        try
+        RunVisibleVulkan();
+    }
+
+    private void RunVisibleVulkan()
+    {
+        AbstractRenderer renderer = AbstractRenderer.Current
+            ?? throw new RenderResourcePreparationPendingException(
+                "Vulkan deformation requires an active renderer.");
+
+        lock (_syncRoot)
         {
-            // Optionally pre-pack all visible renderers into global buffers for this frame.
-            bool globalSkinPalette = RuntimeEngine.Rendering.Settings.UseGlobalSkinPaletteBufferForComputeSkinning;
-            bool globalBlend = false;
-            if (globalSkinPalette || globalBlend)
+            if (CanReuseAllVisibleVulkanOutputs())
             {
-                lock (_syncRoot)
-                {
-                    _globalInputs.BeginFrame(State.RenderFrameId);
-                    bool anyChanged = false;
-                    foreach (var renderer in renderers)
-                    {
-                        var mesh = renderer.Mesh;
-                        if (mesh is null)
-                            continue;
-
-                        bool skinningInCompute = computeSkinningEnabledForBackend
-                            && mesh.HasSkinning
-                            && RuntimeEngine.Rendering.Settings.AllowSkinning;
-                        bool needsSkinPalette = globalSkinPalette
-                            && !renderer.HasExternalSkinPaletteSource
-                            && !renderer.HasGpuDrivenBoneSource
-                            && skinningInCompute;
-                        bool blendshapePathRequested = mesh.HasBlendshapeDeformation
-                            && RuntimeEngine.Rendering.Settings.AllowBlendshapes
-                            && (computeBlendshapesEnabledForBackend
-                                || skinningInCompute
-                                || precombineEnabledForBackend);
-                        if (blendshapePathRequested)
-                            renderer.EnsureBlendshapeBuffers(logWarnings: false);
-                        bool needsBlend = globalBlend
-                            && blendshapePathRequested
-                            && renderer.HasActiveBlendshapes;
-                        if (!needsSkinPalette && !needsBlend)
-                            continue;
-
-                        anyChanged |= _globalInputs.EnsurePackedForRenderer(renderer, needsSkinPalette, needsBlend);
-                    }
-
-                    if (anyChanged)
-                        _globalInputs.PushIfDirty(pushSkinPalette: globalSkinPalette, pushBlendshapeWeights: globalBlend);
-                }
+                foreach (XRMeshRenderer visibleRenderer in _visibleRenderers)
+                    Run(visibleRenderer);
+                return;
             }
 
-            foreach (var renderer in renderers)
+            _visibleOutputResources.Clear();
+            _visibleProducerFailed = false;
+            _visibleProducerFailureReason = null;
+            if (_activeProducerAttemptId == 0UL)
+                throw new RenderResourcePreparationPendingException(
+                    "Vulkan deformation has no active pipeline invocation receipt scope.");
+            VulkanOutputReceipt? receipt = ReserveVulkanReceipt();
+            if (receipt is null)
+                throw new RenderResourcePreparationPendingException(
+                    "Vulkan deformation has no free producer receipt slot.");
+
+            bool accepted;
+            XRGpuFence? fence;
+            Exception? failure;
+            try
             {
-                Run(
-                    renderer,
-                    forceSkinning: false,
-                    forceBlendshapes: false,
-                    requireLiveBounds: true,
-                    requireCommittedOutput: requireCommittedOutput,
-                    currentSequence: currentSequence,
-                    committedSequence: committedSequence,
-                    allowOutputReuse: true);
+                _collectingVisibleOutputs = true;
+                accepted = renderer.TryExecuteRequiredGpuProducerBatch(
+                    _runVisibleProducer,
+                    out fence,
+                    out failure);
             }
-        }
-        finally
-        {
-            dispatched.Clear();
-            renderers.Clear();
+            catch
+            {
+                foreach (RendererResources resources in _visibleOutputResources)
+                    resources.MarkOutputReceiptUnavailable();
+                receipt.CancelReservation();
+                throw;
+            }
+            finally
+            {
+                _collectingVisibleOutputs = false;
+            }
+
+            receipt.Publish(renderer, _activeProducerAttemptId, fence, accepted);
+
+            if (_visibleOutputResources.Count > 0)
+            {
+                foreach (RendererResources resources in _visibleOutputResources)
+                    resources.AttachOutputReceipt(receipt);
+            }
+
+            if (!accepted || _visibleProducerFailed || fence is null)
+                throw new RenderResourcePreparationPendingException(
+                    failure?.Message ?? _visibleProducerFailureReason ??
+                    "Vulkan deformation output was not accepted as a complete producer batch.");
         }
     }
+
+    private bool CanReuseAllVisibleVulkanOutputs()
+    {
+        foreach (XRMeshRenderer renderer in _visibleRenderers)
+        {
+            XRMesh? mesh = renderer.Mesh;
+            if (mesh is null || mesh.VertexCount <= 0)
+                continue;
+
+            bool doSkinning = RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
+                MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh) &&
+                mesh.HasSkinning &&
+                RuntimeEngine.Rendering.Settings.AllowSkinning;
+            if (doSkinning && RuntimeEngine.Rendering.Settings.CalculateSkinnedBoundsInComputeShader)
+                return false;
+            bool blendshapePathRequested = mesh.HasBlendshapeDeformation &&
+                RuntimeEngine.Rendering.Settings.AllowBlendshapes &&
+                (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader &&
+                    MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh) || doSkinning);
+            bool doBlendshapes = blendshapePathRequested && renderer.HasActiveBlendshapes;
+            if (!doSkinning && !doBlendshapes)
+                continue;
+
+            if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
+                !resources.CanReuseOutput(doSkinning, doBlendshapes, usePrecombinedBlendshapes: false))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool RunVisibleProducer()
+    {
+        foreach (XRMeshRenderer renderer in _visibleRenderers)
+            Run(renderer);
+
+        if (_visibleProducerFailed)
+            return false;
+
+        AbstractRenderer backendRenderer = AbstractRenderer.Current
+            ?? throw new InvalidOperationException("Vulkan deformation lost its active renderer.");
+        bool enqueued = backendRenderer.TryMemoryBarrier(
+            EMemoryBarrierMask.ShaderStorage |
+            EMemoryBarrierMask.VertexAttribArray |
+            EMemoryBarrierMask.ClientMappedBuffer) ==
+            ERendererComputeEnqueueStatus.Enqueued;
+        if (!enqueued)
+            FailVulkanProducer("Vulkan deformation final memory barrier was not enqueued.");
+        return enqueued;
+    }
+
+    private bool DispatchDirectProducer()
+    {
+        AbstractRenderer renderer = _directDispatchRenderer
+            ?? throw new InvalidOperationException("Vulkan deformation has no active producer renderer.");
+        XRRenderProgram program = _directDispatchProgram
+            ?? throw new InvalidOperationException("Vulkan deformation has no active producer program.");
+        if (renderer.TryDispatchCompute(program, _directDispatchGroupsX, 1u, 1u) !=
+            ERendererComputeEnqueueStatus.Enqueued)
+        {
+            return false;
+        }
+
+        if (_directDispatchUpdateBounds)
+        {
+            return renderer.TryMemoryBarrier(
+                EMemoryBarrierMask.ShaderStorage |
+                EMemoryBarrierMask.VertexAttribArray |
+                EMemoryBarrierMask.ClientMappedBuffer) == ERendererComputeEnqueueStatus.Enqueued;
+        }
+
+        if (_directDispatchReduceBounds)
+        {
+            if (renderer.TryMemoryBarrier(EMemoryBarrierMask.ShaderStorage) != ERendererComputeEnqueueStatus.Enqueued ||
+                _directDispatchResources is not { } resources ||
+                _directDispatchMesh is not { } mesh ||
+                !TryUpdateSkinnedBoundsFromOutput(
+                    resources,
+                    mesh,
+                    _directDispatchInterleaved,
+                    _directDispatchVertexCount))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        return renderer.TryMemoryBarrier(
+            EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray) ==
+            ERendererComputeEnqueueStatus.Enqueued;
+    }
+
+    private void FailVulkanProducer(string reason)
+    {
+        if (_collectingVisibleOutputs)
+        {
+            _visibleProducerFailed = true;
+            _visibleProducerFailureReason ??= reason;
+            return;
+        }
+
+        throw new RenderResourcePreparationPendingException(reason);
+    }
+
+    private readonly List<XRMeshRenderer> _runVisibleRenderers = [];
+    private readonly HashSet<XRMeshRenderer> _runVisibleSeen = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
+    private readonly HashSet<XRMeshRenderer> _runVisibleTraditional = new(System.Collections.Generic.ReferenceEqualityComparer.Instance);
 
     private void EnsureProgram()
     {

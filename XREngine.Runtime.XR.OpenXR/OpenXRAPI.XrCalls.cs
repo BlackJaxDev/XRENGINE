@@ -378,6 +378,9 @@ public unsafe partial class OpenXRAPI
         long start;
         long end;
         Result result;
+        // XR collect pacing: the frame is submitted now, so the collect for the next frame starts
+        // and overlaps this call and the next xrWaitFrame (either one can block).
+        ReleasePacedCollectAtSubmit();
         using (var endFrameSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.XrEndFrame"))
         {
             endFrameAttempted = true;
@@ -393,7 +396,10 @@ public unsafe partial class OpenXRAPI
         // Record headroom only for a frame that a completed xrWaitFrame opened. The
         // runtime does not pace this time, so it shows the rate the engine could reach.
         if (Interlocked.Exchange(ref _frameWorkOpen, 0) != 0)
+        {
             RuntimeEngine.Rendering.Stats.VrHeadroom.RecordCpuFrameWork(frameWorkTicks);
+            RecordSlackAfterEndFrame(end, frameWorkTicks);
+        }
         result = CheckResult(result, "xrEndFrame");
         _smokePendingFrameTiming.EndEndQpc = end;
         _smokePendingFrameTiming.EndStartXrAvailable = TryConvertPerformanceCounterToXrTime(start, out long endStartXr);
@@ -741,6 +747,10 @@ public unsafe partial class OpenXRAPI
                         var stateChanged = (EventDataSessionStateChanged*)eventDataPtr;
                         _sessionState = stateChanged->State;
                         RecordSmokeSessionState(_sessionState);
+                        // Collect pacing needs a focused session; any change wakes a paced
+                        // collect so that it checks the new state at once.
+                        if (_sessionState != SessionState.Focused)
+                            StopCollectPacing();
                         Debug.Out($"Session state changed to: {_sessionState}");
                         if (_sessionState == SessionState.Ready &&
                             _runtimeMonitoringEnabled &&
@@ -839,7 +849,7 @@ public unsafe partial class OpenXRAPI
         if (ReferenceEquals(RuntimeEngine.VRState.RightEyeViewport, _openXrRightViewport))
             RuntimeEngine.VRState.RightEyeViewport = null;
 
-        UpdateOpenXrEyeSettingsSubscriptions(null, null);
+        DetachOpenXrEyeSettings();
 
         _openXrLeftViewport?.Camera = null;
         _openXrRightViewport?.Camera = null;

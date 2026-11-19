@@ -1,5 +1,6 @@
 using NUnit.Framework;
 using Shouldly;
+using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Materials;
@@ -15,8 +16,8 @@ public sealed class MaterialBindingLayoutTests
         MaterialBindingLayout layout = MaterialBindingLayouts.OpaqueDeferred;
 
         layout.RenderPass.ShouldBe((int)EDefaultRenderPass.OpaqueDeferred);
-        layout.RowWordCount.ShouldBe(36u);
-        layout.RowByteCount.ShouldBe(144u);
+        layout.RowWordCount.ShouldBe(40u);
+        layout.RowByteCount.ShouldBe(160u);
         GPUMaterialTable.MaterialEntryUIntCount.ShouldBe(layout.RowWordCount);
 
         layout.PackedMembers[0].Name.ShouldBe("AlbedoHandleIndex");
@@ -27,6 +28,9 @@ public sealed class MaterialBindingLayoutTests
         WordOffset(layout, "Flags").ShouldBe(5);
         WordOffset(layout, "BaseColorOpacity").ShouldBe(8);
         WordOffset(layout, "RMSE").ShouldBe(12);
+        WordOffset(layout, "OcclusionStrength").ShouldBe(36);
+        WordOffset(layout, "OcclusionControls").ShouldBe(37);
+        WordOffset(layout, "OcclusionHandleIndex").ShouldBe(38);
     }
 
     [Test]
@@ -45,9 +49,11 @@ public sealed class MaterialBindingLayoutTests
             supportsGeneratedMaterialTableDispatch: baseline.SupportsGeneratedMaterialTableDispatch);
 
         changed.LayoutHash.ShouldNotBe(baseline.LayoutHash);
-        // The height-map and parallax words fill the last row padding, so a new field starts a row.
-        WordOffset(changed, "Clearcoat").ShouldBe(36);
-        changed.RowWordCount.ShouldBe(baseline.RowWordCount + 4);
+        // A new field follows the occlusion fields. The occlusion handle packs after all fields,
+        // so it moves to the last padding word and the row size does not change.
+        WordOffset(changed, "Clearcoat").ShouldBe(38);
+        WordOffset(changed, "OcclusionHandleIndex").ShouldBe(39);
+        changed.RowWordCount.ShouldBe(baseline.RowWordCount);
     }
 
     [Test]
@@ -208,6 +214,38 @@ public sealed class MaterialBindingLayoutTests
 
         result.Outcome.ShouldBe(EMaterialBindingResolverOutcome.PerMaterialRequired);
         result.Reason.ShouldContain("no material semantic");
+    }
+
+    [Test]
+    public void SourceEncoder_FlagsGltfPackedMetallicRoughness_OnlyForOneSharedTexture()
+    {
+        XRTexture2D packed = new(1u, 1u, ColorF4.White) { Name = "MetallicRoughness" };
+        XRMaterial gltf = new()
+        {
+            SurfaceTextureBindings =
+            [
+                new MaterialSurfaceTextureBinding(EMaterialTextureSemantic.Metallic, packed, Channel: 2),
+                new MaterialSurfaceTextureBinding(EMaterialTextureSemantic.Roughness, packed, Channel: 1),
+            ],
+        };
+
+        uint gltfFlags = MaterialBindingSourceEncoder.Encode(gltf).Entry.Flags;
+        (gltfFlags & (1u << 2)).ShouldNotBe(0u);
+        (gltfFlags & GPUMaterialEntry.PackedMetallicRoughnessFlag).ShouldNotBe(0u);
+
+        XRTexture2D metallic = new(1u, 1u, ColorF4.White) { Name = "Metallic" };
+        XRTexture2D roughness = new(1u, 1u, ColorF4.White) { Name = "Roughness" };
+        XRMaterial separate = new()
+        {
+            SurfaceTextureBindings =
+            [
+                new MaterialSurfaceTextureBinding(EMaterialTextureSemantic.Metallic, metallic),
+                new MaterialSurfaceTextureBinding(EMaterialTextureSemantic.Roughness, roughness),
+            ],
+        };
+
+        (MaterialBindingSourceEncoder.Encode(separate).Entry.Flags & GPUMaterialEntry.PackedMetallicRoughnessFlag)
+            .ShouldBe(0u);
     }
 
     private static float UIntToFloat(uint value)

@@ -181,32 +181,53 @@ internal sealed partial class VulkanResourceRuntime
         };
     }
 
-    /// <summary>Cold diagnostic grouping that distinguishes image growth from retained buffer owners.</summary>
+    /// <summary>
+    /// Cold diagnostic grouping that distinguishes image growth from retained buffer owners. Each group is one
+    /// registering owner, lifetime state, and memory type, so a host-visible buffer in system memory and a
+    /// device-local buffer of the same owner appear as separate rows. <c>MemoryTypeIndex</c> names the physical
+    /// device memory type (and so its heap); <c>RequestedProperties</c> are the flags that the allocation asked for.
+    /// </summary>
     private object[] CaptureBufferAllocationOwners(int limit)
     {
-        var entries = new List<(string Owner, string State, long Bytes)>();
+        var entries = new List<(string Owner, string State, uint MemoryTypeIndex, MemoryPropertyFlags Requested, long Bytes)>();
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
         lock (tracker.SyncRoot)
         {
             foreach (var pair in Allocations.Buffers.Allocations)
-            {
-                tracker.ResourceLifetimes.TryGetValue(new VulkanResourceLifetimeKey(ObjectType.Buffer, pair.Key), out var lifetime);
-                entries.Add((lifetime?.Owner ?? "<unregistered>", lifetime?.State.ToString() ?? "Unknown",
-                    pair.Value.Size > long.MaxValue ? long.MaxValue : (long)pair.Value.Size));
-            }
+                AddBufferAllocationOwner(tracker, entries, pair.Key, pair.Value);
             foreach (var pair in Allocations.Buffers.LegacyAllocations)
-            {
-                tracker.ResourceLifetimes.TryGetValue(new VulkanResourceLifetimeKey(ObjectType.Buffer, pair.Key), out var lifetime);
-                entries.Add((lifetime?.Owner ?? "<unregistered>", lifetime?.State.ToString() ?? "Unknown",
-                    pair.Value.Size > long.MaxValue ? long.MaxValue : (long)pair.Value.Size));
-            }
+                AddBufferAllocationOwner(tracker, entries, pair.Key, pair.Value);
         }
-        return entries.GroupBy(static entry => (entry.Owner, entry.State))
-            .Select(static group => new { group.Key.Owner, group.Key.State, Count = group.Count(), SizeBytes = group.Sum(static entry => entry.Bytes) })
+        return entries.GroupBy(static entry => (entry.Owner, entry.State, entry.MemoryTypeIndex, entry.Requested))
+            .Select(static group => new
+            {
+                group.Key.Owner,
+                group.Key.State,
+                group.Key.MemoryTypeIndex,
+                RequestedProperties = group.Key.Requested.ToString(),
+                Count = group.Count(),
+                SizeBytes = group.Sum(static entry => entry.Bytes),
+            })
             .OrderByDescending(static group => group.SizeBytes)
             .Take(limit)
             .Cast<object>()
             .ToArray();
+    }
+
+    /// <summary>Adds one buffer allocation with its registering owner to the owner grouping.</summary>
+    private static void AddBufferAllocationOwner(
+        VulkanResourceLifetimeTracker tracker,
+        List<(string Owner, string State, uint MemoryTypeIndex, MemoryPropertyFlags Requested, long Bytes)> entries,
+        ulong handle,
+        VulkanMemoryAllocation allocation)
+    {
+        tracker.ResourceLifetimes.TryGetValue(new VulkanResourceLifetimeKey(ObjectType.Buffer, handle), out var lifetime);
+        entries.Add((
+            lifetime?.Owner ?? "<unregistered>",
+            lifetime?.State.ToString() ?? "Unknown",
+            allocation.MemoryTypeIndex,
+            allocation.Properties,
+            allocation.Size > long.MaxValue ? long.MaxValue : (long)allocation.Size));
     }
 
     private static void ResolveImageAllocationDiagnosticFields(

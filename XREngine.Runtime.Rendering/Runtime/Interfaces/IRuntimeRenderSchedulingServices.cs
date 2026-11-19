@@ -60,6 +60,19 @@ public interface IRuntimeRenderSchedulingServices
     void UnsubscribeViewportSwapBuffers(Action swapBuffers);
 
     /// <summary>
+    /// Subscribes a callback to the host frame output preparation event. The event runs on the
+    /// collect thread after the collect frame id advances and before any collect callback, so a
+    /// viewport can decide its output pacing for the frame before the lights plan their shadow
+    /// work. Hosts without this event never call the callback.
+    /// </summary>
+    void SubscribeViewportPrepareFrameOutput(Action prepareFrameOutput) { }
+
+    /// <summary>
+    /// Unsubscribes a callback from the host frame output preparation event.
+    /// </summary>
+    void UnsubscribeViewportPrepareFrameOutput(Action prepareFrameOutput) { }
+
+    /// <summary>
     /// Subscribes a callback to the host viewport collect-visible frame event.
     /// </summary>
     void SubscribeViewportCollectVisible(Action collectVisible);

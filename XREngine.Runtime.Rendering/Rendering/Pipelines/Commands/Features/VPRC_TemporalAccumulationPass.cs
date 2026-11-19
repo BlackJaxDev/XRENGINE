@@ -721,7 +721,47 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
         return !IsHistoryIsolationPolicyDisabled(policy);
     }
 
+    /// <summary>
+    /// Resolves the temporal history policy for <paramref name="instance"/> before that instance
+    /// is the current rendering pipeline. The frame profile uses this overload to decide the TSR
+    /// internal scale, because the profile runs before the render pushes the pipeline and its
+    /// stereo state.
+    /// </summary>
+    /// <param name="instance">The pipeline instance that will render the view.</param>
+    /// <param name="stereoPass">True when the instance renders both eyes in one stereo pass.</param>
+    /// <param name="policy">The resolved history policy.</param>
+    /// <param name="reason">The reason for the policy, for diagnostics.</param>
+    /// <returns>True when history-based effects such as TSR can run.</returns>
+    internal static bool TryUseHistoryBasedVrEffects(
+        XRRenderPipelineInstance? instance,
+        bool stereoPass,
+        out EVrTemporalHistoryPolicy policy,
+        out string reason)
+    {
+        policy = ResolveHistoryIsolationPolicy(instance, stereoPass, out reason);
+        return !IsHistoryIsolationPolicyDisabled(policy);
+    }
+
+    /// <summary>
+    /// Resolves the temporal history policy for the current rendering pipeline and its stereo state.
+    /// </summary>
     internal static EVrTemporalHistoryPolicy ResolveHistoryIsolationPolicy(out string reason)
+        => ResolveHistoryIsolationPolicy(
+            CurrentRenderingPipeline,
+            RuntimeEngine.Rendering.State.IsStereoPass,
+            out reason);
+
+    /// <summary>
+    /// Resolves the temporal history policy for one pipeline instance.
+    /// A bound Advanced OpenXR eye (also the Advanced stage family of an RVC eye) that renders
+    /// one eye to an external Vulkan swapchain image gets <see cref="EVrTemporalHistoryPolicy.PerEye"/>.
+    /// Each eye has its own viewport and pipeline instance, so the temporal state of the instance
+    /// is the history of that eye only. Other per-eye swapchain targets stay disabled.
+    /// </summary>
+    internal static EVrTemporalHistoryPolicy ResolveHistoryIsolationPolicy(
+        XRRenderPipelineInstance? instance,
+        bool stereoPass,
+        out string reason)
     {
         if (IsLightProbePass)
         {
@@ -744,7 +784,7 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
              RuntimeEngine.VRState.OpenXRApi is not null ||
              RuntimeEngine.VRState.IsOpenXRActive);
 
-        if (!externalSwapchainTarget && !RuntimeEngine.Rendering.State.IsStereoPass)
+        if (!externalSwapchainTarget && !stereoPass)
         {
             reason = "mono/shared temporal history";
             return EVrTemporalHistoryPolicy.HeadsetShared;
@@ -752,14 +792,22 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
 
         if (openXrVulkanRuntimeSelected &&
             externalSwapchainTarget &&
-            !RuntimeEngine.Rendering.State.IsStereoPass &&
-            !IsBoundAdvancedOpenXrEye())
+            !stereoPass)
         {
-            reason = "external OpenXR Vulkan swapchain target";
-            return EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
+            if (!IsBoundAdvancedOpenXrEye(instance))
+            {
+                reason = "external OpenXR Vulkan swapchain target";
+                return EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
+            }
+
+            if (RuntimeEngine.VRState.IsInVR)
+            {
+                reason = "bound Advanced OpenXR eye per-eye history";
+                return EVrTemporalHistoryPolicy.PerEye;
+            }
         }
 
-        if (!RuntimeEngine.VRState.IsInVR && !RuntimeEngine.Rendering.State.IsStereoPass)
+        if (!RuntimeEngine.VRState.IsInVR && !stereoPass)
         {
             reason = "mono/shared temporal history";
             return EVrTemporalHistoryPolicy.HeadsetShared;
@@ -772,7 +820,7 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
             RuntimeEngine.Rendering.Settings.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo &&
             (RuntimeEngine.VRState.IsOpenXRActive
                 ? RuntimeEngine.VRState.OpenXRApi?.CanUseTrueSinglePassStereo == true
-                : RuntimeEngine.Rendering.State.IsStereoPass &&
+                : stereoPass &&
                   (RuntimeEngine.Rendering.State.HasVulkanMultiView ||
                    RuntimeEngine.Rendering.State.HasOvrMultiViewExtension));
 
@@ -796,11 +844,12 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
     }
 
     /// <summary>
-    /// An Advanced OpenXR eye with a bound output owns its own per-eye history,
-    /// so an external swapchain target does not disable it.
+    /// True when <paramref name="instance"/> runs an Advanced OpenXR eye stage family with a
+    /// bound output. Such an eye owns its own per-eye history, so an external swapchain target
+    /// does not disable it.
     /// </summary>
-    private static bool IsBoundAdvancedOpenXrEye()
-        => CurrentRenderingPipeline is { } instance &&
+    private static bool IsBoundAdvancedOpenXrEye(XRRenderPipelineInstance? instance)
+        => instance is not null &&
            instance.AssignedPipeline?.ResolveAdvancedStageFamily() is { IsOpenXrEyeProfile: true } &&
            instance.AdvancedOutputBinding.IsBound;
 

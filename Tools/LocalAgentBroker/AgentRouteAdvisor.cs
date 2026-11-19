@@ -53,7 +53,7 @@ public static class AgentRouteAdvisor
                 nameof(modelFamily));
         }
 
-        string combined = objective + "\n" + string.Join('\n', constraints ?? []);
+        string combined = $"{objective}\n{string.Join('\n', constraints ?? [])}";
         if (ContainsAny(combined, s_hardSolSignals))
         {
             return new AgentRouteRecommendation

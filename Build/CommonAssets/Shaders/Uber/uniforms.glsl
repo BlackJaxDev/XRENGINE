@@ -30,7 +30,7 @@ uniform vec3 CameraPosition;
 // The inverse-hull outline expands vertices in screen space. Fragment-stage
 // lighting snippets declare these separately, so keep this declaration scoped
 // to the vertex variants that consume u_ScreenParams.
-#ifndef XRENGINE_UBER_MVP_FRAGMENT
+#if !defined(XRENGINE_UBER_MVP_FRAGMENT) || defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING)
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 #endif
@@ -146,11 +146,33 @@ uniform float _AlphaMaskInvert;
 #endif
 
 //@property(name="_Cutoff", display="Alpha Cutoff", mode=static, range=[0,1])
-//@tooltip("Threshold below which fragments are discarded in masked modes.")
+//@tooltip("Discards fragments below this threshold in masked modes or when Source Alpha Clip is enabled.")
 uniform float _Cutoff;              // Alpha cutoff threshold
+//@property(name="_SourceAlphaClip", display="Source Alpha Clip", mode=static, default="0.0")
+uniform float _SourceAlphaClip;
 uniform int _Mode;                  // Rendering mode (opaque, cutout, fade, etc.)
 uniform float _AlphaForceOpaque;
 uniform float _AlphaMod;
+
+//@feature(id="source-scene-color", name="Source Scene Color", default=off, cost=high)
+#ifndef XRENGINE_UBER_DISABLE_SOURCE_SCENE_COLOR
+uniform sampler2DArray _SourceSceneColor;
+uniform float _SourceSceneColorMode;
+uniform vec4 _SourceGrabColor;
+uniform float _SourceGrabBrightness;
+uniform float _SourceGrabAddBrightness;
+uniform float _SourceGrabBlendFactor;
+uniform float _SourceGrabUseAlpha;
+// Source shader blend factor-table indices (0 to 10) for the surface and scene-color terms.
+uniform float _SourceGrabSrcBlend;
+uniform float _SourceGrabDstBlend;
+// Source toon GrabPass refraction: on/off, index of refraction (0 to 3), chromatic
+// aberration (0 to 1), and the facing falloff power (0 disables the falloff).
+uniform float _SourceRefractionEnabled;
+uniform float _SourceRefractionIndex;
+uniform float _SourceRefractionChromaticAberration;
+uniform float _SourceRefractionFresnelPower;
+#endif
 
 // ============================================
 // Color Adjustments
@@ -588,6 +610,9 @@ uniform float _OutlineFixedSize;
 uniform float _OutlineUseVertexColors;
 //@property(name="_OutlineZOffset", display="Depth Offset", mode=animated, range=[-1,1])
 uniform float _OutlineZOffset;
+uniform int _SourceOutlineBasic;
+uniform float _OutlineFixWidth;
+uniform float _OutlinesMaxDistance;
 uniform vec4 _OutlineTexture_ST;
 uniform vec2 _OutlineTexturePan;
 uniform int _OutlineTextureUV;

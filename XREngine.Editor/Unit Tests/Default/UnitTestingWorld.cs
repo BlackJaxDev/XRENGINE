@@ -133,6 +133,8 @@ public static partial class EditorUnitTests
             s.VulkanRenderTargetMode = runtimeSettings.Rendering.Vulkan.RenderTargetMode;
             s.VulkanPresentationProfile = runtimeSettings.Rendering.Vulkan.PresentationProfile;
             s.Vulkan.Startup.FallbackPolicy = runtimeSettings.Rendering.BackendFallbackPolicy;
+            s.AdvancedVirtualGeometry = runtimeSettings.Rendering.VirtualGeometry;
+            s.AdvancedVirtualGeometryPixelThreshold = runtimeSettings.Rendering.VirtualGeometryPixelThreshold;
         }
         else if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
         {
@@ -157,6 +159,11 @@ public static partial class EditorUnitTests
             s.VrRenderPipeline = runtimeSettings.VR.RenderPipeline;
             s.RvcPipelineMode = runtimeSettings.VR.RvcPipelineMode;
             s.RvcQuadViewEnabled = runtimeSettings.VR.RvcQuadView;
+            s.VrAdvancedEdgeHalfRateShading = runtimeSettings.VR.AdvancedEdgeHalfRateShading;
+            s.VrAdvancedEdgeHalfRateRadius = runtimeSettings.VR.AdvancedEdgeHalfRateRadius;
+            s.VrAdvancedEdgeHalfRateDebugTint = runtimeSettings.VR.AdvancedEdgeHalfRateDebugTint;
+            s.VrAdvancedShadowFilterTaps = runtimeSettings.VR.AdvancedShadowFilterTaps;
+            runtimeSettings.VR.EyeFeatures.ApplyTo(s.VrEyeFeatures);
             s.VrFoveationMode = runtimeSettings.VR.Foveation.Mode;
             s.VrFoveationQualityPreset = runtimeSettings.VR.Foveation.QualityPreset;
             s.VrFoveationRequireRequested = runtimeSettings.VR.Foveation.RequireRequested;

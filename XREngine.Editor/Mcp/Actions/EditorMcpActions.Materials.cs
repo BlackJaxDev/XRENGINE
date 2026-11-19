@@ -146,6 +146,9 @@ namespace XREngine.Editor.Mcp
             if (!TrySetShaderVarValue(shaderVar, value, out var setError))
                 return Task.FromResult(new McpToolResponse(setError!, isError: true));
 
+            if (material is XRMaterial uberMaterial && RefreshStaticMaterialParameter(uberMaterial, shaderVar.Name))
+                uberMaterial.RequestUberVariantRebuildDebounced();
+
             return Task.FromResult(new McpToolResponse(
                 $"Set uniform '{shaderVar.Name}' on material '{material.Name}'.",
                 new
@@ -189,6 +192,7 @@ namespace XREngine.Editor.Mcp
             var results = new List<object>();
             int successCount = 0;
             int failCount = 0;
+            bool staticLiteralChanged = false;
 
             foreach (var kvp in uniforms)
             {
@@ -211,6 +215,8 @@ namespace XREngine.Editor.Mcp
 
                 if (TrySetShaderVarValue(shaderVar, kvp.Value, out var setError))
                 {
+                    if (material is XRMaterial uberMaterial)
+                        staticLiteralChanged |= RefreshStaticMaterialParameter(uberMaterial, shaderVar.Name);
                     results.Add(new { uniform = shaderVar.Name, success = true, newValue = FormatUniformValue(shaderVar) });
                     successCount++;
                 }
@@ -220,6 +226,9 @@ namespace XREngine.Editor.Mcp
                     failCount++;
                 }
             }
+
+            if (staticLiteralChanged && material is XRMaterial rebuiltMaterial)
+                rebuiltMaterial.RequestUberVariantRebuildDebounced();
 
             bool anyFailed = failCount > 0;
             return Task.FromResult(new McpToolResponse(
@@ -231,6 +240,27 @@ namespace XREngine.Editor.Mcp
         // ─────────────────────────────────────────────────────────────────
         // Material resolution helpers
         // ─────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Updates a compiled Uber constant after a material parameter edit.
+        /// Runtime uniforms keep their existing update path.
+        /// </summary>
+        private static bool RefreshStaticMaterialParameter(XRMaterial material, string parameterName)
+        {
+            if (!material.TryGetUberMaterialState(out _, out ShaderUiManifest manifest) ||
+                !manifest.PropertyLookup.TryGetValue(parameterName, out ShaderUiProperty? property) ||
+                property.IsSampler)
+                return false;
+
+            EShaderUiPropertyMode mode = property.HasExplicitMutability
+                ? property.Mutability == EShaderUiPropertyMutability.Runtime
+                    ? EShaderUiPropertyMode.Animated
+                    : EShaderUiPropertyMode.Static
+                : material.GetUberPropertyMode(property.Name, property.DefaultMode, false);
+
+            return mode == EShaderUiPropertyMode.Static &&
+                material.RefreshUberPropertyStaticLiteral(property.Name);
+        }
 
         /// <summary>
         /// Resolves an <see cref="XRMaterialBase"/> from either a direct asset ID or from a component's

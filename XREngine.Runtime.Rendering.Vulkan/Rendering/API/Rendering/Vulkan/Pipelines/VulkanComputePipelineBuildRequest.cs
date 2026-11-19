@@ -14,6 +14,7 @@ internal sealed class VulkanComputePipelineBuildRequest(
     DescriptorSetAndBindingMappingEXTNative[] descriptorHeapMappings)
 {
     public VkRenderProgram Program { get; } = program;
+    public string ProgramName { get; } = program.Data.Name ?? "<unnamed program>";
     public VulkanProgramCreationPort ProgramServices { get; } = programServices;
     public VulkanComputePipelineCompileKey Key { get; } = key;
     public PipelineLayout PipelineLayout { get; } = pipelineLayout;

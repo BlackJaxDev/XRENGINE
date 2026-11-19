@@ -130,7 +130,9 @@ namespace XREngine.Editor.Mcp
                 if (IsUnserializableType(targetType))
                 {
                     converted = null;
-                    error = $"Type '{targetType.Name}' cannot be deserialized from JSON.";
+                    error = typeof(XRBase).IsAssignableFrom(targetType)
+                        ? $"Type '{targetType.Name}' is an engine object and is not created from JSON. Set its members with a dotted path instead, for example '<property>.Value' and '<property>.HasOverride' for an OverrideableSetting."
+                        : $"Type '{targetType.Name}' cannot be deserialized from JSON.";
                     return false;
                 }
 

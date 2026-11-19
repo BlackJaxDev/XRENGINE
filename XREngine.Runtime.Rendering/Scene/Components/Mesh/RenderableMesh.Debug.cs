@@ -22,6 +22,7 @@ namespace XREngine.Components.Scene.Mesh
         private readonly object _highlightStateLock = new();
         private RenderingParameters? _highlightRenderOptionsOverride;
         private XRMaterial? _highlightSourceMaterial;
+        private RenderingParameters? _highlightSourceOptions;
         private int _highlightStencilBits;
         private bool _skinnedCullDiagLogged;
         private bool _gpuSkinnedBoundsDebugFailureLogged;
@@ -76,12 +77,22 @@ namespace XREngine.Components.Scene.Mesh
         #region Highlight stencil overrides
 
         public void SetHighlightStencilBit(int stencilBit, bool enabled)
+            => SetHighlightBit(stencilBit, enabled);
+
+        /// <summary>
+        /// Publishes editor highlight flags and a tagged Default pipeline stencil override.
+        /// The Advanced scene path reads the flags and uses the authored material options.
+        /// </summary>
+        public void SetEditorHighlightBit(int highlightBit, bool enabled)
+            => SetHighlightBit(highlightBit, enabled);
+
+        private void SetHighlightBit(int highlightBit, bool enabled)
         {
             lock (_highlightStateLock)
             {
                 int nextBits = enabled
-                    ? (_highlightStencilBits | stencilBit)
-                    : (_highlightStencilBits & ~stencilBit);
+                    ? (_highlightStencilBits | highlightBit)
+                    : (_highlightStencilBits & ~highlightBit);
 
                 if (nextBits == _highlightStencilBits)
                     return;
@@ -117,14 +128,18 @@ namespace XREngine.Components.Scene.Mesh
             {
                 _rc.MaterialOverride = Volatile.Read(ref _materialOverride);
                 _rc.RenderOptionsOverride = null;
-                _rc.EditorHighlightBits = 0u;
+                _rc.EditorHighlightBits = unchecked((uint)_highlightStencilBits);
                 return;
             }
 
-            if (!ReferenceEquals(_highlightSourceMaterial, sourceMaterial) || _highlightRenderOptionsOverride is null)
+            RenderingParameters sourceOptions = sourceMaterial.RenderOptions;
+            if (!ReferenceEquals(_highlightSourceMaterial, sourceMaterial) ||
+                !ReferenceEquals(_highlightSourceOptions, sourceOptions) ||
+                _highlightRenderOptionsOverride is null)
             {
                 _highlightSourceMaterial = sourceMaterial;
-                _highlightRenderOptionsOverride = CloneRenderingParameters(sourceMaterial.RenderOptions);
+                _highlightSourceOptions = sourceOptions;
+                _highlightRenderOptionsOverride = CloneRenderingParameters(sourceOptions);
             }
 
             ConfigureHighlightStencil(_highlightRenderOptionsOverride, _highlightStencilBits);
@@ -136,7 +151,7 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private static RenderingParameters CloneRenderingParameters(RenderingParameters source)
-            => new()
+            => new LegacyEditorHighlightRenderingParameters(source)
             {
                 RequiredEngineUniforms = source.RequiredEngineUniforms,
                 WriteRed = source.WriteRed,

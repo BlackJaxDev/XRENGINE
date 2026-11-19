@@ -240,6 +240,9 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
         ArgumentNullException.ThrowIfNull(image);
         if (width == 0 || height == 0)
             throw new ArgumentOutOfRangeException(nameof(width), "Resized image dimensions must be positive.");
+        if (mode == RuntimeImageResizeMode.IndependentChannels &&
+            image.PixelFormat is RuntimePixelFormat.Rgba8 or RuntimePixelFormat.Bgra8 or RuntimePixelFormat.RgbaFloat32)
+            return ResizeIndependentChannels(image, width, height);
         (StorageType storage, string mapping) = image.PixelFormat switch
         {
             RuntimePixelFormat.Rgb8 => (StorageType.Char, "RGB"),
@@ -271,6 +274,7 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
         switch (mode)
         {
             case RuntimeImageResizeMode.Standard:
+            case RuntimeImageResizeMode.IndependentChannels:
                 resized.Resize(geometry);
                 break;
             case RuntimeImageResizeMode.Bilinear:
@@ -300,6 +304,75 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
                 _ => throw new InvalidOperationException("Unsupported image channel mapping."),
             }) ?? throw new InvalidDataException("ImageMagick returned no resized pixel bytes.");
         return new RuntimeImage(width, height, image.Format, image.Type, data);
+    }
+
+    /// <summary>
+    /// Averages each pixel channel without using alpha to weight RGB. Packed masks can
+    /// store useful RGB values where alpha is zero, so the streaming mips must keep them.
+    /// </summary>
+    private static RuntimeImage ResizeIndependentChannels(RuntimeImage image, uint width, uint height)
+    {
+        if (image.Width == 0 || image.Height == 0)
+            throw new InvalidDataException("Source image dimensions must be positive.");
+        bool floatingPoint = image.PixelFormat == RuntimePixelFormat.RgbaFloat32;
+        int componentBytes = floatingPoint ? sizeof(float) : sizeof(byte);
+        int pixelBytes = componentBytes * 4;
+        byte[] result = new byte[checked((int)((long)width * height * pixelBytes))];
+        ReadOnlySpan<byte> source = image.Pixels.Span;
+        Span<byte> destination = result;
+        double scaleX = image.Width / (double)width;
+        double scaleY = image.Height / (double)height;
+        Span<double> sums = stackalloc double[4];
+        for (int y = 0; y < height; ++y)
+        {
+            double top = y * scaleY;
+            double bottom = (y + 1) * scaleY;
+            int firstY = (int)Math.Floor(top);
+            int lastY = Math.Min((int)image.Height - 1, (int)Math.Ceiling(bottom) - 1);
+            for (int x = 0; x < width; ++x)
+            {
+                double left = x * scaleX;
+                double right = (x + 1) * scaleX;
+                int firstX = (int)Math.Floor(left);
+                int lastX = Math.Min((int)image.Width - 1, (int)Math.Ceiling(right) - 1);
+                sums.Clear();
+                for (int sourceY = firstY; sourceY <= lastY; ++sourceY)
+                {
+                    double verticalWeight = Math.Min(bottom, sourceY + 1.0) - Math.Max(top, sourceY);
+                    int row = image.Origin == RuntimeImageOrigin.BottomLeft
+                        ? (int)image.Height - sourceY - 1
+                        : sourceY;
+                    for (int sourceX = firstX; sourceX <= lastX; ++sourceX)
+                    {
+                        double weight = verticalWeight *
+                            (Math.Min(right, sourceX + 1.0) - Math.Max(left, sourceX));
+                        int offset = checked(row * image.RowStrideBytes + sourceX * pixelBytes);
+                        for (int channel = 0; channel < 4; ++channel)
+                        {
+                            int componentOffset = offset + channel * componentBytes;
+                            double value = floatingPoint
+                                ? BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadInt32LittleEndian(
+                                    source.Slice(componentOffset, sizeof(float))))
+                                : source[componentOffset];
+                            sums[channel] += value * weight;
+                        }
+                    }
+                }
+                int destinationOffset = checked((int)(((long)y * width + x) * pixelBytes));
+                double area = scaleX * scaleY;
+                for (int channel = 0; channel < 4; ++channel)
+                {
+                    int componentOffset = destinationOffset + channel * componentBytes;
+                    if (floatingPoint)
+                        BinaryPrimitives.WriteInt32LittleEndian(destination.Slice(componentOffset, sizeof(float)),
+                            BitConverter.SingleToInt32Bits((float)(sums[channel] / area)));
+                    else
+                        destination[componentOffset] = (byte)Math.Clamp(
+                            Math.Round(sums[channel] / area), byte.MinValue, byte.MaxValue);
+                }
+            }
+        }
+        return new RuntimeImage(width, height, image.Format, image.Type, result);
     }
 
     public RuntimeImage ReprojectEquirectangularToCubeCross(RuntimeImage image)

@@ -44,9 +44,11 @@ Fallbacks must log why they happen. A missing, stale, unreadable, or incompatibl
 
 `TextureStreamingCacheCodec` selects the key from the effective cook compression:
 
-- Role-dependent (`Bcn`): `TextureStreaming_v5_preview<preview-size>_bcn_binary`, with the texture role as a variant folder below it (`usage-color`, `usage-data`, or `usage-normal`). A cache path without a role folder cooks as BC7.
+- Role-dependent (`Bcn`): `TextureStreaming_v5_preview<preview-size>_bcn_binary`, with `usage-color`, `usage-data-independent-v1`, or `usage-normal-independent-v1` below it. A cache path without a role folder cooks as BC7.
 - BC7 only: `TextureStreaming_v4_preview<preview-size>_bc7_binary`.
 - Uncompressed: `TextureStreaming_v3_preview<preview-size>_rgba8_uncompressed_binary` (the earlier key, so existing RGBA8 caches stay valid).
+
+Data and Normal use their versioned role folders in all three modes. This prevents reuse of mips that lost RGB values where alpha is zero. Color keeps its existing key outside `Bcn`.
 
 A cache cooked in one mode is never reused in the other mode.
 

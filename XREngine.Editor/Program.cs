@@ -27,12 +27,14 @@ using XREngine.Editor;
 using XREngine.Editor.Importers;
 using XREngine.Editor.Importers.SerializedAssets;
 using XREngine.Editor.Mcp;
+using XREngine.Editor.Rendering.EditorHighlight;
 using XREngine.Editor.Settings;
 using XREngine.Fbx;
 using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.EditorHighlight.Contracts;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Runtime.Bootstrap;
@@ -91,6 +93,8 @@ internal partial class Program
     private static void Main(string[] args)
     {
         Stopwatch processEntryStopwatch = Stopwatch.StartNew();
+        using IDisposable editorHighlightModule = EditorHighlightModuleRegistry.Install(
+            static () => new EditorHighlightModule());
         ImGuiBackend.Register();
         CoACD.InstallBackend(new CoAcdNativeBackend());
         using IDisposable colliderAuthoringServices =
@@ -224,6 +228,11 @@ internal partial class Program
         ConfigureFbxTraceLogging(settings);
         EditorUnitTests.SyncTogglesFromRuntime();
         BootstrapEditorHookRegistration.Register();
+        WriteBootstrapTrace(
+            $"Model import settings: file='{UnitTestingWorldSettingsStore.ResolveSettingsFilePath()}', " +
+            $"configured={settings.ModelsToImport?.Count ?? 0}, enabled={settings.ModelsToImport?.Count(model => model?.Enabled == true) ?? 0}, " +
+            $"synced={EditorUnitTests.Toggles.ModelsToImport?.Count ?? 0}, syncedEnabled={EditorUnitTests.Toggles.HasAnyModelsToImport}, " +
+            $"bridgeRegistered={BootstrapModelImportBridge.Current is not null}.");
         OpenXrSmokeRunController smokeRun = OpenXrSmokeRunController.Parse(args);
         smokeRun.Configure(settings);
         settingsLoadStopwatch.Stop();
@@ -365,8 +374,7 @@ internal partial class Program
             return true;
 
         EngineDebug.LogWarning(
-            $"Invalid {XREngineEnvironmentVariables.OpenXrRenderPacingMode} value '{raw}'. Expected one of: " +
-            string.Join(", ", Enum.GetNames<OpenXrRenderPacingMode>()) + ".");
+            $"Invalid {XREngineEnvironmentVariables.OpenXrRenderPacingMode} value '{raw}'. Expected one of: {string.Join(", ", Enum.GetNames<OpenXrRenderPacingMode>())}.");
         return false;
     }
 
@@ -420,6 +428,9 @@ internal partial class Program
         {
             UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
             bool setUI = settings.EditorType != UnitTestEditorType.None || settings.RiveUI;
+            WriteBootstrapTrace(
+                $"Creating unit-test world: configuredModels={settings.ModelsToImport?.Count ?? 0}, " +
+                $"syncedEnabled={EditorUnitTests.Toggles.HasAnyModelsToImport}, bridgeRegistered={BootstrapModelImportBridge.Current is not null}.");
             targetWorld = BootstrapWorldFactory.CreateSelectedWorld(setUI, false);
             EngineDebug.Out("Loading Unit Testing World...");
         }
@@ -877,6 +888,9 @@ internal partial class Program
                 stopwatch.Stop();
                 WriteBootstrapTrace($"Default UI font prewarm failed after {stopwatch.Elapsed.TotalMilliseconds:F0} ms: {ex.Message}");
             }
+
+            FontGlyphSet.StartDefaultWorldFontPreparation();
+            WriteBootstrapTrace("Default world font preparation started.");
         });
     }
 
@@ -904,6 +918,7 @@ internal partial class Program
                 // Fragment shaders
                 _ = XRShader.EngineShader(Path.Combine("Common", "Text.fs"), EShaderType.Fragment);
                 _ = XRShader.EngineShader(Path.Combine("Common", "TextMsdf.fs"), EShaderType.Fragment);
+                _ = XRShader.EngineShader(Path.Combine("Common", "TextMtsdf.fs"), EShaderType.Fragment);
                 _ = XRShader.EngineShader(Path.Combine("Common", "TextMtsdfScreen.fs"), EShaderType.Fragment);
                 stopwatch.Stop();
                 WriteBootstrapTrace($"Text shaders prewarmed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms.");

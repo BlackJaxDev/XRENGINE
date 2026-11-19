@@ -1,0 +1,7 @@
+{
+  "version": "3.4",
+  "sourceUrl": "https://codeload.github.com/glfw/glfw/zip/refs/tags/3.4",
+  "archiveSha256": "A133DDC3D3C66143EBA9035621DB8E0BCF34DBA1EE9514A9E23E96AFD39FD57A",
+  "patch": "Glfw/window-list.patch",
+  "license": "Zlib"
+}

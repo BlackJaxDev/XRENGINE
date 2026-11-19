@@ -9,11 +9,13 @@ using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Vulkan;
 using Debug = XREngine.Debug;
 using VkExtent2D = Silk.NET.Vulkan.Extent2D;
 using VkFormat = Silk.NET.Vulkan.Format;
 using VkImage = Silk.NET.Vulkan.Image;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -857,6 +859,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
     private bool TryRenderVulkanEye(uint viewIndex, uint imageIndex)
     {
+        // One eye of a sequential XR frame. The XR frame count comes from the frame lifecycle,
+        // so this entry only sets the domain.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
         if (Window?.Renderer is not VulkanRenderer renderer)
             return false;
 
@@ -1287,6 +1292,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
     private bool TryRenderVulkanEyesBatch(out bool handled)
     {
+        // One XR frame of the XR output domain: both eyes, any view mode.
+        using RenderOutputDomainContext.Scope outputDomainScope = RenderOutputDomainContext.Enter(ERenderOutputDomain.Xr);
+        RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.Frames);
         global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.EyeBatchStart);
         bool strictSinglePassStereoRequested =
             RuntimeRenderingHostServices.Presentation.VrViewRenderMode == EVrViewRenderMode.SinglePassStereo;
@@ -1651,8 +1659,20 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     (rightInsetAcquired && Host.HasAcquiredImage(_swapchains[3])))
                 {
                     handled = true;
-                    throw new InvalidOperationException(
-                        "OpenXR batched eye image ownership remains with the runtime after a wait or release failure. The frame must end without projection layers; retrying eye acquisition would violate the runtime ownership ledger.");
+                    // A wait or release that returned a runtime loss code (for example when the
+                    // runtime process stops) already marked the loss through CheckResult. The
+                    // instance is gone, so its image ownership ledger no longer applies; the caller
+                    // ends the frame without layers instead of tripping the render circuit breaker.
+                    if (Host.IsRuntimeLossPending)
+                    {
+                        _eyeImageReleaseRuntimeLost = true;
+                        requestSequentialFallback = false;
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            "OpenXR batched eye image ownership remains with the runtime after a wait or release failure. The frame must end without projection layers; retrying eye acquisition would violate the runtime ownership ledger.");
+                    }
                 }
             }
 
@@ -1834,7 +1854,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 TimeSpan.FromSeconds(2),
                 "[OpenXR] True SinglePassStereo is unavailable: {0}.",
                 unavailableReason);
-            return false;
+            return FailOpenXrStereoPair(pair, "SinglePassStereoUnavailable");
         }
 
         if (!TryPlanVulkanOpenXrViewBatches(
@@ -1849,21 +1869,21 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 TimeSpan.FromSeconds(1),
                 "[OpenXR] True SinglePassStereo planned batch became unavailable: {0}. Sequential fallback is forbidden.",
                 batchPlanReason);
-            return false;
+            return FailOpenXrStereoPair(pair, "BatchPlanUnavailable");
         }
         SwapchainImageVulkan2KHR* leftImages = _swapchainImagesVK[(int)leftView];
         SwapchainImageVulkan2KHR* rightImages = _swapchainImagesVK[(int)rightView];
         if (leftImages == null || rightImages == null)
-            return false;
+            return FailOpenXrStereoPair(pair, "NoSwapchainImages");
         if (leftImageIndex >= _swapchainImageCounts[(int)leftView] || rightImageIndex >= _swapchainImageCounts[(int)rightView])
-            return false;
+            return FailOpenXrStereoPair(pair, "SwapchainImageIndexOutOfRange");
 
         if (_openXrFrameWorld is null)
-            return LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no frame world");
+            return FailOpenXrStereoPair(pair, "NotReady") || LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no frame world");
         XRCamera? leftEyeCamera = widePair ? _openXrLeftEyeCamera : Context.LeftInsetEyeCamera;
         XRCamera? rightEyeCamera = widePair ? _openXrRightEyeCamera : Context.RightInsetEyeCamera;
         if (leftEyeCamera is null || rightEyeCamera is null)
-            return LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no eye cameras");
+            return FailOpenXrStereoPair(pair, "NotReady") || LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no eye cameras");
 
         uint width = GetOpenXrSwapchainWidth(leftView);
         uint height = GetOpenXrSwapchainHeight(leftView);
@@ -1880,7 +1900,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         XRCamera leftCamera = leftEyeCamera;
         XRCamera rightCamera = rightEyeCamera;
         if (leftViewport is null || rightViewport is null)
-            return LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no eye viewport");
+            return FailOpenXrStereoPair(pair, "NotReady") || LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no eye viewport");
         ValidateOpenXrEyeViewportExtent(leftViewport, 0, GetOpenXrSwapchainWidth(0), GetOpenXrSwapchainHeight(0));
         ValidateOpenXrEyeViewportExtent(rightViewport, 1, GetOpenXrSwapchainWidth(1), GetOpenXrSwapchainHeight(1));
 
@@ -1903,12 +1923,12 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 out OpenXrStereoRenderTarget target,
                 pair))
         {
-            return false;
+            return FailOpenXrStereoPair(pair, "StereoTargetUnavailable");
         }
 
         XRViewport? pairViewport = widePair ? _openXrStereoViewport : Context.InsetStereoViewport;
         if (pairViewport is null)
-            return LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no stereo viewport for the view pair");
+            return FailOpenXrStereoPair(pair, "NotReady") || LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no stereo viewport for the view pair");
         XRViewport stereoViewport = pairViewport;
         stereoViewport.WorldInstanceOverride = _openXrFrameWorld;
         stereoViewport.Camera = leftCamera;
@@ -1920,7 +1940,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         // Visibility collection assigned the inset pair its own stereo pipeline.
         RenderPipeline? insetPipeline = widePair ? null : stereoViewport.RenderPipeline;
         if (!widePair && insetPipeline is null)
-            return LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no inset stereo pipeline");
+            return FailOpenXrStereoPair(pair, "NotReady") || LogVulkanEyeRenderNotReady(leftView, leftImageIndex, "no inset stereo pipeline");
         RenderPipeline stereoPipeline = insetPipeline ?? GetOrCreateOpenXrStereoPipeline(sourcePipeline);
         if (!ReferenceEquals(stereoViewport.RenderPipeline, stereoPipeline))
             stereoViewport.RenderPipeline = stereoPipeline;
@@ -1949,6 +1969,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         ApplyOpenXrEyePoseForRenderThread(leftView);
         ApplyOpenXrEyePoseForRenderThread(rightView);
+        LogOpenXrEyeViewDiagnostics("stereo", leftView, stereoViewport, leftCamera);
+        LogOpenXrEyeViewDiagnostics("stereo", rightView, stereoViewport, rightCamera);
 
         if (VulkanCaptureEyeOutputs)
         {
@@ -1980,7 +2002,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 Context.PendingPredictedDisplayTime);
             if (!stereoViewport.TryCaptureRenderingBackendReadyFramePackageAuthority(
                     out var packageAuthority))
-                return false;
+            {
+                LogOpenXrStereoPackageUnavailable(pair, stereoMeshCommands, stereoViewport);
+                return FailOpenXrStereoPair(pair, "NoPublishedFramePackage");
+            }
 
             var renderRequest = new OpenXrEyeMirrorRenderRequest(
                 target.FrameBuffer,
@@ -2048,7 +2073,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                         target.Extent.Width,
                         target.Extent.Height,
                         stereoPipeline.DebugName);
-                    return false;
+                    return FailOpenXrStereoPair(pair, "RenderPublishFailed");
                 }
 
                 Debug.VulkanWarningEvery(
@@ -2059,7 +2084,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     target.Extent.Width,
                     target.Extent.Height,
                     stereoPipeline.DebugName);
-                return false;
+                return FailOpenXrStereoPair(pair, "ResizeCatchUpSkipped");
             }
 
             if (!widePair)
@@ -2733,6 +2758,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
         }
     }
 
+    /// <summary>
+    /// Checks that a per-eye viewport describes its swapchain image. The display extent must be the
+    /// swapchain extent. The internal extent can be smaller (the TSR render scale), but it must not be
+    /// empty or larger than the display extent.
+    /// </summary>
     private static void ValidateOpenXrEyeViewportExtent(
         XRViewport viewport,
         uint viewIndex,
@@ -2748,8 +2778,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
         int height = (int)expectedHeight;
         if (viewport.Width == width &&
             viewport.Height == height &&
-            viewport.InternalWidth == width &&
-            viewport.InternalHeight == height &&
+            viewport.InternalWidth > 0 &&
+            viewport.InternalHeight > 0 &&
+            viewport.InternalWidth <= width &&
+            viewport.InternalHeight <= height &&
             viewport.RendersToExternalSwapchainTarget &&
             viewport.Window is null)
         {
@@ -2757,7 +2789,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         }
 
         throw new InvalidOperationException(
-            $"OpenXR eye {viewIndex} viewport does not exactly match the swapchain extent. " +
+            $"OpenXR eye {viewIndex} viewport does not match the swapchain extent. " +
             $"Expected={width}x{height}; Viewport={viewport.Width}x{viewport.Height}; " +
             $"Internal={viewport.InternalWidth}x{viewport.InternalHeight}; " +
             $"ExternalTarget={viewport.RendersToExternalSwapchainTarget}; " +
@@ -2783,6 +2815,40 @@ Target:                 new RenderFrameViewTargetDescriptor(
         => Enum.IsDefined(typeof(VkFormat), (VkFormat)format)
             ? $"{(VkFormat)format}({format})"
             : $"0x{format:X}";
+
+    /// <summary>
+    /// Reports why a stereo view pair has no published backend-ready frame package to render.
+    /// It reads the package state, the command counts, and the applied pipeline, so a pair
+    /// that never collects can be told apart from a pair whose package is not yet published.
+    /// </summary>
+    private void LogOpenXrStereoPackageUnavailable(uint pair, RenderCommandCollection commands, XRViewport viewport)
+    {
+        EBackendReadyFramePackageState state;
+        long packageGeneration;
+        long collectGeneration;
+        using (commands.EnterRenderingBufferReadScope())
+        {
+            BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+            state = package.State;
+            packageGeneration = package.PackageGeneration;
+            collectGeneration = package.Identity.CollectGeneration;
+        }
+
+        XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
+        Debug.VulkanWarningEvery(
+            $"OpenXR.Vulkan.TrueSinglePassStereo.NoPublishedPackage.{pair}.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[OpenXR] Vulkan true stereo pair {0} has no published frame package. state={1} packageGeneration={2} collectGeneration={3} rendering={4} updating={5} applied='{6}' assigned='{7}' decline='{8}'",
+            pair,
+            state,
+            packageGeneration,
+            collectGeneration,
+            commands.GetRenderingCommandCount(),
+            commands.GetUpdatingCommandCount(),
+            instance.GetFullyAppliedPipeline()?.DebugName ?? "<none>",
+            instance.AssignedPipeline?.DebugName ?? "<none>",
+            instance.LastRenderDeclineReason ?? "<none>");
+    }
 
     private bool LogVulkanEyeRenderNotReady(uint viewIndex, uint imageIndex, string reason)
     {

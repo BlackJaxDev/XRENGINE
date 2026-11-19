@@ -120,8 +120,10 @@ internal sealed partial class VulkanFrameLoop
             }
             layerCount = (int)Math.Max(source2DArray.Depth, 1u);
             program = _resourceRuntime.AutoExposureComputeProgram2DArray;
+            // A constant key: this runs on every stereo exposure update, and a key built from the
+            // texture name allocated a string each time.
             Debug.VulkanEvery(
-                $"Vulkan.AutoExposure.HeadsetSharedArray.{source2DArray.Name ?? source2DArray.SamplerName ?? "<unnamed>"}",
+                "Vulkan.AutoExposure.HeadsetSharedArray",
                 TimeSpan.FromSeconds(30),
                 "[Vulkan] Auto exposure policy=HeadsetShared source='{0}' layers={1}; luminance is averaged across stereo array layers.",
                 source2DArray.Name ?? source2DArray.SamplerName ?? "<unnamed>",
@@ -146,34 +148,7 @@ internal sealed partial class VulkanFrameLoop
 
         float alpha = settings.ComputeGpuAutoExposureBlend(deltaTime);
 
-        bool exposureLayoutManagedByRenderGraph = false;
-
-        // Ensure standalone exposure images are in GENERAL for storage write.
-        // Render-graph images already have pass-declared read/write usage and
-        // must not be transitioned through an out-of-band one-shot submit.
-        if (GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is VkTexture2D vkExposure)
-        {
-            exposureLayoutManagedByRenderGraph = vkExposure.UsesAllocatorImage;
-            if (exposureLayoutManagedByRenderGraph)
-            {
-                VulkanPhysicalImageGroup? activeExposureGroup =
-                    vkExposure.TryResolvePhysicalGroup(ensureAllocated: false);
-                if (VulkanFramePlanner.IsUsableAutoExposureHistoryGroup(activeExposureGroup))
-                    _framePlanner.TrackAutoExposureHistory(activeExposureGroup!);
-
-                Debug.VulkanEvery(
-                    "Vulkan.AutoExposure.PlannerExposureGraphBarriers",
-                    TimeSpan.FromSeconds(30),
-                    "[Vulkan] Auto exposure is relying on render-graph barriers for planner-backed exposure texture '{0}'.",
-                    exposureTex.Name ?? "<unnamed>");
-            }
-            else
-            {
-                Silk.NET.Vulkan.ImageLayout oldLayout = vkExposure.CurrentImageLayout;
-                if (oldLayout != Silk.NET.Vulkan.ImageLayout.General)
-                    vkExposure.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.General);
-            }
-        }
+        bool exposureLayoutManagedByRenderGraph = PrepareExposureImageForStorage(exposureTex);
 
         program.Uniform("SmallestMip", sampledSmallestMip);
         program.Uniform("LuminanceWeights", settings.AutoExposureLuminanceWeights);
@@ -217,14 +192,138 @@ internal sealed partial class VulkanFrameLoop
             return false;
         EnqueueMemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.TextureFetch);
 
-        if (!exposureLayoutManagedByRenderGraph && GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is VkTexture2D vkExposurePost)
+        FinishExposureImageStorage(exposureTex, exposureLayoutManagedByRenderGraph);
+        return true;
+    }
+
+    /// <summary>
+    /// Copies the exposure that the left eye of a two-pass VR eye pair just wrote into its 1x1
+    /// exposure texture to the headset exposure buffer. Both dispatches run in the exposure pass
+    /// of the left eye, so the texture keeps its pass-declared storage layout. The storage barrier
+    /// after the copy makes the value visible to the right eye's follow dispatch, which runs later
+    /// in queue submission order. When the right eye's command buffer runs before the left eye's
+    /// in a frame, the right eye reads the value of the previous frame.
+    /// </summary>
+    internal bool PublishHeadsetAutoExposureGpu(XRTexture2D exposureTex)
+    {
+        if (!_resourceRuntime.EnsureAutoExposureComputeResources() ||
+            _resourceRuntime.HeadsetExposurePublishProgram is not { } program ||
+            _resourceRuntime.HeadsetExposureBuffer is not { } headsetExposure ||
+            exposureTex is null ||
+            !EnsureExposureStorageUsage(exposureTex))
         {
-            Silk.NET.Vulkan.ImageLayout oldLayout = vkExposurePost.CurrentImageLayout;
-            if (oldLayout != Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal)
-                vkExposurePost.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal);
+            return false;
         }
 
+        // The exposure dispatch wrote the image with imageStore; make that write visible to this load.
+        EnqueueMemoryBarrier(EMemoryBarrierMask.ShaderImageAccess);
+        bool managedByRenderGraph = PrepareExposureImageForStorage(exposureTex);
+        program.BindImageTexture(
+            1,
+            exposureTex,
+            0,
+            false,
+            0,
+            XRRenderProgram.EImageAccess.ReadWrite,
+            XRRenderProgram.EImageFormat.R32F);
+        program.BindBuffer(headsetExposure, 2);
+        if (TryDispatchCompute(program, 1, 1, 1) != ERendererComputeEnqueueStatus.Enqueued)
+            return false;
+        EnqueueMemoryBarrier(EMemoryBarrierMask.ShaderStorage);
+
+        FinishExposureImageStorage(exposureTex, managedByRenderGraph);
         return true;
+    }
+
+    /// <summary>
+    /// Writes the headset exposure buffer into the 1x1 exposure texture of the right eye of a
+    /// two-pass VR eye pair, clamped to the exposure bounds of the shared settings. The storage
+    /// barrier at the end of the left eye's publish orders this read after it (earlier in queue
+    /// submission order); the barrier after this dispatch orders it before the tonemap samples
+    /// the texture.
+    /// </summary>
+    internal bool FollowHeadsetAutoExposureGpu(XRTexture2D exposureTex, ColorGradingSettings settings)
+    {
+        if (!_resourceRuntime.EnsureAutoExposureComputeResources() ||
+            _resourceRuntime.HeadsetExposureFollowProgram is not { } program ||
+            _resourceRuntime.HeadsetExposureBuffer is not { } headsetExposure ||
+            exposureTex is null || settings is null ||
+            !EnsureExposureStorageUsage(exposureTex))
+        {
+            return false;
+        }
+
+        // No leading barrier: the left eye's publish ends with a storage barrier, and barriers
+        // order every later command in queue submission order, including this read.
+        bool managedByRenderGraph = PrepareExposureImageForStorage(exposureTex);
+
+        settings.GetResolvedExposureBounds(out float minExposure, out float maxExposure);
+        float fallbackExposure = settings.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
+            ? settings.ComputePhysicalExposureMultiplier()
+            : settings.Exposure;
+        program.Uniform("MinExposure", minExposure);
+        program.Uniform("MaxExposure", maxExposure);
+        program.Uniform("FallbackExposure", Math.Clamp(fallbackExposure, minExposure, maxExposure));
+        program.BindImageTexture(
+            1,
+            exposureTex,
+            0,
+            false,
+            0,
+            XRRenderProgram.EImageAccess.ReadWrite,
+            XRRenderProgram.EImageFormat.R32F);
+        program.BindBuffer(headsetExposure, 2);
+        if (TryDispatchCompute(program, 1, 1, 1) != ERendererComputeEnqueueStatus.Enqueued)
+            return false;
+        EnqueueMemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.TextureFetch);
+
+        FinishExposureImageStorage(exposureTex, managedByRenderGraph);
+        return true;
+    }
+
+    /// <summary>
+    /// Gets a 1x1 exposure texture ready for a storage write and returns true when the render
+    /// graph owns its layout. A render-graph (planner) image already has its pass-declared
+    /// read/write layout and must not be transitioned through an out-of-band one-shot submit;
+    /// its physical group is tracked as exposure history so it survives across frames. A
+    /// standalone image is moved to GENERAL here.
+    /// </summary>
+    private bool PrepareExposureImageForStorage(XRTexture2D exposureTex)
+    {
+        if (GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is not VkTexture2D vkExposure)
+            return false;
+
+        if (vkExposure.UsesAllocatorImage)
+        {
+            VulkanPhysicalImageGroup? activeExposureGroup =
+                vkExposure.TryResolvePhysicalGroup(ensureAllocated: false);
+            if (VulkanFramePlanner.IsUsableAutoExposureHistoryGroup(activeExposureGroup))
+                _framePlanner.TrackAutoExposureHistory(activeExposureGroup!);
+
+            Debug.VulkanEvery(
+                "Vulkan.AutoExposure.PlannerExposureGraphBarriers",
+                TimeSpan.FromSeconds(30),
+                "[Vulkan] Auto exposure is relying on render-graph barriers for planner-backed exposure texture '{0}'.",
+                exposureTex.Name ?? "<unnamed>");
+            return true;
+        }
+
+        Silk.NET.Vulkan.ImageLayout oldLayout = vkExposure.CurrentImageLayout;
+        if (oldLayout != Silk.NET.Vulkan.ImageLayout.General)
+            vkExposure.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.General);
+        return false;
+    }
+
+    /// <summary>Returns a standalone exposure image to its sampled layout after a storage write.</summary>
+    private void FinishExposureImageStorage(XRTexture2D exposureTex, bool managedByRenderGraph)
+    {
+        if (managedByRenderGraph ||
+            GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is not VkTexture2D vkExposure)
+            return;
+
+        Silk.NET.Vulkan.ImageLayout oldLayout = vkExposure.CurrentImageLayout;
+        if (oldLayout != Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal)
+            vkExposure.TransitionImageLayout(oldLayout, Silk.NET.Vulkan.ImageLayout.ShaderReadOnlyOptimal);
     }
 
 

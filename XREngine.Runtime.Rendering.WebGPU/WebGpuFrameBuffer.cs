@@ -141,7 +141,7 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
             if (!MatchesAuthoredTargets(snapshot))
                 throw Unsupported("Create", "attachments changed while their physical view plan was being prepared");
             int validationCommand = Renderer.CreateEngineReplacement(this, ref _validationRequest, 7,
-                "{\"label\":\"Engine framebuffer validation\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
+                $$"""{"label":"Engine framebuffer validation","commands":[{"type":"clear","pass":{{plan.ToJson()}}}]}""");
             ReleaseAllocation();
             _targets = snapshot;
             _textures = textures;
@@ -283,7 +283,7 @@ public sealed partial class WebGpuFrameBuffer : WebGpuObject<XRFrameBuffer>
         if (_clearCommands[index] != 0) return _clearCommands[index];
         BrowserFrameBufferPlan plan = CreatePlan(color, depth, default, 1);
         _clearCommands[index] = Renderer.CreateEngineReplacement(this, ref _clearRequests[index], 7,
-            "{\"label\":\"Engine framebuffer clear\",\"commands\":[{\"type\":\"clear\",\"engineClearValues\":true,\"pass\":" + plan.ToJson() + "}]}");
+            $$"""{"label":"Engine framebuffer clear","commands":[{"type":"clear","engineClearValues":true,"pass":{{plan.ToJson()}}}]}""");
         return _clearCommands[index];
     }
 

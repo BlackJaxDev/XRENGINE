@@ -1,5 +1,6 @@
 using MemoryPack;
 using XREngine.Extensions;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Rendering;
@@ -281,7 +282,10 @@ namespace XREngine.Rendering
         /// Use this to set uniform values to be passed to the fragment shader.
         /// </summary>
         public T2? Parameter<T2>(int index) where T2 : ShaderVar
-            => Parameters.IndexInRangeArrayT(index) ? Parameters[index] as T2 : null;
+        {
+            ShaderVar[] parameters = Parameters;
+            return parameters.IndexInRangeArrayT(index) ? parameters[index] as T2 : null;
+        }
 
         /// <summary>
         /// Retrieves the material's uniform parameter with the given name.
@@ -289,35 +293,37 @@ namespace XREngine.Rendering
         /// </summary>
         public T2? Parameter<T2>(string name) where T2 : ShaderVar
         {
+            ShaderVar[] parameters = Parameters;
             if (_nameIndexCache.TryGetValue(name, out var index))
             {
-                if (Parameters.IndexInRangeArrayT(index) &&
-                    string.Equals(Parameters[index]?.Name, name, StringComparison.Ordinal))
-                {
-                    return Parameter<T2>(index);
-                }
+                ShaderVar? parameter = parameters.IndexInRangeArrayT(index)
+                    ? parameters[index]
+                    : null;
+                if (string.Equals(parameter?.Name, name, StringComparison.Ordinal))
+                    return parameter as T2;
 
-                // Parameter arrays are exposed for serialization and editor mutation,
-                // so callers can reorder or replace entries without invoking the
-                // property setter. Never let a stale cached index resolve a different
-                // uniform, because Uber resource reconstruction uses this lookup to
-                // decide whether a typed parameter needs to be restored.
-                _nameIndexCache.Remove(name);
+                // The visible collector can read this cache while an editor or
+                // importer replaces parameters. Validate the index against this
+                // call's array before returning a parameter. A racing removal of
+                // a newer index only makes the next lookup scan the array again.
+                _nameIndexCache.TryRemove(name, out _);
             }
 
-            for (var i = 0; i < Parameters.Length; i++)
+            for (var i = 0; i < parameters.Length; i++)
             {
-                if (string.Equals(Parameters[i]?.Name, name, StringComparison.Ordinal))
+                ShaderVar? parameter = parameters[i];
+                if (string.Equals(parameter?.Name, name, StringComparison.Ordinal))
                 {
                     _nameIndexCache[name] = i;
-                    return Parameter<T2>(i);
+                    return parameter as T2;
                 }
             }
             return null;
         }
 
         [YamlIgnore]
-        private readonly Dictionary<string, int> _nameIndexCache = [];
+        private readonly ConcurrentDictionary<string, int> _nameIndexCache =
+            new(StringComparer.Ordinal);
 
         public void ResetNameIndexCache()
             => _nameIndexCache.Clear();
@@ -618,7 +624,10 @@ namespace XREngine.Rendering
 
             for (int index = 0; index < parameters.Length; index++)
                 if (parameters[index] is { } parameter)
+                {
                     parameter.ValueChanged += ParameterValueChanged;
+                    parameter.NameChanged += ParameterNameChanged;
+                }
         }
 
         private void DetachParameterHandlers(ShaderVar[]? parameters)
@@ -628,7 +637,10 @@ namespace XREngine.Rendering
 
             for (int index = 0; index < parameters.Length; index++)
                 if (parameters[index] is { } parameter)
+                {
                     parameter.ValueChanged -= ParameterValueChanged;
+                    parameter.NameChanged -= ParameterNameChanged;
+                }
         }
 
         /// <summary>Restores value subscriptions after a cooked reflection load suppressed property callbacks.</summary>
@@ -643,6 +655,20 @@ namespace XREngine.Rendering
 
         private void ParameterValueChanged(ShaderVar _)
             => IncrementBindingValueVersion();
+
+        /// <summary>
+        /// Reacts to a rename of one parameter. The cached name-to-index lookup is no longer
+        /// valid, and consumers that map uniform names to program slots or to encoded material
+        /// words (for example the Advanced scene publisher) must rebuild that map. A rename
+        /// therefore advances the layout version, and the value version with it, as a change
+        /// of the Parameters array does.
+        /// </summary>
+        private void ParameterNameChanged(ShaderVar _)
+        {
+            ResetNameIndexCache();
+            IncrementBindingLayoutVersion();
+            IncrementBindingValueVersion();
+        }
 
         protected void IncrementBindingValueVersion()
         {

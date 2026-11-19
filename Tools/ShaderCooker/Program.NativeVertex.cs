@@ -112,7 +112,7 @@ internal static partial class Program
                     functionSource, functionHash, computeIdentity, null, context);
                 auxiliaries.Add(prepared);
                 string property = pass.ToString();
-                auxiliaryIdentities[char.ToLowerInvariant(property[0]) + property[1..] + "Identity"] = Hash(prepared.Descriptor);
+                auxiliaryIdentities[$"{char.ToLowerInvariant(property[0])}{property[1..]}Identity"] = Hash(prepared.Descriptor);
             }
             foreach (EngineLitMaterialShaderSource canonical in EngineNativeVertexShaderGenerator.RequiredCanonicalSources)
                 Require(Hash(ReadBounded(ResolveInput(sourceRoot, canonical.Path), MaxSourceBytes)) == canonical.Sha256,

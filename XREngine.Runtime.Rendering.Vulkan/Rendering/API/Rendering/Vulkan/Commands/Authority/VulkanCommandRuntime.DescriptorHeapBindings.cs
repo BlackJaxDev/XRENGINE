@@ -36,7 +36,7 @@ internal sealed partial class VulkanCommandRuntime
         if (LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? lane) && lane is not null)
             return TryApplyDescriptorHeapBinding(commandBuffer, in identity, ref lane.BindState, out reason);
 
-        lock (CommandBuffers.BindStateGate)
+        using (VulkanFrameLockScope.Enter(CommandBuffers.BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
         {
             ulong handle = unchecked((ulong)commandBuffer.Handle);
             if (!CommandBuffers.BindStates.TryGetValue(handle, out CommandBufferBindState state))

@@ -183,6 +183,7 @@ public partial class OpenGLRenderer
         if (!sceneUploader.TryUpload(sceneDatabase, in scenePublication, out reason) ||
             !sceneUploader.TryUploadViews(backendPackage, request.Views, request.RenderTimeSeconds, out reason))
             return false;
+        sceneUploader.ClearReconstructionCounters();
         if (!_advancedOutputRegistry.TryBindPersistentState(
                 in reservation,
                 inputStorage.PersistentStateByteLength,
@@ -453,8 +454,8 @@ public partial class OpenGLRenderer
         uint pushBinding = shaderPath.StartsWith("Advanced/Preparation/", StringComparison.Ordinal)
             ? 0u
             : 1u;
-        string preamble = AdvancedShaderAccessLibrary.BuildPreamble(
-            RuntimeGraphicsApiKind.OpenGL, textureMode) + "\n#define XR_ADV_VISIBILITY_ARRAY 1\n" + defines;
+        string preamble = $"{AdvancedShaderAccessLibrary.BuildPreamble(
+            RuntimeGraphicsApiKind.OpenGL, textureMode)}\n#define XR_ADV_VISIBILITY_ARRAY 1\n{defines}";
         XRShader shader = CreateAdvancedSourceShader(
             template,
             EShaderType.Compute,
@@ -585,7 +586,7 @@ public partial class OpenGLRenderer
         // The shared preamble declares record types. Required extensions
         // must precede those declarations on desktop GL drivers.
         string vertexPreamble = "#extension GL_ARB_shader_draw_parameters : require\n" +
-            (stereo ? "#extension GL_OVR_multiview2 : require\n#define XR_ADV_OPENGL_MULTIVIEW_RASTER 1\n" : string.Empty) + preamble;
+            $"{(stereo ? "#extension GL_OVR_multiview2 : require\n#define XR_ADV_OPENGL_MULTIVIEW_RASTER 1\n" : string.Empty)}{preamble}";
         XRShader vertex = CreateAdvancedSourceShader(
             vertexTemplate,
             EShaderType.Vertex,

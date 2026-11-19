@@ -38,12 +38,14 @@ internal sealed partial class VulkanCommandRuntime
         QueueFamilyIndices families = _deviceContext.QueueFamilies;
         uint graphicsFamily = families.GraphicsFamilyIndex ?? 0u;
 
+        long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         for (int index = 0; index < uploads.Count; index++)
             if (!uploads[index].TryValidateTransferOwnership(ResourceRuntime, out string? validationFailure))
             {
                 failureReason = validationFailure;
                 return false;
             }
+        long probeValidated = System.Diagnostics.Stopwatch.GetTimestamp();
 
         Queue submissionQueue = _deviceContext.GraphicsQueue;
         if (submissionQueue.Handle == 0)
@@ -90,6 +92,7 @@ internal sealed partial class VulkanCommandRuntime
                 failureReason = ex.Message;
                 return false;
             }
+            long probeBegun = System.Diagnostics.Stopwatch.GetTimestamp();
 
             if (gpuTimestampLease.IsValid)
             {
@@ -109,6 +112,7 @@ internal sealed partial class VulkanCommandRuntime
             if (gpuTimestampLease.IsValid)
                 Api!.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.BottomOfPipeBit,
                     gpuTimestampLease.QueryPool, 1);
+            long probeRecorded = System.Diagnostics.Stopwatch.GetTimestamp();
 
             Result endResult = EndCommandBufferTracked(commandBuffer);
             if (endResult != Result.Success)
@@ -129,6 +133,7 @@ internal sealed partial class VulkanCommandRuntime
                 return false;
             }
 
+            long probeFenced = System.Diagnostics.Stopwatch.GetTimestamp();
             SubmitInfo submitInfo = new()
             {
                 SType = StructureType.SubmitInfo,
@@ -155,6 +160,7 @@ internal sealed partial class VulkanCommandRuntime
                 bytesInFlight,
                 gpuTimestampLease);
 
+            long probeOwnerBuilt = System.Diagnostics.Stopwatch.GetTimestamp();
             VulkanSubmissionReceipt submitReceipt;
             submitReceipt = SubmitToQueueTrackedWithDisposition(
                 submissionQueue,
@@ -171,6 +177,21 @@ internal sealed partial class VulkanCommandRuntime
                 out _,
                 out _,
                 "TextureUpload.GraphicsForeground");
+            long probeSubmitted = System.Diagnostics.Stopwatch.GetTimestamp();
+            double probeTotal = VulkanTextureUploadTimingProbe.Ms(probeStart, probeSubmitted);
+            if (probeTotal >= VulkanTextureUploadTimingProbe.ThresholdMilliseconds)
+            {
+                VulkanTextureUploadTimingProbe.Write(
+                    $"[VkTextureUpload.SubmitPhases] firstTexture='{uploads[0].Request.TextureName}' uploads={uploads.Count} " +
+                    $"stagingBytes={bytesInFlight} total={probeTotal:F2} ms " +
+                    $"validateOwnership={VulkanTextureUploadTimingProbe.Ms(probeStart, probeValidated):F2} " +
+                    $"allocateBegin={VulkanTextureUploadTimingProbe.Ms(probeValidated, probeBegun):F2} " +
+                    $"record={VulkanTextureUploadTimingProbe.Ms(probeBegun, probeRecorded):F2} " +
+                    $"endAndFence={VulkanTextureUploadTimingProbe.Ms(probeRecorded, probeFenced):F2} " +
+                    $"buildOwner={VulkanTextureUploadTimingProbe.Ms(probeFenced, probeOwnerBuilt):F2} " +
+                    $"submit={VulkanTextureUploadTimingProbe.Ms(probeOwnerBuilt, probeSubmitted):F2} " +
+                    $"accepted={submitReceipt.SubmissionAccepted}");
+            }
 
             if (!submitReceipt.SubmissionAccepted)
             {

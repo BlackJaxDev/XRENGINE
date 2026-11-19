@@ -1133,6 +1133,50 @@ namespace XREngine.Rendering
             float deltaTime, bool generateMipmapsNow, string? gpuProgramBinding)
             => UpdateAutoExposureGpu(sourceTex, exposureTex, settings, deltaTime, generateMipmapsNow);
 
+        /// <summary>
+        /// Copies the value of a 1x1 exposure texture into the one-float storage buffer of a
+        /// <see cref="SharedAutoExposureChannel"/>. The copy stays on the GPU. Returns true
+        /// when the copy is enqueued for the current frame.
+        /// </summary>
+        public virtual bool PublishAutoExposureGpu(XRTexture2D exposureTex, XRDataBuffer channelBuffer)
+            => false;
+
+        /// <summary>
+        /// Writes the exposure in a channel's storage buffer into a 1x1 exposure texture,
+        /// clamped to <paramref name="minExposure"/> and <paramref name="maxExposure"/>. A value
+        /// that is not a positive finite number writes <paramref name="fallbackExposure"/>.
+        /// Returns true when the copy is enqueued for the current frame.
+        /// </summary>
+        public virtual bool ConsumeAutoExposureGpu(XRDataBuffer channelBuffer, XRTexture2D exposureTex,
+            float minExposure, float maxExposure, float fallbackExposure)
+            => false;
+
+        /// <summary>
+        /// True when this renderer can share one headset exposure between the two pipelines of a
+        /// two-pass VR eye pair (<see cref="PublishHeadsetAutoExposureGpu"/> and
+        /// <see cref="FollowHeadsetAutoExposureGpu"/>). A renderer without it lets each eye adapt
+        /// on its own.
+        /// </summary>
+        public virtual bool SupportsHeadsetSharedAutoExposure => false;
+
+        /// <summary>
+        /// Copies the exposure that the left eye just wrote into its 1x1 exposure texture to the
+        /// renderer's headset exposure value, on the GPU. Call it after a successful
+        /// <see cref="UpdateAutoExposureGpu(XRTexture, XRTexture2D, ColorGradingSettings, float, bool)"/>
+        /// of the left eye. Returns true when the copy was recorded.
+        /// </summary>
+        public virtual bool PublishHeadsetAutoExposureGpu(XRTexture2D exposureTex)
+            => false;
+
+        /// <summary>
+        /// Writes the renderer's headset exposure value into the 1x1 exposure texture of the right
+        /// eye, on the GPU, clamped to the exposure bounds of <paramref name="settings"/>. Before the
+        /// left eye publishes a value, the texture keeps its own valid value or gets the fallback
+        /// exposure. Returns true when the write was recorded, so the tonemap may sample the texture.
+        /// </summary>
+        public virtual bool FollowHeadsetAutoExposureGpu(XRTexture2D exposureTex, ColorGradingSettings settings)
+            => false;
+
         public void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Action<bool, float> callback)
             => CalcDotLuminanceFrontAsync(region, withTransparency, RuntimeRenderingHostServices.FrameTiming.DefaultLuminance, callback);
         public abstract void CalcDotLuminanceFrontAsync(BoundingRectangle region, bool withTransparency, Vector3 luminance, Action<bool, float> callback);
@@ -1318,6 +1362,28 @@ namespace XREngine.Rendering
             out string? failure)
         {
             failure = "The active renderer does not implement asynchronous Advanced integer-attachment picking readback.";
+            return false;
+        }
+
+        /// <summary>Checks the optional editor identity attachment's required GPU format support.</summary>
+        public virtual bool SupportsEditorPickingIdentity(out string? failure)
+        {
+            failure = "The active renderer does not support the editor identity attachment.";
+            return false;
+        }
+
+        /// <summary>
+        /// Queues one RGBA16 editor identity pixel. The callback receives exact
+        /// channel codes after GPU completion. This is an editor query only.
+        /// </summary>
+        public virtual bool TryQueueEditorPickingReadback(
+            XRTexture identity,
+            in AdvancedPickingQuery query,
+            ulong requestToken,
+            Action<ulong, EditorPickingEncodedPixel> callback,
+            out string? failure)
+        {
+            failure = "The active renderer does not implement asynchronous editor identity readback.";
             return false;
         }
 
@@ -1893,6 +1959,13 @@ namespace XREngine.Rendering
         /// Returns whether the current API supports the Count variant for MultiDrawElementsIndirect.
         /// </summary>
         public abstract bool SupportsIndirectCountDraw();
+
+        /// <summary>
+        /// True when the device can use <paramref name="format"/> as an optimally tiled depth-stencil
+        /// attachment. Pipelines use it to choose a stencil-only format where the device supports one.
+        /// The base renderer reports false.
+        /// </summary>
+        public virtual bool SupportsDepthStencilAttachmentFormat(ESizedInternalFormat format) => false;
 
         /// <inheritdoc />
         public virtual AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()

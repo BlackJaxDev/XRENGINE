@@ -816,7 +816,15 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
     public unsafe bool TryRenderViewsBatch(IOpenXrGraphicsHost host, out bool handled)
     {
         Attach(host);
-        return TryRenderVulkanEyesBatch(out handled);
+        _eyeImageReleaseRuntimeLost = false;
+        bool rendered = TryRenderVulkanEyesBatch(out handled);
+        if (!_eyeImageReleaseRuntimeLost)
+            return rendered;
+
+        // The runtime was lost while this frame owned eye images. The lifecycle handles the loss;
+        // the frame submits no projection layers and no sequential retry may acquire images.
+        handled = true;
+        return false;
     }
 
     public bool TryRenderEye(

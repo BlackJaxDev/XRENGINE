@@ -278,6 +278,44 @@ and merges consumer requests.
   uses preallocated arrays, an open-addressing lookup and an epoch instead of
   per-build clears.
 
+**Mesh descriptor proof stamps.** In a steady frame a mesh draw writes no
+descriptor, but it used to prove that again every frame: build its owner key,
+resolve published signatures, and resolve and hash each frame-source image. A
+`DescriptorProofStamp`
+([`DescriptorProofStamp`](../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Descriptors/DescriptorProofStamp.cs))
+records the inputs of that proof when it passes with no descriptor write
+(`VkMeshRenderer.EnsureDescriptorSets`, `TryRefreshFrameSourceDescriptorSetsForDraw`).
+A later frame with the same draw key (shared binding artifact, material,
+program, draw slot, frame slot) and an equal stamp reuses the allocation.
+
+- **Stamp fields.** The image binding revision, the native buffer binding
+  revision, the program link generation, the material binding layout and resource
+  versions, the descriptor view family, the render pipeline identity, the
+  descriptor pool handle, and the allocation topology and content generations. The
+  allocation path also checks `IsOwnerGenerationPublished` for the slot.
+- **Image binding revision.** `VulkanResourceLifetimeTracker.ImageBindingRevision`
+  advances for an image, image view or sampler at each lifetime-generation site:
+  `RegisterResource` (new handle), `GetOrRegisterResourceNoLock`,
+  `SetPublishedGenerationNoLock` (published generation changes),
+  `RecycleResourceGenerationNoLock`, `RemoveResourceNoLock` (also for a published
+  generation without a record), and `TryDetachExternalResourceIdentityNoLock`.
+  Texture streaming mip swaps, placeholder-to-ready views, resizes and
+  physical-plan publications create, publish or retire these handles, so they
+  reach the stamp through these sites.
+- **Kept per frame.** A stamp hit still runs the steps that can change
+  descriptors: draw-slot capacity, the shared material set refresh and the
+  global material texture-array payload. Any failure falls back to the full path.
+- **Not stamped.** Draws without a binding snapshot, frame-owned snapshots, and
+  snapshots with read-only storage bindings or a material-table publication (their
+  lowered buffer offsets can change every frame).
+- **Switches.** `XRE_VULKAN_DESCRIPTOR_PROOF_STAMP=0` turns stamps off.
+  `XRE_VULKAN_DESCRIPTOR_PROOF_STAMP_VERIFY=1` runs the full proof on every stamp
+  hit and counts a mismatch when the proof would write a descriptor or choose
+  another allocation. `VulkanDescriptorProofStamps.Describe()` (MCP
+  `invoke_method`) reports hits, misses, verify checks and mismatches;
+  `Set(enabled, verify)` changes the switches at run time. A verify run must
+  report 0 mismatches.
+
 ## Hot Paths Do Not Allocate
 
 Steady-state update, collect, swap, preparation, recording, submission and
@@ -411,16 +449,51 @@ holds two variants: about 320 extra descriptor sets, created once at the first
 cascade refresh after load, with no growth afterwards.
 
 **The directional shadow lane records cascades from the canonical bins.** On
-Vulkan with the Advanced pipeline and CpuDirect submission, the desktop
-family's sealed stable bins already hold every canonical draw with its geometry
-closure and scene sets. The `DirectionalShadowRaster` stage, which follows the
-late visibility raster, records those bins a second time into the directional
-atlas page:
+Vulkan with the Advanced pipeline, the desktop family's sealed stable bins
+already hold every canonical draw with its geometry closure and scene sets. The
+`DirectionalShadowRaster` stage, which follows the late visibility raster,
+records those bins a second time into the directional atlas page. The frozen
+submission strategy selects the caster producer:
+
+- `CpuDirect`: the lane draws the frozen indexed arguments of each record with
+  CPU cascade masks (`CpuDirectIndexed`).
+- `GpuIndirectZeroReadback`: `CullDirectionalShadowCasters` selects the casters
+  per cascade on the GPU and writes indexed arguments (`GpuIndexed`).
+- `GpuMeshletZeroReadback`: the meshlet raster has no shadow producer. Every
+  sealed record still holds the frozen indexed arguments of its canonical
+  geometry, so the lane draws static meshlet bins and the indexed bins of the
+  frame with CPU cascade masks (`CpuMaskedIndexed`). So meshlet frames draw
+  directional shadow casters through CPU-masked indexed draws. A GPU caster
+  cull for meshlet frames does not exist yet. The stage writes one log entry
+  when it first resolves a meshlet frame to this producer. The shadow vertex stage
+  reports a static meshlet payload as an indexed producer, so masked coverage
+  decodes index-buffer triangles. A skinned meshlet bin uses the same frozen
+  indexed arguments (local geometry indices, vertex offset 0). Its vertex stage
+  fetches each vertex from the prepared deformation of the frame
+  (`preparedDeformation.currentVertexOffset` into the current vertex arena), as
+  the indirect indexed producer does, so the avatar casts its present pose. A
+  skinned draw without a prepared deformation record casts nothing; it never
+  falls back to the bind pose. The deformation stage runs before the directional
+  shadow raster in the Advanced frame contract.
+  The CPU side does not count rejected skinned shadow records, because a
+  recorded frame cannot contain one. The shadow lane draws the records of the
+  visibility geometry stream of the frame
+  (`VulkanPreparedStableBinStream.TryBuildVisibilityGeometryStream`). That build
+  writes an active deformation record for each skinned payload, from the
+  deformation slice and the canonical draw of the same publication. If a skinned
+  payload has no matching slice, the build fails with a reason and the Advanced
+  frame is deferred; it is not drawn without the avatar. The vertex-stage
+  rejection is a GPU guard only. The CPU cannot see the remaining GPU case: a
+  deformation dispatch that was recorded but did not write its vertices.
+- `GpuMeshletInstrumented` and every other strategy keep the generic path with
+  an explicit reason.
+
+The lane then works as follows:
 
 - `ShadowAtlasManager.RenderScheduledTiles` still allocates, tracks dirtiness,
-  applies budgets and owns completion receipts. A depth-only desktop cascade
-  group whose grouped render would run is deferred to the lane when the stage
-  reported itself ready in the previous frame
+  applies budgets and owns completion receipts. A depth-only cascade group
+  (desktop or HMD source) whose grouped render would run is deferred to the lane when the
+  frame's owner reported its stage ready at its last run
   ([`ShadowAtlasManager.AdvancedDirectionalShadowLane`](../../../XREngine.Runtime.Rendering/Rendering/Shadows/ShadowAtlasManager.AdvancedDirectionalShadowLane.cs)).
   The light publishes the page, one tile rectangle and one world-to-clip matrix
   per cascade. The first successfully built request selects one framebuffer
@@ -440,14 +513,38 @@ atlas page:
   ([`RecordAdvancedDirectionalShadowRasterPayload`](../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.DirectionalShadow.cs)).
 - Acceptance commits the cascade slots and receipts like a grouped render. A
   rejected or unconsumed group stays dirty, renders generically next frame and
-  holds the lane closed for 60 frames. A lane preparation fault rejects the
+  holds the lane closed for 60 frames that have an owner. A group whose owner
+  did not run in its frame (for example an eye that skipped a frame) stays
+  dirty without a hold (`ownerAbsentGroups`). A lane preparation fault rejects the
   fresh frame with failed receipts, preserves dirty keys for generic retry,
   and reports the stage not ready for 5 s.
-- Moment-encoded pages, HMD sources, GPU-driven submission strategies and
+- Moment-encoded pages, unsupported submission strategies and
   sequential cascade renders keep the generic path with an explicit decline
-  reason. `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` disables the lane;
+  reason. `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` disables the lane.
+  In CPU-direct and meshlet frames, the lane keeps the static casters of
+  each cascade (desktop and HMD source) with dynamic casters in a separate static tile. A refresh with a
+  matching tile key copies that tile and draws only the dynamic casters over
+  it (see [shadow atlas](shadow-atlas.md#static-caster-tiles-of-directional-cascades)).
+  `XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0` turns the static tile off.
+  Several Advanced pipeline instances can run in one frame (the desktop view
+  and the VR eyes). The window publishes the consumer authority before the
+  shadow pass (`XRWindow.PublishAdvancedDirectionalShadowConsumerAuthority`):
+  the owner is the first Advanced instance that runs in the frame, so the
+  lane draws the groups before every view that samples them. The eyes render
+  (`RenderViewportsCallback`) before the desktop viewports, so the candidates
+  in that order are the left and right eye viewports when the eyes render in
+  the frame (emulated and OpenVR eyes in each frame; OpenXR eyes when
+  `IOpenXrRuntime.HasPreparedEyeFrame` is true), then the desktop viewports
+  whose scene renders in the frame (`XRViewport.RendersSceneThisFrame`, not
+  held). Eyes without an Advanced pipeline render before a desktop owner, so
+  HMD groups then stay on the generic path. Only the owner takes the deferred
+  groups and reports readiness, kept per pipeline instance; the other
+  instances skip the lane, so they neither reject the owner's groups nor mark
+  the lane not ready.
   `get_advanced_profile_diagnostics.directionalShadowLane` reports the
-  counters and the last decline reason.
+  counters (`genericGroups` counts the groups that stayed on the generic
+  path), the last decline reason, and `casterProducer` with
+  `casterProducerReason` for the frame's strategy.
 
 
 ## Play-Mode Restores Must Rebuild The Same Derived State
@@ -497,6 +594,66 @@ previous restore's copy (`SnapshotRestoredContent`).
     when runtime counters show no lock contention and about 1% GC. Use them for
     coarse subtrees only, and confirm contention with `dotnet-counters`
     (`dotnet.monitor.lock_contentions`).
+- **Separate the output domains.** One render thread can render two output
+  families in a frame: the desktop window and the XR eyes. Each backend frame
+  entry point enters an output domain scope (`RenderOutputDomainContext`:
+  desktop frame transaction, XR eye frame and eye mirror, and the render workers
+  that record for them), so per-output work can be counted and owned by its
+  domain. A domain is an output family, not a view: both eyes are one XR domain.
+  `vulkan.output_domains` reports cumulative counts per domain (`desktop`, `xr`,
+  `none`): frames, plan builds, plan operations and rank evaluations, prepared
+  mesh cohort matches and misses, materialized mesh requests, binding artifact
+  replacements and table evictions, and descriptor owner misses. Divide a window
+  delta by the domain's `frames`.
+- **Decide desktop output before the collect plans work.** Each automatically
+  collected viewport decides its output pacing for a collect frame one time, in
+  the timer's `PrepareFrameOutputs` event. The event runs on the collect thread
+  after `CollectFrameId` advances and before any collect callback. The decision
+  includes every reason that a desktop scene is not due: the XR frame priority
+  hold, the mirror mode, the VR pressure hold and the cadence skip.
+  `CollectVisibleAutomatic` reuses the stored decision for its frame id, and the
+  swap carries it to the render, so the collect, the swap and the render of one
+  frame use one answer. The lights read the stored decisions
+  (`XRViewport.IsSceneHeldForCollectFrame`) and plan the desktop shadow source
+  for every frame in which a desktop viewport renders. A viewport without a
+  stored decision for the frame (manual collect, or created after the
+  preparation) counts as due. The
+  render does not decide again, so a render-time veto of a collect decision
+  cannot occur. `vulkan.desktop_output_schedule` counts both mismatch
+  directions in a VR session with an independent desktop window:
+  `desktop_scene_rendered_while_retained` (a desktop render read retained
+  desktop cascades; it must stay 0) and `desktop_scene_due_not_rendered` (the
+  collect made the scene due, but it did not render, for example because of a
+  breaker hold or a minimized window; the shadow work of that frame was wasted).
+- **Split the render wait.** `frame_lifecycle.phase_totals.render_wait_for_collect`
+  is the time the render thread waited while the collect thread collected or
+  swapped. With OpenXR collect pacing the collect thread also holds a
+  publication until `xrWaitFrame` of the next XR frame returns; the render
+  thread waits for that frame anyway, so that part is reported separately as
+  `render_wait_for_xr_frame`. `collect_wait_for_xr_submit` is the collect
+  thread's wait for the eyes to enter `xrEndFrame`, and `publication_age` is
+  the time from a collect start to the render thread taking its publication.
+  The timeline marks `CollectWaitXrSubmit*` and `CollectWaitXrFrame*` show the
+  two waits. See [XR collect pacing](vr-output-pacing-and-mirror-policy.md#xr-collect-pacing).
+- **Budgets that count collects keep their real-time rate.** A per-collect
+  allowance (the directional cascade refresh limit, texture streaming
+  transitions and their frame clock, the VR desktop pressure hold) is
+  multiplied by `CollectBudgetPeriods`. It is 1 with render pacing. With XR
+  collect pacing one collect stands for the XR display periods since the last
+  collect, so a change of the collect rate does not change these rates in time.
+- **Pending planner publications retry, bounded.** A pass or resource-generation
+  change of an output (for example a debug view change or a capture) gives the
+  desktop frame operations a new planner key one render before the generation
+  transaction publishes its planner state. When the output already has a
+  published state, the desktop readiness retries the frame instead of failing
+  it (and tripping the render circuit breaker), for at most 8 consecutive
+  attempts; after that it fails as before. A key whose output has no published
+  state fails at once. `vulkan.planner_publication_pending` counts the retries
+  and the failures.
+- **Separate GC from lock waits.** A trace with
+  `Microsoft-Windows-DotNETRuntime:0x4001:5` records GC suspensions, allocation
+  ticks with stacks, and contention start and stop events, so GC pause time and
+  real lock waits are measured separately from sample traces.
 - **Know which fields are gauges.** Most `binding_data.*` fields describe the
   last frame, and many `frame_lifecycle` fields describe the last sample. Diff
   cumulative counters across a window and normalize by completed frames.
@@ -546,4 +703,7 @@ Open work that affects this design:
 - planner states for short-lived outputs (for example each world copy's shadow
   viewports) accumulate under new keys until the state cap evicts them;
 - temporal (TSR) correctness passes cut and render-scale checks, but
-  disocclusion and the original ghosting report are not yet verified.
+  disocclusion and the original ghosting report are not yet verified;
+- OpenXR collect pacing is off by default: on Monado it lowers the XR rate
+  when the eye GPU time is more than about two display periods, for a reason
+  that is not known yet.

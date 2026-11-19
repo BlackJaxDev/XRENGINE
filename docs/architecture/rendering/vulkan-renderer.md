@@ -543,6 +543,9 @@ Additional diagnostic flags are:
 | `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |
 | `XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD=1` | Benchmark-only mode that forces every scheduled mesh-chain secondary to rerecord each frame. Use only for controlled serial/parallel dirty-recording comparisons. |
 | `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1` | Builds and validates queue-schedule sidecar metadata; execution still falls back to the graphics queue. |
+| `XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0` | Turns off the static caster tiles of directional cascades in the Advanced directional shadow lane: every cascade refresh draws all casters (see [shadow atlas](shadow-atlas.md#static-caster-tiles-of-directional-cascades)). |
+| `XRE_VULKAN_DIRECTIONAL_CASCADES=1` or `0` | Decides three Vulkan directional shadow gates with one test: cascade rendering, the cascade shadow atlas, and grouped atlas entries (which the Advanced directional shadow lane needs). `0` turns the three off. `1` turns them on, also on the known Monado OpenXR runtime, which has the three off by default because of earlier OpenXR + Monado hangs. It is not proved that the hang is gone. Use `1` on Monado for validation only, with a guard that stops a session that hangs (see [shadow atlas](shadow-atlas.md)). |
+| `XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1` | Turns on the `EmulatedVrEyesUseHmdDirectionalCascades` engine setting: the HMD cascade source fits the emulated VR eyes, and Default-pipeline eyes read it. Advanced eyes in SequentialViews still read the desktop cascades (see [shadow atlas](shadow-atlas.md)). |
 | `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` | Keeps directional cascade casters on the generic per-renderer shadow path instead of the Advanced directional shadow raster lane (see [frame loop design](frame-loop-design.md#shadow-casters-are-the-dominant-motion-cost)). |
 
 `XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT=1` is a destructive,
@@ -1048,6 +1051,14 @@ Multiple files handle descriptor set management:
 - **Per-swapchain descriptor pools/sets** — Allocated in `CreateAllSwapChainObjects()`, rebuilt on swapchain recreation
 
 Compute auto-uniform and unresolved fallback uniform buffers are cached per program/image/set/binding. They are updated in place and destroyed with the program instead of being allocated as one-frame transient buffers.
+
+Generated GLSL auto-uniform blocks use eight bindings per shader stage, starting
+at set 0, binding 256. The rewrite skips explicit bindings inside its stage
+range and fails when the range cannot hold all generated frequency blocks.
+Program linking rejects any other stage descriptor at a generated block's
+binding, even when both descriptors are uniform buffers. Slang resources with
+a shared native ABI retain their explicit binding contract. Shader ABI and
+rewrite identities invalidate cached artifacts when this binding layout changes.
 
 Unannotated supplemental lighting and ambient-occlusion uniforms use `RuntimeCallback` blocks rather
 than material-owned blocks. Explicit shader frequency annotations and core

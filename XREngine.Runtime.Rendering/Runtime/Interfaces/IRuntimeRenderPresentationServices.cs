@@ -64,6 +64,17 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     EVrViewRenderMode VrViewRenderMode { get; }
 
     /// <summary>
+    /// Gets the stopwatch timestamp at which the independent VR desktop output needs its next
+    /// frame under the XR-first desktop admission: the last admitted desktop frame plus the
+    /// minimum desktop frame interval. XR collect pacing of two-pass eyes ends its wait for the
+    /// next XR frame at this time, so the desktop keeps its minimum rate. <see cref="long.MaxValue"/>
+    /// means that no independent desktop output stays live in VR. 0 means that desktop frames do
+    /// not wait for XR frames (desktop priority, or the over-budget skip is off), so two-pass
+    /// collect pacing does not apply. The default implementation returns 0.
+    /// </summary>
+    long VrIndependentDesktopNextDueTimestamp => 0L;
+
+    /// <summary>
     /// Gets the requested VR eye pipeline family.
     /// </summary>
     EVrRenderPipeline VrRenderPipeline => RuntimeRenderingHostServiceDefaults.VrRenderPipeline;
@@ -90,6 +101,15 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     /// the XR slack can hold it. False lets the desktop run at its own rate.
     /// </summary>
     bool VrDesktopSplitSlackGate => false;
+
+    /// <summary>
+    /// True in an OpenXR VR session with an independent desktop window (mirror mode
+    /// FullIndependentRender with RenderWindowsWhileInVR). Only then does a collect in which no
+    /// desktop viewport renders its scene
+    /// retain the desktop shadow source (no cascade refit and no refresh render). Desktop-only,
+    /// OpenVR and emulated stereo return false and keep the earlier desktop source planning.
+    /// </summary>
+    bool IsIndependentDesktopRetentionInScope => false;
 
     /// <summary>
     /// Gets which output gets render-thread time first while VR is active. The
@@ -145,6 +165,18 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
 
     ERvcPipelineMode RvcPipelineMode => ERvcPipelineMode.Off;
     bool RvcQuadViewEnabled => false;
+
+    /// <summary>
+    /// Multiplies the eye resolution of the wide pair (views 0 and 1) when the OpenXR quad
+    /// view is active. The inset pair keeps the full eye resolution.
+    /// </summary>
+    float RvcQuadViewWideResolutionScale => RuntimeRenderingHostServiceDefaults.RvcQuadViewWideResolutionScale;
+
+    /// <summary>
+    /// When true, the quad-view inset pair draws only the objects that the wide pair drew in
+    /// the same frame, inside the inset frustum, and runs no late visibility of its own.
+    /// </summary>
+    bool RvcQuadViewSharedVisibilityEnabled => RuntimeRenderingHostServiceDefaults.RvcQuadViewSharedVisibilityEnabled;
     bool RvcOpenXrVisibilityMaskEnabled => false;
     double ResolveRvcViewGpuMilliseconds(int runtimeViewIndex, int runtimeViewCount)
     {

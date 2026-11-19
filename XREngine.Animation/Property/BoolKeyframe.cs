@@ -33,8 +33,6 @@
             Value = bool.Parse(str.AsSpan(spaceIndex + 1));
         }
         public override string WriteToString()
-        {
-            return string.Format("{0} {1}", Second, Value);
-        }
+            => $"{Second} {Value}";
     }
 }

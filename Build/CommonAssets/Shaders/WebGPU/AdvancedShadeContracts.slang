@@ -921,6 +921,15 @@ static const uint XR_ADV_VIEW_DEPTH_ZERO_TO_ONE = 1u << 0u;
 static const uint XR_ADV_VIEW_FRAMEBUFFER_TEXTURE_Y_DOWN = 1u << 6u;
 static const uint XR_ADV_VIEW_TEMPORAL_HISTORY_VALID = 1u << 7u;
 static const uint XR_ADV_VIEW_EXCLUDE_PROJECTIVE_MIRRORS = 1u << 8u;
+// GPUMaterialEntry.PackedMetallicRoughnessFlag in the Standard material flags word.
+static const uint XR_ADV_STANDARD_PACKED_METALLIC_ROUGHNESS_FLAG = 1u << 30u;
+
+// Roughness (x) and metallic (y) from a Standard RM texture sample. A glTF metallic-roughness
+// texture keeps roughness in green and metallic in blue; other RM textures use red and green.
+float2 XR_ADV_StandardRoughnessMetallic(uint materialFlags, float4 texel)
+{
+    return (materialFlags & XR_ADV_STANDARD_PACKED_METALLIC_ROUGHNESS_FLAG) != 0u ? texel.gb : texel.rg;
+}
 
 float XR_ADV_FoveationDerivativeScale(XRAdvancedViewRecord viewRecord, float2 targetUv)
 {

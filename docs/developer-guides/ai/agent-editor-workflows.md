@@ -28,6 +28,13 @@ keep the full affinity. Editor and RenderBench session builds use this wrapper.
 
 Raw `dotnet` commands and other build tools do not acquire this lock. Agents
 must use the wrapper for builds and run applications with `--no-build`.
+
+Keep PowerShell settings edits that contain URLs separate from session launch
+commands. Some command-policy versions classify a compound script with a URL
+and a `Start` argument as a URL launch, even when `Start` belongs to the local
+session script. Use separate, explicit settings and launch commands. Do not
+change security settings to resolve this parser false positive.
+
 Existing agent chats must read the updated instructions before their next
 build. After all builds stop, `dotnet build-server shutdown` releases retained
 MSBuild and compiler servers. Do not use it during another task's build.
@@ -121,6 +128,17 @@ The loop:
 2. Position the view with MCP: `set_editor_camera_view` (or `focus_node_in_view` after locating the subject with `find_nodes_by_name`/`select_node_by_name`). Use `duration: 0` for an immediate cut.
 3. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Pass `output_dir` under the current run root, for example `Build/_AgentValidation/<run>/mcp-captures/`; do not rely on the default `McpCaptures/` location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
 
+   A fixed physics pose does not freeze animated materials. For a controlled
+   source comparison, invoke the static method
+   `XREngine.Rendering.RenderFrameViewSetCapture.SetDiagnosticElapsedTime`
+   with one time value in seconds, such as `0.0`. This process-local diagnostic
+   overrides shared shader time in native and authored draws. It also holds
+   render-side timers, including the CPU exposure update cadence. Disable
+   auto-exposure for this comparison. It does not change the physics clock or
+   save a setting. A scoped capture time takes
+   priority. Pass one `null` argument to restore normal shader time after the
+   comparison. Record the selected time with the capture evidence.
+
    Vulkan viewport PNG capture applies the SDR sRGB display transfer when it
    reads a single-layer floating-point color image and the desktop uses an sRGB
    swapchain. That image holds linear display values, and the swapchain applies
@@ -151,6 +169,13 @@ If queued MCP calls stop completing, call `get_time_state`. This read-only
 diagnostic runs on the caller thread and can report `terminalFault` after the
 engine update loop stops. A responsive native window does not prove that the
 engine loop is running.
+
+For missing native text, query
+`XREngine.Rendering.UI.UIBatchCollector.GetTextPreparationDiagnostics` through
+`invoke_method`. The counters distinguish absent or empty batches from failed
+preparation. They do not prove that the GPU drew the text. Compare a window
+recording with `get_render_profiler_stats.vulkan.frame_lifecycle.terminal_result`.
+Recording deferrals retain their reason in `detail`, including in Release.
 
 `get_render_state` reads fully applied pipeline state. An unassigned pipeline,
 RVC stage family, or postprocess state can be absent during startup. The query

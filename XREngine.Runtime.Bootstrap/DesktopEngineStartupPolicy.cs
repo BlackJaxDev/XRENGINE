@@ -1,3 +1,4 @@
+using XREngine.Data;
 using XREngine.Data.Vectors;
 using XREngine.Networking;
 using XREngine.Rendering;
@@ -12,6 +13,19 @@ internal sealed class DesktopEngineStartupPolicy : IRuntimeEngineStartupPolicy
     private bool _environmentRealtimeHandoffApplied;
 
     private DesktopEngineStartupPolicy() { }
+
+    /// <summary>
+    /// Installs this policy as the engine startup policy and installs the desktop camera defaults.
+    /// Desktop hosts use GT7 tonemapping. The shared default stays Mobius, because the cooked web
+    /// Default output route supports only Mobius. The install runs before the host creates any
+    /// render pipeline, so editor, desktop and VR eye cameras start with GT7.
+    /// </summary>
+    public static IDisposable Install()
+        => RegistrationLeaseGroup.Create(static leases =>
+        {
+            leases.Add(RuntimeEngineStartupPolicyServices.Install(Instance));
+            leases.Add(TonemappingSettings.InstallHostDefault(ETonemappingType.GT7));
+        });
 
     public IVector2 GetPrimaryDisplaySize() => DesktopPlatformBackend.GetPrimaryDisplaySize();
 

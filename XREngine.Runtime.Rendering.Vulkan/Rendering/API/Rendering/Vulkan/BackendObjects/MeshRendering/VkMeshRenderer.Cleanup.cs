@@ -121,7 +121,7 @@ internal unsafe partial class VkMeshRenderer
 		in VulkanSupersededResourceDescriptorOwner pending)
 	{
 		int detachedCount = 0;
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			List<DescriptorAllocationKey>? keysToRelease = null;
 			if (!affectedSets.IsEmpty)
@@ -165,7 +165,7 @@ internal unsafe partial class VkMeshRenderer
 		while (true)
 		{
 			(DescriptorAllocationKey Key, DescriptorAllocation Allocation) pending;
-			lock (_recordDrawSync)
+			using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			{
 				if (_pendingSupersededDescriptorAllocationRetirements.Count == 0)
 					return;
@@ -176,7 +176,7 @@ internal unsafe partial class VkMeshRenderer
 			// Keep the detached allocation queued if normal lifetime retirement throws.
 			ReleaseDescriptorAllocationResources(pending.Allocation);
 			ReleaseDescriptorOwnershipTelemetry(pending.Allocation);
-			lock (_recordDrawSync)
+			using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			{
 				if (_pendingSupersededDescriptorAllocationRetirements.Count != 0 &&
 					ReferenceEquals(

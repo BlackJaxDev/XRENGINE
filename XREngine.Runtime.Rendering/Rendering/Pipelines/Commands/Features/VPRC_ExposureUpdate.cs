@@ -62,12 +62,33 @@ namespace XREngine.Rendering.Pipelines.Commands
             return "restricted";
         }
 
+        /// <summary>
+        /// Decides whether this exposure update may meter <paramref name="sourceTexture"/>.
+        /// <paramref name="eyeRole"/> describes a two-pass VR eye pair: such an eye keeps its own
+        /// adaptation state and its own exposure texture, so it may meter its own 2D image.
+        /// An external per-eye target without a pair is still skipped, because two eyes would then
+        /// write one exposure state (last-eye-wins).
+        /// </summary>
         internal static bool TryUseAutoExposureSource(
             XRTexture sourceTexture,
+            EVrEyeExposureRole eyeRole,
             out EVrAutoExposurePolicy policy,
             out string reason)
         {
             policy = EVrAutoExposurePolicy.HeadsetShared;
+
+            if (eyeRole == EVrEyeExposureRole.IndependentEye)
+            {
+                policy = EVrAutoExposurePolicy.PerEye;
+                reason = "IndependentEyeExposure is on: this eye meters its own image and adapts its own exposure state.";
+                return true;
+            }
+
+            if (eyeRole == EVrEyeExposureRole.HeadsetLeader)
+            {
+                reason = "HeadsetShared auto exposure: the left eye meters its own image and publishes one headset exposure for both eyes.";
+                return true;
+            }
 
             if (!IsVrOrStereoExposureContext())
             {
@@ -90,34 +111,53 @@ namespace XREngine.Rendering.Pipelines.Commands
             => RuntimeEngine.Rendering.State.IsStereoPass
             || AbstractRenderer.Current?.IsRenderingExternalSwapchainTarget == true;
 
-        private static void ReportVrAutoExposurePolicy(
+        // Last policy outcome that this command reported. The VR policy reports run every frame
+        // on an eye, so they log only when the outcome changes: no per-frame key string,
+        // argument array or boxing.
+        private EVrAutoExposurePolicy? _reportedPolicy;
+        private Type? _reportedSourceType;
+        private bool _reportedSkipped;
+
+        private bool IsReportedOutcome(EVrAutoExposurePolicy policy, XRTexture sourceTexture, bool skipped)
+        {
+            Type sourceType = sourceTexture.GetType();
+            if (_reportedPolicy == policy && ReferenceEquals(_reportedSourceType, sourceType) && _reportedSkipped == skipped)
+                return true;
+            _reportedPolicy = policy;
+            _reportedSourceType = sourceType;
+            _reportedSkipped = skipped;
+            return false;
+        }
+
+        private void ReportVrAutoExposurePolicy(
             EVrAutoExposurePolicy policy,
             XRTexture sourceTexture,
             string reason)
         {
-            if (!IsVrOrStereoExposureContext())
+            if (!IsVrOrStereoExposureContext() || IsReportedOutcome(policy, sourceTexture, skipped: false))
                 return;
 
-            Debug.RenderingEvery(
-                $"ExposureUpdate.VrPolicy.{policy}.{sourceTexture.GetType().Name}",
-                TimeSpan.FromSeconds(5),
+            Debug.Rendering(
                 "[ExposureUpdate] VR auto exposure policy={0} source={1} reason={2}",
                 policy,
                 sourceTexture.GetType().Name,
                 reason);
         }
 
-        private static void ReportSkippedVrAutoExposure(
+        private void ReportSkippedVrAutoExposure(
             EVrAutoExposurePolicy policy,
             XRTexture sourceTexture,
             string reason)
-            => Debug.RenderingWarningEvery(
-                $"ExposureUpdate.VrPolicySkipped.{policy}.{sourceTexture.GetType().Name}",
-                TimeSpan.FromSeconds(1),
+        {
+            if (IsReportedOutcome(policy, sourceTexture, skipped: true))
+                return;
+
+            Debug.RenderingWarning(
                 "[ExposureUpdate] Skipping VR auto exposure policy={0} source={1}: {2}",
                 policy,
                 sourceTexture.GetType().Name,
                 reason);
+        }
 
         protected override void Execute()
         {
@@ -181,12 +221,23 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            if (DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath)
+            var renderer = AbstractRenderer.Current;
+            EVrEyeExposureRole eyeRole = ResolveEyeExposureRole(ActivePipelineInstance.Pipeline, grading, renderer);
+
+            // An external eye target without an eye pair holds its exposure. A paired eye owns its
+            // adaptation state and its exposure texture, so it adapts every frame.
+            if (eyeRole == EVrEyeExposureRole.None && VrEyeFrameRules.IsExternalEyeTargetFrame())
             {
                 Debug.RenderingEvery(
-                    "ExposureUpdate.Skip.OpenXrVulkanDesktopStartup",
+                    "ExposureUpdate.Skip.UnpairedExternalEyeTarget",
                     TimeSpan.FromSeconds(2),
-                    "[ExposureUpdate] Holding auto exposure on OpenXR Vulkan desktop startup/mirror frame.");
+                    "[ExposureUpdate] Holding auto exposure on an external eye target without an eye pair.");
+                return;
+            }
+
+            if (eyeRole == EVrEyeExposureRole.HeadsetFollower)
+            {
+                FollowHeadsetExposure(grading);
                 return;
             }
 
@@ -197,7 +248,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            if (!TryUseAutoExposureSource(sourceTexture, out EVrAutoExposurePolicy exposurePolicy, out string exposurePolicyReason))
+            if (!TryUseAutoExposureSource(sourceTexture, eyeRole, out EVrAutoExposurePolicy exposurePolicy, out string exposurePolicyReason))
             {
                 ReportSkippedVrAutoExposure(exposurePolicy, sourceTexture, exposurePolicyReason);
                 return;
@@ -208,7 +259,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             // The epoch that the capture of this frame recorded. A reset from a later discontinuity does not apply to it.
             ulong? frameCameraEpoch = ResolveFrameCameraEpoch(viewport);
 
-            var renderer = AbstractRenderer.Current;
             if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             {
                 XRTexture2D exposure = ActivePipelineInstance.GetTexture<XRTexture2D>(AutoExposureTextureName)
@@ -225,9 +275,23 @@ namespace XREngine.Rendering.Pipelines.Commands
                 var exposureTexture = ActivePipelineInstance.GetTexture<XRTexture2D>(AutoExposureTextureName);
                 if (exposureTexture is not null)
                 {
+                    if (TryConsumeSharedAutoExposure(renderer, grading, exposureTexture))
+                        return;
+
                     grading.UpdateExposureGpu(sourceTexture, exposureTexture, GenerateMipmapsHere, null, frameCameraEpoch);
                     if (grading.UseGpuAutoExposureThisFrame)
+                    {
+                        PublishSharedAutoExposure(renderer, exposureTexture);
+                        if (eyeRole == EVrEyeExposureRole.HeadsetLeader &&
+                            !renderer.PublishHeadsetAutoExposureGpu(exposureTexture))
+                        {
+                            Debug.RenderingWarningEvery(
+                                "ExposureUpdate.HeadsetPublishFailed",
+                                TimeSpan.FromSeconds(1),
+                                "[ExposureUpdate] The left eye could not publish the headset exposure this frame; the right eye keeps the last published value.");
+                        }
                         return;
+                    }
 
                     Debug.Rendering("[ExposureUpdate] GPU exposure update not ready; using CPU exposure for this frame");
                 }
@@ -254,6 +318,130 @@ namespace XREngine.Rendering.Pipelines.Commands
             return viewport is not null && sequence != 0UL && viewport.TryGetCapturedCameraEpoch(sequence, out ulong epoch)
                 ? epoch
                 : null;
+        }
+
+        /// <summary>
+        /// Copies this pipeline instance's new exposure into its shared channel, so that
+        /// instances that render later in the frame (the quad-view inset pair) use the same
+        /// exposure. Does nothing when the instance publishes to no channel.
+        /// </summary>
+        private void PublishSharedAutoExposure(AbstractRenderer renderer, XRTexture2D exposureTexture)
+        {
+            if (ActivePipelineInstance.PublishesAutoExposureTo is not { } channel)
+                return;
+
+            if (renderer.PublishAutoExposureGpu(exposureTexture, channel.Buffer))
+            {
+                channel.MarkPublished(RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId);
+                return;
+            }
+
+            Debug.RenderingWarningEvery(
+                $"ExposureUpdate.SharedPublishFailed.{ActivePipelineInstance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[ExposureUpdate] Could not publish the shared auto exposure of pipeline instance {0}. Consumers meter their own scene this frame.",
+                ActivePipelineInstance.InstanceId);
+        }
+
+        /// <summary>
+        /// For an instance that consumes a shared channel, copies the exposure that the
+        /// publisher wrote this frame into this instance's exposure texture and skips metering.
+        /// Returns false when the instance consumes no channel, or when no value was published
+        /// this frame; the caller then meters this instance's own scene image.
+        /// </summary>
+        private bool TryConsumeSharedAutoExposure(AbstractRenderer renderer, ColorGradingSettings grading, XRTexture2D exposureTexture)
+        {
+            if (ActivePipelineInstance.ConsumesAutoExposureFrom is not { } channel)
+                return false;
+
+            ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+            if (channel.PublishedRenderFrameId == renderFrameId)
+            {
+                grading.GetResolvedExposureBounds(out float minExposure, out float maxExposure);
+                float fallbackExposure = grading.ExposureMode == ColorGradingSettings.ExposureControlMode.Physical
+                    ? grading.ComputePhysicalExposureMultiplier()
+                    : grading.Exposure;
+                bool consumed = renderer.ConsumeAutoExposureGpu(
+                    channel.Buffer,
+                    exposureTexture,
+                    minExposure,
+                    maxExposure,
+                    Math.Clamp(fallbackExposure, minExposure, maxExposure));
+                grading.MarkGpuAutoExposureReady(consumed);
+                if (consumed)
+                    return true;
+            }
+
+            Debug.RenderingWarningEvery(
+                $"ExposureUpdate.SharedConsumeUnavailable.{ActivePipelineInstance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[ExposureUpdate] Pipeline instance {0} has no shared auto exposure for render frame {1} (published frame {2}). It meters its own scene this frame.",
+                ActivePipelineInstance.InstanceId,
+                renderFrameId,
+                channel.PublishedRenderFrameId);
+            return false;
+        }
+
+        /// <summary>
+        /// Finds the auto exposure role of a pipeline. Only the two pipelines of a two-pass VR eye
+        /// pair (<see cref="RenderPipeline.IsVrEyePostProcessPair"/>) get an eye role.
+        /// <see cref="ColorGradingSettings.IndependentEyeExposure"/> selects between one headset
+        /// exposure (the owner eye leads, the other eye follows) and an independent exposure per
+        /// eye. Vulkan and OpenGL share the headset exposure. A renderer without that support
+        /// lets each eye adapt on its own and logs this once per session.
+        /// </summary>
+        // Set after the one-time report that the renderer has no headset exposure sharing.
+        private static bool s_reportedHeadsetSharedUnavailable;
+
+        private static EVrEyeExposureRole ResolveEyeExposureRole(
+            RenderPipeline? pipeline,
+            ColorGradingSettings grading,
+            AbstractRenderer? renderer)
+        {
+            if (pipeline is not { IsVrEyePostProcessPair: true })
+                return EVrEyeExposureRole.None;
+            if (grading.IndependentEyeExposure)
+                return EVrEyeExposureRole.IndependentEye;
+            if (renderer?.SupportsHeadsetSharedAutoExposure != true)
+            {
+                if (!s_reportedHeadsetSharedUnavailable)
+                {
+                    s_reportedHeadsetSharedUnavailable = true;
+                    Debug.RenderingWarning(
+                        "[ExposureUpdate] This renderer cannot share one headset exposure between the eye pipelines; each eye adapts its own exposure.");
+                }
+                return EVrEyeExposureRole.IndependentEye;
+            }
+            return pipeline.PostProcessStateOwner is not null
+                ? EVrEyeExposureRole.HeadsetFollower
+                : EVrEyeExposureRole.HeadsetLeader;
+        }
+
+        /// <summary>
+        /// Right eye of a headset exposure pair: copies the headset exposure that the left eye
+        /// published into this eye's exposure texture. This eye does not meter its own image.
+        /// </summary>
+        private void FollowHeadsetExposure(ColorGradingSettings grading)
+        {
+            var exposureTexture = ActivePipelineInstance.GetTexture<XRTexture2D>(AutoExposureTextureName);
+            if (exposureTexture is null)
+            {
+                Debug.RenderingWarningEvery(
+                    "ExposureUpdate.HeadsetFollowerNoTexture",
+                    TimeSpan.FromSeconds(1),
+                    "[ExposureUpdate] The right eye has no exposure texture '{0}'; it keeps the manual exposure this frame.",
+                    AutoExposureTextureName);
+                return;
+            }
+
+            grading.FollowHeadsetExposureGpu(exposureTexture);
+            if (!grading.UseGpuAutoExposureThisFrame)
+            {
+                Debug.RenderingWarningEvery(
+                    "ExposureUpdate.HeadsetFollowerNotReady",
+                    TimeSpan.FromSeconds(1),
+                    "[ExposureUpdate] The right eye could not copy the headset exposure this frame; it keeps the manual exposure.");
+            }
         }
 
         public void SetOptions(string hdrSceneTextureName, bool generateMipmapsHere)

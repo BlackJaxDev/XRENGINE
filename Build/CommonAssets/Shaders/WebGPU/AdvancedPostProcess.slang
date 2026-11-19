@@ -96,7 +96,7 @@ ScreenOutput outputVertex(ScreenInput input)
 
 int2 LoadCoordinate(float2 uv)
 {
-    uint width, height; StencilView.GetDimensions(width, height);
+    uint width, height; DepthView.GetDimensions(width, height);
     return min(int2(saturate(uv) * float2(width, height)), int2(width, height) - 1);
 }
 float GetBloomWeight(int level)
@@ -186,79 +186,6 @@ float2 SceneSourceUv(float2 uv)
   return uv;
 }
 
-uint SampleSceneStencilSource(float2 sourceUv)
-{
-  return StencilView.Load(int3(LoadCoordinate(sourceUv), 0)).r;
-}
-
-uint SampleSceneEditorHighlightSource(float2 sourceUv)
-{
-  uint stencilFlags = SampleSceneStencilSource(sourceUv) & 3u;
-
-  uint metadata = AdvancedVisibilityMetadata.Load(int3(LoadCoordinate(sourceUv), 0)).r;
-  uint metadataFlags = metadata == 0xFFFFFFFFu ? 0u : (metadata >> 25u) & 3u;
-  return stencilFlags | metadataFlags;
-
-}
-
-float GetStencilMaskBit(uint stencilValue, uint bit)
-{
-  return (stencilValue & bit) != 0u ? 1.0f : 0.0f;
-}
-
-float2 GetStencilOutlineIntensity(float2 sourceUv)
-{
-  int outlineSize = 3;
-  uint width, height; StencilView.GetDimensions(width, height); int2 texSize = int2(width, height);
-  float2 texelSize = 1.0f / float2(texSize);
-    float2 texelX = float2(texelSize.x, 0.0f);
-    float2 texelY = float2(0.0f, texelSize.y);
-
-    uint stencilCurrent = SampleSceneEditorHighlightSource(sourceUv);
-  float currentHover = GetStencilMaskBit(stencilCurrent, 1u);
-  float currentSelection = GetStencilMaskBit(stencilCurrent, 2u);
-
-  float hoverOutline = 0.0f;
-  float selectionOutline = 0.0f;
-
-    float2 zero = float2(0.0f);
-  float2 one = float2(1.0f);
-
-    for (int i = 1; i <= outlineSize; ++i)
-    {
-      float step = float(i);
-      float2 yPos = clamp(sourceUv + texelY * step, zero, one);
-      float2 yNeg = clamp(sourceUv - texelY * step, zero, one);
-      float2 xPos = clamp(sourceUv + texelX * step, zero, one);
-      float2 xNeg = clamp(sourceUv - texelX * step, zero, one);
-
-      uint sYPos = SampleSceneEditorHighlightSource(yPos);
-      uint sYNeg = SampleSceneEditorHighlightSource(yNeg);
-      uint sXPos = SampleSceneEditorHighlightSource(xPos);
-      uint sXNeg = SampleSceneEditorHighlightSource(xNeg);
-
-      if (currentHover == 0.0f)
-      {
-        hoverOutline = max(hoverOutline, GetStencilMaskBit(sYPos, 1u));
-        hoverOutline = max(hoverOutline, GetStencilMaskBit(sYNeg, 1u));
-        hoverOutline = max(hoverOutline, GetStencilMaskBit(sXPos, 1u));
-        hoverOutline = max(hoverOutline, GetStencilMaskBit(sXNeg, 1u));
-      }
-
-      if (currentSelection == 0.0f)
-      {
-        selectionOutline = max(selectionOutline, GetStencilMaskBit(sYPos, 2u));
-        selectionOutline = max(selectionOutline, GetStencilMaskBit(sYNeg, 2u));
-        selectionOutline = max(selectionOutline, GetStencilMaskBit(sXPos, 2u));
-        selectionOutline = max(selectionOutline, GetStencilMaskBit(sXNeg, 2u));
-      }
-    }
-
-  return float2(hoverOutline, selectionOutline);
-}
-
-#include "ToneMapping.slang"
-
 float3 SampleHDR(float2 uv)
 {
   float2 duv = SceneSourceUv(uv);
@@ -278,14 +205,6 @@ float4 outputFragment(ScreenOutput input) : SV_Target0
       float2(0.0f),
       float2(1.0f));
   float2 sceneUv = SceneSourceUv(uv);
-
-  // Gizmo bypass: pixels tagged with the gizmo stencil bit (0x80) skip tonemap,
-  // color grading, vignette, exposure, atmosphere, fog, and bloom add. They are
-  // emitted as raw HDR scene color so editor gizmos look unprocessed.
-  if ((SampleSceneStencilSource(sceneUv) & 0x80u) != 0u)
-  {
-      return float4(SafeColor(HDRSceneTex.SampleLevel(HDRSceneTexSampler, sceneUv, 0.0).rgb), 1.0f);
-  }
 
   //Perform HDR operations
   float3 hdrSceneColor;
@@ -420,18 +339,7 @@ float4 outputFragment(ScreenOutput input) : SV_Target0
 	sceneColor = ApplyHsvColorGrade(sceneColor);
 	sceneColor = (sceneColor - 0.5f) * ColorGradeContrast + 0.5f;
 
-  float2 outline = EnableEditorOutline ? GetStencilOutlineIntensity(sceneUv) : float2(0.0f);
-  float hoverOutline = outline.x;
-  float selectionOutline = outline.y;
-  float outlineWeight = max(hoverOutline, selectionOutline);
-  float3 outlineColor = lerp(SelectionOutlineColor, HoverOutlineColor, hoverOutline);
-  sceneColor = lerp(sceneColor, outlineColor, outlineWeight);
-
-  // DEBUG: Visualize raw stencil value - uncomment to see stencil data
-  // uint rawStencil = texture(StencilView, uv).r;
-  // if ((rawStencil & 1) != 0) sceneColor = float3(1.0, 0.0, 0.0); // Red where stencil bit 0 is set
-
-	sceneColor = ApplyVignette(sceneColor, uv);
+sceneColor = ApplyVignette(sceneColor, uv);
   sceneColor = SafeColor(sceneColor);
 
   if (!OutputHDR)

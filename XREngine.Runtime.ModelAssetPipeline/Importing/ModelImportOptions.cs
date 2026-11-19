@@ -222,6 +222,11 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool ImportBlendShapeNormals { get; set; } = true;
 
     /// <summary>
+    /// Selects the tangent rule for FBX import. The default keeps each backend's existing behavior.
+    /// </summary>
+    public ModelTangentImportPolicy TangentImportPolicy { get; set; } = ModelTangentImportPolicy.Default;
+
+    /// <summary>
     /// If true, treat the source file as Z-up (common in some DCCs).
     /// </summary>
     public bool ZUp { get; set; } = false;

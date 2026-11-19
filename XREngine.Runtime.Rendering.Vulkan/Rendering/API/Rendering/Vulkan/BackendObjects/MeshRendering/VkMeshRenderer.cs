@@ -13,6 +13,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering.Pipelines.Commands;
@@ -174,9 +175,16 @@ internal unsafe partial class VkMeshRenderer(
     private readonly Dictionary<DescriptorOwnerLookupKey, DescriptorAllocation> _descriptorAllocationsByOwner = new();
     private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, ulong LinkGeneration, ulong MaterialLayoutVersion, XRRenderPipelineInstance? Pipeline), int[]>
         _artifactFrameSourceBindingIndices = [];
-    private readonly Dictionary<(DescriptorAllocation Allocation, int Slot, ComputeDispatchSnapshot Snapshot), ulong> _frameSourceDescriptorRefreshes = new();
+    // Value: render frame of the last refresh and the proof stamp captured after it.
+    private readonly Dictionary<(DescriptorAllocation Allocation, int Slot, ComputeDispatchSnapshot Snapshot), (ulong RenderFrameId, DescriptorProofStamp Stamp)> _frameSourceDescriptorRefreshes = new();
     private const int MaxFrameDescriptorAllocations = 256;
-    private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, int DrawSlot, int FrameIndex), (DescriptorAllocation Allocation, ulong RenderFrameId)> _frameDescriptorAllocations = new();    private readonly Queue<(DescriptorAllocationKey Key, DescriptorAllocation Allocation)>
+    // Value: allocation chosen for the key, the render frame of that choice, and the proof stamp
+    // (valid only when the proof passed without any descriptor write).
+    private readonly Dictionary<(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, int DrawSlot, int FrameIndex), (DescriptorAllocation Allocation, ulong RenderFrameId, DescriptorProofStamp Stamp, bool StampValid)> _frameDescriptorAllocations = new();
+    // Counts descriptor set allocations and writes made by this renderer's descriptor preparation.
+    // A proof that leaves it unchanged changed no descriptor.
+    private ulong _descriptorPreparationWrites;
+    private readonly Queue<(DescriptorAllocationKey Key, DescriptorAllocation Allocation)>
         _pendingSupersededDescriptorAllocationRetirements = new();
     private bool _descriptorDirty = true;
     private ulong _descriptorSchemaFingerprint;
@@ -458,10 +466,10 @@ internal unsafe partial class VkMeshRenderer(
         }
     }
 
-    void IApiMeshRenderer.Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot, Vector4 sourceFlatDirection)
+    void IApiMeshRenderer.Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot, Vector4 sourceFlatDirection, uint editorHighlightBits)
         => _ = EnqueueMeshRender(modelMatrix, prevModelMatrix, materialOverride,
             renderOptionsOverride, instances, billboardMode, forceNoStereo,
-            canonicalDrawIdentitySnapshot, sourceFlatDirection, null, out _);
+            canonicalDrawIdentitySnapshot, sourceFlatDirection, editorHighlightBits, null, out _);
 
     bool IApiMeshRenderer.RenderIndexedIndirect(Matrix4x4 modelMatrix,
         Matrix4x4 previousModelMatrix, XRMaterial? materialOverride,
@@ -484,7 +492,7 @@ internal unsafe partial class VkMeshRenderer(
             return false;
         }
         return EnqueueMeshRender(modelMatrix, previousModelMatrix, materialOverride,
-            renderOptionsOverride, 1u, billboardMode, forceNoStereo, default, default,
+            renderOptionsOverride, 1u, billboardMode, forceNoStereo, default, default, 0u,
             new VulkanMeshIndexedIndirectPayload(arguments, byteOffset, topology,
                 authoringLease),
             out failureReason);
@@ -495,6 +503,7 @@ internal unsafe partial class VkMeshRenderer(
         uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo,
         in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
         Vector4 sourceFlatDirection,
+        uint editorHighlightBits,
         VulkanMeshIndexedIndirectPayload? indexedIndirect, out string failureReason)
     {
         failureReason = string.Empty;
@@ -527,6 +536,17 @@ internal unsafe partial class VkMeshRenderer(
         }
         ResolvedMeshRenderMaterial resolvedMaterial =
             ResolveMaterialSelection(materialOverride, instances);
+        bool requiredForOutput = RequiredMeshSubmissionScope.IsActive;
+        uint frozenEditorHighlightBits =
+            (editorHighlightBits & 3u) | (resolvedMaterial.Material.EditorOverlayFlags & XRMaterial.GizmoOverlayFlag);
+        EditorHighlightRasterOutput editorHighlightOutput =
+            CaptureEditorHighlightOutput(pipeline, producer.Target,
+                RuntimeEngine.Rendering.State.CurrentAuthoredRenderPassIndex);
+        bool suppressLegacyGizmoStencil =
+            (resolvedMaterial.Material.EditorOverlayFlags & XRMaterial.GizmoOverlayFlag) != 0u &&
+            (renderOptionsOverride is null ||
+                ReferenceEquals(renderOptionsOverride, resolvedMaterial.Material.RenderOptions)) &&
+            pipeline?.Pipeline?.ResolveAdvancedStageFamily() is not null;
         if (SourceMultilayerFlatDirection.IsRequired(resolvedMaterial.Material) &&
             !SourceMultilayerFlatDirection.IsValid(sourceFlatDirection))
             throw new InvalidOperationException("The active flat multilayer draw has no valid source direction.");
@@ -566,6 +586,9 @@ internal unsafe partial class VkMeshRenderer(
         if (expandedInstances == 0u)
         {
             failureReason = "The resolved material has no draw instances.";
+            if (requiredForOutput)
+                throw new RequiredRenderCommandException(failureReason,
+                    new NotSupportedException(failureReason));
             return false;
         }
 
@@ -577,51 +600,104 @@ internal unsafe partial class VkMeshRenderer(
                 in shadowUniformState,
                 forceNoStereo,
                 out uint transformId);
-        ulong preparationCompatibilitySignature =
-            CapturePreparationCompatibilitySignature(
-                in resolvedMaterial,
+        if (!SkinningPrepassDispatcher.TryCaptureVulkanOutputWitness(
+                MeshRenderer,
+                out DeformationOutputWitness deformationOutputWitness,
+                out bool deformationOutputRequired))
+        {
+            failureReason = deformationOutputRequired
+                ? "Vulkan deformation output has no healthy producer receipt for this draw."
+                : "Vulkan deformation output could not be validated for this draw.";
+            _ = SetPrepareResult(
+                false,
+                "DeformationOutputPending",
+                failureReason,
+                out _);
+            CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
+            throw new RenderResourcePreparationPendingException(failureReason);
+        }
+
+        VulkanMeshRenderRequest request;
+        try
+        {
+            ulong skinnedOutputSetIdentity = deformationOutputWitness.IsValid
+                ? MeshRenderer.SkinnedOutputSetIdentity
+                : 0UL;
+            ulong preparationCompatibilitySignature =
+                CapturePreparationCompatibilitySignature(
+                    in resolvedMaterial,
+                    renderOptionsOverride,
+                    instances,
+                    expandedInstances,
+                    passIndex,
+                    deferredBindings.Publisher,
+                    in shadowUniformState,
+                    editorHighlightOutput,
+                    suppressLegacyGizmoStencil,
+                    requiredForOutput,
+                    skinnedOutputSetIdentity,
+                    in deformationOutputWitness);
+            VulkanResidentDrawTemplateHandle residentTemplateHandle =
+                CapturePublishedResidentTemplateHandle(
+                    canonicalDrawIdentitySnapshot,
+                    passIndex,
+                    context,
+                    skinnedOutputSetIdentity);
+
+            request = new(
+                this,
+                passIndex,
+                pipeline,
+                context,
+                producer,
+                deferredBindings,
+                resolvedMaterial,
+                viewSnapshot,
+                shadowCasterRelevance,
+                transformId,
+                preparationCompatibilitySignature,
+                modelMatrix,
+                prevModelMatrix,
+                materialOverride,
                 renderOptionsOverride,
                 instances,
                 expandedInstances,
-                passIndex,
-                deferredBindings.Publisher,
-                in shadowUniformState);
-        VulkanResidentDrawTemplateHandle residentTemplateHandle =
-            CapturePublishedResidentTemplateHandle(
+                billboardMode,
+                forceNoStereo,
                 canonicalDrawIdentitySnapshot,
-                passIndex,
-                context);
-        VulkanMeshRenderRequest request = new(
-            this,
-            passIndex,
-            pipeline,
-            context,
-            producer,
-            deferredBindings,
-            resolvedMaterial,
-            viewSnapshot,
-            shadowCasterRelevance,
-            transformId,
-            preparationCompatibilitySignature,
-            modelMatrix,
-            prevModelMatrix,
-            materialOverride,
-            renderOptionsOverride,
-            instances,
-            expandedInstances,
-            billboardMode,
-            forceNoStereo,
-            canonicalDrawIdentitySnapshot,
-            residentTemplateHandle,
-            windowPresentationSourceMarker)
+                residentTemplateHandle,
+                windowPresentationSourceMarker)
+            {
+                SourceFlatDirection = sourceFlatDirection,
+                EditorHighlightBits = frozenEditorHighlightBits,
+                SuppressLegacyGizmoStencil = suppressLegacyGizmoStencil,
+                EditorHighlightOutput = editorHighlightOutput,
+                IndexedIndirect = indexedIndirect,
+                PassStateFlags = CaptureDrawPassStateFlags(),
+                DeformationOutputWitness = deformationOutputWitness,
+                SkinnedOutputSetIdentity = skinnedOutputSetIdentity,
+                RequiredForOutput = requiredForOutput,
+            };
+        }
+        catch
         {
-            SourceFlatDirection = sourceFlatDirection,
-            IndexedIndirect = indexedIndirect,
-            PassStateFlags = CaptureDrawPassStateFlags(),
-        };
-        VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult =
-            _meshRequests?.TryEnqueue(in request)
-            ?? VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.TerminalFailure;
+            deformationOutputWitness.Receipt?.ReleaseAuthoringUse();
+            throw;
+        }
+        bool witnessTransferred = false;
+        VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult;
+        try
+        {
+            scheduleResult = _meshRequests?.TryEnqueue(in request)
+                ?? VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.TerminalFailure;
+            witnessTransferred = scheduleResult ==
+                VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.Scheduled;
+        }
+        finally
+        {
+            if (!witnessTransferred)
+                deformationOutputWitness.Receipt?.ReleaseAuthoringUse();
+        }
         if (RenderDiagnosticsFlags.VkTraceDraw &&
             MeshRenderer.Name?.StartsWith("FullscreenQuad:", StringComparison.Ordinal) == true)
         {
@@ -643,6 +719,13 @@ internal unsafe partial class VkMeshRenderer(
             MeshRenderer.Name ?? "<unnamed renderer>",
             scheduleResult);
         failureReason = $"Vulkan mesh request was not scheduled: {scheduleResult}.";
+        if (requiredForOutput)
+        {
+            if (scheduleResult == VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.Backpressured)
+                throw new RenderResourcePreparationPendingException(failureReason);
+            throw new RequiredRenderCommandException(failureReason,
+                new NotSupportedException(failureReason));
+        }
         return false;
     }
 
@@ -653,7 +736,12 @@ internal unsafe partial class VkMeshRenderer(
         uint expandedInstances,
         int passIndex,
         IDeferredRenderBindingPublisher? deferredPublisher,
-        in LayeredShadowUniformState shadowUniformState)
+        in LayeredShadowUniformState shadowUniformState,
+        EditorHighlightRasterOutput editorHighlightOutput,
+        bool suppressLegacyGizmoStencil,
+        bool requiredForOutput,
+        ulong skinnedOutputSetIdentity,
+        in DeformationOutputWitness deformationOutputWitness)
     {
         const ulong offset = 1469598103934665603UL;
         const ulong prime = 1099511628211UL;
@@ -665,9 +753,26 @@ internal unsafe partial class VkMeshRenderer(
         hash = (hash ^ unchecked((ulong)material.ShaderStateRevision)) * prime;
         hash = (hash ^ material.ActiveUberVariant.VariantHash) * prime;
         hash = (hash ^ ReferenceIdentity(Mesh)) * prime;
+        // A prepared draw must bind the output set retained by its deformation receipt.
+        hash = (hash ^ skinnedOutputSetIdentity) * prime;
+        if (deformationOutputWitness.IsValid)
+        {
+            SkinningPrepassDispatcher.OutputAllocationIdentity output =
+                deformationOutputWitness.AllocationIdentity;
+            hash = MixDeformationAllocation(hash, output.Positions);
+            hash = MixDeformationAllocation(hash, output.Normals);
+            hash = MixDeformationAllocation(hash, output.Tangents);
+            hash = MixDeformationAllocation(hash, output.Interleaved);
+        }
         hash = (hash ^ ReferenceIdentity(renderOptionsOverride)) * prime;
         hash = (hash ^ ReferenceIdentity(deferredPublisher)) * prime;
         hash = (hash ^ unchecked((uint)passIndex)) * prime;
+        hash = (hash ^ unchecked((uint)editorHighlightOutput.Role)) * prime;
+        hash = (hash ^ editorHighlightOutput.AttachmentIndex) * prime;
+        hash = (hash ^ editorHighlightOutput.AbiVersion) * prime;
+        hash = (hash ^ (suppressLegacyGizmoStencil ? 1UL : 0UL)) * prime;
+        hash = (hash ^ (requiredForOutput ? 1UL : 0UL)) * prime;
+        hash = (hash ^ material.EditorOverlayFlags) * prime;
         hash = (hash ^ instances) * prime;
         hash = (hash ^ expandedInstances) * prime;
         hash = (hash ^ (shadowUniformState.IsShadowPass ? 1UL : 0UL)) * prime;
@@ -683,6 +788,23 @@ internal unsafe partial class VkMeshRenderer(
             ref _preparationCompatibilityRevision))) * prime;
         hash = (hash ^ unchecked((uint)RuntimeEngine.Rendering.Settings.ShaderConfigVersion)) * prime;
         return hash == 0 ? 1UL : hash;
+    }
+
+    private static ulong MixDeformationAllocation(
+        ulong hash,
+        GpuBufferAllocationIdentity? allocation)
+    {
+        const ulong prime = 1099511628211UL;
+        if (allocation is not { } value)
+            return (hash ^ 0UL) * prime;
+
+        hash = (hash ^ ReferenceIdentity(value.Owner)) * prime;
+        hash = (hash ^ value.NativeHandle) * prime;
+        hash = (hash ^ value.Offset) * prime;
+        hash = (hash ^ value.Length) * prime;
+        hash = (hash ^ value.LifetimeSlot) * prime;
+        hash = (hash ^ value.LifetimeGeneration) * prime;
+        return (hash ^ value.Usage) * prime;
     }
 
     private static VulkanMeshDrawViewSnapshot CaptureEnqueueViewSnapshot(
@@ -762,6 +884,17 @@ internal unsafe partial class VkMeshRenderer(
         // they would be emitted with an invalid pass index and dropped at recording time.
         if (producer.Context.PipelineInstance is null)
             return false;
+        if (!SkinningPrepassDispatcher.ValidateVulkanOutputWitness(
+                MeshRenderer,
+                request.DeformationOutputWitness))
+        {
+            _ = SetPrepareResult(
+                false,
+                "DeformationOutputUnavailable",
+                "The queued deformation output receipt or its native allocation is no longer valid.",
+                out _);
+            return false;
+        }
         if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null ||
             RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId == 0)
         {
@@ -828,6 +961,13 @@ internal unsafe partial class VkMeshRenderer(
         StencilOpState backStencilState = drawState.BackStencilState;
         uint stencilWriteMask = drawState.StencilWriteMask;
         ColorComponentFlags colorWriteMask = drawState.ColorWriteMask;
+        if (request.SuppressLegacyGizmoStencil)
+        {
+            stencilTestEnabled = false;
+            frontStencilState = default;
+            backStencilState = default;
+            stencilWriteMask = 0u;
+        }
 
         // The pipeline frame-resource scope already captured and installed the immutable
         // context that owns this command list. Recomputing it for every visible mesh repeats
@@ -873,7 +1013,8 @@ internal unsafe partial class VkMeshRenderer(
                         effectiveMaterial,
                         materializationSnapshot.RequiresSynchronousGeometryPreparation,
                         out prepareReason,
-                        request.IndexedIndirect is not null);
+                        request.IndexedIndirect is not null,
+                        request.EditorHighlightOutput);
                 }
                 if (!prepared)
                 {
@@ -891,6 +1032,20 @@ internal unsafe partial class VkMeshRenderer(
                         effectiveMaterial.Name ?? "<unnamed material>",
                         prepareReason,
                     LastPrepareDetail);
+                    return false;
+                }
+
+                if (!SkinningPrepassDispatcher.ValidateVulkanOutputWitness(
+                        MeshRenderer,
+                        request.DeformationOutputWitness))
+                {
+                    programBindingSnapshot = null;
+                    CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
+                    _ = SetPrepareResult(
+                        false,
+                        "DeformationOutputChanged",
+                        "The deformation output changed during draw preparation.",
+                        out _);
                     return false;
                 }
 
@@ -990,6 +1145,10 @@ internal unsafe partial class VkMeshRenderer(
         draw = draw with
         {
             SourceFlatDirection = request.SourceFlatDirection,
+            EditorHighlightBits = request.EditorHighlightBits,
+            EditorHighlightOutput = request.EditorHighlightOutput,
+            DeformationOutputWitness = request.DeformationOutputWitness,
+            SkinnedOutputSetIdentity = request.SkinnedOutputSetIdentity,
             PassStateFlags = request.PassStateFlags,
             PreparationCompatibilitySignature =
                 request.PreparationCompatibilitySignature,
@@ -1113,7 +1272,7 @@ internal unsafe partial class VkMeshRenderer(
         XRFrameBuffer? effectiveTarget = producer.Target;
         SampleCountFlags rasterizationSamples = ResolveRasterizationSamples(effectiveTarget);
         VulkanFixedFunctionStateSnapshot producerState = producer.FixedFunctionState;
-        bool alphaToCoverageEnabled = producerState.AlphaToCoverageEnabled && rasterizationSamples != SampleCountFlags.Count1Bit;
+        bool alphaToCoverageEnabled = producerState.AlphaToCoverageEnabled;
 
         XRRenderPipelineInstance? currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         bool explicitCameraScope = RuntimeEngine.Rendering.State.RenderingPipelineState?.HasRenderingCameraScope == true;

@@ -22,6 +22,8 @@ public sealed record AdvancedLatePassMetadata
     public ShaderVar? TemporalCoverageParameter { get; init; }
     public bool WritesDepth { get; init; }
     public bool IsOrderDependent { get; init; }
+    /// <summary>Identifies a source surface whose base draw has a verified late-pass contract.</summary>
+    public EAdvancedSourceSurfaceContract SourceSurfaceContract { get; init; }
     /// <summary>Blocks the material's visible late-pass lane.</summary>
     public string? UnsupportedReason { get; init; }
     /// <summary>

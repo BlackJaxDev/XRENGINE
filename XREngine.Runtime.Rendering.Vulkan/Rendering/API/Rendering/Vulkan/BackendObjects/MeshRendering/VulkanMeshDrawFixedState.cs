@@ -64,7 +64,7 @@ internal static class VulkanMeshDrawFixedState
         if (matBlend is not null && matBlend.Enabled == ERenderParamUsage.Enabled)
         {
             blendEnabled = true;
-            alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;
+            alphaToCoverageEnabled = requestedAlphaToCoverage;
             colorBlendOp = VulkanMeshRenderingConventions.ToVulkanBlendOp(matBlend.RgbEquation);
             alphaBlendOp = VulkanMeshRenderingConventions.ToVulkanBlendOp(matBlend.AlphaEquation);
             srcColor = VulkanMeshRenderingConventions.ToVulkanBlendFactor(matBlend.RgbSrcFactor);
@@ -75,7 +75,7 @@ internal static class VulkanMeshDrawFixedState
         else if (matOpts is not null && (matBlend is null || matBlend.Enabled == ERenderParamUsage.Disabled))
         {
             blendEnabled = false;
-            alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;
+            alphaToCoverageEnabled = requestedAlphaToCoverage;
             colorBlendOp = BlendOp.Add;
             alphaBlendOp = BlendOp.Add;
             srcColor = BlendFactor.One;
@@ -86,7 +86,7 @@ internal static class VulkanMeshDrawFixedState
         else
         {
             blendEnabled = passState.BlendEnabled;
-            alphaToCoverageEnabled = passState.AlphaToCoverageEnabled && rasterizationSamples != SampleCountFlags.Count1Bit;
+            alphaToCoverageEnabled = passState.AlphaToCoverageEnabled;
             colorBlendOp = passState.ColorBlendOp;
             alphaBlendOp = passState.AlphaBlendOp;
             srcColor = passState.SrcColorBlendFactor;

@@ -1,0 +1,37 @@
+// View segment selection for the visibility preparation dispatches.
+//
+// The Vulkan recorder dispatches early visibility, indirect expansion and
+// indexed group finalization once for all views of a family. The Y workgroup
+// index selects the view as an offset from the pushed base view. The push
+// constants hold the segment of the base view, and each later view uses the
+// next segment of every per-view stream:
+// - payload streams (visible, deferred, persistent state, arguments) advance
+//   by payloadCapacity entries;
+// - range counters advance by the range count of one view, which is the length
+//   of the shared range offset table (its descriptor range is exact).
+// A dispatch with one Y workgroup (OpenGL, single-view families) gives offset
+// zero, so the pushed segment is used unchanged.
+//
+// Include this file after the push block and VisibilityInterface.glslinc.
+// Define XR_ADV_VISIBILITY_COUNTER_INDEX as XR_ADV_PREP_VIEW_INDEX before the
+// interface include, so the counter record of the selected view is used.
+
+#ifndef XR_ADV_VISIBILITY_PREPARATION_VIEWS_GLSLINC
+#define XR_ADV_VISIBILITY_PREPARATION_VIEWS_GLSLINC
+
+uint XR_ADV_PrepPayloadBase()
+{
+    return XR_ADV_VisibilityPush.payloadBase +
+        XR_ADV_PREP_VIEW_OFFSET * XR_ADV_VisibilityPush.payloadCapacity;
+}
+
+uint XR_ADV_PrepRangeBase()
+{
+    uint rangeStride = max(1u, uint(XR_ADV_VisibilityRangeOffsets.records.length()));
+    return XR_ADV_VisibilityPush.rangeBase + XR_ADV_PREP_VIEW_OFFSET * rangeStride;
+}
+
+#define XR_ADV_PREP_PAYLOAD_BASE XR_ADV_PrepPayloadBase()
+#define XR_ADV_PREP_RANGE_BASE XR_ADV_PrepRangeBase()
+
+#endif

@@ -40,6 +40,7 @@ public partial class RenderableMesh
         _materialOutlineCommand.WorldMatrixIsModelMatrix = _rc.WorldMatrixIsModelMatrix;
         _materialOutlineCommand.WorldCullingVolumeOverride = _rc.WorldCullingVolumeOverride;
         _materialOutlineCommand.Instances = _rc.Instances;
+        _materialOutlineCommand.EditorHighlightBits = _rc.EditorHighlightBits;
         _materialOutlineCommand.MaterialOverride = outlineMaterial;
         _materialOutlineCommand.RenderOptionsOverride = outlinePass.RenderOptions;
         _materialOutlineCommand.RenderPass = outlinePass.RenderPass;

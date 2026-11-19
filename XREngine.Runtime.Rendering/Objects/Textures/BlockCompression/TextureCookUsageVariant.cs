@@ -6,11 +6,9 @@ namespace XREngine.Rendering;
 /// Maps a texture role to the cache variant folder of the streaming cache, and back.
 /// </summary>
 /// <remarks>
-/// With <see cref="ETextureCookCompression.Bcn"/>, one source file can cook to a different
-/// block format for each role (for example BC5 as a normal map and BC7 as color). The role
-/// is therefore a variant folder below the payload key: <c>usage-color</c>,
-/// <c>usage-data</c>, or <c>usage-normal</c>. The cache codec reads the folder back from the
-/// cache path when it cooks the texture. Other compression modes use no role folder.
+/// Data and normal pixels use separate versioned folders so old mips that lost RGB under
+/// zero alpha cannot be reused. BCn also uses a color folder because its block format
+/// depends on the texture role. The cache codec reads the role from the folder name.
 /// </remarks>
 internal static class TextureCookUsageVariant
 {
@@ -18,20 +16,20 @@ internal static class TextureCookUsageVariant
     private const string ColorFolder = Prefix + "color";
     private const string DataFolder = Prefix + "data";
     private const string NormalFolder = Prefix + "normal";
+    private const string IndependentDataFolder = DataFolder + "-independent-v1";
+    private const string IndependentNormalFolder = NormalFolder + "-independent-v1";
 
     /// <summary>
-    /// Returns the variant folder for a role while the effective cook compression uses
-    /// role-dependent formats; otherwise null.
+    /// Returns a new cache folder for data and normal pixels that retain RGB under zero alpha.
+    /// Color uses a role folder only when its block format depends on the role.
     /// </summary>
     internal static string? ResolveVariantKey(ETextureImportUsage usage)
-        => TextureCookBlockCompressor.EffectiveMode == ETextureCookCompression.Bcn
-            ? usage switch
-            {
-                ETextureImportUsage.Normal => NormalFolder,
-                ETextureImportUsage.Data => DataFolder,
-                _ => ColorFolder,
-            }
-            : null;
+        => usage switch
+        {
+            ETextureImportUsage.Normal => IndependentNormalFolder,
+            ETextureImportUsage.Data => IndependentDataFolder,
+            _ => TextureCookBlockCompressor.EffectiveMode == ETextureCookCompression.Bcn ? ColorFolder : null,
+        };
 
     /// <summary>
     /// Reads the role from a cache path. Returns false when the path has no role folder,
@@ -48,12 +46,14 @@ internal static class TextureCookUsageVariant
         {
             int separator = remaining.IndexOfAny('\\', '/');
             ReadOnlySpan<char> segment = separator < 0 ? remaining : remaining[..separator];
-            if (segment.Equals(NormalFolder, StringComparison.OrdinalIgnoreCase))
+            if (segment.Equals(IndependentNormalFolder, StringComparison.OrdinalIgnoreCase) ||
+                segment.Equals(NormalFolder, StringComparison.OrdinalIgnoreCase))
             {
                 usage = ETextureImportUsage.Normal;
                 return true;
             }
-            if (segment.Equals(DataFolder, StringComparison.OrdinalIgnoreCase))
+            if (segment.Equals(IndependentDataFolder, StringComparison.OrdinalIgnoreCase) ||
+                segment.Equals(DataFolder, StringComparison.OrdinalIgnoreCase))
             {
                 usage = ETextureImportUsage.Data;
                 return true;

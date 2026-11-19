@@ -74,7 +74,62 @@ public partial class XRMesh
         if (payload.PayloadVersion <= MeshletPayload.LastPayloadVersionWithVertexStream)
             size += sizeof(int); // empty legacy vertex stream
         size += sizeof(int) * 4; // stats
+        if (payload.PayloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+            size += CalculateClusterHierarchySize(payload);
         return size;
+    }
+
+    /// <summary>Level-0 count, then the cluster records (8 bytes each) and group records (32 bytes each), each with a count.</summary>
+    private static long CalculateClusterHierarchySize(MeshletPayload payload)
+        => sizeof(int)
+           + sizeof(int) + (long)payload.ClusterLods.Length * ClusterLodRecordBytes
+           + sizeof(int) + (long)payload.LodGroups.Length * LodGroupRecordBytes;
+
+    private const int ClusterLodRecordBytes = sizeof(int) * 2;
+    private const int LodGroupRecordBytes = sizeof(float) * 5 + sizeof(int) + sizeof(uint) * 2;
+
+    private static void WriteClusterHierarchy(RuntimeCookedBinaryWriter writer, MeshletPayload payload)
+    {
+        writer.Write(payload.ClusterLevel0Count);
+        writer.Write(payload.ClusterLods.Length);
+        foreach (MeshletClusterLodRecord record in payload.ClusterLods)
+        {
+            writer.Write(record.Group);
+            writer.Write(record.RefinedGroup);
+        }
+        writer.Write(payload.LodGroups.Length);
+        foreach (MeshletLodGroupRecord group in payload.LodGroups)
+        {
+            writer.Write(group.SimplifiedSphere.X);
+            writer.Write(group.SimplifiedSphere.Y);
+            writer.Write(group.SimplifiedSphere.Z);
+            writer.Write(group.SimplifiedSphere.W);
+            writer.Write(group.SimplifiedError);
+            writer.Write(group.Depth);
+            writer.Write(group.Reserved0);
+            writer.Write(group.Reserved1);
+        }
+    }
+
+    private static (int Level0Count, MeshletClusterLodRecord[] Clusters, MeshletLodGroupRecord[] Groups) ReadClusterHierarchy(RuntimeCookedBinaryReader reader)
+    {
+        int level0Count = reader.ReadInt32();
+        int clusterCount = reader.ReadInt32();
+        ValidateArrayCount(clusterCount, ClusterLodRecordBytes, reader.Remaining, "cluster hierarchy record");
+        MeshletClusterLodRecord[] clusters = new MeshletClusterLodRecord[clusterCount];
+        for (int i = 0; i < clusterCount; i++)
+            clusters[i] = new MeshletClusterLodRecord(reader.ReadInt32(), reader.ReadInt32());
+
+        int groupCount = reader.ReadInt32();
+        ValidateArrayCount(groupCount, LodGroupRecordBytes, reader.Remaining, "cluster hierarchy group");
+        MeshletLodGroupRecord[] groups = new MeshletLodGroupRecord[groupCount];
+        for (int i = 0; i < groupCount; i++)
+        {
+            Vector4 sphere = new(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+            groups[i] = new MeshletLodGroupRecord(sphere, reader.ReadSingle(), reader.ReadInt32(), reader.ReadUInt32(), reader.ReadUInt32());
+        }
+
+        return (level0Count, clusters, groups);
     }
 
     internal static void WriteMeshletPayload(RuntimeCookedBinaryWriter writer, MeshletPayload? payload)
@@ -110,6 +165,8 @@ public partial class XRMesh
         writer.Write(payload.Stats.VertexReferenceCount);
         writer.Write(payload.Stats.TriangleByteCount);
         writer.Write(payload.Stats.EncodedByteCount);
+        if (payload.PayloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+            WriteClusterHierarchy(writer, payload);
     }
 
     internal static MeshletPayload? ReadMeshletPayload(RuntimeCookedBinaryReader reader)
@@ -150,6 +207,17 @@ public partial class XRMesh
             reader.ReadInt32(),
             reader.ReadInt32());
 
+        // Version 5 adds the cluster hierarchy. The settings bytes do not carry the hierarchy flag;
+        // the version implies it.
+        int level0Count = 0;
+        MeshletClusterLodRecord[] clusterLods = [];
+        MeshletLodGroupRecord[] lodGroups = [];
+        if (payloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+        {
+            (level0Count, clusterLods, lodGroups) = ReadClusterHierarchy(reader);
+            meshletSettings = meshletSettings with { BuildClusterHierarchy = true };
+        }
+
         if (payloadVersion < 2)
             runtimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSettings);
 
@@ -187,6 +255,9 @@ public partial class XRMesh
             VertexIndices = vertexIndices.ToImmutableArray(),
             TriangleIndices = triangleIndices.ToImmutableArray(),
             Stats = stats,
+            ClusterLevel0Count = level0Count,
+            ClusterLods = clusterLods.ToImmutableArray(),
+            LodGroups = lodGroups.ToImmutableArray(),
         };
         payload.ValidatePortablePayload();
         return payload;
@@ -217,7 +288,18 @@ public partial class XRMesh
             return false;
         }
 
-        return TrySkipBytes(reader, sizeof(int) * 4L);
+        if (!TrySkipBytes(reader, sizeof(int) * 4L))
+            return false;
+        if (payloadVersion < MeshletPayload.ClusterHierarchyPayloadVersion)
+            return true;
+
+        if (!TrySkipBytes(reader, sizeof(int)))
+            return false;
+        int clusterCount = reader.ReadInt32();
+        if (clusterCount < 0 || !TrySkipBytes(reader, (long)clusterCount * ClusterLodRecordBytes))
+            return false;
+        int groupCount = reader.ReadInt32();
+        return groupCount >= 0 && TrySkipBytes(reader, (long)groupCount * LodGroupRecordBytes);
     }
 
     private static bool TrySkipCpuMeshletDescriptors(RuntimeCookedBinaryReader reader)

@@ -9,4 +9,5 @@ internal enum EVulkanPreparedMeshIngressFailureKind : byte
     StreamExceptionAppendFailed = 3,
     NonOpaqueComputedOrdering = 4,
     StableRecordAppendFailed = 5,
+    PackageExceptionMissingSubmission = 6,
 }

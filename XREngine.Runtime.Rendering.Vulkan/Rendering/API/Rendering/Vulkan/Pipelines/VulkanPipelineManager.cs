@@ -287,6 +287,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             EffectiveTargetMode = effectiveTargetMode,
             ShaderArtifactFingerprints = shaderFingerprints,
         };
+        var pendingJobs = CapturePendingJobDiagnostics();
         VulkanPipelineCacheIdentity.Write(identityPath, identity);
         return new()
         {
@@ -302,6 +303,10 @@ internal sealed unsafe partial class VulkanPipelineManager
             IdentityPath = identityPath,
             Identity = identity,
             Telemetry = CaptureTelemetry(),
+            PendingGraphicsJobCount = pendingJobs.GraphicsCount,
+            PendingComputeJobCount = pendingJobs.ComputeCount,
+            PendingGraphicsJobs = pendingJobs.Graphics,
+            PendingComputeJobs = pendingJobs.Compute,
         };
     }
 

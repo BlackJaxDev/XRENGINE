@@ -300,7 +300,7 @@ internal static class Program
                 HumanoidConformanceMappingCorrectionResult correction = HumanoidConformanceMappingCorrectionLoader.LoadValidateAndApply(
                     correctionPath!, avatarPath, humanoid);
                 if (!correction.Applied)
-                    throw new InvalidDataException($"Persisted mapping correction failed: {string.Join("; ", correction.Issues.Select(x => x.Code + ": " + x.Message))}");
+                    throw new InvalidDataException($"Persisted mapping correction failed: {string.Join("; ", correction.Issues.Select(x => $"{x.Code}: {x.Message}"))}");
             }
 
             AnimationClip clip = AnimYamlImporter.Import(clipPath);

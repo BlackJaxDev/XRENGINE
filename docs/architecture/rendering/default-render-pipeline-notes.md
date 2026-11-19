@@ -4,6 +4,22 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 
 ---
 
+## Required Command Resources
+
+`ViewportRenderCommandContainer` propagates
+`RenderResourcePreparationPendingException` after it unwinds framebuffer bindings.
+The pipeline then discards the incomplete invocation and retries a later frame.
+Do not isolate this exception as an ordinary command failure. A pending mesh
+resource must not remove a required outline or other draw from the frame.
+
+Required Advanced native stages also propagate authoring failures on desktop.
+An offscreen rejection receipt alone does not stop a desktop command chain.
+If native scene preparation or stage enqueue fails, stop the invocation before
+late authored draws can consume retained native color or depth targets. Pending
+resources request a retry; unsupported configurations remain explicit failures.
+The native Uber shading kernel must be current before a scene that uses it is
+admitted. A simpler standard shader is not a substitute for that kernel.
+
 ## Point Light Publication
 
 `PointLightComponent.RegisterDynamicLight` prepares the shadow cameras and
@@ -65,6 +81,8 @@ names, null slots, and texture targets match. Value and resource revisions
 still advance. Texture views also track their viewed resource and effective
 target. Unknown texture types use conservative layout invalidation. Repeated
 slots share one change subscription, and material destruction removes it.
+An `XRTexture2DArrayView` with `Array=true` keeps the array target even when
+it has one layer. Its Vulkan descriptor must match a `sampler2DArray` shader binding.
 
 Static deformation uses a separate exact mesh-input generation. Material
 layout and camera changes do not discard unchanged deformation inputs. See
@@ -105,6 +123,13 @@ the result of that compute pass.
 
 ## Vulkan Shader Module Publication
 
+A recoverable PresentNow pipeline compilation failure can outlast its bounded
+recovery probes. New pipeline compile activity permits another bounded probe.
+The render thread consumes that activity generation when the probe starts, so
+a completion during the probe remains visible. The probe must still pass all
+readiness and dependency checks. A terminal resource failure is not recoverable
+through this trigger.
+
 Shader module destruction and publication use the same pipeline dependency gate.
 Read the current native module after entering that gate. Cold publication has no
 pipeline jobs to drain. Replacement of a live module uses the scoped shader
@@ -144,6 +169,21 @@ An existing window with an uninitialized renderer defers its binding check.
 Required mode still rejects an unsupported initialized renderer.
 
 ## Resource Generation Lifecycle
+
+### Material Parameter Lookup
+
+Visibility collection and rendering can query one material at the same time.
+`XRMaterialBase` uses a concurrent name-index cache because a lookup can add or
+remove an index. Each lookup captures one parameter array and validates the
+cached slot's name before it returns that same slot. Array replacement or a
+cache reset can force another scan; it must not corrupt the cache or mix array
+lengths and indices. This lookup does not make all material values one atomic
+snapshot. Warm cache hits do not allocate memory.
+
+Derived pass materials can share the source parameter objects to receive live
+value changes. Set the variant's pass, alpha cutoff, and transparency state
+before attaching those shared parameters. These setters can change shader
+opacity values; running them after attachment changes the source material too.
 
 ### Imported And Forward Buffer Ownership
 
@@ -400,10 +440,31 @@ therefore follow the active passes through the resource feature mask:
   Forward+ oracle schedule none, so OpenXR eyes no longer carry about 0.8 GB of
   unwritten two-layer targets; `VPRC_RvcPass` then describes no resources.
 - AO scratch targets follow the encoded AO mode: SSAO/MVAO/MSVO allocate the
-  shared raw target, HBAO+ and GTAO their own raw and blur targets.
-- The bloom chain is R11G11B10F. No bloom consumer reads alpha (the format
-  drops what the bloom copy passes through) and every consumer samples `.rgb`;
-  keep it that way or move bloom back to RGBA16F.
+  shared raw target, HBAO+ and GTAO their own raw and blur targets. In Advanced,
+  GTAO at half resolution declares the AO normals at half resolution, adds a
+  half-resolution R32F depth target and the prepare framebuffer, and drops the
+  full-resolution AO normal framebuffer.
+- Advanced declares the FXAA output and the SMAA edge, blend and output targets, with their
+  framebuffers, only while the profile AA mode is FXAA or SMAA, as Default does. The AA mode is
+  part of the generation key, so a mode switch builds a generation that declares them. With TSR
+  this saves about 661 MiB for the 2688x2688 eye pair and about 101 MiB for a 1920x1080 desktop.
+- The bloom chain is R11G11B10F in both pipelines. No bloom consumer reads alpha
+  (the format drops what the bloom copy passes through) and every consumer
+  samples `.rgb`; keep it that way or move bloom back to RGBA16F. In Advanced
+  this halves the 2688x2688 eye bloom chain from about 157 MB to 79 MB with no
+  visible change in a same-session A/B; GPU time is unchanged.
+- In Advanced (native renderers), the first bloom downsample reads the HDR scene
+  through a linear, clamp-to-edge view (`VPRC_BloomPass.FirstDownsampleReadsInput`).
+  The copy into bloom mip 0 is a same-size texel copy, so the result is the same,
+  and the copy runs only while the bloom combine reads mip 0 (start mip 0 with a
+  mip 0 weight) or the bloom debug view is on. With the default settings this saves
+  the full-resolution copy (about 0.15 ms for the 2688x2688 eye pair). WebGPU
+  keeps the copy.
+  In this mode the copy pass is declared and run after the downsample and
+  upsample passes. The render-graph planner puts the barrier that makes the HDR
+  scene readable on the first pass that reads it. If the optional copy were that
+  first reader, a frame that skips the copy would also skip the barrier, and the
+  first downsample would sample the HDR scene without one.
 
 ---
 
@@ -561,7 +622,13 @@ The resource-generation key and frozen native stage order preserve the selected
 AO family. On desktop backends, the native stage writes neutral AO. The mode from
 the camera's AO schema then replaces it with the Default pipeline's AO commands
 and shaders, which read normals derived from depth. VXAO stays neutral, because
-the Default pipeline does not implement it.
+the Default pipeline does not implement it. On Vulkan, when the AO passes run in a
+frame and their finalize framebuffer exists
+(`AdvancedRenderPipeline.AmbientOcclusionPassesReplaceNeutralFill`), the native stage
+records no neutral-fill dispatch (`SkipNeutralAmbientOcclusionFill`): the finalize quad
+overwrites the whole image before shading reads it. The stage operation and its
+transitions still run. AO off, VXAO, a VR eye frame whose eye feature profile turns
+ambient occlusion off, a missing camera and a missing finalize target keep the fill.
 All native, surface-export, depth-comparison, and MSAA shading recipes declare
 `XR_ADV_AMBIENT_OCCLUSION_SCHEMA_VERSION=1`. Runtime validation rejects older
 recipes before binding the neutral texture, despite the unchanged 160-byte
@@ -790,6 +857,8 @@ Use the standard `SceneCopy.fs` / `SceneCopyStereo.fs` material for `ForwardPass
 ## 5. Auto-Exposure: Constructor vs Schema Defaults
 
 **Rule:** `ColorGradingSettings` constructor defaults **must** match the pipeline schema defaults in `DefaultRenderPipeline.PostProcessing.cs` / `AdvancedRenderPipeline.PostProcessing.cs`. Keep the regression test `Defaults_MatchPipelineSchemaDefaults` in sync.
+
+The default authored `Contrast` is `0`. Its shader multiplier is `(1 + Contrast / 100)^2`, so the initial cached multiplier must be `1`. A default authored value of `1` increases contrast and clamps small positive HDR colors to black. Explicit authored contrast values keep this conversion.
 
 ### What went wrong
 
@@ -1262,6 +1331,8 @@ composition is separate.
 
 Contact shadows expose distance, sample count, thickness, fade range, normal offset, and jitter strength. Use the fade range to limit near-field detail work to the camera distances where the extra ray march is visible.
 
+The shadow-map contact march (`XRENGINE_SHADOW_BODY_SampleContactShadow2D` for forward receivers, `XR_ADV_DirectionalContactShadow` for Advanced native shading) steps from the receiver toward the light and darkens where an occluder lies above the step within the thickness window. Distance and thickness are in world meters. The depth difference of a step is in normalized light depth, so the march scales the window by the light depth change of one meter along the light direction (1 / depth range of the map). For an orthographic map (a directional cascade) every step projects to the same texel, so the march fetches the stored depth once and tests each step against it; the sample count then changes only arithmetic. Perspective maps (spot lights) keep one fetch for each step.
+
 Directional lights default to short-range contact shadows enabled with distance `1.0`, `16` samples, thickness `2.0`, fade range `10` to `40`, zero normal offset, and full jitter.
 
 Spot lights default to `512x512` shadow maps, PCSS/contact-hardening filtering, `8` blocker samples, `8` filter samples, blocker-search radius `0.1`, penumbra clamp `0.0002` to `0.05`, source radius `0.1`, and short-range contact shadows with distance `0.1`, `16` samples, thickness `1.0`, fade range `10` to `40`, normal offset `0.036`, and full jitter.
@@ -1433,6 +1504,12 @@ The Default Render Pipeline tonemapping stage now exposes AgX and GT7 in additio
 
 `GT7` is the lightweight Uchimura/Gran Turismo per-channel curve intended for the engine's SDR post-process path. It is not the full GT7 physical HDR/display pipeline with target-display adaptation and perceptual gamut mapping.
 
+**Default operator.** `TonemappingSettings.HostDefaultTonemapping` sets the operator that new tonemapping settings and new post-process schemas start with. Each pipeline copies the value into its schema when it builds the schema, so a host must set it before it creates render pipelines.
+
+- The shared default is `Mobius`. The cooked web Default output route (`Tonemap.slang`) supports only Mobius, and `GetWebPostProcessRejection` rejects other operators. `CreateWebPostProcessAdmissionState` sets Mobius as the browser default before it applies the authored values.
+- Desktop hosts install `GT7`. `DesktopEngineStartupPolicy.Install` sets it when the editor, desktop runtime, VR client or server installs its application services, before any camera exists. Editor, desktop and VR eye cameras therefore start with GT7 without a per-scene step.
+- Authored camera values win over the host default. A camera that keeps GT7 is rejected by the cooked web route.
+
 ---
 
 ## 25. ImGui Platform Viewport Disposal
@@ -1451,13 +1528,16 @@ The stage owns broad render-pipeline diagnostics, not only GPU BVH wireframes. I
 
 - `Full Overdraw`: renders all visible mesh render passes into `FullOverdrawCountTex` using additive `1.0` writes with depth disabled, then presents `FullOverdrawDebugFBO` as a heatmap over `PostProcessOutputTexture`. It resolves the same mesh submission strategy as the main pass: `CpuDirect` redraws the CPU mesh list, while active GPU submission draws GPU-eligible meshes through the GPU render path and leaves forced-CPU / `ExcludeFromGpuIndirect` meshes on the CPU fallback path.
 - `GPU BVH`: the existing zero-readback BVH wireframe controls.
-- `Meshlet Debug Display`: requests meshlet debug colors through production meshlet dispatch when available, or through the diagnostic direct-dispatch overlay on OpenGL NV mesh-shader hardware. Keep `VPRC_RenderMeshletDebugDisplay` wired in both default pipelines so the inspector toggle is visible on the active pipeline as well as V2.
+- `Meshlet Debug Display`: requests meshlet debug colors through production meshlet dispatch when available, or through the diagnostic direct-dispatch overlay on OpenGL NV mesh-shader hardware. Keep `VPRC_RenderMeshletDebugDisplay` wired in both default pipelines so the inspector toggle is visible on the active pipeline as well as V2. The Advanced pipeline reads the same toggle: while its `ShadingDebugView` is `Disabled`, the toggle selects the `MeshletId` shading view. It does not change the submission strategy, so indexed pixels stay neutral grey.
+- `Occlusion-Culled Bounds`: draws the bounds of the units that the occlusion test removed in the current frame. Only the Advanced pipeline implements it today; see [Advanced render pipeline](advanced-render-pipeline.md#debug-views-for-meshlets-and-occlusion).
 
 Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resource caching but before final output. The count pass is intentionally debug-only mesh submission with a forced simple material, so it should not be used for performance numbers except to locate screen regions with repeated pixel coverage.
 
 ---
 
 ## 27. DLAA And MFAA AA Modes
+
+The default AA mode (`EngineSettings.AntiAliasingMode`) is `Tsr`, and the default `TsrRenderScale` is 0.75. TSR renders each axis at 75 percent of the output size and upscales to the output size. At 1.0, TSR renders at full resolution and acts as temporal anti-aliasing. A view without TSR history (for example a Default-pipeline per-eye OpenXR eye) keeps its full internal size. A camera `AntiAliasingModeOverride` or `TsrRenderScaleOverride` replaces these values for one camera.
 
 `DLAA` is a first-class AA mode in the default render pipeline. It requests the existing NVIDIA DLSS vendor path at native internal resolution, bypasses the in-engine FXAA/SMAA/TSR post-AA chain, and fails visibly when the DLSS runtime or compatible NVIDIA path is unavailable.
 
@@ -1499,8 +1579,30 @@ Current policy:
   are stereo arrays.
 - Auto exposure uses `EVrAutoExposurePolicy.HeadsetShared`: stereo-array HDR
   sources are averaged across both eye layers into one shared exposure value.
-  Per-eye external swapchain sources skip auto exposure to avoid last-eye-wins
-  mutation of the shared 1x1 exposure texture.
+- Two-pass VR eyes (one pipeline per eye, OpenXR or OpenVR) are an eye pair
+  (`RenderPipeline.IsVrEyePostProcessPair`, set by the post-process state
+  owner link). Each eye pipeline instance keeps its own adaptation state
+  (`AutoExposureRuntimeState` in `ColorGradingSettings`: GPU-ready flag, update
+  timing, CPU-adapted exposure) and its own 1x1 exposure texture, so the eyes
+  cannot overwrite each other. `ColorGradingSettings.IndependentEyeExposure`
+  selects the mode:
+  - Off (default), one headset exposure: the left (owner) eye meters its own
+    HDR image and copies its adapted value into one renderer-wide buffer
+    (`PublishHeadsetAutoExposureGpu`). The right eye copies that value into its
+    own exposure texture (`FollowHeadsetAutoExposureGpu`) and does not meter.
+    In queue order the right eye reads the value of the same frame; when its
+    command buffer runs first, it reads the value of the previous frame.
+    OpenGL runs one context in order and renders the left eye first, so the
+    right eye always reads the value of the same frame.
+  - On (`EVrAutoExposurePolicy.PerEye`): each eye meters its own image and
+    adapts on its own, so the eyes can differ in brightness.
+  Vulkan and OpenGL share the headset exposure
+  (`SupportsHeadsetSharedAutoExposure`), so OpenVR and OpenXR two-pass eyes
+  get it on both backends. A renderer without it uses the independent mode
+  and logs this once per session. A paired eye
+  adapts every frame. An external per-eye target without an eye pair
+  (`VrEyeFrameRules.IsExternalEyeTargetFrame`) still skips auto exposure to avoid
+  last-eye-wins mutation of one exposure state.
 - Atmosphere and volumetric-fog temporal history stay mono-only until their
   half-resolution color/depth/history resources and reprojection/upscale shaders
   are stereo-array aware.
@@ -1728,6 +1830,49 @@ use the same ownership. Do not upload a CPU image across GPU-owned gaps or
 read the GPU-owned rows back. Prepare copy-range storage before the frame and
 bound it by the admitted palette capacity.
 
+The Vulkan `SkinningPrepassDispatcher` produces late mesh deformation inside
+the pipeline frame-resource scope. Compute enqueue success does not prove that
+the GPU output exists. An unchanged pose can reuse output across frames only
+when its producer has a healthy submitted receipt, its input version and pose
+still match, and its native output allocations have not changed.
+
+A queued mesh draw carries a frozen deformation-output witness. Deferred draw
+materialization checks that witness instead of relying on a later thread's
+active pipeline invocation. A transient read lease prevents output overwrite
+until native submission pins protect the draw, or until the frame is discarded.
+Keep this lease with the logical frame attempt through cold preparation. Do not
+retain it in cached physical draw payloads, which outlive an individual read.
+
+Changing poses use at most four output buffer sets per renderer. A set can be
+replaced as the active output only after its authoring leases end and its
+producer leaves the awaiting-submission state. Submitted draws retain the old
+native allocations. A retired set becomes writable only when every buffer
+reports `Ready`; a full busy pool defers the producer without a CPU wait or
+readback. Select the writable set before output initialization or bounds writes.
+Slot changes preserve the settled input state. Each set has a stable identity
+in the Vulkan preparation key, so cached draws cannot combine a new receipt
+with the previous set's buffer bindings. Publishing a prepared set does not
+allocate a new renderer resource-state object.
+
+Draw requests freeze the selected set identity while they hold the deformation
+lease. Preparation signatures also include the exact native output allocation.
+Prepared and resident draw reuse checks both values before it installs the
+current witness. Output-only binding switches retain the preparation revision
+when all other buffer identities match. Structural edits and native allocation
+replacement still invalidate preparation. Resident variants include the set
+identity, and a bounded cache reuses immutable handle publications. The inline
+draw path does not publish resident templates; its counters must not be used
+to claim resident reuse.
+
+Vulkan buffer collection copies mesh entries into reusable storage under the
+collection lock, then creates backend wrappers after releasing that lock. An
+eight-entry cache retains immutable readiness snapshots for repeated buffer
+sets. Reuse requires exact buffer membership and geometry metadata. Readiness
+and native allocation identity remain live checks; the membership cache does
+not prove that a buffer is ready. Terminal renderer destruction releases all
+deformation sets after the renderer publication gate is released, preserving
+the dispatcher-to-publication lock order.
+
 The GPU scene owns the command records used for removal. Mesh disposal can
 clear the producer's command list before queued scene removal runs. Removal
 must use the registration records under the scene lock.
@@ -1737,6 +1882,29 @@ Desktop frame data is owned by the logical frame-in-flight slot, independently o
 Advanced light records use the light emitter's render transform. Do not use `LightMeshMatrix` for the light origin or direction: a spot volume shifts its center by half the light distance. The volume transform is for volume geometry only. Cone attenuation and shadow projection must share the emitter origin.
 
 Retired render-resource generations require a Signaled completion fence before disposal. Missing fences remain pending; failed fences may be replaced but cannot authorize disposal. A request to wait for GPU progress is not itself a completion proof.
+
+Pending Vulkan resource preparation takes its registry, pass metadata, extents,
+and queue-family selection from the same resource generation. The current draw
+package can still describe an older generation. Desktop depth and image readback
+require an exact submitted receipt; preparation alone does not permit readback.
+
+Vulkan mesh draw camera uniforms use the unique matching frozen frame view.
+Native visibility, late material geometry, and background draws must not read
+different camera poses in one frame. Preserve each pass's jitter choice and exact
+eye identity. View snapshot caches include the frozen descriptor and projection
+choice; auto-uniform reuse includes the snapshot packet identity. Scopes without
+a matching frame view retain their camera-at-enqueue behavior.
+
+The typed uniform writer converts accepted vector widths from the value's
+actual storage field. A vec4 camera position supplies XYZ to a vec3 destination.
+A vec3 write covers 12 bytes, so it preserves a scalar at the next packed
+offset. CPU serialization parity cannot prove this conversion when both paths
+use the same writer; verify the uploaded value against the frozen view.
+
+OpenXR applies a pending eye pipeline transition on the render thread before
+checking pipeline family and output binding. The check reads the fully applied
+pipeline. A cold eye must not wait for a render entry that its own admission check
+prevents. Resource readiness and strict stereo checks remain required.
 
 A minimized desktop window is not a new 1x1 render profile. Suspend managed resource preparation and preserve the last complete generation until restoration; externally owned swapchain outputs remain independent.
 

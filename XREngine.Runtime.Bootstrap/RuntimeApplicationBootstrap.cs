@@ -93,7 +93,7 @@ public static class RuntimeApplicationBootstrap
             {
                 // Published worlds require the same serialization/cooked-asset roots as
                 // windowed hosts even though a headless process installs no renderer.
-                leases.Add(RuntimeEngineStartupPolicyServices.Install(DesktopEngineStartupPolicy.Instance));
+                leases.Add(DesktopEngineStartupPolicy.Install());
                 leases.Add(RuntimeAssetBootstrap.InstallEngineAssetServices());
                 leases.Add(XREngine.Cutscenes.CutsceneSerializationRegistration.Install());
 

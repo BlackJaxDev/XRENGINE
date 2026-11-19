@@ -137,6 +137,30 @@ successor asset.
   `ReservedViewCount`, `ReservedEyeIndex`, `ExternalTargetKind`,
   `SettingsRevision`, `PipelineRevision`, and `ResourceVariant`. A change to HDR
   output also changes `OutputColorFormat`.
+- `SettingsRevision` names the content of the settings snapshot of one output kind.
+  Equal content keeps one revision: the instance keeps the last four distinct
+  snapshots per output kind, and a snapshot that returns to earlier content (A, B,
+  A) gets the earlier revision again. An external swapchain generation compares the
+  revision, so a new revision for equal content made the OpenXR eye key never match
+  its active generation, and every eye frame was declined.
+- Feature-mask inputs read only the explicit viewport and pipeline flags, not the
+  render state of the thread. The Advanced AO mask uses the eye's viewport and the
+  pipeline's stereo flag to decide the OpenXR Vulkan eye safe path, so keys built
+  inside and outside the eye render agree.
+- A resource factory must create its texture with the extent of the declared size policy:
+  the resource manager rejects any other extent and fails the generation. The Advanced
+  visibility texture factory (`CreateVisibilityTexture`) resolves absolute sizes (for
+  example the 1x1 shading diagnostics placeholder), the 64x64 depth tile grid and the
+  internal resolution.
+- A failed generation (layout description, materialization or backend commit) and an Advanced
+  native compute closure that cannot find a required image or buffer are written to the
+  auxiliary log `render-readiness-failures.log` (`RenderReadinessFailureLog`), which Release
+  sessions also write. Each line names the category, pipeline, resource key (with the feature
+  mask) and reason, and one failure repeats at most once per 5 seconds. OpenXR parallel eye
+  recording writes to the same log: `OpenXrParallelEyeRecord` for each failed eye (eye, frame,
+  swapchain image, render lane, managed thread, and the exception type and message) and
+  `OpenXrParallelEyeBatch` for each batch that ended with an exception, whose frame ends
+  without projection layers.
 - A retired generation stays alive until its completion receipt signals. The
   retired-generation count limit is soft. Unsignaled generations are kept, and
   the instance drains them after they signal.
@@ -191,6 +215,25 @@ until empty-layout cleanup succeeds, so a transient description or cleanup
 failure cannot make stale legacy resources appear current. Readiness likewise
 rejects any outstanding transition request, including a request that has not yet
 reached the render thread.
+
+### Reading A Pipeline Without Creating One
+
+`XRRenderPipelineInstance.Pipeline` creates and requests the default pipeline
+when no pipeline is applied or pending. Code that only queries the state (for
+example the shadow consumer selection, which runs every frame, and diagnostics
+such as `get_vr_view_state`) reads `PipelineIfAssigned`, which never creates or
+requests a pipeline.
+
+An owner can release an instance's pipeline on purpose and hold the instance
+without one (`ReleasePipelineByOwner`, `IsPipelineReleasedByOwner`). OpenXR
+true single-pass stereo holds the per-eye viewports this way while the stereo
+viewport renders both eyes, and the per-eye modes hold the stereo viewport. A
+held instance is not unassigned: `Pipeline` returns null and no default is
+created. The hold ends when the owner ends it (`EndPipelineReleaseByOwner`) or
+when a pipeline is requested explicitly. Without the hold, a per-frame query of
+a released viewport created a default pipeline, the output binding replaced it
+with a new eye pipeline, and the next XR frame released it again, so each frame
+built and destroyed render pipelines.
 
 ## Resize And Settings Changes
 

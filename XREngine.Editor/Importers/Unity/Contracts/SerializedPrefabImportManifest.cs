@@ -1,7 +1,9 @@
+using XREngine.UnityScriptHost.Contracts;
+
 namespace XREngine.Scene.Prefabs;
 
 /// <summary>
-/// Reproducible dependency and conversion record embedded in an imported Unity prefab.
+/// Retains editor-only dependency and conversion evidence beside an imported native prefab.
 /// </summary>
 [Serializable]
 public sealed class SerializedPrefabImportManifest
@@ -21,6 +23,8 @@ public sealed class SerializedPrefabImportManifest
     public List<SerializedAnimatorRecord> Animators { get; set; } = [];
     public List<SerializedAvatarAnimationGraphRecord> AvatarAnimationGraphs { get; set; } = [];
     public List<UnsupportedSourceBehaviourMetadata> UnsupportedBehaviours { get; set; } = [];
+    /// <summary>Gets partial evidence for native conversion of selected source features.</summary>
+    public UnityConversionCoverageReport ConversionCoverage { get; set; } = new();
     public List<string> OwnedOutputPaths { get; set; } = [];
 
     /// <summary>

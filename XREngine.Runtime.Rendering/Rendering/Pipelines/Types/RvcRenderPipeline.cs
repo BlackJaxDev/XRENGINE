@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.EditorHighlight.Contracts;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.RenderGraph;
@@ -65,9 +66,29 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
     private bool _stereo;
     private bool _rvcShadeletTelemetryEnabled;
     private bool _rvcFoveatedQuadShadingEnabled;
+    private bool _enableEditorHighlightModule = true;
 
     /// <summary>True when this pipeline renders both eyes as one layered stereo target.</summary>
     public bool Stereo => _stereo;
+
+    /// <summary>Gets the editor module used by this pipeline's Advanced stage family.</summary>
+    public IEditorHighlightModule? EditorHighlightModule => AdvancedStageFamily.EditorHighlightModule;
+
+    /// <summary>
+    /// Enables the optional editor highlight module on the hosted Advanced stage family.
+    /// </summary>
+    public bool EnableEditorHighlightModule
+    {
+        get => _enableEditorHighlightModule;
+        set
+        {
+            if (!SetField(ref _enableEditorHighlightModule, value))
+                return;
+            AdvancedStageFamily.EnableEditorHighlightModule = value;
+            InvalidateOwnedInstancePhysicalResources("EditorHighlightModuleChanged");
+            RebuildCommandChain();
+        }
+    }
 
     AdvancedRenderPipeline IAdvancedRenderStageFamilyHost.AdvancedStageFamilyDefinition => AdvancedStageFamily;
 
@@ -98,6 +119,7 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
         // The telemetry counters are small; declaring them for every RVC family
         // lets the setting toggle per frame without a resource rebuild.
         family.DeclaresRvcShadeletTelemetry = true;
+        family.EnableEditorHighlightModule = _enableEditorHighlightModule;
         return family;
     }
 
@@ -144,8 +166,15 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
         => AdvancedStageFamily.GetRequestedInternalResolutionForCamera(camera);
 
-    internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
-        => AdvancedStageFamily.GetRequestedInternalResolutionForCamera(camera, effectiveAntiAliasingMode);
+    // The camera keeps its post-process values under this pipeline's ID, not the family's.
+    internal override EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera)
+        => AdvancedStageFamily.ResolveCanonicalViewPolicyFlags(camera, this);
+
+    internal override float? GetRequestedInternalResolutionForCamera(
+        XRCamera? camera,
+        EAntiAliasingMode effectiveAntiAliasingMode,
+        bool allowVendorUpscale)
+        => AdvancedStageFamily.GetRequestedInternalResolutionForCamera(camera, effectiveAntiAliasingMode, allowVendorUpscale);
 
     internal override RenderPipelineResourceVariant BuildResourceVariantForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
         => AdvancedStageFamily.BuildResourceVariantForGenerationKey(instance, viewport);

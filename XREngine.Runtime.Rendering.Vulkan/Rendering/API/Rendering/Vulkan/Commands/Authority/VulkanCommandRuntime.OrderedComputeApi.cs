@@ -378,7 +378,7 @@ internal sealed partial class VulkanCommandRuntime
         VulkanTimelineGpuFence fence = RentTimelineGpuFence();
         fence.SetAuthoringContext(RuntimeEngine.Rendering.State.RenderFrameId, passIndex);
         queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(
-            new SubmissionMarkerOp(
+            SubmissionMarkerOp.Rent(
                 passIndex,
                 fence,
                 "SubmissionMarker",

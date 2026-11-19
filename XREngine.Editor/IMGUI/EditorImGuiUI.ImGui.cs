@@ -993,6 +993,12 @@ public static partial class EditorImGuiUI
 
             XRAsset[] dirtyAssets = Engine.Assets?.DirtyAssets.Values.ToArray() ?? [];
 
+            if (dirtyAssets.Length == 0)
+            {
+                FlushImGuiLayoutImmediate();
+                return Engine.WindowCloseRequestResult.Allow;
+            }
+
             BeginClosePrompt(window, dirtyAssets);
             return Engine.WindowCloseRequestResult.Defer;
         }
@@ -1507,8 +1513,31 @@ public static partial class EditorImGuiUI
                 if (ImGui.MenuItem("Shader Editor"))
                     ShaderEditorWindow.Instance.Open();
 
-                if (ImGui.MenuItem("MCP Assistant"))
+                if (ImGui.MenuItem("Assistant"))
                     McpAssistantWindow.Instance.Open();
+
+                if (ImGui.BeginMenu("Explain a command"))
+                {
+                    if (ImGui.MenuItem("Import External Files"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Import External Files", "Tools menu"));
+                    if (ImGui.MenuItem("Import External Folder"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Import External Folder", "Tools menu"));
+                    if (ImGui.MenuItem("Import Archive"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Import Archive", "Tools menu"));
+                    if (ImGui.MenuItem("Archive Inspector"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Archive Inspector", "Tools menu"));
+                    if (ImGui.MenuItem("External Texture Browser"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "External Texture Browser", "Tools menu"));
+                    if (ImGui.MenuItem("Shader Editor"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Shader Editor", "Tools menu"));
+                    if (ImGui.MenuItem("Assistant"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Assistant", "Tools menu"));
+                    if (ImGui.MenuItem("Shader Graph Builder"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Shader Graph Builder", "Tools menu"));
+                    if (ImGui.MenuItem("Renderer Development"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Renderer Development", "Tools menu"));
+                    ImGui.EndMenu();
+                }
 
                 if (ImGui.MenuItem("Shader Graph Builder"))
                     _showShaderGraphPanel = true;

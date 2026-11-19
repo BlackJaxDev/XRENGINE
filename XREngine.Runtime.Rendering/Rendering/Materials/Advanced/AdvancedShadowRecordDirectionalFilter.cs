@@ -54,4 +54,21 @@ internal static class AdvancedShadowRecordDirectionalFilter
             : 0u;
         return record;
     }
+
+    /// <summary>
+    /// Returns <paramref name="record"/> with the headset shadow quality setting applied:
+    /// <c>VrAdvancedShadowFilterTaps</c> replaces the filter sample count and the Vogel tap
+    /// count. A setting of 0 keeps the values of the light. Only the record fields change, so
+    /// the cascade rendering and the shaders stay the same.
+    /// </summary>
+    internal static AdvancedShadowRecord WithHeadsetShadowQuality(this AdvancedShadowRecord record)
+    {
+        int taps = RuntimeEngine.Rendering.Settings.VrAdvancedShadowFilterTaps;
+        if (taps > 0)
+        {
+            record.FilterSamples = (uint)taps;
+            record.VogelTapCount = (uint)taps;
+        }
+        return record;
+    }
 }

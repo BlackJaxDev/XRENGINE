@@ -132,200 +132,113 @@ vec3 XR_UBER_Glitter(
 void XR_UBER_ApplyDecalSlot(
     XRUberCoordinates coordinates,
     uint textureSlot,
-    vec4 decalSt,
     vec4 color,
     vec2 position,
     vec2 scale,
-    vec4 sideOffset,
     vec2 pan,
     float angle,
     float angleSpeed,
     int uvSelector,
-    int defaultMaskChannel,
+    int maskChannel,
     vec4 modifiers,
     vec4 effects,
     vec4 blendParameters,
-    vec4 slotMask,
-    vec4 slotGlobalMask,
+    vec4 sourceAlphaParams,
     inout vec4 baseColor,
     inout vec3 emission)
 {
-    bool isSourceDecal = slotMask.x > 0.5;
-    if (!isSourceDecal && blendParameters.y <= 0.0)
+    if (blendParameters.y <= 0.0 &&
+        (sourceAlphaParams.w <= 0.5 || sourceAlphaParams.x < 0.5))
         return;
 
-    uvec4 globalMaskSlots = uvec4(
-        UBER_T(_GlobalMaskTexture0),
-        UBER_T(_GlobalMaskTexture1),
-        UBER_T(_GlobalMaskTexture2),
-        UBER_T(_GlobalMaskTexture3));
-
-    if (!isSourceDecal)
-    {
-        vec2 uv;
-        vec2 dx;
-        vec2 dy;
-        XR_UBER_CoverageUv(coordinates, uvSelector, uv, dx, dy);
-        int mirrorMode = int(modifiers.z + 0.5);
-        if (mirrorMode == 1)
-        {
-            uv.x = 1.0 - uv.x;
-            dx.x = -dx.x;
-            dy.x = -dy.x;
-        }
-        uv += pan * coordinates.time;
-        vec2 divisor = max(abs(scale), vec2(1.0e-6));
-        uv = (uv - position) / divisor + vec2(0.5);
-        dx /= divisor;
-        dy /= divisor;
-
-        float rotation = radians(angle + angleSpeed * coordinates.time);
-        float sine = sin(rotation);
-        float cosine = cos(rotation);
-        mat2 rotationMatrix = mat2(cosine, sine, -sine, cosine);
-        uv = rotationMatrix * (uv - vec2(0.5)) + vec2(0.5);
-        dx = rotationMatrix * dx;
-        dy = rotationMatrix * dy;
-        float bounds = step(0.0, uv.x) * step(uv.x, 1.0) *
-            step(0.0, uv.y) * step(uv.y, 1.0);
-
-        vec4 sampled = XR_UBER_Sample(textureSlot, uv, dx, dy, vec4(1.0));
-        sampled.rgb = XR_UBER_hueShift(sampled.rgb,
-            effects.x + effects.y * coordinates.time);
-        vec3 themedColor = XR_UBER_Theme(int(effects.w + 0.5), color.rgb);
-        vec4 decal = sampled * vec4(themedColor, color.a);
-        vec4 maskSample = XR_UBER_CoverageTexture(UBER_T(_DecalMask),
-            UBER_I(_DecalMaskUV), UBER_V(_DecalMask_ST),
-            UBER_V(_DecalMaskPan).xy, coordinates, vec4(1.0));
-        float faceMask = modifiers.x == 1.0
-            ? float(coordinates.frontFacing)
-            : modifiers.x == 2.0 ? float(!coordinates.frontFacing) : 1.0;
-        float globalMask = 1.0;
-        if (modifiers.y > 0.5)
-            globalMask = XR_UBER_GlobalMask(coordinates, int(modifiers.y + 0.5),
-                globalMaskSlots, vec3(0.0), vec3(0.0), vec3(0.0), 1.0);
-        decal.a *= maskSample[clamp(defaultMaskChannel, 0, 3)] * bounds * faceMask * globalMask;
-
-        int blendMode = int(blendParameters.x + 0.5);
-        float opacity = clamp(decal.a * blendParameters.y, 0.0, 1.0);
-        vec3 blended = XR_UBER_Blend(baseColor.rgb, decal.rgb, blendMode);
-        baseColor.rgb = mix(baseColor.rgb, blended, opacity);
-        baseColor.a = mix(baseColor.a, decal.a,
-            clamp(blendParameters.z, 0.0, 1.0) * opacity);
-        emission += decal.rgb * max(blendParameters.w, 0.0) * opacity;
-        return;
-    }
-
-    vec2 engineUv;
-    vec2 engineDx;
-    vec2 engineDy;
-    XR_UBER_CoverageUv(coordinates, uvSelector, engineUv, engineDx, engineDy);
-    vec2 uv = vec2(engineUv.x, 1.0 - engineUv.y);
-    vec2 uvDx = vec2(engineDx.x, -engineDx.y);
-    vec2 uvDy = vec2(engineDy.x, -engineDy.y);
-
-    vec4 adj = vec4(-sideOffset.x, sideOffset.y, -sideOffset.z, sideOffset.w);
-    int symmetryMode = int(slotMask.w + 0.5);
-    if (symmetryMode == 1)
-    {
-        float symSign = uv.x < 0.5 ? -1.0 : 1.0;
-        uv.x = abs(uv.x - 0.5) + 0.5;
-        uvDx.x *= symSign;
-        uvDy.x *= symSign;
-    }
-    else if (symmetryMode == 2 && uv.x < 0.5)
-    {
-        uv.x += 0.5;
-    }
-
+    vec2 uv;
+    vec2 dx;
+    vec2 dy;
+    XR_UBER_CoverageUv(coordinates, uvSelector, uv, dx, dy);
     int mirrorMode = int(modifiers.z + 0.5);
-    if (mirrorMode == 3 || mirrorMode == 4)
-        uv.x = -1.0;
+    if (mirrorMode == 1)
+    {
+        uv.x = 1.0 - uv.x;
+        dx.x = -dx.x;
+        dy.x = -dy.x;
+    }
+    uv += pan * coordinates.time;
+    vec2 divisor = max(abs(scale), vec2(1.0e-6));
+    uv = (uv - position) / divisor + vec2(0.5);
+    dx /= divisor;
+    dy /= divisor;
 
-    vec2 decalCenter = position + 0.5 * vec2(adj.x + adj.y, adj.z + adj.w);
-    float theta = radians(angle + (coordinates.time * 2.0) * angleSpeed);
-    float cs = cos(theta);
-    float sn = sin(theta);
-    mat2 rot = mat2(cs, sn, -sn, cs);
-    vec2 low = position - 0.5 * scale + adj.xz;
-    vec2 span = scale + adj.yw - adj.xz;
-    vec2 safeSpan = vec2(
-        abs(span.x) < 1.0e-6 ? 1.0e-6 : span.x,
-        abs(span.y) < 1.0e-6 ? 1.0e-6 : span.y);
-    uv = (rot * (uv - decalCenter) + decalCenter - low) / safeSpan;
-    vec2 rawDx = (rot * uvDx) / safeSpan;
-    vec2 rawDy = (rot * uvDy) / safeSpan;
+    float rotation = radians(angle + angleSpeed * coordinates.time);
+    float sine = sin(rotation);
+    float cosine = cos(rotation);
+    mat2 rotationMatrix = mat2(cosine, sine, -sine, cosine);
+    uv = rotationMatrix * (uv - vec2(0.5)) + vec2(0.5);
+    dx = rotationMatrix * dx;
+    dy = rotationMatrix * dy;
+    float bounds = step(0.0, uv.x) * step(uv.x, 1.0) *
+        step(0.0, uv.y) * step(uv.y, 1.0);
+    float strictBounds = float(uv.x > 0.0 && uv.x < 1.0 &&
+        uv.y > 0.0 && uv.y < 1.0);
 
-    bool inBounds = uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0;
-    float tiled = slotMask.z;
-    float clipMask = (tiled > 0.5 || inBounds) ? 1.0 : 0.0;
-
-    bool wrapJump = any(greaterThan(abs(rawDx) + abs(rawDy), vec2(0.5)));
-    vec2 unitySampleUv = uv * decalSt.xy + decalSt.zw + pan * (coordinates.time * 0.05);
-    vec2 texUv = vec2(unitySampleUv.x, 1.0 - unitySampleUv.y);
-    vec2 gradDx = wrapJump ? vec2(0.001) : rawDx * vec2(decalSt.x, -decalSt.y);
-    vec2 gradDy = wrapJump ? vec2(0.001) : rawDy * vec2(decalSt.x, -decalSt.y);
-    vec4 sampled = XR_UBER_Sample(textureSlot, texUv, gradDx, gradDy, vec4(1.0));
-
+    vec4 sampled = XR_UBER_Sample(textureSlot, uv, dx, dy, vec4(1.0));
+    sampled.rgb = XR_UBER_hueShift(sampled.rgb,
+        effects.x + effects.y * coordinates.time);
     vec3 themedColor = XR_UBER_Theme(int(effects.w + 0.5), color.rgb);
     vec4 decal = sampled * vec4(themedColor, color.a);
-    if (effects.x != 0.0 || effects.y != 0.0)
-        decal.rgb = XR_UBER_hueShift(decal.rgb, effects.x + effects.y * (coordinates.time * 0.05));
-
-    vec2 maskBaseUv;
-    vec2 maskBaseDx;
-    vec2 maskBaseDy;
-    XR_UBER_CoverageUv(coordinates, UBER_I(_DecalMaskUV), maskBaseUv, maskBaseDx, maskBaseDy);
-    vec4 maskSt = UBER_V(_DecalMask_ST);
-    vec2 maskPan = UBER_V(_DecalMaskPan).xy;
-    vec2 maskUnityUv = vec2(maskBaseUv.x, 1.0 - maskBaseUv.y) * maskSt.xy + maskSt.zw + maskPan * (coordinates.time * 0.05);
-    vec2 maskUv = vec2(maskUnityUv.x, 1.0 - maskUnityUv.y);
-    vec2 maskDx = vec2(maskBaseDx.x * maskSt.x, maskBaseDx.y * maskSt.y);
-    vec2 maskDy = vec2(maskBaseDy.x * maskSt.x, maskBaseDy.y * maskSt.y);
-    vec4 maskSample = XR_UBER_Sample(UBER_T(_DecalMask), maskUv, maskDx, maskDy, vec4(1.0));
-    int maskChannel = clamp(int(slotMask.y + 0.5), 0, 3);
-    decal.a *= maskSample[maskChannel] * clipMask;
-
-    int readGlobalMaskIndex = int(modifiers.y + 0.5);
-    if (readGlobalMaskIndex > 0)
+    vec4 maskSample = XR_UBER_CoverageTexture(UBER_T(_DecalMask),
+        UBER_I(_DecalMaskUV), UBER_V(_DecalMask_ST),
+        UBER_V(_DecalMaskPan).xy, coordinates, vec4(1.0));
+    float faceMask = modifiers.x == 1.0
+        ? float(coordinates.frontFacing)
+        : modifiers.x == 2.0 ? float(!coordinates.frontFacing) : 1.0;
+    float globalMask = 1.0;
+    if (modifiers.y > 0.5)
+        globalMask = XR_UBER_GlobalMask(coordinates, int(modifiers.y + 0.5),
+            uvec4(UBER_T(_GlobalMaskTexture0), UBER_T(_GlobalMaskTexture1),
+                UBER_T(_GlobalMaskTexture2), UBER_T(_GlobalMaskTexture3)),
+            vec3(0.0), vec3(0.0), vec3(0.0), 1.0);
+    float localMask = maskSample[maskChannel];
+    float tileCoverage = sourceAlphaParams.w > 0.5 &&
+        sourceAlphaParams.z > 0.5 ? 1.0 : bounds;
+    decal.a *= localMask * tileCoverage * faceMask;
+    float maskWeight = localMask;
+    if (sourceAlphaParams.w > 0.5 && modifiers.y > 0.5)
     {
-        float globalMask = XR_UBER_GlobalMask(coordinates, readGlobalMaskIndex,
-            globalMaskSlots, vec3(0.0), vec3(0.0), vec3(0.0), 0.05);
-        decal.a = XR_UBER_BlendMask(decal.a, globalMask, int(slotGlobalMask.x + 0.5));
+        int blendType = int(sourceAlphaParams.w + 0.5) - 1;
+        decal.a = xrGlitterMaskBlend(decal.a, globalMask, blendType);
+        maskWeight = xrGlitterMaskBlend(localMask, globalMask, blendType);
     }
-    if (mirrorMode == 3 || mirrorMode == 4)
-        decal.a = 0.0;
-    if (modifiers.x == 1.0 && !coordinates.frontFacing)
-        decal.a = 0.0;
-    else if (modifiers.x == 2.0 && coordinates.frontFacing)
-        decal.a = 0.0;
-
-    float decalAlphaMixed = decal.a * clamp(blendParameters.y, 0.0, 1.0);
-    int overrideAlpha = int(blendParameters.z + 0.5);
-    int overrideAlphaMode = int(slotGlobalMask.w + 0.5);
-    bool inStrictBounds = uv.x > 0.0 && uv.x < 1.0 && uv.y > 0.0 && uv.y < 1.0;
-    if (overrideAlpha > 0 && (overrideAlphaMode == 0 || tiled > 0.5 || inStrictBounds))
-    {
-        if (overrideAlpha == 1) baseColor.a = decalAlphaMixed;
-        else if (overrideAlpha == 2) baseColor.a = clamp(baseColor.a * decalAlphaMixed, 0.0, 1.0);
-        else if (overrideAlpha == 3) baseColor.a = clamp(baseColor.a + decalAlphaMixed, 0.0, 1.0);
-        else if (overrideAlpha == 4) baseColor.a = clamp(baseColor.a - decalAlphaMixed, 0.0, 1.0);
-        else if (overrideAlpha == 5) baseColor.a = min(baseColor.a, decalAlphaMixed);
-        else if (overrideAlpha == 6) baseColor.a = max(baseColor.a, decalAlphaMixed);
-    }
-
-    int applyGlobalMaskIndex = int(slotGlobalMask.y + 0.5);
-    if (applyGlobalMaskIndex > 0)
-    {
-        float currentGlobal = XR_UBER_GlobalMask(coordinates, applyGlobalMaskIndex,
-            globalMaskSlots, vec3(0.0), vec3(0.0), vec3(0.0), 0.05);
-        float updatedGlobal = XR_UBER_BlendMask(currentGlobal, decalAlphaMixed, int(slotGlobalMask.z + 0.5));
-        XR_UBER_WriteGlobalMaskOverride(applyGlobalMaskIndex - 1, updatedGlobal);
-    }
+    else
+        decal.a *= globalMask;
 
     int blendMode = int(blendParameters.x + 0.5);
-    baseColor.rgb = mix(baseColor.rgb, XR_UBER_Blend(baseColor.rgb, decal.rgb, blendMode), decalAlphaMixed);
-    emission += decal.rgb * decal.a * max(blendParameters.w, 0.0);
+    float opacity = clamp(decal.a * blendParameters.y, 0.0, 1.0);
+    vec3 blended = XR_UBER_Blend(baseColor.rgb, decal.rgb, blendMode);
+    baseColor.rgb = mix(baseColor.rgb, blended, opacity);
+    if (sourceAlphaParams.w > 0.5)
+    {
+        int operation = int(sourceAlphaParams.x + 0.5);
+        int selector = int(sourceAlphaParams.y + 0.5);
+        if (operation != 0 && faceMask > 0.5 &&
+            (sourceAlphaParams.z > 0.5 ||
+             (selector != 1 && selector != 3) || strictBounds > 0.5))
+        {
+            float finalAlpha = clamp(decal.a * blendParameters.y, 0.0, 1.0);
+            float weight = selector == 2 || selector == 3 ? maskWeight : 1.0;
+            float changedAlpha = baseColor.a;
+            if (operation == 1) changedAlpha = finalAlpha;
+            else if (operation == 2) changedAlpha = clamp(baseColor.a * finalAlpha, 0.0, 1.0);
+            else if (operation == 3) changedAlpha = clamp(baseColor.a + finalAlpha, 0.0, 1.0);
+            else if (operation == 4) changedAlpha = clamp(baseColor.a - finalAlpha, 0.0, 1.0);
+            else if (operation == 5) changedAlpha = min(baseColor.a, finalAlpha);
+            else if (operation == 6) changedAlpha = max(baseColor.a, finalAlpha);
+            baseColor.a = mix(baseColor.a, changedAlpha, weight);
+        }
+    }
+    else
+        baseColor.a = mix(baseColor.a, decal.a,
+            clamp(blendParameters.z, 0.0, 1.0) * opacity);
+    emission += decal.rgb * max(blendParameters.w, 0.0) * opacity;
 }
 
 void XR_UBER_ApplyDecals(
@@ -336,34 +249,34 @@ void XR_UBER_ApplyDecals(
     if (!XR_UBER_HasFeature(XR_UBER_FEATURE_LAYERED_DECALS))
         return;
 
-    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture), UBER_V(_DecalTexture_ST),
+    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture),
         UBER_V(_DecalColor), UBER_V(_DecalPosition).xy,
-        UBER_V(_DecalScale).xy, UBER_V(_DecalSideOffset), UBER_V(_DecalTexturePan).xy,
+        UBER_V(_DecalScale).xy, UBER_V(_DecalTexturePan).xy,
         UBER_F(_DecalRotation), UBER_F(_DecalRotationSpeed),
         UBER_I(_DecalUvMode0), 0, UBER_V(_DecalSlotModifiers0),
         UBER_V(_DecalSlotFx0), UBER_V(_DecalBlendParams0),
-        UBER_V(_DecalSlotMask0), UBER_V(_DecalSlotGlobalMask0), baseColor, emission);
-    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture1), UBER_V(_DecalTexture1_ST),
+        UBER_V(_SourceDecalAlphaParams0), baseColor, emission);
+    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture1),
         UBER_V(_DecalColor1), UBER_V(_DecalPosition1).xy,
-        UBER_V(_DecalScale1).xy, UBER_V(_DecalSideOffset1), UBER_V(_DecalTexturePan1).xy,
+        UBER_V(_DecalScale1).xy, UBER_V(_DecalTexturePan1).xy,
         UBER_F(_DecalRotation1), UBER_F(_DecalRotationSpeed1),
         UBER_I(_DecalUvMode1), 1, UBER_V(_DecalSlotModifiers1),
         UBER_V(_DecalSlotFx1), UBER_V(_DecalBlendParams1),
-        UBER_V(_DecalSlotMask1), UBER_V(_DecalSlotGlobalMask1), baseColor, emission);
-    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture2), UBER_V(_DecalTexture2_ST),
+        UBER_V(_SourceDecalAlphaParams1), baseColor, emission);
+    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture2),
         UBER_V(_DecalColor2), UBER_V(_DecalPosition2).xy,
-        UBER_V(_DecalScale2).xy, UBER_V(_DecalSideOffset2), UBER_V(_DecalTexturePan2).xy,
+        UBER_V(_DecalScale2).xy, UBER_V(_DecalTexturePan2).xy,
         UBER_F(_DecalRotation2), UBER_F(_DecalRotationSpeed2),
         UBER_I(_DecalUvMode2), 2, UBER_V(_DecalSlotModifiers2),
         UBER_V(_DecalSlotFx2), UBER_V(_DecalBlendParams2),
-        UBER_V(_DecalSlotMask2), UBER_V(_DecalSlotGlobalMask2), baseColor, emission);
-    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture3), UBER_V(_DecalTexture3_ST),
+        UBER_V(_SourceDecalAlphaParams2), baseColor, emission);
+    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture3),
         UBER_V(_DecalColor3), UBER_V(_DecalPosition3).xy,
-        UBER_V(_DecalScale3).xy, UBER_V(_DecalSideOffset3), UBER_V(_DecalTexturePan3).xy,
+        UBER_V(_DecalScale3).xy, UBER_V(_DecalTexturePan3).xy,
         UBER_F(_DecalRotation3), UBER_F(_DecalRotationSpeed3),
         UBER_I(_DecalUvMode3), 3, UBER_V(_DecalSlotModifiers3),
         UBER_V(_DecalSlotFx3), UBER_V(_DecalBlendParams3),
-        UBER_V(_DecalSlotMask3), UBER_V(_DecalSlotGlobalMask3), baseColor, emission);
+        UBER_V(_SourceDecalAlphaParams3), baseColor, emission);
 }
 
 #endif

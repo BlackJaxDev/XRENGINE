@@ -259,7 +259,7 @@ public sealed class FfmpegEncoder
             ? string.Create(CultureInfo.InvariantCulture, $"scale=-2:{rendition.Height}:flags=area")
             : null;
         if (video)
-            filter = (filter is null ? "scale=" + Bt709ScaleOptions : filter + ":" + Bt709ScaleOptions) + "," + Bt709FrameTags;
+            filter = filter is null ? $"scale={Bt709ScaleOptions},{Bt709FrameTags}" : $"{filter}:{Bt709ScaleOptions},{Bt709FrameTags}";
         if (filter is not null)
             arguments.AddRange(["-vf", filter]);
 

@@ -1,0 +1,17 @@
+diff --git a/src/win32_window.c b/src/win32_window.c
+index e6a9496cd..6d442e38a 100644
+--- a/src/win32_window.c
++++ b/src/win32_window.c
+@@ -2136,7 +2136,11 @@ void _glfwPollEventsWin32(void)
+     handle = GetActiveWindow();
+     if (handle)
+     {
+-        window = GetPropW(handle, L"GLFW");
++        // XRENGINE: Resolve the active HWND through this GLFW instance's window list.
++        // An attached input queue can make another process's GLFW window active.
++        window = _glfw.windowListHead;
++        while (window && window->win32.handle != handle)
++            window = window->next;
+         if (window)
+         {
+             int i;

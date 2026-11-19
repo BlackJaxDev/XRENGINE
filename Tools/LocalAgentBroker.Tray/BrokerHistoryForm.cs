@@ -193,10 +193,10 @@ internal sealed class BrokerHistoryForm : Form
             .OrderByDescending(static record => record.IsActive)
             .ThenByDescending(static record => record.CreatedUtc)
             .ToArray();
-        string listVersion = filter + "\n" + string.Join(
+        string listVersion = $"{filter}\n{string.Join(
             '\n',
             filtered.Select(static record =>
-                $"{record.RunId}:{record.Status}:{record.CreatedUtc.UtcTicks}:{record.Objective}"));
+                $"{record.RunId}:{record.Status}:{record.CreatedUtc.UtcTicks}:{record.Objective}"))}";
         if (!force && string.Equals(listVersion, _renderedListVersion, StringComparison.Ordinal))
             return false;
         _renderedListVersion = listVersion;

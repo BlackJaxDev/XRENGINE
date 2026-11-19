@@ -4,9 +4,8 @@ namespace XREngine.Rendering.Vulkan;
 /// Identifies the inputs of one <see cref="VulkanMeshDrawViewSnapshot"/>.
 /// Two captures with an equal key in the same render frame produce the same
 /// snapshot, so the later capture reuses the earlier one. The key holds only
-/// what the snapshot reads. The target, pass, and recording context are not in
-/// the snapshot, so full-screen passes that share a camera and render area
-/// share one snapshot.
+/// what the snapshot reads. A matching frozen view and projection choice must
+/// stay equal before a later draw can reuse the snapshot.
 /// </summary>
 internal readonly struct VulkanMeshDrawViewSnapshotCacheKey(
     ulong renderFrameId,
@@ -14,11 +13,15 @@ internal readonly struct VulkanMeshDrawViewSnapshotCacheKey(
     XRRenderPipelineInstance? pipeline,
     XRCamera? camera,
     XRCamera? rightEyeCamera,
+    RenderFrameViewDescriptor? frozenLeftView,
+    RenderFrameViewDescriptor? frozenRightView,
     int renderAreaWidth,
     int renderAreaHeight,
     int descriptorViewFamilyIdentity,
     bool isStereoPass,
     bool useUnjitteredProjection,
+    bool useLeftUnjitteredProjection,
+    bool useRightUnjitteredProjection,
     in LayeredShadowUniformState shadowUniformState)
 {
     private readonly ulong _renderFrameId = renderFrameId;
@@ -26,11 +29,15 @@ internal readonly struct VulkanMeshDrawViewSnapshotCacheKey(
     private readonly XRRenderPipelineInstance? _pipeline = pipeline;
     private readonly XRCamera? _camera = camera;
     private readonly XRCamera? _rightEyeCamera = rightEyeCamera;
+    private readonly RenderFrameViewDescriptor? _frozenLeftView = frozenLeftView;
+    private readonly RenderFrameViewDescriptor? _frozenRightView = frozenRightView;
     private readonly int _renderAreaWidth = renderAreaWidth;
     private readonly int _renderAreaHeight = renderAreaHeight;
     private readonly int _descriptorViewFamilyIdentity = descriptorViewFamilyIdentity;
     private readonly bool _isStereoPass = isStereoPass;
     private readonly bool _useUnjitteredProjection = useUnjitteredProjection;
+    private readonly bool _useLeftUnjitteredProjection = useLeftUnjitteredProjection;
+    private readonly bool _useRightUnjitteredProjection = useRightUnjitteredProjection;
     private readonly bool _isShadowPass = shadowUniformState.IsShadowPass;
     private readonly bool _directionalLayeredShadowPass = shadowUniformState.DirectionalCascadeLayeredShadowPass;
     private readonly bool _directionalInstancedLayeredShadowPass = shadowUniformState.DirectionalCascadeInstancedLayeredShadowPass;
@@ -61,7 +68,11 @@ internal readonly struct VulkanMeshDrawViewSnapshotCacheKey(
            _pointLayeredShadowPass == other._pointLayeredShadowPass &&
            _pointInstancedLayeredShadowPass == other._pointInstancedLayeredShadowPass &&
            _pointAtlasGroupedShadowPass == other._pointAtlasGroupedShadowPass &&
-           _pointShadowFaceCount == other._pointShadowFaceCount;
+           _pointShadowFaceCount == other._pointShadowFaceCount &&
+           _useLeftUnjitteredProjection == other._useLeftUnjitteredProjection &&
+           _useRightUnjitteredProjection == other._useRightUnjitteredProjection &&
+           _frozenLeftView == other._frozenLeftView &&
+           _frozenRightView == other._frozenRightView;
 
     public ulong RenderFrameId => _renderFrameId;
 }

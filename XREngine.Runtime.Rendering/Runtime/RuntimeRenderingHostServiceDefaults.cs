@@ -116,7 +116,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const string PlayModeStateName = "Stopped";
     public const uint DefaultMsaaSampleCount = 1u;
     public const bool DefaultOutputHDR = false;
-    public const float DefaultTsrRenderScale = 1.0f;
+    public const float DefaultTsrRenderScale = 0.75f;
     public const bool EnableRenderStatisticsTracking = true;
     public const bool EnableGpuRenderPipelineProfiling = false;
     public const bool GpuRenderPipelineTimingsReady = false;
@@ -179,6 +179,8 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool VrFoveationRequireRequested = false;
     public const EOpenXrEyeResolutionPreset OpenXrEyeResolutionPreset = EOpenXrEyeResolutionPreset.RuntimeRecommended;
     public const float OpenXrEyeResolutionScale = 1.0f;
+    public const float RvcQuadViewWideResolutionScale = 0.5f;
+    public const bool RvcQuadViewSharedVisibilityEnabled = false;
     public const uint OpenXrCustomEyeResolutionWidth = 0u;
     public const uint OpenXrCustomEyeResolutionHeight = 0u;
     public const bool IsInVR = false;

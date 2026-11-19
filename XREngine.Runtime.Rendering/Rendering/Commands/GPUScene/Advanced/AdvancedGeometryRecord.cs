@@ -28,7 +28,15 @@ public struct AdvancedGeometryRecord
     public uint MeshletFirst;
     public uint MeshletCount;
     public ulong VertexLayoutId;
+    /// <summary>
+    /// For a cluster hierarchy geometry, the level-0 meshlet count (see
+    /// <see cref="ClusterLevel0Count"/>); zero for other geometry.
+    /// </summary>
     public uint ReservedLayout0;
+    /// <summary>
+    /// For a cluster hierarchy geometry, the word offset of the hierarchy tables in
+    /// <see cref="MeshletTriangleWords"/> (see <see cref="ClusterHierarchyWordOffset"/>).
+    /// </summary>
     public uint ReservedLayout1;
     public Vector4 BoundsSphere;
     public Vector4 BoundsMin;
@@ -44,6 +52,29 @@ public struct AdvancedGeometryRecord
 
     public readonly bool IsResident
         => Residency == EAdvancedGeometryResidency.Resident;
+
+    /// <summary>
+    /// True when the geometry holds a cluster hierarchy: <see cref="MeshletCount"/> counts the
+    /// meshlets of every level, and the level-0 meshlets come first.
+    /// </summary>
+    public readonly bool HasClusterHierarchy => ReservedLayout0 != 0u;
+
+    /// <summary>The level-0 meshlet count of a cluster hierarchy geometry, or zero.</summary>
+    public readonly uint ClusterLevel0Count => ReservedLayout0;
+
+    /// <summary>
+    /// The word offset, relative to the start of <see cref="MeshletTriangleWords"/>, of the
+    /// cluster records of a cluster hierarchy geometry. The group records follow the cluster
+    /// records (see <see cref="AdvancedPublishedMeshletLayout"/>).
+    /// </summary>
+    public readonly uint ClusterHierarchyWordOffset => ReservedLayout1;
+
+    /// <summary>
+    /// The meshlets that a draw without cluster cut selection uses: the level-0 meshlets of a
+    /// cluster hierarchy geometry, or all meshlets otherwise.
+    /// </summary>
+    public readonly uint DrawMeshletCount
+        => ReservedLayout0 != 0u ? ReservedLayout0 : MeshletCount;
 
     /// <summary>
     /// Source-compatibility alias for code which only needs to know whether a

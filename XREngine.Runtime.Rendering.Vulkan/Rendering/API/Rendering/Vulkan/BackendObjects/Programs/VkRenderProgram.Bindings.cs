@@ -15,6 +15,7 @@ using XREngine.Diagnostics;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -442,10 +443,12 @@ internal unsafe partial class VkRenderProgram
                 foreach (var evicted in _persistentProgramBindingArtifacts.Values)
                     RetireProgramBindingArtifactNoLock(evicted.Artifact);
                 _persistentProgramBindingArtifacts.Clear();
+                RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.ArtifactTableEvictions);
             }
             else if (_persistentProgramBindingArtifacts.TryGetValue(slot, out var replaced))
             {
                 RetireProgramBindingArtifactNoLock(replaced.Artifact);
+                RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.ArtifactReplacements);
             }
 
             _persistentProgramBindingArtifacts[slot] =

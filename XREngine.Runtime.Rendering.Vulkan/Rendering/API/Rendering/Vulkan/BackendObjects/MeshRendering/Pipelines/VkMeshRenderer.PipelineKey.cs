@@ -39,7 +39,8 @@ internal readonly record struct VulkanGraphicsPipelineKey(
     BlendFactor DstAlphaBlendFactor,
     ColorComponentFlags ColorWriteMask,
     uint ViewportScissorCount,
-    bool NativeNegativeOneToOneDepth)
+    bool NativeNegativeOneToOneDepth,
+    EditorHighlightRasterOutput EditorHighlightOutput = default)
 {
         public bool Equals(VulkanGraphicsPipelineKey other)
             => Topology == other.Topology &&
@@ -74,7 +75,8 @@ internal readonly record struct VulkanGraphicsPipelineKey(
                DstAlphaBlendFactor == other.DstAlphaBlendFactor &&
                ColorWriteMask == other.ColorWriteMask &&
                ViewportScissorCount == other.ViewportScissorCount &&
-               NativeNegativeOneToOneDepth == other.NativeNegativeOneToOneDepth;
+               NativeNegativeOneToOneDepth == other.NativeNegativeOneToOneDepth &&
+               EditorHighlightOutput == other.EditorHighlightOutput;
 
         public override int GetHashCode()
         {
@@ -112,6 +114,7 @@ internal readonly record struct VulkanGraphicsPipelineKey(
             hash.Add(ColorWriteMask);
             hash.Add(ViewportScissorCount);
             hash.Add(NativeNegativeOneToOneDepth);
+            hash.Add(EditorHighlightOutput);
             return hash.ToHashCode();
         }
 

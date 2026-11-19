@@ -374,6 +374,11 @@ internal sealed partial class VulkanCommandRuntime
         if (groups == 0u)
             return info.OperationIndex;
 
+        // Times the bounds patch, early visibility, indirect build and group finalize dispatches
+        // and the barriers between them.
+        using VulkanGpuProfilerScope prepareScope = TryBeginWorkGpuProfilerScope(
+            state.CommandBuffer, AdvancedVisibilityPrepareGpuProfilerPath);
+
         if (payload.Input.BoundsPage.Token.IsValid)
         {
             if (payload.State.BoundsPageToken != payload.Input.BoundsPage.Token ||
@@ -409,66 +414,67 @@ internal sealed partial class VulkanCommandRuntime
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
         }
 
-        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
-        {
-            if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
-                throw new VulkanPlanPreconditionException("Advanced visibility could not resolve a sealed early view segment.");
+        uint sharedVisibilityBit = RecordAdvancedSharedVisibilityCopy(ref state, in payload)
+            ? AdvancedSharedVisibilityViewBit
+            : 0u;
+        // Each stage runs once for all views: the Y workgroup index selects the
+        // view, and the shaders derive its payload and range segments from the
+        // view 0 segment pushed here (VisibilityPreparationViews.glslinc). The
+        // views write disjoint segments and counter records, so one barrier
+        // between stages serves all of them.
+        if (!payload.State.SupportsMultiViewPreparation)
+            throw new VulkanPlanPreconditionException("Advanced visibility view segments do not follow the multi-view preparation strides.");
+        uint viewCount = payload.State.ViewCount;
+        AdvancedVisibilityPreparationPushConstants allViews = new(
+            0u, 0u, payload.State.PayloadCapacity, 0u);
+        // Only early visibility reads the shared-visibility bit; the later stages
+        // use the plain base view.
+        AdvancedVisibilityPreparationPushConstants earlyViews = new(
+            sharedVisibilityBit, 0u, payload.State.PayloadCapacity, 0u);
 
-            CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.Early");
-            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
-                payload.EarlyVisibilityPipeline);
-            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
-                PipelineBindPoint.Compute, early.PipelineLayout, in payload);
-            PushConstantsTracked(state.CommandBuffer, early.PipelineLayout,
-                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
-                    DeviceContext), 0u,
-                new AdvancedVisibilityPreparationPushConstants(
-                    viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
-            Api.CmdDispatch(state.CommandBuffer, groups, 1u, 1u);
-            CmdEndLabel(state.CommandBuffer);
-        }
+        CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.Early");
+        BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+            payload.EarlyVisibilityPipeline);
+        BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+            PipelineBindPoint.Compute, early.PipelineLayout, in payload);
+        PushConstantsTracked(state.CommandBuffer, early.PipelineLayout,
+            VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                DeviceContext), 0u,
+            earlyViews);
+        Api.CmdDispatch(state.CommandBuffer, groups, viewCount, 1u);
+        CmdEndLabel(state.CommandBuffer);
 
         CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.EarlyToIndirect");
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordAdvancedEarlyVisibilityBarrierEmission();
         CmdEndLabel(state.CommandBuffer);
 
-        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
-        {
-            if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
-                throw new VulkanPlanPreconditionException("Advanced visibility could not resolve a sealed indirect view segment.");
-
-            CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.BuildIndirect");
-            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
-                payload.BuildIndirectPipeline);
-            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
-                PipelineBindPoint.Compute, indirect.PipelineLayout, in payload);
-            PushConstantsTracked(state.CommandBuffer, indirect.PipelineLayout,
-                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
-                    DeviceContext), 0u,
-                new AdvancedVisibilityPreparationPushConstants(
-                    viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
-            Api.CmdDispatch(state.CommandBuffer, groups, 1u, 1u);
-            CmdEndLabel(state.CommandBuffer);
-        }
+        // Also writes the late test dispatch record of each view. The early
+        // raster read barrier (EmitAdvancedVisibilityRasterReadBarrier) makes
+        // the records visible to the late test's indirect dispatch.
+        CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.BuildIndirect");
+        BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+            payload.BuildIndirectPipeline);
+        BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+            PipelineBindPoint.Compute, indirect.PipelineLayout, in payload);
+        PushConstantsTracked(state.CommandBuffer, indirect.PipelineLayout,
+            VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                DeviceContext), 0u,
+            allViews);
+        Api.CmdDispatch(state.CommandBuffer, groups, viewCount, 1u);
+        CmdEndLabel(state.CommandBuffer);
         if (payload.State.IndexedInstanceGroupCount != 0u)
         {
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
-            uint groupWorkgroups = DivideRoundUp(payload.State.IndexedInstanceGroupCount, 256u);
-            for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
-            {
-                if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
-                    throw new VulkanPlanPreconditionException("An indexed group has no sealed early view segment.");
-                BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
-                    payload.EarlyIndexedGroupFinalizePipeline);
-                BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
-                    PipelineBindPoint.Compute, groupFinalize.PipelineLayout, in payload);
-                PushConstantsTracked(state.CommandBuffer, groupFinalize.PipelineLayout,
-                    VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0u,
-                    new AdvancedVisibilityPreparationPushConstants(
-                        viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
-                Api.CmdDispatch(state.CommandBuffer, groupWorkgroups, 1u, 1u);
-            }
+            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                payload.EarlyIndexedGroupFinalizePipeline);
+            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                PipelineBindPoint.Compute, groupFinalize.PipelineLayout, in payload);
+            PushConstantsTracked(state.CommandBuffer, groupFinalize.PipelineLayout,
+                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0u,
+                allViews);
+            Api.CmdDispatch(state.CommandBuffer,
+                DivideRoundUp(payload.State.IndexedInstanceGroupCount, 256u), viewCount, 1u);
             EmitMemoryBarrierMask(state.CommandBuffer,
                 EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
         }
@@ -497,7 +503,14 @@ internal sealed partial class VulkanCommandRuntime
         if (state.RenderScope.IsActive)
             EndActiveRenderPass(ref state);
 
+        if (!payload.State.SupportsMultiViewPreparation)
+            throw new VulkanPlanPreconditionException("Advanced late visibility view segments do not follow the multi-view preparation strides.");
         bool buildDepthPyramid = payload.Request.MsaaSampleCount <= 1u;
+        // The depth pyramid build and the late test bind the images of one view
+        // through that view's descriptor sets, so they run once per view. The
+        // views write disjoint segments and counter records, so no barrier
+        // separates them. One storage barrier then publishes the late test
+        // results of all views to the group finalize pass.
         for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
         {
             if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
@@ -550,6 +563,11 @@ internal sealed partial class VulkanCommandRuntime
             // Build the depth pyramid even when the scene has no opaque draws.
             if (payload.State.PayloadCapacity != 0u)
             {
+                // BuildVisibilityIndirect wrote this record from the live early
+                // and deferred counts, so the test launches only the workgroups
+                // that have work (at least one, for the meshlet history clear).
+                if (!payload.State.TryGetLateDispatchArgumentOffset(viewIndex, out ulong dispatchOffset))
+                    throw new VulkanPlanPreconditionException("Advanced late visibility has no sealed dispatch record for a view.");
                 BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
                     payload.LateVisibilityPipeline);
                 BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
@@ -564,30 +582,45 @@ internal sealed partial class VulkanCommandRuntime
                 using (VulkanGpuProfilerScope gpuScope = TryBeginVulkanGpuProfilerScope(
                            state.CommandBuffer, NativeHiZTestGpuProfilerPath))
                 {
-                    Api.CmdDispatch(state.CommandBuffer, DivideRoundUp(payload.State.PayloadCapacity, 256u), 1u, 1u);
+                    Api.CmdDispatchIndirect(state.CommandBuffer,
+                        payload.State.IndirectArguments.Buffer, dispatchOffset);
                 }
+                // The live count is on the GPU; the capacity is the upper bound.
                 OcclusionTelemetry.RecordHiZTest(
                     payload.State.PayloadCapacity,
                     Stopwatch.GetElapsedTime(testRecordStart).TotalMilliseconds);
             }
-            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
-            if (payload.State.IndexedInstanceGroupCount != 0u)
-            {
-                BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
-                    payload.LateIndexedGroupFinalizePipeline);
-                BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
-                    PipelineBindPoint.Compute, lateGroupFinalize.PipelineLayout, in payload,
-                    closure.DescriptorSets![closure.DescriptorIndex(viewIndex, 1)]);
-                PushConstantsTracked(state.CommandBuffer, lateGroupFinalize.PipelineLayout,
-                    VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0u,
-                    new AdvancedVisibilityPreparationPushConstants(
-                        viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
-                Api.CmdDispatch(state.CommandBuffer,
-                    DivideRoundUp(payload.State.IndexedInstanceGroupCount, 256u), 1u, 1u);
-                EmitMemoryBarrierMask(state.CommandBuffer,
-                    EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
-            }
-            const uint counterByteLength = 152u;
+        }
+
+        // Times the late group finalize, the counter copies and the pyramid layout barriers. The
+        // HiZ build and test scopes above have closed, so this scope does not nest in them.
+        using VulkanGpuProfilerScope lateFinalizeScope = TryBeginWorkGpuProfilerScope(
+            state.CommandBuffer, AdvancedVisibilityLateFinalizeGpuProfilerPath);
+        EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
+        if (payload.State.IndexedInstanceGroupCount != 0u)
+        {
+            // One dispatch finalizes the groups of all views (Y = view, as in
+            // the early pass). The finalize shader reads no pyramid image, so
+            // the view 0 table only satisfies the pipeline layout.
+            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                payload.LateIndexedGroupFinalizePipeline);
+            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                PipelineBindPoint.Compute, lateGroupFinalize.PipelineLayout, in payload,
+                closure.DescriptorSets![closure.DescriptorIndex(0u, 1)]);
+            PushConstantsTracked(state.CommandBuffer, lateGroupFinalize.PipelineLayout,
+                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0u,
+                new AdvancedVisibilityPreparationPushConstants(
+                    0u, 0u, payload.State.PayloadCapacity, 0u));
+            Api.CmdDispatch(state.CommandBuffer,
+                DivideRoundUp(payload.State.IndexedInstanceGroupCount, 256u),
+                payload.State.ViewCount, 1u);
+            EmitMemoryBarrierMask(state.CommandBuffer,
+                EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+        }
+
+        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
+        {
+            const uint counterByteLength = 160u;
             GpuDiagnosticReadbackPlanNode counterNode = new(
                 (ulong)payload.State.Counters.Buffer.Handle,
                 viewIndex,
@@ -620,7 +653,75 @@ internal sealed partial class VulkanCommandRuntime
                     AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
                     PipelineStageFlags.ComputeShaderBit,
                     allowUndefined: false);
+
+        // Late visibility has written this frame's final visibility into the persistent
+        // state. A shared-visibility consumer that records later in the frame copies it.
+        ResourceRuntime.PublishAdvancedVisibilitySharedSource(
+            payload.State.Reservation.ReservationId,
+            new VulkanResourceRuntime.AdvancedVisibilitySharedSource(
+                payload.State.PersistentStateBuffer,
+                payload.State.PersistentStateTopologyGeneration,
+                payload.State.PayloadCapacity,
+                payload.State.ViewCount,
+                payload.Request.RenderFrameId));
         return info.OperationIndex;
+    }
+
+    /// <summary>Bit 31 of the early-visibility view index selects the shared-visibility mode.</summary>
+    private const uint AdvancedSharedVisibilityViewBit = 0x80000000u;
+
+    /// <summary>
+    /// When this bank consumes another bank's visibility (the quad-view inset uses the
+    /// wide pair's), copies the producer's persistent records for all views to the records
+    /// after this bank's own records, then makes the copy visible to compute. Returns true
+    /// when early visibility should run in shared mode.
+    /// </summary>
+    private unsafe bool RecordAdvancedSharedVisibilityCopy(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload)
+    {
+        if (!ResourceRuntime.TryGetActiveAdvancedVisibilitySharedSource(
+                payload.State.Reservation.ReservationId,
+                payload.State.PayloadCapacity,
+                payload.State.ViewCount,
+                payload.State.PersistentStateByteLength,
+                payload.Request.RenderFrameId,
+                out VulkanResourceRuntime.AdvancedVisibilitySharedSource source))
+            return false;
+
+        ulong recordBytes = (ulong)payload.State.PayloadCapacity * payload.State.ViewCount * 32u;
+        CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.SharedCopy");
+        // The producer wrote the records in an earlier submission on this queue; its
+        // compute writes must be visible to the transfer read.
+        MemoryBarrier beforeCopy = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.ShaderReadBit | AccessFlags.TransferWriteBit,
+            DstAccessMask = AccessFlags.TransferReadBit | AccessFlags.TransferWriteBit,
+        };
+        CmdPipelineBarrierTracked(state.CommandBuffer,
+            PipelineStageFlags.ComputeShaderBit | PipelineStageFlags.TransferBit,
+            PipelineStageFlags.TransferBit,
+            DependencyFlags.None, 1, &beforeCopy, 0, null, 0, null);
+        BufferCopy region = new()
+        {
+            SrcOffset = 0u,
+            DstOffset = recordBytes,
+            Size = recordBytes,
+        };
+        Api.CmdCopyBuffer(state.CommandBuffer, source.PersistentStateBuffer, payload.State.PersistentStateBuffer, 1, &region);
+        MemoryBarrier afterCopy = new()
+        {
+            SType = StructureType.MemoryBarrier,
+            SrcAccessMask = AccessFlags.TransferWriteBit,
+            DstAccessMask = AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+        };
+        CmdPipelineBarrierTracked(state.CommandBuffer,
+            PipelineStageFlags.TransferBit,
+            PipelineStageFlags.ComputeShaderBit,
+            DependencyFlags.None, 1, &afterCopy, 0, null, 0, null);
+        CmdEndLabel(state.CommandBuffer);
+        return true;
     }
 
     private int RecordAdvancedVisibilityLateRasterPayload(
@@ -1112,7 +1213,17 @@ internal sealed partial class VulkanCommandRuntime
                     "A non-empty visibility bin has no sealed raster pipeline and submission plan.");
             }
 
-            VulkanVisibilityRasterPipeline raster = decalLane ? header.DecalRasterPipeline : header.RasterPipeline;
+            // Late meshlet bins use the late task variant: it adds the Hi-Z test
+            // and writes the meshlet occlusion history for the next frame.
+            bool lateMeshlet = lateSegment && !decalLane && header.RasterPipeline.IsMeshShaderPipeline;
+            if (lateMeshlet && !header.HasLateMeshletRaster)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "A late meshlet visibility bin has no sealed late task pipeline.");
+            }
+            VulkanVisibilityRasterPipeline raster = decalLane
+                ? header.DecalRasterPipeline
+                : lateMeshlet ? header.LateRasterPipeline : header.RasterPipeline;
             if (!raster.IsValid || raster.TargetClosure != payload.TargetClosure ||
                 raster.Program.LinkGeneration != raster.ProgramLinkGeneration)
             {
@@ -1194,11 +1305,33 @@ internal sealed partial class VulkanCommandRuntime
                     state.CommandBuffer,
                     PipelineBindPoint.Graphics,
                     raster.Pipeline);
-                BindAdvancedVisibilityDescriptorSets(
-                    state.CommandBuffer,
-                    PipelineBindPoint.Graphics,
-                    raster.PipelineLayout,
-                    in payload);
+                if (lateMeshlet)
+                {
+                    // The per-view late raster table holds the same storage
+                    // bindings as the frame-slot table plus this view's depth
+                    // pyramid layer in GENERAL, the layout the late compute pass
+                    // leaves. The late task stage samples it.
+                    if (payload.LateTargetClosure is not { IsRecordingReady: true } lateClosure ||
+                        viewIndex >= lateClosure.ViewCount)
+                    {
+                        throw new VulkanPlanPreconditionException(
+                            "A late meshlet visibility bin has no sealed late depth-pyramid table for its view.");
+                    }
+                    BindAdvancedVisibilityDescriptorSets(
+                        state.CommandBuffer,
+                        PipelineBindPoint.Graphics,
+                        raster.PipelineLayout,
+                        in payload,
+                        lateClosure.DescriptorSets![lateClosure.DescriptorIndex(viewIndex, 2)]);
+                }
+                else
+                {
+                    BindAdvancedVisibilityDescriptorSets(
+                        state.CommandBuffer,
+                        PipelineBindPoint.Graphics,
+                        raster.PipelineLayout,
+                        in payload);
+                }
             }
 
             VulkanResidentDrawTemplateNativeState native = decalLane ? header.DecalNativeState : header.NativeState;
@@ -1384,8 +1517,10 @@ internal sealed partial class VulkanCommandRuntime
         PipelineStageFlags destinationStages = PipelineStageFlags.DrawIndirectBit |
             PipelineStageFlags.VertexShaderBit |
             PipelineStageFlags.FragmentShaderBit;
+        // The meshlet task stage reads the payload table and meshlet records that
+        // preparation compute wrote.
         if (DeviceContext.SupportsMeshTaskIndirectCount)
-            destinationStages |= PipelineStageFlags.MeshShaderBitExt;
+            destinationStages |= PipelineStageFlags.TaskShaderBitExt | PipelineStageFlags.MeshShaderBitExt;
         CmdPipelineBarrierTracked(
             state.CommandBuffer,
             PipelineStageFlags.ComputeShaderBit |
@@ -1534,6 +1669,10 @@ internal sealed partial class VulkanCommandRuntime
                 info.PassIndex,
                 out _) ||
             info.PassIndex == VulkanBarrierPlanner.SwapchainPassIndex;
+        using VulkanGpuProfilerScope gpuScope =
+            header.OpCode is EVulkanPrimaryPlanNodeKind.ComputeDispatch or EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect
+                ? TryBeginComputeSecondaryRangeGpuProfilerScope(state.CommandBuffer)
+                : default;
         if (!TryRecordSecondaryBucket(
                 primaryCommandBuffer: state.CommandBuffer,
                 state.FrameDataSlotIndex,
@@ -1628,6 +1767,7 @@ internal sealed partial class VulkanCommandRuntime
 
     private int RecordComputeDispatchPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
+        using VulkanGpuProfilerScope gpuScope = TryBeginComputeDispatchGpuProfilerScope(state.CommandBuffer, payload.Program);
         CmdBeginLabel(state.CommandBuffer, "ComputeDispatch");
         EnsureComputeSampledImageLayoutsForDispatch(
             state.CommandBuffer,
@@ -1653,6 +1793,7 @@ internal sealed partial class VulkanCommandRuntime
 
     private int RecordComputeDispatchIndirectPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchIndirectPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
+        using VulkanGpuProfilerScope gpuScope = TryBeginComputeDispatchGpuProfilerScope(state.CommandBuffer, payload.Program);
         CmdBeginLabel(state.CommandBuffer, payload.Label);
         EnsureComputeSampledImageLayoutsForDispatch(
             state.CommandBuffer,
@@ -1791,7 +1932,8 @@ internal sealed partial class VulkanCommandRuntime
     private int RecordDlssUpscalePayload(scoped ref PrimaryCommandBufferRecordingState state, in DlssUpscalePayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
         CmdBeginLabel(state.CommandBuffer, "DLSS.SuperResolution");
-        RecordDlssUpscalePayload(state.CommandBuffer, in payload);
+        using (TryBeginDlssEvaluateGpuProfilerScope(state.CommandBuffer))
+            RecordDlssUpscalePayload(state.CommandBuffer, in payload);
         CmdEndLabel(state.CommandBuffer); return info.OperationIndex;
     }
 
@@ -1851,7 +1993,11 @@ internal sealed partial class VulkanCommandRuntime
             BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         }
         int uniformSlot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
-        bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot, out string failureReason, out bool pipelineUnavailable);
+        bool recorded;
+        string failureReason;
+        bool pipelineUnavailable;
+        using (TryBeginFullscreenPassGpuProfilerScope(state.CommandBuffer, in payload.Draw))
+            recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot, out failureReason, out pipelineUnavailable);
         state.CurrentPrimaryOperationRecorded = recorded;
         if (!recorded && failureReason.Length > 0)
         {
@@ -2089,6 +2235,7 @@ internal sealed partial class VulkanCommandRuntime
         if (state.HasActiveContext && FrameOpContextCompatibility.AreRecordingCompatible(state.ActiveContext, context)) return true;
         bool preserve = state.RenderScope.ShouldPreserveForContextChange(target is null, target, passIndex, state.ActiveInlineQuery is not null, context.SchedulingIdentity, state.ActivePassIndex, state.ActiveSchedulingIdentity, FrameOpContextCompatibility.AreQueryScopeCompatible(state.ActiveContext, context));
         if (!preserve) EndActiveRenderPass(ref state);
+        if (!preserve) EndPassGpuProfilerScope(ref state);
         if (!preserve) EndSelectedGpuPass(ref state);
         if (!preserve && state.PassIndexLabelActive) { _deviceContext.CmdEndLabel(state.CommandBuffer); state.PassIndexLabelActive = false; }
         state.ActiveContext = context; state.HasActiveContext = true; ApplyPipelineOverride(ref state, state.ActiveContext);
@@ -2136,9 +2283,11 @@ internal sealed partial class VulkanCommandRuntime
         int schedulingIdentity = state.Ops.GetContext(operationIndex).SchedulingIdentity;
         if (!HasPrimaryPlanAction(node.Actions, EVulkanPrimaryPlanAction.BarrierBatch) || (passIndex == state.ActivePassIndex && schedulingIdentity == state.ActiveSchedulingIdentity)) return;
         EndActiveRenderPass(ref state);
+        EndPassGpuProfilerScope(ref state);
         EndSelectedGpuPass(ref state);
         if (state.PassIndexLabelActive) { _deviceContext.CmdEndLabel(state.CommandBuffer); state.PassIndexLabelActive = false; }
         if (_deviceContext.CanRecordCommandBufferDebugLabels) state.PassIndexLabelActive = _deviceContext.CmdBeginLabel(state.CommandBuffer, $"Pass={passIndex} Pipe={state.ActiveContext.PipelineIdentity} Vp={state.ActiveContext.ViewportIdentity}");
+        BeginPassGpuProfilerScope(ref state, passIndex);
         EmitPassBarriers(ref state, passIndex);
         state.ActivePassIndex = passIndex; state.ActiveSchedulingIdentity = schedulingIdentity;
         state.SelectedGpuPassStartQuery = VulkanSelectedGpuPassContext.Current?.BeginProductionPass(
@@ -2159,6 +2308,7 @@ internal sealed partial class VulkanCommandRuntime
     {
         RecordDroppedPrimaryOperation(ref state, header.OpCode, true);
         EndActiveRenderPass(ref state);
+        EndPassGpuProfilerScope(ref state);
         EndSelectedGpuPass(ref state);
         Debug.VulkanEvery($"Vulkan.FrameOpError.{GetHashCode()}", TimeSpan.FromSeconds(1), "[Vulkan] Frame op recording failed for {0}: {1}: {2}", header.OpCode, exception.GetType().Name, exception.Message);
     }

@@ -27,6 +27,14 @@ public sealed record AgentRunResult
 
     public int RetryCount { get; init; }
 
+    /// <summary>False when the runtime does not expose its internal model-turn count.</summary>
+    public bool TurnCountReported { get; init; } = true;
+
+    /// <summary>False when the runtime does not expose its internal transport retries.</summary>
+    public bool RetryCountReported { get; init; } = true;
+
+    public AgentRuntimeInfo? RuntimeInfo { get; init; }
+
     public IReadOnlyList<AgentProviderAttemptDiagnostic> ProviderAttempts { get; init; } = [];
 
     public long ElapsedMilliseconds { get; init; }

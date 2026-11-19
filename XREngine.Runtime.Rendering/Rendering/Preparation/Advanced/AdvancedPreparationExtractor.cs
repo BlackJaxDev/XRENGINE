@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using XREngine.Rendering.Compute;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
 
@@ -286,7 +287,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         if (publicationSnapshot is null ||
             publicationSnapshot.Submission.Sequence != publicationReference.Sequence)
             return CreateDeferredPublication(world, consumers, 0u,
-                "The exact canonical scene publication is unavailable for advanced preparation.");
+                "The exact canonical scene publication is unavailable for advanced preparation.",
+                EAdvancedPreparationDeferral.CanonicalSnapshotUnavailable);
 
         ResetTemporalStateForSceneEpoch(world.GpuScene, frameId);
         uint submissionCount = checked((uint)publicationSnapshot.Submission.Records.Length);
@@ -301,9 +303,26 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
                     (uint)_options.MaximumDraws)),
-                "The advanced frame-upload slot is still owned by an earlier frame.");
+                "The advanced frame-upload slot is still owned by an earlier frame.",
+                EAdvancedPreparationDeferral.FrameUploadSlotBusy);
         }
-        if (!_deformedArena.TryBeginFrame(frameId, completedValue))
+        // The GPU output slot is chosen by availability (signaled producer fence, no native
+        // consumers), not by frame id, so a slot that the GPU still uses one frame longer than the
+        // ring expects does not defer the whole preparation while another slot is free.
+        if (!_gpuDeformation.TrySelectOutputSlot(out uint deformationSlot, out uint previousDeformationSlot))
+        {
+            LogDeformationSlotDeferral(frameId, deformationSlot, consumers);
+            _frameUploadArena.EndFrame(frameId);
+            return CreateDeferredPublication(
+                world,
+                consumers,
+            visibleFallbackCount: checked((uint)Math.Min(
+                    submissionCount,
+                    (uint)_options.MaximumDraws)),
+                "The advanced deformation GPU output slot or static generation is not reusable.",
+                EAdvancedPreparationDeferral.DeformationOutputSlot);
+        }
+        if (!_deformedArena.TryBeginFrame(frameId, completedValue, deformationSlot, previousDeformationSlot))
         {
             _frameUploadArena.EndFrame(frameId);
             return CreateDeferredPublication(
@@ -312,7 +331,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
                     (uint)_options.MaximumDraws)),
-                "The advanced deformation arena slot is still owned by an earlier frame.");
+                "The advanced deformation arena slot is still owned by an earlier frame.",
+                EAdvancedPreparationDeferral.DeformedArenaSlotBusy);
         }
         if (!_gpuDeformation.TryBeginFrame(
                 frameId,
@@ -324,6 +344,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 publicationReference.Publication.DatabaseEpoch,
                 deformationSourceGeneration))
         {
+            LogDeformationSlotDeferral(frameId, _deformedArena.CurrentFrameSlot, consumers);
             _deformedArena.EndFrame(frameId);
             _frameUploadArena.EndFrame(frameId);
             return CreateDeferredPublication(
@@ -332,7 +353,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
                     (uint)_options.MaximumDraws)),
-                "The advanced deformation GPU output slot or static generation is not reusable.");
+                "The advanced deformation GPU output slot or static generation is not reusable.",
+                EAdvancedPreparationDeferral.DeformationFrameOpen);
         }
 
         try
@@ -342,7 +364,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             (uint)_options.MaximumDraws));
         if (!TryCaptureGpuBoundsPublication(publicationSnapshot, _drawCount))
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
-                "The covered draw bounds output page is unavailable.");
+                "The covered draw bounds output page is unavailable.",
+                EAdvancedPreparationDeferral.BoundsPageUnavailable);
         _gpuDeformation.SetPhysicsOutputSource(_gpuBoundsDispatcher, _gpuBoundsPage.Token);
         long prePassMark = AdvancedExtractionSubStageTimers.Start();
         bool meshesPrepared = TryPrepareCanonicalDeformationMeshes(publicationSnapshot, _drawCount);
@@ -352,7 +375,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 world,
                 consumers,
                 visibleFallbackCount: checked((uint)_drawCount),
-                "Canonical GPU deformation mesh preparation is still in progress.");
+                "Canonical GPU deformation mesh preparation is still in progress.",
+                EAdvancedPreparationDeferral.DeformationMeshPreparationPending);
 
         ResetDeformationOwnersForGeneration(
             world.GpuScene,
@@ -387,16 +411,19 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         }
         if (_deformationArenaPending)
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
-                "The deformation output arena must grow before this scene can be prepared.");
+                "The deformation output arena must grow before this scene can be prepared.",
+                EAdvancedPreparationDeferral.DeformedArenaGrowth);
         if (_physicsOutputMismatch)
             return CreateDeferredPublication(world, consumers, checked((uint)_drawCount),
-                "The covered draw palette or authored envelope does not match its retained bounds page.");
+                "The covered draw palette or authored envelope does not match its retained bounds page.",
+                EAdvancedPreparationDeferral.BoundsPageMismatch);
         if (_meshPreparationPending)
             return CreateDeferredPublication(
                 world,
                 consumers,
                 visibleFallbackCount: checked((uint)_drawCount),
-                "Canonical GPU deformation mesh preparation is still in progress.");
+                "Canonical GPU deformation mesh preparation is still in progress.",
+                EAdvancedPreparationDeferral.DeformationMeshPreparationPending);
         LastExtractionTicks = Stopwatch.GetTimestamp() - extractionStarted;
 
         _admission = _deformationJobs.FinalizeJobs(
@@ -745,7 +772,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             GPUScene.GpuMeshletRange meshletRange = new()
             {
                 MeshletOffset = geometry.MeshletFirst,
-                MeshletCount = geometry.MeshletCount,
+                MeshletCount = geometry.DrawMeshletCount,
             };
             uint topologyGeneration = ComputeTopologyGeneration(mesh, meshletRange);
             // Consecutive rows that draw one shared mesh use one preparation.
@@ -771,6 +798,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 Ready: true);
             _preparedDeformationMeshes[commandIndex] = lastReady;
         }
+        _gpuDeformation.RetireAbsentMeshPreparation();
         return allReady;
     }
 
@@ -873,7 +901,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         AdvancedSceneGeometryOffsets offsets = ResolveGeometryOffsets(
             hasCanonicalGeometry,
             in canonicalGeometry,
-            command.SkinID);
+            command.SkinID,
+            clusterCut: !skinned && AdvancedVirtualGeometryPolicy.Enabled);
         if (skinned && (renderer is null || mesh is not { VertexCount: > 0 }))
             throw new InvalidOperationException(
                 $"Advanced draw {draw} requires a captured primitive mesh and renderer for deformation.");
@@ -885,7 +914,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         GPUScene.GpuMeshletRange deformationMeshletRange = new()
         {
             MeshletOffset = canonicalGeometry.MeshletFirst,
-            MeshletCount = canonicalGeometry.MeshletCount,
+            MeshletCount = canonicalGeometry.DrawMeshletCount,
         };
         AdvancedDeformedArenaSlice deformationSlice = default;
         int deformationCandidateIndex = -1;
@@ -1619,9 +1648,11 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         in RenderWorldSnapshot world,
         EAdvancedPreparationConsumer consumers,
         uint visibleFallbackCount,
-        string reason)
+        string reason,
+        EAdvancedPreparationDeferral deferral)
     {
         LastDeferralReason = reason;
+        NotePreparationDeferral(deferral, world.FrameId, consumers, reason);
         _preparedSceneIdentity = 0u;
         _preparedScenePublication = default;
         _drawCount = 0;
@@ -1690,13 +1721,21 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             EAdvancedVelocityValidityReason.HistoryReset,
             source.ForceCpuRendering,
             source.MaterialOverride,
-            source.RenderOptionsOverride);
+            LegacyEditorHighlightRenderingParameters.ResolveAuthoredOptions(
+                source.RenderOptionsOverride));
     }
 
+    /// <summary>
+    /// Reads the arena offsets and the meshlet range of a draw's geometry for its visibility
+    /// payload. With <paramref name="clusterCut"/> (a static draw while Advanced virtual geometry
+    /// is on), the range holds the meshlets of every level and the task stage selects the cut;
+    /// otherwise it holds only the level-0 meshlets of a cluster hierarchy geometry.
+    /// </summary>
     private static AdvancedSceneGeometryOffsets ResolveGeometryOffsets(
         bool hasCanonicalGeometry,
         in AdvancedGeometryRecord geometry,
-        uint skinId)
+        uint skinId,
+        bool clusterCut)
     {
         if (!hasCanonicalGeometry)
             return default;
@@ -1708,7 +1747,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             WeightOffset: geometry.CurrentVertexData.ElementOffset,
             PaletteOffset: skinId,
             MeshletOffset: geometry.MeshletFirst,
-            MeshletCount: geometry.MeshletCount);
+            MeshletCount: clusterCut ? geometry.MeshletCount : geometry.DrawMeshletCount);
     }
 
     /// <summary>

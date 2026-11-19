@@ -443,6 +443,16 @@ internal sealed class EngineRuntimeRenderingHostServices :
         Engine.Time.Timer.SwapBuffers -= swapBuffers;
     }
 
+    public void SubscribeViewportPrepareFrameOutput(Action prepareFrameOutput)
+    {
+        Engine.Time.Timer.PrepareFrameOutputs += prepareFrameOutput;
+    }
+
+    public void UnsubscribeViewportPrepareFrameOutput(Action prepareFrameOutput)
+    {
+        Engine.Time.Timer.PrepareFrameOutputs -= prepareFrameOutput;
+    }
+
     public void SubscribeViewportCollectVisible(Action collectVisible)
     {
         Engine.Time.Timer.CollectVisible += collectVisible;
@@ -1641,6 +1651,31 @@ internal sealed class EngineRuntimeRenderingHostServices :
         => mode == EVrMirrorMode.FullIndependentRender &&
            RuntimeEngine.Rendering.Settings.RenderWindowsWhileInVR;
 
+    public bool IsIndependentDesktopRetentionInScope
+        => RuntimeEngine.VRState.IsInVR &&
+           RuntimeEngine.VRState.IsOpenXRActive &&
+           ShouldKeepIndependentDesktopLive(RuntimeEngine.Rendering.Settings.VrMirrorMode);
+
+    /// <inheritdoc/>
+    public long VrIndependentDesktopNextDueTimestamp
+    {
+        get
+        {
+            if (!IsIndependentDesktopRetentionInScope)
+                return long.MaxValue;
+            // With desktop priority or without the over-budget skip, the desktop admission does
+            // not hold desktop frames for XR, so a desktop frame can be due at any time.
+            if (Engine.UserSettings.VrRenderPriority == EVrRenderPriority.Desktop ||
+                !RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget)
+                return 0L;
+
+            long lastAdmitted = Volatile.Read(ref _independentDesktopLastAdmittedTicks);
+            return lastAdmitted == 0L
+                ? 0L
+                : lastAdmitted + (long)(System.Diagnostics.Stopwatch.Frequency / MinimumIndependentDesktopRateHz);
+        }
+    }
+
     /// <summary>
     /// Admits at most one independent desktop frame per XR frame, and only when it can finish
     /// before the next XR frame. A minimum rate keeps the window live. A frame admitted at this
@@ -1661,7 +1696,12 @@ internal sealed class EngineRuntimeRenderingHostServices :
                 _independentDesktopCostSinceAdmissionMs,
                 RuntimeEngine.Rendering.Stats.FrameOutputs.LastDesktopWorkMs);
 
-            double slackMs = RuntimeEngine.VRState.OpenXRApi?.NextFrameSlackMs ?? -1.0;
+            // A paced collect starts when the eyes enter xrEndFrame, and its desktop frame renders
+            // after the next eye frame, so it reads the slack of that window from completed frames.
+            // A render-paced collect reads the time left now, as before.
+            double slackMs = RuntimeEngine.VRState.OpenXRApi is IOpenXrCollectPacing { IsCurrentCollectPaced: true } pacedCollect
+                ? pacedCollect.PacedDesktopSlackMs
+                : RuntimeEngine.VRState.OpenXRApi?.NextFrameSlackMs ?? -1.0;
             long xrWakeTicks = RuntimeEngine.VRState.OpenXRApi?.LastFrameWakeTicks ?? 0L;
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
             double elapsedMs = (now - _independentDesktopLastAdmittedTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
@@ -1749,8 +1789,11 @@ internal sealed class EngineRuntimeRenderingHostServices :
                 return false;
             }
 
-            _vrDesktopPressureHoldFramesRemaining--;
-            _vrDesktopPressureConsecutiveSkips++;
+            // Hold and skip counts are budget periods: with XR collect pacing one collect stands
+            // for the display periods since the last collect, so the hold keeps its length in time.
+            int periods = CollectBudgetPeriods.Current;
+            _vrDesktopPressureHoldFramesRemaining -= periods;
+            _vrDesktopPressureConsecutiveSkips += periods;
             _vrDesktopPressureHoldCurrentFrame = true;
             return true;
         }
@@ -1911,6 +1954,8 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public bool EnableVrFoveatedViewSet => RuntimeEngine.Rendering.Settings.EnableVrFoveatedViewSet;
     public ERvcPipelineMode RvcPipelineMode => RuntimeEngine.Rendering.Settings.RvcPipelineMode;
     public bool RvcQuadViewEnabled => RuntimeEngine.Rendering.Settings.RvcQuadViewEnabled;
+    public float RvcQuadViewWideResolutionScale => RuntimeEngine.Rendering.Settings.RvcQuadViewWideResolutionScale;
+    public bool RvcQuadViewSharedVisibilityEnabled => RuntimeEngine.Rendering.Settings.RvcQuadViewSharedVisibilityEnabled;
     public bool RvcOpenXrVisibilityMaskEnabled
         => RuntimeEngine.VRState.IsOpenXRActive &&
            RuntimeEngine.VRState.OpenXRApi?.IsRvcOpenXrVisibilityMaskExtensionEnabled == true;

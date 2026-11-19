@@ -64,6 +64,8 @@ public partial class GPUScene
     /// whole-scene plan. Zero means that the whole-scene plan ran.
     /// </summary>
     public int AdvancedUnchangedRowGateHitCount => _advancedScenePublisher.LastUnchangedRowGateHitCount;
+    /// <summary>Gets the number of moved rows that the latest Advanced publication patched without the whole-scene plan.</summary>
+    public int AdvancedMovedRowPatchCount => _advancedScenePublisher.LastMovedRowPatchCount;
 
     /// <summary>Gets whether the last publication committed the retained rows without the whole-scene plan.</summary>
     public bool AdvancedRetainedRowCommit => _advancedScenePublisher.LastPublicationCommittedRetainedRows;

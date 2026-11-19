@@ -5,7 +5,7 @@ internal static partial class NativeMeshOptimizer
 {
     private const string NativeLibraryName = "meshoptimizer";
     private const string VersionFileName = "meshoptimizer.version";
-    private const int InteropVersion = 3;
+    private const int InteropVersion = 4;
     private const uint SimplifyPermissiveWithSeamsMask = (uint)MeshOptimizerSimplifyOptions.Permissive;
     private static readonly Lazy<nint> s_nativeLibraryHandle = new(LoadNativeLibraryHandle, LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<string> s_versionText = new(ReadVersionText, LazyThreadSafetyMode.ExecutionAndPublication);

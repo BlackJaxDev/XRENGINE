@@ -371,6 +371,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer recoveryDynamicTextSecondaryCommandBuffer = default,
             int recoveryDynamicTextOperationCount = 0)
         {
+            attempt.RecordingDeferralDetail = reason;
             Debug.VulkanWarningEvery(
                 $"Vulkan.Frame.{GetHashCode()}.RecordDeferredReason",
                 TimeSpan.FromSeconds(1),

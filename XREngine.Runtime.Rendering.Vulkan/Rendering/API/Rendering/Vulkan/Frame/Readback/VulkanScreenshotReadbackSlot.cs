@@ -36,8 +36,11 @@ internal sealed class VulkanScreenshotReadbackSlot
     public DateTimeOffset SubmittedAtUtc;
     public Action<ScreenshotReadbackResult>? Callback;
     public Action<AdvancedVisibilityEncodedSurface>? AdvancedPickingCallback;
+    public Action<ulong, EditorPickingEncodedPixel>? EditorPickingCallback;
+    public ulong EditorPickingToken;
+    public bool IsEditorPicking;
     public bool IsAdvancedPicking;
-    public XRTexture? AdvancedPickingIdentitySource;
+    public XRTexture? PickingIdentitySource;
     public XRTexture? AdvancedPickingMetadataSource;
     public XRTexture? AdvancedPickingSelectionSource;
 }

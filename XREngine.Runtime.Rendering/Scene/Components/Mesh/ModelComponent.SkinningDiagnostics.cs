@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Numerics;
 using System.Text;
 using XREngine.Rendering;
@@ -182,6 +183,86 @@ public partial class ModelComponent
         }
 
         return summary.ToString();
+    }
+
+    /// <summary>
+    /// Reads the current bone matrices and CPU palette for each rendered mesh.
+    /// Call this only from an editor diagnostic because the report allocates text.
+    /// </summary>
+    internal string GetRuntimeSkinningMatrixDiagnosticSummary()
+    {
+        StringBuilder summary = new();
+        summary.Append("component=").Append(Name ?? SceneNode.Name ?? "<unnamed>");
+        summary.AppendLine();
+
+        for (int renderableIndex = 0; renderableIndex < Meshes.Count; renderableIndex++)
+        {
+            RenderableMesh.RenderableLOD[] lods = Meshes[renderableIndex].GetLodSnapshot();
+            for (int lodIndex = 0; lodIndex < lods.Length; lodIndex++)
+            {
+                XRMeshRenderer renderer = lods[lodIndex].Renderer;
+                XRMesh? mesh = renderer.Mesh;
+                if (mesh is null)
+                    continue;
+
+                Matrix4x4 bindRoot = mesh.BindRootMatrix ?? Matrix4x4.Identity;
+                XRDataBuffer? paletteBuffer = renderer.SkinPaletteBuffer;
+                XRDataBuffer? activePaletteBuffer = renderer.ActiveSkinPaletteBuffer;
+                summary.Append("renderable=").Append(renderableIndex)
+                    .Append(" lod=").Append(lodIndex)
+                    .Append(" rendererId=").Append(renderer.ID)
+                    .Append(" meshId=").Append(mesh.ID)
+                    .Append(" mesh=").Append(mesh.Name ?? "<unnamed>")
+                    .Append(" bones=").Append(mesh.UtilizedBones.Length)
+                    .Append(" localPalette=").Append(paletteBuffer is null ? "missing" : "present")
+                    .Append(" activePalette=").Append(activePaletteBuffer is null ? "missing" : "present")
+                    .Append(" activePaletteBase=").Append(renderer.ActiveSkinPaletteBase)
+                    .Append(" externalPalette=").Append(renderer.HasExternalSkinPaletteSource);
+                AppendMatrix(summary.Append(" rendererWorld="), SceneNode.Transform.RenderMatrix);
+                AppendMatrix(summary.Append(" bindRoot="), bindRoot);
+                summary.AppendLine();
+
+                for (int boneIndex = 0; boneIndex < mesh.UtilizedBones.Length; boneIndex++)
+                {
+                    (TransformBase bone, Matrix4x4 inverseBind) = mesh.UtilizedBones[boneIndex];
+                    Matrix4x4 current = XRMeshRenderer.GetCurrentBoneMatrix(bone);
+                    Matrix4x4 expected = XRMeshRenderer.ComposeSkinPalette(mesh, inverseBind, current)
+                        .ToRowVectorMatrix();
+                    SkinPaletteMatrix? buffered = paletteBuffer?.Get<SkinPaletteMatrix>(
+                        checked((uint)(boneIndex + 1) * paletteBuffer.ElementSize));
+                    summary.Append("bone=").Append(boneIndex)
+                        .Append(" name=").Append(bone.SceneNode?.Name ?? bone.Name ?? "<unnamed>");
+                    AppendMatrix(summary.Append(" inverseBind="), inverseBind);
+                    AppendMatrix(summary.Append(" current="), current);
+                    AppendMatrix(summary.Append(" render="), bone.RenderMatrix);
+                    AppendMatrix(summary.Append(" expected="), expected);
+                    if (buffered.HasValue)
+                        AppendMatrix(summary.Append(" buffered="), buffered.Value.ToRowVectorMatrix());
+                    else
+                        summary.Append(" buffered=missing");
+                    summary.AppendLine();
+                }
+            }
+        }
+
+        return summary.ToString();
+    }
+
+    private static void AppendMatrix(StringBuilder summary, in Matrix4x4 matrix)
+    {
+        Span<float> values =
+        [
+            matrix.M11, matrix.M12, matrix.M13, matrix.M14,
+            matrix.M21, matrix.M22, matrix.M23, matrix.M24,
+            matrix.M31, matrix.M32, matrix.M33, matrix.M34,
+            matrix.M41, matrix.M42, matrix.M43, matrix.M44,
+        ];
+        for (int index = 0; index < values.Length; index++)
+        {
+            if (index != 0)
+                summary.Append(',');
+            summary.Append(values[index].ToString("R", CultureInfo.InvariantCulture));
+        }
     }
 
     private static Matrix4x4 GetCurrentBoneMatrix(TransformBase transform)

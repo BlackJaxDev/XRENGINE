@@ -544,3 +544,10 @@ Build/Dependencies/Meshoptimizer/
 # Windows shell files. A publish would ship them in CommonAssets.pak.
 desktop.ini
 Thumbs.db
+
+# GLFW and Bc7Enc native source checkouts and CMake build output. Keep the
+# win-x64 version and license records.
+Build/Dependencies/Glfw/*/
+!Build/Dependencies/Glfw/win-x64/
+Build/Dependencies/Bc7Enc/cmake-win-x64/
+Build/Dependencies/Bc7Enc/source/

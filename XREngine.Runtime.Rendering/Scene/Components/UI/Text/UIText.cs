@@ -424,6 +424,12 @@ namespace XREngine.Rendering.UI
 
         private readonly Lock _matrixLock = new();
         private bool _textMatrixInvalidated = false;
+        private Action? _preparationRenderAction;
+
+        /// <summary>Returns one reusable callback for preparation-only text capture.</summary>
+        internal Action PreparationRenderAction => _preparationRenderAction ??= Render;
+        internal bool HasRenderableGlyphs => Mesh is not null && _glyphCount > 0;
+
         public void Render()
         {
             if (Mesh is null || _glyphCount <= 0)

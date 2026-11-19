@@ -14,6 +14,7 @@ using XREngine.Input;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.OutputDomains;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
@@ -212,6 +213,15 @@ namespace XREngine.Rendering
 
         private FrameOutputPacingDecision _pendingFrameOutputPacing;
         private FrameOutputPacingDecision _renderingFrameOutputPacing;
+        // Collect frame id for which PrepareFrameOutputAutomatic stored _pendingFrameOutputPacing,
+        // or 0. CollectVisibleAutomatic reuses the stored decision only for this frame id.
+        private ulong _preparedFrameOutputCollectFrameId;
+        // Collect frame id of the last swapped collect whose scene this viewport rendered.
+        private ulong _sceneRenderedCollectFrameId;
+        // Collect frame id whose stored output decision does not render the scene, or 0. Unlike
+        // _preparedFrameOutputCollectFrameId it stays set after the collect, because the lights
+        // can read it after this viewport collected (IsSceneHeldForCollectFrame).
+        private ulong _sceneHeldCollectFrameId;
         private bool _pendingFrameOutputSceneDue = true;
         private ulong _nextExactOutputCollectionGeneration;
         private ulong _pendingExactOutputCollectionGeneration;
@@ -1581,6 +1591,7 @@ namespace XREngine.Rendering
                     return;
 
                 IRuntimeRenderSchedulingServices host = RuntimeRenderingHostServices.Scheduling;
+                host.SubscribeViewportPrepareFrameOutput(PrepareFrameOutputAutomatic);
                 host.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
                 _collectVisibleSubscriptionHost = host;
                 return;
@@ -1591,7 +1602,9 @@ namespace XREngine.Rendering
                 return;
 
             _collectVisibleSubscriptionHost = null;
+            subscribedHost.UnsubscribeViewportPrepareFrameOutput(PrepareFrameOutputAutomatic);
             subscribedHost.UnsubscribeViewportCollectVisible(CollectVisibleAutomatic);
+            _preparedFrameOutputCollectFrameId = 0UL;
         }
 
         #endregion
@@ -1968,9 +1981,22 @@ namespace XREngine.Rendering
             if (_destroyed)
                 return;
 
-            FrameOutputPacingDecision pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
-            _pendingFrameOutputPacing = pacing;
-            _pendingFrameOutputSceneDue = pacing.IsDue;
+            // The frame output preparation of this collect frame already evaluated the pacing
+            // (and recorded its statistics). Evaluate it here only when no preparation ran.
+            ulong collectFrameId = RuntimeRenderingHostServices.FrameTiming.CollectFrameId;
+            FrameOutputPacingDecision pacing;
+            if (collectFrameId != 0UL && _preparedFrameOutputCollectFrameId == collectFrameId)
+            {
+                pacing = _pendingFrameOutputPacing;
+            }
+            else
+            {
+                pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
+                _pendingFrameOutputPacing = pacing;
+                _pendingFrameOutputSceneDue = pacing.IsDue;
+                _sceneHeldCollectFrameId = pacing.IsDue ? 0UL : collectFrameId;
+            }
+            _preparedFrameOutputCollectFrameId = 0UL;
 
             if (Suppress3DSceneRendering)
             {
@@ -2161,6 +2187,70 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// True when this viewport has a stored output decision for the collect frame
+        /// <paramref name="collectFrameId"/> and that decision does not render the scene. The
+        /// lights read it on the collect thread to retain the desktop shadow source only in
+        /// frames in which no desktop viewport renders. Without a stored decision for the frame
+        /// it returns false, so the viewport counts as due.
+        /// </summary>
+        internal bool IsSceneHeldForCollectFrame(ulong collectFrameId)
+            => collectFrameId != 0UL && _sceneHeldCollectFrameId == collectFrameId;
+
+        /// <summary>
+        /// Evaluates this viewport's output pacing for the new collect frame, before any collect
+        /// callback runs, and stores it for <see cref="CollectVisibleAutomatic"/> and for the
+        /// lights (<see cref="IsSceneHeldForCollectFrame"/>), so the lights plan the desktop
+        /// shadow source only in frames in which a desktop viewport renders its scene.
+        /// </summary>
+        private void PrepareFrameOutputAutomatic()
+        {
+            if (_destroyed)
+                return;
+
+            FrameOutputPacingDecision pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
+            _pendingFrameOutputPacing = pacing;
+            _pendingFrameOutputSceneDue = pacing.IsDue;
+            _preparedFrameOutputCollectFrameId = RuntimeRenderingHostServices.FrameTiming.CollectFrameId;
+            _sceneHeldCollectFrameId = pacing.IsDue ? 0UL : _preparedFrameOutputCollectFrameId;
+        }
+
+        /// <summary>
+        /// Counts a desktop scene that the swapped collect made due but that did not render
+        /// before the next swap, in a VR session with an independent desktop window. The render
+        /// of the swapped collect finishes before the next swap, so the check runs at the swap.
+        /// </summary>
+        private void CountDesktopSceneDueNotRendered()
+        {
+            ulong collectFrameId = _renderingFrameOutputPacing.FrameId;
+            if (!_renderingFrameOutputSceneDue ||
+                collectFrameId == 0UL ||
+                _sceneRenderedCollectFrameId == collectFrameId ||
+                Suppress3DSceneRendering ||
+                _renderPipeline.IsShadowPipeline ||
+                !IsDesktopFacingOutput() ||
+                !RuntimeRenderingHostServices.Presentation.IsIndependentDesktopRetentionInScope)
+                return;
+
+            DesktopOutputScheduleTelemetry.Count(EDesktopOutputScheduleCounter.DesktopSceneDueNotRendered);
+        }
+
+        /// <summary>
+        /// Records that this viewport rendered the scene of the swapped collect. When that
+        /// collect retained the desktop shadow source, the render read stale desktop cascades;
+        /// the counter DesktopSceneRenderedWhileRetained records it.
+        /// </summary>
+        private void NoteDesktopSceneRendered()
+        {
+            ulong collectFrameId = _renderingFrameOutputPacing.FrameId;
+            if (collectFrameId == 0UL || !IsDesktopFacingOutput())
+                return;
+
+            _sceneRenderedCollectFrameId = collectFrameId;
+            if (World?.Lights.WasDesktopShadowSourceRetained(collectFrameId) == true)
+                DesktopOutputScheduleTelemetry.Count(EDesktopOutputScheduleCounter.DesktopSceneRenderedWhileRetained);
+        }
+
+        /// <summary>
         /// Internal callback for automatic buffer swapping.
         /// Subscribed to RuntimeEngine.Time.Timer.SwapBuffers when AutomaticallySwapBuffers is true.
         /// Delegates to SwapBuffers() with default parameters, wrapped in a profiler sample.
@@ -2169,6 +2259,8 @@ namespace XREngine.Rendering
         {
             if (_destroyed)
                 return;
+
+            CountDesktopSceneDueNotRendered();
 
             FrameOutputPacingDecision pacing = _pendingFrameOutputPacing.FrameId != 0UL
                 ? _pendingFrameOutputPacing
@@ -2183,6 +2275,7 @@ namespace XREngine.Rendering
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
                 _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
                 _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
+                _renderPipeline.ReleaseLaggingEditorPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -2202,6 +2295,7 @@ namespace XREngine.Rendering
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
                 _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
                 _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
+                _renderPipeline.ReleaseLaggingEditorPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -2659,7 +2753,6 @@ namespace XREngine.Rendering
                 ulong issuedSequence = tracksDesktopHistory
                     ? ConsumeRenderingFrameViewHistorySequence()
                     : 0UL;
-                ulong committedHistorySequence = 0UL;
                 RenderFrameViewDescriptor? frozenDesktopView = null;
                 RenderFrameViewHistoryCandidateToken frozenHistoryCandidate =
                     default;
@@ -2721,29 +2814,18 @@ namespace XREngine.Rendering
                         return false;
                     }
                     frozenDesktopView = capturedView;
-                    RenderFrameViewHistorySnapshot committedSnapshot =
-                        _frameViewHistoryLedger.CaptureSnapshot();
-                    committedHistorySequence = committedSnapshot.CommittedHistoryValid
-                        ? committedSnapshot.CommittedSequence
-                        : 0UL;
                 }
 
-                // Visibility-driven compute deformation (skinning/blendshapes).
-                // Run after history acceptance so rejected frames do not latch cached
-                // deformation outputs, and pass the history ledger sequence so discarded
-                // frames re-dispatch until a frame commits on the GPU.
+                // Visibility-driven compute deformation (skinning/blendshapes) for OpenGL. It runs after
+                // history acceptance so rejected frames do not latch cached deformation outputs. Vulkan
+                // records its deformation producer inside the frame at the first raster consumer.
                 var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-                if (!Suppress3DSceneRendering &&
+                if (!RuntimeEngine.Rendering.State.IsVulkan &&
+                    !Suppress3DSceneRendering &&
                     SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
                 {
                     using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
-                    {
-                        SkinningPrepassDispatcher.Instance.RunVisible(
-                            activeCommands,
-                            requireCommittedOutput: tracksDesktopHistory && issuedSequence != 0UL,
-                            currentSequence: issuedSequence,
-                            committedSequence: committedHistorySequence);
-                    }
+                        SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
                 }
                 bool recorded;
                 bool outputCompletionAuthoringStarted;
@@ -2772,7 +2854,9 @@ namespace XREngine.Rendering
                             consumedCollectGenerationOverride,
                         completionFence: out completionFence,
                         outputCompletionAuthoringStarted:
-                            out outputCompletionAuthoringStarted);
+                            out outputCompletionAuthoringStarted,
+                        suppressDeformationPrepass: Suppress3DSceneRendering,
+                        vrEyeRender: IsVrEyeOutput);
                 }
                 finally
                 {
@@ -2937,7 +3021,8 @@ namespace XREngine.Rendering
             // The stereo pipeline is installed as the current pipeline while it
             // dispatches, so that the dispatches use that pipeline's frame snapshot pool
             // and frame-operation context instead of allocating new snapshots each frame.
-            if (!Suppress3DSceneRendering &&
+            if (!RuntimeEngine.Rendering.State.IsVulkan &&
+                !Suppress3DSceneRendering &&
                 SkinningPrepassDispatcher.OwnsDeformation(vrEyeRender: true, shadowPass: false))
             {
                 using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
@@ -2966,7 +3051,9 @@ namespace XREngine.Rendering
                 outputCompletionCollectGeneration: -1L,
                 consumedCollectGenerationOverride,
                 out _,
-                out _);
+                out _,
+                suppressDeformationPrepass: Suppress3DSceneRendering,
+                vrEyeRender: true);
 
             if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);
@@ -2980,6 +3067,14 @@ namespace XREngine.Rendering
                 elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
             return recorded;
         }
+
+        /// <summary>
+        /// True when this viewport renders its 3D scene in the current render frame: the scene
+        /// is not suppressed and the frame output pacing of the swapped collect made it due.
+        /// The window reads it before the shadow pass to find the views that render.
+        /// </summary>
+        internal bool RendersSceneThisFrame
+            => _renderingFrameOutputSceneDue && !Suppress3DSceneRendering;
 
         /// <summary>True when the XR frame priority held this viewport's scene for the current render.</summary>
         internal bool IsHeldForXrFramePriority
@@ -3169,6 +3264,9 @@ namespace XREngine.Rendering
             // target that can never be presented.
             if (_renderPipeline.IsShadowPipeline)
                 return;
+
+            if (phase == EFrameOutputPhase.Render && sceneRendered)
+                NoteDesktopSceneRendered();
 
             double cpuMs = elapsedTicks <= 0L
                 ? 0.0
@@ -4128,6 +4226,88 @@ namespace XREngine.Rendering
                     completed,
                     out request,
                     out failure);
+        }
+
+        /// <summary>
+        /// Queues one editor identity pixel from the accepted render package.
+        /// The result names the exact collected mesh owner when one exists.
+        /// </summary>
+        public bool TryPickEditorAsync(
+            Vector2 normalizedViewportPosition,
+            uint viewIndex,
+            Action<EditorPickingResult> completed,
+            out EditorPickingRequest? request,
+            out string? failure)
+        {
+            if (!RuntimeEngine.IsRenderThread)
+            {
+                if (_destroyed || RuntimeRenderingHostServices.FrameTiming.IsShuttingDown ||
+                    RuntimeEngine.Windows.Count == 0)
+                {
+                    request = null;
+                    failure = "Editor picking cannot be queued after viewport destruction or during shutdown.";
+                    return false;
+                }
+
+                var queued = RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
+                    () =>
+                    {
+                        bool accepted = TryPickEditorAsync(normalizedViewportPosition,
+                            viewIndex, completed, out EditorPickingRequest? renderRequest,
+                            out string? renderFailure);
+                        return (accepted, renderRequest, renderFailure);
+                    },
+                    "XRViewport.EditorPickingReadback",
+                    RenderThreadJobKind.Readback);
+                request = queued.renderRequest;
+                failure = queued.renderFailure;
+                return queued.accepted;
+            }
+
+            int width = InternalWidth;
+            int height = InternalHeight;
+            if (width <= 0 || height <= 0 ||
+                !float.IsFinite(normalizedViewportPosition.X) ||
+                !float.IsFinite(normalizedViewportPosition.Y) ||
+                normalizedViewportPosition.X < 0.0f ||
+                normalizedViewportPosition.X > 1.0f ||
+                normalizedViewportPosition.Y < 0.0f ||
+                normalizedViewportPosition.Y > 1.0f)
+            {
+                request = null;
+                failure = "The editor picking coordinate is outside the active internal viewport.";
+                return false;
+            }
+
+            AbstractRenderer? renderer = Window?.Renderer ?? AbstractRenderer.Current;
+            if (renderer is null)
+            {
+                request = null;
+                failure = "The viewport has no renderer for editor picking readback.";
+                return false;
+            }
+
+            uint x = (uint)Math.Min(width - 1, (int)(normalizedViewportPosition.X * width));
+            uint y = (uint)Math.Min(height - 1, (int)(normalizedViewportPosition.Y * height));
+            RuntimeGraphicsApiKind backend = renderer.GetAdvancedRenderPipelineCapabilities().Backend;
+            if (backend == RuntimeGraphicsApiKind.Unknown)
+                backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
+            if (backend != RuntimeGraphicsApiKind.Unknown &&
+                RenderClipSpacePolicy.FramebufferTextureYDirection(backend) ==
+                    ERenderClipSpaceYDirection.YDown)
+                y = (uint)(height - 1) - y;
+
+            AdvancedPickingQuery query = new(x, y, viewIndex);
+            if (!TryEnterRenderPipelineReadbackScope(out IDisposable? readbackScope))
+            {
+                request = null;
+                failure = "The viewport's render-resource generation is not available for editor picking readback.";
+                return false;
+            }
+
+            using (readbackScope)
+                return _renderPipeline.TryQueueEditorPicking(renderer, in query,
+                    completed, out request, out failure);
         }
 
         //TODO: provide PickScene with a List<(XRComponent item, object? data)> pool to take from and release to. As few allocations as possible for constant picking every frame.

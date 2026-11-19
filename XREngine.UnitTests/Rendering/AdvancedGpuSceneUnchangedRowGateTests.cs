@@ -256,6 +256,75 @@ public sealed class AdvancedGpuSceneUnchangedRowGateTests
         }
     }
 
+    [Test]
+    public void MovedDynamicRowIsPatchedWithoutWholeScenePlan()
+    {
+        using AdvancedGpuSceneIdentityCacheFixture fixture = new();
+        fixture.AddSource(out RenderCommandMesh3D command, shadowCasterDynamic: true);
+        command.WorldMatrixIsModelMatrix = true;
+        command.WorldMatrix = Matrix4x4.CreateTranslation(1f, 0f, 0f);
+        PublishUntilGated(fixture);
+        AdvancedGpuScenePublicationReference before = fixture.Publisher.CurrentPublication;
+        fixture.Publisher.TryGetCanonicalHandles(0u, out AdvancedGpuHandle draw, out _, out _)
+            .ShouldBeTrue();
+        long patchesBefore = AdvancedMovedRowPatchTelemetry.Patches;
+
+        fixture.Scene.TryGetAdvancedPreparationCommand(0u, out DrawMetadata planned).ShouldBeTrue();
+        (planned.Flags & (uint)GPUIndirectRenderFlags.ShadowCasterDynamic).ShouldNotBe(0u);
+        command.WorldMatrix = Matrix4x4.CreateTranslation(3f, 0f, 0f);
+        fixture.Publish();
+
+        fixture.Publisher.PublicationRejected.ShouldBeFalse(fixture.Publisher.LastPublicationFailure);
+        fixture.Publisher.LastUnchangedRowGateHitCount.ShouldBe(1);
+        fixture.Publisher.LastMovedRowPatchCount.ShouldBe(1);
+        fixture.Publisher.LastPublicationCommittedRetainedRows.ShouldBeTrue();
+        AdvancedMovedRowPatchTelemetry.Patches.ShouldBeGreaterThan(patchesBefore);
+        AdvancedGpuScenePublicationReference after = fixture.Publisher.CurrentPublication;
+        after.Sequence.ShouldBeGreaterThan(before.Sequence);
+        after.Publication.ContentGeneration.ShouldBeGreaterThan(before.Publication.ContentGeneration);
+        after.Publication.TopologyGeneration.ShouldBe(before.Publication.TopologyGeneration);
+        fixture.Publisher.TryGetCanonicalHandles(0u, out AdvancedGpuHandle patchedDraw, out _, out _)
+            .ShouldBeTrue();
+        patchedDraw.ShouldBe(draw);
+        AdvancedGpuSceneIdentityCacheFixture.Snapshot(command).Publication.ShouldBe(after);
+
+        // The previous world settles to the new world one frame after the motion, which is
+        // one more moved-row patch. After that, the patched plan entry equals the published
+        // row, so the gate passes without a moved row.
+        fixture.Publish();
+        fixture.Publisher.LastUnchangedRowGateHitCount.ShouldBe(1);
+        fixture.Publisher.LastMovedRowPatchCount.ShouldBe(1);
+        fixture.Publish();
+        fixture.Publisher.PublicationRejected.ShouldBeFalse(fixture.Publisher.LastPublicationFailure);
+        fixture.Publisher.LastUnchangedRowGateHitCount.ShouldBe(1);
+        fixture.Publisher.LastMovedRowPatchCount.ShouldBe(0);
+    }
+
+    [Test]
+    public void StaticRowThatStartsMovingRunsWholeScenePlan()
+    {
+        using AdvancedGpuSceneIdentityCacheFixture fixture = new();
+        fixture.AddSource(out RenderCommandMesh3D command);
+        command.WorldMatrixIsModelMatrix = true;
+        command.WorldMatrix = Matrix4x4.CreateTranslation(1f, 0f, 0f);
+        PublishUntilGated(fixture);
+        AdvancedGpuScenePublicationReference before = fixture.Publisher.CurrentPublication;
+        long staticFallbacksBefore = AdvancedMovedRowPatchTelemetry.GetFallbacks(
+            EAdvancedMovedRowPatchFallback.StaticRow);
+
+        command.WorldMatrix = Matrix4x4.CreateTranslation(3f, 0f, 0f);
+        fixture.Publish();
+
+        fixture.Publisher.PublicationRejected.ShouldBeFalse(fixture.Publisher.LastPublicationFailure);
+        fixture.Publisher.LastUnchangedRowGateHitCount.ShouldBe(0);
+        fixture.Publisher.LastMovedRowPatchCount.ShouldBe(0);
+        AdvancedMovedRowPatchTelemetry.GetFallbacks(EAdvancedMovedRowPatchFallback.StaticRow)
+            .ShouldBeGreaterThan(staticFallbacksBefore);
+        fixture.Publisher.CurrentPublication.Sequence.ShouldBeGreaterThan(before.Sequence);
+        AdvancedGpuSceneIdentityCacheFixture.Snapshot(command).Publication
+            .ShouldBe(fixture.Publisher.CurrentPublication);
+    }
+
     private static AdvancedDrawSubmissionRecord[] SubmissionRecords(
         AdvancedGpuSceneIdentityCacheFixture fixture,
         in AdvancedGpuScenePublicationReference publication)

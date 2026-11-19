@@ -26,6 +26,10 @@ public sealed record AgentRunListItem
 
     public string RequestedModel { get; init; } = string.Empty;
 
+    public AgentExecutionMode ExecutionMode { get; init; }
+
+    public AgentRuntimeInfo? RuntimeInfo { get; init; }
+
     public string ActualModel { get; init; } = string.Empty;
 
     public string RequestedReasoningEffort { get; init; } = string.Empty;
@@ -47,6 +51,10 @@ public sealed record AgentRunListItem
     public int AttemptCount { get; init; }
 
     public int RetryCount { get; init; }
+
+    public bool TurnCountReported { get; init; } = true;
+
+    public bool RetryCountReported { get; init; } = true;
 
     public bool SwarmEnabled { get; init; }
 }

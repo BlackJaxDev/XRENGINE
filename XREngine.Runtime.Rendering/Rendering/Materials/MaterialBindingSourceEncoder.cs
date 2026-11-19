@@ -21,8 +21,15 @@ namespace XREngine.Rendering.Materials
             bool hasSurfaceBindings = material.SurfaceTextureBindings.Length != 0;
             XRTexture? albedo = material.GetSurfaceTexture(EMaterialTextureSemantic.BaseColor)?.Texture;
             XRTexture? normal = material.GetSurfaceTexture(EMaterialTextureSemantic.Normal)?.Texture;
-            XRTexture? rm = material.GetSurfaceTexture(EMaterialTextureSemantic.Metallic)?.Texture ??
-                material.GetSurfaceTexture(EMaterialTextureSemantic.Roughness)?.Texture;
+            MaterialSurfaceTextureBinding? metallicBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Metallic);
+            MaterialSurfaceTextureBinding? roughnessBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Roughness);
+            XRTexture? rm = metallicBinding?.Texture ?? roughnessBinding?.Texture;
+            // A glTF metallic-roughness texture binds once for both roles: roughness in green and
+            // metallic in blue. The RM slot then reads those channels instead of red and green.
+            bool packedMetallicRoughness = hasSurfaceBindings &&
+                metallicBinding is not null && roughnessBinding is not null &&
+                ReferenceEquals(metallicBinding.Texture, roughnessBinding.Texture) &&
+                roughnessBinding.Channel == 1 && metallicBinding.Channel == 2;
             MaterialSurfaceTextureBinding? emissiveBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Emissive);
             XRTexture? emissive = emissiveBinding?.Texture;
             // A separate opacity map only matters for coverage. A map that is also the base
@@ -55,7 +62,11 @@ namespace XREngine.Rendering.Materials
             if (normal is not null)
                 flags |= 1u << 1;
             if (rm is not null)
+            {
                 flags |= 1u << 2;
+                if (packedMetallicRoughness)
+                    flags |= GPUMaterialEntry.PackedMetallicRoughnessFlag;
+            }
             if (material.GetEffectiveTransparencyMode() is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
             {
                 flags |= GPUMaterialEntry.MaskedCoverageFlag;
@@ -73,6 +84,26 @@ namespace XREngine.Rendering.Materials
                 flags |= 1u << 1;
             flags |= surfaceDetail.Flags;
 
+            // Only an explicit occlusion surface binding with a strength above 0 publishes the
+            // texture and its flag. Without the flag, native shading samples no occlusion texture.
+            MaterialSurfaceTextureBinding? occlusionBinding = hasSurfaceBindings
+                ? material.GetSurfaceTexture(EMaterialTextureSemantic.Occlusion)
+                : null;
+            XRTexture? occlusion = occlusionBinding?.Texture;
+            float occlusionStrength = Math.Clamp(material.OcclusionStrength, 0.0f, 1.0f);
+            uint occlusionControls = 0u;
+            if (occlusion is not null && occlusionStrength > 0.0f)
+            {
+                flags |= GPUMaterialEntry.OcclusionTextureFlag;
+                occlusionControls = (uint)Math.Clamp(occlusionBinding!.Channel, 0, 3) |
+                    (occlusionBinding.TexCoordSet > 0 ? GPUMaterialEntry.OcclusionUv1Flag : 0u);
+            }
+            else
+            {
+                occlusion = null;
+                occlusionStrength = 1.0f;
+            }
+
             return new MaterialBindingSourceSnapshot(
                 new GPUMaterialEntry
                 {
@@ -82,6 +113,8 @@ namespace XREngine.Rendering.Materials
                     AlphaCutoff = material.AlphaCutoff,
                     SurfaceDetailHeightScale = surfaceDetail.HeightScale,
                     ParallaxScale = surfaceDetail.ParallaxScale,
+                    OcclusionStrength = occlusionStrength,
+                    OcclusionControls = occlusionControls,
                 },
                 albedo,
                 normal,
@@ -92,7 +125,8 @@ namespace XREngine.Rendering.Materials
                 ResolveEmissionTextureMetadata(emissiveBinding),
                 emissiveBinding?.UvScaleOffset ?? new Vector4(1.0f, 1.0f, 0.0f, 0.0f),
                 emissiveBinding?.UvRotation ?? 0.0f,
-                opacity);
+                opacity,
+                occlusion);
         }
 
         private readonly record struct SurfaceDetailControls(uint Flags, float HeightScale, float ParallaxScale);

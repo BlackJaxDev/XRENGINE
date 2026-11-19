@@ -1,0 +1,75 @@
+using System.Globalization;
+
+namespace XREngine.Rendering.Commands;
+
+/// <summary>
+/// Reads the Advanced virtual geometry settings once for the process. Two consumers must agree in
+/// every frame: the preparation extractor, which gives a static meshlet draw of a cluster hierarchy
+/// geometry the full meshlet range of every level, and the Vulkan visibility runtime, which compiles
+/// the task stage with the cluster cut that selects meshlets from that range. A change while they
+/// run could give one frame a full range without the cut (every level drawn at once), so the first
+/// read latches both values and a later change takes effect at the next start.
+/// </summary>
+/// <remarks>
+/// Only the Vulkan Advanced path has the cut. On another backend <see cref="Enabled"/> is false and
+/// the extractor keeps the level-0 range, so the OpenGL and WebGPU paths draw as before.
+/// </remarks>
+public static class AdvancedVirtualGeometryPolicy
+{
+    private static readonly Lock Sync = new();
+    private static volatile bool _latched;
+    private static bool _enabled;
+    private static float _pixelThreshold = 1.0f;
+
+    /// <summary>
+    /// True when the Vulkan Advanced path selects a cluster cut for static meshlet draws of cluster
+    /// hierarchy geometry. Reads and latches the settings on the first call with a Vulkan renderer.
+    /// </summary>
+    public static bool Enabled
+    {
+        get
+        {
+            if (!_latched)
+                Latch();
+            return _latched && _enabled;
+        }
+    }
+
+    /// <summary>The latched cut threshold, in render pixels of projected error.</summary>
+    public static float PixelThreshold
+    {
+        get
+        {
+            if (!_latched)
+                Latch();
+            return _pixelThreshold;
+        }
+    }
+
+    /// <summary>
+    /// Defines that select the cut variant of the meshlet task stage, or an empty string when the
+    /// cut is off. The off variant therefore compiles from the same source text as before.
+    /// </summary>
+    public static string TaskPreamble
+        => Enabled
+            ? "#define XR_ADV_CLUSTER_LOD_CUT 1\n#define XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD " +
+              PixelThreshold.ToString("0.0###", CultureInfo.InvariantCulture) + "\n"
+            : string.Empty;
+
+    private static void Latch()
+    {
+        // Before the renderer exists the backend is unknown; read again on the next call.
+        if (!RuntimeEngine.Rendering.State.IsVulkan)
+            return;
+        lock (Sync)
+        {
+            if (_latched)
+                return;
+            _enabled = RuntimeEngine.Rendering.Settings.AdvancedVirtualGeometry;
+            _pixelThreshold = RuntimeEngine.Rendering.Settings.AdvancedVirtualGeometryPixelThreshold;
+            _latched = true;
+            XREngine.Debug.Rendering(
+                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
+        }
+    }
+}

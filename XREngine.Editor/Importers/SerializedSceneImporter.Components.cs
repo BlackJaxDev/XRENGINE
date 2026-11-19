@@ -1383,6 +1383,12 @@ internal static partial class SerializedSceneImporter
         }
     }
 
+    /// <summary>
+    /// Imports one Unity material file and caches the result for the active project import.
+    /// A material that cannot be imported does not stop the prefab import. The importer replaces it
+    /// with a magenta fallback material in the same renderer slot, records a partial-import warning
+    /// in the import manifest, and writes the error to the log.
+    /// </summary>
     private static XRMaterial? LoadSerializedMaterial(string materialPath, ImportState state)
     {
         return state.Context.GetOrAddCached(
@@ -1394,39 +1400,39 @@ internal static partial class SerializedSceneImporter
                     SerializedMaterialImportResult result = SerializedMaterialImporter.ImportWithReport(materialPath, state.Context);
                     foreach (string warning in result.Warnings)
                         Debug.LogWarning(warning);
-                    return result.Material
-                        ?? throw new SourceVisualImportException($"Unity material importer returned no material for '{materialPath}'.");
+                    if (result.Material is not null)
+                        return result.Material;
+
+                    string failure = result.ConversionReport is { Failures.Count: > 0 } report
+                        ? string.Join("; ", report.Failures)
+                        : $"Unity material importer returned no material for '{materialPath}'.";
+                    throw new SourceVisualImportException(failure);
                 }
-                catch (Exception ex) when (IsRecoverableMaterialImportFailure(ex))
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     string materialName = Path.GetFileNameWithoutExtension(materialPath);
-                    if (state.Context.AllowPartialImport)
-                    {
-                        state.Context.MarkOutcome(materialPath, SourceImportConversionOutcome.Failed);
-                        state.Context.ReportPartialImport("UNITYPARTIAL0003",
-                            $"Material '{materialName}' could not be converted. A fallback material is used: {ex.Message}",
-                            materialPath);
-                        return CreateFallbackSerializedMaterial($"Missing {materialName}", new ColorF4(1f, 0f, 1f, 1f));
-                    }
-
-                    state.Context.AddDiagnostic(
-                        "UNITYMAT0001",
-                        SourceImportDiagnosticSeverity.Error,
-                        SourceImportDiagnosticCategory.MaterialDowngrade,
-                        $"Required Unity material '{materialName}' could not be imported: {ex.Message}",
+                    if (!IsExpectedMaterialImportFailure(ex))
+                        Debug.LogException(ex, $"Unexpected error while importing Unity material '{materialName}'.");
+                    state.Context.MarkOutcome(materialPath, SourceImportConversionOutcome.Failed);
+                    state.Context.ReportPartialImport("UNITYPARTIAL0003",
+                        $"Material '{materialName}' could not be converted. A fallback material is used: {ex.Message}",
                         materialPath);
-                    throw new SourceVisualImportException(
-                        $"Required Unity material '{materialName}' could not be imported: {ex.Message}");
+                    return CreateFallbackSerializedMaterial($"Missing {materialName}", new ColorF4(1f, 0f, 1f, 1f));
                 }
             });
     }
 
-    private static bool IsRecoverableMaterialImportFailure(Exception exception)
+    /// <summary>
+    /// Returns true for material failures that come from the source data, such as unreadable files or
+    /// unsupported source content. Other exceptions are importer defects, so the caller also logs
+    /// their stack trace.
+    /// </summary>
+    private static bool IsExpectedMaterialImportFailure(Exception exception)
         => exception switch
         {
             SourceVisualImportException or InvalidDataException or IOException or UnauthorizedAccessException or NotSupportedException => true,
             AggregateException aggregate => aggregate.InnerExceptions.Count > 0 &&
-                aggregate.InnerExceptions.All(IsRecoverableMaterialImportFailure),
+                aggregate.InnerExceptions.All(IsExpectedMaterialImportFailure),
             _ => false,
         };
 

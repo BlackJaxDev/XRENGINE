@@ -23,11 +23,15 @@ blend/queue state.
 
 ## Vertex contract
 
-`vertex_effects.glsl` runs after compute skinning and morph inputs in
-the canonical vertex variants. The generated mesh vertex shader carries the
-same core local transform, rounding, barrel, Uzumore, and world-translation
-contract into override passes. Material vertex values are uploaded through a
-cached `SettingVertexUniforms` binding; the draw loop does not allocate.
+`vertex_manipulation.glsl` supplies the same vertex effects to static Uber
+shaders and generated mesh shaders. Generated shaders read the canonical
+compute or direct deformation result before they apply these effects. They
+then expand the existing outline and publish the final position and normal.
+The helper includes local transforms, vertex-color offsets, glitch, wave,
+equation, rounding, barrel, depth bulge, look-at, and world translation.
+`vertex_effects.glsl` keeps the static Uber outline helpers. Material vertex
+values use a cached `SettingVertexUniforms` binding; the draw loop does not
+allocate.
 
 Materials using these effects opt out of GPU-indirect substitution because
 that path owns a material-indexed vertex program. `_VertexConservativeBounds`

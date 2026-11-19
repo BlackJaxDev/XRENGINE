@@ -83,10 +83,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
+    <ProjectReference Include="..\XREngine.AgentRuntimes\XREngine.AgentRuntimes.csproj" />
     <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Audio.SteamAudio\XREngine.Audio.SteamAudio.csproj" />
     <ProjectReference Include="..\XREngine.ControlPlane\XREngine.ControlPlane.csproj" />
+    <ProjectReference Include="..\XREngine.UnityScriptHost.Contracts\XREngine.UnityScriptHost.Contracts.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.GaussianBaking\XREngine.GaussianBaking.csproj" />
@@ -139,6 +141,7 @@
 
   <Import Project="../Build/Shared/BrowserContentPublishing.props" />
   <Import Project="../Build/Shared/BrowserPublisherPayload.targets" />
+  <Import Project="../Build/Shared/PatchedGlfw.targets" />
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Audio.Audio2Face\XREngine.Audio.Audio2Face.csproj" />
   </ItemGroup>

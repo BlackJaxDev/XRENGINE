@@ -202,6 +202,12 @@ internal sealed partial class VulkanFrameLoop
         _deviceContext.SetDebugObjectName(ObjectType.Semaphore, sync._graphicsTimelineSemaphore.Handle, "Timeline.Graphics");
         _deviceContext.SetDebugObjectName(ObjectType.Semaphore, sync._presentTimelineSemaphore.Handle, "Timeline.Present");
         _deviceContext.SetDebugObjectName(ObjectType.Semaphore, sync._transferTimelineSemaphore.Handle, "Timeline.Transfer");
+        // The lifetime completion sweep may query these frame-loop timelines; they live until
+        // DestroySyncObjects unregisters them.
+        VulkanResourceLifetimeTracker lifetimeTracker = _resourceRuntime.Lifetime.Tracker;
+        lifetimeTracker.RegisterSweepableTimeline(sync._graphicsTimelineSemaphore.Handle);
+        lifetimeTracker.RegisterSweepableTimeline(sync._presentTimelineSemaphore.Handle);
+        lifetimeTracker.RegisterSweepableTimeline(sync._transferTimelineSemaphore.Handle);
 
         SemaphoreCreateInfo binary = new() { SType = StructureType.SemaphoreCreateInfo };
         for (int index = 0; index < FrameSlotCount; index++)
@@ -228,6 +234,10 @@ internal sealed partial class VulkanFrameLoop
                 Api.DestroySemaphore(_deviceContext.Device, sync.acquireBridgeSemaphores[index], null);
         if (_outputRuntime.Desktop.PresentBridgeSemaphores is not null && _targetDriver.RequiresSwapchainOutput)
             DestroyDesktopPresentBridgeSemaphores();
+        VulkanResourceLifetimeTracker lifetimeTracker = _resourceRuntime.Lifetime.Tracker;
+        lifetimeTracker.UnregisterSweepableTimeline(sync._graphicsTimelineSemaphore.Handle);
+        lifetimeTracker.UnregisterSweepableTimeline(sync._presentTimelineSemaphore.Handle);
+        lifetimeTracker.UnregisterSweepableTimeline(sync._transferTimelineSemaphore.Handle);
         if (sync._graphicsTimelineSemaphore.Handle != 0) Api.DestroySemaphore(_deviceContext.Device, sync._graphicsTimelineSemaphore, null);
         if (sync._presentTimelineSemaphore.Handle != 0) Api.DestroySemaphore(_deviceContext.Device, sync._presentTimelineSemaphore, null);
         if (sync._transferTimelineSemaphore.Handle != 0) Api.DestroySemaphore(_deviceContext.Device, sync._transferTimelineSemaphore, null);

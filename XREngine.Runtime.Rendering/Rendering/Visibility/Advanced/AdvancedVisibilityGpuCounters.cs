@@ -21,7 +21,10 @@ public struct AdvancedVisibilityGpuCounters
     public uint UnsupportedDisplacement;
     public uint PhysicsChainBoundsRouteRejected;
     public uint PhysicsChainBoundsNumericRejected;
-    public uint Reserved2;
-    public uint Reserved3;
-    public uint Reserved4;
+    /// <summary>Meshlets that the early-raster task stage launched.</summary>
+    public uint MeshletEarlyVisible;
+    /// <summary>Meshlets that the early-raster task stage culled against the view frustum.</summary>
+    public uint MeshletEarlyFrustumCulled;
+    /// <summary>Meshlets that the early-raster task stage culled with their normal cone.</summary>
+    public uint MeshletEarlyConeCulled;
 }

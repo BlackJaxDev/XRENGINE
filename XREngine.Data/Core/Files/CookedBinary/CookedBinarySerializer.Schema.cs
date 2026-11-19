@@ -449,7 +449,7 @@ public static partial class CookedBinarySerializer
             payloadNode.SizeDescription = $"{actualPayloadSize} byte{(actualPayloadSize == 1 ? string.Empty : "s")}";
             payloadNode.Notes = string.IsNullOrWhiteSpace(payloadNode.Notes)
                 ? note
-                : payloadNode.Notes + "; " + note;
+                : $"{payloadNode.Notes}; {note}";
             payloadNode.Notes += "; expanded for inspection, size reflects actual serialized payload";
             node.MutableChildren.Add(payloadNode);
         }
@@ -469,7 +469,7 @@ public static partial class CookedBinarySerializer
             var payloadNode = BuildTypeNode("payload", modelType, allowCustom: true);
             payloadNode.Notes = string.IsNullOrWhiteSpace(payloadNode.Notes)
                 ? note
-                : payloadNode.Notes + "; " + note;
+                : $"{payloadNode.Notes}; {note}";
             node.MutableChildren.Add(payloadNode);
         }
 

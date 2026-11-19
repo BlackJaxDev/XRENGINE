@@ -111,7 +111,8 @@ public static partial class AdvancedPackedVertexCodec
                 texCoord2.IsPresent ? texCoord2.Read<Vector2>(vertex) : Vector2.Zero,
                 texCoord3.IsPresent ? texCoord3.Read<Vector2>(vertex) : Vector2.Zero,
                 hasTexCoord2,
-                hasTexCoord3);
+                hasTexCoord3,
+                texCoord0.IsPresent);
         }
     }
 

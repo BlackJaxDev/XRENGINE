@@ -43,6 +43,7 @@ internal sealed class VulkanGraphicsPipelineBuildRequest(
         public VulkanGraphicsPipelineKey Key { get; } = key;
         public VulkanGraphicsPipelineCompileKey CompileKey { get; } = new(key);
         public string PipelineName { get; } = pipelineName;
+        public string ProgramName { get; } = program.Data.Name ?? "<unnamed program>";
         public uint ColorAttachmentCount { get; } = colorAttachmentCount;
         public PipelineLayout PipelineLayout { get; } = pipelineLayout;
         /// <summary>Captured independently of mapping count because heap pipelines may have no reflected resources.</summary>

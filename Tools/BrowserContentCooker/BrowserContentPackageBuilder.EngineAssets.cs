@@ -349,7 +349,7 @@ public static partial class BrowserContentPackageBuilder
                     Require(Regex.IsMatch(scope, "^[a-z][a-z0-9.-]{0,63}\\z", RegexOptions.CultureInvariant),
                         "Pipeline artifact scope must be a bounded lowercase identifier.");
                 }
-                string bindingKey = scope is null ? pass : scope + "::" + pass;
+                string bindingKey = scope is null ? pass : $"{scope}::{pass}";
                 Require(bindings.Add(bindingKey), "Duplicate pipeline artifact binding.");
                 JsonElement identityValue = pipeline.GetProperty("descriptorIdentity");
                 Require(identityValue.ValueKind == JsonValueKind.String, "Pipeline artifact identity must be a string.");

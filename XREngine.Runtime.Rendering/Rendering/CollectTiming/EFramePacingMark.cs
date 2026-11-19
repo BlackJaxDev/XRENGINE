@@ -95,4 +95,23 @@ public enum EFramePacingMark : byte
     DesktopReadyComputeRecording,
     /// <summary>Desktop readiness finished plan acceptance.</summary>
     DesktopReadyAccepted,
+    /// <summary>
+    /// The window render circuit breaker caught a render-callback exception and stopped
+    /// rendering of the window for its hold time.
+    /// </summary>
+    RenderCircuitBreakerTrip,
+    /// <summary>
+    /// The collect thread starts to wait for the render thread to submit the XR frame of the
+    /// last publication, before it collects the next frame (XR collect pacing).
+    /// </summary>
+    CollectWaitXrSubmitStart,
+    /// <summary>The XR submit wait of the collect thread ended.</summary>
+    CollectWaitXrSubmitEnd,
+    /// <summary>
+    /// The collect thread starts to wait for <c>xrWaitFrame</c> of the next XR frame, after
+    /// the swap and before the publication (XR collect pacing).
+    /// </summary>
+    CollectWaitXrFrameStart,
+    /// <summary>The XR frame wait of the collect thread ended.</summary>
+    CollectWaitXrFrameEnd,
 }

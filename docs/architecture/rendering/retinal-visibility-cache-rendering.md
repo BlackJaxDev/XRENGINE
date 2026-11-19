@@ -35,6 +35,15 @@ does not have a backend kernel. This is a feature, not a placeholder accident:
 it prevents the engine from pretending the cache path is doing GPU work when it
 is only proving resource and pass topology.
 
+Current behavior: every active RVC mode (`ForwardPlusOracle`, `VisibilityOnlyDebug`,
+`MaterialCache`, `SharedLighting`, `Full`) renders through the hosted Advanced stage
+family (`RvcRenderPipeline.GenerateCommandChain` returns
+`AdvancedStageFamily.CreateHostedCommandChain`), so the image is the Advanced image:
+visibility raster, reconstruction, tile classification and compute native shading.
+`ForwardPlusOracle` does not render Forward+ today. The RVC passes
+(`AppendRvcPassCommands`, `DeclareRvcResources`) are not called. `Off` renders no XR
+output.
+
 The foundation covers:
 
 - explicit runtime view-set contracts for mono, stereo, quad wide/inset, mirror,
@@ -67,6 +76,7 @@ choices, and foveal inset artifacts.
 
 ### Forward+ Remains The Oracle
 
+Design intent; not implemented yet (see the current behavior above).
 Forward+ is kept as both a companion path and the correctness oracle. Transparent
 and order-dependent materials remain on Forward+, and every RVC quality claim is
 compared against a foveated Forward+ baseline when the runtime supports it.
@@ -182,6 +192,47 @@ The OpenXR path now:
 The design keeps the OpenXR runtime in charge of view count and dimensions. That
 prevents the engine from inventing quad-view assumptions that disagree with the
 runtime.
+
+### Quad View Pairs
+
+With quad view active (`VR.RvcQuadView` or `XRE_UNIT_TEST_VR_RVC_QUAD_VIEW=true`
+on a runtime with four views), the eye path renders two layered stereo pairs:
+
+- The wide pair (views 0 and 1) uses the rig eye cameras and the wide stereo
+  viewport (`XRViewport.OpenXrViewPair` = 0).
+- The inset pair (views 2 and 3) uses inset cameras that share the eye
+  transforms, its own stereo viewport (`OpenXrViewPair` = 1) and its own RVC
+  pipeline instance at the inset extent. It renders after the wide pair in the
+  same frame.
+- Both the full collect and the speculative next-frame collect
+  (`OpenXRAPI.SpeculativeCollect.cs`) collect the inset pair. A collect path
+  that skips it leaves the inset with no published frame package.
+- The wide pair renders at `RvcQuadViewWideResolutionScale` (default 0.5)
+  times the eye resolution, because the inset covers the center of each eye at
+  full resolution. A change recreates the OpenXR swapchains.
+- With `RvcQuadViewSharedVisibilityEnabled` (default false), the inset uses the
+  wide pair's visibility. The inset pipeline instance has
+  `ConsumesVisibilityFrom` set to the wide instance. After the wide pair's late
+  visibility, its Vulkan bank publishes its persistent visibility state. In the
+  inset's visibility preparation, the recording copies those records after the
+  inset's own records, and `EarlyVisibility.comp` runs in shared mode (bit 31 of
+  the view index). A candidate is drawn when it is in the inset frustum and the
+  wide view of the same eye drew it. Nothing is deferred, so the inset's late
+  visibility has no work. If the wide pair did not publish in the same render
+  frame, or its candidate or view count differs, the inset runs its normal
+  visibility. With `XRE_VULKAN_RECORDING_DIAG=1`, the consumed and fallback
+  counts go to `openxr-pair-failures.log`. Set
+  `XRE_OPENXR_QUAD_SHARED_VISIBILITY=0` to turn it off for an A/B run.
+- GPU timing dumps label the quad-view stereo records `Advanced[xr-wide]` and
+  `Advanced[xr-inset]` (`Advanced[xr-stereo]` without quad view).
+- The inset copies the wide pair's post-process settings when the wide state
+  changes.
+- The inset uses the wide pair's auto exposure. The wide instance publishes its
+  exposure to a `SharedAutoExposureChannel` (a one-float storage buffer), and
+  the inset's `VPRC_ExposureUpdate` copies that value instead of metering its
+  own image. Without this, the inset meters a different part of the scene and
+  shows a brightness step at its border. If no value was published in the same
+  render frame, the inset meters its own image and logs a warning.
 
 ### Visibility Masks
 
@@ -475,6 +526,9 @@ to its opaque shading. RVC eyes therefore use foveated quad shading in compute:
   visibility identity and the view record, so shading and fill always agree.
 - Edges between primitives stay per pixel, because a follower needs the same
   primitive as its representative.
+- Advanced eyes use the same rule and fill pass for
+  [edge half-rate shading](advanced-render-pipeline.md#edge-half-rate-shading-for-eye-outputs),
+  with one radius around the lens center and 2x2 blocks only.
 
 ## Shared Head-Space Lighting
 
@@ -607,6 +661,8 @@ a documented warm-cache policy.
 | `XREngine.Runtime.XR.OpenXR/OpenXRAPI.State.cs` | View, swapchain, image, visibility-mask, and diagnostic storage sized by `RenderFrameViewSet.MaxViewCount`. |
 | `XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs` | OpenGL swapchain setup and per-view Forward+ rendering path. |
 | `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs` | Vulkan swapchain setup, per-view rendering path, and quad-safe storage/prewarm plumbing. |
+| `XREngine.Runtime.XR.OpenXR/OpenXRAPI.InsetPair.cs` | Quad-view inset pair: cameras, stereo viewport, pipeline, collect, swap, and the shared exposure link to the wide pair. |
+| `XREngine.Runtime.Rendering/Rendering/PostProcessing/SharedAutoExposureChannel.cs` and `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.AutoExposureSharing.cs` | Shared auto exposure buffer and the Vulkan publish and consume dispatches. |
 | `Build/CommonAssets/Shaders/Advanced/Rvc/RvcShadeletTelemetry.comp` | Shadelet telemetry kernel: intra-view unique keys and stereo reprojection key matches. |
 | `XREngine.Runtime.Core/Settings/RvcRuntimeContracts/Records/RvcShadeletTelemetryCounters.cs` | Telemetry counter record, GPU word layout, decode, and reuse ratios. |
 | `XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.NativeShading.cs` | Records the telemetry dispatch after the last native shading view and its counter readback. |

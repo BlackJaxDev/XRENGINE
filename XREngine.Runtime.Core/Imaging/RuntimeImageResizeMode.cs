@@ -7,4 +7,6 @@ public enum RuntimeImageResizeMode
     Bilinear,
     Lanczos,
     Adaptive,
+    /// <summary>Average each channel without using alpha to weight RGB.</summary>
+    IndependentChannels,
 }

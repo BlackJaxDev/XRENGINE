@@ -138,6 +138,12 @@ internal sealed partial class VulkanTextureUploadService
     private const double SlowTransferDrainLogMilliseconds = 4.0;
 
     /// <summary>
+    /// Auxiliary log for upload timing probes. Auxiliary logs are written in
+    /// every build configuration, so Release runs can be measured too.
+    /// </summary>
+    internal const string TextureUploadTimingLogFile = "texture-upload-timing.log";
+
+    /// <summary>
     /// Logs where one slow transfer drain step spent its time: ready-batch
     /// gather and submit, fence poll, batch completion, and child completion
     /// (chunk retirement, next-chunk queueing, and final publication). This
@@ -155,7 +161,7 @@ internal sealed partial class VulkanTextureUploadService
         if (totalMilliseconds < SlowTransferDrainLogMilliseconds)
             return;
 
-        Debug.VulkanWarning(
+        Debug.WriteAuxiliaryLog(TextureUploadTimingLogFile,
             $"[VkTextureUpload.DrainSlow] total={totalMilliseconds:F2} ms " +
             $"submit={Stopwatch.GetElapsedTime(drainStart, submitEnd).TotalMilliseconds:F2} ms " +
             $"poll={Stopwatch.GetElapsedTime(submitEnd, completeStart).TotalMilliseconds:F2} ms " +
@@ -455,11 +461,14 @@ internal sealed partial class VulkanTextureUploadService
         VulkanImportedTexturePendingUpload upload,
         VulkanTextureUploadManifest? manifest)
     {
+        long probeStart = Stopwatch.GetTimestamp();
         long completedBytes = RetireCompletedTextureUploadChunk(context.Resources, upload);
+        long probeRetired = Stopwatch.GetTimestamp();
         // The batch fence and command-buffer cleanup have already completed.
         // Recycle only retirement-ready staging leases so the protected ring can
         // admit the next foreground chunk without a synthetic frame advance.
         _ = context.Resources.DrainCompletedStagingBuffers(maxItems: 4);
+        long probeDrained = Stopwatch.GetTimestamp();
         Interlocked.Increment(ref s_chunksCompleted);
         Interlocked.Add(ref s_chunkBytesCompleted, completedBytes);
         RecordUploadChunkProgress(upload.Request, submitted: false);
@@ -479,8 +488,12 @@ internal sealed partial class VulkanTextureUploadService
         }
         if (!upload.CurrentChunkIsFinal)
         {
-            if (!ResumeNextImportedTextureChunk(context, upload))
+            long probeResumeStart = Stopwatch.GetTimestamp();
+            bool resumed = ResumeNextImportedTextureChunk(context, upload);
+            long probeResumed = Stopwatch.GetTimestamp();
+            if (!resumed)
                 FailSubmittedUpload(upload, "texture chunk could not resume after completion", manifest);
+            LogChildPhases(upload, probeStart, probeRetired, probeDrained, probeResumeStart, probeResumed, probeResumed, completedBytes);
             return;
         }
         long publishStart = Stopwatch.GetTimestamp();
@@ -492,7 +505,7 @@ internal sealed partial class VulkanTextureUploadService
         // Log only a slow publication, so the fast path builds no string.
         if (publishMilliseconds >= SlowTransferDrainLogMilliseconds)
         {
-            Debug.VulkanWarning(
+            Debug.WriteAuxiliaryLog(TextureUploadTimingLogFile,
                 $"[VkTextureUpload.Publish] texture='{upload.Request.TextureName}' publish={publishMilliseconds:F2} ms " +
                 $"mipLevels={upload.MipLevels} gpuMips={upload.ResidentData.GenerateMipChainOnGpu} extent={upload.Extent.Width}x{upload.Extent.Height} format={upload.Format}");
         }
@@ -503,6 +516,37 @@ internal sealed partial class VulkanTextureUploadService
                 upload.Ticket,
                 failure ?? "final texture upload publication failed",
                 failureDisposition);
+        LogChildPhases(upload, probeStart, probeRetired, probeDrained, publishStart, publishStart, Stopwatch.GetTimestamp(), completedBytes);
+    }
+
+    /// <summary>
+    /// Writes one child-completion sub-phase line when the child took the probe
+    /// threshold or more. A non-final chunk has resume time and no publish time;
+    /// the final chunk has publish time and no resume time.
+    /// </summary>
+    private static void LogChildPhases(
+        VulkanImportedTexturePendingUpload upload,
+        long start,
+        long retired,
+        long drained,
+        long resumeStart,
+        long resumeEnd,
+        long publishEnd,
+        long completedBytes)
+    {
+        long end = Stopwatch.GetTimestamp();
+        double total = VulkanTextureUploadTimingProbe.Ms(start, end);
+        if (total < VulkanTextureUploadTimingProbe.ThresholdMilliseconds)
+            return;
+
+        VulkanTextureUploadTimingProbe.Write(
+            $"[VkTextureUpload.ChildPhases] texture='{upload.Request.TextureName}' finalChunk={upload.CurrentChunkIsFinal} " +
+            $"chunkBytes={completedBytes} total={total:F2} ms " +
+            $"retireChunk={VulkanTextureUploadTimingProbe.Ms(start, retired):F2} " +
+            $"drainStaging={VulkanTextureUploadTimingProbe.Ms(retired, drained):F2} " +
+            $"progressAndCheck={VulkanTextureUploadTimingProbe.Ms(drained, resumeStart):F2} " +
+            $"resumeNextChunk={VulkanTextureUploadTimingProbe.Ms(resumeStart, resumeEnd):F2} " +
+            $"publish={VulkanTextureUploadTimingProbe.Ms(resumeEnd, publishEnd):F2}");
     }
 
     private void FailSubmittedUpload(

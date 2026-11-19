@@ -3,7 +3,6 @@
 
 #include "Advanced/Shading/NativeUberMaterial.glslinc"
 #include "Uber/source_dissolve.glsl"
-#include "Uber/lost_eye.glsl"
 
 struct XRUberCoordinates
 {
@@ -98,7 +97,7 @@ vec3 XR_UBER_AdjustBaseColor(XRUberCoordinates coordinates, vec3 color)
         UBER_V(_MainColorAdjustTexturePan).xy, coordinates, vec4(1.0));
     color = mix(vec3(XR_UBER_Luminance(color)), color,
         1.0 + UBER_F(_Saturation) * mask.b);
-    color = clamp(mix(color, color * (UBER_F(_MainBrightness) + 1.0), mask.g), 0.0, 1.0);
+    color += UBER_F(_MainBrightness) * mask.g;
     if (UBER_F(_MainHueShiftToggle) > 0.5)
     {
         float shift = (UBER_F(_MainHueShift) + UBER_F(_MainHueShiftSpeed) * coordinates.time) * mask.r;
@@ -238,7 +237,6 @@ bool XR_UBER_ApplyCoverage(
     out vec3 edgeEmission,
     bool shadowPass)
 {
-    XR_UBER_ResetGlobalMaskOverrides();
     baseColor = vec4(0.0);
     edgeEmission = vec3(0.0);
     int faceDiscard = UBER_I(_FaceDiscard);
@@ -253,6 +251,8 @@ bool XR_UBER_ApplyCoverage(
         vec2 tileDx;
         vec2 tileDy;
         XR_UBER_CoverageUv(coordinates, UBER_I(_UDIMDiscardUV), tileUv, tileDx, tileDy);
+        if (UBER_F(_SourceUdimFlipV) > 0.5)
+            tileUv.y = 1.0 - tileUv.y;
         vec2 tile = floor(tileUv);
         if (all(greaterThanEqual(tile, vec2(0.0))) &&
             all(lessThan(tile, vec2(4.0))))
@@ -313,23 +313,22 @@ bool XR_UBER_ApplyCoverage(
         else if (mode == 4) alpha = clamp(alpha - mask, 0.0, 1.0);
     }
     alpha = clamp(alpha + UBER_F(_AlphaMod), 0.0, 1.0);
-    if (UBER_F(_AlphaForceOpaque) > 0.5)
+    if (UBER_F(_SourceAlphaClip) <= 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
         alpha = 1.0;
 
     base.a = alpha;
     XR_UBER_ApplyDecals(coordinates, base, edgeEmission);
     XR_UBER_ApplyFlipbook(coordinates, shadowPass, base, edgeEmission);
-    if (XR_UBER_HasFeature(XR_UBER_FEATURE_EXTENDED_EFFECTS) &&
-        UBER_I(_ProceduralMode) == 6)
-    {
-        base.a = xrLostEyeCoverageAlpha(coordinates.uv0, UBER_V(_MainTex_ST), UBER_V(_LostEyeParams3));
-    }
     int blendMode = UBER_I(_Mode);
     baseColor = base;
     vec3 dissolveEmission;
     bool keep = XR_UBER_ApplyDissolve(coordinates, baseColor, dissolveEmission);
     edgeEmission += dissolveEmission;
-    return keep && ((blendMode != 1 && blendMode != 9) || baseColor.a >= UBER_F(_Cutoff));
+    // Source ForceOpaque runs after decals and dissolve but before the clip test.
+    if (UBER_F(_SourceAlphaClip) > 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
+        baseColor.a = 1.0;
+    return keep && ((blendMode != 1 && UBER_F(_SourceAlphaClip) <= 0.5) ||
+        baseColor.a >= UBER_F(_Cutoff));
 }
 
 bool XR_UBER_ApplyCoverage(

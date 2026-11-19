@@ -38,7 +38,7 @@ public sealed class RuntimeFactoryGenerator : IIncrementalGenerator
         {
             var name = assembly.Identity.Name;
             if (mode == "CommandsOnly" ? name != "XREngine.Runtime.Rendering" :
-                mode == "Portable" ? !PortableAssemblies.Contains(";" + name + ";") : !DesktopAssemblies.Contains(";" + name + ";"))
+                mode == "Portable" ? !PortableAssemblies.Contains($";{name};") : !DesktopAssemblies.Contains($";{name};"))
                 continue;
             Collect(assembly.GlobalNamespace, types, seen, compilation);
         }
@@ -50,45 +50,47 @@ public sealed class RuntimeFactoryGenerator : IIncrementalGenerator
         foreach (var type in types)
         {
             var fullName = Name(type);
-            var create = "new " + fullName + "()";
+            var create = $"new {fullName}()";
             var parameterless = HasConstructor(type, compilation);
             if (mode != "CommandsOnly" && Inherits(type, "XREngine.Scene.Transforms.TransformBase") && parameterless)
-                Line(source, "global::XREngine.Scene.Transforms.TransformFactoryRegistry.Register(typeof(" + fullName + "), static () => " + create + ");");
+                Line(source, $"global::XREngine.Scene.Transforms.TransformFactoryRegistry.Register(typeof({fullName}), static () => {create});");
             if (mode != "CommandsOnly" && Inherits(type, "XREngine.Components.XRComponent") && parameterless)
-                Line(source, "global::XREngine.Components.RuntimeComponentFactoryRegistry.Register(typeof(" + fullName + "), static () => " + create + ");");
+                Line(source, $"global::XREngine.Components.RuntimeComponentFactoryRegistry.Register(typeof({fullName}), static () => {create});");
             if (Inherits(type, "XREngine.Rendering.Pipelines.Commands.ViewportRenderCommand") && parameterless &&
                 (mode == "CommandsOnly" || type.ContainingAssembly.Identity.Name != "XREngine.Runtime.Rendering"))
             {
-                Line(source, "global::XREngine.Rendering.Pipelines.Commands.ViewportRenderCommandContainer.RegisterBuiltInCommandFactory(typeof(" + fullName + "), static () => " + create + ");");
+                Line(source, $"global::XREngine.Rendering.Pipelines.Commands.ViewportRenderCommandContainer.RegisterBuiltInCommandFactory(typeof({fullName}), static () => {create});");
                 if (type.GetAttributes().Any(static attribute => attribute.AttributeClass?.Name == "RenderPipelineScriptCommandAttribute"))
-                    Line(source, "global::XREngine.Rendering.RenderPipelineScript.RegisterCommandScriptName(typeof(" + fullName + "), null, true);");
+                    Line(source, $"global::XREngine.Rendering.RenderPipelineScript.RegisterCommandScriptName(typeof({fullName}), null, true);");
             }
             if (mode == "CommandsOnly")
                 continue;
             if (Inherits(type, "XREngine.Rendering.XRCameraParameters"))
             {
                 var factory = HasConstructor(type, compilation, SpecialType.System_Single, SpecialType.System_Single)
-                    ? "static (nearZ, farZ) => new " + fullName + "(nearZ, farZ)"
+                    ? $"static (nearZ, farZ) => new {fullName}(nearZ, farZ)"
                     : HasConstructor(type, compilation, SpecialType.System_Boolean, SpecialType.System_Single, SpecialType.System_Single)
-                        ? "static (nearZ, farZ) => new " + fullName + "(true, nearZ, farZ)"
-                        : parameterless ? "static (_, _) => " + create : null;
+                        ? $"static (nearZ, farZ) => new {fullName}(true, nearZ, farZ)"
+                        : parameterless ? $"static (_, _) => {create}" : null;
                 if (factory != null)
-                    Line(source, "global::XREngine.Rendering.XRCameraParameters.RegisterFactory(typeof(" + fullName + "), " + factory + ");");
+                    Line(source, $"global::XREngine.Rendering.XRCameraParameters.RegisterFactory(typeof({fullName}), {factory});");
             }
             if (Inherits(type, "XREngine.Rendering.PostProcessSettings") && parameterless)
-                Line(source, "global::XREngine.Rendering.PostProcessing.PostProcessBackingFactoryRegistry.Register(typeof(" + fullName + "), static () => " + create + ");");
+                Line(source, $"global::XREngine.Rendering.PostProcessing.PostProcessBackingFactoryRegistry.Register(typeof({fullName}), static () => {create});");
             if (Inherits(type, "XREngine.Rendering.RenderPipeline") && parameterless)
-                Line(source, "global::XREngine.Rendering.RenderPipeline.RegisterOpenXrPipelineFactory(typeof(" + fullName + "), static source => new " + fullName + " { IsShadowPass = source.IsShadowPass });");
+                Line(source, $$"""global::XREngine.Rendering.RenderPipeline.RegisterOpenXrPipelineFactory(typeof({{fullName}}), static source => new {{fullName}} { IsShadowPass = source.IsShadowPass });""");
             if (type.DeclaredAccessibility != Accessibility.Public)
                 continue;
             if (InheritsConstructed(type, "PlayerController", "LocalInputInterface") && HasConstructorNamed(type, compilation, "ELocalPlayerIndex"))
             {
-                Line(source, "global::XREngine.Input.RuntimePlayerControllerServices.RegisterLocalControllerFactory(typeof(" + fullName + "), static index => new " + fullName + "(index), makeDefault: " + (!localDefault ? "true" : "false") + ");");
+                string makeDefault = !localDefault ? "true" : "false";
+                Line(source, $"global::XREngine.Input.RuntimePlayerControllerServices.RegisterLocalControllerFactory(typeof({fullName}), static index => new {fullName}(index), makeDefault: {makeDefault});");
                 localDefault = true;
             }
             if (InheritsConstructed(type, "PlayerController", "ServerInputInterface") && HasConstructor(type, compilation, SpecialType.System_Int32))
             {
-                Line(source, "global::XREngine.Input.RuntimePlayerControllerServices.RegisterRemoteControllerFactory(typeof(" + fullName + "), static serverPlayerIndex => new " + fullName + "(serverPlayerIndex), makeDefault: " + (!remoteDefault ? "true" : "false") + ");");
+                string makeDefault = !remoteDefault ? "true" : "false";
+                Line(source, $"global::XREngine.Input.RuntimePlayerControllerServices.RegisterRemoteControllerFactory(typeof({fullName}), static serverPlayerIndex => new {fullName}(serverPlayerIndex), makeDefault: {makeDefault});");
                 remoteDefault = true;
             }
         }

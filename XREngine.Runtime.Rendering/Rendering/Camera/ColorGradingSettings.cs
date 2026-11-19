@@ -1,6 +1,7 @@
 using XREngine.Extensions;
 using System.Numerics;
 using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics.X86;
 using XREngine.Data;
 using XREngine.Data.Colors;
@@ -45,11 +46,6 @@ namespace XREngine.Rendering
             IgnoreTopPercent = 3,
         }
 
-        public ColorGradingSettings()
-        {
-            Contrast = 1.0f;
-        }
-
         private ExposureControlMode _exposureMode = ExposureControlMode.Artist;
         private float _physicalApertureFNumber = 2.8f;
         private float _physicalShutterSpeedSeconds = 1.0f / 60.0f;
@@ -58,10 +54,11 @@ namespace XREngine.Rendering
         private float _physicalExposureScale = 1.0f;
 
         private float _contrast = 0.0f;
-        private float _contrastUniformValue;
+        private float _contrastUniformValue = 1.0f;
         private float _exposureTransitionSpeed = 0.5f;
         private ColorF3 _tint = new(1.0f, 1.0f, 1.0f);
         private bool _autoExposure = true;
+        private bool _independentEyeExposure;
         private float _autoExposureBias = 0.0f;
         private float _autoExposureScale = 1.0f;
         private float _exposureDividend = 0.1f;
@@ -152,6 +149,20 @@ namespace XREngine.Rendering
         {
             get => _autoExposure;
             set => SetField(ref _autoExposure, value);
+        }
+
+        /// <summary>
+        /// Selects how auto exposure adapts on a pair of two-pass VR eyes (OpenXR or OpenVR, one
+        /// pipeline per eye). False (default): one headset exposure. The left eye meters its own
+        /// image, and the right eye uses the left eye's adapted value. True: each eye meters its own
+        /// image and adapts on its own, as real eyes do, so the eyes can differ in brightness.
+        /// The two eyes always share all other settings, and each eye keeps its own adaptation
+        /// state in both modes. Desktop views, mirrors and single-pass stereo ignore this setting.
+        /// </summary>
+        public bool IndependentEyeExposure
+        {
+            get => _independentEyeExposure;
+            set => SetField(ref _independentEyeExposure, value);
         }
         public float AutoExposureBias
         {
@@ -303,8 +314,11 @@ namespace XREngine.Rendering
         {
             program.Uniform($"{ColorGradeUniformName}.{nameof(Tint)}", Tint);
 
-            float exposure = ClampExposureToResolvedBounds(Exposure);
-            bool useGpuExposure = UseGpuAutoExposureThisFrame;
+            AutoExposureRuntimeState runtime = ResolveAutoExposureState(null);
+            // A paired VR eye keeps its CPU-adapted exposure in its own runtime state.
+            float exposure = ClampExposureToResolvedBounds(
+                AutoExposure && runtime.HasAdaptedExposure ? runtime.AdaptedExposure : Exposure);
+            bool useGpuExposure = AutoExposure && runtime.GpuReadyThisFrame;
             if (ExposureMode == ExposureControlMode.Physical)
             {
                 float physicalBase = ClampExposureToResolvedBounds(ComputePhysicalExposureMultiplier());
@@ -321,7 +335,9 @@ namespace XREngine.Rendering
                 else
                 {
                     // CPU path stores the current absolute exposure in Exposure.
-                    exposure = _lastUpdateTime == float.MinValue ? physicalBase : ClampExposureToResolvedBounds(Exposure);
+                    exposure = runtime.LastUpdateTime == float.MinValue
+                        ? physicalBase
+                        : ClampExposureToResolvedBounds(runtime.HasAdaptedExposure ? runtime.AdaptedExposure : Exposure);
                 }
             }
 
@@ -385,9 +401,6 @@ uniform ColorGradeStruct ColorGrade;";
             set => SetField(ref _secBetweenExposureUpdates, value);
         }
 
-        private float _lastUpdateTime = float.MinValue;
-        private float _lastLumDot = 0.0f;
-        private bool _gpuAutoExposureReadyThisFrame;
         private long _autoExposureResetRequests;
         private long _autoExposureResetsApplied;
         private long _autoExposureResetMinimumEpoch;
@@ -397,7 +410,6 @@ uniform ColorGradeStruct ColorGrade;";
         // dispatches of the same settings (for example one camera on two viewports with render workers) apart.
         [ThreadStatic]
         private static ColorGradingSettings? t_snapDispatchOwner;
-        internal const float MaxGpuAutoExposureDeltaSeconds = 1.0f / 15.0f;
 
         /// <summary>
         /// Makes the next automatic exposure update go to the metered exposure in one step, for any frame.
@@ -546,11 +558,46 @@ uniform ColorGradeStruct ColorGrade;";
                 Interlocked.CompareExchange(ref _cpuSnapRequestsInFlight, 0L, requests);
         }
 
+        internal const float MaxGpuAutoExposureDeltaSeconds = 1.0f / 15.0f;
+
+        // Adaptation state per render pipeline instance. The two VR eyes share this settings
+        // object but render with two pipeline instances, so each eye gets its own entry. The table
+        // holds the instances weakly; an entry is created once per instance.
+        private readonly ConditionalWeakTable<XRRenderPipelineInstance, AutoExposureRuntimeState> _autoExposureStates = new();
+        // State for calls made outside any pipeline instance.
+        private readonly AutoExposureRuntimeState _detachedAutoExposureState = new();
+
+        /// <summary>
+        /// Returns the adaptation state of this settings object for one pipeline instance. Null
+        /// selects the instance that renders on this thread (<c>RuntimeEngine.Rendering.State
+        /// .CurrentRenderingPipeline</c>), which is the pipeline that called the exposure update or
+        /// sets the tonemap uniforms.
+        /// </summary>
+        internal AutoExposureRuntimeState ResolveAutoExposureState(XRRenderPipelineInstance? instance)
+        {
+            instance ??= RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            return instance is null
+                ? _detachedAutoExposureState
+                : _autoExposureStates.GetValue(instance, static _ => new AutoExposureRuntimeState());
+        }
+
+        /// <summary>
+        /// True when the GPU exposure texture of the rendering pipeline instance was written this
+        /// frame, so the tonemap may sample it.
+        /// </summary>
         [Browsable(false)]
-        internal bool UseGpuAutoExposureThisFrame => AutoExposure && _gpuAutoExposureReadyThisFrame;
+        internal bool UseGpuAutoExposureThisFrame => AutoExposure && ResolveAutoExposureState(null).GpuReadyThisFrame;
 
         internal void MarkGpuAutoExposureReady(bool ready)
-            => _gpuAutoExposureReadyThisFrame = AutoExposure && ready;
+            => ResolveAutoExposureState(null).GpuReadyThisFrame = AutoExposure && ready;
+
+        /// <summary>
+        /// True when the rendering pipeline instance is one eye of a two-pass VR eye pair
+        /// (<see cref="RenderPipeline.IsVrEyePostProcessPair"/>). Such an eye keeps its CPU-adapted
+        /// exposure in its runtime state instead of the shared <see cref="Exposure"/> setting.
+        /// </summary>
+        private static bool IsRenderingPairedVrEye()
+            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.IsVrEyePostProcessPair == true;
 
         internal static float SanitizeGpuAutoExposureDeltaSeconds(double deltaSeconds)
         {
@@ -562,22 +609,24 @@ uniform ColorGradeStruct ColorGrade;";
 
         public void UpdateExposure(BoundingRectangle rect)
         {
-            _gpuAutoExposureReadyThisFrame = false;
+            AutoExposureRuntimeState runtime = ResolveAutoExposureState(null);
+            runtime.GpuReadyThisFrame = false;
 
             if (!RequiresAutoExposure || RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
 
             bool snap = BeginCpuAutoExposureSnap(null, out long resetRequests);
             float time = RuntimeEngine.ElapsedTime;
-            if (!snap && time - _lastUpdateTime < _secBetweenExposureUpdates)
+            if (!snap && time - runtime.LastUpdateTime < _secBetweenExposureUpdates)
                 return;
 
-            _lastUpdateTime = time;
+            runtime.LastUpdateTime = time;
+            bool pairedEye = IsRenderingPairedVrEye();
 
             void OnResult(bool success, float dot)
             {
-                _lastLumDot = dot;
-                bool applied = LerpExposure(success, dot, snap);
+                runtime.LastLumDot = dot;
+                bool applied = LerpExposure(runtime, pairedEye, success, dot, snap);
                 if (snap)
                     EndCpuAutoExposureSnap(applied, resetRequests);
             }
@@ -594,22 +643,24 @@ uniform ColorGradeStruct ColorGrade;";
         /// </param>
         public void UpdateExposure(XRTexture tex, bool generateMipmapsNow, ulong? frameCameraEpoch = null)
         {
-            _gpuAutoExposureReadyThisFrame = false;
+            AutoExposureRuntimeState runtime = ResolveAutoExposureState(null);
+            runtime.GpuReadyThisFrame = false;
 
             if (!RequiresAutoExposure || RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
 
             bool snap = BeginCpuAutoExposureSnap(frameCameraEpoch, out long resetRequests);
             float time = RuntimeEngine.ElapsedTime;
-            if (!snap && time - _lastUpdateTime < _secBetweenExposureUpdates)
+            if (!snap && time - runtime.LastUpdateTime < _secBetweenExposureUpdates)
                 return;
 
-            _lastUpdateTime = time;
+            runtime.LastUpdateTime = time;
+            bool pairedEye = IsRenderingPairedVrEye();
 
             void OnResult(bool success, float dot)
             {
-                _lastLumDot = dot;
-                bool applied = LerpExposure(success, dot, snap);
+                runtime.LastLumDot = dot;
+                bool applied = LerpExposure(runtime, pairedEye, success, dot, snap);
                 if (snap)
                     EndCpuAutoExposureSnap(applied, resetRequests);
             }
@@ -643,7 +694,8 @@ uniform ColorGradeStruct ColorGrade;";
         /// </param>
         public void UpdateExposureGpu(XRTexture sourceTex, XRTexture2D exposureTex, bool generateMipmapsNow, string? gpuProgramBinding, ulong? frameCameraEpoch = null)
         {
-            _gpuAutoExposureReadyThisFrame = false;
+            AutoExposureRuntimeState runtime = ResolveAutoExposureState(null);
+            runtime.GpuReadyThisFrame = false;
 
             if (!RequiresAutoExposure || RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
                 return;
@@ -661,7 +713,7 @@ uniform ColorGradeStruct ColorGrade;";
             // next real scene render should advance by the current render tick instead of
             // catching up in one large adaptation step.
             double rawRenderDeltaSeconds = RuntimeRenderingHostServices.FrameTiming.RenderDeltaSeconds;
-            float deltaTime = _lastUpdateTime == float.MinValue ? 0.0f : SanitizeGpuAutoExposureDeltaSeconds(rawRenderDeltaSeconds);
+            float deltaTime = runtime.LastUpdateTime == float.MinValue ? 0.0f : SanitizeGpuAutoExposureDeltaSeconds(rawRenderDeltaSeconds);
 
             // The backend reads ComputeGpuAutoExposureBlend, so a reset that is due for this frame gives a blend of one.
             BeginGpuAutoExposureDispatch(frameCameraEpoch, out long resetRequests);
@@ -674,17 +726,42 @@ uniform ColorGradeStruct ColorGrade;";
             {
                 EndGpuAutoExposureDispatch(success, resetRequests);
             }
-            _gpuAutoExposureReadyThisFrame = success;
+            runtime.GpuReadyThisFrame = success;
 
             // Only consume the timestamp budget when the GPU dispatch actually succeeded.
-            // If GPU fails, leaving _lastUpdateTime untouched lets the CPU fallback path
+            // If GPU fails, leaving LastUpdateTime untouched lets the CPU fallback path
             // pass its own throttle check and produce a valid exposure value this frame.
             if (success)
-                _lastUpdateTime = RuntimeEngine.ElapsedTime;
+                runtime.LastUpdateTime = RuntimeEngine.ElapsedTime;
+        }
+
+        /// <summary>
+        /// Writes the headset exposure of a two-pass VR eye pair into the exposure texture of the
+        /// rendering (right) eye: the renderer copies the value that the left eye published with
+        /// <see cref="AbstractRenderer.PublishHeadsetAutoExposureGpu"/>. The right eye does not
+        /// meter its own image in this mode. On success the tonemap of the right eye samples the
+        /// texture like a normal GPU exposure.
+        /// </summary>
+        internal void FollowHeadsetExposureGpu(XRTexture2D exposureTex)
+        {
+            AutoExposureRuntimeState runtime = ResolveAutoExposureState(null);
+            runtime.GpuReadyThisFrame = false;
+
+            if (!RequiresAutoExposure || RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass || RuntimeEngine.Rendering.State.IsSceneCapturePass)
+                return;
+
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer?.SupportsHeadsetSharedAutoExposure != true)
+                return;
+
+            bool success = renderer.FollowHeadsetAutoExposureGpu(exposureTex, this);
+            runtime.GpuReadyThisFrame = success;
+            if (success)
+                runtime.LastUpdateTime = RuntimeEngine.ElapsedTime;
         }
 
         /// <returns>True if the exposure was set from a metered value.</returns>
-        private bool LerpExposure(bool success, float lumDot, bool snap)
+        private bool LerpExposure(AutoExposureRuntimeState runtime, bool pairedEye, bool success, float lumDot, bool snap)
         {
             if (!success)
                 return false;
@@ -696,6 +773,12 @@ uniform ColorGradeStruct ColorGrade;";
             //If we were to update the exposure now, the scene would look very bright once it finally starts rendering.
             if (!float.IsFinite(lumDot) || lumDot <= 0.0f)
             {
+                if (pairedEye)
+                {
+                    if (runtime.HasAdaptedExposure)
+                        runtime.AdaptedExposure = Math.Clamp(runtime.AdaptedExposure, minExposure, maxExposure);
+                    return false;
+                }
                 if (Exposure < minExposure)
                     Exposure = minExposure;
                 if (Exposure > maxExposure)
@@ -711,17 +794,23 @@ uniform ColorGradeStruct ColorGrade;";
 
             //If the current exposure is an invalid value, that means we want the exposure to be set immediately.
             //A reset of the exposure history also sets it immediately.
-            float currentExposure = Exposure;
-            if (snap || !float.IsFinite(currentExposure) || currentExposure < minExposure || currentExposure > maxExposure)
-                Exposure = exposure;
+            // A paired VR eye adapts its own runtime value, so it never writes the setting that
+            // both eyes share.
+            float currentExposure = pairedEye ? runtime.AdaptedExposure : Exposure;
+            float nextExposure = snap || !float.IsFinite(currentExposure) || currentExposure < minExposure || currentExposure > maxExposure
+                ? exposure
+                : Interp.Lerp(currentExposure, exposure, ExposureTransitionSpeed);
+            if (pairedEye)
+                runtime.AdaptedExposure = nextExposure;
             else
-                Exposure = Interp.Lerp(currentExposure, exposure, ExposureTransitionSpeed);
+                Exposure = nextExposure;
             return true;
         }
 
         public void Lerp(ColorGradingSettings source, ColorGradingSettings dest, float time)
         {
             ExposureMode = time < 0.5f ? source.ExposureMode : dest.ExposureMode;
+            IndependentEyeExposure = time < 0.5f ? source.IndependentEyeExposure : dest.IndependentEyeExposure;
 
             Saturation = Interp.Lerp(source.Saturation, dest.Saturation, time);
             Hue = Interp.Lerp(source.Hue, dest.Hue, time);

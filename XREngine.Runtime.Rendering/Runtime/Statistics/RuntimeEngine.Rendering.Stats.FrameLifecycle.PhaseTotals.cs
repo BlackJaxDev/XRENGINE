@@ -28,6 +28,12 @@ namespace XREngine
                     private static long _collectWaitForRenderTotalCalls;
                     private static long _renderWaitForCollectTotalTicks;
                     private static long _renderWaitForCollectTotalCalls;
+                    private static long _renderWaitForXrFrameTotalTicks;
+                    private static long _renderWaitForXrFrameTotalCalls;
+                    private static long _collectWaitForXrSubmitTotalTicks;
+                    private static long _collectWaitForXrSubmitTotalCalls;
+                    private static long _publicationAgeTotalTicks;
+                    private static long _publicationAgeTotalCalls;
 
                     /// <summary>Records one update-thread iteration.</summary>
                     internal static void RecordUpdatePhase(long stopwatchTicks)
@@ -46,6 +52,17 @@ namespace XREngine
                         => AddPhase(ref _renderPhaseTicks, ref _renderPhaseCalls, stopwatchTicks);
 
                     /// <summary>
+                    /// Records one collect-thread wait for the render thread to end the XR frame of the
+                    /// last publication (XR collect pacing).
+                    /// </summary>
+                    internal static void RecordCollectWaitForXrSubmit(long stopwatchTicks)
+                        => AddPhase(ref _collectWaitForXrSubmitTotalTicks, ref _collectWaitForXrSubmitTotalCalls, stopwatchTicks);
+
+                    /// <summary>Records the age of one publication when the render thread takes it: collect start to take.</summary>
+                    internal static void RecordPublicationAge(long stopwatchTicks)
+                        => AddPhase(ref _publicationAgeTotalTicks, ref _publicationAgeTotalCalls, stopwatchTicks);
+
+                    /// <summary>
                     /// Reads all cumulative phase totals. Ticks and calls are read separately, so a
                     /// concurrent phase can differ by one call; window deltas tolerate this.
                     /// </summary>
@@ -56,7 +73,10 @@ namespace XREngine
                             ReadPhase(ref _swapPhaseTicks, ref _swapPhaseCalls),
                             ReadPhase(ref _renderPhaseTicks, ref _renderPhaseCalls),
                             ReadPhase(ref _collectWaitForRenderTotalTicks, ref _collectWaitForRenderTotalCalls),
-                            ReadPhase(ref _renderWaitForCollectTotalTicks, ref _renderWaitForCollectTotalCalls));
+                            ReadPhase(ref _renderWaitForCollectTotalTicks, ref _renderWaitForCollectTotalCalls),
+                            ReadPhase(ref _renderWaitForXrFrameTotalTicks, ref _renderWaitForXrFrameTotalCalls),
+                            ReadPhase(ref _collectWaitForXrSubmitTotalTicks, ref _collectWaitForXrSubmitTotalCalls),
+                            ReadPhase(ref _publicationAgeTotalTicks, ref _publicationAgeTotalCalls));
 
                     private static void AddPhase(ref long ticks, ref long calls, long stopwatchTicks)
                     {

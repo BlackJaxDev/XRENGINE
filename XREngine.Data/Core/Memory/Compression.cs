@@ -130,8 +130,7 @@ namespace XREngine.Data
                 string tail = byteStr.Length <= 32 ? string.Empty : byteStr[^32..];
                 throw new FormatException(
                     $"Compressed byte string must contain an even number of hex characters (after trimming). Got {byteStr.Length}. " +
-                    $"Tried repairs (pad front/back, drop first/last nibble) but none produced a valid LZMA payload" +
-                    (length is null ? "." : $" matching expected length {length.Value}.") +
+                    $"Tried repairs (pad front/back, drop first/last nibble) but none produced a valid LZMA payload{(length is null ? "." : $" matching expected length {length.Value}.")}" +
                     $" Head='{head}' Tail='{tail}'.");
             }
 

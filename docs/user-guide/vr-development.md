@@ -99,6 +99,43 @@ while VR is active. The engine reads it each frame.
 The FPS overlay shows the presented desktop rate and the OpenXR submitted rate,
 so you can compare the two modes.
 
+## VR Eye Post-Process Settings
+
+The VR eyes have their own post-process settings (AO, bloom, color grading and the other
+camera stages). They are separate from the desktop camera, and the left and right eye
+always use the same settings:
+
+- `VrEyeCameraSettingsLink` links the two eye cameras. OpenXR and OpenVR each own one link
+  (`OpenXRAPI.EnsureOpenXrEyeSettingsOwnership`, `EngineVrLifecycle.LinkOpenVrEyeCameraSettings`).
+- Both eye cameras use one post-process state collection.
+- The per-camera render overrides (anti-aliasing mode, MSAA sample count, HDR output, TSR render
+  scale, post-process material) are mirrored: a change on either eye camera is copied to the other
+  at once. OpenXR also rewrites both eyes from the last edited eye each frame.
+- A camera keeps one state per pipeline ID. In two-pass modes each eye has its own pipeline
+  object, so the right eye pipeline names the left eye pipeline as its
+  `RenderPipeline.PostProcessStateOwner`. Both eyes then read and write one state.
+- Single-pass stereo uses one pipeline for both eyes and reads the left eye camera.
+- The editor and MCP (`vr_eye` = `left`, `right` or `stereo`) edit this one eye state.
+- Auto exposure is the only adaptation that can differ between the eyes. The exposure
+  settings stay shared, but each eye pipeline keeps its own adapted exposure. The Color
+  Grading setting **Independent Eye Exposure** (`IndependentEyeExposure`) selects the mode
+  for two-pass eyes:
+  - Off (default): one headset exposure. The left eye meters its own image, and the right
+    eye uses the left eye's value (the same frame, or the previous frame when the right eye
+    renders first).
+  - On: each eye meters its own image and adapts on its own, as real eyes do. The eyes can
+    then differ in brightness.
+  Single-pass stereo always meters both eye layers together and ignores this setting.
+  Vulkan and OpenGL both support the shared headset exposure, so it works for OpenVR and
+  OpenXR two-pass eyes.
+- The engine setting **VR Eye Features** (engine settings, category **VR**; `VrEyeFeatures`)
+  turns optional features on or off for every VR eye frame, in every view mode and pipeline:
+  ambient occlusion, fog and aerial perspective, order-independent transparency, depth of
+  field, motion blur, deferred MSAA and Forward+ light culling. Depth of field and motion blur
+  are off by default for comfort; the other features are on. A feature also needs the eye
+  camera's own setting (for example an enabled ambient occlusion stage). The desktop camera
+  never reads this profile. In the Unit Testing World, set `VR.EyeFeatures`.
+
 ## Testing
 
 The Unit Testing World supports `VR.Mode = "Emulated"` for desktop stereo

@@ -96,7 +96,7 @@ namespace XREngine.Components.Animation
             }
             if (_bones.Length < MinimumBoneCount)
             {
-                message = "IK chain has less than " + MinimumBoneCount + " Bones.";
+                message = $"IK chain has less than {MinimumBoneCount} Bones.";
                 return false;
             }
             foreach (IKBone bone in _bones)
@@ -128,7 +128,7 @@ namespace XREngine.Components.Animation
                     float l = (_bones[i]._transform!.WorldTranslation - _bones[i + 1]._transform!.WorldTranslation).Length();
                     if (l == 0)
                     {
-                        message = "Bone " + i + " length is zero.";
+                        message = $"Bone {i} length is zero.";
                         return false;
                     }
                 }

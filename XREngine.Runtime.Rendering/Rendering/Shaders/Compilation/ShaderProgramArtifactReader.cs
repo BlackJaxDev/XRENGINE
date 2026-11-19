@@ -112,7 +112,7 @@ public static class ShaderProgramArtifactReader
                 case "vertex": vertex = value; stages |= ShaderStageVisibility.Vertex; break;
                 case "fragment": fragment = value; stages |= ShaderStageVisibility.Fragment; break;
                 case "compute": compute = value; stages |= ShaderStageVisibility.Compute; break;
-                default: throw Invalid("unsupported shader stage '" + entry.Name + "'");
+                default: throw Invalid($"unsupported shader stage '{entry.Name}'");
             }
         }
         Require((vertex is not null && compute is null) || (compute is not null && vertex is null && fragment is null), "provide a vertex stage with optional fragment, or one compute stage");
@@ -190,7 +190,7 @@ public static class ShaderProgramArtifactReader
                 int bytes = VertexFormatBytes(format);
                 Require(locations.Add(location) && offset % 4 == 0 && offset + bytes <= stride, "overlapping vertex location or attribute outside its stride");
                 Require(semantic is "position" or "normal" or "tangent" or "tangent-or-zero" or "tangent-presence" or "uv0" or "uv1" or "uv2" or "uv3" or "color0" or
-                    "uv0-or-zero" or "uv1-or-zero" or "uv2-or-zero" or "uv3-or-zero" or "color0-or-default", "unsupported engine vertex semantic '" + semantic + "'");
+                    "uv0-or-zero" or "uv1-or-zero" or "uv2-or-zero" or "uv3-or-zero" or "color0-or-default", $"unsupported engine vertex semantic '{semantic}'");
                 Require(semantic != "tangent-or-zero" || format == "float32x4" &&
                     schema is Generation.EngineAuthoredTexturedShaderGenerator.Schema or Generation.EngineAuthoredTexturedShaderGenerator.OrderGateSchema or Generation.EngineUberBaseShaderContract.Schema or Generation.EngineUberBaseShaderContract.OrderGateSchema,
                     "optional tangent sentinels require the exact authored-textured float4 vertex contract");
@@ -258,7 +258,7 @@ public static class ShaderProgramArtifactReader
                 "uniform" => ShaderAbiResourceKind.UniformBuffer,
                 "read-only-storage" or "storage" => ShaderAbiResourceKind.StorageBuffer,
                 "filtering-sampler" or "non-filtering-sampler" or "comparison-sampler" => ShaderAbiResourceKind.Sampler,
-                _ => throw Invalid("unsupported resource binding kind '" + kind + "'"),
+                _ => throw Invalid($"unsupported resource binding kind '{kind}'"),
             };
             ShaderAbiResourceOwner owner = EnumValue<ShaderAbiResourceOwner>(resource, "owner");
             ShaderAbiFrequency frequency = EnumValue<ShaderAbiFrequency>(resource, "frequency");
@@ -327,7 +327,7 @@ public static class ShaderProgramArtifactReader
         ImmutableDictionary<string, int>.Builder limits = ImmutableDictionary.CreateBuilder<string, int>(StringComparer.Ordinal);
         foreach (JsonProperty limit in Property(descriptor, "requiredLimits", JsonValueKind.Object).EnumerateObject())
         {
-            Require(LimitNames.Contains(limit.Name) && limit.Value.TryGetInt32(out int value) && value > 0, "invalid required limit '" + limit.Name + "'");
+            Require(LimitNames.Contains(limit.Name) && limit.Value.TryGetInt32(out int value) && value > 0, $"invalid required limit '{limit.Name}'");
             limits.Add(limit.Name, limit.Value.GetInt32());
         }
         if (workgroupSize is { } groupSize)
@@ -479,7 +479,7 @@ public static class ShaderProgramArtifactReader
     internal static int VertexFormatBytes(string format) => format switch
     {
         "float32" => 4, "float32x2" => 8, "float32x3" => 12, "float32x4" => 16,
-        _ => throw Invalid("unsupported vertex format '" + format + "'"),
+        _ => throw Invalid($"unsupported vertex format '{format}'"),
     };
 
     internal static (int Alignment, int Size) MemberShape(string type) => type switch
@@ -489,11 +489,11 @@ public static class ShaderProgramArtifactReader
         "vec3<f32>" or "vec3<u32>" or "vec3<i32>" => (16, 12),
         "vec4<f32>" or "vec4<u32>" or "vec4<i32>" => (16, 16),
         "mat4x4<f32>" => (16, 64),
-        _ => throw Invalid("unsupported physical member type '" + type + "'"),
+        _ => throw Invalid($"unsupported physical member type '{type}'"),
     };
 
     private static void CheckLimit(ImmutableDictionary<string, int>.Builder limits, string key, int minimum)
-        => Require(minimum == 0 || limits.TryGetValue(key, out int value) && value >= minimum, "requiredLimits." + key + " must be at least " + minimum);
+        => Require(minimum == 0 || limits.TryGetValue(key, out int value) && value >= minimum, $"requiredLimits.{key} must be at least {minimum}");
     private static bool RelativePath(string value) => value.Length is > 0 and <= 240 && !value.Contains('\\') && !value.StartsWith('/') && !value.Contains(':') && !value.Split('/').Any(part => part is "" or "." or "..");
     private static bool Identifier(string value, bool allowDash = false) => value.Length is > 0 and <= 64 && Regex.IsMatch(value, allowDash ? "^[a-zA-Z_][a-zA-Z0-9_-]*$" : "^[a-zA-Z_][a-zA-Z0-9_]*$", RegexOptions.CultureInvariant);
     private static bool ProviderIdentifier(string value)
@@ -544,8 +544,8 @@ public static class ShaderProgramArtifactReader
     private static JsonElement Property(JsonElement value, string key, JsonValueKind? kind = null)
     {
         if (value.ValueKind != JsonValueKind.Object || !value.TryGetProperty(key, out JsonElement result))
-            throw Invalid("missing property '" + key + "'");
-        Require(kind is null || result.ValueKind == kind, key + " has an incorrect value kind");
+            throw Invalid($"missing property '{key}'");
+        Require(kind is null || result.ValueKind == kind, $"{key} has an incorrect value kind");
         return result;
     }
     private static void ExactKeys(JsonElement value, params string[] keys)
@@ -557,7 +557,7 @@ public static class ShaderProgramArtifactReader
             HashSet<string> keys = new(StringComparer.Ordinal);
             foreach (JsonProperty property in value.EnumerateObject())
             {
-                Require(keys.Add(property.Name), "duplicate property '" + property.Name + "'");
+                Require(keys.Add(property.Name), $"duplicate property '{property.Name}'");
                 CheckUnique(property.Value);
             }
         }
@@ -565,5 +565,5 @@ public static class ShaderProgramArtifactReader
             foreach (JsonElement element in value.EnumerateArray()) CheckUnique(element);
     }
     private static void Require(bool condition, string message) { if (!condition) throw Invalid(message); }
-    private static InvalidDataException Invalid(string message) => new("Engine WGSL artifact: " + message + ".");
+    private static InvalidDataException Invalid(string message) => new($"Engine WGSL artifact: {message}.");
 }

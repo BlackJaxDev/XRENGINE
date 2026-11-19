@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
 using VkBufferHandle = Silk.NET.Vulkan.Buffer;
 
@@ -9,6 +10,10 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkMeshRenderer
 {
+    private readonly VulkanResidentDrawTemplatePublication?[] _residentTemplatePublications =
+        new VulkanResidentDrawTemplatePublication?[32];
+    private int _nextResidentTemplatePublication;
+
     internal void ReleaseCanonicalPublicationBridge(
         in AdvancedGpuSceneDrawIdentitySnapshot canonicalDraw)
         => _meshRequests?.ReleaseCanonicalPublicationBridge(canonicalDraw);
@@ -24,6 +29,7 @@ internal unsafe partial class VkMeshRenderer
             !TryCaptureResidentTemplateVariant(
                 request.PassIndex,
                 request.Context,
+                request.SkinnedOutputSetIdentity,
                 out VulkanResidentDrawTemplateVariantKey variant))
         {
             return false;
@@ -33,11 +39,21 @@ internal unsafe partial class VkMeshRenderer
             BackendContext.Resources.ResidentDrawTemplates.TryGetResolved(
                 request.ResidentTemplateHandle,
                 variant,
-                out template))
+                out template) &&
+            template is not null &&
+            template.NativeState.DrawTemplate.EditorHighlightOutput == request.EditorHighlightOutput &&
+            template.NativeState.DrawTemplate.PreparationCompatibilitySignature ==
+                request.PreparationCompatibilitySignature &&
+            template.NativeState.DrawTemplate.SkinnedOutputSetIdentity ==
+                request.SkinnedOutputSetIdentity &&
+            SameDeformationAllocation(
+                template.NativeState.DrawTemplate.DeformationOutputWitness,
+                request.DeformationOutputWitness))
         {
             handle = request.ResidentTemplateHandle;
             return true;
         }
+        template = null;
 
         if (!TryCaptureResidentTemplateGenerations(
                 request.CanonicalDrawIdentitySnapshot,
@@ -50,7 +66,13 @@ internal unsafe partial class VkMeshRenderer
                 variant,
                 generations,
                 out handle,
-                out template))
+                out template) ||
+            template is null ||
+            template.NativeState.DrawTemplate.SkinnedOutputSetIdentity !=
+                request.SkinnedOutputSetIdentity ||
+            !SameDeformationAllocation(
+                template.NativeState.DrawTemplate.DeformationOutputWitness,
+                request.DeformationOutputWitness))
         {
             return false;
         }
@@ -62,11 +84,13 @@ internal unsafe partial class VkMeshRenderer
     private VulkanResidentDrawTemplateHandle CapturePublishedResidentTemplateHandle(
         in AdvancedGpuSceneDrawIdentitySnapshot canonicalDraw,
         int passIndex,
-        in FrameOpContext context)
+        in FrameOpContext context,
+        ulong skinnedOutputSetIdentity)
     {
         if (!TryCaptureResidentTemplateVariant(
                 passIndex,
                 context,
+                skinnedOutputSetIdentity,
                 out VulkanResidentDrawTemplateVariantKey variant))
         {
             return default;
@@ -87,9 +111,24 @@ internal unsafe partial class VkMeshRenderer
         if (!handle.IsValid)
             return;
 
-        Volatile.Write(
-            ref _residentTemplatePublication,
-            new VulkanResidentDrawTemplatePublication(handle, variant));
+        lock (_bufferStateSync)
+        {
+            for (int i = 0; i < _residentTemplatePublications.Length; i++)
+            {
+                VulkanResidentDrawTemplatePublication? cached = _residentTemplatePublications[i];
+                if (cached is null || cached.Handle != handle || cached.Variant != variant)
+                    continue;
+
+                Volatile.Write(ref _residentTemplatePublication, cached);
+                return;
+            }
+
+            VulkanResidentDrawTemplatePublication publication = new(handle, variant);
+            _residentTemplatePublications[_nextResidentTemplatePublication] = publication;
+            _nextResidentTemplatePublication =
+                (_nextResidentTemplatePublication + 1) % _residentTemplatePublications.Length;
+            Volatile.Write(ref _residentTemplatePublication, publication);
+        }
     }
 
     internal bool TryGetResidentDrawTemplate(
@@ -115,7 +154,20 @@ internal unsafe partial class VkMeshRenderer
             if (BackendContext.Resources.ResidentDrawTemplates
                 .TryGetResolvedAndRetain(handle, out template))
             {
-                return true;
+                if (template is not null &&
+                    template.NativeState.DrawTemplate.EditorHighlightOutput == draw.EditorHighlightOutput &&
+                    template.NativeState.DrawTemplate.PreparationCompatibilitySignature ==
+                        draw.PreparationCompatibilitySignature &&
+                    template.NativeState.DrawTemplate.SkinnedOutputSetIdentity ==
+                        draw.SkinnedOutputSetIdentity &&
+                    SameDeformationAllocation(
+                        template.NativeState.DrawTemplate.DeformationOutputWitness,
+                        draw.DeformationOutputWitness))
+                    return true;
+
+                template?.ReleaseUse();
+                template = null;
+                handle = default;
             }
         }
 
@@ -124,6 +176,7 @@ internal unsafe partial class VkMeshRenderer
                 passIndex,
                 material,
                 draw.PreparationCompatibilitySignature,
+                draw.SkinnedOutputSetIdentity,
                 context,
                 out variant,
                 out generations))
@@ -137,7 +190,12 @@ internal unsafe partial class VkMeshRenderer
             generations,
             out handle,
             out template) ||
-            template is null)
+            template is null ||
+            template.NativeState.DrawTemplate.SkinnedOutputSetIdentity !=
+                draw.SkinnedOutputSetIdentity ||
+            !SameDeformationAllocation(
+                template.NativeState.DrawTemplate.DeformationOutputWitness,
+                draw.DeformationOutputWitness))
         {
             return false;
         }
@@ -173,6 +231,13 @@ internal unsafe partial class VkMeshRenderer
                    ?.HasActiveScopedBindings != true;
     }
 
+    private static bool SameDeformationAllocation(
+        in DeformationOutputWitness cached,
+        in DeformationOutputWitness current)
+        => !cached.IsValid && !current.IsValid ||
+           cached.IsValid && current.IsValid &&
+           cached.AllocationIdentity.Matches(current.AllocationIdentity);
+
     private bool IsResidentTemplateDrawEligible(
         in PendingMeshDraw draw,
         XRMaterial material)
@@ -199,11 +264,13 @@ internal unsafe partial class VkMeshRenderer
         int passIndex,
         XRMaterial material,
         ulong preparationSignature,
+        ulong skinnedOutputSetIdentity,
         in FrameOpContext context,
         out VulkanResidentDrawTemplateVariantKey variant,
         out VulkanResidentDrawTemplateGenerationDomains generations)
     {
-        if (!TryCaptureResidentTemplateVariant(passIndex, context, out variant))
+        if (!TryCaptureResidentTemplateVariant(
+                passIndex, context, skinnedOutputSetIdentity, out variant))
         {
             generations = default;
             return false;
@@ -225,6 +292,7 @@ internal unsafe partial class VkMeshRenderer
     private static bool TryCaptureResidentTemplateVariant(
         int passIndex,
         in FrameOpContext context,
+        ulong skinnedOutputSetIdentity,
         out VulkanResidentDrawTemplateVariantKey variant)
     {
         if (passIndex < 0)
@@ -254,7 +322,8 @@ internal unsafe partial class VkMeshRenderer
             strategy,
             instrumentationSchema,
             dialect,
-            outputProfile);
+            outputProfile,
+            skinnedOutputSetIdentity);
         return true;
     }
 
@@ -411,6 +480,7 @@ internal unsafe partial class VkMeshRenderer
                 passIndex,
                 material,
                 draw.PreparationCompatibilitySignature,
+                draw.SkinnedOutputSetIdentity,
                 context,
                 out VulkanResidentDrawTemplateVariantKey currentVariant,
                 out VulkanResidentDrawTemplateGenerationDomains currentGenerations) ||

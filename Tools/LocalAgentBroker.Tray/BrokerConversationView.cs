@@ -196,10 +196,17 @@ internal sealed class BrokerConversationView : UserControl
 
     private void UpdateRaw()
     {
-        string text = _record is null ? "" :
-            (string.IsNullOrWhiteSpace(_record.SystemInstructions) ? "" : "SYSTEM\n" + _record.SystemInstructions + "\n\n")
-            + "PROMPT\n" + _record.PromptText + "\n\nRESPONSE\n" + _record.ResponseText
-            + (FailureText(_record) is { Length: > 0 } failure ? "\n\nFAILURE\n" + failure : "");
+        string text = "";
+        if (_record is not null)
+        {
+            string systemSection = string.IsNullOrWhiteSpace(_record.SystemInstructions)
+                ? ""
+                : $"SYSTEM\n{_record.SystemInstructions}\n\n";
+            string failureSection = FailureText(_record) is { Length: > 0 } failure
+                ? $"\n\nFAILURE\n{failure}"
+                : "";
+            text = $"{systemSection}PROMPT\n{_record.PromptText}\n\nRESPONSE\n{_record.ResponseText}{failureSection}";
+        }
         if (_raw.Text == text)
             return;
         bool sameRun = _rawRunId == _record?.RunId;
@@ -249,5 +256,5 @@ internal sealed class BrokerConversationView : UserControl
     private static string FailureText(BrokerHistoryRecord? record)
         => string.IsNullOrWhiteSpace(record?.FailureSummary) ? ""
             : string.IsNullOrWhiteSpace(record.FailureDetail) ? record.FailureSummary
-            : record.FailureSummary + "\n\n" + record.FailureDetail;
+            : $"{record.FailureSummary}\n\n{record.FailureDetail}";
 }

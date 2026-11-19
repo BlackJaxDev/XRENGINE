@@ -17,8 +17,12 @@ public static class AdvancedViewRecordFactory
             inverseViewProjectionJittered = Matrix4x4.Identity;
         if (!Matrix4x4.Invert(viewProjectionUnjittered, out Matrix4x4 inverseViewProjectionUnjittered))
             inverseViewProjectionUnjittered = Matrix4x4.Identity;
+        // Native stages read the render size to map pixels of their internal targets to clip
+        // space. It differs from the output size when the view renders below its output size.
         float width = Math.Max(source.ViewportWidth, 1);
         float height = Math.Max(source.ViewportHeight, 1);
+        float renderWidth = source.RenderWidth > 0 ? source.RenderWidth : width;
+        float renderHeight = source.RenderHeight > 0 ? source.RenderHeight : height;
         Vector4 cameraPositionAndNear = source.CameraPositionAndNear;
         Vector4 cameraForwardAndFar = source.CameraForwardAndFar;
         DeriveCameraVectors(source.View, ref cameraPositionAndNear, ref cameraForwardAndFar);
@@ -33,7 +37,7 @@ public static class AdvancedViewRecordFactory
             InverseViewProjectionJittered = inverseViewProjectionJittered,
             InverseViewProjectionUnjittered = inverseViewProjectionUnjittered,
             CameraPositionAndNear = cameraPositionAndNear, CameraForwardAndFar = cameraForwardAndFar,
-            RenderSizeAndInverse = new Vector4(width, height, 1.0f / width, 1.0f / height),
+            RenderSizeAndInverse = new Vector4(renderWidth, renderHeight, 1.0f / renderWidth, 1.0f / renderHeight),
             OutputSizeAndInverse = new Vector4(width, height, 1.0f / width, 1.0f / height),
             CurrentAndPreviousJitter = source.CurrentAndPreviousJitter, DepthParams = source.DepthParams,
             ViewId = source.ViewId, OutputLayer = source.OutputLayer, Flags = source.Flags,

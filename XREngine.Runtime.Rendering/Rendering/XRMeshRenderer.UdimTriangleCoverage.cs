@@ -20,6 +20,7 @@ public partial class XRMeshRenderer
         ValidateResourcePublicationLease();
         XRMaterial source = material.ShadowBindingSourceMaterial ?? material;
         bool required = NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(source);
+        bool flipSourceV = source.Parameter<ShaderFloat>("_SourceUdimFlipV") is { Value: > 0.5f };
         if (!required)
         {
             if (publishInactive)
@@ -46,7 +47,8 @@ public partial class XRMeshRenderer
 
         long revision = mesh.GeometryRevision;
         if (_udimTriangleCoverage is { } cached &&
-            ReferenceEquals(cached.Mesh, mesh) && cached.GeometryRevision == revision)
+            ReferenceEquals(cached.Mesh, mesh) && cached.GeometryRevision == revision &&
+            cached.FlipSourceV == flipSourceV)
         {
             SelectUdimTriangleCoverage(cached.Buffer, cached.TriangleCount);
             reason = string.Empty;
@@ -72,9 +74,9 @@ public partial class XRMeshRenderer
             for (int index = 0; index < triangles.Count; index++)
             {
                 IndexTriangle triangle = triangles[index];
-                if (!TryGetCornerMasks(mesh, triangle.Point0, out UdimTriangleMask first) ||
-                    !TryGetCornerMasks(mesh, triangle.Point1, out UdimTriangleMask second) ||
-                    !TryGetCornerMasks(mesh, triangle.Point2, out UdimTriangleMask third))
+                if (!TryGetCornerMasks(mesh, triangle.Point0, flipSourceV, out UdimTriangleMask first) ||
+                    !TryGetCornerMasks(mesh, triangle.Point1, flipSourceV, out UdimTriangleMask second) ||
+                    !TryGetCornerMasks(mesh, triangle.Point2, flipSourceV, out UdimTriangleMask third))
                 {
                     reason = "Vertex-mode UDIM discard found an invalid source vertex or non-finite UV.";
                     return false;
@@ -100,7 +102,7 @@ public partial class XRMeshRenderer
             buffer.SetDataRaw<UdimTriangleMask>(masks);
             buffer.PushData();
             _udimTriangleCoverage?.Buffer.RetireBindingStorage();
-            _udimTriangleCoverage = new UdimTriangleCoverage(mesh, revision, triangles.Count, buffer);
+            _udimTriangleCoverage = new UdimTriangleCoverage(mesh, revision, triangles.Count, flipSourceV, buffer);
             SelectUdimTriangleCoverage(buffer, triangles.Count);
             reason = string.Empty;
             return true;
@@ -126,16 +128,19 @@ public partial class XRMeshRenderer
             material.GeometryShaders[0], XRShader.EngineShader(engineShader, EShaderType.Geometry));
     }
 
-    private static bool TryGetCornerMasks(XRMesh mesh, int vertex, out UdimTriangleMask masks)
+    private static bool TryGetCornerMasks(XRMesh mesh, int vertex, bool flipSourceV, out UdimTriangleMask masks)
     {
         masks = default;
         if ((uint)vertex >= (uint)mesh.VertexCount)
             return false;
         for (uint channel = 0; channel < 4; channel++)
         {
-            Vector2 uv = channel < mesh.TexCoordCount ? mesh.GetTexCoord((uint)vertex, channel) : Vector2.Zero;
+            bool hasChannel = channel < mesh.TexCoordCount;
+            Vector2 uv = hasChannel ? mesh.GetTexCoord((uint)vertex, channel) : Vector2.Zero;
             if (!float.IsFinite(uv.X) || !float.IsFinite(uv.Y))
                 return false;
+            if (flipSourceV && hasChannel)
+                uv.Y = 1.0f - uv.Y;
             uint bit = uv.X >= 0f && uv.X < 4f && uv.Y >= 0f && uv.Y < 4f
                 ? 1u << ((int)MathF.Floor(uv.X) + 4 * (int)MathF.Floor(uv.Y))
                 : 0u;
@@ -181,7 +186,7 @@ public partial class XRMeshRenderer
         }
     }
 
-    private readonly record struct UdimTriangleCoverage(XRMesh Mesh, long GeometryRevision, int TriangleCount, XRDataBuffer Buffer);
+    private readonly record struct UdimTriangleCoverage(XRMesh Mesh, long GeometryRevision, int TriangleCount, bool FlipSourceV, XRDataBuffer Buffer);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct UdimTriangleMask(uint uv0, uint uv1, uint uv2, uint uv3)

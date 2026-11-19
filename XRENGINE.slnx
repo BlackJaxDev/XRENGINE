@@ -1,9 +1,21 @@
 <Solution>
+  <Project Path="XREngine.UnityScriptHost.Contracts/XREngine.UnityScriptHost.Contracts.csproj" />
+  <Project Path="XREngine.UnityScriptHost/XREngine.UnityScriptHost.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/Runtime/XREngine.UnityScriptHost.Compatibility.Runtime.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEngine/XREngine.UnityScriptHost.Compatibility.UnityEngine.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEditor/XREngine.UnityScriptHost.Compatibility.UnityEditor.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEngine.CoreModule/XREngine.UnityScriptHost.Compatibility.UnityEngine.CoreModule.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEngine.AnimationModule/XREngine.UnityScriptHost.Compatibility.UnityEngine.AnimationModule.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEngine.InputLegacyModule/XREngine.UnityScriptHost.Compatibility.UnityEngine.InputLegacyModule.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEditor.CoreModule/XREngine.UnityScriptHost.Compatibility.UnityEditor.CoreModule.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/Annotations/XREngine.UnityScriptHost.Compatibility.Annotations.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/MethodPatching/XREngine.UnityScriptHost.Compatibility.MethodPatching.csproj" />
   <Project Path="XREngine.Benchmarks/XREngine.Benchmarks.csproj" />
   <Project Path="XREngine.ControlPlane/XREngine.ControlPlane.csproj" />
   <Project Path="XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj" />
   <Project Path="XREngine.Animation/XREngine.Animation.csproj" />
   <Project Path="XREngine.AgentOrchestration/XREngine.AgentOrchestration.csproj" />
+  <Project Path="XREngine.AgentRuntimes/XREngine.AgentRuntimes.csproj" />
   <Project Path="XREngine.Audio/XREngine.Audio.csproj" />
   <Project Path="XREngine.Data/XREngine.Data.csproj" />
   <Project Path="XREngine.Editor/XREngine.Editor.csproj" />

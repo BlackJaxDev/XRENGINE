@@ -48,6 +48,55 @@ mask, polygon offset, alpha-to-coverage, fog opt-out, and common/front/back
 stencil state are converted from their serialized Unity enum values. Outline
 blend, depth, stencil, and cull state is independent from the base pass.
 
+Verified locked source toon 9.3.63 Basic outlines use the canonical mesh
+deformation before outline expansion. The source branch samples the outline
+mask at mip 0, applies its authored width and distance factor to the deformed
+normal, and clips fragments with the source width-mask threshold. It keeps the
+authored outline blend, depth, stencil, and queue state. The importer requires
+the supported local-space, UV0, red-channel mask subset. An external mask must
+use a linear-repeat sampler; an absent source mask uses the white default.
+The importer also requires neutral outline theme, color adjust, and AudioLink
+width controls. It reports active options outside this subset as conversion
+failures. Required scene import keeps these failure reasons in its diagnostics.
+Other engine outline materials keep their existing expansion rules.
+
+Imported source materials apply `_AlphaForceOpaque` after decal, flipbook, and
+dissolve effects, before the final alpha cutoff. Dissolve can still discard a
+fragment. Native visibility, masked shadow, and native shading use the same
+coverage rule. The authored Uber path retains alpha before the override for
+effects such as GrabPass and applies the override to final coverage and output.
+
+Verified source surfaces with a queue above 2500 use the ordered late pass.
+The base draw keeps its authored blend, depth, and stencil state, and its sort
+priority is the source queue minus 3000. An active, verified named GrabPass uses
+the `_SourceSceneColor` array sampler. The pipeline copies linear HDR scene
+color before the first such draw and binds the matching view layer. The shader
+divides absolute framebuffer coordinates by the full copy extent, including
+views with a nonzero viewport origin. It uses source alpha and Fresnel before
+the late opaque override, blends scene
+color into base color before decals, matcaps, and rim, and then lights the
+result. The blend uses the source shader blend factor table: `_GrabSrcBlend` and
+`_GrabDstBlend` map to `_SourceGrabSrcBlend` and `_SourceGrabDstBlend` (indices
+0 to 10). Source toon refraction maps to `_SourceRefraction*`. The shader moves the
+scene-color sample by the view-space normal, multiplied by `(index - 1)`,
+`(1 - N.V)`, half the vertical projection scale, and the inverse camera distance
+(at least 1). Chromatic aberration samples green at `offset * (1 - aberration)`
+and blue at `offset * (1 + aberration)`. The view-space up direction follows the
+projection sign and `FramebufferTextureYDirection`.
+
+The importer does not reject a GrabPass material for an unsupported option. It
+drops each option that has no mapping and reports it as a `POI0007` warning.
+These options are blur, hue shift, pixelation, color ramp, saturation and
+vibrance, mask textures, vertex-color masks, global masks, chromatic-aberration
+blur, and alpha distance, angle, and AudioLink masks. Out-of-range values are
+replaced by the source shader defaults or clamped. An unverified GrabPass shader still
+uses the scene-color mapping with a warning. A GrabPass with a queue of 2500 or
+less, or with an outline, EarlyZ, or alpha-to-coverage pass, renders without its
+scene-color sample. The ordered route keeps the `NativeUberV1` material identity.
+The verified Grab lighting divisor uses the primary directional light. The
+import report flags source vertex-light and additional-light responses for live
+validation.
+
 ## Uber Helper Audit
 
 `UberHelperModuleAudit` is the authoritative, testable inventory.
@@ -113,6 +162,11 @@ sampler roles whose owning Uber feature bit is disabled and reuses existing
 `XRTexture2D` or source file path.
 
 ## Validation
+
+Use the same camera, pose, render time, exposure, texture resolution, and
+anti-aliasing settings for source and native image comparisons. Compare the HDR
+scene output with the final output before changing material conversion. FXAA
+can soften thin texture marks and outlines that remain intact in the HDR image.
 
 `PoiyomiMaterialArchitectureTests` covers every preset, authored fixed state,
 queue and pass enable state, deterministic ordering, companion coverage keys,

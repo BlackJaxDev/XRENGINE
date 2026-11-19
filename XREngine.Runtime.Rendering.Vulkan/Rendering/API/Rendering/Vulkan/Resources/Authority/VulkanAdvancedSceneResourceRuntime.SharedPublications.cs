@@ -16,6 +16,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         int frameSlot,
         ulong frameGeneration,
         in VulkanAdvancedScenePublicationState shared,
+        ReadOnlySpan<byte> recordedStaleTextureRows,
         AdvancedGpuScenePublicationSnapshot snapshot,
         ReadOnlySpan<BackendReadyCanonicalViewRecord> views,
         in BackendReadyCanonicalFrameRecord frame,
@@ -40,7 +41,14 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
 
         // Strong references preserve lifetime, but mutable texture descriptors
         // can still change after the first output admitted this publication.
-        if (!TryValidatePublicationSources(snapshot, out failure, out reason))
+        // This output reuses the first output's texture table, so it accepts only
+        // the stale rows that the first output already published as not resident.
+        if (!TryValidatePublicationSources(
+                snapshot,
+                EVulkanStaleTextureRowPolicy.AllowRecorded,
+                recordedStaleTextureRows,
+                out failure,
+                out reason))
             return false;
 
         VulkanFrameDataArena arena = _resources.FrameDataArena!;

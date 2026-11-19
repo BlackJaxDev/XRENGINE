@@ -218,7 +218,7 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
             "claude-fable-5-1" or "claude-opus-5-5" or "claude-sonnet-5-5" or "claude-haiku-5-5"))
             throw new AgentModelException(AgentFailureCategory.ModelUnavailable,
                 "The requested Anthropic model is not supported by this broker.");
-        if (request.Run.ReasoningEffort?.ToLowerInvariant() is not
+        if (!request.Run.UseProviderDefaultReasoningEffort && request.Run.ReasoningEffort?.ToLowerInvariant() is not
             ("low" or "medium" or "high" or "xhigh" or "max"))
             throw new AgentModelException(AgentFailureCategory.Validation,
                 "The selected Anthropic reasoning effort is not supported.");
@@ -316,8 +316,9 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
             ["messages"] = messages.DeepClone(),
             ["stream"] = true,
             ["thinking"] = new JsonObject { ["type"] = "adaptive" },
-            ["output_config"] = new JsonObject { ["effort"] = request.Run.ReasoningEffort.ToLowerInvariant() },
         };
+        if (!request.Run.UseProviderDefaultReasoningEffort)
+            payload["output_config"] = new JsonObject { ["effort"] = request.Run.ReasoningEffort.ToLowerInvariant() };
         string verbosity = request.Run.TextVerbosity.ToLowerInvariant() switch
         {
             "low" => "Keep the visible final answer brief.",
@@ -325,7 +326,7 @@ public sealed class AnthropicMessagesModelClient : IAgentModelClient
             _ => "Give a clear visible final answer.",
         };
         payload["system"] = string.IsNullOrWhiteSpace(request.Run.SystemInstructions)
-            ? verbosity : request.Run.SystemInstructions + "\n\n" + verbosity;
+            ? verbosity : $"{request.Run.SystemInstructions}\n\n{verbosity}";
         if (request.Tools.Count > 0)
         {
             JsonArray tools = [];

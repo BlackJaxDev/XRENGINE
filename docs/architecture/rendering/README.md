@@ -12,6 +12,7 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | [Frame Loop Design](frame-loop-design.md) | Why work stays off the frame and how: nonblocking readiness, complete-state publication, identity versus content dirtiness, mutation-scoped updates, allocation-free hot paths, scoped invalidation and retirement, shadow-caster costs, play-mode restores, and how to measure the loop. |
 | [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md) | Implemented contract for declared pipeline resources, generation-based materialization, staged resize, and atomic resource swaps. |
 | [Advanced Render Pipeline](advanced-render-pipeline.md) | `AdvancedRenderPipeline` visibility-buffer frame flow, invariants, capability floor, and output ownership for desktop, OpenXR, and offscreen. |
+| [Editor Highlight Module](editor-highlight-module.md) | Optional Advanced and RVC editor mask, authored stencil ownership, draw output policy, and backend limits. |
 | [Shadow Atlas](shadow-atlas.md) | Shadow atlas allocator, solve, relevance, threading and publication, stale-frame and reprojection rules, and directional cascade publication. |
 | [Transparency And OIT](transparency-and-oit.md) | Transparent surface routing, weighted blended order-independent transparency, and exact transparency experiments in the Default and Advanced pipelines. |
 | [GPU Hi-Z Occlusion Culling](gpu-hiz-occlusion-culling.md) | Cull, occlusion, and indirect buffer contract, the two-pass Hi-Z flow, and barrier obligations for each backend. |

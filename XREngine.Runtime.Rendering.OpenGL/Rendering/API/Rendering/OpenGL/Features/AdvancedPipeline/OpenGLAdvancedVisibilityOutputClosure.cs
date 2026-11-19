@@ -39,6 +39,13 @@ internal readonly record struct OpenGLAdvancedVisibilityOutputClosure(
     uint LayerCount,
     uint NativeViewIndex)
 {
+    /// <summary>
+    /// True when the frame does not declare the shading diagnostics image. The diagnostics
+    /// fields then refer to the metadata texture, and the shading push constants carry the
+    /// diagnostics-disabled flag so that no pass stores to it.
+    /// </summary>
+    internal bool ShadingDiagnosticsAliased { get; init; }
+
     internal bool IsValid
         => IdentityId != 0u && MetadataId != 0u && SelectionId != 0u &&
            DepthId != 0u && DepthPyramidId != 0u && Width != 0u && Height != 0u &&

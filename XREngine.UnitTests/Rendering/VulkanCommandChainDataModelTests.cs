@@ -941,10 +941,13 @@ public sealed class VulkanCommandChainDataModelTests
         string postProcessSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
         string postProcess2Source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.PostProcessing.cs").Replace("\r\n", "\n");
         string temporalSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_TemporalAccumulationPass.cs").Replace("\r\n", "\n");
+        string frameProfileSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.FrameProfile.cs").Replace("\r\n", "\n");
 
         foreach (string source in new[] { pipelineSource, advancedPipelineSource })
         {
-            source.ShouldContain("if (mode == EAntiAliasingMode.Tsr && DisableHistoryBasedVrEffects())\n            return null;");
+            // The frame profile owns the TSR-without-history decision, because it knows the
+            // pipeline instance and the stereo flag before the render makes them current.
+            source.ShouldNotContain("if (mode == EAntiAliasingMode.Tsr && DisableHistoryBasedVrEffects())");
             source.ShouldContain("&& !DisableHistoryBasedVrEffects()\n        && ResolveAntiAliasingMode() == EAntiAliasingMode.Tsr;");
             source.ShouldContain("private static bool RuntimeNeedsTemporalAaVelocityBuffer");
             source.ShouldContain("=> !DisableHistoryBasedVrEffects()\n        && ResolveAntiAliasingMode() is EAntiAliasingMode.Taa or EAntiAliasingMode.Dlaa;");
@@ -956,6 +959,8 @@ public sealed class VulkanCommandChainDataModelTests
             source.ShouldContain("private static bool DisableHistoryBasedVrEffects()\n        => !VPRC_TemporalAccumulationPass.TryUseHistoryBasedVrEffects(out _, out _);");
         }
 
+        frameProfileSource.ShouldContain("float? requestedScale = antiAliasingMode == EAntiAliasingMode.Tsr && !temporalHistoryAllowed\n            ? null");
+        frameProfileSource.ShouldContain("VPRC_TemporalAccumulationPass.TryUseHistoryBasedVrEffects(\n                this,\n                stereoPass,");
         temporalSource.ShouldContain("ShouldDisableHistoryBasedVrAntiAliasing()");
         temporalSource.ShouldContain("internal static EVrTemporalHistoryPolicy ResolveHistoryIsolationPolicy(out string reason)");
         temporalSource.ShouldContain("EVrTemporalHistoryPolicy.StereoArrayLayer => \"true single-pass stereo array-layer history\"");

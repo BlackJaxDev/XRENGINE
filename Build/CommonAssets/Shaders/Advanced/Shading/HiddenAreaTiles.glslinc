@@ -1,0 +1,32 @@
+#ifndef XR_ADVANCED_HIDDEN_AREA_TILES_GLSLINC
+#define XR_ADVANCED_HIDDEN_AREA_TILES_GLSLINC
+
+// Hidden-area tile reject of the OpenXR eyes. Only ClassifyTiles.comp and ShadeBackground.comp
+// include this file: the Vulkan recording writes a conservative visible ellipse into push fields
+// that these two passes do not otherwise read. depthSlices holds the ellipse center as two 16-bit
+// UNORM values in eye-image UV, and maxLightIndices and lightCount hold the inverse radii in UV as
+// float bits. Zero inverse radii mean that the reject is off. The OpenGL backend does not write
+// these fields, so the test returns false there.
+//
+// A tile is hidden when its whole rectangle lies outside the ellipse. In ellipse space the ellipse
+// is the unit circle, and the point of the tile rectangle nearest to the center is the clamp of the
+// origin to the rectangle. Every visible pixel lies inside the ellipse, so a hidden tile holds no
+// visible pixel.
+bool XR_ADV_IsHiddenAreaTile(uvec2 tileCoord)
+{
+#if defined(XR_ADV_BACKEND_VULKAN)
+    if (u_Push.maxLightIndices == 0u || u_Push.lightCount == 0u)
+        return false;
+    vec2 extent = vec2(u_Push.screenExtent);
+    vec2 center = unpackUnorm2x16(u_Push.depthSlices);
+    vec2 inverseRadius = vec2(uintBitsToFloat(u_Push.maxLightIndices), uintBitsToFloat(u_Push.lightCount));
+    vec2 low = (vec2(tileCoord * 16u) / extent - center) * inverseRadius;
+    vec2 high = (min(vec2(tileCoord * 16u + 16u), extent) / extent - center) * inverseRadius;
+    vec2 nearest = clamp(vec2(0.0), low, high);
+    return dot(nearest, nearest) > 1.0;
+#else
+    return false;
+#endif
+}
+
+#endif // XR_ADVANCED_HIDDEN_AREA_TILES_GLSLINC

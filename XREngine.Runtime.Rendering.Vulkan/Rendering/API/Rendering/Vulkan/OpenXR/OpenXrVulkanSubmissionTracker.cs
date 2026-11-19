@@ -311,7 +311,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
 
     internal void ConfigureSubmissionValidation(in OpenXrSubmissionValidationRequest request)
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             _submissionValidationRequest = request with
             {
@@ -367,13 +367,13 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
 
     internal void SetSubmissionValidationRuntimeEpoch(long runtimeEpoch)
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             _submissionValidationRuntimeEpoch = runtimeEpoch;
     }
 
     internal OpenXrSubmissionValidationSnapshot CaptureSubmissionValidation()
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             long capturedAt = Stopwatch.GetTimestamp();
             var snapshot = new OpenXrSubmissionValidationSnapshot
@@ -515,7 +515,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     internal void SetSubmissionRetiredCallback(Action<InFlightSubmission> callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (_onSubmissionRetired is not null && _onSubmissionRetired != callback)
                 throw new InvalidOperationException("OpenXR submission retirement already has a different owner.");
@@ -528,7 +528,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     {
         get
         {
-            lock (_gate)
+            using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
                 return CountActiveSubmissionsNoLock();
         }
     }
@@ -543,7 +543,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         out VulkanSemaphore semaphore,
         out ulong value)
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             semaphore = _latestAcceptedCompletionSemaphore;
             value = _latestAcceptedCompletionValue;
@@ -555,7 +555,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     {
         get
         {
-            lock (_gate)
+            using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
                 return CountOwnedSubmissionsNoLock() > 0;
         }
     }
@@ -565,7 +565,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     {
         get
         {
-            lock (_gate)
+            using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             {
                 int count = 0;
                 for (int i = 0; i < _inFlight.Length; i++)
@@ -621,32 +621,109 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         VulkanFrameDataArena? frameDataArena,
         ulong frameDataGeneration)
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
+            return FindRegisteredFrameDataSlotOwnerNoLock(
+                frameSlot,
+                mappedFrameArena,
+                mappedFrameGeneration,
+                frameDataArena,
+                frameDataGeneration) is not null;
+    }
+
+    /// <summary>
+    /// Waits for the GPU to complete the submission that owns <paramref name="frameSlot"/>, for at
+    /// most <paramref name="timeoutNanoseconds"/>, and then settles completed submissions so that
+    /// the slot is released. Returns true when no submission owns the slot after the wait.
+    /// </summary>
+    /// <remarks>
+    /// Per-eye OpenXR preparation calls this only when both frame-data slots of an eye are still
+    /// owned. A submission that is not committed yet (no timeline value) cannot be waited on, so
+    /// the method only settles and checks again.
+    /// </remarks>
+    internal bool TryWaitForRegisteredFrameDataSlotRelease(
+        uint frameSlot,
+        VulkanMappedFrameArena? mappedFrameArena,
+        ulong mappedFrameGeneration,
+        VulkanFrameDataArena? frameDataArena,
+        ulong frameDataGeneration,
+        ulong timeoutNanoseconds)
+    {
+        VulkanSemaphore ownerSemaphore = default;
+        ulong ownerTimelineValue = 0UL;
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
-            for (int i = 0; i < _inFlight.Length; i++)
+            InFlightSubmission? owner = FindRegisteredFrameDataSlotOwnerNoLock(
+                frameSlot,
+                mappedFrameArena,
+                mappedFrameGeneration,
+                frameDataArena,
+                frameDataGeneration);
+            if (owner is null)
+                return true;
+            if (owner.Active && !owner.PendingCommit && !owner.Cancelled && !owner.CompletionProven)
             {
-                InFlightSubmission entry = _inFlight[i];
-                if (!entry.Active && !entry.Retiring && !entry.PendingCommit)
-                    continue;
-                bool mappedArenaMatches = mappedFrameArena is not null &&
-                    ReferenceEquals(entry.MappedFrameArena, mappedFrameArena) &&
-                    entry.MappedFrameGeneration == mappedFrameGeneration;
-                bool frameDataArenaMatches = frameDataArena is not null &&
-                    ReferenceEquals(entry.FrameDataArena, frameDataArena) &&
-                    entry.FrameDataGeneration == frameDataGeneration;
-                if (!mappedArenaMatches && !frameDataArenaMatches)
-                    continue;
-                for (int slotIndex = 0; slotIndex < entry.FrameSlotCount; slotIndex++)
-                    if (entry.FrameSlots[slotIndex] == frameSlot)
-                        return true;
+                ownerSemaphore = owner.TimelineSemaphore;
+                ownerTimelineValue = owner.TimelineValue;
             }
-            return false;
         }
+
+        if (ownerSemaphore.Handle != 0 && ownerTimelineValue != 0UL &&
+            _commandRuntime.DeviceContext.IsOperational)
+        {
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "OpenXR.Vulkan.EyeFrameDataSlotWait"))
+            {
+                Result waitResult = _commandRuntime.Synchronization.WaitForTimelineCompletion(
+                    _commandRuntime.Api,
+                    _commandRuntime.DeviceContext,
+                    _commandRuntime.ResourceRuntime.Lifetime.Tracker,
+                    ownerSemaphore,
+                    ownerTimelineValue,
+                    timeoutNanoseconds);
+                if (waitResult != Result.Success && waitResult != Result.Timeout)
+                    return false;
+            }
+        }
+
+        PollCompletions();
+        return !OwnsRegisteredFrameDataSlot(
+            frameSlot,
+            mappedFrameArena,
+            mappedFrameGeneration,
+            frameDataArena,
+            frameDataGeneration);
+    }
+
+    private InFlightSubmission? FindRegisteredFrameDataSlotOwnerNoLock(
+        uint frameSlot,
+        VulkanMappedFrameArena? mappedFrameArena,
+        ulong mappedFrameGeneration,
+        VulkanFrameDataArena? frameDataArena,
+        ulong frameDataGeneration)
+    {
+        for (int i = 0; i < _inFlight.Length; i++)
+        {
+            InFlightSubmission entry = _inFlight[i];
+            if (!entry.Active && !entry.Retiring && !entry.PendingCommit)
+                continue;
+            bool mappedArenaMatches = mappedFrameArena is not null &&
+                ReferenceEquals(entry.MappedFrameArena, mappedFrameArena) &&
+                entry.MappedFrameGeneration == mappedFrameGeneration;
+            bool frameDataArenaMatches = frameDataArena is not null &&
+                ReferenceEquals(entry.FrameDataArena, frameDataArena) &&
+                entry.FrameDataGeneration == frameDataGeneration;
+            if (!mappedArenaMatches && !frameDataArenaMatches)
+                continue;
+            for (int slotIndex = 0; slotIndex < entry.FrameSlotCount; slotIndex++)
+                if (entry.FrameSlots[slotIndex] == frameSlot)
+                    return entry;
+        }
+        return null;
     }
 
     internal void NotifyRegisteredFrameDataSlotPressure()
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             ReleaseSubmissionValidationHoldNoLock(EOpenXrCompletionObservationHoldReleaseReason.FrameDataSlotPressureAbort);
     }
 
@@ -698,11 +775,11 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         ticket = null;
         if (Volatile.Read(ref _disposed) != 0 || !_commandRuntime.DeviceContext.IsOperational)
             return false;
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             if (ReleaseValidationHoldAtCapacityNoLock(maxInFlight))
                 return false;
         PollCompletions();
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (Volatile.Read(ref _disposed) != 0 || !_commandRuntime.DeviceContext.IsOperational)
                 return false;
@@ -715,7 +792,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         if (!EnsureInFlightBudget(maxInFlight, timeoutMs))
             return false;
 
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (Volatile.Read(ref _disposed) != 0 || !_commandRuntime.DeviceContext.IsOperational)
                 return false;
@@ -755,7 +832,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         if (ticket is null)
             return;
 
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (!TryGetActiveAdmissionSlotNoLock(ticket.Value, out AdmissionSlot slot) ||
                 slot.PreparedSlotIndex >= 0)
@@ -813,7 +890,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         uint imageReuseAge = 0;
         int inFlightSnapshot;
 
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (Volatile.Read(ref _disposed) != 0 ||
                 !_commandRuntime.DeviceContext.IsOperational ||
@@ -941,7 +1018,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     internal void SetSubmissionFrameSlotLifetimeSettledCallback(Action<InFlightSubmission, uint> callback)
     {
         ArgumentNullException.ThrowIfNull(callback);
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             _onSubmissionFrameSlotLifetimeSettled = callback;
     }
 
@@ -1042,7 +1119,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         if (Volatile.Read(ref _submissionValidationEnabled) == 0)
             return false;
 
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (_submissionValidationRequest.Scenario != scenario ||
                 _submissionValidationFaultConsumed)
@@ -1078,7 +1155,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     {
         if (entry.ValidationLedgerIndex < 0)
             return;
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if ((uint)entry.ValidationLedgerIndex < (uint)_submissionValidationLedgerCount)
             {
@@ -1111,7 +1188,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     {
         if (!entry.NativeSubmissionAccepted || entry.CompletionProven || entry.ValidationLedgerIndex < 0)
             return;
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             if ((uint)entry.ValidationLedgerIndex < (uint)_submissionValidationLedgerCount)
                 _submissionValidationLedger[entry.ValidationLedgerIndex].EarlySettlementViolationCount++;
     }
@@ -1160,7 +1237,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         if (Volatile.Read(ref _submissionValidationEnabled) == 0)
             return;
 
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             for (int i = 0; i < _inFlight.Length; i++)
             {
@@ -1326,7 +1403,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         long submitStartTimestamp,
         long submitEndTimestamp)
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
 
             if (!TryGetActiveAdmissionSlotNoLock(ticket, out AdmissionSlot admissionSlot) ||
@@ -1373,7 +1450,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         out TemporalHistorySubmissionCandidate candidate)
     {
         candidate = default;
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             for (int i = 0; i < _inFlight.Length; i++)
             {
@@ -1410,7 +1487,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     /// </summary>
     internal void FinalizeAcceptedSubmissionReceipt(in SubmissionAdmissionTicket ticket)
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             for (int i = 0; i < _inFlight.Length; i++)
             {
@@ -1448,7 +1525,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             return;
 
         InFlightSubmission? entry = null;
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (!TryGetActiveAdmissionSlotNoLock(ticket, out AdmissionSlot admissionSlot))
                 return;
@@ -1492,7 +1569,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
 
     private bool IsTicketActive(in SubmissionAdmissionTicket ticket)
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             return TryGetActiveAdmissionSlotNoLock(ticket, out _);
     }
 
@@ -1553,7 +1630,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         Span<Result> observedResults = stackalloc Result[DefaultMaxInFlightSubmissions];
         int observedCount = 0;
 
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (IsSubmissionValidationHoldActiveNoLock())
                 return 0;
@@ -1656,7 +1733,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                 retired = RetireCompletedSubmission(completed);
                 if (!retired)
                     continue;
-                lock (_gate)
+                using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
                 {
                     if (completed.SubmissionValidationTracked && !completed.SubmissionValidationRetiredCounted)
                     {
@@ -1670,7 +1747,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             }
             finally
             {
-                lock (_gate)
+                using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
                 {
                     if (!completed.AbandonedAfterDeviceLoss)
                     {
@@ -1817,7 +1894,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         if (settled && !ShouldStopNormalSettlement(entry))
             settled = ReopenArenas(entry);
         settled &= !ShouldStopNormalSettlement(entry);
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (!entry.AbandonedAfterDeviceLoss)
             {
@@ -2098,7 +2175,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         bool observationPressureAtCapacity = false;
         bool preWaitCompletionProven = false;
         int preWaitSettlementCount = 0;
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (CountOwnedSubmissionsNoLock() < maxInFlight)
                 return true;
@@ -2147,7 +2224,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeCompletionWaitTime(waitElapsed);
         RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeFenceForcedWait();
         Interlocked.Increment(ref _forcedWaitCount);
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             RecordSubmissionValidationForcedWaitNoLock(
                 oldestLedgerIndex,
                 oldestAdmissionSlotIndex,
@@ -2165,7 +2242,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         // Release even on failure so an operational device can be polled again;
         // a failed wait itself never authorizes completion or settlement.
         if (observationPressureAtCapacity)
-            lock (_gate)
+            using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
                 ReleaseSubmissionValidationHoldNoLock(EOpenXrCompletionObservationHoldReleaseReason.AfterNativeCapacityWait);
 
         if (waitResult != Result.Success && waitResult != Result.Timeout)
@@ -2179,7 +2256,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         }
 
         PollCompletions();
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             return CountOwnedSubmissionsNoLock() < maxInFlight;
     }
 
@@ -2189,7 +2266,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     /// </summary>
     public bool DrainAll(uint timeoutMs = DefaultShutdownDrainTimeoutMs)
     {
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             ReleaseSubmissionValidationHoldNoLock(EOpenXrCompletionObservationHoldReleaseReason.Teardown);
         long deadline = Stopwatch.GetTimestamp() + (long)(timeoutMs * (Stopwatch.Frequency / 1000.0));
         while (HasInFlightWork)
@@ -2197,7 +2274,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             PollCompletions();
             InFlightSubmission? pending = null;
             int ownedCount;
-            lock (_gate)
+            using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             {
                 if (CountOwnedSubmissionsNoLock() == 0)
                     break;
@@ -2281,7 +2358,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     private int AbandonAfterDeviceLossCore()
     {
         int abandonedCount = 0;
-        lock (_gate)
+        using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
         {
             if (Volatile.Read(ref _disposed) != 0)
                 return 0;
@@ -2333,7 +2410,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             }
             ReleasePreparedInputsAfterDeviceLoss(entry);
             AbandonUploadsAfterDeviceLoss(entry);
-            lock (_gate)
+            using (VulkanFrameLockScope.Enter(_gate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.SubmissionTracker))
             {
                 entry.Active = false;
                 entry.Retiring = false;

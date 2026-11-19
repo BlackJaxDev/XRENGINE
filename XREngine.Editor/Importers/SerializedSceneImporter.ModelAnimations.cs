@@ -24,7 +24,7 @@ internal static partial class SerializedSceneImporter
                 return;
             FbxAnimationDocument animations;
             (source, animations) = state.Context.FbxSourceDocuments.GetAnimationSnapshot(path,
-                requireLosslessLinearAnimation: true);
+                requireStrictAnimation: true);
             var converter = new UnityFbxAnimationConverter(source, root, metadata.PreserveHierarchy,
                 state.Context.CancellationToken);
             var clips = new List<AnimationClip>(animations.Stacks.Count);

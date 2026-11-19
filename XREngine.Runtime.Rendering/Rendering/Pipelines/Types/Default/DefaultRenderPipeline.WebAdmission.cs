@@ -99,6 +99,10 @@ public partial class DefaultRenderPipeline
         CommonPostProcessStages.AddStandardPipelineSchema(builder, defaultAutoExposure: false);
         PipelinePostProcessState state = new();
         state.BindToSchema(builder.Build());
+        // The cooked output route supports only Mobius. A desktop host can install another
+        // host default operator, so set the browser default here before the authored values.
+        state.GetStage(CommonPostProcessStages.TonemappingStageKey)?
+            .SetValue(PostProcessParameterNames.TonemappingOperator, (int)ETonemappingType.Mobius);
         if (authored is not null)
             foreach ((string key, PostProcessStageState source) in authored.Stages)
                 if (state.GetStage(key) is { } destination)
@@ -157,7 +161,7 @@ public partial class DefaultRenderPipeline
         ColorGradingSettings? color = GetSettings<ColorGradingSettings>(state);
         if (color is not null && (color.ExposureMode != ColorGradingSettings.ExposureControlMode.Artist ||
             !float.IsFinite(color.Exposure) || !float.IsFinite(color.Gamma) || color.Exposure < 0 || color.Gamma <= 0 ||
-            color.Contrast != 1 || color.Saturation != 1 || color.Brightness != 1 || color.Hue != 1 ||
+            color.Contrast != 0 || color.Saturation != 1 || color.Brightness != 1 || color.Hue != 1 ||
             (Vector3)color.Tint != Vector3.One))
             return "Use finite artist exposure and positive gamma with neutral color grading.";
         pass = CommonPostProcessStages.TonemappingStageKey;

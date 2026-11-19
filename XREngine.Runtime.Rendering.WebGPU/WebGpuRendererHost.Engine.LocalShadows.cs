@@ -163,7 +163,7 @@ public sealed partial class WebGpuRendererHost
                 WebGpuTexture2D api = (WebGpuTexture2D)GetOrCreateAPIRenderObject(_defaultSpotShadow, generateNow: true)!;
                 BrowserFrameBufferPlan plan = new([new BrowserColorAttachmentPlan(api.GetRenderView(0, -1), true, true, Vector4.One)]);
                 SetField(ref _defaultSpotShadowClear, PrepareEngineCommands(this,
-                    "{\"label\":\"Disabled spot shadow initialization\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}"));
+                    $$"""{"label":"Disabled spot shadow initialization","commands":[{"type":"clear","pass":{{plan.ToJson()}}}]}"""));
             }
             RecordEngineCommands(_defaultSpotShadowClear, []);
             SetField(ref _defaultSpotShadowClearFrame, _engineFrameSequence, publishNotifications: false);
@@ -203,7 +203,7 @@ public sealed partial class WebGpuRendererHost
                     BrowserFrameBufferPlan plan = new([new BrowserColorAttachmentPlan(api.GetRenderView(0, face), true, true, Vector4.One)]);
                     // Every ordered engine frame record references one retained operation.
                     _defaultPointShadowClears[face] = PrepareEngineCommands(this,
-                        "{\"label\":\"Disabled point shadow face initialization\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
+                        $$"""{"label":"Disabled point shadow face initialization","commands":[{"type":"clear","pass":{{plan.ToJson()}}}]}""");
                 }
                 RecordEngineCommands(_defaultPointShadowClears[face], []);
             }

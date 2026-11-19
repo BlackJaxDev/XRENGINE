@@ -16,6 +16,7 @@ internal sealed partial class VulkanDeviceContext
     internal bool AdvancedMultiviewGeometryShaderEnabled { get; set; }
     internal bool AdvancedMultiviewMeshEnabled { get; set; }
     internal bool SampleRateShadingEnabled { get; set; }
+    internal bool IndependentBlendEnabled { get; set; }
     private int _deviceLossDiagnosticsClaimed;
     private int _capabilityPublicationState;
     private int _queuesPublished;

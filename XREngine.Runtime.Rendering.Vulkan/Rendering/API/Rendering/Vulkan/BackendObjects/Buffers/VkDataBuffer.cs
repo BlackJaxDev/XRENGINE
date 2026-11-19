@@ -430,11 +430,27 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 if (!_vkBuffer.HasValue ||
-                    !BackendContext.Resources.Buffers.TryGetAllocation(_vkBuffer.Value, out VulkanMemoryAllocation allocation) ||
-                    !VulkanBufferResourceService.IsDeviceLocalVramAllocation(allocation.Properties))
+                    !BackendContext.Resources.Buffers.TryGetAllocation(_vkBuffer.Value, out VulkanMemoryAllocation allocation))
                 {
                     return;
                 }
+
+                // The allocator retries a failed device-local request in host-visible memory. Report
+                // that placement loudly: the buffer then works, but its GPU access crosses PCIe.
+                if ((_lastMemProps & MemoryPropertyFlags.DeviceLocalBit) != 0 &&
+                    (allocation.Properties & MemoryPropertyFlags.DeviceLocalBit) == 0)
+                {
+                    Debug.VulkanWarningEvery(
+                        $"VkDataBuffer.DeviceLocalFallback.{GetDescribingName()}",
+                        TimeSpan.FromSeconds(10),
+                        "[VkDataBuffer] Device-local memory was requested for '{0}' ({1} bytes) but the allocation is in {2} memory. GPU access to this buffer crosses PCIe.",
+                        GetDescribingName(),
+                        allocation.Size,
+                        allocation.Properties);
+                }
+
+                if (!VulkanBufferResourceService.IsDeviceLocalVramAllocation(allocation.Properties))
+                    return;
 
                 _allocatedVRAMBytes = ClampToTrackedVramBytes(allocation.Size);
                 RuntimeEngine.Rendering.Stats.Vram.AddBufferAllocation(_allocatedVRAMBytes);
@@ -1136,11 +1152,19 @@ namespace XREngine.Rendering.Vulkan
             private bool IsUsingDeviceLocalBacking()
                 => (_lastMemProps & MemoryPropertyFlags.DeviceLocalBit) != 0;
 
+            /// <summary>
+            /// Selects device-local memory for a buffer without host-visible intent when the GPU
+            /// produces its contents (any size and usage), or when it holds a static upload of
+            /// 64 KiB or more. A GPU-produced buffer that sits in host-visible memory makes every
+            /// GPU read and write cross PCIe. Its CPU readers copy it on the GPU into a readback
+            /// buffer first, so they do not need a mapping.
+            /// </summary>
             private static bool ShouldUseDeviceLocal(XRDataBuffer data, ulong byteCount)
                 => !data.ShouldMap &&
                    !HasHostVisibleIntent(data) &&
-                   byteCount >= DeviceLocalStaticUploadMinimumBytes &&
-                   (data.Usage == EBufferUsage.StaticDraw || data.Usage == EBufferUsage.StaticCopy);
+                   (data.GpuProduced ||
+                    (byteCount >= DeviceLocalStaticUploadMinimumBytes &&
+                     (data.Usage == EBufferUsage.StaticDraw || data.Usage == EBufferUsage.StaticCopy)));
 
             private static bool HasHostVisibleIntent(XRDataBuffer data)
                 => data.ShouldMap ||

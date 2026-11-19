@@ -24,4 +24,12 @@ internal static class MeshOptimizerNative
         => MeshOptimizerBackendServices.Required.SimplifySloppy(indices, positions, vertexCount, targetIndexCount, targetError, vertexLock, out resultError);
     public static float SimplifyScale(float[] positions, int vertexCount)
         => MeshOptimizerBackendServices.Required.SimplifyScale(positions, vertexCount);
+    public static void GeneratePositionRemap(Span<uint> destination, ReadOnlySpan<float> positions, int vertexCount, int positionsStride)
+        => MeshOptimizerBackendServices.Required.GeneratePositionRemap(destination, positions, vertexCount, positionsStride);
+    public static int PartitionClusters(Span<uint> destination, ReadOnlySpan<uint> clusterIndices, ReadOnlySpan<uint> clusterIndexCounts, ReadOnlySpan<float> positions, int vertexCount, int positionsStride, int targetPartitionSize)
+        => MeshOptimizerBackendServices.Required.PartitionClusters(destination, clusterIndices, clusterIndexCounts, positions, vertexCount, positionsStride, targetPartitionSize);
+    public static MeshOptimizerBounds ComputeSphereBounds(ReadOnlySpan<float> positions, int count, int positionsStride, ReadOnlySpan<float> radii, int radiiStride)
+        => MeshOptimizerBackendServices.Required.ComputeSphereBounds(positions, count, positionsStride, radii, radiiStride);
+    public static MeshOptimizerBounds ComputeClusterBounds(ReadOnlySpan<uint> indices, ReadOnlySpan<float> positions, int vertexCount, int positionsStride)
+        => MeshOptimizerBackendServices.Required.ComputeClusterBounds(indices, positions, vertexCount, positionsStride);
 }

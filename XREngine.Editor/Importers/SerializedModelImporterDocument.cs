@@ -10,6 +10,8 @@ public sealed class SerializedModelImporterDocument
     public bool ImportBlendShapes { get; init; } = true;
     /// <summary>The source mode: 0 imports, 1 calculates, and 2 ignores blendshape normals.</summary>
     public int BlendShapeNormalImportMode { get; init; }
+    /// <summary>The source tangent mode. Mode 3 calculates Mikk-compatible tangents.</summary>
+    public int TangentImportMode { get; init; } = -1;
     public bool ImportAnimation { get; init; } = true;
     public int AnimationType { get; init; }
     public float GlobalScale { get; init; } = 1.0f;

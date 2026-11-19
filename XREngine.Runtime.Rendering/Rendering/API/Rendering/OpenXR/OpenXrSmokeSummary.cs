@@ -63,6 +63,8 @@ public sealed class OpenXrSmokeSummary
     public OpenXrSmokeLifecycleFaultSnapshot LifecycleFault { get; set; } = new();
     public long SubmittedFrameCount { get; set; }
     public long NoLayerFrameCount { get; set; }
+    /// <summary>No-layer frame counts keyed by <see cref="EOpenXrNoLayerReason"/> name.</summary>
+    public Dictionary<string, long> NoLayerFrameReasons { get; set; } = [];
     public long EndFrameFailureCount { get; set; }
     public uint LocatedViewCount { get; set; }
     public bool PredictedViewPoseCached { get; set; }

@@ -735,6 +735,9 @@ internal unsafe partial class VkMeshRenderer
 			BlendshapeWeightThresholdUniformName => EVulkanAutoUniformSpecialSource.BlendshapeWeightThreshold,
 			UsePrecombinedBlendshapeDeltasUniformName => EVulkanAutoUniformSpecialSource.UsePrecombinedBlendshapeDeltas,
 			"u_SourceFlatDirection" => EVulkanAutoUniformSpecialSource.SourceFlatDirection,
+			"XRENGINE_EditorHighlightFlags" => EVulkanAutoUniformSpecialSource.EditorHighlightFlags,
+			"XRENGINE_EditorPickingKey" => EVulkanAutoUniformSpecialSource.TransformId,
+			"XRENGINE_EditorPickingCoverage" => EVulkanAutoUniformSpecialSource.EditorPickingCoverage,
 			_ => EVulkanAutoUniformSpecialSource.None,
 		};
 		return source != EVulkanAutoUniformSpecialSource.None;
@@ -757,6 +760,14 @@ internal unsafe partial class VkMeshRenderer
 			case EVulkanAutoUniformSpecialSource.SourceFlatDirection:
 				value = draw.SourceFlatDirection;
 				type = EShaderVarType._vec4;
+				return true;
+			case EVulkanAutoUniformSpecialSource.EditorHighlightFlags:
+				value = draw.EditorHighlightBits;
+				type = EShaderVarType._uint;
+				return true;
+			case EVulkanAutoUniformSpecialSource.EditorPickingCoverage:
+				value = GetEditorPickingCoverage(in draw);
+				type = EShaderVarType._uint;
 				return true;
 			case EVulkanAutoUniformSpecialSource.SkinPaletteBase:
 				value = draw.AutoUniformPublication.SkinPaletteBase;

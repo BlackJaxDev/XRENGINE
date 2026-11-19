@@ -81,9 +81,8 @@ public static class SecretCipherServices
 
         private static InvalidOperationException MissingRegistration(string operation, string? serialized)
             => new(
-                $"Editor secret cipher owner '{nameof(ISecretCipherServices)}' is not installed for {operation}" +
-                (string.IsNullOrWhiteSpace(serialized) ? "." : $" of value kind '{GetValueKind(serialized)}'.") +
-                " Install the editor secret-persistence service at the application composition root.");
+                $"Editor secret cipher owner '{nameof(ISecretCipherServices)}' is not installed for {operation}{(string.IsNullOrWhiteSpace(serialized) ? "." : $" of value kind '{GetValueKind(serialized)}'.")} " +
+                "Install the editor secret-persistence service at the application composition root.");
 
         private static string GetValueKind(string serialized)
             => serialized.StartsWith(DpapiPrefix, StringComparison.Ordinal)

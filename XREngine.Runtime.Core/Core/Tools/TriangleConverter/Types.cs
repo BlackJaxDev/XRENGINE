@@ -42,7 +42,7 @@ namespace XREngine.TriangleConverter
             => A.GetHashCode() ^ B.GetHashCode();
 
         public override string ToString()
-            => string.Format("{0} {1}", A, B);
+            => $"{A} {B}";
     }
 
     public class TriEdge(uint A, uint B, uint triPos) : TriangleEdge(A, B)
@@ -61,7 +61,7 @@ namespace XREngine.TriangleConverter
             => A.GetHashCode() ^ B.GetHashCode();
 
         public override string ToString()
-            => string.Format("{0} {1} {2}", A, B, TriPos);
+            => $"{A} {B} {TriPos}";
     }
 
     public enum TriOrder

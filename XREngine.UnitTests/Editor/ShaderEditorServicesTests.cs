@@ -72,7 +72,7 @@ public sealed class ShaderEditorServicesTests
 
         string result = ShaderEditorServices.AppendDirective(source, "#pragma snippet \"ForwardLighting\"");
 
-        result.ShouldBe("#version 460 core" + Environment.NewLine + "#pragma snippet \"ForwardLighting\"" + Environment.NewLine);
+        result.ShouldBe($"#version 460 core{Environment.NewLine}#pragma snippet \"ForwardLighting\"{Environment.NewLine}");
         source.ShouldBe("#version 460 core");
     }
 

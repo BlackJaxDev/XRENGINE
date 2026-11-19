@@ -235,7 +235,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ulong key = (ulong)commandBuffer.Handle;
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 state.HasDescriptorHeapBinding = false;
@@ -252,7 +252,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ulong key = (ulong)commandBuffer.Handle;
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 state.GraphicsDescriptorSignature = 0;
@@ -279,7 +279,7 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ulong key = unchecked((ulong)primary.Handle);
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState previousState);
                 _commandBindStates[key] = new CommandBufferBindState
@@ -296,7 +296,7 @@ namespace XREngine.Rendering.Vulkan
 
             int resolvedImageIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
             ulong key = (ulong)commandBuffer.Handle;
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
                 _commandBufferImageIndices[key] = resolvedImageIndex;
         }
 
@@ -310,7 +310,7 @@ namespace XREngine.Rendering.Vulkan
                 return registered;
 
             ulong key = (ulong)commandBuffer.Handle;
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
                 return _commandBufferImageIndices.TryGetValue(key, out int imageIndex)
                     ? imageIndex
                     : -1;
@@ -321,7 +321,7 @@ namespace XREngine.Rendering.Vulkan
 
         private void RemoveCommandBufferBindStateByHandle(ulong key)
         {
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.Remove(key);
                 _commandBufferImageIndices.Remove(key);
@@ -364,7 +364,7 @@ namespace XREngine.Rendering.Vulkan
 
             bool shouldBind = true;
             ulong key = (ulong)commandBuffer.Handle;
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 ulong handle = pipeline.Handle;
@@ -440,7 +440,7 @@ namespace XREngine.Rendering.Vulkan
 
             bool shouldSet;
             ulong key = (ulong)commandBuffer.Handle;
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 shouldSet = !state.HasViewportScissorState || state.ViewportScissorSignature != signature;
@@ -585,7 +585,7 @@ namespace XREngine.Rendering.Vulkan
             bool shouldBind = true;
             ulong key = (ulong)commandBuffer.Handle;
 
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 if (bindPoint == PipelineBindPoint.Graphics)
@@ -724,7 +724,7 @@ namespace XREngine.Rendering.Vulkan
             ulong legacySignature = unchecked((ulong)legacyHash.ToHashCode());
             bool shouldBind;
             ulong key = (ulong)commandBuffer.Handle;
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 shouldBind = state.VertexBufferSignature != legacySignature;
@@ -796,7 +796,7 @@ namespace XREngine.Rendering.Vulkan
             ulong legacySignature = unchecked((ulong)legacyHash.ToHashCode());
             bool shouldBind;
             ulong key = (ulong)commandBuffer.Handle;
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 shouldBind = state.VertexBufferSignature != legacySignature;
@@ -846,7 +846,7 @@ namespace XREngine.Rendering.Vulkan
 
             bool shouldBind;
             ulong key = (ulong)commandBuffer.Handle;
-            lock (_commandBindStateLock)
+            using (VulkanFrameLockScope.Enter(_commandBindStateLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 shouldBind = state.IndexBuffer != indexBuffer.Handle || state.IndexOffset != offset || state.IndexType != indexType;
@@ -1554,7 +1554,7 @@ namespace XREngine.Rendering.Vulkan
             ComputeTransientResources? resources = _computeTransientResources[imageIndex];
             if (resources is null)
             {
-                lock (_computeDescriptorCacheLock)
+                using (VulkanFrameLockScope.Enter(_computeDescriptorCacheLock, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
                     resources = _computeTransientResources[imageIndex] ??= new ComputeTransientResources();
             }
 

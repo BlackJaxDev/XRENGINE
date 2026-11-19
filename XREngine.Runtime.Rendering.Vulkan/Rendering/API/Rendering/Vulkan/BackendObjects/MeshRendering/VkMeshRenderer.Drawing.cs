@@ -88,7 +88,7 @@ internal unsafe partial class VkMeshRenderer
 		out string failureReason,
 		out bool pipelineUnavailable)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			return RecordDrawNoLock(
 				commandBuffer,
@@ -534,7 +534,7 @@ internal unsafe partial class VkMeshRenderer
 		out VulkanPreparedMeshDrawState recordingState,
 		out string reason)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			return TryPrepareMeshDrawRecordingStateNoLock(
 				preparedFrame,
@@ -2571,7 +2571,7 @@ internal unsafe partial class VkMeshRenderer
 		// The primary reuse refresh and secondary recording paths can prepare the
 		// same renderer concurrently. They mutate the active program, descriptor
 		// allocation, and dynamic UBO state, so they must share RecordDraw's lock.
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return TryPrewarmFrameDataForRecordingNoLock(draw, drawUniformSlot, frameIndex, out reason, telemetry);
 	}
 
@@ -2585,7 +2585,7 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		out string reason)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return TryPrepareFrameDataStructuresForRecordingNoLock(draw, out reason);
 	}
 
@@ -2637,7 +2637,7 @@ internal unsafe partial class VkMeshRenderer
 		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
 		bool frameDataAlreadyPrewarmed = false)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			if ((!frameDataAlreadyPrewarmed &&
 				 !TryPrewarmFrameDataForRecordingNoLock(
@@ -2716,7 +2716,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			reason = "program pending";
 			return false;
@@ -2829,7 +2829,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			reason = "program pending after frame-wide prewarm";
 			return false;
@@ -2937,7 +2937,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			reason = "program pending";
 			return false;
@@ -3187,7 +3187,7 @@ internal unsafe partial class VkMeshRenderer
 		// renderer-owned descriptor and UBO state consumed by RecordDraw.
 		// Serializing it with recording keeps a draw from observing another
 		// output's active program or dynamic-uniform slot during camera motion.
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return TryRefreshReusableCommandBufferFrameDataNoLock(
 				imageIndex,
 				draw,
@@ -3205,7 +3205,7 @@ internal unsafe partial class VkMeshRenderer
 		EVulkanBindingFrequencyMask frequencyMask,
 		out string reason)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			reason = "frame-frequency reusable";
 			if (!IsFrameDataOwnerOpen(draw, out reason))
@@ -3254,7 +3254,7 @@ internal unsafe partial class VkMeshRenderer
 	internal bool SupportsOwnerOnlyReusableFrameDataRefresh(
 		in PendingMeshDraw draw)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return SupportsOwnerOnlyReusableFrameDataRefreshNoLock(
 				draw,
 				allowPlanOwnedFrameSourceSamplers: false);
@@ -3263,7 +3263,7 @@ internal unsafe partial class VkMeshRenderer
 	/// <summary>Identifies draws whose physical frame source must be published for every active descriptor slot.</summary>
 	internal bool RequiresPerDrawFrameSourceDescriptorRefresh(in PendingMeshDraw draw)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return RequiresPerDrawFrameSourceDescriptorRefreshNoLock(draw);
 	}
 
@@ -3295,7 +3295,7 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		bool allowPlanOwnedFrameSourceSamplers)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return SupportsOwnerOnlyReusableFrameDataRefreshNoLock(
 				draw,
 				allowPlanOwnedFrameSourceSamplers);
@@ -3304,7 +3304,7 @@ internal unsafe partial class VkMeshRenderer
 	internal string? DescribeOwnerOnlyReusableFrameDataRefreshBlocker(
 		in PendingMeshDraw draw)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return DescribeOwnerOnlyReusableFrameDataRefreshBlockerNoLock(draw);
 	}
 
@@ -3616,7 +3616,7 @@ internal unsafe partial class VkMeshRenderer
 
 	internal string DescribeReusableCommandBufferFrameDataBlocker(in PendingMeshDraw draw, int drawUniformSlot)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			ActivateDrawMaterializationSnapshot(draw);
 			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);

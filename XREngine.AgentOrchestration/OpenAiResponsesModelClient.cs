@@ -697,7 +697,7 @@ public sealed class OpenAiResponsesModelClient : IAgentModelClient
             payload["max_output_tokens"] = request.MaxOutputTokens;
         if (request.Run.UseBackgroundMode)
             payload["background"] = true;
-        if (SupportsReasoning(request.Run.RequestedModel))
+        if (!request.Run.UseProviderDefaultReasoningEffort && SupportsReasoning(request.Run.RequestedModel))
         {
             payload["reasoning"] = new JsonObject
             {

@@ -226,7 +226,7 @@ public sealed partial class WebGpuRendererHost : IBrowserShadowReuseCapability
                 WebGpuTexture2D api = (WebGpuTexture2D)GetOrCreateAPIRenderObject(_defaultDirectionalShadow, generateNow: true)!;
                 BrowserFrameBufferPlan plan = new([], new BrowserDepthStencilAttachmentPlan(api.GetRenderView(0, -1), depthClearValue: 1));
                 SetField(ref _defaultDirectionalShadowClear, PrepareEngineCommands(this,
-                    "{\"label\":\"Disabled shadow depth initialization\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}"));
+                    $$"""{"label":"Disabled shadow depth initialization","commands":[{"type":"clear","pass":{{plan.ToJson()}}}]}"""));
             }
             RecordEngineCommands(_defaultDirectionalShadowClear, []);
             SetField(ref _defaultDirectionalShadowClearFrame, _engineFrameSequence, publishNotifications: false);

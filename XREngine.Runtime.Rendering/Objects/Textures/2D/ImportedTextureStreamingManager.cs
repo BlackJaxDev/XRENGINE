@@ -30,11 +30,13 @@ internal sealed partial class ImportedTextureStreamingManager
     private const long VulkanAllocatorStreamingReserveBytes = 768L * 1024L * 1024L;
     private const string VulkanImportedTexturePreviewFreezeEnvVar = XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze;
     private const string VulkanPreviewFreezeReason = "explicit Vulkan imported-texture preview freeze requested";
+    internal const string PublishedSourceRehydrationReason = "restore published native Vulkan residency from source";
 
     /// <summary>
     /// If a pending transition has been stuck for this many frames after all
-    /// texture decode and upload work has gone idle, force-clear it so the next
-    /// Evaluate cycle can re-queue a fresh transition.
+    /// backend texture work has gone idle, force-clear it so the next Evaluate
+    /// cycle can re-queue a fresh transition. Source rehydration has separate
+    /// worker ownership and is excluded from this recovery path.
     /// </summary>
     private const int StuckPendingTransitionFrameThreshold = 300;
 
@@ -182,13 +184,17 @@ internal sealed partial class ImportedTextureStreamingManager
             return false;
         }
 
+        long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         EnsureCallbacksSubscribed();
         uint targetDimension = Math.Max(residentData.ResidentMaxDimension, 1u);
+        long probeRecordStart = System.Diagnostics.Stopwatch.GetTimestamp();
         ImportedTextureStreamingRecord record = GetOrCreateRecord(
             texture,
             bindStreamingSource ? texture.FilePath : null);
+        long probeRecordEnd = System.Diagnostics.Stopwatch.GetTimestamp();
         CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         long frameId = Volatile.Read(ref _collectFrameId);
+        long probeTransitionStart = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!_transitionQueue.TryBeginTransition(
                 record,
                 cts,
@@ -209,6 +215,7 @@ internal sealed partial class ImportedTextureStreamingManager
             return false;
         }
 
+        long probeTransitionEnd = System.Diagnostics.Stopwatch.GetTimestamp();
         CancelPendingLoad(previousPendingLoad);
         lock (record.Sync)
         {
@@ -228,6 +235,7 @@ internal sealed partial class ImportedTextureStreamingManager
                 return ReferenceEquals(record.PendingLoadCts, cts) && !cts.IsCancellationRequested;
         }
 
+        long probeScheduleStart = System.Diagnostics.Stopwatch.GetTimestamp();
         bool queued = VulkanProvider.TryScheduleSynchronizedUpload(
             texture,
             residentData,
@@ -248,10 +256,24 @@ internal sealed partial class ImportedTextureStreamingManager
                 onFailed?.Invoke(error);
             },
             () => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId));
+        long probeScheduleEnd = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!queued)
         {
             ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId);
             streamingGeneration = 0;
+        }
+
+        double probeTotal = System.Diagnostics.Stopwatch.GetElapsedTime(probeStart).TotalMilliseconds;
+        if (probeTotal >= 4.0)
+        {
+            static double Ms(long a, long b) => System.Diagnostics.Stopwatch.GetElapsedTime(a, b).TotalMilliseconds;
+            Debug.WriteAuxiliaryLog(
+                "texture-upload-timing.log",
+                $"[TextureSchedulePhases] manager texture='{texture.Name}' total={probeTotal:F2} ms " +
+                $"subscribe={Ms(probeStart, probeRecordStart):F2} getOrCreateRecord={Ms(probeRecordStart, probeRecordEnd):F2} " +
+                $"tryBeginTransition={Ms(probeTransitionStart, probeTransitionEnd):F2} " +
+                $"cancelAndRecordUpdate={Ms(probeTransitionEnd, probeScheduleStart):F2} " +
+                $"providerSchedule={Ms(probeScheduleStart, probeScheduleEnd):F2} queued={queued}");
         }
 
         return queued;
@@ -325,7 +347,10 @@ internal sealed partial class ImportedTextureStreamingManager
                 if (record.Source is not { } releasedSource || record.Format != ESizedInternalFormat.Rgba8)
                 {
                     cts.Dispose();
-                    failureReason = "Published texture pixels were released but no RGBA8 streaming source can reload them.";
+                    failureReason = $"Texture '{texture.Name}' released its pixels but has no compatible RGBA8 reload source. " +
+                        $"DecodedFormat={record.Format}, MipFormat={retainedMips[0].InternalFormat}, " +
+                        $"ResolvedFormat={texture.SizedInternalFormat}, SourceType={record.Source?.GetType().Name ?? "none"}, " +
+                        $"PublishedGeneration={expectedPublishedGeneration}.";
                     return false;
                 }
 
@@ -342,7 +367,7 @@ internal sealed partial class ImportedTextureStreamingManager
                         previousCommittedBytes: 0L,
                         targetCommittedBytes: EstimateReleasedResidentBytes(retainedMips),
                         backendName: VulkanDenseBackend.Name,
-                        reason: "restore published native Vulkan residency from source",
+                        reason: PublishedSourceRehydrationReason,
                         priority: JobPriority.High,
                         uploadPriorityClass: TextureUploadPriorityClass.VisibleNow,
                         out CancellationTokenSource? previousReleasedLoad))
@@ -385,7 +410,9 @@ internal sealed partial class ImportedTextureStreamingManager
                     frozenMips,
                     record.SourceWidth,
                     record.SourceHeight,
-                    targetDimension);
+                    targetDimension,
+                    GenerateMipChainOnGpu: texture.AutoGenerateMipmaps &&
+                        frozenMips.Length == 1 && targetDimension > 1u);
                 if (residentData.SizedInternalFormat != record.Format)
                 {
                     cts.Dispose();
@@ -987,7 +1014,10 @@ internal sealed partial class ImportedTextureStreamingManager
         // Advance for the next collection phase.  Every viewport that runs
         // during the upcoming CollectVisible tick will tag usages with the new
         // value, and the following PostCollectVisible will evaluate against it.
-        Interlocked.Increment(ref _collectFrameId);
+        // The clock counts budget periods, not collects: with XR collect pacing
+        // one collect stands for several display periods, so the per-frame
+        // allowances above and the cooldowns in frames keep their real-time rate.
+        Interlocked.Add(ref _collectFrameId, CollectBudgetPeriods.Current);
     }
 
     private void OnSwapBuffers()
@@ -1030,7 +1060,7 @@ internal sealed partial class ImportedTextureStreamingManager
         WeakReference<ImportedTextureStreamingRecord>[] refs = _registry.GetRecordReferencesSnapshot();
         for (int i = 0; i < refs.Length; i++)
         {
-            if (completedFinalizations >= MaxSparseFinalizationsPerFrame)
+            if (completedFinalizations >= CollectBudgetPeriods.Scale(MaxSparseFinalizationsPerFrame))
                 break;
 
             if (!refs[i].TryGetTarget(out ImportedTextureStreamingRecord? record)
@@ -1237,13 +1267,9 @@ internal sealed partial class ImportedTextureStreamingManager
         for (int i = 0; i < snapshots.Count; i++)
             currentManagedBytes += snapshots[i].CurrentCommittedBytes;
 
-        // Recovery pass: detect and force-clear stuck pending transitions. The
-        // manager cannot distinguish a record whose callback was dropped from a
-        // legitimate decode waiting behind other texture work. Never cancel a
-        // pending record while the current backend still reports queued/active work;
-        // doing so makes high-frame-rate scenes repeatedly cancel valid jobs before
-        // they reach the decode gate and prevents large material sets from ever
-        // converging beyond their placeholder textures.
+        // Recovery pass: detect and force-clear stuck backend transitions. Source
+        // rehydration runs on a separate worker queue, so backend idleness does not
+        // prove that its decode stopped. Its exact owner callbacks clear it.
         TextureStreamingBackendActivity backendActivity = CurrentProvider.GetActivity();
         bool globalStuckRecoveryAllowed = !backendActivity.HasWork;
         for (int i = 0; i < snapshots.Count; i++)
@@ -1261,8 +1287,28 @@ internal sealed partial class ImportedTextureStreamingManager
             if (!globalStuckRecoveryAllowed)
                 continue;
 
-            if (!_transitionQueue.TryForceClearStuckTransition(snapshot.Record, frameId, out CancellationTokenSource? pendingLoadCts))
+            bool restoringResidency;
+            long restoringUploadGeneration;
+            lock (snapshot.Record.Sync)
+            {
+                restoringResidency = snapshot.Record.PendingTransitionReason.StartsWith("restore published", StringComparison.Ordinal);
+                restoringUploadGeneration = snapshot.Record.UploadGeneration;
+            }
+
+            if (!_transitionQueue.TryForceClearStuckTransition(
+                    snapshot.Record,
+                    snapshot.UploadGeneration,
+                    snapshot.LastTransitionFrameId,
+                    frameId,
+                    out CancellationTokenSource? pendingLoadCts))
                 continue;
+
+            if (restoringResidency)
+                Debug.WriteAuxiliaryLog("texture-upload-timing.log",
+                    $"[TextureRehydration.StuckCleanup] source='{snapshot.Record.FilePath}' frame={frameId} " +
+                    $"owner={(pendingLoadCts is null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(pendingLoadCts))} " +
+                    $"upload={restoringUploadGeneration} staleFrames={framesSincePending} " +
+                    $"pending={snapshot.PendingMaxDimension} resident={snapshot.ResidentMaxDimension}");
 
             Debug.TexturesWarning(
                 $"[TextureStreaming] Clearing stuck pending transition for '{snapshot.Record.FilePath}' "
@@ -1380,13 +1426,13 @@ internal sealed partial class ImportedTextureStreamingManager
                         return false;
                     }
 
-                    if (queuedPromotionBytes + deltaBytes > MaxImportEraPromotionBytesPerFrame)
+                    if (queuedPromotionBytes + deltaBytes > CollectBudgetPeriods.Scale(MaxImportEraPromotionBytesPerFrame))
                         return false;
                 }
 
-                if (queuedTransitions >= limits.MaxResidentTransitionsPerFrame
-                    || queuedPromotions >= limits.MaxPromotionTransitionsPerFrame
-                    || (queuedPromotions > 0 && queuedPromotionBytes + deltaBytes > limits.MaxPromotionBytesPerFrame))
+                if (queuedTransitions >= CollectBudgetPeriods.Scale(limits.MaxResidentTransitionsPerFrame)
+                    || queuedPromotions >= CollectBudgetPeriods.Scale(limits.MaxPromotionTransitionsPerFrame)
+                    || (queuedPromotions > 0 && queuedPromotionBytes + deltaBytes > CollectBudgetPeriods.Scale(limits.MaxPromotionBytesPerFrame)))
                 {
                     return false;
                 }
@@ -1425,7 +1471,7 @@ internal sealed partial class ImportedTextureStreamingManager
                     }
                 }
 
-                if (queuedTransitions >= limits.MaxResidentTransitionsPerFrame)
+                if (queuedTransitions >= CollectBudgetPeriods.Scale(limits.MaxResidentTransitionsPerFrame))
                     return false;
             }
 
@@ -1632,7 +1678,7 @@ internal sealed partial class ImportedTextureStreamingManager
 
         for (int i = 0; i < deferredPromotions.Count; i++)
         {
-            if (queuedTransitions >= limits.MaxResidentTransitionsPerFrame || queuedPromotions >= limits.MaxPromotionTransitionsPerFrame)
+            if (queuedTransitions >= CollectBudgetPeriods.Scale(limits.MaxResidentTransitionsPerFrame) || queuedPromotions >= CollectBudgetPeriods.Scale(limits.MaxPromotionTransitionsPerFrame))
                 break;
 
             DeferredPromotionCandidate deferred = deferredPromotions[i];

@@ -57,7 +57,7 @@ public sealed partial class WebGpuFrameBuffer
             new BrowserColorAttachmentPlan(source.View, clear: false, store: true, default,
                 resolveTargetHandle: target.View)]);
         int command = Renderer.PrepareEngineCommands(this,
-            "{\"label\":\"Engine color MSAA resolve\",\"commands\":[{\"type\":\"clear\",\"pass\":" + plan.ToJson() + "}]}");
+            $$"""{"label":"Engine color MSAA resolve","commands":[{"type":"clear","pass":{{plan.ToJson()}}}]}""");
         _colorResolves.Add(new(destination, destination.Revision, sourceSlot, destinationSlot,
             source.Owner, target.Owner, command));
         return command;

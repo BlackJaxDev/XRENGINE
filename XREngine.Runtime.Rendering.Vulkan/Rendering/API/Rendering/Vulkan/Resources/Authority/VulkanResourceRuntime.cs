@@ -330,6 +330,12 @@ internal sealed partial class VulkanResourceRuntime
     internal bool AutoExposureComputeInitialized;
     internal XRRenderProgram? AutoExposureComputeProgram2D;
     internal XRRenderProgram? AutoExposureComputeProgram2DArray;
+    /// <summary>Copies the left eye exposure of a two-pass VR eye pair into <see cref="HeadsetExposureBuffer"/>.</summary>
+    internal XRRenderProgram? HeadsetExposurePublishProgram;
+    /// <summary>Writes <see cref="HeadsetExposureBuffer"/> into the right eye exposure of a two-pass VR eye pair.</summary>
+    internal XRRenderProgram? HeadsetExposureFollowProgram;
+    /// <summary>One headset exposure value shared by the two eyes of a two-pass VR eye pair.</summary>
+    internal XRDataBuffer? HeadsetExposureBuffer;
     internal object TextureUploadContextSync { get; } = new();
     internal Dictionary<VulkanFrameBufferRenderPassKey, Silk.NET.Vulkan.RenderPass> FrameBufferRenderPasses { get; } = new();
     internal VulkanPhysicalImageGroup? RetainedAutoExposureHistoryGroup;
@@ -376,6 +382,13 @@ internal sealed partial class VulkanResourceRuntime
     /// </summary>
     internal ulong NativeBufferBindingRevision
         => Lifetime.Tracker.PublishedNativeBufferBindingRevision;
+
+    /// <summary>
+    /// Changes when any image, image view or sampler is registered, recycled, removed,
+    /// detached, or gets a new published generation.
+    /// </summary>
+    internal ulong ImageBindingRevision
+        => Lifetime.Tracker.PublishedImageBindingRevision;
 
     internal int FramebufferRetirementFrameSlot
         => Volatile.Read(ref _framebufferRetirementFrameSlot);

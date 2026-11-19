@@ -12,10 +12,7 @@ namespace XREngine.Rendering.Models.Materials
             => program.Uniform(location, Value);
 
         internal override string GetShaderValueString()
-        => string.Format("iVector3({0}, {1}, {2})",
-            _value.X.ToString(),
-            _value.Y.ToString(),
-            _value.Z.ToString());
+            => $"iVector3({_value.X}, {_value.Y}, {_value.Z})";
 
         public ShaderIVector3()
             : this(new IVector3(), NoName) { }

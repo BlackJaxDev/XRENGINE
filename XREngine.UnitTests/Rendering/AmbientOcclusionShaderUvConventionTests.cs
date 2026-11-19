@@ -66,9 +66,12 @@ public sealed class AmbientOcclusionShaderUvConventionTests
     {
         string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
 
-        source.ShouldContain("AOViewPosFromDepth(depth, uv");
-        source.ShouldContain("AOViewPosFromDepth(fDepth, fUV");
-        source.ShouldContain("AOViewPosFromDepth(bDepth, bUV");
+        // Raw depth input keeps the shared clip-depth policy. Linear depth input (half-resolution
+        // GTAO) rebuilds the same positions from the inverse projection terms.
+        source.ShouldContain("return AOViewPosFromDepth(depthInput, uv, inverseProjMatrix);");
+        source.ShouldContain("GtaoViewPosition(depth, uv");
+        source.ShouldContain("GtaoViewPosition(fDepth, fUV");
+        source.ShouldContain("GtaoViewPosition(bDepth, bUV");
         source.ShouldNotContain("XRENGINE_ViewPosFromDepthRaw");
     }
 

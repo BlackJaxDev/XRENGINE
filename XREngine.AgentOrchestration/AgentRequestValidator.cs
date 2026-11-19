@@ -10,22 +10,30 @@ public static partial class AgentRequestValidator
     private const int MaximumRequestCharacters = 262_144;
 
     private static readonly HashSet<string> s_reasoningEfforts =
-        new(StringComparer.OrdinalIgnoreCase) { "none", "low", "medium", "high", "xhigh", "max" };
+        new(StringComparer.OrdinalIgnoreCase) { "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra" };
 
     private static readonly HashSet<string> s_textVerbosityLevels =
         new(StringComparer.OrdinalIgnoreCase) { "low", "medium", "high" };
+
+    /// <summary>Accepts effort names supported by the shared request contract.</summary>
+    public static bool IsSupportedReasoningEffort(string? value)
+        => value is not null && s_reasoningEfforts.Contains(value);
 
     public static IReadOnlyList<string> Validate(AgentRunRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
 
         List<string> errors = [];
+        if (!Enum.IsDefined(request.ExecutionMode))
+            errors.Add("execution_mode is not supported");
         if (string.IsNullOrWhiteSpace(request.Objective))
             errors.Add("objective is required");
         if (string.IsNullOrWhiteSpace(request.RequestedModel))
             errors.Add("requested_model is required");
-        if (!s_reasoningEfforts.Contains(request.ReasoningEffort))
-            errors.Add("reasoning_effort must be one of: none, low, medium, high, xhigh, max");
+        if (!IsSupportedReasoningEffort(request.ReasoningEffort))
+            errors.Add("reasoning_effort must be one of: none, minimal, low, medium, high, xhigh, max, ultra");
+        if (request.UseProviderDefaultReasoningEffort && request.EnforceReasoningEffort)
+            errors.Add("provider default effort and enforced effort cannot both be selected");
         if (!s_textVerbosityLevels.Contains(request.TextVerbosity))
             errors.Add("text_verbosity must be one of: low, medium, high");
         if (!string.IsNullOrWhiteSpace(request.EditorSession) && !SessionNamePattern().IsMatch(request.EditorSession))
@@ -42,6 +50,8 @@ public static partial class AgentRequestValidator
             errors.Add("tool_policy cannot be null");
         if (request.Budget is null)
             errors.Add("budget cannot be null");
+        if (request.HostedTools is null)
+            errors.Add("hosted_tools cannot be null");
         if (request.SuccessCriteria is null || request.Constraints is null)
             errors.Add("success_criteria and constraints cannot be null");
         if (request.EvidencePacket is not null
@@ -96,11 +106,19 @@ public static partial class AgentRequestValidator
             || request.ToolPolicy.DeniedTools is null
             || request.RepositoryAccess is null
             || request.RepositoryAccess.AllowedRoots is null
-            || request.ContextFiles is null)
+            || request.ContextFiles is null
+            || request.HostedTools is null)
             return errors;
 
         AgentRunBudget budget = request.Budget;
-        if (budget.MaxTurns is < 1 or > 32)
+        if (request.ExecutionMode != AgentExecutionMode.Api)
+        {
+            if (budget.MaxTurns != 0 || budget.MaxRetries != 0 || budget.MaxOutputTokens != 0)
+                errors.Add("CLI runtimes require max_turns, max_retries, and max_output_tokens to be 0; native model turns, retries, and token caps cannot be enforced by the host");
+            if (request.UseBackgroundMode || request.Swarm is not null || request.HostedTools.Count > 0)
+                errors.Add("CLI runtimes do not support API background mode, swarms, or hosted tools");
+        }
+        else if (budget.MaxTurns is < 1 or > 32)
             errors.Add("budget.max_turns must be between 1 and 32");
         if (budget.MaxToolCalls is < 0 or > 256)
             errors.Add("budget.max_tool_calls must be between 0 and 256");
@@ -147,7 +165,7 @@ public static partial class AgentRequestValidator
         {
             errors.Add("repository_access.allowed_roots requires repository_access.enabled");
         }
-        if (string.IsNullOrWhiteSpace(request.EditorSession))
+        if (string.IsNullOrWhiteSpace(request.EditorSession) && !request.UseInProcessToolProvider)
         {
             if (policy.AllowMutation || policy.AllowDestructive)
                 errors.Add("reasoning-only runs without editor_session cannot authorize mutation");

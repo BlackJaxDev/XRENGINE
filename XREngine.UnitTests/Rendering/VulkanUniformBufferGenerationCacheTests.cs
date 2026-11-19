@@ -906,8 +906,9 @@ public sealed class VulkanUniformBufferGenerationCacheTests
         refreshStart.ShouldBeGreaterThanOrEqualTo(0);
         refreshEnd.ShouldBeGreaterThan(refreshStart);
 
-        drawing[prewarmStart..prewarmEnd].ShouldContain("lock (_recordDrawSync)");
-        drawing[refreshStart..refreshEnd].ShouldContain("lock (_recordDrawSync)");
+        // Both paths take the renderer's draw recording lock (through the contention-counting scope).
+        drawing[prewarmStart..prewarmEnd].ShouldContain("VulkanFrameLockScope.Enter(_recordDrawSync,");
+        drawing[refreshStart..refreshEnd].ShouldContain("VulkanFrameLockScope.Enter(_recordDrawSync,");
     }
 
     [Test]

@@ -154,15 +154,15 @@ public static partial class SerializedMaterialImporter
         SetVector4(material, "_GlitterMask_ST", new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
         SetVector4(material, "_GlitterTexture_ST", new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
         SetVector4(material, "_GlitterColorMap_ST", new Vector4(1.0f, 1.0f, 0.0f, 0.0f));
-        ApplyTextureTransform(material, document, "_GlitterMask", "_GlitterMask");
+        ApplySourceToonMeshTextureTransform(material, document, "_GlitterMask", "_GlitterMask");
         ApplyTextureTransform(material, document, "_GlitterTexture", "_GlitterTexture");
-        ApplyTextureTransform(material, document, "_GlitterColorMap", "_GlitterColorMap");
+        ApplySourceToonMeshTextureTransform(material, document, "_GlitterColorMap", "_GlitterColorMap");
         SetInt(material, "_GlitterMaskUV", maskUv);
         SetVector2(material, "_GlitterMaskPan", document.TryGetVector("_GlitterMaskPan", out Vector4 maskPan)
-            ? new Vector2(maskPan.X, maskPan.Y)
+            ? new Vector2(maskPan.X, -maskPan.Y)
             : Vector2.Zero);
         SetVector2(material, "_GlitterColorMapPan", document.TryGetVector("_GlitterColorMapPan", out Vector4 colorMapPan)
-            ? new Vector2(colorMapPan.X, colorMapPan.Y)
+            ? new Vector2(colorMapPan.X, -colorMapPan.Y)
             : Vector2.Zero);
     }
 

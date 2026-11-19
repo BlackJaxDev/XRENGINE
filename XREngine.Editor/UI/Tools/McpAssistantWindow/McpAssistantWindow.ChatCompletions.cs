@@ -34,7 +34,7 @@ public sealed partial class McpAssistantWindow
         string model,
         Action<HttpRequestMessage> configureAuth)
     {
-        bool requestLikelyNeedsTools = IsLikelySceneMutationPrompt(prompt);
+        bool requestLikelyNeedsTools = !IsReadOnlyRequest && IsLikelySceneMutationPrompt(prompt);
         usage.RequireToolUse = requestLikelyNeedsTools;
 
         // Local workspace tools are always available (file search, apply patch).
@@ -268,9 +268,10 @@ public sealed partial class McpAssistantWindow
             {
                 var tcEntry = new ToolCallEntry
                 {
-                    ToolName = FormatToolName(call.Name),
+                    ToolName = call.Name,
                     ArgsSummary = SummarizeToolArguments(call.Name, call.Arguments.ToString()),
                 };
+                tcEntry.SetInvocation(call.Arguments.ToString());
                 AddToolCallSegmented(target, tcEntry);
 
                 var toolResult = await ExecuteMcpToolCallAsync(call.Name, call.Arguments.ToString(), ct);
@@ -281,6 +282,7 @@ public sealed partial class McpAssistantWindow
                 tcEntry.IsError = toolResult.IsError;
                 tcEntry.ResultFilePath = toolResult.ImagePath;
                 tcEntry.IsComplete = true;
+                tcEntry.UpdateOutcome(toolResult.Text);
 
                 if (toolResult.IsError)
                     Debug.LogWarning($"MCP tool call '{call.Name}' failed: {toolResult.Text}");

@@ -1341,11 +1341,13 @@ namespace XREngine
                 TextureType.Metalness => EMaterialTextureSemantic.Metallic,
                 TextureType.Roughness => EMaterialTextureSemantic.Roughness,
                 TextureType.Emissive or TextureType.EmissionColor => EMaterialTextureSemantic.Emissive,
+                TextureType.AmbientOcclusion => EMaterialTextureSemantic.Occlusion,
                 _ => default,
             };
             return textureType is TextureType.Diffuse or TextureType.BaseColor or TextureType.Opacity
                 or TextureType.NormalCamera or TextureType.Normals or TextureType.Metalness
-                or TextureType.Roughness or TextureType.Emissive or TextureType.EmissionColor;
+                or TextureType.Roughness or TextureType.Emissive or TextureType.EmissionColor
+                or TextureType.AmbientOcclusion;
         }
 
         public static void MakeMaterialDeferred(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
@@ -2315,12 +2317,16 @@ namespace XREngine
 
                     SetAssimpConfig(effectiveImportOptions);
 
+                    ModelImportSteps assimpSteps = effectiveImportOptions.ImportSteps;
+                    if (effectiveImportOptions.TangentImportPolicy != ModelTangentImportPolicy.Default)
+                        assimpSteps &= ~ModelImportSteps.CalculateTangentSpace;
+
                     AScene scene;
-                    using (runtimeServices.StartProfileScope($"Assimp ImportFile: {SourceFilePath} with options: {effectiveImportOptions.ImportSteps}"))
+                    using (runtimeServices.StartProfileScope($"Assimp ImportFile: {SourceFilePath} with options: {assimpSteps}"))
                     {
                         assimpProgress?.Invoke(0.02f);
                         RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletSourceParserEntry();
-                        scene = AssimpModelFileImporter.Import(_assimp, SourceFilePath, effectiveImportOptions.ImportSteps.ToAssimp());
+                        scene = AssimpModelFileImporter.Import(_assimp, SourceFilePath, assimpSteps.ToAssimp());
                         assimpProgress?.Invoke(0.12f);
                     }
 
@@ -3134,7 +3140,10 @@ namespace XREngine
             cancellationToken.ThrowIfCancellationRequested();
 
             bool importBlendShapeNormals = (_currentImportOptions.Value ?? ImportOptions)?.ImportBlendShapeNormals ?? true;
-            XRMesh xrMesh = AssimpMeshFactory.Create(mesh, _nodeCache, dataTransform, importBlendShapeNormals);
+            ModelTangentImportPolicy tangentPolicy = (_currentImportOptions.Value ?? ImportOptions)?.TangentImportPolicy
+                ?? ModelTangentImportPolicy.Default;
+            XRMesh xrMesh = AssimpMeshFactory.Create(mesh, _nodeCache, dataTransform,
+                importBlendShapeNormals, tangentPolicy);
             cancellationToken.ThrowIfCancellationRequested();
             var xrMaterial = ResolveMaterial(mesh, scene, cancellationToken);
             return (xrMesh, xrMaterial);

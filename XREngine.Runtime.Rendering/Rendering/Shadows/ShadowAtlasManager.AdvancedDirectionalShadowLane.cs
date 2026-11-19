@@ -13,7 +13,8 @@ namespace XREngine.Rendering.Shadows;
 public sealed partial class ShadowAtlasManager
 {
     private const int MaxPendingAdvancedLaneGroups = 4;
-    private const ulong AdvancedLaneFailureHoldFrames = 60UL;
+    private const int AdvancedLaneFailureHoldFrames = 60;
+    private const int MaxAdvancedLaneConsumers = 8;
 
     private static readonly bool s_advancedDirectionalShadowLaneEnabled =
         ReadAdvancedDirectionalShadowLaneFlag();
@@ -22,31 +23,93 @@ public sealed partial class ShadowAtlasManager
         new PendingAdvancedLaneGroup[MaxPendingAdvancedLaneGroups];
     private readonly AdvancedDirectionalShadowLaneRequest[] _advancedLaneRequests =
         CreateAdvancedLaneRequests();
+    // Static caster tiles, one per (light, source, cascade) with recent dynamic casters (see
+    // DirectionalCascadeStaticTile). A light that leaves keeps its slots until the atlas resets.
+    private readonly DirectionalCascadeStaticTile?[] _directionalStaticCascadeTiles =
+        new DirectionalCascadeStaticTile?[MaxPendingAdvancedLaneGroups * AdvancedDirectionalShadowLaneRequest.MaxCascadeCount * 2];
     private int _pendingAdvancedLaneGroupCount;
     private ulong _advancedLaneConsumerFrameId;
     private ulong _advancedLaneTargetFrameId;
     private XRFrameBuffer? _advancedLaneTargetFrameBuffer;
     private bool _advancedLaneConsumerReady;
     private string? _advancedLaneConsumerReason;
+    private string? _advancedLaneCasterProducer;
+    private string? _advancedLaneCasterProducerReason;
     private AdvancedDirectionalShadowConsumerAuthority _advancedLaneAuthority;
     private ulong _advancedLaneAuthorityFrameId;
     private bool _advancedLaneOwnerExpected;
     private bool _advancedLaneGenericFallbackAllowed = true;
     private bool _advancedLaneAuthorityConflict;
     private string? _advancedLaneAuthorityReason;
-    private ulong _advancedLaneHoldUntilFrameId;
+    // Frames with a lane owner that remain in the failure hold. The hold counts only frames in
+    // which an Advanced instance owns the lane, so render frames that draw no Advanced view (for
+    // example OpenXR frames without an eye frame) do not end it early.
+    private int _advancedLaneHoldOwnerFrames;
+    private ulong _advancedLaneHoldCountedFrameId;
+    // True when VR eye views render in this frame before the lane owner executes (the eyes do not
+    // use an Advanced pipeline). HMD-source groups then use the generic path, which draws them
+    // before any view.
+    private bool _advancedLaneHmdViewsBeforeOwner;
+    // Readiness that each Advanced pipeline instance reported at its last directional shadow
+    // stage. The lane defers groups only to an owner whose last report was ready.
+    private readonly AdvancedLaneConsumerReadiness[] _advancedLaneConsumerReadiness =
+        new AdvancedLaneConsumerReadiness[MaxAdvancedLaneConsumers];
     private string? _advancedLaneLastDeclineReason;
     private long _advancedLaneDeferredGroups;
     private long _advancedLaneAcceptedGroups;
     private long _advancedLaneRejectedGroups;
     private long _advancedLaneUnconsumedGroups;
+    // Unconsumed groups whose owner did not run its stage in their frame. They start no hold.
+    private long _advancedLaneOwnerAbsentGroups;
     private long _advancedLaneGenericGroups;
+    // Directional cascade plan entries that waited in a render frame without a lane owner, because
+    // the generic path has no caster producer for that frame's submission strategy.
+    private long _advancedLaneOwnerlessDeferredEntries;
+    // One when a directional atlas reset released the cascade allocations and the static cascade
+    // tiles still hold content of the old page. The planning thread sets it; the render thread
+    // releases the tiles at its next scheduled-tile pass, because only that thread uses them.
+    private int _directionalStaticTileReleasePending;
+    // Directional atlas resets that released the static cascade tiles.
+    private long _directionalAtlasResets;
+    // Single directional cascade tile entries that waited because no producer can draw them: the
+    // lane draws only cascade groups, and the generic path has no casters in the frame's strategy.
+    private long _directionalTileNoProducerDeferrals;
+
+    /// <summary>
+    /// Decline reason of a single directional cascade tile entry in a GPU zero-readback meshlet frame.
+    /// </summary>
+    private const string DirectionalTileNoProducerReason =
+        "A single directional cascade tile has no producer in a GPU zero-readback meshlet frame: the lane draws only cascade groups, and the generic path has no casters. The tile stays dirty until its cascade joins a group.";
+    // Generic directional cascade renders that were declined because the generic path has no
+    // caster producer (see TryDeclineGenericDirectionalCascadeRender). All atlas managers add to it.
+    private static long s_genericCascadeNoCasterProducerDeclines;
+
+    /// <summary>
+    /// Decline reason of a generic directional cascade render in a GPU zero-readback meshlet frame.
+    /// </summary>
+    internal const string GenericCascadeNoCasterProducerReason =
+        "GPU zero-readback meshlet frame: the generic cascade path has no caster producer (no CPU collection, and the meshlet raster has no shadow producer). The cascade tile keeps its last valid content and stays dirty.";
+
+    /// <summary>
+    /// Lane decline reason in a render frame without a lane owner when the generic path cannot draw
+    /// the casters of the frame's submission strategy.
+    /// </summary>
+    private const string OwnerlessFrameNoGenericProducerReason =
+        "No Advanced view renders the scene in this render frame, and the generic cascade path has no caster producer for GPU zero-readback meshlet frames. The cascade group waits for a frame with a lane owner.";
 
     private enum PendingAdvancedLaneGroupState : byte
     {
         Free = 0,
         Pending,
         Dequeued,
+    }
+
+    private struct AdvancedLaneConsumerReadiness
+    {
+        public XRRenderPipelineInstance? Pipeline;
+        public ulong FrameId;
+        public bool Ready;
+        public string? Reason;
     }
 
     private struct PendingAdvancedLaneGroup
@@ -67,45 +130,159 @@ public sealed partial class ShadowAtlasManager
     /// </summary>
     public static bool AdvancedDirectionalShadowLaneEnabled => s_advancedDirectionalShadowLaneEnabled;
 
+    /// <summary>
+    /// True when the directional cascade groups of this render frame can be drawn: the
+    /// lane is off (every group uses the generic path), or an Advanced pipeline instance
+    /// reported its directional shadow stage ready at its last execution. The
+    /// scheduled-tile pass tests the readiness of the frame's owner before it defers a
+    /// group to the lane, and a strict lane drops a declined group without a draw. The
+    /// Advanced capture reads this at the swap, before the render frame chooses its owner,
+    /// so it tests every known consumer.
+    /// </summary>
+    internal bool CanDrawDirectionalCascadeGroupsThisFrame()
+    {
+        if (!s_advancedDirectionalShadowLaneEnabled)
+            return true;
+
+        for (int i = 0; i < _advancedLaneConsumerReadiness.Length; i++)
+        {
+            ref readonly AdvancedLaneConsumerReadiness entry = ref _advancedLaneConsumerReadiness[i];
+            if (entry.Pipeline is not null && entry.Ready)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Finds the readiness that <paramref name="pipeline"/> reported at its last directional
+    /// shadow stage. Returns false when that instance has not run the stage yet.
+    /// </summary>
+    private bool TryGetAdvancedLaneConsumerReadiness(
+        XRRenderPipelineInstance? pipeline,
+        out bool ready,
+        out string? reason)
+    {
+        ready = false;
+        reason = null;
+        if (pipeline is null)
+            return false;
+
+        for (int i = 0; i < _advancedLaneConsumerReadiness.Length; i++)
+        {
+            ref readonly AdvancedLaneConsumerReadiness entry = ref _advancedLaneConsumerReadiness[i];
+            if (!ReferenceEquals(entry.Pipeline, pipeline))
+                continue;
+
+            ready = entry.Ready;
+            reason = entry.Reason;
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>Lane counters and the last decline reason, for diagnostics.</summary>
     public AdvancedDirectionalShadowLaneDiagnostics CaptureAdvancedDirectionalShadowLaneDiagnostics()
         => new(
             s_advancedDirectionalShadowLaneEnabled,
             _advancedLaneConsumerReady,
             _advancedLaneConsumerFrameId,
-            _advancedLaneHoldUntilFrameId,
+            _advancedLaneHoldOwnerFrames,
             _advancedLaneDeferredGroups,
             _advancedLaneAcceptedGroups,
             _advancedLaneRejectedGroups,
             _advancedLaneUnconsumedGroups,
+            _advancedLaneOwnerAbsentGroups,
             _advancedLaneGenericGroups,
-            _advancedLaneLastDeclineReason ?? _advancedLaneConsumerReason);
+            _advancedLaneOwnerlessDeferredEntries,
+            Interlocked.Read(ref _directionalAtlasResets),
+            _directionalTileNoProducerDeferrals,
+            _submissionReverts,
+            Interlocked.Read(ref s_genericCascadeNoCasterProducerDeclines),
+            _advancedLaneLastDeclineReason ?? _advancedLaneConsumerReason,
+            _advancedLaneCasterProducer,
+            _advancedLaneCasterProducerReason);
 
     /// <summary>
-    /// Called by the Advanced directional shadow stage every time it executes.
-    /// Groups are deferred in a later frame only while the consumer keeps
-    /// reporting itself ready. A strict GPU request stays dirty without it.
+    /// Called by the Advanced directional shadow stage of <paramref name="consumer"/> every
+    /// time that stage owns the frame's groups. The lane defers groups to an owner only
+    /// while the last report of that instance was ready. A strict GPU request stays dirty
+    /// without it. <paramref name="casterProducer"/> names the producer that draws the
+    /// casters of this frame's submission strategy, and
+    /// <paramref name="casterProducerReason"/> tells why. Diagnostics show both, so
+    /// a reader can see, for example, that a meshlet frame draws indexed casters.
+    /// The stage passes constant strings, so this call does not allocate.
     /// </summary>
     public void NotifyAdvancedDirectionalShadowLaneConsumer(
         ulong renderFrameId,
+        XRRenderPipelineInstance consumer,
         bool ready,
-        string? reason)
+        string? reason,
+        string? casterProducer = null,
+        string? casterProducerReason = null)
     {
         AssertRenderThread();
         _advancedLaneConsumerFrameId = renderFrameId;
         _advancedLaneConsumerReady = ready;
         _advancedLaneConsumerReason = ready ? null : reason;
+        _advancedLaneCasterProducer = casterProducer;
+        _advancedLaneCasterProducerReason = casterProducerReason;
+
+        // Keep one entry per instance. A new instance takes a free entry, or the entry with
+        // the oldest report when all entries are in use.
+        int slot = -1;
+        for (int i = 0; i < _advancedLaneConsumerReadiness.Length; i++)
+        {
+            ref readonly AdvancedLaneConsumerReadiness entry = ref _advancedLaneConsumerReadiness[i];
+            if (ReferenceEquals(entry.Pipeline, consumer))
+            {
+                slot = i;
+                break;
+            }
+            if (slot < 0)
+            {
+                slot = i;
+                continue;
+            }
+            ref readonly AdvancedLaneConsumerReadiness chosen = ref _advancedLaneConsumerReadiness[slot];
+            if (chosen.Pipeline is not null &&
+                (entry.Pipeline is null || entry.FrameId < chosen.FrameId))
+            {
+                slot = i;
+            }
+        }
+
+        ref AdvancedLaneConsumerReadiness target = ref _advancedLaneConsumerReadiness[slot];
+        target.Pipeline = consumer;
+        target.FrameId = renderFrameId;
+        target.Ready = ready;
+        target.Reason = ready ? null : reason;
     }
 
-    /// <summary>Publishes the desktop consumer selected before shadow scheduling.</summary>
+    /// <summary>
+    /// Publishes the consumer that owns this frame's directional cascade groups, selected before
+    /// shadow scheduling. <paramref name="hmdViewsRenderBeforeOwner"/> is true when VR eye views
+    /// render before that owner in this frame.
+    /// </summary>
     internal void PublishAdvancedDirectionalShadowConsumerAuthority(
         ulong renderFrameId,
         in AdvancedDirectionalShadowConsumerAuthority authority,
         bool ownerExpected,
         bool genericFallbackAllowed,
-        string? reason)
+        string? reason,
+        bool hmdViewsRenderBeforeOwner = false)
     {
         AssertRenderThread();
+        // A frame without an owner may use the generic path only when that path can draw the
+        // casters. In a GPU zero-readback meshlet frame it cannot, so the groups wait.
+        if (!ownerExpected && !GenericDirectionalCascadePathHasCasterProducer())
+        {
+            genericFallbackAllowed = false;
+            reason ??= OwnerlessFrameNoGenericProducerReason;
+        }
+        if (_advancedLaneAuthorityFrameId == renderFrameId)
+            _advancedLaneHmdViewsBeforeOwner |= hmdViewsRenderBeforeOwner;
+        else
+            _advancedLaneHmdViewsBeforeOwner = hmdViewsRenderBeforeOwner;
         if (_advancedLaneAuthorityFrameId == renderFrameId)
         {
             _advancedLaneGenericFallbackAllowed &= genericFallbackAllowed;
@@ -143,7 +320,28 @@ public sealed partial class ShadowAtlasManager
             ? authority : default;
         _advancedLaneOwnerExpected = ownerExpected;
         _advancedLaneAuthorityReason = _advancedLaneAuthority.IsValid ? null : reason;
+
+        // The failure hold counts frames that have an owner, once per frame.
+        if (_advancedLaneAuthority.IsValid && _advancedLaneHoldCountedFrameId != renderFrameId)
+        {
+            _advancedLaneHoldCountedFrameId = renderFrameId;
+            if (_advancedLaneHoldOwnerFrames > 0)
+                _advancedLaneHoldOwnerFrames--;
+        }
     }
+
+    /// <summary>
+    /// True when a valid consumer authority for the frame of <paramref name="authority"/> exists
+    /// and names another pipeline instance. Several Advanced pipeline instances can run in one
+    /// frame (the desktop view and the VR eyes); only the owner may take the deferred groups and
+    /// report readiness. Another instance skips the lane, so it neither rejects the owner's groups
+    /// nor marks the lane not ready.
+    /// </summary>
+    internal bool IsAdvancedDirectionalShadowConsumerOwnedByAnother(
+        in AdvancedDirectionalShadowConsumerAuthority authority)
+        => _advancedLaneAuthorityFrameId == authority.RenderFrameId &&
+            _advancedLaneAuthority.IsValid &&
+            !_advancedLaneAuthority.SameAs(in authority);
 
     /// <summary>Checks that the stage owns this frame's scheduled groups.</summary>
     internal bool MatchesAdvancedDirectionalShadowConsumerAuthority(
@@ -271,15 +469,25 @@ public sealed partial class ShadowAtlasManager
                 "The desktop Advanced shadow consumer has no published command package.";
             return false;
         }
-        if (!_advancedLaneConsumerReady || _advancedLaneConsumerFrameId + 1UL < renderFrameId)
+        if (_advancedLaneHmdViewsBeforeOwner && group.Source == ShadowRequestSource.Hmd)
         {
-            declineReason = _advancedLaneConsumerReason ??
-                "No Advanced directional shadow stage reported itself ready in the previous frame.";
+            declineReason = "VR eye views render before the lane owner in this frame, so HMD cascade groups use the generic path, which draws before any view.";
+            return false;
+        }
+        if (!TryGetAdvancedLaneConsumerReadiness(_advancedLaneAuthority.Pipeline, out bool ownerReady, out string? ownerReason))
+        {
+            declineReason = "The Advanced pipeline instance that owns this frame has not run its directional shadow stage yet.";
+            return false;
+        }
+        if (!ownerReady)
+        {
+            declineReason = ownerReason ??
+                "The Advanced directional shadow stage of this frame's owner reported itself not ready at its last execution.";
             return false;
         }
 
         bool strictGpu = RequiresStrictDirectionalShadowLane();
-        if (!strictGpu && renderFrameId < _advancedLaneHoldUntilFrameId)
+        if (!strictGpu && _advancedLaneHoldOwnerFrames > 0)
         {
             declineReason = _advancedLaneLastDeclineReason ?? "The lane is held after a rejected group.";
             return false;
@@ -297,14 +505,12 @@ public sealed partial class ShadowAtlasManager
             return false;
         }
 
+        // The family that owns the canonical scene draws the groups of every source: casters
+        // do not depend on the view, the record masks come from each group's cascade matrices,
+        // and the static tiles are kept per source.
         ShadowRequestSource source = group.Source == ShadowRequestSource.Default
             ? ShadowRequestSource.Desktop
             : group.Source;
-        if (source != ShadowRequestSource.Desktop)
-        {
-            declineReason = "Only desktop cascade groups are consumed by the desktop Advanced family.";
-            return false;
-        }
 
         if (_advancedLaneTargetFrameBuffer is not null &&
             !ReferenceEquals(_advancedLaneTargetFrameBuffer, page.FrameBuffer))
@@ -341,6 +547,7 @@ public sealed partial class ShadowAtlasManager
             return false;
         }
 
+        AttachDirectionalStaticCascadeTiles(request, light, source);
         _advancedLaneTargetFrameBuffer = page.FrameBuffer;
         request.RequiresStrictGpu = strictGpu;
         request.ConsumerAuthority = _advancedLaneAuthority;
@@ -361,8 +568,10 @@ public sealed partial class ShadowAtlasManager
 
     /// <summary>
     /// Groups still pending when the next scheduled-tile pass starts were never
-    /// consumed. They stay dirty. A CPU-direct group can use a bounded hold;
-    /// a strict GPU group must retry its GPU lane.
+    /// consumed. They stay dirty. When the owner did not run its directional shadow
+    /// stage in the group's frame (for example an eye view that skipped a frame while
+    /// its resources were rebuilt), the lane did not fail, so no hold starts. Otherwise
+    /// a CPU-direct group can use a bounded hold; a strict GPU group must retry its GPU lane.
     /// </summary>
     private void FailUnconsumedAdvancedLaneGroups()
     {
@@ -370,6 +579,7 @@ public sealed partial class ShadowAtlasManager
             return;
 
         int unconsumed = 0;
+        int ownerAbsent = 0;
         bool strictGroup = false;
         for (int slot = 0; slot < _pendingAdvancedLaneGroups.Length; slot++)
         {
@@ -378,6 +588,8 @@ public sealed partial class ShadowAtlasManager
                 continue;
 
             unconsumed++;
+            if (pending.Request is { } request && !AdvancedLaneOwnerRanInFrame(request))
+                ownerAbsent++;
             strictGroup |= pending.Request?.RequiresStrictGpu == true;
             ReleasePendingAdvancedLaneGroup(ref pending);
         }
@@ -385,12 +597,35 @@ public sealed partial class ShadowAtlasManager
         if (unconsumed == 0)
             return;
 
+        _advancedLaneOwnerAbsentGroups += ownerAbsent;
+        if (ownerAbsent == unconsumed)
+        {
+            _advancedLaneUnconsumedGroups += unconsumed;
+            return;
+        }
+
         _advancedLaneUnconsumedGroups += unconsumed;
         if (strictGroup || RequiresStrictDirectionalShadowLane())
             _advancedLaneLastDeclineReason =
                 "The strict GPU directional shadow stage did not consume its deferred groups.";
         else
             HoldAdvancedLane("The Advanced directional shadow stage did not consume the deferred cascade groups.");
+    }
+
+    /// <summary>
+    /// True when the owner named by <paramref name="request"/> ran its directional shadow
+    /// stage in the request's render frame.
+    /// </summary>
+    private bool AdvancedLaneOwnerRanInFrame(AdvancedDirectionalShadowLaneRequest request)
+    {
+        XRRenderPipelineInstance? owner = request.ConsumerAuthority.Pipeline;
+        for (int i = 0; i < _advancedLaneConsumerReadiness.Length; i++)
+        {
+            ref readonly AdvancedLaneConsumerReadiness entry = ref _advancedLaneConsumerReadiness[i];
+            if (ReferenceEquals(entry.Pipeline, owner))
+                return entry.FrameId == request.RenderFrameId;
+        }
+        return false;
     }
 
     private void ReleasePendingAdvancedLaneGroup(ref PendingAdvancedLaneGroup pending)
@@ -408,14 +643,54 @@ public sealed partial class ShadowAtlasManager
     private void HoldAdvancedLane(string reason)
     {
         _advancedLaneLastDeclineReason = reason;
-        _advancedLaneHoldUntilFrameId = SubmissionTrackingRenderFrameId + AdvancedLaneFailureHoldFrames;
+        _advancedLaneHoldOwnerFrames = AdvancedLaneFailureHoldFrames;
         XREngine.Debug.LightingWarningEvery(
             $"ShadowAtlas.AdvancedDirectionalShadowLane.Hold.{GetHashCode()}",
             TimeSpan.FromSeconds(2.0),
-            "[ShadowAtlas] Directional cascade groups return to the generic path for {0} frames: {1}",
+            "[ShadowAtlas] Directional cascade groups return to the generic path for {0} frames with a lane owner: {1}",
             AdvancedLaneFailureHoldFrames,
             reason);
     }
+
+    /// <summary>
+    /// True when the generic directional cascade path can draw casters for the current submission
+    /// strategy. In a GPU zero-readback meshlet frame it cannot: the cascade collection skips the
+    /// CPU traversal (the GPU scene owns caster membership), and the meshlet raster has no shadow
+    /// producer, so a generic render would clear the tile and draw nothing. Only the Advanced lane
+    /// draws meshlet-frame casters (CPU-masked indexed draws of the canonical geometry).
+    /// </summary>
+    internal static bool GenericDirectionalCascadePathHasCasterProducer()
+        => !RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsZeroReadbackMeshletStrategy();
+
+    /// <summary>
+    /// Declines a generic directional cascade render that has no caster producer
+    /// (<see cref="GenericDirectionalCascadePathHasCasterProducer"/>). The caller does not render
+    /// or clear the tile, and does not mark it rendered, so the tile keeps its last valid content
+    /// and stays dirty. Counts the decline for diagnostics and returns true with
+    /// <paramref name="declineReason"/> set to a constant reason.
+    /// </summary>
+    internal static bool TryDeclineGenericDirectionalCascadeRender(out string? declineReason)
+    {
+        if (GenericDirectionalCascadePathHasCasterProducer())
+        {
+            declineReason = null;
+            return false;
+        }
+
+        Interlocked.Increment(ref s_genericCascadeNoCasterProducerDeclines);
+        declineReason = GenericCascadeNoCasterProducerReason;
+        return true;
+    }
+
+    /// <summary>
+    /// True in a render frame without a lane owner in which the generic path may not draw
+    /// directional cascades (<see cref="PublishAdvancedDirectionalShadowConsumerAuthority"/>). The
+    /// scheduled-tile pass then defers directional cascade entries to a frame with an owner.
+    /// </summary>
+    private bool IsOwnerlessDirectionalCascadeDeferralFrame()
+        => _advancedLaneAuthorityFrameId == SubmissionTrackingRenderFrameId &&
+           !_advancedLaneOwnerExpected &&
+           !_advancedLaneGenericFallbackAllowed;
 
     private bool RequiresStrictDirectionalShadowLane()
     {
@@ -424,6 +699,180 @@ public sealed partial class ShadowAtlasManager
         if (!_advancedLaneOwnerExpected)
             return false;
         return true;
+    }
+
+    /// <summary>
+    /// Update frames after the last dynamic caster change in a cascade during which the
+    /// cascade keeps its static caster tile. After that the tile is released.
+    /// </summary>
+    private const ulong DirectionalStaticTileKeepFrames = 600UL;
+
+    /// <summary>
+    /// Attaches a static caster tile to each cascade of a group (desktop or HMD source) that a dynamic caster
+    /// change marked within <see cref="DirectionalStaticTileKeepFrames"/> update frames, or
+    /// records why the cache does not apply to a cascade. A tile is created on first use and
+    /// created again when the inner tile size changes. The tiles of this light whose cascade
+    /// had no dynamic change for that time are released. It allocates only when it creates a
+    /// tile.
+    /// </summary>
+    private void AttachDirectionalStaticCascadeTiles(
+        AdvancedDirectionalShadowLaneRequest request,
+        DirectionalLightComponent light,
+        ShadowRequestSource source)
+    {
+        bool enabled = RuntimeEngine.Rendering.Settings.DirectionalShadowStaticCacheEnabled;
+        ulong frame = RuntimeRenderingHostServices.FrameTiming.UpdateFrameId;
+        ReleaseUnusedDirectionalStaticCascadeTiles(request.LightId, light, source, frame, enabled);
+
+        ReadOnlySpan<int> cascades = request.CascadeIndices;
+        ReadOnlySpan<BoundingRectangle> rects = request.TileRects;
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        for (int entry = 0; entry < cascades.Length; entry++)
+        {
+            int cascade = cascades[entry];
+            if (!enabled)
+            {
+                request.SetStaticCacheCause(entry, EDirectionalShadowStaticCacheCause.Disabled);
+                continue;
+            }
+            if (!light.HasRecentDirectionalCascadeDynamicChange(source, cascade, frame, DirectionalStaticTileKeepFrames))
+            {
+                request.SetStaticCacheCause(entry, EDirectionalShadowStaticCacheCause.NoDynamicCasters);
+                continue;
+            }
+
+            BoundingRectangle rect = rects[entry];
+            uint width = (uint)Math.Max(rect.Width, 0);
+            uint height = (uint)Math.Max(rect.Height, 0);
+            DirectionalCascadeStaticTile? tile = FindDirectionalStaticCascadeTile(request.LightId, source, cascade, out int slot);
+            if (tile is not null && (tile.Width != width || tile.Height != height))
+            {
+                tile.Destroy();
+                _directionalStaticCascadeTiles[slot] = null;
+                tile = null;
+            }
+            if (tile is null)
+            {
+                if (slot < 0)
+                {
+                    request.SetStaticCacheCause(entry, EDirectionalShadowStaticCacheCause.TileUnavailable);
+                    continue;
+                }
+                tile = new DirectionalCascadeStaticTile(request.LightId, source, cascade, width, height);
+                _directionalStaticCascadeTiles[slot] = tile;
+                DirectionalShadowStaticCacheDiagnostics.RecordTileCreated();
+            }
+
+            // The backend lane can only record a target whose wrappers exist. Wrapper
+            // creation happens here, outside command recording; later calls find them.
+            renderer?.GetOrCreateAPIRenderObject(tile.DepthTexture, generateNow: true);
+            renderer?.GetOrCreateAPIRenderObject(tile.FrameBuffer, generateNow: true);
+            request.SetStaticCache(entry, tile, light.GetDirectionalCascadeStaticCasterEpoch(source, cascade));
+        }
+    }
+
+    /// <summary>
+    /// Releases the static tiles of <paramref name="lightId"/> and <paramref name="source"/> whose cascade had no dynamic
+    /// caster change for <see cref="DirectionalStaticTileKeepFrames"/> update frames, or all of
+    /// them when the cache does not apply (<paramref name="keep"/> false).
+    /// </summary>
+    private void ReleaseUnusedDirectionalStaticCascadeTiles(
+        Guid lightId,
+        DirectionalLightComponent light,
+        ShadowRequestSource source,
+        ulong frame,
+        bool keep)
+    {
+        for (int i = 0; i < _directionalStaticCascadeTiles.Length; i++)
+        {
+            DirectionalCascadeStaticTile? tile = _directionalStaticCascadeTiles[i];
+            if (tile is null || tile.LightId != lightId || tile.Source != source)
+                continue;
+            if (keep && light.HasRecentDirectionalCascadeDynamicChange(source, tile.CascadeIndex, frame, DirectionalStaticTileKeepFrames))
+                continue;
+
+            tile.Destroy();
+            _directionalStaticCascadeTiles[i] = null;
+            DirectionalShadowStaticCacheDiagnostics.RecordTileReleased();
+        }
+    }
+
+    /// <summary>
+    /// Returns the static tile of one cascade of <paramref name="lightId"/> and <paramref name="source"/>.
+    /// When there is none, <paramref name="slot"/> is a free slot for a new tile, or -1 when all
+    /// slots are used.
+    /// </summary>
+    private DirectionalCascadeStaticTile? FindDirectionalStaticCascadeTile(Guid lightId, ShadowRequestSource source, int cascadeIndex, out int slot)
+    {
+        slot = -1;
+        for (int i = 0; i < _directionalStaticCascadeTiles.Length; i++)
+        {
+            DirectionalCascadeStaticTile? tile = _directionalStaticCascadeTiles[i];
+            if (tile is null)
+            {
+                if (slot < 0)
+                    slot = i;
+                continue;
+            }
+            if (tile.LightId == lightId && tile.Source == source && tile.CascadeIndex == cascadeIndex)
+            {
+                slot = i;
+                return tile;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Invalidates the static tile of a cascade when the failed submission of render frame
+    /// <paramref name="submissionFrameId"/> recorded the static draw that the tile holds, so
+    /// the next refresh draws its static casters again. A failed submission loses only the
+    /// content that it wrote: a tile whose static draw came from another frame keeps its
+    /// content. This matters when a window callback that skips its desktop frame discards its
+    /// queued shadow work. That cohort fails without having drawn into the static tiles.
+    /// </summary>
+    private void InvalidateDirectionalStaticCascadeTile(in ShadowRequestKey key, ulong submissionFrameId)
+    {
+        if (key.ProjectionType != EShadowProjectionType.DirectionalCascade)
+            return;
+        ShadowRequestSource source = key.Source == ShadowRequestSource.Default ? ShadowRequestSource.Desktop : key.Source;
+        DirectionalCascadeStaticTile? tile = FindDirectionalStaticCascadeTile(key.LightId, source, key.FaceOrCascadeIndex, out _);
+        if (tile is not null && tile.RecordedRenderFrameId == submissionFrameId)
+            tile.Invalidate();
+    }
+
+    /// <summary>
+    /// Called on the planning thread when an atlas reset releases the directional cascade
+    /// allocations. The reset creates new page storage, so a static cascade tile copy would put
+    /// casters of the old page fit into a tile that the new plan must draw in full. Counts the
+    /// reset and asks the render thread to release every static cascade tile.
+    /// </summary>
+    private void RequestDirectionalStaticCascadeTileRelease()
+    {
+        Interlocked.Increment(ref _directionalAtlasResets);
+        Interlocked.Exchange(ref _directionalStaticTileReleasePending, 1);
+    }
+
+    /// <summary>
+    /// Releases every static cascade tile after a directional atlas reset. Runs on the render
+    /// thread at the start of the scheduled-tile pass, before the lane attaches tiles to new
+    /// groups, so the first refresh of each cascade after the reset draws all of its casters.
+    /// </summary>
+    private void ReleaseDirectionalStaticCascadeTilesAfterReset()
+    {
+        if (Interlocked.Exchange(ref _directionalStaticTileReleasePending, 0) == 0)
+            return;
+
+        for (int i = 0; i < _directionalStaticCascadeTiles.Length; i++)
+        {
+            DirectionalCascadeStaticTile? tile = _directionalStaticCascadeTiles[i];
+            if (tile is null)
+                continue;
+
+            tile.Destroy();
+            _directionalStaticCascadeTiles[i] = null;
+            DirectionalShadowStaticCacheDiagnostics.RecordTileReleased();
+        }
     }
 
     private static AdvancedDirectionalShadowLaneRequest[] CreateAdvancedLaneRequests()
@@ -449,10 +898,18 @@ public readonly record struct AdvancedDirectionalShadowLaneDiagnostics(
     bool Enabled,
     bool ConsumerReady,
     ulong ConsumerFrameId,
-    ulong HoldUntilFrameId,
+    int HoldOwnerFramesRemaining,
     long DeferredGroups,
     long AcceptedGroups,
     long RejectedGroups,
     long UnconsumedGroups,
+    long OwnerAbsentGroups,
     long GenericGroups,
-    string? LastDeclineReason);
+    long OwnerlessDeferredEntries,
+    long DirectionalAtlasResets,
+    long DirectionalTileNoProducerDeferrals,
+    long SubmissionReverts,
+    long GenericNoCasterProducerDeclines,
+    string? LastDeclineReason,
+    string? CasterProducer,
+    string? CasterProducerReason);
