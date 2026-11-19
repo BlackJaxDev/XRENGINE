@@ -778,7 +778,7 @@ internal static partial class SerializedSceneImporter
 
         if (SupportedExternalModelExtensions.Contains(Path.GetExtension(assetPath)))
         {
-            Model? model = LoadExternalModelForNode(assetPath, node, hierarchy, materialReferences, skinnedMeshRenderer, state);
+            Model? model = LoadExternalModelForNode(assetPath, node, hierarchy, meshReference, materialReferences, skinnedMeshRenderer, state);
             if (model is null && state.Context.AllowPartialImport)
                 ReportSkippedMesh(assetPath, node, meshReference, state);
             return model;
@@ -836,6 +836,7 @@ internal static partial class SerializedSceneImporter
         string assetPath,
         SceneNode targetNode,
         ImportedHierarchy hierarchy,
+        SourceReference meshReference,
         IReadOnlyList<SourceReference> materialReferences,
         ParsedSkinnedMeshRenderer? skinnedMeshRenderer,
         ImportState state)
@@ -857,7 +858,9 @@ internal static partial class SerializedSceneImporter
         if (targetNodeName.Length == 0)
             return null;
 
-        SceneNode? sourceNode = FindSourceModelNodeByName(sourceRoot, targetNodeName);
+        // The file ID names the mesh exactly, also when the prefab renamed the renderer node, so it comes first.
+        SceneNode? sourceNode = FindSourceModelNodeByUnityFileId(sourceRoot, meshReference.FileId)
+            ?? FindSourceModelNodeByName(sourceRoot, targetNodeName);
         if (sourceNode is null && skinnedMeshRenderer is not null)
             sourceNode = FindSourceModelNodeBySkinBones(
                 sourceRoot, targetNode, hierarchy, skinnedMeshRenderer, materialReferences.Count, assetPath, state);
@@ -867,6 +870,43 @@ internal static partial class SerializedSceneImporter
             return null;
 
         return CloneModelForTarget(sourceRoot, sourceNode, sourceModelComponent.Model, targetNode, materialReferences, isFbx, state);
+    }
+
+    /// <summary>
+    /// Finds the source model node whose mesh has a Unity file ID. A model importer whose meta file has no
+    /// <c>internalIDToNameTable</c> entries makes the file ID of each mesh from its name: the signed XxHash64 (seed 0) of
+    /// the UTF-8 text <c>Type:Mesh-&gt;{name}{n}</c>, where <c>n</c> counts the earlier meshes with the same name.
+    /// The method computes this ID for each model node in hierarchy order and returns the match, or null.
+    /// </summary>
+    private static SceneNode? FindSourceModelNodeByUnityFileId(SceneNode sourceRoot, long fileId)
+    {
+        if (fileId == 0)
+            return null;
+
+        Dictionary<string, int> nameCounts = new(StringComparer.Ordinal);
+        SceneNode? match = null;
+        sourceRoot.IterateHierarchy(node =>
+        {
+            if (match is not null ||
+                node.Name is not { Length: > 0 } name ||
+                !node.TryGetComponent<ModelComponent>(out ModelComponent? modelComponent) ||
+                modelComponent?.Model is null)
+            {
+                return;
+            }
+
+            nameCounts.TryGetValue(name, out int index);
+            nameCounts[name] = index + 1;
+            if (ComputeUnityMeshFileId(name, index) == fileId)
+                match = node;
+        });
+        return match;
+    }
+
+    private static long ComputeUnityMeshFileId(string meshName, int index)
+    {
+        byte[] text = System.Text.Encoding.UTF8.GetBytes($"Type:Mesh->{meshName}{index.ToString(CultureInfo.InvariantCulture)}");
+        return unchecked((long)System.IO.Hashing.XxHash64.HashToUInt64(text));
     }
 
     /// <summary>
