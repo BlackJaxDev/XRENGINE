@@ -219,6 +219,10 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     }
                 }
 
+                // The decode is complete. A cancel from here on comes from the render-thread
+                // apply step (for example, a newer transition superseded this one).
+                cancellationPhase = "after decode, before render-thread apply";
+
                 void ApplyResidentDataOnRenderThreadCore()
                 {
                     if (cancellationToken.IsCancellationRequested
@@ -704,6 +708,10 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                         DecodeGate.Release();
                     }
                 }
+
+                // The decode is complete. A cancel from here on comes from the render-thread
+                // continuation (for example, a newer transition superseded this one).
+                cancellationPhase = "after decode, before render-thread apply";
 
                 void ContinueOnRenderThreadCore()
                 {

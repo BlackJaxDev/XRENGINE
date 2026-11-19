@@ -61,13 +61,23 @@ public partial class OpenGLRenderer
             => value == 0.0f ? 0 : BitConverter.SingleToInt32Bits(value);
     }
 
+    /// <summary>
+    /// Acquires a resident bindless texture/sampler handle for one Advanced texture row.
+    /// <paramref name="transient"/> is true when the call failed only because an imported streamed
+    /// texture is in a short state (pending import transition, sparse upload, sampling-parameter
+    /// transition, or storage recreate). The scene uploader then publishes the row as not resident
+    /// for this frame and tries again on a later publication. Any other failure is a real error
+    /// and rejects the family.
+    /// </summary>
     internal bool TryGetResidentBindlessTextureSamplerHandle(
         XRTexture texture,
         in AdvancedSamplerRecord sampler,
         out ulong handle,
+        out bool transient,
         out string reason)
     {
         handle = 0ul;
+        transient = false;
         if (ARBBindlessTexture is null)
         {
             reason = "OpenGL ARB_bindless_texture is unavailable.";
@@ -83,14 +93,11 @@ public partial class OpenGLRenderer
         // Linking installs the imported texture's progressive-upload callbacks.
         // It does not allocate native storage or acquire a bindless handle.
         _ = GetOrCreateAPIRenderObject(texture, generateNow: false);
-        // A pending imported transition owns the canonical texture until its
-        // sparse fence or dense upload has published. Check before Bind can
-        // prepare a new handle and freeze the old sampling range.
-        if (HasPendingImportedTextureTransition(texture))
-        {
-            reason = "The imported texture has a pending residency transition.";
-            return false;
-        }
+        // A pending imported transition that is still in decode or cache read has not touched
+        // the texture: its current resident storage stays valid, so the row keeps its handle.
+        // The upload states that own the native mip range are checked after Bind below. A
+        // handle taken now freezes the sampling parameters; when the upload later needs to
+        // change them, EnsureBindlessParametersMutable defers it until this lease is released.
         if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not GLObjectBase glObject ||
             glObject is not IGLTexture glTexture || glObject is not IGLBindlessTexture bindlessTexture ||
             !IsSupportedAdvancedTexturePair(texture, glObject, glTexture.TextureTarget))
@@ -101,20 +108,24 @@ public partial class OpenGLRenderer
 
         if (glObject is GLTexture2D texture2D && texture2D.HasPendingSparseAsyncWork)
         {
+            transient = IsImportedStreamedTexture(texture);
             reason = "A sparse texture upload still owns the native identity.";
             return false;
         }
         bindlessTexture.PrepareForBindlessHandle();
         glTexture.Bind();
-        if (HasPendingImportedTextureTransition(texture) || !bindlessTexture.IsReadyForBindlessHandle())
+        if (!bindlessTexture.IsReadyForBindlessHandleDuringStreamingDecode())
         {
-            reason = "The texture still has a pending sampling-parameter transition.";
+            transient = IsImportedStreamedTexture(texture);
+            reason = "An upload still owns the texture's sampling range.";
             return false;
         }
 
         uint textureId = glObject.BindingId;
         if (textureId == GLObjectBase.InvalidBindingId || textureId == 0u || !Api.IsTexture(textureId))
         {
+            // A streamed texture can be between two immutable storages while it is recreated.
+            transient = IsImportedStreamedTexture(texture);
             reason = "The physical OpenGL texture identity is unavailable.";
             return false;
         }
@@ -145,11 +156,14 @@ public partial class OpenGLRenderer
         return true;
     }
 
-    private static bool HasPendingImportedTextureTransition(XRTexture texture)
-        => texture is XRTexture2D texture2D
-            && ImportedTextureStreamingManager.Instance.TryGetGenerationState(
-                texture2D, out _, out _, out _, out bool pending)
-            && pending;
+    /// <summary>
+    /// True for an imported 2D texture that <see cref="ImportedTextureStreamingManager"/> owns.
+    /// Only such a texture can have a transient per-texture state that keeps the Advanced family
+    /// rendering with a not-resident row; every other source keeps the strict rejection.
+    /// </summary>
+    internal static bool IsImportedStreamedTexture(XRTexture texture)
+        => texture is XRTexture2D texture2D &&
+           ImportedTextureStreamingManager.Instance.TryGetGenerationState(texture2D, out _, out _, out _, out _);
 
     internal void ReleaseAdvancedBindlessTextureSamplerHandle(ulong handle)
     {

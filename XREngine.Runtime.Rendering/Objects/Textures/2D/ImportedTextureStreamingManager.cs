@@ -31,6 +31,14 @@ internal sealed partial class ImportedTextureStreamingManager
     private const int RecordRefCompactionIntervalFrames = 600;
     private const int TextureSummaryIntervalFrames = 60;
     private const float PageSelectionFullCoverageThreshold = 0.85f;
+
+    /// <summary>
+    /// Span factor for the demotion check of a visible texture. The policy promotes when the
+    /// effective projected span is larger than half of the next size; a non-pressure demotion
+    /// happens only when the span multiplied by this factor would not keep the current size.
+    /// With 1.25, a 1024 texture promotes above 512 px and demotes at about 410 px or less.
+    /// </summary>
+    private const float VisibleDemotionSpanHysteresis = 1.25f;
     private const double VulkanDenseNonPressureDemotionPreserveBudgetFillRatio = 0.75;
     private const long VulkanAllocatorStreamingReserveBytes = 768L * 1024L * 1024L;
     private const string VulkanImportedTexturePreviewFreezeEnvVar = XREngineEnvironmentVariables.VulkanImportedTexturePreviewFreeze;
@@ -111,6 +119,18 @@ internal sealed partial class ImportedTextureStreamingManager
             out uploadGeneration,
             out pendingPriorityClass,
             out hasPendingTransition);
+
+    /// <summary>
+    /// Reads the base LOD bias and the current promotion-fade bias of a streamed texture. The
+    /// fade runs only on backends where <see cref="ShouldApplySamplerLodBiasPromotionFade"/> is
+    /// true, and it changes <see cref="XRTexture2D.LodBias"/> every frame without a new content
+    /// generation.
+    /// </summary>
+    internal bool TryGetStreamingLodBias(
+        XRTexture2D texture,
+        out float baseLodBias,
+        out float streamingLodBias)
+        => _registry.TryGetStreamingLodBias(texture, out baseLodBias, out streamingLodBias);
 
     internal bool TryGetTerminalGenerationFailure(
         XRTexture2D texture,
@@ -1381,6 +1401,24 @@ internal sealed partial class ImportedTextureStreamingManager
                     if (importsActive)
                         return false;
 
+                    // A visible texture keeps its promotion while that promotion is in flight.
+                    // The visible policy quantizes the projected span against the resident
+                    // size, so a small span change near a size boundary asks for the resident
+                    // size again. Relative to the pending size that is a demotion, but the pin
+                    // and demotion cooldown start only when a transition completes. Without
+                    // this hold, each frame canceled the pending promotion after its decode and
+                    // queued a reload of the already-resident size, and the texture never left
+                    // the pending state. Memory pressure still demotes it.
+                    if (visibleThisFrame
+                        && snapshot.PendingMaxDimension > snapshot.ResidentMaxDimension
+                        && assignedResidentSize >= snapshot.ResidentMaxDimension)
+                    {
+                        return false;
+                    }
+
+                    if (IsVisibleDemotionInsideHysteresis(snapshot, currentResidentSize, frameId, allowPromotions))
+                        return false;
+
                     if (frameId < snapshot.Record.DemotionCooldownUntilFrameId
                         || frameId < snapshot.Record.PinUntilFrameId)
                     {
@@ -2058,6 +2096,52 @@ internal sealed partial class ImportedTextureStreamingManager
         }
 
         return backend.Name;
+    }
+
+    /// <summary>
+    /// Returns true when a non-pressure demotion of a texture that is visible this frame is
+    /// inside the demotion hysteresis band. The method runs the visible policy again with the
+    /// projected span multiplied by <see cref="VisibleDemotionSpanHysteresis"/> and with
+    /// <paramref name="currentResidentSize"/> (the pending size, or the resident size when no
+    /// transition is pending) as the resident size. If that result still keeps the current
+    /// size, the span change is too small to demote. Without this band, a span that moves a
+    /// few pixels across a size boundary each frame (for example, an animated avatar) queued a
+    /// promotion and a demotion in turn, and each one canceled the other after its decode.
+    /// </summary>
+    private static bool IsVisibleDemotionInsideHysteresis(
+        ImportedTextureStreamingSnapshot snapshot,
+        uint currentResidentSize,
+        long frameId,
+        bool allowPromotions)
+    {
+        if (snapshot.LastVisibleFrameId != frameId || !snapshot.PreviewReady)
+            return false;
+
+        float projectedPixelSpan = snapshot.MaxProjectedPixelSpan;
+        if (!float.IsFinite(projectedPixelSpan) || projectedPixelSpan <= 0.0f)
+            return false;
+
+        uint widenedTarget = DetermineDesiredResidentSize(
+            new ImportedTextureStreamingPolicyInput(
+                snapshot.SourceWidth,
+                snapshot.SourceHeight,
+                currentResidentSize,
+                snapshot.PreviewReady,
+                snapshot.LastVisibleFrameId,
+                snapshot.MinVisibleDistance,
+                projectedPixelSpan * VisibleDemotionSpanHysteresis,
+                snapshot.MaxScreenCoverage,
+                snapshot.UvDensityHint,
+                snapshot.SamplerName,
+                snapshot.LastBoundFrameId),
+            frameId,
+            allowPromotions,
+            snapshot.Backend.PreviewMaxDimension);
+        widenedTarget = TextureResidencyPolicy.ApplyTextureQuality(
+            widenedTarget,
+            snapshot.Backend.PreviewMaxDimension,
+            RuntimeRenderingHostServices.Settings.TextureQuality);
+        return widenedTarget >= currentResidentSize;
     }
 
     private static bool ShouldPreserveVulkanDenseResidentSizeWithoutPressure(

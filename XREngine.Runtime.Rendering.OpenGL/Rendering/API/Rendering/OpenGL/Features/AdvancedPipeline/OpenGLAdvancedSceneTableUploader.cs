@@ -1,6 +1,5 @@
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Numerics;
 using Silk.NET.OpenGL;
 using XREngine.Rendering.Commands;
 
@@ -26,6 +25,14 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
     private AdvancedEncodedTextureReference[] _encodedTextureScratch = [];
     private ulong[] _residentPairHandles = [];
     private byte[] _samplerValidationScratch = [];
+    // Per dense texture row: the EAdvancedTextureDriftKind that validation accepted, and the
+    // current texture record to write into the GL row when the kind is not Exact.
+    private byte[] _textureDriftScratch = [];
+    private AdvancedTextureRecord[] _currentTextureRecordScratch = [];
+    // Value in _textureDriftScratch for a row whose source changed in a way that the drift rules
+    // do not accept. The row is published as not resident for this upload.
+    private const byte StaleTextureRow = byte.MaxValue;
+    private int _staleTextureRowCount;
     private int _residentPairHandleCount;
     private AdvancedGpuScenePublicationLease _lease;
     private ulong _uploadedSequence;
@@ -343,6 +350,16 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
         EnsureTextureScratch(textures.Length, bindings.Length);
         textures.CopyTo(_textureScratch);
         bindings.CopyTo(_materialBindingScratch);
+        // A streaming commit after publication (placeholder or residency drift) passed the
+        // validation. The bindless handle samples the current image, so write the current
+        // extent, mip count and format into the GL row, as the Vulkan runtime does.
+        for (int dense = 0; dense < textures.Length; dense++)
+            if (_textureDriftScratch[dense] != (byte)EAdvancedTextureDriftKind.Exact &&
+                _textureDriftScratch[dense] != StaleTextureRow)
+                AdvancedTextureResidencyDrift.Apply(
+                    (EAdvancedTextureDriftKind)_textureDriftScratch[dense],
+                    ref _textureScratch[dense],
+                    _currentTextureRecordScratch[dense]);
         int pairCount = checked(1 + textures.Length + bindings.Length);
         Span<AdvancedEncodedTextureReference> pairs = _encodedTextureScratch.AsSpan(0, pairCount);
         pairs[0] = new(0u, 0u, (uint)EAdvancedResourceFallback.Zero, EAdvancedResourceReferenceFlags.Fallback);
@@ -366,8 +383,29 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
                 reason = $"The sealed OpenGL texture row {dense} ('{source.Name}') has no live default sampler.";
                 return false;
             }
-            if (!_renderer.TryGetResidentBindlessTextureSamplerHandle(source, in sampler, out nativeHandle, out reason))
-                return false;
+            // A stale row, or a transient state of an imported streamed texture, keeps the row not
+            // resident for this frame (encoded index 0), like a texture that is still loading.
+            // The shaders use the fallback, and the state does not reject the whole family.
+            if (_textureDriftScratch[dense] == StaleTextureRow)
+                continue;
+            // The importer gives each imported texture a small placeholder (the red and blue
+            // filler checker for color slots) until its first resident data arrives. The GL
+            // texture holds that image and can make a valid handle, so check the state here:
+            // the row stays not resident and the binding fallback applies, as on Vulkan. The
+            // OpenGL streaming path ends the state in XRTexture2D.ApplyResidentData and
+            // PublishSparseTextureStreamingState.
+            if (source is XRTexture2D { IsAwaitingFirstResidency: true })
+            {
+                MarkStaleTextureRow(dense);
+                continue;
+            }
+            if (!_renderer.TryGetResidentBindlessTextureSamplerHandle(source, in sampler, out nativeHandle, out bool transient, out reason))
+            {
+                if (!transient)
+                    return false;
+                MarkStaleTextureRow(dense);
+                continue;
+            }
             _textureScratch[dense].EncodedReferenceIndex = checked((uint)dense + 1u);
             RecordResidentPairHandle(nativeHandle);
             pairs[dense + 1] = EncodePair(nativeHandle, _textureScratch[dense].Dimension);
@@ -393,8 +431,16 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
                 reason = $"The sealed OpenGL material binding {index} ('{source.Name}') has no live sampler.";
                 return false;
             }
-            if (!_renderer.TryGetResidentBindlessTextureSamplerHandle(source, in sampler, out nativeHandle, out reason))
-                return false;
+            // Reserved stays 0 for a stale row or a transient texture state, so the shader keeps
+            // this binding's own fallback (for example white base color or a flat normal).
+            if (IsStaleTextureRow(snapshot, binding.Texture.Handle))
+                continue;
+            if (!_renderer.TryGetResidentBindlessTextureSamplerHandle(source, in sampler, out nativeHandle, out bool transient, out reason))
+            {
+                if (!transient)
+                    return false;
+                continue;
+            }
             _materialBindingScratch[index] = binding with
             {
                 Texture = binding.Texture with { Reserved = checked((uint)(bindingBase + index)) },
@@ -455,6 +501,13 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
         _samplerValidationScratch.AsSpan(0, samplerHighWater).Clear();
 
         ReadOnlySpan<AdvancedTextureRecord> textureRecords = snapshot.Textures.PhysicalRecords;
+        if (_textureDriftScratch.Length < textureRecords.Length)
+        {
+            Array.Resize(ref _textureDriftScratch, textureRecords.Length);
+            Array.Resize(ref _currentTextureRecordScratch, textureRecords.Length);
+        }
+        _textureDriftScratch.AsSpan(0, textureRecords.Length).Clear();
+        _staleTextureRowCount = 0;
         for (int denseIndex = 0; denseIndex < textureRecords.Length; ++denseIndex)
         {
             if (!TryResolveTextureRow(snapshot.Textures, denseIndex, out AdvancedGpuHandle handle, out reason))
@@ -478,25 +531,71 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
                 reason = $"Canonical GL texture {handle.Index}:{handle.Generation} has no retained strong source reference.";
                 return false;
             }
+            if (!canonical.DefaultSampler.IsValid ||
+                !snapshot.Samplers.TryGet(canonical.DefaultSampler, out AdvancedSamplerRecord canonicalDefaultSampler) ||
+                !snapshot.Samplers.TryGetDenseIndex(canonical.DefaultSampler, out uint defaultSamplerDense))
+            {
+                reason = $"Canonical GL texture {handle.Index}:{handle.Generation} has no retained default sampler row.";
+                return false;
+            }
             if (!AdvancedGpuResourceSourceEncoder.TryEncode(
                     source,
                     EAdvancedResourceFallback.Zero,
                     out AdvancedGpuResourceBindingSource current,
-                    out _,
+                    out EAdvancedCanonicalCompatibilityReason encodeCompatibility,
                     out string encodeReason))
             {
-                reason = $"Canonical GL texture {handle.Index}:{handle.Generation} source revalidation failed: {encodeReason}";
-                return false;
+                // While streaming writes the imported metadata (or before the first resident mip),
+                // the encoder reports EmptyResourceTexture. For an imported streamed texture that is
+                // a transient state: the row is not resident for this frame. Any other encode
+                // failure is a real content error.
+                if (encodeCompatibility != EAdvancedCanonicalCompatibilityReason.EmptyResourceTexture ||
+                    !IsImportedStreamedTexture(source))
+                {
+                    reason = $"Canonical GL texture {handle.Index}:{handle.Generation} source revalidation failed: {encodeReason}";
+                    return false;
+                }
+                MarkStaleTextureRow(denseIndex);
+                _samplerValidationScratch[checked((int)defaultSamplerDense)] = 1;
+                continue;
             }
-            if (current.SourceContentGeneration != capturedSourceContentGeneration ||
-                !canonical.DefaultSampler.IsValid ||
-                !snapshot.Samplers.TryGet(canonical.DefaultSampler, out AdvancedSamplerRecord canonicalDefaultSampler) ||
-                !snapshot.Samplers.TryGetDenseIndex(canonical.DefaultSampler, out uint defaultSamplerDense) ||
-                !TextureMetadataStateEquals(current.TextureRecord, canonical) ||
-                !SamplerStateEquals(current.SamplerRecord, canonicalDefaultSampler))
+            // A streaming commit after publication can replace the loading placeholder or change
+            // the resident mip chain. The bindless handle samples the current image, so such a
+            // change passes when the shape that the shaders see is the same
+            // (AdvancedTextureResidencyDrift). The promotion-fade LOD bias is removed first.
+            AdvancedSamplerRecord currentSampler = current.SamplerRecord;
+            AdvancedTextureResidencyDrift.NormalizeStreamingLodBias(source, ref currentSampler, canonicalDefaultSampler);
+            EAdvancedTextureDriftKind drift = AdvancedTextureResidencyDrift.Classify(
+                source, capturedSourceContentGeneration, current.SourceContentGeneration,
+                current.TextureRecord, canonical, currentSampler, canonicalDefaultSampler);
+            EAdvancedTextureSourceMismatch mismatch = AdvancedTextureResidencyDrift.CompareTexture(
+                drift,
+                current.SourceContentGeneration != capturedSourceContentGeneration,
+                current.TextureRecord,
+                canonical);
+            if (mismatch == EAdvancedTextureSourceMismatch.None &&
+                !AdvancedTextureResidencyDrift.SamplerEquals(drift, currentSampler, canonicalDefaultSampler))
+                mismatch = EAdvancedTextureSourceMismatch.SamplerChanged;
+            if (mismatch != EAdvancedTextureSourceMismatch.None)
             {
-                reason = $"Canonical GL texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication.";
-                return false;
+                // Only an imported streamed texture can become a stale row: streaming replaces its
+                // preview (other extent or format) without a new publication. As in the Vulkan
+                // stale-row policy, the row is published as not resident, so its material bindings
+                // sample their own fallback until a later publication captures the new source.
+                // Any other source (for example a GPU-written output) keeps the strict rejection.
+                if (!IsImportedStreamedTexture(source))
+                {
+                    reason = $"Canonical GL texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication ({drift}, {mismatch}): texture=({AdvancedTextureResidencyDrift.DescribeTextureStateMismatch(current.TextureRecord, canonical)}), sampler=({AdvancedTextureResidencyDrift.DescribeSamplerStateMismatch(currentSampler, canonicalDefaultSampler)})";
+                    return false;
+                }
+                MarkStaleTextureRow(denseIndex);
+                _samplerValidationScratch[checked((int)defaultSamplerDense)] = 1;
+                continue;
+            }
+            if (drift != EAdvancedTextureDriftKind.Exact)
+            {
+                _textureDriftScratch[denseIndex] = (byte)drift;
+                _currentTextureRecordScratch[denseIndex] = current.TextureRecord;
             }
             _samplerValidationScratch[checked((int)defaultSamplerDense)] = 1;
         }
@@ -512,35 +611,70 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
             if (!binding.Sampler.Handle.IsValid ||
                 !snapshot.Textures.TryGet(textureHandle, out AdvancedTextureRecord canonicalTexture) ||
                 !snapshot.Samplers.TryGet(binding.Sampler.Handle, out AdvancedSamplerRecord canonicalSampler) ||
-                !resources.TryGetTextureSource(textureHandle, out XRTexture source))
+                !resources.TryGetTextureSource(textureHandle, out XRTexture source, out ulong capturedBindingGeneration))
             {
                 reason = $"GL material texture binding {bindingIndex} does not resolve its retained texture/sampler publication.";
                 return false;
+            }
+            if (!canonicalTexture.DefaultSampler.IsValid ||
+                !snapshot.Samplers.TryGet(canonicalTexture.DefaultSampler, out _))
+            {
+                reason = $"GL material texture binding {bindingIndex} has no retained default sampler row.";
+                return false;
+            }
+            if (!snapshot.Samplers.TryGetDenseIndex(binding.Sampler.Handle, out uint bindingSamplerDense))
+            {
+                reason = $"GL material texture binding {bindingIndex} sampler handle is absent from the retained dense image.";
+                return false;
+            }
+            // A binding of a stale texture row keeps its own fallback; its sampler row is still
+            // witnessed so the sampler table stays complete.
+            if (IsStaleTextureRow(snapshot, textureHandle))
+            {
+                _samplerValidationScratch[checked((int)bindingSamplerDense)] = 1;
+                continue;
             }
             if (!AdvancedGpuResourceSourceEncoder.TryEncode(
                     source,
                     binding.Texture.Fallback,
                     out AdvancedGpuResourceBindingSource current,
-                    out _,
+                    out EAdvancedCanonicalCompatibilityReason encodeCompatibility,
                     out string encodeReason))
             {
-                reason = $"GL material texture binding {bindingIndex} source revalidation failed: {encodeReason}";
-                return false;
+                // Same transient rule as for the texture row above.
+                if (encodeCompatibility != EAdvancedCanonicalCompatibilityReason.EmptyResourceTexture ||
+                    !TryMarkStaleTextureRow(snapshot, textureHandle, source))
+                {
+                    reason = $"GL material texture binding {bindingIndex} source revalidation failed: {encodeReason}";
+                    return false;
+                }
+                _samplerValidationScratch[checked((int)bindingSamplerDense)] = 1;
+                continue;
             }
-            if (!canonicalTexture.DefaultSampler.IsValid ||
-                !snapshot.Samplers.TryGet(canonicalTexture.DefaultSampler, out _) ||
-                !TextureMetadataStateEquals(current.TextureRecord, canonicalTexture) ||
-                !SamplerStateEquals(current.SamplerRecord, canonicalSampler))
+            // The texture loop above already handled a content generation change that is not a
+            // streaming commit; the binding compares the metadata and its own sampler.
+            AdvancedSamplerRecord currentSampler = current.SamplerRecord;
+            AdvancedTextureResidencyDrift.NormalizeStreamingLodBias(source, ref currentSampler, canonicalSampler);
+            EAdvancedTextureDriftKind drift = AdvancedTextureResidencyDrift.Classify(
+                source, capturedBindingGeneration, current.SourceContentGeneration,
+                current.TextureRecord, canonicalTexture, currentSampler, canonicalSampler);
+            EAdvancedTextureSourceMismatch mismatch = AdvancedTextureResidencyDrift.CompareTexture(
+                drift,
+                generationChanged: false,
+                current.TextureRecord,
+                canonicalTexture);
+            if (mismatch == EAdvancedTextureSourceMismatch.None &&
+                !AdvancedTextureResidencyDrift.SamplerEquals(drift, currentSampler, canonicalSampler))
+                mismatch = EAdvancedTextureSourceMismatch.SamplerChanged;
+            // A binding mismatch of an imported streamed texture makes its row stale (not resident
+            // this frame); any other source keeps the strict rejection.
+            if (mismatch != EAdvancedTextureSourceMismatch.None &&
+                !TryMarkStaleTextureRow(snapshot, textureHandle, source))
             {
-                reason = $"GL material texture binding {bindingIndex} source '{source.Name ?? source.GetType().Name}' changed after publication.";
+                reason = $"GL material texture binding {bindingIndex} source '{source.Name ?? source.GetType().Name}' changed after publication ({drift}, {mismatch}): texture=({AdvancedTextureResidencyDrift.DescribeTextureStateMismatch(current.TextureRecord, canonicalTexture)}), sampler=({AdvancedTextureResidencyDrift.DescribeSamplerStateMismatch(currentSampler, canonicalSampler)})";
                 return false;
             }
-            if (!snapshot.Samplers.TryGetDenseIndex(binding.Sampler.Handle, out uint samplerDense))
-            {
-                reason = $"GL material texture binding {bindingIndex} sampler handle is absent from the retained dense image.";
-                return false;
-            }
-            _samplerValidationScratch[checked((int)samplerDense)] = 1;
+            _samplerValidationScratch[checked((int)bindingSamplerDense)] = 1;
         }
 
         for (int denseIndex = 0; denseIndex < samplerHighWater; ++denseIndex)
@@ -558,38 +692,41 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
         return true;
     }
 
-    private static bool TextureMetadataStateEquals(
-        in AdvancedTextureRecord left,
-        in AdvancedTextureRecord right)
+    /// <summary>Number of texture rows that the last validation published as not resident because they were stale.</summary>
+    internal int StaleTextureRowCount => _staleTextureRowCount;
+
+    private static bool IsImportedStreamedTexture(XRTexture source)
+        => OpenGLRenderer.IsImportedStreamedTexture(source);
+
+    private void MarkStaleTextureRow(int denseIndex)
     {
-        AdvancedTextureRecord leftWithoutSampler = left;
-        AdvancedTextureRecord rightWithoutSampler = right;
-        leftWithoutSampler.DefaultSampler = AdvancedGpuHandle.Invalid;
-        rightWithoutSampler.DefaultSampler = AdvancedGpuHandle.Invalid;
-        return leftWithoutSampler.Dimension == rightWithoutSampler.Dimension &&
-            leftWithoutSampler.Flags == rightWithoutSampler.Flags &&
-            leftWithoutSampler.Width == rightWithoutSampler.Width &&
-            leftWithoutSampler.Height == rightWithoutSampler.Height &&
-            leftWithoutSampler.DepthOrLayers == rightWithoutSampler.DepthOrLayers &&
-            leftWithoutSampler.MipCount == rightWithoutSampler.MipCount &&
-            leftWithoutSampler.FormatClass == rightWithoutSampler.FormatClass &&
-            VectorBitsEqual(leftWithoutSampler.UvScaleBias, rightWithoutSampler.UvScaleBias);
+        _textureDriftScratch[denseIndex] = StaleTextureRow;
+        _staleTextureRowCount++;
     }
 
-    private static bool SamplerStateEquals(
-        in AdvancedSamplerRecord left,
-        in AdvancedSamplerRecord right)
-        => left.Filter == right.Filter && left.Flags == right.Flags &&
-           left.AddressU == right.AddressU && left.AddressV == right.AddressV &&
-           left.AddressW == right.AddressW && left.CompareOperation == right.CompareOperation &&
-           VectorBitsEqual(left.LodBiasMinMaxAnisotropy, right.LodBiasMinMaxAnisotropy) &&
-           VectorBitsEqual(left.BorderColor, right.BorderColor);
+    /// <summary>
+    /// Marks the texture row of <paramref name="textureHandle"/> stale when
+    /// <paramref name="source"/> is an imported streamed texture. Returns false for any other
+    /// source, so the caller keeps the strict rejection.
+    /// </summary>
+    private bool TryMarkStaleTextureRow(
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        AdvancedGpuHandle textureHandle,
+        XRTexture source)
+    {
+        if (!IsImportedStreamedTexture(source) ||
+            !snapshot.Textures.TryGetDenseIndex(textureHandle, out uint dense) ||
+            dense >= (uint)_textureDriftScratch.Length)
+            return false;
+        if (_textureDriftScratch[dense] != StaleTextureRow)
+            MarkStaleTextureRow(checked((int)dense));
+        return true;
+    }
 
-    private static bool VectorBitsEqual(Vector4 left, Vector4 right)
-        => BitConverter.SingleToInt32Bits(left.X) == BitConverter.SingleToInt32Bits(right.X) &&
-           BitConverter.SingleToInt32Bits(left.Y) == BitConverter.SingleToInt32Bits(right.Y) &&
-           BitConverter.SingleToInt32Bits(left.Z) == BitConverter.SingleToInt32Bits(right.Z) &&
-           BitConverter.SingleToInt32Bits(left.W) == BitConverter.SingleToInt32Bits(right.W);
+    private bool IsStaleTextureRow(AdvancedGpuScenePublicationSnapshot snapshot, AdvancedGpuHandle textureHandle)
+        => snapshot.Textures.TryGetDenseIndex(textureHandle, out uint dense) &&
+           dense < (uint)_textureDriftScratch.Length &&
+           _textureDriftScratch[dense] == StaleTextureRow;
 
     private void EnsureTextureScratch(int textureCount, int bindingCount)
     {
