@@ -656,6 +656,14 @@ namespace XREngine.Rendering.OpenGL
 
                 using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.SetMaterialUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
+                    // A separable vertex program from the material's own vertex shader also reads material parameters.
+                    if (!ReferenceEquals(vtx, mat) &&
+                        ReferenceEquals(vtx, _separatedVertexProgram) &&
+                        material.Data.VertexShaders.Count > 0)
+                    {
+                        material.SetVertexProgramUniforms(vtx!);
+                    }
+
                     material.SetUniforms(mat);
                     if (uniformSourceMaterial is not null)
                     {

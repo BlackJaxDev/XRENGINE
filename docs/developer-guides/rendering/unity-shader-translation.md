@@ -67,7 +67,7 @@ The importer builds the material as follows:
 5. It maps `Cull`, `ZWrite`, `ZTest`, `Blend`, `BlendOp`, `ColorMask`, and `AlphaToMask`. A `[_Property]` argument takes the material value, then the property default. Numeric values use the Unity enums. `Stencil` blocks and per-target blend state cause a warning.
 6. It selects the engine pass from the render queue (the material custom queue, then the `Queue` tag): below 2450 is opaque forward, 2450 to 2500 is masked forward, and above 2500 or any blending is transparent forward. `AlphaToMask On` selects alpha to coverage. `_Cutoff` sets the alpha cutoff.
 
-The translated vertex stage replaces the engine vertex shader. Skinned meshes therefore do not skin, and the engine stereo paths do not apply. Use static meshes to compare translated materials with Unity.
+The translated vertex stage replaces the engine vertex shader. It can read material parameters, for example `_MainTex_ST`. In OpenGL shader pipeline mode, the mesh renderer therefore sets the material parameters and the engine uniforms that the vertex program uses on the separable vertex program too (`GLMaterial.SetVertexProgramUniforms`). Skinned meshes therefore do not skin, and the engine stereo paths do not apply. Use static meshes to compare translated materials with Unity.
 
 ## Vertex Attributes
 

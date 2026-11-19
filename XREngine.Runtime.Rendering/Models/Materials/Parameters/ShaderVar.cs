@@ -112,6 +112,20 @@ namespace XREngine.Rendering.Models.Materials
             _valueChanged = false;
         }
 
+        /// <summary>
+        /// Sets the uniform on an additional program of the same draw, for example a separable vertex program.
+        /// The change flag stays set, so the next <see cref="SetUniform"/> call for the main program still sends the value.
+        /// </summary>
+        /// <param name="program">The additional program.</param>
+        /// <param name="forceUpdate">True to send the value even when it did not change.</param>
+        public void SetUniformKeepingChange(XRRenderProgram program, bool forceUpdate)
+        {
+            if (!_valueChanged && !forceUpdate)
+                return;
+
+            SetProgramUniform(program, Name);
+        }
+
         //internal void SetUniform(string name) { SetUniform(Api.GetUniformLocation(programBindingId, name)); }
         //internal void SetUniform() { SetUniform(Api.GetUniformLocation(programBindingId, Name)); }
 
