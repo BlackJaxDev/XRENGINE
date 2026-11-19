@@ -43,14 +43,24 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
             SType = StructureType.CommandBufferBeginInfo,
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
-        Result result = commands.BeginTrackedCommandBuffer(
-            CommandBuffer,
-            ref beginInfo,
-            owner);
-        context.DeviceContext.ObserveNativeResult($"vkBeginCommandBuffer.{owner}", result);
+        Result result;
+        try
+        {
+            result = commands.BeginTrackedCommandBuffer(
+                CommandBuffer,
+                ref beginInfo,
+                owner);
+            context.DeviceContext.ObserveNativeResult($"vkBeginCommandBuffer.{owner}", result);
+        }
+        catch
+        {
+            AbandonAndReleaseCommandBuffer();
+            throw;
+        }
+
         if (result != Result.Success)
         {
-            ReleaseCommandBuffer();
+            AbandonAndReleaseCommandBuffer();
             throw new InvalidOperationException($"Failed to begin synchronous resource command buffer ({result}).");
         }
     }
@@ -174,21 +184,60 @@ internal unsafe sealed class VulkanSynchronousResourceCommandSession : IDisposab
         }
     }
 
+    /// <summary>
+    /// Discards and frees the command buffer when the session ends before the queue accepted it.
+    /// It does nothing after a completed session, or after an accepted submission, because
+    /// completion or debt retirement then owns the command buffer.
+    /// </summary>
+    /// <remarks>
+    /// A <c>using</c> scope also calls this method when a recording exception leaves the scope.
+    /// So this method logs cleanup failures and does not throw, and the caller gets the original exception.
+    /// </remarks>
     public void Dispose()
     {
         if (!_completed && !_nativeSubmissionAccepted)
+            AbandonAndReleaseCommandBuffer();
+    }
+
+    /// <summary>
+    /// Discards the recording state of the command buffer, then frees the command buffer.
+    /// Use this only before the queue accepted the command buffer. It logs failures and does not throw.
+    /// </summary>
+    private void AbandonAndReleaseCommandBuffer()
+    {
+        if (_commandBufferReleased)
+            return;
+
+        try
+        {
+            // The free rejects a command buffer whose tracking batch still records.
+            // Abandon removes that batch and the recorded dependencies first.
+            Encoder.Abandon(CommandBuffer);
             ReleaseCommandBuffer();
+        }
+        catch (Exception exception)
+        {
+            Debug.VulkanWarning(
+                "[Vulkan] Could not free synchronous resource command buffer 0x{0:X} for {1} after the session ended before submission: {2}: {3}",
+                unchecked((ulong)CommandBuffer.Handle),
+                _owner,
+                exception.GetType().Name,
+                exception.Message);
+        }
     }
 
     private void ReleaseCommandBuffer()
     {
         if (_commandBufferReleased)
             return;
-        _commandBufferReleased = true;
+
         CommandBuffer commandBuffer = CommandBuffer;
         _commands.FreeCompletedSynchronousCommandBuffer(
             _pool,
             ref commandBuffer,
             _owner);
+        // Set the flag only after the free returns. A failed free keeps the
+        // command buffer owned by this session, so a later dispose can try again.
+        _commandBufferReleased = true;
     }
 }
