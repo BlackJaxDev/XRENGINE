@@ -138,6 +138,7 @@
 
   <Import Project="../Build/Shared/BrowserContentPublishing.props" />
   <Import Project="../Build/Shared/BrowserPublisherPayload.targets" />
+  <Import Project="../Build/Shared/PatchedGlfw.targets" />
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Audio.Audio2Face\XREngine.Audio.Audio2Face.csproj" />
   </ItemGroup>

@@ -1,0 +1,70 @@
+<Project>
+  <PropertyGroup>
+    <PatchedGlfwDirectory>$(MSBuildThisFileDirectory)..\Dependencies\Glfw\win-x64\</PatchedGlfwDirectory>
+    <PatchedGlfwLibrary>$(PatchedGlfwDirectory)glfw3.dll</PatchedGlfwLibrary>
+  </PropertyGroup>
+
+  <Target Name="StagePatchedGlfw" AfterTargets="CopyFilesToOutputDirectory"
+          Condition="$([MSBuild]::IsOSPlatform('Windows')) and '$(DesignTimeBuild)' != 'true' and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64')">
+    <ItemGroup>
+      <_PatchedGlfwNativeAsset Include="@(NativeCopyLocalItems)"
+                               Condition="'%(NativeCopyLocalItems.NuGetPackageId)' == 'Ultz.Native.GLFW' and '%(NativeCopyLocalItems.PathInPackage)' == 'runtimes/win-x64/native/glfw3.dll'" />
+      <_PatchedGlfwNativeAsset Include="@(RuntimeTargetsCopyLocalItems)"
+                               Condition="'%(RuntimeTargetsCopyLocalItems.NuGetPackageId)' == 'Ultz.Native.GLFW' and '%(RuntimeTargetsCopyLocalItems.PathInPackage)' == 'runtimes/win-x64/native/glfw3.dll'" />
+      <_PatchedGlfwPackage Include="@(NativeCopyLocalItems)" Condition="'%(NativeCopyLocalItems.NuGetPackageId)' == 'Ultz.Native.GLFW'" />
+      <_PatchedGlfwPackage Include="@(RuntimeTargetsCopyLocalItems)" Condition="'%(RuntimeTargetsCopyLocalItems.NuGetPackageId)' == 'Ultz.Native.GLFW'" />
+    </ItemGroup>
+    <Error Condition="'@(_PatchedGlfwPackage)' != '' and '@(_PatchedGlfwNativeAsset)' == ''"
+           Text="The resolved Ultz.Native.GLFW package has no win-x64 glfw3.dll asset. The patched desktop GLFW output cannot be selected." />
+    <Error Condition="'@(_PatchedGlfwNativeAsset)' != '' and (!Exists('$(PatchedGlfwLibrary)') or !Exists('$(PatchedGlfwDirectory)glfw.version.json'))"
+           Text="The patched GLFW 3.4 win-x64 library is missing. Run 'pwsh Tools/Dependencies/Build-Glfw.ps1 -Rid win-x64' from the repository root, then build again." />
+    <PropertyGroup Condition="'@(_PatchedGlfwNativeAsset)' != ''">
+      <_PatchedGlfwBuildRuntime>$(TargetDir)runtimes\win-x64\native\glfw3.dll</_PatchedGlfwBuildRuntime>
+      <_PatchedGlfwBuildRoot>$(TargetDir)glfw3.dll</_PatchedGlfwBuildRoot>
+      <_PatchedGlfwHasBuildRuntime Condition="Exists('$(_PatchedGlfwBuildRuntime)')">true</_PatchedGlfwHasBuildRuntime>
+      <_PatchedGlfwHasBuildRoot Condition="Exists('$(_PatchedGlfwBuildRoot)')">true</_PatchedGlfwHasBuildRoot>
+    </PropertyGroup>
+    <Error Condition="'@(_PatchedGlfwNativeAsset)' != '' and '$(_PatchedGlfwHasBuildRuntime)' != 'true' and '$(_PatchedGlfwHasBuildRoot)' != 'true'"
+           Text="The resolved GLFW win-x64 package asset was not copied to the build output." />
+    <!-- Remove each output first. A package copy can be a hardlink to the NuGet cache. -->
+    <Delete Files="$(_PatchedGlfwBuildRuntime)" Condition="'$(_PatchedGlfwHasBuildRuntime)' == 'true'" />
+    <Copy SourceFiles="$(PatchedGlfwLibrary)" DestinationFiles="$(_PatchedGlfwBuildRuntime)"
+          Condition="'$(_PatchedGlfwHasBuildRuntime)' == 'true'" />
+    <Delete Files="$(_PatchedGlfwBuildRoot)" Condition="'$(_PatchedGlfwHasBuildRoot)' == 'true'" />
+    <Copy SourceFiles="$(PatchedGlfwLibrary)" DestinationFiles="$(_PatchedGlfwBuildRoot)"
+          Condition="'$(_PatchedGlfwHasBuildRoot)' == 'true'" />
+  </Target>
+
+  <!-- Replace the publish input before the SDK copies files or builds a single-file bundle. -->
+  <Target Name="UsePatchedGlfwForPublish" AfterTargets="ComputeResolvedFilesToPublishList"
+          Condition="$([MSBuild]::IsOSPlatform('Windows')) and '$(DesignTimeBuild)' != 'true' and ('$(RuntimeIdentifier)' == '' or '$(RuntimeIdentifier)' == 'win-x64')">
+    <ItemGroup>
+      <_PatchedGlfwPublishAsset Include="@(ResolvedFileToPublish)"
+                                Condition="'%(ResolvedFileToPublish.NuGetPackageId)' == 'Ultz.Native.GLFW' and '%(ResolvedFileToPublish.PathInPackage)' == 'runtimes/win-x64/native/glfw3.dll'" />
+      <_PatchedGlfwPublishPackage Include="@(ResolvedFileToPublish)"
+                                  Condition="'%(ResolvedFileToPublish.NuGetPackageId)' == 'Ultz.Native.GLFW'" />
+      <_PatchedGlfwPublishPackage Include="@(NativeCopyLocalItems)"
+                                  Condition="'%(NativeCopyLocalItems.NuGetPackageId)' == 'Ultz.Native.GLFW'" />
+      <_PatchedGlfwPublishPackage Include="@(RuntimeTargetsCopyLocalItems)"
+                                  Condition="'%(RuntimeTargetsCopyLocalItems.NuGetPackageId)' == 'Ultz.Native.GLFW'" />
+    </ItemGroup>
+    <Error Condition="'@(_PatchedGlfwPublishPackage)' != '' and '@(_PatchedGlfwPublishAsset)' == ''"
+           Text="The resolved Ultz.Native.GLFW package has no win-x64 publish asset. The patched desktop GLFW output cannot be selected." />
+    <Error Condition="'@(_PatchedGlfwPublishAsset)' != '' and (!Exists('$(PatchedGlfwLibrary)') or !Exists('$(PatchedGlfwDirectory)glfw.version.json'))"
+           Text="The patched GLFW 3.4 win-x64 library is missing. Run 'pwsh Tools/Dependencies/Build-Glfw.ps1 -Rid win-x64' from the repository root, then publish again." />
+    <ItemGroup Condition="'@(_PatchedGlfwPublishAsset)' != ''">
+      <ResolvedFileToPublish Remove="@(_PatchedGlfwPublishAsset)" />
+      <ResolvedFileToPublish Include="$(PatchedGlfwLibrary)">
+        <RelativePath>@(_PatchedGlfwPublishAsset->'%(RelativePath)')</RelativePath>
+        <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>@(_PatchedGlfwPublishAsset->'%(ExcludeFromSingleFile)')</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+  <!-- Remove an old publish output before the SDK writes the replacement. -->
+  <Target Name="UnlinkPublishedGlfw" BeforeTargets="_CopyResolvedFilesToPublishAlways"
+          Condition="'@(_PatchedGlfwPublishAsset)' != ''">
+    <Delete Files="@(_PatchedGlfwPublishAsset->'$(PublishDir)%(RelativePath)')" />
+  </Target>
+</Project>
