@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Security.Cryptography;
 using XREngine.Animation;
 using XREngine.Animation.Importers;
 using XREngine.Components;
@@ -21,7 +20,6 @@ using XREngine.Scene;
 using XREngine.Scene.Importers;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
-using YamlDotNet.RepresentationModel;
 
 namespace XREngine.Editor.GaussianBake;
 
@@ -118,11 +116,6 @@ public static class CookUnityPrefabCommand
                 SceneNode rootNode = conversion.RootNode
                     ?? throw new InvalidDataException($"Unity prefab import produced no root node for '{resolvedPrefabPath}'.");
 
-                // A root node extracted from a Unity scene keeps its scene lineup position; move it to the origin
-                // so the cooked prefab matches a standalone prefab asset.
-                if (!string.IsNullOrWhiteSpace(sceneRootName) && rootNode.Transform is Transform selectedRootTransform)
-                    selectedRootTransform.Translation = System.Numerics.Vector3.Zero;
-
                 Console.WriteLine(
                     $"[CookUnityPrefab] Imported root '{rootNode.Name}' (tier={conversion.Manifest?.CompletionTier}, " +
                     $"diagnostics={conversion.Manifest?.Diagnostics.Count ?? 0}, meshletsCooked={conversion.MeshletCookingCompleted}, " +
@@ -207,7 +200,7 @@ public static class CookUnityPrefabCommand
                         }, iterateChildHierarchy: true);
                         verifyRoot.IterateComponents<HumanoidComponent>(loadedHumanoid =>
                             Console.WriteLine(
-                                $"[CookUnityPrefab] Loaded humanoid '{loadedHumanoid.SceneNode?.Name}' bind positions: {DescribeSymmetryRoles(loadedHumanoid)}"),
+                                $"[CookUnityPrefab] Loaded humanoid '{loadedHumanoid.SceneNode?.Name}' bind positions: {SerializedHumanoidAvatarSetup.DescribeSymmetryRoles(loadedHumanoid)}"),
                             iterateChildHierarchy: true);
                     }
 
@@ -568,45 +561,11 @@ public static class CookUnityPrefabCommand
         if (!File.Exists(resolvedAnimPath))
             throw new FileNotFoundException($"The humanoid animation clip '{resolvedAnimPath}' does not exist.", resolvedAnimPath);
 
-        SceneNode avatarRoot = FindHumanoidTargetNode(rootNode);
+        SceneNode avatarRoot = SerializedHumanoidAvatarSetup.FindHumanoidTargetNode(rootNode);
         RemoveExistingAnimationClipComponents(rootNode, out int removedGenericClips);
 
-        (string? fbxPath, string fbxSha256) = ResolvePrimaryModelDependency(manifest);
-        Dictionary<EHumanoidAvatarBoneRole, SceneNode?> explicitMappings = fbxPath is not null
-            ? ResolveMetaHumanoidBoneMappings(avatarRoot, fbxPath + ".meta")
-            : [];
-
-        // The humanoid captures each bone bind pose into its avatar definition, and a cooked pak load writes those
-        // neutral poses back into the bones. Some import paths leave prefab bones with identity bind matrices, which
-        // would store zero translations for bones such as Hips. Save the bind matrices from the authored rest pose
-        // first, so the definition and the validation both read the real skeleton.
-        avatarRoot.Transform
-            .RecalculateMatrixHierarchy(forceWorldRecalc: true, setRenderMatrixNow: true, childRecalcType: ELoopType.Sequential)
-            .GetAwaiter()
-            .GetResult();
-        SaveBindStateRecursive(avatarRoot.Transform);
-
-        HumanoidComponent humanoid;
-        using (HumanoidComponent.BeginDeferredSceneNodeInitialization())
-        {
-            humanoid = avatarRoot.GetComponent<HumanoidComponent>()
-                ?? avatarRoot.AddComponent<HumanoidComponent>("Humanoid")
-                ?? throw new InvalidOperationException($"Failed to add HumanoidComponent to '{avatarRoot.Name}'.");
-        }
-
-        if (!string.IsNullOrWhiteSpace(fbxSha256))
-            humanoid.SetSourceModelContentSha256(fbxSha256);
-
-        humanoid.InitializeSceneNodeBindings();
-        if (explicitMappings.Count > 0)
-            humanoid.SetAvatarBoneMappings(explicitMappings, lockEditorCorrections: true);
-
-        if (!humanoid.ConfirmAvatarDefinition(out string confirmDiagnostic))
-            throw new InvalidOperationException(
-                $"Humanoid avatar definition confirmation failed: {confirmDiagnostic} " +
-                $"Mapped bind positions: {DescribeSymmetryRoles(humanoid)}");
-
-        humanoid.PosePreviewMode = EHumanoidPosePreviewMode.AnimatedPose;
+        (string? fbxPath, string fbxSha256) = SerializedHumanoidAvatarSetup.FindPrimaryModelDependency(manifest);
+        SerializedHumanoidAvatarSetup.Configure(avatarRoot, fbxPath, fbxSha256, out int mappedRoleCount);
 
         AnimationClip clip = AnimYamlImporter.Import(resolvedAnimPath);
         if (clip.UsesCyclicSourcePlayback)
@@ -623,57 +582,8 @@ public static class CookUnityPrefabCommand
 
         Console.WriteLine(
             $"[CookUnityPrefab] Attached humanoid clip '{clip.Name}' ({clip.LengthInSeconds:F2}s, looped={clip.Looped}, " +
-            $"mappedRoles={explicitMappings.Count}, removedGenericClips={removedGenericClips}) to '{avatarRoot.Name}'.");
+            $"mappedRoles={mappedRoleCount}, removedGenericClips={removedGenericClips}) to '{avatarRoot.Name}'.");
         return clip.Name ?? Path.GetFileNameWithoutExtension(resolvedAnimPath);
-    }
-
-    private static void SaveBindStateRecursive(TransformBase transform)
-    {
-        transform.SaveBindState();
-        foreach (TransformBase child in transform.Children)
-            SaveBindStateRecursive(child);
-    }
-
-    /// <summary>
-    /// Lists the node and bind-pose translation of each role that the humanoid symmetry check uses, so a failed
-    /// confirmation shows which source bone the mapper chose for each side.
-    /// </summary>
-    private static string DescribeSymmetryRoles(HumanoidComponent humanoid)
-    {
-        EHumanoidAvatarBoneRole[] roles =
-        [
-            EHumanoidAvatarBoneRole.Hips,
-            EHumanoidAvatarBoneRole.LeftUpperArm, EHumanoidAvatarBoneRole.RightUpperArm,
-            EHumanoidAvatarBoneRole.LeftUpperLeg, EHumanoidAvatarBoneRole.RightUpperLeg,
-            EHumanoidAvatarBoneRole.LeftHand, EHumanoidAvatarBoneRole.RightHand,
-        ];
-        List<string> parts = new(roles.Length + 1);
-        HumanoidAvatarBodyAxes? axes = humanoid.AvatarDefinition?.BodyAxes;
-        parts.Add(axes is null
-            ? "bodyRight=<unavailable>"
-            : string.Create(CultureInfo.InvariantCulture, $"bodyRight={axes.Right}"));
-        foreach (EHumanoidAvatarBoneRole role in roles)
-        {
-            SceneNode? node = humanoid.GetAvatarBoneNode(role);
-            parts.Add(node is null
-                ? $"{role}=<none>"
-                : string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"{role}='{node.Name}' type={node.Transform.GetType().Name} bind={node.Transform.BindMatrix.Translation} local={node.Transform.LocalMatrix.Translation} world={node.Transform.WorldMatrix.Translation} parent='{node.Parent?.Name}'"));
-        }
-
-        return string.Join("; ", parts);
-    }
-
-    private static SceneNode FindHumanoidTargetNode(SceneNode rootNode)
-    {
-        SceneNode? matched = null;
-        rootNode.IterateComponents<HumanoidAuthoredTPoseComponent>(component =>
-        {
-            if (matched is null && component.SceneNode is not null)
-                matched = component.SceneNode;
-        }, iterateChildHierarchy: true);
-        return matched ?? rootNode;
     }
 
     private static void RemoveExistingAnimationClipComponents(SceneNode rootNode, out int removedCount)
@@ -687,94 +597,6 @@ public static class CookUnityPrefabCommand
         }
 
         removedCount = existing.Count;
-    }
-
-    private static (string? FbxPath, string Sha256) ResolvePrimaryModelDependency(SerializedPrefabImportManifest? manifest)
-    {
-        if (manifest is null)
-            return (null, string.Empty);
-
-        foreach (SourceImportDependencyManifestEntry dependency in manifest.Dependencies)
-        {
-            if (!dependency.NormalizedPath.EndsWith(".fbx", StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            string? resolved = manifest.ResolveDependencySourcePath(dependency.NormalizedPath);
-            string sha256 = !string.IsNullOrWhiteSpace(dependency.Sha256)
-                ? dependency.Sha256
-                : resolved is not null && File.Exists(resolved)
-                    ? ComputeFileSha256(resolved)
-                    : string.Empty;
-            return (resolved, sha256);
-        }
-
-        return (null, string.Empty);
-    }
-
-    private static Dictionary<EHumanoidAvatarBoneRole, SceneNode?> ResolveMetaHumanoidBoneMappings(
-        SceneNode avatarRoot,
-        string metaPath)
-    {
-        Dictionary<EHumanoidAvatarBoneRole, SceneNode?> mappings = [];
-        if (!File.Exists(metaPath))
-            return mappings;
-
-        YamlStream yaml = new();
-        using (StreamReader reader = new(metaPath))
-            yaml.Load(reader);
-
-        if (yaml.Documents.Count == 0
-            || yaml.Documents[0].RootNode is not YamlMappingNode root
-            || TryGetYamlChild(root, "ModelImporter") is not YamlMappingNode importer
-            || TryGetYamlChild(importer, "humanDescription") is not YamlMappingNode humanDescription
-            || TryGetYamlChild(humanDescription, "human") is not YamlSequenceNode humanSequence)
-        {
-            return mappings;
-        }
-
-        Dictionary<string, SceneNode> nodesByName = new(StringComparer.Ordinal);
-        avatarRoot.IterateHierarchy(node =>
-        {
-            if (!string.IsNullOrWhiteSpace(node.Name))
-                nodesByName.TryAdd(node.Name, node);
-        });
-
-        foreach (YamlNode item in humanSequence.Children)
-        {
-            if (item is not YamlMappingNode entry)
-                continue;
-
-            string? boneName = (TryGetYamlChild(entry, "boneName") as YamlScalarNode)?.Value;
-            string? humanName = (TryGetYamlChild(entry, "humanName") as YamlScalarNode)?.Value;
-            if (string.IsNullOrWhiteSpace(boneName) || string.IsNullOrWhiteSpace(humanName))
-                continue;
-
-            string normalizedRoleName = humanName.Replace(" ", string.Empty, StringComparison.Ordinal);
-            if (!Enum.TryParse(normalizedRoleName, ignoreCase: true, out EHumanoidAvatarBoneRole role))
-                continue;
-
-            if (nodesByName.TryGetValue(boneName, out SceneNode? targetNode))
-                mappings[role] = targetNode;
-        }
-
-        return mappings;
-    }
-
-    private static YamlNode? TryGetYamlChild(YamlMappingNode mapping, string key)
-    {
-        foreach ((YamlNode yamlKey, YamlNode value) in mapping.Children)
-        {
-            if (string.Equals((yamlKey as YamlScalarNode)?.Value, key, StringComparison.Ordinal))
-                return value;
-        }
-
-        return null;
-    }
-
-    private static string ComputeFileSha256(string filePath)
-    {
-        using FileStream stream = File.OpenRead(filePath);
-        return Convert.ToHexString(SHA256.HashData(stream));
     }
 
     private static bool TryParseArgs(
@@ -910,8 +732,11 @@ public static class CookUnityPrefabCommand
             return false;
         }
 
-        // Without --asset, the archive entry takes the prefab file name, so two cooks write different entries.
-        assetPath = explicitAssetPath ?? $"Avatars/{Path.GetFileNameWithoutExtension(prefabPath)}.asset";
+        // Without --asset, the archive entry takes the scene root name or the prefab file name, so two cooks write different entries.
+        string entryName = string.IsNullOrWhiteSpace(sceneRootName)
+            ? Path.GetFileNameWithoutExtension(prefabPath)
+            : string.Join("_", sceneRootName.Trim().Split(Path.GetInvalidFileNameChars()));
+        assetPath = explicitAssetPath ?? $"Avatars/{entryName}.asset";
 
         return true;
     }

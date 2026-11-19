@@ -18,9 +18,17 @@ The script does these steps:
 The shots move across the walking avatar from the feet up to the face, and end on a full-body push-in shot that reveals
 the title and the subtitle on the left side.
 
+.PARAMETER SceneRoot
+When -UnityPrefab is a .unity scene, the name of the top-level avatar object to import from it. Use it for an avatar
+that exists only as a prefab instance inside a scene.
+
 .PARAMETER AllowPartialImport
 Keeps importing the prefab when the Unity project is missing textures or materials. The missing parts use fallback
 materials, so they do not match the Unity look.
+
+.PARAMETER SourceModel
+The FBX file of the avatar. Its Unity humanoid settings (.fbx.meta) set the humanoid bone names. By default, the editor
+uses the first FBX file in the import record of the prefab.
 
 .EXAMPLE
 powershell -NoProfile -File Tools/Cutscenes/New-SplatShowcaseCutscene.ps1 `
@@ -31,6 +39,7 @@ powershell -NoProfile -File Tools/Cutscenes/New-SplatShowcaseCutscene.ps1 `
 param(
     [Parameter(Mandatory = $true)][string]$ProjectPath,
     [Parameter(Mandatory = $true)][string]$UnityPrefab,
+    [string]$SceneRoot,
     [Parameter(Mandatory = $true)][string]$AnimationFile,
     [Parameter(Mandatory = $true)][string]$OutputDir,
     [string]$Title = 'XRENGINE',
@@ -52,6 +61,7 @@ param(
     [switch]$SkipRecording,
     [switch]$NoSessionBuild,
     [switch]$AllowPartialImport,
+    [string]$SourceModel,
     [hashtable]$SessionEnvironment = @{}
 )
 
@@ -225,10 +235,18 @@ try {
     }
 
     $prefabArguments = @{ source_path = [System.IO.Path]::GetFullPath($UnityPrefab); dest_folder = $AssetFolder; overwrite = $true; allow_partial_import = [bool]$AllowPartialImport }
+    if ($SceneRoot) { $prefabArguments.scene_root = $SceneRoot }
     $prefabImport = Invoke-Tool 'import_third_party_asset' $prefabArguments
     $clipImport = Invoke-Tool 'import_third_party_asset' @{ source_path = [System.IO.Path]::GetFullPath($AnimationFile); dest_folder = $AssetFolder; overwrite = $true }
     $avatar = Invoke-Tool 'instantiate_prefab' @{ prefab_path = [string]$prefabImport.path }
     $avatarId = [string]$avatar.instanceId
+
+    # The import creates the bones but no humanoid. The humanoid node drives the walk clip and gives the body bounds.
+    $humanoidArguments = @{ node_id = $avatarId }
+    if ($SourceModel) { $humanoidArguments.source_model_path = [System.IO.Path]::GetFullPath($SourceModel) }
+    $humanoid = Invoke-Tool 'setup_humanoid_avatar' $humanoidArguments
+    $humanoidId = [string]$humanoid.humanoid_node_id
+    Write-Host "Humanoid on '$($humanoid.humanoid_node_name)', hips '$($humanoid.hips_node_name)', source '$($humanoid.source_model_path)', mapped roles $($humanoid.mapped_role_count)."
     if (-not $TrianglesOnly) {
         [void](Add-Component $avatarId 'GaussianAvatarSplatComponent' @{ TargetSplatCount = $SplatCount })
     }
@@ -243,8 +261,9 @@ try {
         $ClipLengthSeconds = [double]::Parse($stopMatch.Groups[1].Value, $inv) - $startTime
     }
 
-    # The skeleton measures a skinned avatar in the editor, because the skinned mesh bounds exist only after rendering.
-    $bounds = Invoke-Tool 'get_node_bounds' @{ node_id = $avatarId; source = 'transforms' }
+    # The humanoid skeleton measures a skinned avatar in the editor, because the skinned mesh bounds exist only after
+    # rendering, and other objects under the avatar root (for example locomotion helpers) can be far from the body.
+    $bounds = Invoke-Tool 'get_node_bounds' @{ node_id = $humanoidId; source = 'humanoid' }
     $min = @([double]$bounds.min[0], [double]$bounds.min[1], [double]$bounds.min[2])
     $max = @([double]$bounds.max[0], [double]$bounds.max[1], [double]$bounds.max[2])
     $height = [Math]::Max($max[1] - $min[1], 0.4)
@@ -347,7 +366,7 @@ try {
     }
 
     [void](Invoke-Tool 'cutscene_add_track' @{ director_node_id = $directorId; track_type = 'camera_cut'; target_node_id = $cameraIds[0]; name = 'Camera cuts'; when_finished = 'KeepState'; clips = $cutClips })
-    [void](Invoke-Tool 'cutscene_add_track' @{ director_node_id = $directorId; track_type = 'animation_clip'; target_node_id = $avatarId; name = 'Walk'; when_finished = 'KeepState'; clips = $animationClips })
+    [void](Invoke-Tool 'cutscene_add_track' @{ director_node_id = $directorId; track_type = 'animation_clip'; target_node_id = $humanoidId; name = 'Walk'; when_finished = 'KeepState'; clips = $animationClips })
 
     # Overlay reveals: hidden during the close shots, revealed shortly after the last cut, and held to the end.
     $lastCut = $DurationSeconds * $Shots[$Shots.Count - 1].Start

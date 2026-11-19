@@ -121,13 +121,14 @@ public sealed partial class EditorMcpActions
     [McpThreadAffinity(McpThreadAffinity.Update)]
     [Description(
         "Return the world-space bounding box of a node and its descendants. With source 'meshes' (the default), each static mesh adds its vertex bounds at the transform of its node, " +
-        "and skinned meshes are skipped. With source 'transforms', each descendant transform adds its world position, which measures a skinned avatar by its skeleton. " +
-        "Scripts use it to place cameras relative to an object.")]
+        "and skinned meshes are skipped. With source 'transforms', each descendant transform adds its world position. With source 'humanoid', the hips bone of the first " +
+        "HumanoidComponent under the node and all transforms under it add their world positions; this measures an avatar body by its skeleton, including hair and ear bones, " +
+        "and skips other objects such as locomotion helpers. Scripts use it to place cameras relative to an object.")]
     public static Task<McpToolResponse> GetNodeBoundsAsync(
         McpToolContext context,
         [McpName("node_id"), Description("ID of the root node.")] string nodeId,
         [McpName("include_inactive"), Description("True to include inactive components and nodes.")] bool includeInactive = false,
-        [McpName("source"), Description("'meshes' (default) or 'transforms'.")] string source = "meshes")
+        [McpName("source"), Description("'meshes' (default), 'transforms', or 'humanoid'.")] string source = "meshes")
     {
         if (!TryGetNodeById(context.World, nodeId, out SceneNode? node, out string? error) || node is null)
             return Task.FromResult(new McpToolResponse(error ?? $"The node '{nodeId}' was not found.", isError: true));
@@ -141,6 +142,18 @@ public sealed partial class EditorMcpActions
         {
             int transformCount = AddTransformPositions(node.Transform, includeInactive, ref min, ref max);
             return Task.FromResult(BoundsResponse(min, max, transformCount, transformCount == 0));
+        }
+
+        if (string.Equals(source, "humanoid", StringComparison.OrdinalIgnoreCase))
+        {
+            SceneNode? hips = null;
+            node.IterateComponents<XREngine.Components.Animation.HumanoidComponent>(humanoid =>
+                hips ??= humanoid.Hips.Node, iterateChildHierarchy: true);
+            if (hips is null)
+                return Task.FromResult(new McpToolResponse("The node has no HumanoidComponent with a hips bone.", isError: true));
+
+            int boneCount = AddTransformPositions(hips.Transform, includeInactive, ref min, ref max);
+            return Task.FromResult(BoundsResponse(min, max, boneCount, boneCount == 0));
         }
         node.IterateComponents<RenderableComponent>(component =>
         {

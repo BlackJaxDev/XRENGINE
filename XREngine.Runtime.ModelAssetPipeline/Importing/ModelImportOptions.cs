@@ -66,6 +66,13 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool AllowPartialSourceImport { get; set; }
 
     /// <summary>
+    /// The name of one top-level object in an external Unity <c>.unity</c> scene. When set, the scene imports as a
+    /// prefab of that object only, with its root translation moved to the origin, instead of as a whole scene. Use it
+    /// for an avatar that exists only as a prefab instance inside a scene. Model importers ignore this value.
+    /// </summary>
+    public string? SourceSceneRootName { get; set; }
+
+    /// <summary>
     /// Backwards-compatibility: older cached YAML stored the combined flags under "PostProcessSteps".
     /// This setter-only property allows deserialization without re-serializing it.
     /// </summary>
