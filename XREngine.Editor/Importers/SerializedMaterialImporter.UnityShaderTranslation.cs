@@ -72,7 +72,12 @@ public static partial class SerializedMaterialImporter
             stages.Add(new XRShader(MapShaderType(stage.Stage), stage.Glsl) { Name = $"{shader.Name} {pass.Label} {stage.Stage}" });
 
         XRTexture?[] textures = ResolveTranslatedTextures(document, resolver, warnings, shader, pass);
-        material = new XRMaterial(textures, stages) { Name = document.Name };
+        material = new XRMaterial(textures, stages)
+        {
+            Name = document.Name,
+            // Unity gives every mesh tangents. Meshes without them get UV0 tangents when they use this material.
+            GenerateMissingMeshTangents = ReadsTangentInput(pass),
+        };
         ShaderLabRenderStateMapper.Apply(material, pass, shader, document, warnings);
         BindTranslatedParameters(material, document, shader, resolver.ProjectRoot, warnings);
         return true;
@@ -98,6 +103,15 @@ public static partial class SerializedMaterialImporter
     {
         foreach (TranslatedStage translated in pass.Stages)
             if (translated.Stage == stage)
+                return true;
+
+        return false;
+    }
+
+    private static bool ReadsTangentInput(TranslatedPass pass)
+    {
+        foreach (TranslatedStage stage in pass.Stages)
+            if (stage.Stage == ShaderProgramStage.Vertex && TangentInputPattern().IsMatch(stage.Glsl))
                 return true;
 
         return false;
@@ -309,6 +323,9 @@ public static partial class SerializedMaterialImporter
                 value.W);
         return true;
     }
+
+    [GeneratedRegex(@"\bin\s+vec[34]\s+Tangent\s*;", RegexOptions.CultureInvariant)]
+    private static partial Regex TangentInputPattern();
 
     [GeneratedRegex(@"\buniform\s+(?<type>sampler\w+)\s+(?<name>\w+)\s*;", RegexOptions.CultureInvariant)]
     private static partial Regex GlslSamplerUniformPattern();

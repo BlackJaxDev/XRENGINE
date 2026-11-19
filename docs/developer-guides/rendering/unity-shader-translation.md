@@ -83,7 +83,9 @@ The mesh renderers bind each vertex buffer to the shader input with the same nam
 
 Engine-generated vertex shaders pack their inputs, so for a mesh without tangents `TexCoord0` is at location 2 there. One OpenGL VAO serves all passes of a mesh renderer, so the OpenGL mesh renderer binds the VAO again when a pass uses a vertex program with other attribute locations.
 
-Another identifier in the stage that already has one of these names gets the `_xrUser` suffix. Other vertex inputs cause a `UNITYSHADER0007` error.
+Another identifier in the stage that already has one of these names gets the `_xrUser` suffix.
+
+Unity gives every mesh tangents, and many Unity shaders normalize the tangent. A zero tangent gives NaN values, which show as black or cut surfaces. When the translated vertex stage reads `Tangent`, the importer sets `XRMaterial.GenerateMissingMeshTangents`. A mesh renderer with such a material adds UV0 tangents (`XRMesh.GenerateTangentsFromUv0`) to a mesh that has triangles, normals, and UV0 but no tangents. Imported FBX meshes already get tangents at import. Other vertex inputs cause a `UNITYSHADER0007` error.
 
 ## Compatibility Includes
 
