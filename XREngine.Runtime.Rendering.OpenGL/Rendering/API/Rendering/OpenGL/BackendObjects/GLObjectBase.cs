@@ -698,6 +698,13 @@ namespace XREngine.Rendering.OpenGL
 
                     ESizedInternalFormat.StencilIndex8 => EPixelInternalFormat.StencilIndex,
 
+                    // A block-compressed format has no uncompressed base format. The upload
+                    // path selects glCompressedTex(Sub)Image from the compressed internal format.
+                    ESizedInternalFormat.Bc7Unorm or
+                    ESizedInternalFormat.Bc7Srgb or
+                    ESizedInternalFormat.Bc5Unorm or
+                    ESizedInternalFormat.Bc4Unorm => TextureBlockFormats.ToPixelInternalFormat(sizedInternalFormat),
+
                     _ => throw new ArgumentOutOfRangeException(nameof(sizedInternalFormat), sizedInternalFormat, null),
                 };
 
