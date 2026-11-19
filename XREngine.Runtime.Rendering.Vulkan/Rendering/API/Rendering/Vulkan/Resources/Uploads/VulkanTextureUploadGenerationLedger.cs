@@ -744,6 +744,15 @@ internal sealed partial class VulkanTextureUploadService
                 if (entry.State is not (VulkanTextureUploadGenerationState.Canceled or
                     VulkanTextureUploadGenerationState.Failed))
                     return false;
+                if (entry.State == VulkanTextureUploadGenerationState.Canceled)
+                {
+                    // A canceled restoration did not fail: another transition or a stale-upload
+                    // check stopped it. Release the claim so the caller requests a new restoration
+                    // of the same published generation on this frame.
+                    record.RehydrationSourceGeneration = 0L;
+                    record.RehydrationUploadGeneration = 0L;
+                    return false;
+                }
                 detail = "Texture residency restoration upload ended without publishing native Vulkan residency.";
                 record.RehydrationFailureDetail = detail;
                 return true;

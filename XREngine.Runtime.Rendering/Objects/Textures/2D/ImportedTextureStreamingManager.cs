@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -293,6 +293,7 @@ internal sealed partial class ImportedTextureStreamingManager
         uint targetDimension;
         ITextureStreamingSource? releasedPixelSource = null;
         int releasedMipCount = 0;
+        ESizedInternalFormat releasedFormat = ESizedInternalFormat.Rgba8;
         long frameId = Volatile.Read(ref _collectFrameId);
         lock (record.Sync)
         {
@@ -323,10 +324,12 @@ internal sealed partial class ImportedTextureStreamingManager
                 // The published pixels were freed after upload; the mips keep their
                 // dimensions. Claim the transition now and reload the chain from the
                 // streaming source on a worker.
-                if (record.Source is not { } releasedSource || record.Format != ESizedInternalFormat.Rgba8)
+                if (record.Source is not { } releasedSource || !CanReloadReleasedResidentFormat(record.Format))
                 {
                     cts.Dispose();
-                    failureReason = "Published texture pixels were released but no RGBA8 streaming source can reload them.";
+                    failureReason = record.Source is null
+                        ? "Published texture pixels were released and the texture has no streaming source to reload them from."
+                        : $"Published texture pixels were released, and {record.Format} chains cannot be reloaded from the streaming source.";
                     return false;
                 }
 
@@ -341,7 +344,7 @@ internal sealed partial class ImportedTextureStreamingManager
                         pressureDemotion: false,
                         previousResidentSize: record.ResidentMaxDimension,
                         previousCommittedBytes: 0L,
-                        targetCommittedBytes: EstimateReleasedResidentBytes(retainedMips),
+                        targetCommittedBytes: EstimateReleasedResidentBytes(retainedMips, record.Format),
                         backendName: VulkanDenseBackend.Name,
                         reason: "restore published native Vulkan residency from source",
                         priority: JobPriority.High,
@@ -360,6 +363,7 @@ internal sealed partial class ImportedTextureStreamingManager
                 record.PublicationEligibleGeneration = scheduledGeneration;
                 releasedPixelSource = releasedSource;
                 releasedMipCount = retainedMips.Length;
+                releasedFormat = record.Format;
                 residentData = default;
                 includeMipChain = releasedIncludesMipChain;
                 targetDimension = releasedTarget;
@@ -440,7 +444,7 @@ internal sealed partial class ImportedTextureStreamingManager
                 targetDimension,
                 includeMipChain,
                 releasedMipCount,
-                ESizedInternalFormat.Rgba8,
+                releasedFormat,
                 scheduledGeneration,
                 frameId,
                 IsCurrentTransition,
@@ -1234,7 +1238,7 @@ internal sealed partial class ImportedTextureStreamingManager
         // they reach the decode gate and prevents large material sets from ever
         // converging beyond their placeholder textures.
         TextureStreamingBackendActivity backendActivity = CurrentProvider.GetActivity();
-        bool globalStuckRecoveryAllowed = !backendActivity.HasWork;
+        bool globalStuckRecoveryAllowed = !backendActivity.HasWork && !HasInFlightReleasedPixelReloads;
         for (int i = 0; i < snapshots.Count; i++)
         {
             ImportedTextureStreamingSnapshot snapshot = snapshots[i];
