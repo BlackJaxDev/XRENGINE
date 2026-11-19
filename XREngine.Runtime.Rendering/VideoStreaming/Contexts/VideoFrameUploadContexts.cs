@@ -15,5 +15,14 @@ public interface IVulkanVideoFrameTextureHandle
 
 public interface IVulkanVideoFrameUploadContext
 {
-    IVulkanVideoFrameTextureHandle? ResolveTexture(XRTexture2D texture);
+    /// <summary>
+    /// Resolves the upload handle of <paramref name="texture"/> for one frame.
+    /// </summary>
+    /// <param name="texture">The video texture.</param>
+    /// <param name="failureReason">
+    /// Why no handle is available, for example when synchronous uploads are blocked, or
+    /// <c>null</c> when a handle is returned.
+    /// </param>
+    /// <returns>The handle, or <c>null</c> when this frame cannot be uploaded.</returns>
+    IVulkanVideoFrameTextureHandle? ResolveTexture(XRTexture2D texture, out string? failureReason);
 }

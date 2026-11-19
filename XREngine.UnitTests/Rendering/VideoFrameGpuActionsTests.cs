@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
@@ -7,13 +8,15 @@ using XREngine.Rendering.VideoStreaming;
 using XREngine.Rendering.VideoStreaming.Interfaces;
 using XREngine.Rendering.Vulkan;
 using Format = Silk.NET.Vulkan.Format;
+using MemoryPropertyFlags = Silk.NET.Vulkan.MemoryPropertyFlags;
 
 namespace XREngine.UnitTests.Rendering;
 
 /// <summary>
 /// Covers uploader selection for streaming video, the RGB24 staging layout of the Vulkan
-/// uploader, and the rate limit of upload failure logs. A Vulkan renderer needs a device,
-/// so selection uses a renderer host proxy that offers the capability.
+/// uploader, the error handling of the Vulkan uploader, and the rate limit of upload failure
+/// logs. A Vulkan renderer needs a device, so selection uses a renderer host proxy that offers
+/// the capability, and the Vulkan uploader uses fake upload contexts and texture handles.
 /// </summary>
 [TestFixture]
 public sealed class VideoFrameGpuActionsTests
@@ -35,6 +38,124 @@ public sealed class VideoFrameGpuActionsTests
         IVideoFrameGpuActions created = new EngineRuntimeVideoStreamingServices().CreateVideoFrameGpuActions(renderer);
 
         created.ShouldBeSameAs(actions);
+    }
+
+    [Test]
+    public void VulkanRenderer_DefaultCapabilityLookup_ReturnsRenderer()
+    {
+        // The default interface method needs no device, so an uninitialized renderer is enough.
+        VulkanRenderer renderer = (VulkanRenderer)RuntimeHelpers.GetUninitializedObject(typeof(VulkanRenderer));
+        GC.SuppressFinalize(renderer);
+
+        ((IRuntimeRendererHost)renderer)
+            .TryGetBackendCapability<IVideoFrameGpuActionsBackendCapability>(out var capability)
+            .ShouldBeTrue();
+        capability.ShouldBeSameAs(renderer);
+    }
+
+    [Test]
+    public void VulkanUpload_WithHandle_UploadsFrame()
+    {
+        FakeVulkanTextureHandle handle = new() { Result = true };
+        VulkanVideoFrameGpuActions actions = new(new FakeVulkanUploadContext { Handle = handle });
+
+        actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out string? error).ShouldBeTrue();
+
+        error.ShouldBeNull();
+        handle.UploadCount.ShouldBe(1);
+        handle.LastWidth.ShouldBe(2u);
+        handle.LastHeight.ShouldBe(1u);
+        handle.LastByteCount.ShouldBe(6);
+    }
+
+    [TestCase(false)]
+    [TestCase(true)]
+    public void VulkanUpload_WhenHandleThrows_ReturnsError(bool outOfMemory)
+    {
+        Exception failure = outOfMemory
+            ? new VulkanOutOfMemoryException("device memory exhausted", MemoryPropertyFlags.DeviceLocalBit)
+            : new InvalidOperationException("submission rejected");
+        FakeVulkanTextureHandle handle = new() { Failure = failure };
+        VulkanVideoFrameGpuActions actions = new(new FakeVulkanUploadContext { Handle = handle });
+
+        bool uploaded = true;
+        string? error = null;
+        Should.NotThrow(() => uploaded = actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out error));
+
+        uploaded.ShouldBeFalse();
+        error.ShouldNotBeNull();
+        error.ShouldContain(failure.Message);
+    }
+
+    [Test]
+    public void VulkanUpload_WhenResolveThrows_ReturnsError()
+    {
+        FakeVulkanUploadContext context = new() { Failure = new InvalidOperationException("wrapper publication failed") };
+        VulkanVideoFrameGpuActions actions = new(context);
+
+        bool uploaded = true;
+        string? error = null;
+        Should.NotThrow(() => uploaded = actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out error));
+
+        uploaded.ShouldBeFalse();
+        error.ShouldNotBeNull();
+        error.ShouldContain("wrapper publication failed");
+    }
+
+    [Test]
+    public void VulkanUpload_ForwardsHandleFailureReason()
+    {
+        FakeVulkanTextureHandle handle = new() { Result = false, FailureReason = "The staging arena is busy." };
+        VulkanVideoFrameGpuActions actions = new(new FakeVulkanUploadContext { Handle = handle });
+
+        actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out string? error).ShouldBeFalse();
+        error.ShouldBe("The staging arena is busy.");
+
+        handle.FailureReason = null;
+        actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out error).ShouldBeFalse();
+        error.ShouldBe(VulkanVideoFrameGpuActions.NoUploadReasonError);
+    }
+
+    [Test]
+    public void VulkanUpload_NullResolve_ReportsContextReasonOrDefault()
+    {
+        FakeVulkanUploadContext context = new() { Handle = null, FailureReason = null };
+        VulkanVideoFrameGpuActions actions = new(context);
+
+        actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out string? error).ShouldBeFalse();
+        error.ShouldBe(VulkanVideoFrameGpuActions.NoTextureHandleError);
+
+        context.FailureReason = "The texture is not ready.";
+        actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out error).ShouldBeFalse();
+        error.ShouldBe("The texture is not ready.");
+    }
+
+    [Test]
+    public void VulkanUpload_SynchronousUploadsBlocked_ForwardsGateReason()
+    {
+        string? blockReason = VulkanVideoFrameUploadContext.GetSynchronousUploadBlockReason(
+            allowSynchronousUploads: false,
+            avoidImageAllocationForOpenXr: false);
+        FakeVulkanUploadContext context = new() { Handle = null, FailureReason = blockReason };
+        VulkanVideoFrameGpuActions actions = new(context);
+
+        actions.UploadVideoFrame(CreateRgb24Frame(), new XRTexture2D(), out string? error).ShouldBeFalse();
+
+        error.ShouldBe(VulkanVideoFrameUploadContext.SynchronousUploadsBlockedReason);
+    }
+
+    [TestCase(true, false, null)]
+    [TestCase(false, false, VulkanVideoFrameUploadContext.SynchronousUploadsBlockedReason)]
+    [TestCase(false, true, VulkanVideoFrameUploadContext.SynchronousUploadsBlockedReason)]
+    [TestCase(true, true, VulkanVideoFrameUploadContext.OpenXrAllocationPressureReason)]
+    public void SynchronousUploadBlockReason_MatchesDescriptorUploadGate(
+        bool allowSynchronousUploads,
+        bool avoidImageAllocationForOpenXr,
+        string? expectedReason)
+    {
+        VulkanVideoFrameUploadContext
+            .GetSynchronousUploadBlockReason(allowSynchronousUploads, avoidImageAllocationForOpenXr)
+            .ShouldBe(expectedReason);
     }
 
     [Test]
@@ -125,6 +246,9 @@ public sealed class VideoFrameGpuActionsTests
         reporter.UnreportedFailureCount.ShouldBe(2);
     }
 
+    private static DecodedVideoFrame CreateRgb24Frame()
+        => new(2, 1, 0, VideoPixelFormat.Rgb24, CreateRgb24Pattern(2));
+
     private static byte[] CreateRgb24Pattern(int texelCount)
     {
         byte[] rgb = new byte[texelCount * 3];
@@ -177,6 +301,48 @@ public sealed class VideoFrameGpuActionsTests
 
         public void Dispose()
         {
+        }
+    }
+
+    /// <summary>Returns <see cref="Handle"/> and <see cref="FailureReason"/>, or throws <see cref="Failure"/>.</summary>
+    private sealed class FakeVulkanUploadContext : IVulkanVideoFrameUploadContext
+    {
+        public IVulkanVideoFrameTextureHandle? Handle { get; set; }
+        public string? FailureReason { get; set; }
+        public Exception? Failure { get; set; }
+
+        public IVulkanVideoFrameTextureHandle? ResolveTexture(XRTexture2D texture, out string? failureReason)
+        {
+            if (Failure is not null)
+                throw Failure;
+
+            failureReason = Handle is null ? FailureReason : null;
+            return Handle;
+        }
+    }
+
+    /// <summary>Records each upload and returns <see cref="Result"/>, or throws <see cref="Failure"/>.</summary>
+    private sealed class FakeVulkanTextureHandle : IVulkanVideoFrameTextureHandle
+    {
+        public bool Result { get; set; }
+        public string? FailureReason { get; set; }
+        public Exception? Failure { get; set; }
+        public int UploadCount { get; private set; }
+        public uint LastWidth { get; private set; }
+        public uint LastHeight { get; private set; }
+        public int LastByteCount { get; private set; }
+
+        public bool UploadVideoFrameData(ReadOnlySpan<byte> pixelData, uint width, uint height, out string? failureReason)
+        {
+            UploadCount++;
+            LastWidth = width;
+            LastHeight = height;
+            LastByteCount = pixelData.Length;
+            if (Failure is not null)
+                throw Failure;
+
+            failureReason = Result ? null : FailureReason;
+            return Result;
         }
     }
 }

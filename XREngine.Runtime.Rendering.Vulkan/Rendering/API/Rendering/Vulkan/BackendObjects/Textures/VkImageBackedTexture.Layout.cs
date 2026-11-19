@@ -39,9 +39,40 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             1,
             &barrier,
             "VkImageBackedTexture.TransitionImageLayout");
-        _currentImageLayout = newLayout;
+        PublishWholeImageLayout(newLayout);
+    }
+
+    /// <summary>
+    /// Records a whole-image layout transition into <paramref name="session"/>. Layouts are
+    /// first coerced to be valid for the image's usage flags, as in <see cref="TransitionImageLayout"/>.
+    /// </summary>
+    /// <remarks>
+    /// The tracked layout does not change. After the session completes, call
+    /// <see cref="PublishWholeImageLayout"/> with the returned layout. If the session fails
+    /// before that call, the tracked layout stays correct, because the GPU did not run the barrier.
+    /// </remarks>
+    /// <returns>The coerced layout that the image has after the barrier runs.</returns>
+    protected ImageLayout RecordWholeImageLayoutTransition(
+        VulkanSynchronousResourceCommandSession session,
+        ImageLayout oldLayout,
+        ImageLayout newLayout)
+    {
+        oldLayout = CoerceLayoutForUsage(oldLayout);
+        newLayout = CoerceLayoutForUsage(newLayout);
+        AssembleTransitionImageLayout(oldLayout, newLayout, out ImageMemoryBarrier barrier, out PipelineStageFlags src, out PipelineStageFlags dst);
+        session.Encoder.PipelineBarrier(session.CommandBuffer, src, dst, 0, 0, null, 0, null, 1, &barrier);
+        return newLayout;
+    }
+
+    /// <summary>
+    /// Sets <paramref name="layout"/> as the tracked layout of the whole image, after a
+    /// transition to that layout completed.
+    /// </summary>
+    protected void PublishWholeImageLayout(ImageLayout layout)
+    {
+        _currentImageLayout = layout;
         if (_physicalGroup is not null)
-            _physicalGroup.LastKnownLayout = newLayout;
+            _physicalGroup.LastKnownLayout = layout;
         ResetAttachmentLayoutTracking();
     }
 
