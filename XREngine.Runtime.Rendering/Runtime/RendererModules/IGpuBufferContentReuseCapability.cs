@@ -7,4 +7,13 @@ namespace XREngine.Rendering;
 public interface IGpuBufferContentReuseCapability
 {
     EGpuBufferContentReuseStatus QueryBufferContentReuse(XRDataBuffer buffer);
+
+    /// <summary>Captures the current exact native allocation for a GPU buffer.</summary>
+    bool TryCaptureBufferAllocationIdentity(
+        XRDataBuffer buffer,
+        out GpuBufferAllocationIdentity identity)
+    {
+        identity = default;
+        return false;
+    }
 }

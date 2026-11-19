@@ -1339,6 +1339,28 @@ namespace XREngine.Rendering
             return false;
         }
 
+        /// <summary>Checks the optional editor identity attachment's required GPU format support.</summary>
+        public virtual bool SupportsEditorPickingIdentity(out string? failure)
+        {
+            failure = "The active renderer does not support the editor identity attachment.";
+            return false;
+        }
+
+        /// <summary>
+        /// Queues one RGBA16 editor identity pixel. The callback receives exact
+        /// channel codes after GPU completion. This is an editor query only.
+        /// </summary>
+        public virtual bool TryQueueEditorPickingReadback(
+            XRTexture identity,
+            in AdvancedPickingQuery query,
+            ulong requestToken,
+            Action<ulong, EditorPickingEncodedPixel> callback,
+            out string? failure)
+        {
+            failure = "The active renderer does not implement asynchronous editor identity readback.";
+            return false;
+        }
+
         /// <summary>
         /// Returns current screenshot readback queue diagnostics.
         /// </summary>

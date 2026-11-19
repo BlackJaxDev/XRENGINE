@@ -41,6 +41,7 @@ public sealed partial class VulkanRenderer :
     IPhysicsChainComputeBackendFactoryCapability,
     IAdvancedVisibilityStageBackendCapability,
     IGpuBufferContentReuseCapability,
+    IDebugPrimitivePreparationBackendCapability,
     IVulkanAllocatorStreamingBackendCapability{
     internal override bool AdvancedPickingSourceRequiresSubmissionAcceptance => true;
 
@@ -59,6 +60,12 @@ public sealed partial class VulkanRenderer :
     private readonly VulkanResourceRuntime _resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime = new();
     internal VulkanCommandRuntime CommandRuntime => _commandRuntime;
+    bool IDebugPrimitivePreparationBackendCapability.CanPrepareDebugPrimitives
+        => _frameLoop.CanPrepareDebugPrimitives;
+
+    EDebugPrimitivePreparationStatus IDebugPrimitivePreparationBackendCapability.TryPrepareDebugPrimitives(
+        Action emitDraws, int expectedRequestCount, bool idle, out string reason)
+        => _frameLoop.TryPrepareDebugPrimitives(emitDraws, expectedRequestCount, idle, out reason);
     private readonly VulkanFrameTelemetry _frameTelemetry = new();
     private int _explicitProductionPreparationCompleted;
 
@@ -909,7 +916,12 @@ public sealed partial class VulkanRenderer :
     /// <summary>No Vulkan image allocation is deferred by throwing, so no exception is an expected deferral.</summary>
     public bool IsExpectedImageAllocationDeferral(Exception exception) => false;
     public EGpuBufferContentReuseStatus QueryBufferContentReuse(XRDataBuffer buffer)
-        => _resourceRuntime.QueryBufferContentReuse(buffer);    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
+        => _resourceRuntime.QueryBufferContentReuse(buffer);
+    public bool TryCaptureBufferAllocationIdentity(
+        XRDataBuffer buffer,
+        out GpuBufferAllocationIdentity identity)
+        => _resourceRuntime.TryCaptureBufferAllocationIdentity(buffer, out identity);
+    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
     public bool TryEnsureComputeBufferReady(XRDataBuffer buffer)
     {
         // The retained command lookup cannot create a cold buffer wrapper.

@@ -25,7 +25,7 @@ public static class Selection
             _sceneNodes = value;
             if (value.Length > 0)
                 _lastSceneNode = value[0];
-            SelectionChanged?.Invoke(value);
+            InvokeSelectionChangedTimed(value);
             /*
             switch (value.Length)
             {
@@ -40,6 +40,48 @@ public static class Selection
                     break;
             }
             */
+        }
+    }
+
+    private const string SelectionProbeLogFile = "editor-pick-timing.log";
+    private const double SelectionProbeThresholdMilliseconds = 4.0;
+    private static int s_selectionProbeSequence;
+
+    /// <summary>
+    /// Invokes each selection subscriber separately and logs the subscribers that take
+    /// the probe threshold or more, so a slow reaction to a selection change can be found.
+    /// </summary>
+    private static void InvokeSelectionChangedTimed(SceneNode[] value)
+    {
+        Action<SceneNode[]>? handlers = SelectionChanged;
+        if (handlers is null)
+            return;
+
+        int sequence = ++s_selectionProbeSequence;
+        long totalStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        Delegate[] subscribers = handlers.GetInvocationList();
+        for (int index = 0; index < subscribers.Length; index++)
+        {
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            ((Action<SceneNode[]>)subscribers[index])(value);
+            double elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            if (elapsed >= SelectionProbeThresholdMilliseconds)
+            {
+                Delegate subscriber = subscribers[index];
+                Debug.WriteAuxiliaryLog(
+                    SelectionProbeLogFile,
+                    $"[SelectionSubscriber] seq={sequence} {subscriber.Method.DeclaringType?.Name}.{subscriber.Method.Name} took {elapsed:F2} ms " +
+                    $"(selected={value.Length} first='{(value.Length > 0 ? value[0].Name : string.Empty)}')");
+            }
+        }
+
+        double total = System.Diagnostics.Stopwatch.GetElapsedTime(totalStart).TotalMilliseconds;
+        if (total >= SelectionProbeThresholdMilliseconds)
+        {
+            Debug.WriteAuxiliaryLog(
+                SelectionProbeLogFile,
+                $"[SelectionChanged] seq={sequence} total={total:F2} ms subscribers={subscribers.Length} selected={value.Length} " +
+                $"first='{(value.Length > 0 ? value[0].Name : string.Empty)}'");
         }
     }
 
