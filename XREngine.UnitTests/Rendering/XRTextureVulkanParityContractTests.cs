@@ -101,6 +101,24 @@ public sealed class XRTextureVulkanParityContractTests
     }
 
     [Test]
+    public void VkImageBackedTexture_ResizeClearsGenerationFailureSoTheNewSizeRetries()
+    {
+        // A wrapper needs a Vulkan device and bound ports to run the resize handler,
+        // so this test checks the handler source.
+        string vkSource = ReadImageBackedTextureSource();
+        int handlerStart = vkSource.IndexOf("private void OnTextureResized()", StringComparison.Ordinal);
+        handlerStart.ShouldBeGreaterThanOrEqualTo(0);
+        int handlerEnd = vkSource.IndexOf("InvalidateTextureData();", handlerStart, StringComparison.Ordinal);
+        handlerEnd.ShouldBeGreaterThan(handlerStart);
+
+        string handler = vkSource[handlerStart..handlerEnd];
+        int destroy = handler.IndexOf("Destroy();", StringComparison.Ordinal);
+        int resetGenerationFailure = handler.IndexOf("ResetGenerationFailure();", StringComparison.Ordinal);
+        destroy.ShouldBeGreaterThanOrEqualTo(0);
+        resetGenerationFailure.ShouldBeGreaterThan(destroy);
+    }
+
+    [Test]
     public void VkTextureBuffer_UploadsSourceBufferBeforeCreatingTexelBufferView()
     {
         string baseSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkTexture.cs");
