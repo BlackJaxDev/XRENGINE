@@ -329,6 +329,17 @@ namespace XREngine.Components.Animation
         {
             base.OnComponentActivated();
 
+            // A prefab instance in a saved world creates its child nodes from the prefab asset after its own components
+            // deserialize, so the post-deserialize pass can find no bones for the persisted bone paths. The children
+            // exist when the component activates, so bind the persisted definition again when the hips are unbound.
+            if (HasPersistedAvatarDefinition()
+                && Hips.Node is null
+                && !SceneNode.IsTransformNull
+                && SceneNode.Transform.Children.Count > 0)
+            {
+                ReinitializeSceneNodeBindings();
+            }
+
             // Apply muscle-driven pose after animation evaluation.
             RegisterTick(ETickGroup.Normal, ETickOrder.Scene, TickMusclePose);
         }
