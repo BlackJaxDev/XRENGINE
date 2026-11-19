@@ -85,6 +85,9 @@ Silk.NET operates as the main C# backend glue for supporting most typical render
 
 - **Asset import:** FBX uses the engine's managed `XREngine.Fbx` importer; glTF/GLB uses `XREngine.Gltf` with FastGltfBridge. `XREngine.Runtime.ModelAssetPipeline` assembles imported runtime objects and handles other formats through Assimp (via AssimpNetter). *Wishlisted: .usd, .blend, .max*
 
+  The [Unity script host](docs/developer-guides/assets/unity-script-host.md)
+  inspects source, resolves assembly graphs, and compiles supported source without executing Unity scripts.
+
 - **Animation:** Fully in-house animation support & compression.
 
 - **Networking:** Fully in-house client/server realtime transport with entity and avatar pose replication.

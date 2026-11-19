@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>UnityEngine</AssemblyName>
+    <AssemblyVersion>0.0.0.0</AssemblyVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../UnityEngine.CoreModule/XREngine.UnityScriptHost.Compatibility.UnityEngine.CoreModule.csproj" />
+    <ProjectReference Include="../UnityEngine.AnimationModule/XREngine.UnityScriptHost.Compatibility.UnityEngine.AnimationModule.csproj" />
+    <ProjectReference Include="../UnityEngine.InputLegacyModule/XREngine.UnityScriptHost.Compatibility.UnityEngine.InputLegacyModule.csproj" />
+  </ItemGroup>
+</Project>
