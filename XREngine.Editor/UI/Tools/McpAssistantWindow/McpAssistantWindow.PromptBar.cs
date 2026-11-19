@@ -20,73 +20,22 @@ namespace XREngine.Editor.UI.Tools;
 
 public sealed partial class McpAssistantWindow
 {
-    // ── Prompt Bar ───────────────────────────────────────────────────────
+    private static readonly Vector4 SendButtonColor = new(0.08f, 0.44f, 0.42f, 1f);
+    private static readonly Vector4 SendButtonHoveredColor = new(0.10f, 0.53f, 0.50f, 1f);
+    private static readonly Vector4 SendButtonActiveColor = new(0.06f, 0.36f, 0.35f, 1f);
+    private string? _promptHeightText;
+    private float _promptHeightWidth;
+    private float _promptHeightFontSize;
+    private float _promptHeight;
 
+    /// <summary>Draws a message field with explicit context choices and a send action.</summary>
     private void DrawPromptBar()
     {
-        // Button row
-        bool canSend = !_isBusy && _prompt.Trim().Length > 0;
-
-        if (!canSend)
-            ImGui.BeginDisabled();
-        bool sendClicked = ImGui.Button("Send (Enter)");
-        if (!canSend)
-            ImGui.EndDisabled();
-
-        if (!_isBusy && _canContinueAfterRepromptLimit && !string.IsNullOrWhiteSpace(_lastPromptForContinue))
-        {
-            ImGui.SameLine();
-            if (ImGui.Button("Continue (Refresh Auto Re-prompts)"))
-            {
-                if (_lastProviderIndexForContinue >= 0)
-                    ProviderIndex = _lastProviderIndexForContinue;
-                AttachMcpServer = _lastAttachMcpForContinue;
-                _ = ContinuePromptAsync();
-            }
-        }
-
-        ImGui.SameLine();
-
-        if (_isBusy)
-        {
-            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.6f, 0.2f, 0.2f, 1f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.8f, 0.3f, 0.3f, 1f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive, new Vector4(0.9f, 0.1f, 0.1f, 1f));
-            if (ImGui.Button("Cancel"))
-                _cts?.Cancel();
-            ImGui.PopStyleColor(3);
-        }
-
-        // Char count
-        ImGui.SameLine();
-        ImGui.TextColored(ColorTimestamp, $"{_prompt.Length:N0} chars");
-
-        // Screenshot toggle
-        ImGui.SameLine();
-        bool attachScreenshot = AttachViewportScreenshot;
-        if (ImGui.Checkbox("Screenshot", ref attachScreenshot))
-            AttachViewportScreenshot = attachScreenshot;
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Capture and attach the current editor viewport\nscreenshot as visual context with your next message.");
-
-        // Right-aligned copy button
-        if (_history.Count > 0)
-        {
-            float copyWidth = ImGui.CalcTextSize("Copy Last").X + 16f;
-            ImGui.SameLine(ImGui.GetContentRegionAvail().X - copyWidth + ImGui.GetCursorPosX());
-            if (ImGui.SmallButton("Copy Last"))
-                CopyLastResponse();
-        }
-
-        // Prompt input (fills width and grows with content)
+        DrawInteractionMode();
+        DrawSelectedContext();
         float promptInputHeight = GetPromptInputHeight();
 
-        // Force-clear ImGui's internal text buffer after a send.
-        // When the InputTextMultiline widget is active (focused), ImGui maintains
-        // its own internal buffer and ignores external changes to the ref parameter.
-        // To work around this, we render the widget with a temporary ID for one frame.
-        // ImGui sees a brand-new widget and initializes it from the empty _prompt.
-        // Next frame the normal ID is used again and picks up the cleared value.
+        // Give the editor a new widget ID for one frame so it reads the cleared value.
         bool clearingThisFrame = _pendingPromptClear;
         if (clearingThisFrame)
         {
@@ -94,53 +43,169 @@ public sealed partial class McpAssistantWindow
             _pendingPromptClear = false;
         }
 
-        // Snapshot the prompt before the widget so we can detect newline insertion.
         string promptBefore = _prompt;
 
         ImGui.InputTextMultiline(
-            clearingThisFrame ? "##McpPromptClr" : "##McpPromptInput",
+            clearingThisFrame ? "##McpPromptClr" : _refreshHelpDraft ? "##McpHelpDraft" : "##McpPromptInput",
             ref _prompt,
             1024 * 128,
             new Vector2(-1f, promptInputHeight),
             ImGuiInputTextFlags.AllowTabInput);
+        _refreshHelpDraft = false;
+        bool inputActive = ImGui.IsItemActive();
+        if (_prompt.Length == 0 && !ImGui.IsItemActive())
+            ImGui.GetWindowDrawList().AddText(
+                ImGui.GetItemRectMin() + new Vector2(9f, 7f),
+                ImGui.GetColorU32(ImGuiCol.TextDisabled),
+                "Ask a question or describe a change...");
         ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_Prompt", ref _prompt);
 
-        // Detect Enter: the multiline widget inserts '\n' for every Enter press.
-        // Compare the prompt before/after to detect a newline was just typed.
-        bool newlineJustInserted = _prompt.Length > promptBefore.Length
-            && _prompt.Length > 0
-            && _prompt[^1] == '\n';
-
-        // Shift detection — try every method since backends vary.
         var io = ImGui.GetIO();
         bool shiftHeld = io.KeyShift
             || ImGui.IsKeyDown(ImGuiKey.ModShift)
             || ImGui.IsKeyDown(ImGuiKey.LeftShift)
             || ImGui.IsKeyDown(ImGuiKey.RightShift);
 
-        bool enterSend = newlineJustInserted && !shiftHeld;
+        bool enterSend = inputActive && !shiftHeld && !_isBusy
+            && (ImGui.IsKeyPressed(ImGuiKey.Enter, false) || ImGui.IsKeyPressed(ImGuiKey.KeypadEnter, false));
 
         if (enterSend)
-            StripOneTrailingNewline(ref _prompt);
+            _prompt = promptBefore;
 
-        bool canSendNow = !_isBusy && _prompt.Trim().Length > 0;
+        bool canSendNow = !_isBusy && !string.IsNullOrWhiteSpace(_prompt) && CanSendWithSelectedModel();
+        DrawComposerActions(canSendNow, out bool sendClicked);
         if ((sendClicked || enterSend) && canSendNow)
             _ = SendPromptAsync();
     }
 
+    private void DrawSelectedContext()
+    {
+        if (!AttachViewportScreenshot && !AttachMcpServer)
+            return;
+
+        if (_isBusy)
+            ImGui.BeginDisabled();
+        if (AttachViewportScreenshot)
+        {
+            if (ImGui.SmallButton("Viewport screenshot  x##RemoveScreenshot"))
+                AttachViewportScreenshot = false;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Remove the viewport screenshot from the next message.");
+        }
+        if (AttachMcpServer)
+        {
+            if (AttachViewportScreenshot && !SelectedContextNeedsTwoRows())
+                ImGui.SameLine();
+            if (ImGui.SmallButton("Editor tools  x##RemoveSceneTools"))
+                AttachMcpServer = false;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Remove editor scene tools from the next message.");
+        }
+        if (_isBusy)
+            ImGui.EndDisabled();
+    }
+
+    /// <summary>Reserves space for context chips after they wrap in a narrow panel.</summary>
+    private float GetSelectedContextHeight()
+    {
+        if (!AttachViewportScreenshot && !AttachMcpServer)
+            return 0f;
+        bool wrapped = AttachViewportScreenshot && AttachMcpServer && SelectedContextNeedsTwoRows();
+        return ImGui.GetFrameHeightWithSpacing() * (wrapped ? 2f : 1f);
+    }
+
+    private static bool SelectedContextNeedsTwoRows()
+    {
+        float required = ImGui.CalcTextSize("Viewport screenshot  x").X
+            + ImGui.CalcTextSize("Editor tools  x").X
+            + ImGui.GetStyle().FramePadding.X * 4f + ImGui.GetStyle().ItemSpacing.X;
+        return required > ImGui.GetContentRegionAvail().X;
+    }
+
+    private void DrawComposerActions(bool canSend, out bool sendClicked)
+    {
+        float rowStart = ImGui.GetCursorPosX();
+        float rowWidth = ImGui.GetContentRegionAvail().X;
+        if (ShowContinueAction)
+        {
+            if (ImGui.Button("Continue"))
+            {
+                if (_lastProviderIndexForContinue >= 0)
+                    ProviderIndex = _lastProviderIndexForContinue;
+                AttachMcpServer = _lastAttachMcpForContinue;
+                _ = ContinuePromptAsync();
+            }
+        }
+        if (_isBusy)
+            ImGui.BeginDisabled();
+        if (ImGui.Button("+ Add context"))
+            ImGui.OpenPopup("##AssistantAddContext");
+        if (ImGui.BeginPopup("##AssistantAddContext"))
+        {
+            if (ImGui.MenuItem("Viewport screenshot", null, AttachViewportScreenshot))
+                AttachViewportScreenshot = !AttachViewportScreenshot;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Send a capture of the current editor viewport.");
+
+            if (ImGui.MenuItem("Editor tools", null, AttachMcpServer))
+                AttachMcpServer = !AttachMcpServer;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Let the assistant inspect or change the editor scene.");
+            ImGui.EndPopup();
+        }
+        if (_isBusy)
+            ImGui.EndDisabled();
+
+        const float actionWidth = 88f;
+        if (!ComposerActionsNeedTwoRows())
+            ImGui.SameLine(rowStart + Math.Max(0f, rowWidth - actionWidth));
+        if (_isBusy)
+        {
+            if (ImGui.Button("Stop", new Vector2(actionWidth, 0f)))
+                _cts?.Cancel();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Stop this reply. Actions that already completed remain applied.");
+            sendClicked = false;
+            return;
+        }
+
+        if (!canSend)
+            ImGui.BeginDisabled();
+        ImGui.PushStyleColor(ImGuiCol.Button, SendButtonColor);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, SendButtonHoveredColor);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, SendButtonActiveColor);
+        sendClicked = ImGui.Button("Send", new Vector2(actionWidth, 0f));
+        ImGui.PopStyleColor(3);
+        if (!canSend)
+            ImGui.EndDisabled();
+    }
+
+    private bool ShowContinueAction => !_isBusy && _canContinueAfterRepromptLimit
+        && !string.IsNullOrWhiteSpace(_lastPromptForContinue) && CanSendWithSelectedModel();
+
+    private static bool ComposerActionsNeedTwoRows()
+        => ImGui.CalcTextSize("+ Add context").X + ImGui.GetStyle().FramePadding.X * 2f
+            + ImGui.GetStyle().ItemSpacing.X + 88f > ImGui.GetContentRegionAvail().X;
+
+    private float GetComposerActionsHeight()
+        => ImGui.GetFrameHeightWithSpacing() * ((ShowContinueAction ? 1f : 0f)
+            + (ComposerActionsNeedTwoRows() ? 2f : 1f));
+
     private float GetPromptInputHeight()
     {
         float width = Math.Max(120f, ImGui.GetContentRegionAvail().X - 8f);
-        int explicitLines = 1;
-        for (int i = 0; i < _prompt.Length; i++)
-        {
-            if (_prompt[i] == '\n')
-                explicitLines++;
-        }
+        float fontSize = ImGui.GetFontSize();
+        if (ReferenceEquals(_promptHeightText, _prompt)
+            && width == _promptHeightWidth
+            && fontSize == _promptHeightFontSize)
+            return _promptHeight;
 
         int wrappedLines = EstimateWrappedLineCount(_prompt, width);
-        int lines = Math.Clamp(Math.Max(explicitLines, wrappedLines), 2, 12);
-        return lines * ImGui.GetTextLineHeightWithSpacing() + 10f;
+        _promptHeightText = _prompt;
+        _promptHeightWidth = width;
+        _promptHeightFontSize = fontSize;
+        _promptHeight = Math.Clamp(wrappedLines, 3, 8) * ImGui.GetTextLineHeightWithSpacing() + 10f;
+        return _promptHeight;
     }
 
     private static int EstimateWrappedLineCount(string text, float maxWidth)
@@ -148,17 +213,22 @@ public sealed partial class McpAssistantWindow
         if (string.IsNullOrEmpty(text))
             return 1;
 
+        float glyphWidth = Math.Max(1f, ImGui.CalcTextSize("M").X);
+        int charactersPerLine = Math.Max(8, (int)(maxWidth / glyphWidth));
         int totalLines = 0;
-        string[] rawLines = text.Split('\n');
-        for (int i = 0; i < rawLines.Length; i++)
+        int lineLength = 0;
+        for (int i = 0; i < text.Length; i++)
         {
-            string line = rawLines[i];
-            float lineWidth = ImGui.CalcTextSize(string.IsNullOrEmpty(line) ? " " : line).X;
-            int wraps = Math.Max(1, (int)Math.Ceiling(lineWidth / Math.Max(1.0f, maxWidth)));
-            totalLines += wraps;
-        }
+            if (text[i] != '\n')
+            {
+                lineLength++;
+                continue;
+            }
 
-        return Math.Max(1, totalLines);
+            totalLines += Math.Max(1, (lineLength + charactersPerLine - 1) / charactersPerLine);
+            lineLength = 0;
+        }
+        return totalLines + Math.Max(1, (lineLength + charactersPerLine - 1) / charactersPerLine);
     }
 
     private static void StripOneTrailingNewline(ref string text)

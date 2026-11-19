@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -20,195 +21,249 @@ namespace XREngine.Editor.UI.Tools;
 
 public sealed partial class McpAssistantWindow
 {
-    // ── Rich Content Renderer (Markdown-lite for ImGui) ──────────────────
+    private readonly ConditionalWeakTable<ChatMessage, Dictionary<int, CachedRichContent>> _richContentCache = new();
 
     /// <summary>
-    /// Renders text with basic markdown formatting:
-    /// fenced code blocks, headers, bullet points, inline backtick code, and **bold**.
+    /// Parses a message segment when its text changes and renders the saved lines
+    /// while the message remains visible. A removed message releases its cache.
     /// </summary>
-    private static void RenderRichContent(string content)
+    private void RenderRichContentCached(ChatMessage message, int segmentKey, string source)
     {
-        string[] lines = content.Split('\n');
-        bool inCodeBlock = false;
-
-        for (int li = 0; li < lines.Length; li++)
+        Dictionary<int, CachedRichContent> segments = _richContentCache.GetValue(message, static _ => []);
+        if (!segments.TryGetValue(segmentKey, out CachedRichContent? cached)
+            || !string.Equals(cached.Source, source, StringComparison.Ordinal))
         {
-            string rawLine = lines[li].TrimEnd('\r');
+            cached = new CachedRichContent(source, ParseRichLines(NormalizeForUiDisplay(GetDisplayContent(source))));
+            segments[segmentKey] = cached;
+        }
 
-            // Fenced code block toggle.
-            if (rawLine.TrimStart().StartsWith("```"))
+        RenderRichLines(cached.Lines);
+    }
+
+    /// <summary>
+    /// Splits one response into display lines and inline pieces. The UI can then
+    /// draw unchanged text without splitting strings on every editor frame.
+    /// </summary>
+    private static RichLine[] ParseRichLines(string content)
+    {
+        string[] sourceLines = content.Split('\n');
+        var result = new RichLine[sourceLines.Length];
+        bool inCodeBlock = false;
+        for (int index = 0; index < sourceLines.Length; index++)
+        {
+            string raw = sourceLines[index].TrimEnd('\r');
+            string trimmed = raw.TrimStart();
+            if (trimmed.StartsWith("```", StringComparison.Ordinal))
             {
                 inCodeBlock = !inCodeBlock;
-                ImGui.Spacing();
+                result[index] = new RichLine(RichLineKind.Empty, string.Empty, 0f, []);
                 continue;
             }
 
             if (inCodeBlock)
             {
-                ImGui.Indent(12f);
-                ImGui.TextColored(ColorCodeFg, rawLine);
-                ImGui.Unindent(12f);
+                result[index] = new RichLine(RichLineKind.Code, raw, 12f, []);
                 continue;
             }
 
-            // Empty line -> spacing.
-            if (string.IsNullOrWhiteSpace(rawLine))
+            if (string.IsNullOrWhiteSpace(raw))
             {
-                ImGui.Spacing();
+                result[index] = new RichLine(RichLineKind.Empty, string.Empty, 0f, []);
                 continue;
             }
 
-            string trimmed = rawLine.TrimStart();
-
-            // Headers.
-            if (trimmed.StartsWith("### "))
+            int headerLength = trimmed.StartsWith("### ", StringComparison.Ordinal) ? 4
+                : trimmed.StartsWith("## ", StringComparison.Ordinal) ? 3
+                : trimmed.StartsWith("# ", StringComparison.Ordinal) ? 2 : 0;
+            if (headerLength > 0)
             {
-                ImGui.Spacing();
-                ImGui.TextColored(ColorHeader, trimmed[4..]);
-                continue;
-            }
-            if (trimmed.StartsWith("## "))
-            {
-                ImGui.Spacing();
-                ImGui.TextColored(ColorHeader, trimmed[3..]);
-                continue;
-            }
-            if (trimmed.StartsWith("# "))
-            {
-                ImGui.Spacing();
-                ImGui.TextColored(ColorHeader, trimmed[2..]);
+                result[index] = new RichLine(RichLineKind.Heading, trimmed[headerLength..], 0f, []);
                 continue;
             }
 
-            // Bullet points.
             if (trimmed.Length > 2 && (trimmed[0] == '-' || trimmed[0] == '*') && trimmed[1] == ' ')
             {
-                int indentChars = rawLine.Length - trimmed.Length;
-                float indent = indentChars * 4f + 12f;
-                ImGui.Indent(indent);
-                ImGui.TextColored(ColorBullet, "*");
-                ImGui.SameLine();
-                RenderInlineFormatted(trimmed[2..]);
-                ImGui.Unindent(indent);
+                float indent = (raw.Length - trimmed.Length) * 4f + 12f;
+                result[index] = new RichLine(RichLineKind.Bullet, string.Empty, indent, ParseRichPieces(trimmed[2..]));
                 continue;
             }
 
-            // Regular line with inline formatting.
-            RenderInlineFormatted(rawLine);
+            result[index] = new RichLine(RichLineKind.Text, string.Empty, 0f, ParseRichPieces(raw));
+        }
+        return result;
+    }
+
+    private static RichPiece[] ParseRichPieces(string text)
+    {
+        var pieces = new List<RichPiece>();
+        int position = 0;
+        while (position < text.Length)
+        {
+            int backtick = text.IndexOf('`', position);
+            int bold = text.IndexOf("**", position, StringComparison.Ordinal);
+            int next = backtick >= 0 && (bold < 0 || backtick <= bold) ? backtick : bold;
+            if (next < 0)
+            {
+                AddTextPieces(pieces, text[position..]);
+                break;
+            }
+
+            if (next > position)
+                AddTextPieces(pieces, text[position..next]);
+
+            bool code = next == backtick;
+            int markerLength = code ? 1 : 2;
+            int close = code
+                ? text.IndexOf('`', next + markerLength)
+                : text.IndexOf("**", next + markerLength, StringComparison.Ordinal);
+            if (close < 0)
+            {
+                AddTextPieces(pieces, text[next..]);
+                break;
+            }
+
+            string markedText = text[(next + markerLength)..close];
+            RichPieceKind kind = code
+                ? Guid.TryParse(markedText.Trim(), out _) ? RichPieceKind.Guid : RichPieceKind.Code
+                : RichPieceKind.Bold;
+            pieces.Add(new RichPiece(kind, kind == RichPieceKind.Guid ? markedText.Trim() : markedText));
+            position = close + markerLength;
+        }
+        return [.. pieces];
+    }
+
+    private static void AddTextPieces(List<RichPiece> pieces, string text)
+    {
+        if (text.Length == 0)
+            return;
+
+        MatchCollection matches = GuidPattern.Matches(text);
+        int position = 0;
+        foreach (Match match in matches)
+        {
+            if (match.Index > position)
+                pieces.Add(new RichPiece(RichPieceKind.Text, text[position..match.Index]));
+            pieces.Add(new RichPiece(RichPieceKind.Guid, match.Value));
+            position = match.Index + match.Length;
+        }
+
+        if (position < text.Length)
+            pieces.Add(new RichPiece(RichPieceKind.Text, text[position..]));
+    }
+
+    /// <summary>
+    /// Draws parsed text while preserving scene-object links and simple formatting.
+    /// </summary>
+    private static void RenderRichLines(RichLine[] lines)
+    {
+        for (int index = 0; index < lines.Length; index++)
+        {
+            RichLine line = lines[index];
+            if (line.Kind == RichLineKind.Empty)
+            {
+                ImGui.Spacing();
+                continue;
+            }
+
+            if (line.Kind == RichLineKind.Code)
+            {
+                ImGui.Indent(line.Indent);
+                ImGui.PushTextWrapPos(0f);
+                ImGui.TextColored(ColorCodeFg, line.Text);
+                ImGui.PopTextWrapPos();
+                ImGui.Unindent(line.Indent);
+                continue;
+            }
+
+            if (line.Kind == RichLineKind.Heading)
+            {
+                ImGui.Spacing();
+                ImGui.PushTextWrapPos(0f);
+                ImGui.TextColored(ColorHeader, line.Text);
+                ImGui.PopTextWrapPos();
+                continue;
+            }
+
+            if (line.Kind == RichLineKind.Bullet)
+            {
+                ImGui.Indent(line.Indent);
+                ImGui.TextColored(ColorBullet, "*");
+                ImGui.SameLine();
+                RenderRichPieces(line.Pieces);
+                ImGui.Unindent(line.Indent);
+                continue;
+            }
+
+            RenderRichPieces(line.Pieces);
         }
     }
 
     /// <summary>
-    /// Renders a single line with inline backtick code and **bold** formatting.
-    /// Falls back to plain word-wrapped text when no formatting markers are found.
+    /// Draws saved inline pieces without rescanning markdown or GUIDs each frame.
     /// </summary>
-    private static void RenderInlineFormatted(string text)
+    private static void RenderRichPieces(RichPiece[] pieces)
     {
-        // Fast path: no inline markers.
-        if (!text.Contains('`') && !text.Contains("**", StringComparison.Ordinal))
+        if (pieces.Length == 1 && pieces[0].Kind == RichPieceKind.Text)
         {
-            // If GUIDs are present, render with clickable links instead of plain text.
-            if (ContainsGuid(text))
-            {
-                bool f = true;
-                RenderTextWithGuidLinks(text, ref f);
-                return;
-            }
-
-            ImGui.PushTextWrapPos(0.0f);
-            ImGui.TextUnformatted(text);
+            ImGui.PushTextWrapPos(0f);
+            ImGui.TextUnformatted(pieces[0].Text);
             ImGui.PopTextWrapPos();
             return;
         }
 
-        int pos = 0;
         bool first = true;
-
-        while (pos < text.Length)
+        ImGui.PushTextWrapPos(0f);
+        for (int index = 0; index < pieces.Length; index++)
         {
-            int backtick = text.IndexOf('`', pos);
-            int bold = text.IndexOf("**", pos, StringComparison.Ordinal);
-
-            // Find the nearest special marker.
-            int next = -1;
-            bool isBacktick = false;
-
-            if (backtick >= 0 && (bold < 0 || backtick <= bold))
+            RichPiece piece = pieces[index];
+            if (!first && piece.Kind != RichPieceKind.Guid)
             {
-                next = backtick;
-                isBacktick = true;
+                ImGui.SameLine(0f, 0f);
+                // A long styled span needs the full line instead of a narrow trailing column.
+                if (ImGui.CalcTextSize(piece.Text).X > ImGui.GetContentRegionAvail().X)
+                    ImGui.NewLine();
             }
-            else if (bold >= 0)
+            switch (piece.Kind)
             {
-                next = bold;
-            }
-
-            if (next < 0)
-            {
-                // No more markers -- render the remainder.
-                string rest = text[pos..];
-                if (rest.Length > 0)
-                    RenderTextWithGuidLinks(rest, ref first);
-                break;
-            }
-
-            // Render plain text before the marker.
-            if (next > pos)
-            {
-                string before = text[pos..next];
-                RenderTextWithGuidLinks(before, ref first);
-                pos = next;
-            }
-
-            if (isBacktick)
-            {
-                int close = text.IndexOf('`', pos + 1);
-                if (close < 0)
-                {
-                    RenderTextWithGuidLinks(text[pos..], ref first);
+                case RichPieceKind.Text:
+                    ImGui.TextUnformatted(piece.Text);
+                    first = RichPieceWrapped();
                     break;
-                }
-
-                string code = text[(pos + 1)..close];
-                if (!first) ImGui.SameLine(0, 0);
-                RenderCodeSpan(code);
-                first = false;
-                pos = close + 1;
-            }
-            else
-            {
-                int close = text.IndexOf("**", pos + 2, StringComparison.Ordinal);
-                if (close < 0)
-                {
-                    RenderTextWithGuidLinks(text[pos..], ref first);
+                case RichPieceKind.Guid:
+                    RenderGuidLink(piece.Text, ref first, piece);
                     break;
-                }
-
-                string boldText = text[(pos + 2)..close];
-                if (!first) ImGui.SameLine(0, 0);
-                ImGui.TextColored(ColorBold, boldText);
-                first = false;
-                pos = close + 2;
+                case RichPieceKind.Bold:
+                    ImGui.TextColored(ColorBold, piece.Text);
+                    first = RichPieceWrapped();
+                    break;
+                case RichPieceKind.Code:
+                    RenderCodeSpan(piece.Text);
+                    first = RichPieceWrapped();
+                    break;
             }
         }
+        ImGui.PopTextWrapPos();
     }
 
+    /// <summary>Keeps the next styled piece on a new row after text wraps.</summary>
+    private static bool RichPieceWrapped()
+        => ImGui.GetItemRectSize().Y > ImGui.GetTextLineHeightWithSpacing() * 1.25f;
+
     /// <summary>
-    /// Renders an inline code span with a subtle background rectangle.
-    /// If the code span is a single GUID, renders it as a clickable node-select button instead.
+    /// Draws short code over a shaded area and wraps code that exceeds the row.
+    /// The parser sends GUID-only spans to the scene-object link renderer.
     /// </summary>
     private static void RenderCodeSpan(string code)
     {
-        // If the entire code span is a GUID, render as a clickable link.
-        string trimmed = code.Trim();
-        if (trimmed.Length == 36 && Guid.TryParse(trimmed, out _))
+        Vector2 textSize = ImGui.CalcTextSize(code);
+        if (textSize.X > ImGui.GetContentRegionAvail().X)
         {
-            bool unused = true;
-            RenderGuidLink(trimmed, ref unused);
+            ImGui.PushTextWrapPos(0f);
+            ImGui.TextColored(ColorCodeFg, code);
+            ImGui.PopTextWrapPos();
             return;
         }
 
-        Vector2 textSize = ImGui.CalcTextSize(code);
         Vector2 cursorPos = ImGui.GetCursorScreenPos();
         var drawList = ImGui.GetWindowDrawList();
 
@@ -226,19 +281,16 @@ public sealed partial class McpAssistantWindow
     // ── GUID Link Rendering ──────────────────────────────────────────────
 
     /// <summary>
-    /// Returns true if the text contains at least one GUID pattern.
-    /// </summary>
-    private static bool ContainsGuid(string text)
-        => GuidPattern.IsMatch(text);
-
-    /// <summary>
     /// Renders a GUID as a small clickable button that selects the corresponding
     /// scene node (or other XRObject) when clicked. Shows the object name as
     /// display text and the full GUID in a tooltip.
     /// </summary>
-    private static void RenderGuidLink(string guidStr, ref bool first)
+    private static void RenderGuidLink(string guidStr, ref bool first, RichPiece? cachedPiece = null)
     {
-        if (!Guid.TryParse(guidStr, out var guid))
+        Guid guid;
+        if (cachedPiece?.ParsedGuid is Guid parsed)
+            guid = parsed;
+        else if (!Guid.TryParse(guidStr, out guid))
         {
             if (!first) ImGui.SameLine(0, 0);
             ImGui.TextUnformatted(guidStr);
@@ -261,7 +313,7 @@ public sealed partial class McpAssistantWindow
         else
         {
             // Object not in cache — show truncated GUID.
-            displayName = guidStr[..8] + "...";
+            displayName = cachedPiece?.MissingObjectLabel ?? guidStr[..8] + "...";
         }
 
         if (!first) ImGui.SameLine(0, 0);
@@ -272,7 +324,8 @@ public sealed partial class McpAssistantWindow
         ImGui.PushStyleColor(ImGuiCol.Text, ColorGuidText);
 
         // Use the full GUID as a unique ImGui ID.
-        bool clicked = ImGui.SmallButton($"Select node: {displayName}##{guidStr}");
+        bool clicked = ImGui.SmallButton(cachedPiece?.GetButtonLabel(displayName)
+            ?? $"Select node: {displayName}##{guidStr}");
 
         ImGui.PopStyleColor(4);
 

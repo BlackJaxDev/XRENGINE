@@ -13,6 +13,12 @@ internal sealed record BrokerConfiguration
 
     public string? EditorAuthTokenEnvironmentVariable { get; init; }
 
+    public string CodexExecutablePath { get; init; } = "codex";
+    public string GeminiExecutablePath { get; init; } = "gemini";
+    public string CopilotExecutablePath { get; init; } = "copilot";
+    public string ClaudeExecutablePath { get; init; } = "claude";
+    public string AntigravityExecutablePath { get; init; } = "agy";
+
     public int MaximumRetainedRuns { get; init; } = 32;
 
     public int MaximumConcurrentRuns { get; init; } = 4;
@@ -30,6 +36,12 @@ internal sealed record BrokerConfiguration
             Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_ANTHROPIC_API_KEY_ENV") ?? "ANTHROPIC_API_KEY";
         string? editorAuthEnvironmentVariable =
             Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV");
+        string codexExecutablePath =
+            Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_CODEX_PATH") ?? "codex";
+        string geminiExecutablePath = Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_GEMINI_PATH") ?? "gemini";
+        string copilotExecutablePath = Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_COPILOT_PATH") ?? "copilot";
+        string claudeExecutablePath = Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_CLAUDE_PATH") ?? "claude";
+        string antigravityExecutablePath = Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_ANTIGRAVITY_PATH") ?? "agy";
 
         for (int index = 0; index < args.Length; index++)
         {
@@ -42,6 +54,16 @@ internal sealed record BrokerConfiguration
                 anthropicApiKeyEnvironmentVariable = ReadValue(args, ref index, argument);
             else if (string.Equals(argument, "--editor-auth-env", StringComparison.OrdinalIgnoreCase))
                 editorAuthEnvironmentVariable = ReadValue(args, ref index, argument);
+            else if (string.Equals(argument, "--codex-path", StringComparison.OrdinalIgnoreCase))
+                codexExecutablePath = ReadValue(args, ref index, argument);
+            else if (string.Equals(argument, "--gemini-path", StringComparison.OrdinalIgnoreCase))
+                geminiExecutablePath = ReadValue(args, ref index, argument);
+            else if (string.Equals(argument, "--copilot-path", StringComparison.OrdinalIgnoreCase))
+                copilotExecutablePath = ReadValue(args, ref index, argument);
+            else if (string.Equals(argument, "--claude-path", StringComparison.OrdinalIgnoreCase))
+                claudeExecutablePath = ReadValue(args, ref index, argument);
+            else if (string.Equals(argument, "--antigravity-path", StringComparison.OrdinalIgnoreCase))
+                antigravityExecutablePath = ReadValue(args, ref index, argument);
             else
                 throw new ArgumentException($"Unknown broker argument '{argument}'.");
         }
@@ -72,7 +94,14 @@ internal sealed record BrokerConfiguration
             EditorAuthTokenEnvironmentVariable = string.IsNullOrWhiteSpace(editorAuthEnvironmentVariable)
                 ? null
                 : ValidateEnvironmentVariableName(editorAuthEnvironmentVariable),
+            CodexExecutablePath = string.IsNullOrWhiteSpace(codexExecutablePath)
+                ? throw new ArgumentException("Codex executable path cannot be empty.")
+                : codexExecutablePath,
             MaximumRetainedRuns = maximumRetainedRuns,
+            GeminiExecutablePath = string.IsNullOrWhiteSpace(geminiExecutablePath) ? throw new ArgumentException("Gemini executable path cannot be empty.") : geminiExecutablePath,
+            CopilotExecutablePath = string.IsNullOrWhiteSpace(copilotExecutablePath) ? throw new ArgumentException("Copilot executable path cannot be empty.") : copilotExecutablePath,
+            ClaudeExecutablePath = string.IsNullOrWhiteSpace(claudeExecutablePath) ? throw new ArgumentException("Claude executable path cannot be empty.") : claudeExecutablePath,
+            AntigravityExecutablePath = string.IsNullOrWhiteSpace(antigravityExecutablePath) ? throw new ArgumentException("Antigravity executable path cannot be empty.") : antigravityExecutablePath,
             MaximumConcurrentRuns = maximumConcurrentRuns,
             RetentionMinutes = ReadBoundedInteger("XRE_LOCAL_AGENT_BROKER_RETENTION_MINUTES", 120, 1, 1_440),
             TraceMode = ParseTraceMode(Environment.GetEnvironmentVariable("XRE_LOCAL_AGENT_BROKER_TRACE")),

@@ -1,11 +1,10 @@
 # Local Agent Broker
 
 The local agent broker is a BCL-only .NET 10 orchestration surface shared with
-the ImGui MCP Assistant. The broker starts explicit public OpenAI Responses or
-Anthropic Messages API calls
-as tool-free reasoning runs, repository-context/read runs, editor-aware runs
-that proxy model function calls to one named loopback editor MCP session, or a
-composition of the read-only repository and editor tool providers.
+the ImGui Assistant. The broker starts public OpenAI Responses or
+Anthropic Messages API calls, or a signed-in local client run.
+Each run can use selected context files, read-only repository tools, one named
+loopback editor MCP session, or an approved combination of these inputs.
 
 It is not an in-place Codex model switch, a generic subprocess runner, or an
 Internet-facing editor bridge.
@@ -14,13 +13,14 @@ Internet-facing editor bridge.
 
 | Project | Owns | Must not own |
 |---|---|---|
-| `XREngine.AgentOrchestration` | Provider-neutral run contracts, prompt packet, budgets, bounded tool loop, Responses and Messages transport/SSE parsing, HTTP MCP client | ImGui state, editor globals, process/session lifecycle |
+| `XREngine.AgentOrchestration` | Provider-neutral run contracts, executor boundary, prompt packet, budgets, bounded API tool loop, Responses and Messages transport/SSE parsing, HTTP MCP client | ImGui state, editor globals, process/session lifecycle |
+| `XREngine.AgentRuntimes` | Isolated Codex, Claude, Antigravity, Gemini, and Copilot CLI processes; dedicated profiles; account/model preflight; native protocols; host tool bridges; owned-process cancellation | API keys, editor globals, generic shell and filesystem access |
 | `Tools/LocalAgentBroker` | Stdio MCP host, exact model catalog/routing advice, run registry, bounded swarm scheduler and approved patch application, repository snapshot/path/read policy, named-session resolution, provider composition, leases, trace policy, durable history publishing | Editor implementation, shell/Git execution, agent-controlled filesystem tools, API-key persistence |
 | `Tools/LocalAgentBroker.Shared` | Tray/history contracts, checkout-local paths, atomic record and settings storage | MCP transport, API calls, Windows UI |
 | `Tools/LocalAgentBroker.Tray` | Windows notifications and notification icon, running-task menu, live prompt/response viewer, idle exit, history cleanup | API keys, provider calls, broker process ownership |
 | `XREngine.Editor` | ImGui messages/segments, preferences, local tools, viewport presentation, in-process MCP startup | A second OpenAI function loop |
 
-`XREngine.Editor` references the shared orchestration project. The broker
+`XREngine.Editor` references the shared orchestration and runtime projects. The broker
 and tray companion share only provider-neutral contracts and the file-backed
 history project. The tray alone references the Microsoft.Web.WebView2 NuGet
 package for its offline Markdown/math viewer; the broker and orchestration
@@ -77,6 +77,7 @@ version conflict. The runtime remains an external Windows prerequisite.
 
 ## Run Contract
 
+`AgentRunRequest.ExecutionMode` selects `Api` by default, or `CodexAppServer`, `ClaudeCli`, `AntigravityCli`, `GeminiCli`, or `CopilotCli`.
 `AgentRunRequest` carries the objective, success criteria, constraints, exact
 requested model, reasoning effort, compact evidence packet, context-file
 requests, repository-access policy, optional named editor session, editor tool
@@ -112,6 +113,14 @@ each exact name back to its owning provider without merging authorization.
 text and multimodal output items, tool evidence, token usage, turn/tool counts,
 elapsed time, retry count, bounded provider-attempt diagnostics, and a
 structured `AgentFailure`.
+
+`IAgentRunExecutor` accepts the same run ID, request, host tool provider,
+observer, and cancellation token for the API orchestrator and CLI runtimes.
+The result includes `AgentRuntimeInfo` for the local runtime. Its name, version,
+authentication category, observed model evidence, and control lists contain no
+account token. `TurnCountReported` and `RetryCountReported` are false when a CLI
+does not expose those native counts. The broker copies the runtime data and
+reporting flags into incremental status, terminal results, and durable history.
 
 The observer stream reports status, text delta, tool-started/tool-completed,
 usage, retry, and diagnostic events. No observer references UI types.
@@ -217,6 +226,101 @@ up to that maximum. The run-wide budget still includes thinking output.
 See the [streaming guide](https://platform.claude.com/docs/en/build-with-claude/streaming)
 and [effort reference](https://platform.claude.com/docs/en/build-with-claude/effort).
 
+## Codex App-Server Runtime
+
+`CodexRunExecutor` uses the native app-server protocol through an owned Codex
+process. `CodexRuntimeProfile` opens a dedicated profile under
+`%LOCALAPPDATA%/XREngine/AgentRuntimes/Codex/profile`. The editor and broker
+share this profile for one Windows user. It is separate from the normal Codex
+CLI profile. The editor starts the native **Sign in to ChatGPT** flow and can
+cancel it. A global `codex login` command does not authenticate the dedicated
+profile unless its process sets `CODEX_HOME` to that directory.
+
+The current pinned protocol target is Codex CLI `0.167.0-alpha.3.2`. A later
+version needs protocol validation before admission. The host selects the executable with
+`XRE_LOCAL_AGENT_BROKER_CODEX_PATH` or `--codex-path` at broker startup. MCP
+arguments cannot set an executable or profile path.
+
+The executor probes account authentication and the exact model catalog before
+generation. It compares the requested model and effort to that catalog, then
+checks the model returned by `thread/start` before the first host tool call.
+It fails on a different model, account change, native tool request, or ambient
+capability. It does not remap model IDs or fall back to an API key. The profile
+blocks ambient MCP servers, hooks, skills, plugins, and workspace instructions.
+The host gives Codex only the approved tool provider. Repository tools retain
+explicit read-only roots; editor tools retain named-session leases, allowlists,
+mutation authority, and read-back rules. No generic shell or filesystem tool
+is exposed.
+
+Codex does not expose enforceable native turn, retry, or output-token limits
+through this integration. `AgentRequestValidator` requires `MaxTurns`,
+`MaxRetries`, and `MaxOutputTokens` to be zero. The MCP host sets omitted Codex
+turn and retry fields to zero; it rejects explicit nonzero values. Host tool
+call count, result bytes, elapsed time, and owned-process cancellation remain
+bounded. Codex rejects background API mode, swarms, and hosted tools. Failed
+or cancelled runs do not automatically retry after a mutation.
+
+## Subscription CLI Runtimes
+
+`ISubscriptionAgentRuntime` adds account probing and sign-in to the common run
+executor. `SubscriptionConnectionInfo` carries the runtime version, account
+fingerprint, authentication mode, and account model list. The fingerprint is
+excluded from JSON status. The editor stores the selected model for each
+brand and shows only models returned by the selected CLI. Runtimes that expose
+account identity or the generating model check those values at run time.
+Antigravity does not expose either value.
+
+`ClaudeRunExecutor` uses Claude Code's stream JSON protocol.
+`AntigravityRunExecutor` uses the Antigravity CLI ACP protocol for personal
+Google plans. `GeminiRunExecutor` retains the Gemini CLI ACP broker route for
+supported work accounts. Personal Gemini CLI login is deprecated.
+`CopilotRunExecutor` uses the Copilot CLI stdio JSON-RPC protocol. Each owns an XRENGINE-managed profile under
+`%LOCALAPPDATA%/XREngine/AgentRuntimes/<Brand>/profile`. Native external-access tools and
+ambient extensions are disabled or denied; approved host tools keep their
+repository roots, editor lease, allowlist, and mutation policy. The runtimes
+do not copy normal CLI credentials and do not accept API keys as subscription
+credentials. They do not fall back to API transport. `AgentRunRequest`
+sets `RequireActualModelEvidence` to `true` by default. The MCP schema exposes
+`require_actual_model_evidence` with the same default. Antigravity rejects a
+strict request before generation. Explicit `false` accepts native selection
+acknowledgment, but does not claim observed model identity. The editor's
+Gemini brand selects this mode explicitly. Antigravity's native
+credential store remains owned by its CLI. The host does not copy or read its
+tokens. Dedicated settings and work folders deny native file, command, and web
+permissions. It disables native swarms and rejects added customizations and
+MCP servers. Internal task and resource bookkeeping can remain available;
+the adapter does not claim that every native tool is absent.
+
+Claude uses native `auth login`; Copilot uses native `login --web-flow`;
+Antigravity uses its native Google login. The Copilot command opens the browser itself and
+keeps authorization output out of the host. The editor shows **Sign in**
+before connection, **Switch account** for Claude and Copilot after connection,
+and **Reconnect** for the Gemini brand. **Manage account** contains connection controls.
+The broker selects executables through
+`XRE_LOCAL_AGENT_BROKER_CLAUDE_PATH`,
+`XRE_LOCAL_AGENT_BROKER_GEMINI_PATH`, and
+`XRE_LOCAL_AGENT_BROKER_COPILOT_PATH`; the personal Google route uses
+`XRE_LOCAL_AGENT_BROKER_ANTIGRAVITY_PATH` with default command `agy`.
+Direct launches also accept `--claude-path`, `--gemini-path`,
+`--copilot-path`, and `--antigravity-path`. MCP request data cannot
+choose an executable or profile path.
+
+`AgentRequestValidator` requires zero `MaxTurns`, `MaxRetries`, and
+`MaxOutputTokens` for every CLI mode. It rejects background API mode, swarms,
+and provider-hosted tools. The host still bounds tool count, tool-result
+bytes, elapsed time, and cancellation. Runtime metadata states which native
+controls are unsupported. Protocol checks used Claude Code `2.1.317`,
+Antigravity CLI `1.5.4`, Gemini CLI `0.67`, and Copilot CLI `1.0.108`. Copilot
+completed a text run and one authorized read-only host tool call with
+`gpt-6-luna`. Antigravity completed native text and one authorized host-tool
+run on Google AI Ultra. Its
+protocol acknowledged the selected exact ID through `session/set_model`, but
+did not report the model that generated the reply. `ActualModel` stays unknown.
+Antigravity does not expose an account ID, so `SupportsConversationReplay` is
+false and the editor sends only the current prompt. Claude sign-in and catalog
+discovery passed, but the account's weekly limit blocked generation. These
+checks do not prove a complete live run for every account and model.
+
 ## Stdio MCP Surface
 
 `McpStdioServer` uses one JSON-RPC object per line and writes only protocol
@@ -230,12 +334,21 @@ The fixed broker tool catalog is:
 - `cancel_agent_run`
 - `list_agent_runs`
 
-`start_agent_run` validates the request synchronously and returns a run ID
-before the API work begins. The bounded registry owns the background task,
+`start_agent_run` validates the host request synchronously and returns a run ID
+before execution begins. Codex account and model preflight occurs in the
+queued runtime task. The bounded registry owns the background task,
 cooperative cancellation, global concurrency, time retention, and terminal
 snapshot. `get_agent_run` is the authoritative incremental/terminal view.
 The snapshot and nested terminal result both retain provider attempts, retry
 count, and the earliest observed actual model, including cancellation paths.
+
+Broker server version `0.13.0` supports `execution_mode` with `api` as the default
+and `codex_app_server`, `claude_cli`, `antigravity_cli`, `gemini_cli`, and `copilot_cli` as local options. The API model enum remains
+conditional in the MCP schema; CLI model IDs come from the installed runtime
+catalog. API requests retain the fixed broker catalog and API-key admission.
+The result and history expose runtime metadata and mark unreported native
+turn/retry counts explicitly. This schema change requires a new published
+broker and a restarted MCP transport; an active transport keeps its old tools.
 
 Broker server version `0.4.0` adds live status metadata to both
 `get_agent_run` and `list_agent_runs`:
@@ -330,7 +443,7 @@ elapsed timer; explicit positive values retain their former hard-limit
 semantics. Caller cancellation, model/provider output limits, rate limits, and
 other bounded tool/run controls remain in force.
 
-The supported exact model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`,
+The supported exact API model IDs are `gpt-5.6-luna`, `gpt-5.6-terra`,
 `gpt-5.6-sol`, `gpt-6-luna`, `gpt-6-sol`, `gpt-6.1-sol`, `gpt-6-astra`,
 `claude-fable-5-1`, `claude-opus-5-5`, `claude-sonnet-5-5`, and `claude-haiku-5-5`.
 Broker version `0.11.0` adds these explicit Claude selections. Automatic route

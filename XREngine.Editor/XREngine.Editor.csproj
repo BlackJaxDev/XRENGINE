@@ -83,6 +83,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
+    <ProjectReference Include="..\XREngine.AgentRuntimes\XREngine.AgentRuntimes.csproj" />
     <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Audio.SteamAudio\XREngine.Audio.SteamAudio.csproj" />

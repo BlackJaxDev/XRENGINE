@@ -7,6 +7,9 @@ namespace XREngine.AgentOrchestration;
 /// </summary>
 public sealed record AgentRunRequest
 {
+    /// <summary>Selects direct API access or a signed-in local runtime.</summary>
+    public AgentExecutionMode ExecutionMode { get; init; }
+
     public string Objective { get; init; } = string.Empty;
 
     public IReadOnlyList<string> SuccessCriteria { get; init; } = [];
@@ -15,7 +18,18 @@ public sealed record AgentRunRequest
 
     public string RequestedModel { get; init; } = string.Empty;
 
+    /// <summary>Requires the runtime to report the actual model, beyond accepting a selected model.</summary>
+    public bool RequireActualModelEvidence { get; init; } = true;
+
     public string ReasoningEffort { get; init; } = "medium";
+
+    /// <summary>Lets the provider choose its model's effort when the editor selects Default.</summary>
+    [JsonIgnore]
+    public bool UseProviderDefaultReasoningEffort { get; init; }
+
+    /// <summary>Requires a CLI to apply the selected effort instead of silently ignoring it.</summary>
+    [JsonIgnore]
+    public bool EnforceReasoningEffort { get; init; }
 
     /// <summary>
     /// Requested text verbosity. OpenAI uses its native control. Anthropic
@@ -48,6 +62,13 @@ public sealed record AgentRunRequest
     /// reasoning-only run with no local tools.
     /// </summary>
     public string? EditorSession { get; init; }
+
+    /// <summary>
+    /// Indicates that the embedding editor supplies its own authorized tools.
+    /// Remote broker callers cannot set this host-only admission flag.
+    /// </summary>
+    [JsonIgnore]
+    public bool UseInProcessToolProvider { get; init; }
 
     public AgentToolPolicy ToolPolicy { get; init; } = new();
 

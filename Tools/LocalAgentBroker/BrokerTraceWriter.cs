@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using XREngine.AgentOrchestration;
 
 namespace XREngine.LocalAgentBroker;
@@ -12,6 +13,7 @@ internal sealed class BrokerTraceWriter
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         WriteIndented = true,
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower) },
     };
 
     private readonly string _validationRoot;
@@ -49,6 +51,8 @@ internal sealed class BrokerTraceWriter
                 result.Status,
                 result.RequestedModel,
                 result.ActualModel,
+                record.Request.ExecutionMode,
+                result.RuntimeInfo,
                 record.Request.EditorSession,
                 record.Request.UseBackgroundMode,
                 objectiveLength = record.Request.Objective.Length,
@@ -65,8 +69,10 @@ internal sealed class BrokerTraceWriter
                 },
                 result.Usage,
                 result.ToolCallCount,
-                result.TurnCount,
-                result.RetryCount,
+                turnCount = result.TurnCountReported ? result.TurnCount : (int?)null,
+                retryCount = result.RetryCountReported ? result.RetryCount : (int?)null,
+                result.TurnCountReported,
+                result.RetryCountReported,
                 providerAttempts = result.ProviderAttempts.Select(static attempt => new
                 {
                     attempt.TurnNumber,

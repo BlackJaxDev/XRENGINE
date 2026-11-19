@@ -8,6 +8,11 @@ public sealed partial class McpAssistantWindow
         public string Content { get; set; } = string.Empty;
         public DateTime Timestamp { get; init; } = DateTime.Now;
         public bool IsStreaming { get; set; }
+        public ChatMessageStatus Status { get; set; } = ChatMessageStatus.Completed;
+        public string? StatusDetail { get; set; }
+        public bool IsExplanation { get; set; }
+        public string UserQuestion { get; set; } = string.Empty;
+        public AssistantHelpRequest? HelpRequest { get; set; }
         public List<ToolCallEntry> ToolCalls { get; } = [];
         public object ToolCallsSyncRoot { get; } = new();
 

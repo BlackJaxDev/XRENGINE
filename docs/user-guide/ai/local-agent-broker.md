@@ -2,21 +2,22 @@
 
 The local agent broker is an optional, checkout-local stdio MCP app. It lets
 Codex or another MCP client start a bounded OpenAI Responses or Anthropic
-Messages API worker. GPT-6 is the default routing family. Claude models require
-an explicit model selection. Deprecated GPT-5.6 IDs remain available.
-A run may receive immutable snapshots of selected
-repository text files, opt into bounded read-only repository search/read tools,
-and/or receive controlled access to one named, loopback XRENGINE editor MCP
-session.
+Messages API worker, or a local Codex, Claude, Antigravity, or Copilot CLI run under
+the user's account sign-in. API access remains the default. GPT-6 is the default API routing
+family. Claude models require an explicit model selection. Deprecated GPT-5.6
+IDs remain available. A run can receive immutable snapshots of selected
+repository text files, use bounded read-only repository search/read tools,
+and use one named, loopback XRENGINE editor MCP session.
 
-The current Codex task remains the coordinator. A broker worker is a separate,
-independently billed API request; it is not an in-place model switch. The
-broker has no generic shell, Git, repository-write, process-discovery, or
+The current Codex task remains the coordinator. An API worker is a separate,
+independently billed API request. A CLI run uses a separate local
+runtime session and the selected account. Neither mode switches the
+current Codex task. The broker has no generic shell, Git, repository-write, process-discovery, or
 process-lifecycle tool for agents. Opt-in code swarms can return reviewed
 changes or explicitly authorize the host to apply those changes to exact files.
 Repository content is never available implicitly.
 
-Codex evaluates it automatically for substantive tasks and uses it when a
+The coordinator evaluates the broker for substantive tasks and uses it when a
 bounded second worker can contribute editor evidence or a focused reasoning
 slice. Exact one-step shell operations remain local because the broker cannot
 perform them and delegation would add latency without useful judgment.
@@ -41,22 +42,24 @@ remain serialized.
 ## Requirements
 
 Publishing and protocol-smoke-testing the app do not require an API key and do
-not make a provider API request. Starting a worker requires every item below.
+not make a provider API request. Use the common requirements below and the
+requirements for the selected execution mode.
 
 | Requirement | How to satisfy or verify it |
 |---|---|
 | Supported checkout | Use Windows 10/11 with this XRENGINE checkout and the .NET 10 SDK. |
 | Published broker | Run `Tools/Setup-LocalAgentBroker.ps1`; verify `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker.current` names a versioned deployment containing `XREngine.LocalAgentBroker.dll`. |
 | Trusted project configuration | Trust the repository in Codex. Project-scoped `.codex/config.toml` MCP configuration is loaded only for trusted projects. Restart Codex after setup or configuration changes. |
-| API project | Use an API account with billing/quota and access to the exact selected model. API billing is separate from chat subscriptions. |
-| API key | Set `OPENAI_API_KEY` for OpenAI or `ANTHROPIC_API_KEY` for Claude in the process environment or Windows user environment. Only the selected provider needs a key. Never put the value in the repository, MCP arguments, a prompt, logs, or command-line arguments. |
+| API project | For `execution_mode: "api"`, use an API account with billing/quota and access to the exact selected model. API billing is separate from chat subscriptions. |
+| API key | For API runs, set `OPENAI_API_KEY` for OpenAI or `ANTHROPIC_API_KEY` for Claude in the process environment or Windows user environment. Only the selected provider needs a key. Never put the value in the repository, MCP arguments, a prompt, logs, or command-line arguments. |
+| CLI sign-in | Install the CLI for the selected brand. In the editor's **Assistant** panel, select the brand and use **Sign in**, **Switch account**, or **Reconnect** as shown. The broker and editor share an XRENGINE-managed profile for each brand. An API key does not select a CLI mode. |
 | Broker tools | Confirm the `local-agent-broker` MCP server exposes `recommend_agent_route`, `start_agent_run`, `get_agent_run`, `cancel_agent_run`, and `list_agent_runs`. |
-| Repository context when needed | Use `context_files` for immutable selected UTF-8 text snapshots. Enable `repository_access` only when the worker must discover more context, and name explicit repository-relative roots. Both mechanisms send selected content to the selected provider API. |
+| Repository context when needed | Use `context_files` for immutable selected UTF-8 text snapshots. Enable `repository_access` only when the worker must discover more context, and name explicit repository-relative roots. Both mechanisms send selected content to the selected runtime. |
 | Editor session when needed | Omit `editor_session` when no editor tools are required. For editor evidence or mutation, start one exact session with `Tools/Manage-McpEditorSession.ps1`; its manifest and loopback MCP endpoint must be live for the whole run. |
 | Standing authority | `AGENTS.md` pre-authorizes bounded broker/API spend for XRENGINE tasks. The coordinator selects the lowest-cost suitable model automatically without asking per run. Mutation and destructive operations still require authority from the task itself. |
-| Bounded request | Set narrow turn, tool-call, retry, and tool-result limits appropriate to the task. Output-token and elapsed-time limits are opt-in. |
+| Bounded request | API runs accept narrow turn, retry, tool-call, and tool-result limits. All CLI runs require `max_turns`, `max_retries`, and `max_output_tokens` to be zero. Set narrow host tool-call, tool-result, and elapsed-time limits. |
 
-The supported exact model IDs are:
+The supported exact API model IDs are:
 
 - `gpt-6-luna`
 - `gpt-6-sol`
@@ -93,10 +96,81 @@ approved effort. See the official
 [GPT-6.1 Sol model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
 and [GPT-6 model guidance](https://developers.openai.com/api/docs/guides/latest-model).
 
-The broker rejects aliases and provider-reported dated snapshot suffixes: both
-the requested and actual model must be the same exact approved model ID.
+For API runs, the broker rejects aliases and provider-reported dated snapshot
+suffixes. The requested and actual model must match the same approved ID.
 
-Check the [current OpenAI model catalog](https://developers.openai.com/api/docs/models)
+### Codex App-Server Access
+
+Set `execution_mode` to `codex_app_server` to select the installed Codex
+app server. The runtime reads the exact model IDs and supported reasoning
+efforts from its account catalog before generation. The requested and observed
+model IDs must match. `gpt-6.1-sol` in the example below works only when the
+signed-in account catalog contains that exact ID. API route advice and the API
+model list above do not define the Codex catalog.
+
+XRENGINE gives Codex a dedicated profile at
+`%LOCALAPPDATA%/XREngine/AgentRuntimes/Codex/profile`. The broker and editor
+use this same product-owned profile for the same Windows user. It is separate
+from the normal Codex CLI profile. This boundary prevents ambient MCP servers,
+hooks, skills, and workspace instructions from becoming broker tools. Use the
+editor's **Sign in to ChatGPT** button to start the native sign-in flow. Use
+**Cancel** to stop it. A normal `codex login` command does not sign in this
+dedicated profile unless you first set `CODEX_HOME` to the path above in that
+terminal. Do not copy account tokens or profile files between locations.
+
+The currently pinned protocol target is Codex CLI `0.167.0-alpha.3.2`. Later versions need
+separate protocol validation before they are supported. The app server can report token usage, but it
+does not expose enforceable native model-turn, retry, or output-token caps for
+this integration. Set `budget.max_turns`, `budget.max_retries`, and
+`budget.max_output_tokens` to `0`. If `max_turns` or `max_retries` is omitted
+from a Codex MCP request, the broker sets it to `0`; an explicit nonzero value
+fails admission. `turn_count_reported` and `retry_count_reported` identify
+unreported counts in status and history. The host still enforces tool-call,
+tool-result-byte, and elapsed-time bounds, as well as model and tool policy.
+Codex runs reject background mode, swarms, and provider-hosted tools. They do
+not fall back to API access.
+
+### Other CLI subscriptions
+
+Select one of these modes in the Assistant panel or in a broker request. The
+model menu comes from the selected CLI and signed-in account. A CLI run checks
+the selected model. It does not use an API key or fall back to API access.
+
+| Brand | `execution_mode` | CLI command | Account action |
+|---|---|---|---|
+| Claude | `claude_cli` | `claude` | **Sign in** or **Switch account** starts Claude Code sign-in. |
+| Gemini personal plan | `antigravity_cli` | `agy` | **Sign in** or **Reconnect** uses the Antigravity CLI Google account. |
+| Gemini work account | `gemini_cli` | `gemini` | This legacy broker route remains available for supported work accounts. |
+| Copilot | `copilot_cli` | `copilot` | **Sign in** or **Switch account** starts the CLI's GitHub browser sign-in. |
+
+The editor's **Manage account** control opens the selected brand's account
+controls. The Gemini brand uses Antigravity for personal Google plans. Each CLI
+uses XRENGINE-managed settings and work folders under
+`%LOCALAPPDATA%/XREngine/AgentRuntimes/<Brand>/profile`. Antigravity keeps its
+account credentials in the CLI's native store. The host does not read or copy
+them. Do not copy credentials or profile files.
+The host passes only approved repository and editor tools to the CLI. It does
+not grant a general shell or filesystem tool. Host tool calls, result bytes,
+elapsed time, and owned-process cancellation remain bounded. Native model-turn,
+retry, and output-token caps are not available through these integrations.
+
+Protocol validation used Codex CLI `0.167.0-alpha.3.2`, Claude Code `2.1.317`,
+Antigravity CLI `1.5.4`, Gemini CLI `0.67`, and Copilot CLI `1.0.108`. Copilot
+completed a text run and one host read-only tool call with `gpt-6-luna`.
+Antigravity completed a text run on a Google AI Ultra account. Its protocol
+acknowledged the selected model ID but did not report the model that generated
+the reply. Broker requests require actual-model evidence by default and reject
+Antigravity before generation. Set `require_actual_model_evidence: false`
+explicitly to accept its native model selection acknowledgment. The result
+still shows the actual model as unknown. The editor's Gemini brand selects this
+mode and explains the difference in **Manage account**. Antigravity
+does not expose an account ID, so the editor sends only the current prompt in
+each new chat request. Claude sign-in and model discovery passed, but a weekly
+account limit prevented a live reply. These checks do not prove that each
+account or model can complete a live run. Personal Google login through the
+legacy Gemini CLI is deprecated; use the Antigravity route for that plan.
+
+For API runs, check the [current OpenAI model catalog](https://developers.openai.com/api/docs/models)
 and the API project's model access before a live run. The broker never silently
 substitutes another tier.
 
@@ -109,7 +183,7 @@ The fixed MCP surface contains five orchestration tools:
   coordinator uses its exact result automatically unless the user pinned a
   model.
 - `start_agent_run` validates a request, snapshots every requested context file
-  atomically, starts the paid worker asynchronously, and returns a run ID plus
+  atomically, starts the selected run asynchronously, and returns a run ID plus
   context/repository-access metadata promptly.
 - `get_agent_run` returns incremental text/evidence/usage, retry count, bounded
   provider-attempt diagnostics, current observation/progress metadata, and the
@@ -369,7 +443,7 @@ Alternatively, the opt-in agent-tool bootstrap includes the same setup:
 ExecTool --bootstrap --with-agent-tools
 ```
 
-Create an API key on the
+For API runs, create an API key on the
 [OpenAI API key page](https://platform.openai.com/api-keys), then store it in
 the Windows user environment as `OPENAI_API_KEY`. OpenAI recommends keeping
 keys out of source and using an environment variable or secret manager; see
@@ -380,7 +454,7 @@ that value is absent, it reads the same variable name from the user environment
 and injects it into only the broker child process. This means a newly configured
 user-scoped key does not need to be copied into chat, arguments, or repository
 state. Other operating systems require the MCP process to inherit the variable.
-A ChatGPT or Codex sign-in is not a replacement for API credentials, and
+A ChatGPT or Codex sign-in is not a replacement for API credentials in API mode, and
 [API billing is separate](https://help.openai.com/en/articles/8156019).
 
 Trust this repository and restart Codex. The checked-in
@@ -606,6 +680,30 @@ policy entries:
 }
 ```
 
+A Codex app-server request uses the dedicated ChatGPT sign-in and exact
+runtime catalog:
+
+```json
+{
+  "execution_mode": "codex_app_server",
+  "objective": "Review the supplied concurrency evidence.",
+  "success_criteria": ["Name the highest-risk race and the next check."],
+  "constraints": ["Use only the supplied evidence."],
+  "requested_model": "gpt-6.1-sol",
+  "reasoning_effort": "medium",
+  "budget": {
+    "max_turns": 0,
+    "max_retries": 0,
+    "max_output_tokens": 0,
+    "max_tool_calls": 0,
+    "max_elapsed_seconds": 120
+  }
+}
+```
+
+The broker rejects this request if the installed runtime or the signed-in
+account does not offer the exact model and effort.
+
 A repository-aware request can combine immutable known context with live,
 read-only discovery:
 
@@ -753,13 +851,15 @@ broker timeout) or between 1 and 3,600.
 
 ## Cost, Data, And Security
 
-Each worker is billed to the API project associated with the configured key,
-independently of ChatGPT/Codex product billing. Configure API project budgets,
-usage alerts, and model access before relying on standing automatic runs. The
-broker reports token usage but intentionally does not embed volatile price
-estimates. Omitted run budgets default to 3 turns, 8 tool calls, 1 retry,
+Each API worker is billed to the API project associated with the configured key,
+independently of ChatGPT/Codex product billing. A Codex app-server run uses the
+signed-in ChatGPT account. Account plan and usage limits still apply. Configure
+API project budgets, usage alerts, and model access for API runs. The
+broker reports available token usage but does not embed price estimates.
+Omitted API run budgets default to 3 turns, 8 tool calls, 1 retry,
 per-run concurrency 1, no broker output-token cap, and no broker elapsed-time
-timeout. The process default is at most 4 concurrent runs. Explicit positive
+timeout. Codex requests use zero native turn, retry, and output-token caps.
+The process default is at most 4 concurrent runs. Explicit positive API
 output-token and elapsed-time limits remain hard caps. Provider/model context,
 output, rate, and service limits still apply even when local limits are disabled.
 
@@ -804,7 +904,7 @@ secrets.
 
 ## Process Configuration
 
-Set these variables before starting Codex. Windows user-scoped API-key values
+Set these variables before starting the broker. Windows user-scoped API-key values
 are also resolved on demand by the launcher and broker:
 
 | Environment variable | Default | Allowed values |
@@ -813,6 +913,11 @@ are also resolved on demand by the launcher and broker:
 | `XRE_LOCAL_AGENT_BROKER_ANTHROPIC_API_KEY_ENV` | `ANTHROPIC_API_KEY` | Valid environment-variable name |
 | `ANTHROPIC_WORKSPACE_ID` | Unset | Optional `wrkspc_` workspace ID; required by multi-workspace keys |
 | `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV` | unset | Name of an optional editor bearer-token variable |
+| `XRE_LOCAL_AGENT_BROKER_CODEX_PATH` | `codex` | Installed Codex executable path or command; also accepts `--codex-path` on direct broker launch |
+| `XRE_LOCAL_AGENT_BROKER_CLAUDE_PATH` | `claude` | Installed Claude Code executable path or command; also accepts `--claude-path` on direct broker launch |
+| `XRE_LOCAL_AGENT_BROKER_GEMINI_PATH` | `gemini` | Installed Gemini CLI executable path or command; also accepts `--gemini-path` on direct broker launch |
+| `XRE_LOCAL_AGENT_BROKER_ANTIGRAVITY_PATH` | `agy` | Installed Antigravity CLI executable path or command; also accepts `--antigravity-path` on direct broker launch |
+| `XRE_LOCAL_AGENT_BROKER_COPILOT_PATH` | `copilot` | Installed Copilot CLI executable path or command; also accepts `--copilot-path` on direct broker launch |
 | `XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY` | 4 | 1-100 |
 | `XRE_LOCAL_AGENT_BROKER_MAX_RUNS` | Larger of 32 and configured concurrency | 4-256; at least configured concurrency |
 | `XRE_LOCAL_AGENT_BROKER_RETENTION_MINUTES` | 120 | 1-1440 |
@@ -864,6 +969,12 @@ named by `XRE_LOCAL_AGENT_BROKER_EDITOR_AUTH_ENV`.
   process environment; on other systems ensure Codex inherits it. Restart Codex
   only when changing broker setup/configuration or when an older broker process
   is already loaded. Do not paste the key into chat.
+- **CLI sign-in is missing:** open **Manage account** in the Assistant panel,
+  then use the sign-in action for the selected brand. This signs in the
+  XRENGINE-managed profile. A normal terminal login uses a different profile.
+- **Codex executable is missing or unsupported:** install the pinned CLI
+  version, or set `XRE_LOCAL_AGENT_BROKER_CODEX_PATH` before broker startup.
+  Direct broker launches also accept `--codex-path <codex-executable>`.
 - **Quota, billing, or model access fails:** check the API project and exact
   model. Do not change tiers merely to bypass access failure; route a newly
   bounded or materially reclassified slice under the standing policy.

@@ -24,8 +24,15 @@ public sealed partial class McpAssistantWindow
 
     private async Task SendPromptAsync()
     {
+        ObserveAssistantConnectionSelection();
         if (_isBusy)
             return;
+
+        if (!CanSendWithSelectedModel())
+        {
+            SetStatus(GetConnectionStatus(), ColorError);
+            return;
+        }
 
         string trimmedPrompt = _prompt.Trim();
         if (string.IsNullOrWhiteSpace(trimmedPrompt))
@@ -34,7 +41,16 @@ public sealed partial class McpAssistantWindow
             return;
         }
 
+        CaptureRequestIntent(trimmedPrompt);
         ProviderType provider = (ProviderType)ProviderIndex;
+        if (UsesSubscription)
+        {
+            await SendSubscriptionPromptAsync(trimmedPrompt);
+            return;
+        }
+
+        ResetSubscriptionHistoryBoundary();
+
         if (provider == ProviderType.Codex && string.IsNullOrWhiteSpace(OpenAiApiKey))
         {
             SetStatus("OpenAI API key is required.", ColorError);
@@ -74,9 +90,6 @@ public sealed partial class McpAssistantWindow
         SetStatus("Preparing\u2026", ColorBusy);
 
         bool attachRequested = AttachMcpServer;
-        if (attachRequested)
-            EnsureMcpServerAutoEnabledForAssistantMessage();
-
         var mcpUsage = new McpUsageEntry
         {
             Provider = provider.ToString(),
@@ -86,20 +99,16 @@ public sealed partial class McpAssistantWindow
         };
         AddMcpUsageEntry(mcpUsage);
 
-        if (attachRequested)
+        // Keep a reply row even if tool discovery fails before generation.
+        var assistantMsg = new ChatMessage
         {
-            SetStatus("Validating MCP connection...", ColorBusy);
-            using var preflightTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-            (bool mcpReady, string reason) = await EnsureMcpServerAttachReadyAsync(preflightTimeout.Token);
-            if (!mcpReady)
-            {
-                mcpUsage.Result = "MCP Unavailable";
-                mcpUsage.Note = reason;
-                SetStatus($"MCP unavailable: {reason}", ColorError);
-                _isBusy = false;
-                return;
-            }
-        }
+            Role = "assistant", IsStreaming = true, Status = ChatMessageStatus.Running
+        };
+        SetMessageExplanationContext(assistantMsg, trimmedPrompt);
+        _history.Add(assistantMsg);
+
+        if (attachRequested && !await PrepareAssistantMcpAsync(assistantMsg, mcpUsage))
+            return;
 
         // Capture viewport screenshot for visual context if the toggle is on.
         _pendingScreenshotBase64 = null;
@@ -117,10 +126,7 @@ public sealed partial class McpAssistantWindow
             }
         }
 
-        // Placeholder assistant message that will be filled by streaming.
-        var assistantMsg = new ChatMessage { Role = "assistant", IsStreaming = true };
-        _history.Add(assistantMsg);
-        bool mutationLikelyRequired = AttachMcpServer && IsLikelySceneMutationPrompt(trimmedPrompt);
+        bool mutationLikelyRequired = !IsReadOnlyRequest && AttachMcpServer && IsLikelySceneMutationPrompt(trimmedPrompt);
 
         int maxAutoReprompts = Math.Clamp(MaxAutoReprompts, 0, 50);
         bool finishedByMarker = false;
@@ -143,6 +149,9 @@ public sealed partial class McpAssistantWindow
                     SetStatus("Streaming\u2026", ColorBusy);
                 else
                     SetStatus($"Auto re-prompt {attempt}/{maxAutoReprompts}\u2026", ColorBusy);
+
+                assistantMsg.Status = ChatMessageStatus.Running;
+                assistantMsg.StatusDetail = null;
 
                 switch (provider)
                 {
@@ -185,6 +194,9 @@ public sealed partial class McpAssistantWindow
                 LogAiResponseAttempt(provider, attempt, maxAutoReprompts, assistantMsg.Content, isContinueFlow: false);
 
                 CaptureContextSummary(assistantMsg);
+
+                if (assistantMsg.Status == ChatMessageStatus.Failed)
+                    break;
 
                 // Check for explicit continue marker — model is requesting auto-reprompt.
                 if (TryStripContinueMarker(assistantMsg))
@@ -238,26 +250,39 @@ public sealed partial class McpAssistantWindow
             if (string.IsNullOrWhiteSpace(assistantMsg.Content))
                 assistantMsg.Content = "(No response content received.)";
 
-            if (IsProviderErrorContent(assistantMsg.Content, out string? providerErrorSummary))
+            if (assistantMsg.Status == ChatMessageStatus.Failed)
             {
                 mcpUsage.Result = "Failed";
+                SetStatus(assistantMsg.StatusDetail ?? "Failed.", ColorError);
+            }
+            else if (IsProviderErrorContent(assistantMsg.Content, out string? providerErrorSummary))
+            {
+                mcpUsage.Result = "Failed";
+                assistantMsg.Status = ChatMessageStatus.Failed;
+                assistantMsg.StatusDetail = providerErrorSummary ?? "Provider request failed.";
                 SetStatus(providerErrorSummary ?? "Failed.", ColorError);
             }
             else if (reachedRepromptLimit)
             {
                 mcpUsage.Result = "Auto Re-prompt Limit";
+                assistantMsg.Status = ChatMessageStatus.Incomplete;
+                assistantMsg.StatusDetail = "The request reached the continuation limit. Select Continue to resume.";
                 _canContinueAfterRepromptLimit = true;
                 SetStatus("Auto re-prompt limit reached. Click Continue to run another auto-reprompt cycle.", ColorBusy);
             }
             else if (!finishedByMarker)
             {
                 mcpUsage.Result = "Done (No Marker)";
+                assistantMsg.Status = ChatMessageStatus.Incomplete;
+                assistantMsg.StatusDetail = "The reply ended before the assistant confirmed completion.";
                 _canContinueAfterRepromptLimit = false;
                 SetStatus("Stopped without done marker.", ColorBusy);
             }
             else
             {
                 mcpUsage.Result = "Done";
+                assistantMsg.Status = ChatMessageStatus.Completed;
+                assistantMsg.StatusDetail = null;
                 _canContinueAfterRepromptLimit = false;
                 SetStatus("Done.", ColorDone);
             }
@@ -265,8 +290,8 @@ public sealed partial class McpAssistantWindow
         catch (OperationCanceledException)
         {
             assistantMsg.IsStreaming = false;
-            if (string.IsNullOrWhiteSpace(assistantMsg.Content))
-                assistantMsg.Content = "(Canceled.)";
+            assistantMsg.Status = ChatMessageStatus.Stopped;
+            assistantMsg.StatusDetail = "The request stopped. Any completed changes may remain in the editor.";
             mcpUsage.Result = "Canceled";
             _canContinueAfterRepromptLimit = false;
             SetStatus("Canceled.", ColorError);
@@ -274,7 +299,8 @@ public sealed partial class McpAssistantWindow
         catch (Exception ex)
         {
             assistantMsg.IsStreaming = false;
-            assistantMsg.Content += $"\n\n--- Error ---\n{ex}";
+            assistantMsg.Status = ChatMessageStatus.Failed;
+            assistantMsg.StatusDetail = ex.Message;
             mcpUsage.Result = "Error";
             mcpUsage.Note = ex.Message;
             _canContinueAfterRepromptLimit = false;
@@ -294,6 +320,13 @@ public sealed partial class McpAssistantWindow
     /// </summary>
     private async Task ContinuePromptAsync()
     {
+        ObserveAssistantConnectionSelection();
+        if (!CanSendWithSelectedModel())
+            return;
+        if (UsesSubscription)
+            return;
+
+        ResetSubscriptionHistoryBoundary();
         if (_isBusy)
             return;
 
@@ -319,12 +352,11 @@ public sealed partial class McpAssistantWindow
         _canContinueAfterRepromptLimit = false;
         _isBusy = true;
         assistantMsg.IsStreaming = true;
+        assistantMsg.Status = ChatMessageStatus.Running;
+        assistantMsg.StatusDetail = null;
         _scrollToBottom = true;
 
         bool attachRequested = AttachMcpServer;
-        if (attachRequested)
-            EnsureMcpServerAutoEnabledForAssistantMessage();
-
         var mcpUsage = new McpUsageEntry
         {
             Provider = provider.ToString(),
@@ -334,20 +366,10 @@ public sealed partial class McpAssistantWindow
         };
         AddMcpUsageEntry(mcpUsage);
 
-        if (attachRequested)
+        if (attachRequested && !await PrepareAssistantMcpAsync(assistantMsg, mcpUsage))
         {
-            SetStatus("Validating MCP connection...", ColorBusy);
-            using var preflightTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-            (bool mcpReady, string reason) = await EnsureMcpServerAttachReadyAsync(preflightTimeout.Token);
-            if (!mcpReady)
-            {
-                mcpUsage.Result = "MCP Unavailable";
-                mcpUsage.Note = reason;
-                SetStatus($"MCP unavailable: {reason}", ColorError);
-                assistantMsg.IsStreaming = false;
-                _isBusy = false;
-                return;
-            }
+            _canContinueAfterRepromptLimit = true;
+            return;
         }
 
         // Capture viewport screenshot for visual context if the toggle is on.
@@ -369,7 +391,7 @@ public sealed partial class McpAssistantWindow
         int maxAutoReprompts = Math.Clamp(MaxAutoReprompts, 0, 50);
         bool finishedByMarker = false;
         bool reachedRepromptLimit = false;
-        bool mutationLikelyRequired = AttachMcpServer && IsLikelySceneMutationPrompt(trimmedPrompt);
+        bool mutationLikelyRequired = !IsReadOnlyRequest && AttachMcpServer && IsLikelySceneMutationPrompt(trimmedPrompt);
 
         SetStatus("Continuing\u2026", ColorBusy);
         _cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
@@ -388,6 +410,9 @@ public sealed partial class McpAssistantWindow
                     SetStatus("Continuing\u2026", ColorBusy);
                 else
                     SetStatus($"Auto re-prompt {attempt}/{maxAutoReprompts}\u2026", ColorBusy);
+
+                assistantMsg.Status = ChatMessageStatus.Running;
+                assistantMsg.StatusDetail = null;
 
                 switch (provider)
                 {
@@ -428,6 +453,9 @@ public sealed partial class McpAssistantWindow
                 LogAiResponseAttempt(provider, attempt, maxAutoReprompts, assistantMsg.Content, isContinueFlow: true);
 
                 CaptureContextSummary(assistantMsg);
+
+                if (assistantMsg.Status == ChatMessageStatus.Failed)
+                    break;
 
                 // Check for explicit continue marker — model is requesting auto-reprompt.
                 if (TryStripContinueMarker(assistantMsg))
@@ -479,31 +507,46 @@ public sealed partial class McpAssistantWindow
 
             assistantMsg.IsStreaming = false;
 
-            if (IsProviderErrorContent(assistantMsg.Content, out string? providerErrorSummary))
+            if (assistantMsg.Status == ChatMessageStatus.Failed)
             {
                 mcpUsage.Result = "Failed";
+                SetStatus(assistantMsg.StatusDetail ?? "Failed.", ColorError);
+            }
+            else if (IsProviderErrorContent(assistantMsg.Content, out string? providerErrorSummary))
+            {
+                mcpUsage.Result = "Failed";
+                assistantMsg.Status = ChatMessageStatus.Failed;
+                assistantMsg.StatusDetail = providerErrorSummary ?? "Provider request failed.";
                 SetStatus(providerErrorSummary ?? "Failed.", ColorError);
             }
             else if (reachedRepromptLimit)
             {
                 mcpUsage.Result = "Auto Re-prompt Limit";
+                assistantMsg.Status = ChatMessageStatus.Incomplete;
+                assistantMsg.StatusDetail = "The request reached the continuation limit. Select Continue to resume.";
                 _canContinueAfterRepromptLimit = true;
                 SetStatus("Auto re-prompt limit reached. Click Continue to run another cycle.", ColorBusy);
             }
             else if (!finishedByMarker)
             {
                 mcpUsage.Result = "Done (No Marker)";
+                assistantMsg.Status = ChatMessageStatus.Incomplete;
+                assistantMsg.StatusDetail = "The reply ended before the assistant confirmed completion.";
                 SetStatus("Stopped without done marker.", ColorBusy);
             }
             else
             {
                 mcpUsage.Result = "Done";
+                assistantMsg.Status = ChatMessageStatus.Completed;
+                assistantMsg.StatusDetail = null;
                 SetStatus("Done.", ColorDone);
             }
         }
         catch (OperationCanceledException)
         {
             assistantMsg.IsStreaming = false;
+            assistantMsg.Status = ChatMessageStatus.Stopped;
+            assistantMsg.StatusDetail = "The request stopped. Any completed changes may remain in the editor.";
             mcpUsage.Result = "Canceled";
             _canContinueAfterRepromptLimit = false;
             SetStatus("Canceled.", ColorError);
@@ -511,7 +554,8 @@ public sealed partial class McpAssistantWindow
         catch (Exception ex)
         {
             assistantMsg.IsStreaming = false;
-            assistantMsg.Content += $"\n\n--- Error ---\n{ex}";
+            assistantMsg.Status = ChatMessageStatus.Failed;
+            assistantMsg.StatusDetail = ex.Message;
             mcpUsage.Result = "Error";
             mcpUsage.Note = ex.Message;
             _canContinueAfterRepromptLimit = false;
@@ -523,6 +567,42 @@ public sealed partial class McpAssistantWindow
             _cts = null;
             _isBusy = false;
         }
+    }
+
+    /// <summary>
+    /// Checks the editor tool connection before generation and ends the reply
+    /// if startup, discovery, or the bounded connection check fails.
+    /// </summary>
+    private async Task<bool> PrepareAssistantMcpAsync(ChatMessage message, McpUsageEntry usage)
+    {
+        SetStatus("Validating MCP connection...", ColorBusy);
+        string reason;
+        try
+        {
+            EnsureMcpServerAutoEnabledForAssistantMessage();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            (bool ready, string checkReason) = await EnsureMcpServerAttachReadyAsync(timeout.Token);
+            if (ready)
+                return true;
+            reason = checkReason;
+        }
+        catch (OperationCanceledException)
+        {
+            reason = "MCP connection check timed out.";
+        }
+        catch (Exception ex)
+        {
+            reason = ex.Message;
+        }
+
+        usage.Result = "MCP Unavailable";
+        usage.Note = reason;
+        message.Status = ChatMessageStatus.Failed;
+        message.StatusDetail = $"Editor tools are unavailable: {reason}";
+        message.IsStreaming = false;
+        _isBusy = false;
+        SetStatus($"MCP unavailable: {reason}", ColorError);
+        return false;
     }
 
     private void AddMcpUsageEntry(McpUsageEntry entry)

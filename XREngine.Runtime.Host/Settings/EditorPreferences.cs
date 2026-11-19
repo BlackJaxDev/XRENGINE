@@ -83,8 +83,12 @@ namespace XREngine
         private int _rendererBackendFirstFrameTimeoutMs = 15000;
         private int _rendererBackendRetainedGenerations = 3;
 
-        // MCP Assistant (in-editor AI chat window) settings
+        // Assistant (in-editor AI chat window) settings
         private int _mcpAssistantProviderIndex = 0;
+        private bool _mcpAssistantUseCodexAppServer;
+        private string _codexExecutablePath = "codex";
+        private string _codexModel = "gpt-6.1-sol";
+        private string _shaderEditorCodexModel = string.Empty;
         private string _mcpAssistantOpenAiApiKey = string.Empty;
         private string _mcpAssistantAnthropicApiKey = string.Empty;
         private string _mcpAssistantOpenAiModel = "gpt-5-codex";
@@ -589,24 +593,68 @@ namespace XREngine
             set => SetField(ref _mcpDispatchMode, value);
         }
 
-        // ── MCP Assistant (in-editor AI chat window) ─────────────────────
+        // ── Assistant (in-editor AI chat window) ─────────────────────
 
         /// <summary>
-        /// Selected provider index (0 = Codex / OpenAI, 1 = Claude Code / Anthropic, 2 = Gemini, 3 = GitHub Models).
+        /// Selects the assistant brand. Value 3 preserves the retired GitHub Models setting.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Provider")]
-        [Description("AI provider selection (0 = Codex, 1 = Claude Code, 2 = Gemini, 3 = GitHub Models).")]
+        [Description("Assistant selection (0 = Codex, 1 = Claude, 2 = Gemini, 3 = retired GitHub Models, 4 = Copilot).")]
         public int McpAssistantProviderIndex
         {
             get => _mcpAssistantProviderIndex;
-            set => SetField(ref _mcpAssistantProviderIndex, Math.Clamp(value, 0, 3));
+            set => SetField(ref _mcpAssistantProviderIndex, Math.Clamp(value, 0, 4));
         }
 
         /// <summary>
-        /// OpenAI API key used by the MCP Assistant window.
+        /// Selects the signed-in Codex runtime for the Codex assistant provider.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
+        [DisplayName("Use Codex App Server")]
+        public bool McpAssistantUseCodexAppServer
+        {
+            get => _mcpAssistantUseCodexAppServer;
+            set => SetField(ref _mcpAssistantUseCodexAppServer, value);
+        }
+
+        /// <summary>
+        /// Names the Codex executable used by the assistant and shader editor.
+        /// </summary>
+        [Category("Assistant")]
+        [DisplayName("Codex Executable")]
+        public string CodexExecutablePath
+        {
+            get => _codexExecutablePath;
+            set => SetField(ref _codexExecutablePath, string.IsNullOrWhiteSpace(value) ? "codex" : value.Trim());
+        }
+
+        /// <summary>
+        /// Selects a model from the signed-in Codex runtime.
+        /// </summary>
+        [Category("Assistant")]
+        [DisplayName("Codex Model")]
+        public string CodexModel
+        {
+            get => _codexModel;
+            set => SetField(ref _codexModel, value?.Trim() ?? string.Empty);
+        }
+
+        /// <summary>
+        /// Overrides the Codex model for explicit shader completion requests.
+        /// </summary>
+        [Category("Shader Editor")]
+        [DisplayName("Codex Shader Model")]
+        public string ShaderEditorCodexModel
+        {
+            get => _shaderEditorCodexModel;
+            set => SetField(ref _shaderEditorCodexModel, value?.Trim() ?? string.Empty);
+        }
+
+        /// <summary>
+        /// OpenAI API key used by the Assistant window.
+        /// </summary>
+        [Category("Assistant")]
         [DisplayName("OpenAI API Key")]
         [Description("API key for OpenAI / Codex provider.")]
         [YamlIgnore]
@@ -620,9 +668,9 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Anthropic API key used by the MCP Assistant window.
+        /// Anthropic API key used by the Assistant window.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Anthropic API Key")]
         [Description("API key for Anthropic / Claude Code provider.")]
         [YamlIgnore]
@@ -638,7 +686,7 @@ namespace XREngine
         /// <summary>
         /// Model name for OpenAI standard (non-realtime) requests.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("OpenAI Model")]
         [Description("Model name for OpenAI standard HTTP requests.")]
         public string McpAssistantOpenAiModel
@@ -650,7 +698,7 @@ namespace XREngine
         /// <summary>
         /// Model name for OpenAI Realtime WebSocket requests.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("OpenAI Realtime Model")]
         [Description("Model name for OpenAI Realtime WebSocket requests.")]
         public string McpAssistantOpenAiRealtimeModel
@@ -662,7 +710,7 @@ namespace XREngine
         /// <summary>
         /// Model name for Anthropic / Claude Code requests.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Anthropic Model")]
         [Description("Model name for Anthropic Messages API requests.")]
         public string McpAssistantAnthropicModel
@@ -674,7 +722,7 @@ namespace XREngine
         /// <summary>
         /// Maximum token count per AI request.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Max Tokens")]
         [Description("Maximum token limit for AI provider requests.")]
         public int McpAssistantMaxTokens
@@ -686,7 +734,7 @@ namespace XREngine
         /// <summary>
         /// Maximum number of automatic continuation prompts sent for a single user prompt.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Max Auto Re-prompts")]
         [Description("Maximum automatic continuation prompts sent when the assistant emits the continue marker or has not emitted the done marker.")]
         public int McpAssistantMaxAutoReprompts
@@ -698,7 +746,7 @@ namespace XREngine
         /// <summary>
         /// Whether to request an AI-generated context summary when approaching model context limits.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Auto Summarize Near Context Limit")]
         [Description("Request a compact assistant-generated context summary as prompts approach the selected model's context window.")]
         public bool McpAssistantAutoSummarizeNearContextLimit
@@ -710,7 +758,7 @@ namespace XREngine
         /// <summary>
         /// Whether to use the OpenAI Realtime WebSocket API instead of standard HTTP.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Use Realtime WebSocket")]
         [Description("Send OpenAI prompts via the Realtime WebSocket API instead of standard HTTP.")]
         public bool McpAssistantUseRealtimeWebSocket
@@ -722,7 +770,7 @@ namespace XREngine
         /// <summary>
         /// Whether to attach the local MCP server to provider requests.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Attach MCP Server")]
         [Description("Include the local MCP server URL in provider requests so the AI can use editor tools.")]
         public bool McpAssistantAttachMcpServer
@@ -735,7 +783,7 @@ namespace XREngine
         /// Whether to capture and attach the current editor viewport screenshot
         /// as visual context when sending a message to the AI provider.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Attach Viewport Screenshot")]
         [Description("Capture and include a viewport screenshot as visual context with each message sent to the AI.")]
         public bool McpAssistantAttachViewportScreenshot
@@ -747,7 +795,7 @@ namespace XREngine
         /// <summary>
         /// Whether the chat log auto-scrolls during streaming.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Auto-Scroll")]
         [Description("Automatically scroll the chat log to the bottom during streaming.")]
         public bool McpAssistantAutoScroll
@@ -757,10 +805,10 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Whether MCP Assistant tool calls automatically move the editor camera to relevant scene nodes.
+        /// Whether Assistant tool calls automatically move the editor camera to relevant scene nodes.
         /// Uses the same smooth focus interpolation as hierarchy double-click.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Auto Camera View")]
         [Description("Automatically move the editor camera to relevant scene nodes after assistant scene edits.")]
         public bool McpAssistantAutoCameraView
@@ -770,11 +818,11 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Whether MCP Assistant writes comprehensive AI request/response/tool traces.
+        /// Whether Assistant writes comprehensive AI request/response/tool traces.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Verbose AI Logging")]
-        [Description("Write full MCP Assistant prompts, responses, and tool call args/results to the AI log category.")]
+        [Description("Write full Assistant prompts, responses, and tool call args/results to the AI log category.")]
         public bool McpAssistantVerboseAiLogging
         {
             get => _mcpAssistantVerboseAiLogging;
@@ -784,7 +832,7 @@ namespace XREngine
         /// <summary>
         /// Preferred downward pitch for editor auto-focus camera framing.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Focus Preferred Down Pitch")]
         [Description("Preferred downward pitch angle (degrees) for editor camera auto-focus framing.")]
         public float FocusPreferredDownPitchDegrees
@@ -796,7 +844,7 @@ namespace XREngine
         /// <summary>
         /// Maximum allowed downward pitch for editor auto-focus camera framing.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Focus Max Down Pitch")]
         [Description("Maximum downward pitch angle (degrees) for editor camera auto-focus framing.")]
         public float FocusMaximumDownPitchDegrees
@@ -806,9 +854,9 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Google Gemini API key used by the MCP Assistant window.
+        /// Google Gemini API key used by the Assistant window.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Gemini API Key")]
         [Description("API key for Google Gemini provider (from Google AI Studio).")]
         [YamlIgnore]
@@ -824,7 +872,7 @@ namespace XREngine
         /// <summary>
         /// Model name for Google Gemini requests.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Gemini Model")]
         [Description("Model name for Google Gemini API requests.")]
         public string McpAssistantGeminiModel
@@ -837,7 +885,7 @@ namespace XREngine
         /// GitHub personal access token (PAT) for GitHub Models inference API.
         /// Requires models:read scope.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("GitHub Models Token")]
         [Description("GitHub PAT with models:read scope for GitHub Models inference API.")]
         [YamlIgnore]
@@ -853,7 +901,7 @@ namespace XREngine
         /// <summary>
         /// Model name for GitHub Models inference requests.
         /// </summary>
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("GitHub Models Model")]
         [Description("Model name for GitHub Models inference API requests (e.g. openai/gpt-4.1).")]
         public string McpAssistantGitHubModelsModel

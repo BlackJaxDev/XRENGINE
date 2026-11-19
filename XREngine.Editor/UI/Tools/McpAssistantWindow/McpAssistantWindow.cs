@@ -28,11 +28,14 @@ public sealed partial class McpAssistantWindow
 
     private static readonly string[] ProviderLabels =
     [
-        "Codex (OpenAI)",
-        "Claude Code (Anthropic)",
-        "Gemini (Google)",
-        "GitHub Models"
+        "Codex",
+        "Claude",
+        "Copilot",
+        "Gemini"
     ];
+
+    private static readonly ProviderType[] BrandProviders =
+        [ProviderType.Codex, ProviderType.ClaudeCode, ProviderType.Copilot, ProviderType.Gemini];
 
     private const string AssistantDoneMarker = "[[XRENGINE_ASSISTANT_DONE]]";
     private const string AssistantContinueMarker = "[[XRENGINE_ASSISTANT_CONTINUE]]";
@@ -199,7 +202,7 @@ public sealed partial class McpAssistantWindow
     private string _mcpServerUrl = "http://localhost:5467/mcp/";
     private string _mcpAuthToken = string.Empty;
 
-    // Chat (ephemeral — not worth persisting)
+    // The current conversation remains in memory until New chat or editor shutdown.
     private string _prompt = string.Empty;
     private bool _pendingPromptClear; // Set after send to force-clear the ImGui text buffer next frame.
     private readonly List<ChatMessage> _history = [];
@@ -210,12 +213,7 @@ public sealed partial class McpAssistantWindow
     private Vector4 _statusColor = ColorReady;
     private bool _scrollToBottom;
     private CancellationTokenSource? _cts;
-    private readonly object _openAiModelLock = new();
-    private string[] _openAiTextModels = [];
-    private bool _openAiModelsLoading;
-    private string _openAiModelsStatus = "Not loaded";
-    private bool _openAiModelsAutoRequested;
-    private readonly Dictionary<string, int> _openAiContextWindowByModel = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _openAiContextWindowByModel = new(StringComparer.OrdinalIgnoreCase);
     private int _openAiSelectedContextWindowTokens;
     private string _conversationSummary = string.Empty;
     private int _historyCompactedThroughExclusive;
@@ -379,20 +377,26 @@ public sealed partial class McpAssistantWindow
 
     public void Render()
     {
+        TakePendingHelpRequest();
         if (!_isOpen)
             return;
 
+        ObserveAssistantConnectionSelection();
+
         ImGui.SetNextWindowSize(new Vector2(780, 620), ImGuiCond.FirstUseEver);
 
-        if (ImGui.Begin("MCP Assistant###McpAssistantWin", ref _isOpen, ImGuiWindowFlags.MenuBar | ImGuiWindowFlags.NoScrollbar))
+        if (ImGui.Begin("Assistant###McpAssistantWin", ref _isOpen, ImGuiWindowFlags.MenuBar))
         {
             DrawMenuBar();
             DrawSettingsSection();
+            ObserveAssistantConnectionSelection();
             DrawChatLog();
             DrawPromptBar();
+            DrawSourceView();
         }
 
         ImGui.End();
+        ImGuiFileBrowser.DrawDialogs();
     }
 
 }

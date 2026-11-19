@@ -29,7 +29,7 @@ internal static class BrokerMcpToolCatalog
         new McpToolSpec
         {
             Name = "start_agent_run",
-            Description = "Start a bounded exact-model OpenAI Responses or Anthropic Messages API worker, or opt into a code swarm using GPT-6 Luna at max or Claude Haiku 5.5 at low, medium, high, xhigh, or max. Swarms return parent-reviewed code changes by default; auto_apply authorizes host writes to allowed_paths. Returns a run ID immediately.",
+            Description = "Start a bounded exact-model API worker or an isolated subscription CLI run. API is the default. CLI access requires zero max_turns, max_retries, and max_output_tokens. Returns a run ID immediately.",
             InputSchema = StartRunSchema(),
         },
         new McpToolSpec
@@ -67,27 +67,23 @@ internal static class BrokerMcpToolCatalog
     ];
 
     private static JsonObject StartRunSchema()
-        => ObjectSchema(
+    {
+        JsonObject schema = ObjectSchema(
             required: ["objective", "requested_model"],
             ("objective", StringSchema("Concrete delegated objective.")),
             ("success_criteria", StringArraySchema("Observable completion criteria.")),
             ("constraints", StringArraySchema("Hard constraints and approval boundaries.")),
+            ("execution_mode", new JsonObject
+            {
+                ["type"] = "string",
+                ["enum"] = new JsonArray("api", "codex_app_server", "gemini_cli", "copilot_cli", "claude_cli", "antigravity_cli"),
+                ["default"] = "api",
+                ["description"] = "Select direct API access or a locally signed-in CLI. CLI access uses the host-configured executable and its own exact model catalog.",
+            }),
             ("requested_model", new JsonObject
             {
                 ["type"] = "string",
-                ["description"] = "Prefer GPT-6 Luna, Sol, or Astra. GPT-6.1 Sol and Claude models are explicit selections. Swarms accept Luna/max or Haiku at an approved effort; medium is the Haiku default. Claude uses ANTHROPIC_API_KEY. GPT-5.6 remains deprecated.",
-                ["enum"] = new JsonArray(
-                    AgentModelCatalog.Luna6,
-                    AgentModelCatalog.Sol6,
-                    AgentModelCatalog.Sol61,
-                    AgentModelCatalog.Astra6,
-                    AgentModelCatalog.Luna,
-                    AgentModelCatalog.Terra,
-                    AgentModelCatalog.Sol,
-                    AgentModelCatalog.ClaudeFable51,
-                    AgentModelCatalog.ClaudeOpus55,
-                    AgentModelCatalog.ClaudeSonnet55,
-                    AgentModelCatalog.ClaudeHaiku55),
+                ["description"] = "Exact model ID. API runs accept only the broker model catalog. CLI runs accept only an exact ID in the installed client catalog; the runtime verifies it before launch. No model substitution is allowed.",
             }),
             ("reasoning_effort", new JsonObject
             {
@@ -119,7 +115,7 @@ internal static class BrokerMcpToolCatalog
             ("context_files", new JsonObject
             {
                 ["type"] = "array",
-                ["description"] = "Repository-relative UTF-8 text files snapshotted before the run is queued. Their contents are sent to the selected provider API as untrusted context.",
+                ["description"] = "Repository-relative UTF-8 text files snapshotted before the run is queued. Their contents are sent to the selected execution mode as untrusted context.",
                 ["maxItems"] = 64,
                 ["default"] = new JsonArray(),
                 ["items"] = ObjectSchema(
@@ -138,7 +134,7 @@ internal static class BrokerMcpToolCatalog
             {
                 ["type"] = "object",
                 ["additionalProperties"] = false,
-                ["description"] = "Opt-in read-only repository_search and repository_read_text tools. Content returned by these tools is sent to the selected provider API.",
+                ["description"] = "Opt-in read-only repository_search and repository_read_text tools. Content returned by these tools is sent to the selected execution mode.",
                 ["properties"] = new JsonObject
                 {
                     ["enabled"] = BooleanSchema(false),
@@ -172,19 +168,25 @@ internal static class BrokerMcpToolCatalog
                     ["denied_tools"] = StringArraySchema("Broker-side deny list."),
                 },
             }),
+            ("require_actual_model_evidence", new JsonObject
+            {
+                ["type"] = "boolean",
+                ["default"] = true,
+                ["description"] = "Require actual model evidence. Antigravity cannot report it and rejects strict runs. Set false explicitly to accept its native model selection acknowledgement; actual_model remains unknown.",
+            }),
             ("budget", new JsonObject
             {
                 ["type"] = "object",
                 ["additionalProperties"] = false,
                 ["properties"] = new JsonObject
                 {
-                    ["max_turns"] = IntegerSchema(1, 32, 3),
+                    ["max_turns"] = IntegerSchema(0, 32, defaultValue: null, description: "API default is 3. CLI access requires 0 because native model turns are not reported or capped."),
                     ["max_tool_calls"] = IntegerSchema(0, 256, 8),
                     ["max_output_tokens"] = IntegerSchema(
                         0,
                         128_000,
                         defaultValue: 0,
-                        description: "Optional combined visible-output and reasoning-token limit. Zero or omission disables the broker limit. OpenAI omits max_output_tokens; Claude sends the model maximum as required max_tokens."),
+                        description: "Optional API output-token limit. CLI access requires 0 because the local runtime does not enforce this cap."),
                     ["max_tool_result_bytes"] = IntegerSchema(1_024, 4_194_304, 262_144),
                     ["max_context_files"] = IntegerSchema(0, 64, 16),
                     ["max_context_file_bytes"] = IntegerSchema(
@@ -207,13 +209,55 @@ internal static class BrokerMcpToolCatalog
                         3_600,
                         defaultValue: 0,
                         description: "Optional whole-run elapsed-time limit. Zero or omission disables the broker timeout; explicit positive values remain hard limits."),
-                    ["max_retries"] = IntegerSchema(0, 5, 1),
+                    ["max_retries"] = IntegerSchema(0, 5, defaultValue: null, description: "API default is 1. CLI access requires 0 because native retries are not reported or capped."),
                     ["max_concurrency"] = IntegerSchema(1, 8, 1),
                 },
             }),
             ("swarm", SwarmSchema()),
             ("system_instructions", StringSchema("Optional provider system instructions. The broker prepends its safety instructions.")),
             ("additional_instructions", StringSchema("Optional task-specific instructions.")));
+        schema["allOf"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["if"] = new JsonObject
+                {
+                    ["properties"] = new JsonObject
+                    {
+                        ["execution_mode"] = new JsonObject { ["enum"] = new JsonArray("codex_app_server", "gemini_cli", "copilot_cli", "claude_cli", "antigravity_cli") },
+                    },
+                    ["required"] = new JsonArray("execution_mode"),
+                },
+                ["then"] = new JsonObject
+                {
+                    ["properties"] = new JsonObject
+                    {
+                        ["budget"] = new JsonObject
+                        {
+                            ["properties"] = new JsonObject
+                            {
+                                ["max_turns"] = new JsonObject { ["const"] = 0 },
+                                ["max_retries"] = new JsonObject { ["const"] = 0 },
+                                ["max_output_tokens"] = new JsonObject { ["const"] = 0 },
+                            },
+                        },
+                    },
+                },
+                ["else"] = new JsonObject
+                {
+                    ["properties"] = new JsonObject
+                    {
+                        ["requested_model"] = new JsonObject
+                        {
+                            ["enum"] = new JsonArray(AgentModelCatalog.Models
+                                .Select(static model => JsonValue.Create(model)).ToArray()),
+                        },
+                    },
+                },
+            },
+        };
+        return schema;
+    }
 
     private static JsonObject SwarmSchema()
         => ObjectSchema(

@@ -252,8 +252,8 @@ chat-style interface for interacting with AI providers while the editor is runni
 | **Auto Camera focus pitch controls** | Editor Preferences expose **Focus Preferred Down Pitch** and **Focus Max Down Pitch** to tune auto-focus end pitch. Defaults are 20° preferred and 45° max downward tilt (never upward, never near straight-down). |
 | **Schema-first mutation guidance** | System instructions bias the model to discover writable members with `get_component_schema`/`get_component_snapshot` before mutation, instead of guessing property names. |
 | **Mutation read-back verification** | System instructions require read-back verification (`get_component_property`/`get_component_snapshot`) and screenshot verification for visual edits before reporting success. |
-| **Edit menu** | Copy last response, copy full history, clear history. |
-| **Auto-scroll** | Toggleable via **Settings** menu; keeps the chat log scrolled to the latest content during streaming. |
+| **Conversation controls** | New chat clears the current conversation. History copies the last reply or the conversation. Context shows the selected inputs. |
+| **Auto-scroll** | Follows new output while the reader stays at the bottom. Scrolling up stops following; Jump to latest resumes it. |
 
 #### Environment variables
 
@@ -813,7 +813,9 @@ The edits enter Undo and do not save assets.
 | `probe_editor_depth_hit` | Probe the editor camera pawn depth-hit state at a normalized viewport coordinate. |
 | `probe_render_pipeline_depth` | Read depth from a named render-pipeline FBO at a normalized viewport coordinate. |
 | `query_advanced_pick` | Asynchronously resolve canonical Advanced visibility identities at one normalized viewport coordinate without a synchronous GPU readback. |
+| `query_editor_pick` | Resolve the exact editor mesh owner at one normalized Advanced viewport coordinate with an asynchronous GPU readback. |
 | `query_references` | Query references for assets, scene nodes, and components by GUID. |
+| `read_engine_help` | Read numbered lines from one engine source or guide file returned by search_engine_help. |
 | `read_game_asset` | Read the raw text contents of a file from the game project's assets directory (.asset, .json, .xml, .yaml, .cs, etc.). |
 | `read_game_config` | Read the contents of a config file from the project's Config/ directory. |
 | `read_game_script` | Read the contents of a .cs script file from the game project's assets directory. |
@@ -837,6 +839,7 @@ The edits enter Undo and do not save assets.
 | `save_world` | Save the active world asset to disk. |
 | `scaffold_component` | Generate a new XRComponent subclass from a template. Creates a .cs file with backing fields, SetField pattern, lifecycle hooks, and Description attribute. |
 | `scaffold_game_mode` | Generate a new game mode class from template. Creates a .cs file extending GameMode<T> with standard lifecycle methods. |
+| `search_engine_help` | Search engine C# source and Markdown guides for literal text. Results are text matches, not semantic symbol references. |
 | `search_types` | Search across all loaded types by name pattern (contains, regex, or exact match). |
 | `select_node` | Select one or more scene nodes in the editor. |
 | `select_node_by_name` | Select scene nodes by display name. |

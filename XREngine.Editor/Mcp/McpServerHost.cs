@@ -104,6 +104,17 @@ namespace XREngine.Editor.Mcp
         public bool IsRunning => _listener?.IsListening ?? false;
 
         /// <summary>
+        /// Confirms that the Assistant uses this editor's active MCP listener.
+        /// An exact prefix check prevents a different local service from supplying tool metadata.
+        /// </summary>
+        internal static bool OwnsAssistantEndpoint(string endpoint)
+        {
+            McpServerHost? host = _instance;
+            return host is { IsRunning: true }
+                && string.Equals(endpoint, host.Prefix, StringComparison.Ordinal);
+        }
+
+        /// <summary>
         /// Gets the singleton MCP server instance.
         /// </summary>
         public static McpServerHost Instance

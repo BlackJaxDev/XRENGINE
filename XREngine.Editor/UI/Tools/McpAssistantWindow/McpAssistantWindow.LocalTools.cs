@@ -22,6 +22,8 @@ public sealed partial class McpAssistantWindow
 {
     private async Task<ToolCallResult> ExecuteMcpToolCallAsync(string toolName, string argumentsJson, CancellationToken ct)
     {
+        if (!CanInvokeAssistantTool(toolName))
+            return new ToolCallResult("[MCP Error] This request is read only. Select Edit and send a new request to make changes.");
         LogAiTrace(
             $"""
 [MCP Assistant Tool Call Request]
@@ -66,7 +68,8 @@ resultEnd
 
         ToolCallResult FinalizeToolResult(string resultText, string? imagePath = null)
         {
-            TryAutoFocusCameraForToolCall(toolName, normalizedArgumentsJson, resultText);
+            if (!IsReadOnlyRequest)
+                TryAutoFocusCameraForToolCall(toolName, normalizedArgumentsJson, resultText);
 
             // If the result references an image file, encode it for multimodal feedback.
             string? resolvedImagePath = imagePath;
@@ -88,6 +91,8 @@ resultEnd
         }
 
         string url = _mcpServerUrl.Trim();
+        if (!McpServerHost.OwnsAssistantEndpoint(url))
+            return new ToolCallResult("[MCP Error] Assistant tools require this editor's active MCP server.");
 
         JsonNode? argsNode;
         try
@@ -171,6 +176,8 @@ bodyEnd
 
             if (root.TryGetProperty("result", out JsonElement resultEl))
             {
+                bool resultIsError = resultEl.TryGetProperty("isError", out JsonElement isError)
+                    && isError.ValueKind == JsonValueKind.True;
                 // Try to extract text from content array: { "content": [ { "type": "text", "text": "..." } ] }
                 var sb = new StringBuilder();
                 string? dataImagePath = null;
@@ -202,7 +209,8 @@ bodyEnd
 
                 if (sb.Length > 0)
                 {
-                    ToolCallResult finalResult = FinalizeToolResult(sb.ToString(), dataImagePath);
+                    ToolCallResult finalResult = FinalizeToolResult(
+                        resultIsError ? "[MCP Error] " + sb : sb.ToString(), dataImagePath);
                     LogAiTrace(
                         $"""
 [MCP Assistant Tool Call Final Result]
@@ -218,7 +226,8 @@ resultEnd
                 }
 
                 // Fallback: serialize the entire result
-                ToolCallResult fallbackResult = FinalizeToolResult(resultEl.GetRawText(), dataImagePath);
+                ToolCallResult fallbackResult = FinalizeToolResult(
+                    (resultIsError ? "[MCP Error] " : string.Empty) + resultEl.GetRawText(), dataImagePath);
                 LogAiTrace(
                     $"""
 [MCP Assistant Tool Call Final Result]

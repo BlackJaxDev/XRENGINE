@@ -15,6 +15,7 @@ internal sealed class BrokerRunRecord
     private AgentRunStatus _status = AgentRunStatus.Queued;
     private AgentTokenUsage _usage = new();
     private AgentRunResult? _result;
+    private AgentRuntimeInfo? _runtimeInfo;
     private string _actualModel = string.Empty;
     private int _retryCount;
     private DateTimeOffset _updatedUtc;
@@ -145,6 +146,7 @@ internal sealed class BrokerRunRecord
         lock (_sync)
         {
             _result = result;
+            _runtimeInfo = result.RuntimeInfo;
             _status = result.Status;
             _progressMessage = result.Status.ToString();
             if (!string.IsNullOrWhiteSpace(result.ActualModel))
@@ -181,6 +183,15 @@ internal sealed class BrokerRunRecord
                     (long)(observedUtc - CreatedUtc).TotalMilliseconds),
                 ProgressMessage = _progressMessage,
                 RequestedModel = Request.RequestedModel,
+                ExecutionMode = Request.ExecutionMode,
+                RuntimeInfo = _runtimeInfo ?? (Request.ExecutionMode != AgentExecutionMode.Api
+                    ? new AgentRuntimeInfo
+                    {
+                        Name = Request.ExecutionMode.ToString(),
+                        AuthenticationMode = "unverified",
+                        UnsupportedControls = ["model turns", "native retries", "output tokens"],
+                    }
+                    : null),
                 ActualModel = _actualModel,
                 RequestedReasoningEffort = Request.ReasoningEffort,
                 RequestedTextVerbosity = Request.TextVerbosity,
@@ -194,6 +205,10 @@ internal sealed class BrokerRunRecord
                 Usage = _usage,
                 ToolEvidence = _toolEvidence.ToArray(),
                 RetryCount = _retryCount,
+                TurnCountReported = _result?.TurnCountReported
+                    ?? Request.ExecutionMode == AgentExecutionMode.Api,
+                RetryCountReported = _result?.RetryCountReported
+                    ?? Request.ExecutionMode == AgentExecutionMode.Api,
                 ProviderAttempts = _providerAttempts.ToArray(),
                 Result = _result,
                 Swarm = _swarm,

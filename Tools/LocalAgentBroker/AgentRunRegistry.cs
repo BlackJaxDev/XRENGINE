@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using XREngine.AgentOrchestration;
+using XREngine.AgentRuntimes;
 
 namespace XREngine.LocalAgentBroker;
 
@@ -17,6 +18,11 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
     private readonly BrokerConfiguration _configuration;
     private readonly HttpClient _httpClient;
     private readonly AgentOrchestrator _orchestrator;
+    private readonly CodexRunExecutor _codexExecutor;
+    private readonly GeminiRunExecutor _geminiExecutor;
+    private readonly CopilotRunExecutor _copilotExecutor;
+    private readonly ClaudeRunExecutor _claudeExecutor;
+    private readonly AntigravityRunExecutor _antigravityExecutor;
     private readonly EditorSessionResolver _sessionResolver;
     private readonly RepositoryPathPolicy _repositoryPathPolicy;
     private readonly RepositoryContextSnapshotter _contextSnapshotter;
@@ -36,6 +42,14 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
         _httpClient = httpClient;
         _orchestrator = new AgentOrchestrator(
             new BrokerModelClient(httpClient, configuration));
+        _codexExecutor = new CodexRunExecutor(new CodexRuntimeOptions
+        {
+            ExecutablePath = configuration.CodexExecutablePath,
+        });
+        _geminiExecutor = new GeminiRunExecutor(new LocalCliRuntimeOptions { ExecutablePath = configuration.GeminiExecutablePath });
+        _copilotExecutor = new CopilotRunExecutor(new LocalCliRuntimeOptions { ExecutablePath = configuration.CopilotExecutablePath });
+        _claudeExecutor = new ClaudeRunExecutor(new LocalCliRuntimeOptions { ExecutablePath = configuration.ClaudeExecutablePath });
+        _antigravityExecutor = new AntigravityRunExecutor(new LocalCliRuntimeOptions { ExecutablePath = configuration.AntigravityExecutablePath });
         _sessionResolver = new EditorSessionResolver(configuration.RepositoryRoot);
         _repositoryPathPolicy = new RepositoryPathPolicy(configuration.RepositoryRoot);
         _contextSnapshotter = new RepositoryContextSnapshotter(_repositoryPathPolicy);
@@ -51,16 +65,20 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
         IReadOnlyList<string> errors = AgentRequestValidator.Validate(request);
         if (errors.Count > 0)
             throw new ArgumentException(string.Join("; ", errors));
-        if (!AgentModelCatalog.IsApproved(request.RequestedModel))
+        if (request.ExecutionMode == AgentExecutionMode.Api
+            && !AgentModelCatalog.IsApproved(request.RequestedModel))
         {
             throw new ArgumentException(
                 $"requested_model must be exactly one of: {string.Join(", ", AgentModelCatalog.Models)}");
         }
-        if (!AgentModelCatalog.SupportsResponseControls(request.RequestedModel))
+        if (request.ExecutionMode == AgentExecutionMode.Api
+            && !AgentModelCatalog.SupportsResponseControls(request.RequestedModel))
             throw new ArgumentException("The exact requested_model does not support broker response controls.");
-        if (!AgentModelCatalog.SupportsReasoningEffort(request.RequestedModel, request.ReasoningEffort))
+        if (request.ExecutionMode == AgentExecutionMode.Api
+            && !AgentModelCatalog.SupportsReasoningEffort(request.RequestedModel, request.ReasoningEffort))
             throw new ArgumentException("reasoning_effort is unsupported by the exact requested_model.");
-        bool isAnthropic = AgentModelCatalog.IsAnthropic(request.RequestedModel);
+        bool isAnthropic = request.ExecutionMode == AgentExecutionMode.Api
+            && AgentModelCatalog.IsAnthropic(request.RequestedModel);
         if (isAnthropic && request.UseBackgroundMode)
             throw new ArgumentException("Claude runs do not support use_background_mode.");
         if (isAnthropic && request.HostedTools.Count > 0)
@@ -68,14 +86,17 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
         if (isAnthropic && request.RequireToolUse && request.RequestedModel != AgentModelCatalog.ClaudeHaiku55)
             throw new ArgumentException("require_tool_use is supported only by Claude Haiku 5.5 among the Claude models.");
         SwarmRequestValidator.Validate(request);
-        string apiKey = isAnthropic ? _configuration.ReadAnthropicApiKey() : _configuration.ReadApiKey();
-        if (string.IsNullOrWhiteSpace(apiKey))
+        if (request.ExecutionMode == AgentExecutionMode.Api)
         {
-            string variable = isAnthropic
-                ? _configuration.AnthropicApiKeyEnvironmentVariable
-                : _configuration.ApiKeyEnvironmentVariable;
-            throw new InvalidOperationException(
-                $"Environment variable '{variable}' is not set.");
+            string apiKey = isAnthropic ? _configuration.ReadAnthropicApiKey() : _configuration.ReadApiKey();
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                string variable = isAnthropic
+                    ? _configuration.AnthropicApiKeyEnvironmentVariable
+                    : _configuration.ApiKeyEnvironmentVariable;
+                throw new InvalidOperationException(
+                    $"Environment variable '{variable}' is not set.");
+            }
         }
 
         IReadOnlyList<AgentContextFileSnapshot> contextSnapshots;
@@ -148,6 +169,8 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
                 ElapsedMilliseconds = snapshot.ElapsedMilliseconds,
                 ProgressMessage = snapshot.ProgressMessage,
                 RequestedModel = snapshot.RequestedModel,
+                ExecutionMode = snapshot.ExecutionMode,
+                RuntimeInfo = snapshot.RuntimeInfo,
                 ActualModel = snapshot.ActualModel,
                 RequestedReasoningEffort = snapshot.RequestedReasoningEffort,
                 RequestedTextVerbosity = snapshot.RequestedTextVerbosity,
@@ -159,6 +182,8 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
                 UseBackgroundMode = snapshot.UseBackgroundMode,
                 AttemptCount = snapshot.ProviderAttempts.Count,
                 RetryCount = snapshot.RetryCount,
+                TurnCountReported = snapshot.TurnCountReported,
+                RetryCountReported = snapshot.RetryCountReported,
                 SwarmEnabled = snapshot.SwarmOptions is not null,
             })
             .ToArray();
@@ -270,7 +295,7 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
         BrokerRunRecord record,
         IReadOnlyList<string> repositoryRoots,
         CancellationToken cancellationToken)
-        => _orchestrator.RunAsync(
+        => SelectExecutor(record.Request).RunAsync(
             record.RunId,
             record.Request,
             CreateRepositoryProvider(record.Request, repositoryRoots)
@@ -301,7 +326,7 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
             ? editorProvider
             : new CompositeAgentToolProvider(repositoryProvider, editorProvider);
 
-        return await _orchestrator.RunAsync(
+        return await SelectExecutor(record.Request).RunAsync(
             record.RunId,
             record.Request,
             provider,
@@ -320,6 +345,18 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
                 request.Budget.MaxToolCalls)
             : null;
 
+    private IAgentRunExecutor SelectExecutor(AgentRunRequest request)
+        => request.ExecutionMode switch
+        {
+            AgentExecutionMode.Api => _orchestrator,
+            AgentExecutionMode.CodexAppServer => _codexExecutor,
+            AgentExecutionMode.GeminiCli => _geminiExecutor,
+            AgentExecutionMode.CopilotCli => _copilotExecutor,
+            AgentExecutionMode.ClaudeCli => _claudeExecutor,
+            AgentExecutionMode.AntigravityCli => _antigravityExecutor,
+            _ => throw new ArgumentException("The selected runtime is not supported."),
+        };
+
     private static AgentRunRequest FreezeRequest(
         AgentRunRequest request,
         IReadOnlyList<AgentContextFileSnapshot> contextSnapshots)
@@ -329,6 +366,7 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
             : BrokerSafetyInstructions + Environment.NewLine + request.SystemInstructions.Trim();
         return request with
         {
+            ExecutionMode = request.ExecutionMode,
             SuccessCriteria = request.SuccessCriteria.ToArray(),
             Constraints = request.Constraints.ToArray(),
             EvidencePacket = request.EvidencePacket with
@@ -423,6 +461,8 @@ internal sealed partial class AgentRunRegistry : IAsyncDisposable
             ToolEvidence = snapshot.ToolEvidence,
             ProviderAttempts = snapshot.ProviderAttempts,
             RetryCount = snapshot.RetryCount,
+            TurnCountReported = record.Request.ExecutionMode == AgentExecutionMode.Api,
+            RetryCountReported = record.Request.ExecutionMode == AgentExecutionMode.Api,
             ElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
             Failure = new AgentFailure
             {

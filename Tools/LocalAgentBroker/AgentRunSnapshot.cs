@@ -35,6 +35,10 @@ public sealed record AgentRunSnapshot
 
     public string RequestedModel { get; init; } = string.Empty;
 
+    public AgentExecutionMode ExecutionMode { get; init; }
+
+    public AgentRuntimeInfo? RuntimeInfo { get; init; }
+
     public string ActualModel { get; init; } = string.Empty;
 
     /// <summary>Requested provider controls retained with the run for auditability.</summary>
@@ -63,6 +67,10 @@ public sealed record AgentRunSnapshot
     public IReadOnlyList<AgentToolEvidence> ToolEvidence { get; init; } = [];
 
     public int RetryCount { get; init; }
+
+    public bool TurnCountReported { get; init; } = true;
+
+    public bool RetryCountReported { get; init; } = true;
 
     public IReadOnlyList<AgentProviderAttemptDiagnostic> ProviderAttempts { get; init; } = [];
 

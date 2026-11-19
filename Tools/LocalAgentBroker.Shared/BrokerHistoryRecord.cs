@@ -30,6 +30,10 @@ public sealed record BrokerHistoryRecord
 
     public string RequestedModel { get; init; } = string.Empty;
 
+    public AgentExecutionMode ExecutionMode { get; init; }
+
+    public AgentRuntimeInfo? RuntimeInfo { get; init; }
+
     public string ActualModel { get; init; } = string.Empty;
 
     public string? EditorSession { get; init; }
@@ -50,6 +54,10 @@ public sealed record BrokerHistoryRecord
     public int ToolCallCount { get; init; }
 
     public int RetryCount { get; init; }
+
+    public bool TurnCountReported { get; init; } = true;
+
+    public bool RetryCountReported { get; init; } = true;
 
     /// <summary>Hierarchy and node review state, retained with the root prompt.</summary>
     public AgentSwarmSnapshot? Swarm { get; init; }

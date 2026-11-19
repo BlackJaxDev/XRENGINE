@@ -5,6 +5,7 @@ namespace XREngine.AgentOrchestration;
 /// </summary>
 public sealed record AgentRunBudget
 {
+    /// <summary>API model-turn cap. Local runtimes require zero when this control is unavailable.</summary>
     public int MaxTurns { get; init; } = 3;
 
     public int MaxToolCalls { get; init; } = 8;
@@ -39,6 +40,7 @@ public sealed record AgentRunBudget
     /// </summary>
     public int MaxElapsedSeconds { get; init; }
 
+    /// <summary>API retry cap. Local runtimes require zero and do not perform host retries.</summary>
     public int MaxRetries { get; init; } = 1;
 
     public int MaxConcurrency { get; init; } = 1;

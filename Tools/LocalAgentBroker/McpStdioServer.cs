@@ -155,21 +155,42 @@ internal sealed class McpStdioServer(
     {
         AgentRunRequest request = arguments.Deserialize<AgentRunRequest>(s_jsonOptions)
             ?? throw new ArgumentException("start_agent_run arguments are invalid.");
+        if (request.ExecutionMode != AgentExecutionMode.Api
+            && request.Budget is not null)
+        {
+            bool hasBudget = TryGetPropertyIgnoreCase(arguments, "budget", out JsonElement budget);
+            if (hasBudget && budget.ValueKind == JsonValueKind.Null)
+                throw new ArgumentException("budget cannot be null.");
+            request = request with
+            {
+                Budget = request.Budget with
+                {
+                    MaxTurns = hasBudget && TryGetPropertyIgnoreCase(budget, "max_turns", out _)
+                        ? request.Budget.MaxTurns : 0,
+                    MaxRetries = hasBudget && TryGetPropertyIgnoreCase(budget, "max_retries", out _)
+                        ? request.Budget.MaxRetries : 0,
+                },
+            };
+        }
         string runId = registry.Start(request);
+        AgentRunBudget acceptedBudget = request.Budget
+            ?? throw new InvalidOperationException("An accepted run has no budget.");
         AgentRunSnapshot snapshot = registry.Get(runId);
         return new
         {
             runId,
             status = snapshot.Status,
             requestedModel = snapshot.RequestedModel,
-            deprecatedModel = AgentModelCatalog.IsDeprecated(snapshot.RequestedModel),
+            executionMode = snapshot.ExecutionMode,
+            deprecatedModel = snapshot.ExecutionMode == AgentExecutionMode.Api
+                && AgentModelCatalog.IsDeprecated(snapshot.RequestedModel),
             actualModel = string.Empty,
             requestedReasoningEffort = snapshot.RequestedReasoningEffort,
             requestedTextVerbosity = snapshot.RequestedTextVerbosity,
             maxOutputTokens = snapshot.MaxOutputTokens,
-            maxElapsedSeconds = request.Budget.MaxElapsedSeconds,
+            maxElapsedSeconds = acceptedBudget.MaxElapsedSeconds,
             outputTokenLimitEnabled = snapshot.MaxOutputTokens > 0,
-            elapsedTimeLimitEnabled = request.Budget.MaxElapsedSeconds > 0,
+            elapsedTimeLimitEnabled = acceptedBudget.MaxElapsedSeconds > 0,
             contextFileCount = snapshot.ContextFileCount,
             contextRawBytes = snapshot.ContextRawBytes,
             repositoryAccessEnabled = snapshot.RepositoryAccessEnabled,
@@ -217,7 +238,7 @@ internal sealed class McpStdioServer(
             ["serverInfo"] = new JsonObject
             {
                 ["name"] = "XREngine.LocalAgentBroker",
-                ["version"] = "0.11.2",
+                ["version"] = "0.13.0",
             },
             ["capabilities"] = new JsonObject
             {
@@ -308,6 +329,27 @@ internal sealed class McpStdioServer(
         }
 
         return value.GetString()!;
+    }
+
+    private static bool TryGetPropertyIgnoreCase(
+        JsonElement objectElement,
+        string propertyName,
+        out JsonElement value)
+    {
+        value = default;
+        if (objectElement.ValueKind != JsonValueKind.Object)
+            return false;
+
+        bool found = false;
+        foreach (JsonProperty property in objectElement.EnumerateObject())
+        {
+            if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                continue;
+            value = property.Value;
+            found = true;
+        }
+
+        return found;
     }
 
     private static IReadOnlyList<string> ReadStringArray(JsonElement arguments, string propertyName)

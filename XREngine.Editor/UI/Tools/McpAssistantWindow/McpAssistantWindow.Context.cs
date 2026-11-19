@@ -132,13 +132,15 @@ public sealed partial class McpAssistantWindow
         var sb = new StringBuilder();
 
         sb.AppendLine("Protocol requirements (must follow exactly):");
-        sb.AppendLine("- Complete ALL parts of the user's request before finishing. Do NOT stop at an intermediate step.");
-        sb.AppendLine("- If you have a multi-step plan, execute every step — do not list remaining steps and stop.");
-        sb.AppendLine("- If a tool call fails, retry or use an alternative approach. Do not abandon the task.");
-        sb.AppendLine("- Do NOT claim missing/denied editor or tool access unless a tool call in this conversation explicitly returned an access/permission error.");
-        sb.AppendLine("- During tool use, include brief progress text; do not output only raw tool activity.");
+        sb.AppendLine("- Complete every part of the current request. Report remaining limits clearly.");
+        sb.AppendLine("- Treat a permission denial as final. Do not retry a denied tool through another route.");
+        sb.AppendLine("- Distinguish inspected source, current editor state, and inferences. Cite source locations when available.");
+        sb.AppendLine("- During material tool work, give brief progress text that states its purpose.");
         sb.AppendLine("- Avoid repeated read-only probes that return the same data. If no new information appears, stop probing and complete with best-effort results plus explicit blockers.");
-        sb.AppendLine($"- When ALL work is done: output 'Completed Work' summary, 'Suggested Follow-ups' (optional), then {AssistantDoneMarker} on the very last line.");
+        if (IsReadOnlyRequest)
+            sb.AppendLine($"- For explanation or diagnosis, answer the question directly in plain language. Explain the observed effect and source evidence. Do not use an execution plan or a mandatory 'Completed Work' heading. Finish with {AssistantDoneMarker} on the final line.");
+        else
+            sb.AppendLine($"- For editing, state the result, verification, and limits in plain language. Do not claim a change is verified from tool success alone. Finish with {AssistantDoneMarker} on the final line when all work is done.");
         sb.AppendLine($"- When you have more steps remaining but your current response is long or you've hit a tool-call limit: output a brief progress summary of what was done and what remains, then {AssistantContinueMarker} on the last line. This triggers an automatic re-prompt so you can continue.");
         sb.AppendLine($"- If any work remains, do NOT output the done marker — either keep working or emit the continue marker.");
         sb.AppendLine($"- Never emit both {AssistantDoneMarker} and {AssistantContinueMarker} in the same response.");
@@ -152,7 +154,7 @@ public sealed partial class McpAssistantWindow
         if (contextWindowTokens > 0)
             sb.AppendLine($"- Selected model context window: {contextWindowTokens:n0} tokens.");
 
-        if (autoRepromptIndex > 0)
+        if (autoRepromptIndex > 0 && !IsReadOnlyRequest)
         {
             sb.AppendLine($"- This is automatic continuation #{autoRepromptIndex}. You stopped before the work was fully complete.");
             sb.AppendLine("- Pick up exactly where you left off and finish ALL remaining work from the original request.");
@@ -166,7 +168,7 @@ public sealed partial class McpAssistantWindow
         sb.AppendLine("Current request:");
         sb.AppendLine(userPrompt);
 
-        if (autoRepromptIndex > 0)
+        if (autoRepromptIndex > 0 && !IsReadOnlyRequest)
             sb.AppendLine("IMPORTANT: Complete all remaining work now. Do not stop until every part of the original request is fulfilled.");
 
         return sb.ToString();
@@ -206,7 +208,7 @@ public sealed partial class McpAssistantWindow
                 "MCP USAGE LEDGER:"
             };
 
-            for (int i = Math.Max(0, _mcpUsageHistory.Count - 120); i < _mcpUsageHistory.Count; i++)
+            for (int i = Math.Max(0, _mcpUsageHistory.Count - 24); i < _mcpUsageHistory.Count; i++)
             {
                 McpUsageEntry u = _mcpUsageHistory[i];
                 string line = $"- {u.Timestamp:HH:mm:ss} provider={u.Provider} attach={u.AttachRequested} requireToolUse={u.RequireToolUse} result={u.Result} mcpCalls={u.McpEventCount} toolCalls={u.ToolEventCount}";
@@ -353,7 +355,8 @@ public sealed partial class McpAssistantWindow
 
         for (int i = startIndex; i < endExclusive; i++)
         {
-            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage: null, messageCharLimit: 280, toolSummaryCharLimit: 320, includeToolCalls: false);
+            // Keep tool facts in the separate reference block instead of truncating them into fallback prose.
+            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage: null, messageCharLimit: 280, toolSummaryCharLimit: 0, includeToolCalls: false);
             if (!string.IsNullOrWhiteSpace(line))
                 lines.Add(Truncate(line, 420));
         }
@@ -389,11 +392,11 @@ public sealed partial class McpAssistantWindow
         if (!string.IsNullOrWhiteSpace(_conversationSummary))
             sb.AppendLine($"Earlier summary: {Truncate(_conversationSummary.Trim().Replace('\n', ' '), Math.Min(maxChars / 3, 8_000))}");
 
-        sb.AppendLine("Transcript to summarize (tool responses are stored separately and must stay out of the summary):");
+        sb.AppendLine("Transcript to summarize. Tool records state actual outcomes and evidence; do not turn their limits into verified claims:");
 
         for (int i = startIndex; i < endExclusive; i++)
         {
-            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage: null, messageCharLimit: 12_000, toolSummaryCharLimit: 0, includeToolCalls: false);
+            string? line = BuildConversationMessageLine(_history[i], activeAssistantMessage: null, messageCharLimit: 8_000, toolSummaryCharLimit: 1_500, includeToolCalls: true);
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
@@ -456,19 +459,23 @@ public sealed partial class McpAssistantWindow
         if (string.IsNullOrWhiteSpace(result))
             result = toolCall.ResultSummary;
 
-        if (string.IsNullOrWhiteSpace(result) && string.IsNullOrWhiteSpace(toolCall.ResultFilePath))
-            return null;
-
         var sb = new StringBuilder();
-        sb.Append($"- {message.Timestamp:HH:mm:ss} {message.Role.ToUpperInvariant()} tool {toolCall.ToolName}");
+        sb.Append($"- {message.Timestamp:HH:mm:ss} tool={toolCall.ToolName}");
+        sb.Append(toolCall.IsError ? " state=failed" : toolCall.IsComplete ? " state=finished" : " state=unfinished");
+        if (!string.IsNullOrWhiteSpace(toolCall.TargetLabel))
+            sb.Append($" target={toolCall.TargetLabel}");
         if (!string.IsNullOrWhiteSpace(toolCall.ArgsSummary))
-            sb.Append($"({toolCall.ArgsSummary})");
+            sb.Append($" input={toolCall.ArgsSummary}");
+        if (!string.IsNullOrWhiteSpace(toolCall.SourcePath))
+            sb.Append(BuildSourceContextReference(toolCall));
+        if (!string.IsNullOrWhiteSpace(toolCall.OutcomeSummary))
+            sb.Append($" outcome={toolCall.OutcomeSummary}");
         if (!string.IsNullOrWhiteSpace(result))
-            sb.Append($": {result}");
+            sb.Append($" result={result}");
+        if (!string.IsNullOrWhiteSpace(toolCall.VerificationSummary))
+            sb.Append(" verification=not-linked");
         if (!string.IsNullOrWhiteSpace(toolCall.ResultFilePath))
             sb.Append($" [file:{toolCall.ResultFilePath}]");
-        if (toolCall.IsError)
-            sb.Append(" [ERROR]");
 
         return sb.ToString();
     }
@@ -491,6 +498,13 @@ public sealed partial class McpAssistantWindow
         else
             line += "(tool-only response)";
 
+        if (string.Equals(msg.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+        {
+            line += $" [state:{msg.Status}]";
+            if (!string.IsNullOrWhiteSpace(msg.StatusDetail))
+                line += $" [detail:{Truncate(msg.StatusDetail.Replace('\n', ' '), 160)}]";
+        }
+
         if (includeToolCalls && toolCalls.Length > 0)
         {
             var toolParts = new List<string>(toolCalls.Length);
@@ -499,6 +513,8 @@ public sealed partial class McpAssistantWindow
                 var part = tc.ToolName;
                 if (!string.IsNullOrEmpty(tc.ArgsSummary))
                     part += $"({tc.ArgsSummary})";
+                if (!string.IsNullOrWhiteSpace(tc.SourcePath))
+                    part += BuildSourceContextReference(tc);
                 if (!string.IsNullOrEmpty(tc.ContextResultSummary))
                     part += $" -> {tc.ContextResultSummary}";
                 else if (!string.IsNullOrEmpty(tc.ResultSummary))
@@ -507,6 +523,8 @@ public sealed partial class McpAssistantWindow
                     part += $" [file:{tc.ResultFilePath}]";
                 if (tc.IsError)
                     part += " [ERROR]";
+                if (!string.IsNullOrWhiteSpace(tc.VerificationSummary))
+                    part += " [verification not linked]";
                 toolParts.Add(part);
             }
 
@@ -516,6 +534,22 @@ public sealed partial class McpAssistantWindow
         }
 
         return line;
+    }
+
+    /// <summary>Keeps source identity ahead of result text that the context budget can shorten.</summary>
+    private static string BuildSourceContextReference(ToolCallEntry call)
+        => $" [source:{call.SourcePath}:{call.SourceStartLine} sha256:{call.SourceHash} revision:{call.SourceRevision ?? "unknown"} binaryMatch:{call.SourceBinaryMatch ?? "unknown"}]";
+
+    /// <summary>Returns one bounded turn with actual tool outcomes for native replay.</summary>
+    private static string? BuildBoundedAssistantContextLine(ChatMessage message, int maxChars)
+    {
+        string? line = BuildConversationMessageLine(
+            message,
+            activeAssistantMessage: null,
+            messageCharLimit: Math.Max(256, maxChars / 2),
+            toolSummaryCharLimit: Math.Max(256, maxChars / 2),
+            includeToolCalls: true);
+        return line is null ? null : Truncate(line, maxChars);
     }
 
     private async Task<string?> GenerateConversationSummaryAsync(ProviderType provider, string transcript, int maxChars, CancellationToken ct)
@@ -548,10 +582,10 @@ public sealed partial class McpAssistantWindow
 Summarize the earlier conversation turns for continuation context.
 
 Requirements:
-- Summarize only the user's prompts, constraints, corrections, and questions.
-- Summarize only the assistant's responses, completed work, conclusions, promises, and remaining work.
-- Do not summarize tool calls or tool results. They are preserved separately.
-- Keep important file names, IDs, settings, and decisions when they matter to future work.
+- Retain the user's prompts, constraints, corrections, and questions.
+- Retain reported effects, failed actions, unfinished work, and verification limits from tool records.
+- Keep source locations, revisions, IDs, inspected settings, and decisions when they matter to future work.
+- Distinguish verified facts from model inferences and unverified tool success.
 - Write concise continuation notes, not prose narration.
 - Keep the final summary under {safeMaxChars} characters.
 

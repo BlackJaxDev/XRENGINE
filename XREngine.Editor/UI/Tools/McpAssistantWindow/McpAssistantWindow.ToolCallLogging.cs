@@ -194,22 +194,33 @@ public sealed partial class McpAssistantWindow
 
         // Extract ID mappings from JSON data
         var idParts = new List<string>();
+        var sourceParts = new List<string>();
         try
         {
             using var doc = JsonDocument.Parse(jsonPart);
             ExtractIdMappings(doc.RootElement, idParts, depth: 0);
+            ExtractSourceReferences(doc.RootElement, sourceParts, depth: 0);
+            string? sourceKind = ReadSourceField(doc.RootElement, "sourceKind");
+            string? revision = ReadSourceField(doc.RootElement, "revision");
+            string? binaryMatch = ReadSourceField(doc.RootElement, "binaryMatch");
+            if (!string.IsNullOrWhiteSpace(sourceKind))
+                sourceParts.Add($"kind={Truncate(sourceKind, 24)}");
+            if (!string.IsNullOrWhiteSpace(revision))
+                sourceParts.Add($"revision={Truncate(revision, 24)}");
+            if (!string.IsNullOrWhiteSpace(binaryMatch))
+                sourceParts.Add($"binaryMatch={Truncate(binaryMatch, 24)}");
         }
         catch { }
 
-        if (idParts.Count == 0)
-            return Truncate(message, 200);
+        if (idParts.Count == 0 && sourceParts.Count == 0)
+            return Truncate(string.IsNullOrWhiteSpace(message) ? jsonPart : message, 240);
 
-        // Build: "Found 1 nodes matching 'Floor'. IDs: Floor=<guid>"
-        string idSection = string.Join(", ", idParts);
-        if (string.IsNullOrEmpty(message))
-            return Truncate($"IDs: {idSection}", 500);
-
-        return Truncate($"{message} IDs: {idSection}", 500);
+        var summary = new StringBuilder(Truncate(message, 200));
+        if (idParts.Count > 0)
+            summary.Append(" IDs: ").Append(string.Join(", ", idParts));
+        if (sourceParts.Count > 0)
+            summary.Append(" Locations: ").Append(string.Join(", ", sourceParts));
+        return Truncate(summary.ToString().Trim(), 1_000);
     }
 
     /// <summary>
@@ -260,6 +271,61 @@ public sealed partial class McpAssistantWindow
                 break;
             }
         }
+    }
+
+    /// <summary>Retains bounded source locations and revisions from structured tool output.</summary>
+    private static void ExtractSourceReferences(JsonElement element, List<string> parts, int depth)
+    {
+        if (depth > 4 || parts.Count >= 6)
+            return;
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (JsonElement item in element.EnumerateArray())
+                ExtractSourceReferences(item, parts, depth + 1);
+            return;
+        }
+        if (element.ValueKind != JsonValueKind.Object)
+            return;
+
+        string? path = ReadSourceField(element, "source_path")
+            ?? ReadSourceField(element, "file")
+            ?? ReadSourceField(element, "path");
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            string? line = ReadSourceField(element, "line")
+                ?? ReadSourceField(element, "startLine")
+                ?? ReadSourceField(element, "start_line");
+            string? revision = ReadSourceField(element, "version")
+                ?? ReadSourceField(element, "sha256")
+                ?? ReadSourceField(element, "hash");
+            var reference = new StringBuilder(Truncate(path, 140));
+            if (!string.IsNullOrWhiteSpace(line))
+                reference.Append(':').Append(Truncate(line, 12));
+            if (!string.IsNullOrWhiteSpace(revision))
+                reference.Append('@').Append(Truncate(revision, 16));
+            parts.Add(reference.ToString());
+        }
+
+        foreach (JsonProperty property in element.EnumerateObject())
+        {
+            if (property.Value.ValueKind is JsonValueKind.Array or JsonValueKind.Object)
+                ExtractSourceReferences(property.Value, parts, depth + 1);
+        }
+    }
+
+    private static string? ReadSourceField(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+            return null;
+        if (!element.TryGetProperty(name, out JsonElement value))
+            return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.ToString(),
+            _ => null
+        };
     }
 
     private static string StripInlineJsonSuffix(string text)
