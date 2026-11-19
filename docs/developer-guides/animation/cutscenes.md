@@ -214,6 +214,11 @@ Save the scene after you end the preview. The scene stores the director and its 
 | **Loop** | Keeps preview playback inside the start and end values. |
 | **Bake Manifest** | Bakes the residency manifest in edit mode, with no preview open, with the **T0 Budget (MiB)** value. The result message gives the T0 total and the largest assets. |
 | **Wait At Cuts** | Sets the playback wait of the open preview or director. |
+| **Add FOV Track** | Adds a camera property track for the selected camera, with one field of view key at the current value. |
+| **Add Property Track...** | Lists the components of the selected node that have public float properties. A pick adds a property track with one key at the current value. |
+| **Add Key At Playhead** on a field of view or property clip | Reads the current value of the bound node (the camera field of view, or the component member) and adds a key at the playhead. Set the value in the inspector first. |
+| **Keys** | Sets the interpolation of all curves of the selected clip: `Linear` or `Step`. |
+| **Record...** | Starts `--record-cutscene` in a separate editor process on the saved world and the director. Save the asset and the world first. The video goes to `Recordings/<asset>-<time>/` next to the game assets folder. See [Gaussian Splat Cutscene Capture](../rendering/gaussian-splat-cutscene-capture.md#record-a-cutscene). |
 | `Ctrl` + mouse wheel | Changes the zoom of the time axis. |
 
 Move, trim, key, track, and duration edits use `Undo.RecordStructuralChange`, so Ctrl+Z reverts them. The asset is read-only in play mode.

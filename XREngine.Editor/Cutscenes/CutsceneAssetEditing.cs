@@ -209,6 +209,126 @@ public static class CutsceneAssetEditing
         return span with { Duration = duration < minimumDuration ? minimumDuration : duration };
     }
 
+    /// <summary>
+    /// Adds a property track that writes one float member of a component on a node. The track has one clip that covers
+    /// the whole cutscene, with one key at the current member value, so the value does not change until an author adds keys.
+    /// </summary>
+    /// <param name="asset">The asset to change.</param>
+    /// <param name="node">The node that holds the component.</param>
+    /// <param name="componentType">The short type name of the component, for example <c>UITextComponent</c>.</param>
+    /// <param name="memberPath">The member path on the component, for example <c>Opacity</c>.</param>
+    /// <param name="currentValue">The current value of the member. It becomes the first key.</param>
+    /// <returns>The new track.</returns>
+    public static PropertyTrack AddFloatPropertyTrack(CutsceneAsset asset, SceneNode node, string componentType, string memberPath, float currentValue)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(componentType);
+        ArgumentException.ThrowIfNullOrWhiteSpace(memberPath);
+        int slot = GetOrAddBinding(asset, node);
+        PropertyTrackClip clip = new() { Start = CutsceneTime.Zero, Duration = EnsureDurationForNewClip(asset) };
+        SetFloatKey(clip.FloatCurve, CutsceneTime.Zero, currentValue);
+
+        PropertyTrack track = new() { Name = $"{node.Name} {memberPath}", BindingSlot = slot, ComponentType = componentType, MemberPath = memberPath };
+        track.Clips.Add(clip);
+        asset.Tracks.Add(track);
+        return track;
+    }
+
+    /// <summary>
+    /// Adds a camera property track for the camera of a node. The track has one clip that covers the whole cutscene, with
+    /// one field of view key at the current value.
+    /// </summary>
+    /// <param name="asset">The asset to change.</param>
+    /// <param name="node">The node that holds the camera.</param>
+    /// <param name="fieldOfViewDegrees">The current vertical field of view in degrees. It becomes the first key.</param>
+    /// <returns>The new track.</returns>
+    public static CameraPropertyTrack AddFieldOfViewTrack(CutsceneAsset asset, SceneNode node, float fieldOfViewDegrees)
+    {
+        int slot = GetOrAddBinding(asset, node);
+        CameraPropertyClip clip = new() { Start = CutsceneTime.Zero, Duration = EnsureDurationForNewClip(asset) };
+        SetFloatKey(clip.FieldOfView, CutsceneTime.Zero, fieldOfViewDegrees);
+
+        CameraPropertyTrack track = new() { Name = $"{node.Name} field of view", BindingSlot = slot };
+        track.Clips.Add(clip);
+        asset.Tracks.Add(track);
+        return track;
+    }
+
+    /// <summary>Adds a key to a float curve, or replaces the key at the same time.</summary>
+    /// <param name="curve">The curve to change.</param>
+    /// <param name="localTime">The clip time of the key.</param>
+    /// <param name="value">The key value.</param>
+    public static void SetFloatKey(CutsceneFloatCurve curve, CutsceneTime localTime, float value)
+    {
+        ArgumentNullException.ThrowIfNull(curve);
+        (CutsceneTime[] times, float[] values) = InsertKey(curve.Times, curve.Values, localTime, value);
+        curve.Times = times;
+        curve.Values = values;
+    }
+
+    /// <summary>Removes the key of a float curve that is nearest a time, within a tolerance.</summary>
+    /// <param name="curve">The curve to change.</param>
+    /// <param name="localTime">The clip time.</param>
+    /// <param name="tolerance">The largest distance from the time at which a key is removed.</param>
+    /// <returns>True if a key was removed.</returns>
+    public static bool RemoveFloatKey(CutsceneFloatCurve curve, CutsceneTime localTime, CutsceneTime tolerance)
+    {
+        ArgumentNullException.ThrowIfNull(curve);
+        if (!TryRemoveKey(curve.Times, curve.Values, localTime, tolerance, out CutsceneTime[] times, out float[] values))
+            return false;
+
+        curve.Times = times;
+        curve.Values = values;
+        return true;
+    }
+
+    /// <summary>
+    /// Returns the float curve that an author keys on a clip: the field of view of a camera property clip, or the float
+    /// curve of a property clip. Other clips have none.
+    /// </summary>
+    public static CutsceneFloatCurve? GetKeyableFloatCurve(CutsceneClip clip)
+        => clip switch
+        {
+            CameraPropertyClip camera => camera.FieldOfView,
+            PropertyTrackClip property => property.FloatCurve,
+            _ => null,
+        };
+
+    /// <summary>Returns the interpolation of the first curve of a clip, or null for a clip with no curve.</summary>
+    public static ECutsceneCurveInterpolation? GetClipInterpolation(CutsceneClip clip)
+        => clip switch
+        {
+            TransformTrackClip transform => transform.Position.Interpolation,
+            CameraPropertyClip camera => camera.FieldOfView.Interpolation,
+            PropertyTrackClip property => property.FloatCurve.Interpolation,
+            _ => null,
+        };
+
+    /// <summary>Sets the interpolation of every curve of a clip. A clip with no curve does not change.</summary>
+    /// <param name="clip">The clip to change.</param>
+    /// <param name="interpolation">The new interpolation.</param>
+    /// <returns>True if the clip has curves.</returns>
+    public static bool SetClipInterpolation(CutsceneClip clip, ECutsceneCurveInterpolation interpolation)
+    {
+        switch (clip)
+        {
+            case TransformTrackClip transform:
+                transform.Position.Interpolation = interpolation;
+                transform.Rotation.Interpolation = interpolation;
+                transform.Scale.Interpolation = interpolation;
+                return true;
+            case CameraPropertyClip camera:
+                camera.FieldOfView.Interpolation = interpolation;
+                return true;
+            case PropertyTrackClip property:
+                property.FloatCurve.Interpolation = interpolation;
+                property.Vector3Curve.Interpolation = interpolation;
+                property.QuaternionCurve.Interpolation = interpolation;
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private static CutsceneTime EnsureDurationForNewClip(CutsceneAsset asset)
     {
         if (asset.Duration < MinimumNewClipLength)

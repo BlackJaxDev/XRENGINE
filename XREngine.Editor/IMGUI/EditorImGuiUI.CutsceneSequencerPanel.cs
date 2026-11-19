@@ -282,6 +282,20 @@ public static partial class EditorImGuiUI
         ImGui.EndDisabled();
 
         ImGui.SameLine();
+        ImGui.BeginDisabled(!hasCamera);
+        if (ImGui.Button("Add FOV Track") && selected is not null)
+            AddCutsceneFieldOfViewTrack(asset, selected);
+        ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        ImGui.BeginDisabled(selected is null);
+        if (ImGui.Button("Add Property Track...") && selected is not null)
+            ImGui.OpenPopup(CutscenePropertyTrackPopupId);
+        ImGui.EndDisabled();
+        if (selected is not null)
+            DrawCutscenePropertyTrackPopup(asset, selected);
+
+        ImGui.SameLine();
         bool canRemoveTrack = _cutsceneSelectedTrack >= 0 && _cutsceneSelectedTrack < asset.Tracks.Count;
         ImGui.BeginDisabled(!canRemoveTrack);
         if (ImGui.Button("Remove Track") && canRemoveTrack)
@@ -290,20 +304,52 @@ public static partial class EditorImGuiUI
 
         ImGui.SameLine();
         TransformTrackClip? keyClip = _cutsceneSelectedClip as TransformTrackClip;
+        CutsceneFloatCurve? floatCurve = _cutsceneSelectedClip is { } selectedClip ? CutsceneAssetEditing.GetKeyableFloatCurve(selectedClip) : null;
         int keySlot = canRemoveTrack ? asset.Tracks[_cutsceneSelectedTrack].BindingSlot : -1;
-        bool canAddKey = keyClip is not null && CutscenePreviewSession.GetBoundNode(keySlot) is not null;
+        bool hasKeyableClip = keyClip is not null || floatCurve is not null;
+        bool canAddKey = hasKeyableClip && CutscenePreviewSession.GetBoundNode(keySlot) is not null;
         ImGui.BeginDisabled(!canAddKey);
-        if (ImGui.Button("Add Key At Playhead") && keyClip is not null)
-            AddCutsceneKey(asset, keyClip, keySlot);
+        if (ImGui.Button("Add Key At Playhead"))
+        {
+            if (keyClip is not null)
+                AddCutsceneKey(asset, keyClip, keySlot);
+            else if (floatCurve is not null && _cutsceneSelectedClip is { } clip)
+                AddCutsceneFloatKey(asset, asset.Tracks[_cutsceneSelectedTrack], clip, floatCurve, keySlot);
+        }
         ImGui.EndDisabled();
         if (!canAddKey && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip("Start a preview and select a transform clip whose track has a live bound node. The key uses the transform of that node.");
+            ImGui.SetTooltip("Start a preview and select a transform, field of view, or float property clip whose track has a live bound node. The key uses the current value of that node.");
 
         ImGui.SameLine();
-        ImGui.BeginDisabled(keyClip is null || !CutscenePreviewSession.IsOpen);
-        if (ImGui.Button("Remove Key At Playhead") && keyClip is not null)
-            RemoveCutsceneKey(asset, keyClip);
+        ImGui.BeginDisabled(!hasKeyableClip || !CutscenePreviewSession.IsOpen);
+        if (ImGui.Button("Remove Key At Playhead"))
+        {
+            if (keyClip is not null)
+                RemoveCutsceneKey(asset, keyClip);
+            else if (floatCurve is not null && _cutsceneSelectedClip is { } clip)
+                RemoveCutsceneFloatKey(asset, clip, floatCurve);
+        }
         ImGui.EndDisabled();
+
+        if (_cutsceneSelectedClip is { } interpolationClip && CutsceneAssetEditing.GetClipInterpolation(interpolationClip) is { } interpolation)
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(90.0f);
+            int interpolationIndex = (int)interpolation;
+            if (ImGui.Combo("Keys##CutsceneInterpolation", ref interpolationIndex, CutsceneInterpolationNames, CutsceneInterpolationNames.Length))
+                SetCutsceneClipInterpolation(asset, interpolationClip, interpolation, (ECutsceneCurveInterpolation)interpolationIndex);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Record..."))
+            StartCutsceneRecording(asset);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Records the saved world and cutscene to a video in a separate process. Save the asset and the world first.");
+        if (_cutsceneRecordMessage is { } recordMessage)
+        {
+            ImGui.SameLine();
+            ImGui.TextWrapped(recordMessage);
+        }
 
         ImGui.SameLine();
         float duration = (float)asset.Duration.ToSeconds();
