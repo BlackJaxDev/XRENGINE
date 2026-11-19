@@ -67,9 +67,10 @@ public sealed class UnityShaderTranslationMaterialImportTests
         material.TransparencyMode.ShouldBe(ETransparencyMode.AlphaBlend);
         material.RenderOptions.CullMode.ShouldBe(ECullMode.None);
         material.RenderOptions.DepthTest.UpdateDepth.ShouldBeFalse();
-        material.RenderOptions.BlendModeAllDrawBuffers.Enabled.ShouldBe(ERenderParamUsage.Enabled);
-        material.RenderOptions.BlendModeAllDrawBuffers.RgbSrcFactor.ShouldBe(EBlendingFactor.SrcAlpha);
-        material.RenderOptions.BlendModeAllDrawBuffers.RgbDstFactor.ShouldBe(EBlendingFactor.OneMinusSrcAlpha);
+        BlendMode blend = material.RenderOptions.BlendModeAllDrawBuffers.ShouldNotBeNull();
+        blend.Enabled.ShouldBe(ERenderParamUsage.Enabled);
+        blend.RgbSrcFactor.ShouldBe(EBlendingFactor.SrcAlpha);
+        blend.RgbDstFactor.ShouldBe(EBlendingFactor.OneMinusSrcAlpha);
 
         // A project with no ProjectSettings is linear, so the color changes from sRGB to linear.
         AssertVector4(material, "_Color", new Vector4(0.2140411f, 0.2140411f, 0.2140411f, 0.8f));

@@ -23,7 +23,7 @@ The translator is in an early state. It is a library, a command-line tool, and a
    - It gives combined samplers the name of their texture. A texture that a shader samples with more than one sampler gets the name `<texture>__<sampler>`, and the translator reports a `UNITYSHADER0012` warning.
    - It removes sampler bindings, so that the engine binds samplers by name.
    - It changes the known light buffers to the engine storage blocks, for example `ForwardDirectionalLightsBuffer`, with `XRENGINE_FORWARD_DESCRIPTOR_SET`.
-   - It moves vertex inputs to the engine attribute locations.
+   - It moves vertex inputs to the engine attribute locations and names.
    - It gives the shader parameters of rewritten globals their original names again.
 
 ## Legacy HLSL Rules
@@ -71,15 +71,17 @@ The translated vertex stage replaces the engine vertex shader. Skinned meshes th
 
 ## Vertex Attributes
 
-| Unity semantic | Engine location |
-| --- | --- |
-| `POSITION` | 0 |
-| `NORMAL` | 1 |
-| `TANGENT` | 2 |
-| `TEXCOORD0` to `TEXCOORD3` | 3 to 6 |
-| `COLOR` | 7 |
+The mesh renderers bind each vertex buffer to the shader input with the same name. The post-processor therefore gives each vertex input the engine location and the engine buffer name.
 
-Other vertex inputs cause a `UNITYSHADER0007` error.
+| Unity semantic | Engine location | Engine input name |
+| --- | --- | --- |
+| `POSITION` | 0 | `Position` |
+| `NORMAL` | 1 | `Normal` |
+| `TANGENT` | 2 | `Tangent` |
+| `TEXCOORD0` to `TEXCOORD3` | 3 to 6 | `TexCoord0` to `TexCoord3` |
+| `COLOR` | 7 | `Color0` |
+
+Another identifier in the stage that already has one of these names gets the `_xrUser` suffix. Other vertex inputs cause a `UNITYSHADER0007` error.
 
 ## Compatibility Includes
 

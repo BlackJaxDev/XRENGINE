@@ -51,7 +51,7 @@ public sealed class GlslPostProcessorTests
     }
 
     [Test]
-    public void Process_VertexStage_MovesInputsToEngineAttributeLocations()
+    public void Process_VertexStage_MovesInputsToEngineAttributeLocationsAndNames()
     {
         const string glsl = """
             #version 460
@@ -60,10 +60,12 @@ public sealed class GlslPostProcessorTests
             layout(location = 1) in vec2 v_uv;
             layout(location = 2) in vec4 v_color;
             layout(location = 3) in vec4 v_extra;
+            layout(location = 0) out vec4 Color0;
 
             void main()
             {
                 gl_Position = v_vertex + vec4(v_uv, 0.0, 0.0) + v_color + v_extra;
+                Color0 = v_color;
             }
             """;
         SlangStageReflection reflection = new();
@@ -77,9 +79,17 @@ public sealed class GlslPostProcessorTests
 
         GlslPostProcessResult result = GlslPostProcessor.Process(glsl, reflection, isVertexStage: true);
 
-        result.Glsl.ShouldContain("layout(location = 0) in vec4 v_vertex;");
-        result.Glsl.ShouldContain("layout(location = 4) in vec2 v_uv;");
-        result.Glsl.ShouldContain("layout(location = 7) in vec4 v_color;");
+        // The mesh renderers bind vertex buffers by input name, so the inputs take the engine buffer names.
+        result.Glsl.ShouldContain("layout(location = 0) in vec4 Position;");
+        result.Glsl.ShouldContain("layout(location = 4) in vec2 TexCoord1;");
+        result.Glsl.ShouldContain("layout(location = 7) in vec4 Color0;");
+        result.Glsl.ShouldContain("layout(location = 3) in vec4 v_extra;");
+        result.Glsl.ShouldContain("gl_Position = Position + vec4(TexCoord1, 0.0, 0.0) + Color0 + v_extra;");
+
+        // An output that already has an engine attribute name gets a suffix.
+        result.Glsl.ShouldContain("layout(location = 0) out vec4 Color0_xrUser;");
+        result.Glsl.ShouldContain("Color0_xrUser = Color0;");
+        result.Glsl.ShouldNotContain("v_vertex");
         result.UnsupportedVertexInputs.ShouldBe(["TEXCOORD6"]);
     }
 

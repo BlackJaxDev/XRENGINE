@@ -11,7 +11,7 @@ namespace XREngine.ShaderTranslation.Compilation;
 /// <item>Uniform structs become loose uniforms, so the engine binds material and engine values by name.</item>
 /// <item>Combined samplers take the texture property name, for example <c>_MainTex</c>.</item>
 /// <item>Sampler uniforms lose explicit bindings; the engine assigns texture units and descriptors.</item>
-/// <item>Vertex inputs move to the engine attribute locations.</item>
+/// <item>Vertex inputs move to the engine attribute locations and take the engine attribute names.</item>
 /// </list>
 /// The input must be SPIRV-Cross output with plain uniform structs. The rewrites depend on its stable layout.
 /// </remarks>
@@ -224,29 +224,61 @@ public static partial class GlslPostProcessor
         ["SpotLights"] = "ForwardSpotLightsBuffer",
     };
 
+    /// <summary>
+    /// Moves the vertex inputs to the engine attribute locations and gives them the engine attribute names.
+    /// </summary>
+    /// <remarks>
+    /// The mesh renderers find each vertex buffer by input name, so the names are necessary. The rename
+    /// goes through temporary names. Other identifiers that already have an engine attribute name get the
+    /// <c>_xrUser</c> suffix first, so that no two declarations have the same name.
+    /// </remarks>
     private static string RemapVertexInputs(string glsl, SlangStageReflection reflection, List<string> unsupported)
     {
-        Dictionary<int, int> locations = [];
+        Dictionary<int, (int Location, string Name)> engineInputs = [];
         foreach (VertexInputReflection input in reflection.VertexInputs)
         {
             int engineLocation = EngineVertexAttributes.GetLocation(input.Semantic, input.SemanticIndex);
-            if (engineLocation < 0)
+            string? engineName = EngineVertexAttributes.GetName(input.Semantic, input.SemanticIndex);
+            if (engineLocation < 0 || engineName is null)
             {
                 unsupported.Add(input.FullSemantic);
                 continue;
             }
 
-            locations[input.Location] = engineLocation;
+            engineInputs[input.Location] = (engineLocation, engineName);
         }
 
-        return VertexInputPattern().Replace(glsl, match =>
+        Dictionary<string, string> renames = new(StringComparer.Ordinal);
+        glsl = VertexInputPattern().Replace(glsl, match =>
         {
             int location = int.Parse(match.Groups["location"].Value, System.Globalization.CultureInfo.InvariantCulture);
-            return locations.TryGetValue(location, out int engineLocation)
-                ? $"layout(location = {engineLocation}) in "
-                : match.Value;
+            if (!engineInputs.TryGetValue(location, out (int Location, string Name) engine))
+                return match.Value;
+
+            string temporary = $"_xrVertexInput{engine.Location}";
+            renames[match.Groups["name"].Value] = temporary;
+            return $"layout(location = {engine.Location}) in {match.Groups["type"].Value} {temporary};";
         });
+
+        foreach ((string name, string temporary) in renames)
+            glsl = ReplaceIdentifier(glsl, name, temporary);
+
+        foreach ((int location, string name) in engineInputs.Values)
+        {
+            string temporary = $"_xrVertexInput{location}";
+            if (!renames.ContainsValue(temporary))
+                continue;
+
+            glsl = ReplaceIdentifier(glsl, name, name + "_xrUser");
+            glsl = ReplaceIdentifier(glsl, temporary, name);
+        }
+
+        return glsl;
     }
+
+    /// <summary>Replaces an identifier everywhere except after a member access dot.</summary>
+    private static string ReplaceIdentifier(string glsl, string name, string replacement)
+        => Regex.Replace(glsl, $@"(?<![\w.]){Regex.Escape(name)}\b", replacement, RegexOptions.CultureInvariant);
 
     [GeneratedRegex(@"layout\(binding = \d+\) uniform sampler")]
     private static partial Regex SamplerBindingPattern();
@@ -266,6 +298,6 @@ public static partial class GlslPostProcessor
     [GeneratedRegex(@"\b(?<instance>\w+)\._member0\b")]
     private static partial Regex StorageMemberPattern();
 
-    [GeneratedRegex(@"layout\(location = (?<location>\d+)\) in ")]
+    [GeneratedRegex(@"layout\(location = (?<location>\d+)\) in (?<type>\w+) (?<name>\w+);")]
     private static partial Regex VertexInputPattern();
 }
