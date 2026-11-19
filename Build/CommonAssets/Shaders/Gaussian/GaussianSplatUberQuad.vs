@@ -1,7 +1,9 @@
-#version 460
-
 // Projects sorted 3D Gaussian avatar splats to 3-sigma EWA screen quads while
 // propagating tangent-plane world offsets and exact sub-splat UV coordinates.
+// The material table prepends the #version line and the defines.
+// With XR_SPLAT_SHADE_PER_SPLAT, this shader also shades each splat once with its source material, at the splat
+// center, and passes the result to the fragment shader in FragSplatShade. A pixel of a splat quad then costs only the
+// Gaussian falloff and the blend, instead of a full material evaluation for each of the overlapping quads.
 
 layout(location = 0) in vec3 Position;
 
@@ -44,6 +46,12 @@ layout(std430, binding = 60) readonly buffer GaussianSplatSurfaces
     GaussianSplatSurface splatSurfaces[];
 };
 
+#if defined(XR_SPLAT_SHADE_PER_SPLAT)
+#include "Gaussian/GaussianUberAdapter.glslinc"
+#include "Advanced/Shading/ShadeNativeUber.glslinc"
+#include "Gaussian/GaussianSplatUberShading.glslinc"
+#endif
+
 uniform mat4 ModelMatrix;
 uniform mat4 ViewMatrix_VTX;
 uniform mat4 ProjMatrix_VTX;
@@ -62,6 +70,7 @@ layout(location = 6) out vec4 FragUv2Uv3;
 layout(location = 7) flat out float FragTangentHandedness;
 layout(location = 8) flat out float FragBaseOpacity;
 layout(location = 9) flat out uvec2 FragMaterialAndColor;
+layout(location = 10) flat out vec4 FragSplatShade;
 
 const uint CulledKey = 0xFFFFFFFFu;
 const float QuadExtentSigma = 2.2;
@@ -81,6 +90,7 @@ void Collapse()
     FragTangentHandedness = 1.0;
     FragBaseOpacity = 0.0;
     FragMaterialAndColor = uvec2(0u);
+    FragSplatShade = vec4(0.0, 0.0, 0.0, -1.0);
 }
 
 mat3 QuaternionToMatrix(vec4 q)
@@ -229,4 +239,45 @@ void main()
     FragMaterialAndColor = uvec2(
         packedMaterialFlags & 0xFFFFu,
         surface.materialAndColor.y);
+
+#if defined(XR_SPLAT_SHADE_PER_SPLAT)
+    // The texture derivatives span one sigma of the splat on its tangent axes, so each texture sample is filtered
+    // over the surface area that the splat covers. Only UV0 has tangent-space gradients; the other UV sets use the
+    // UV0 gradients as an estimate.
+    vec2 uv0Dx = surface.dUv0LocalXY.xy * sigma.x;
+    vec2 uv0Dy = surface.dUv0LocalXY.zw * sigma.y;
+    XRSplatShadeInput shadeInput;
+    shadeInput.worldPosition = worldCenter;
+    shadeInput.localPosition = surface.localPosPad.xyz;
+    shadeInput.worldPositionDx = normalize(worldRot[0]) * sigma.x;
+    shadeInput.worldPositionDy = normalize(worldRot[1]) * sigma.y;
+    shadeInput.normal = surface.worldNormalAndSign.xyz;
+    shadeInput.normalDx = vec3(0.0);
+    shadeInput.normalDy = vec3(0.0);
+    shadeInput.tangent = surface.worldTangentPad.xyz;
+    shadeInput.tangentDx = vec3(0.0);
+    shadeInput.tangentDy = vec3(0.0);
+    shadeInput.tangentHandedness = surface.worldNormalAndSign.w;
+    shadeInput.uv0Uv1 = surface.uv0Uv1;
+    shadeInput.uv2Uv3 = surface.uv2Uv3;
+    shadeInput.uv0Dx = uv0Dx;
+    shadeInput.uv0Dy = uv0Dy;
+    shadeInput.uv1Dx = uv0Dx;
+    shadeInput.uv1Dy = uv0Dy;
+    shadeInput.uv2Dx = uv0Dx;
+    shadeInput.uv2Dy = uv0Dy;
+    shadeInput.uv3Dx = uv0Dx;
+    shadeInput.uv3Dy = uv0Dy;
+    shadeInput.materialIndex = packedMaterialFlags & 0xFFFFu;
+    shadeInput.packedColor = surface.materialAndColor.y;
+    shadeInput.cameraPosition = InverseViewMatrix[3].xyz;
+    shadeInput.pixel = uvec2(splatIndex & 0xFFFFu, splatIndex >> 16u);
+
+    XRAdvancedOpaqueSampleResult shaded;
+    FragSplatShade = XR_SPLAT_Shade(shadeInput, shaded)
+        ? vec4(shaded.radiance, clamp(shaded.opacity, 0.0, 1.0))
+        : vec4(0.0, 0.0, 0.0, -1.0);
+#else
+    FragSplatShade = vec4(0.0);
+#endif
 }

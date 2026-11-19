@@ -309,34 +309,32 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
 
     private XRMaterial CreateUberQuadMaterialCore(bool depthOcclusionOnly)
     {
-        XRShader vertexShader = ShaderHelper.LoadEngineShader("Gaussian/GaussianSplatUberQuad.vs", EShaderType.Vertex);
+        XRShader vertexTemplate = ShaderHelper.LoadEngineShader("Gaussian/GaussianSplatUberQuad.vs", EShaderType.Vertex);
         XRShader fragmentTemplate = ShaderHelper.LoadEngineShader("Gaussian/GaussianSplatUberQuad.fs", EShaderType.Fragment);
         bool isVulkan = RuntimeEngine.Rendering.State.IsVulkan ||
                         RuntimeEngine.Rendering.IsVulkanRendererActive() ||
                         RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
 
-        StringBuilder sb = new(32768);
-        sb.AppendLine("#version 460");
-        if (isVulkan)
+        // The color pass shades each splat once in the vertex shader. That stage then reads all material textures,
+        // which Vulkan allows, but OpenGL limits a vertex shader to far fewer texture units than the table binds, so
+        // OpenGL shades each pixel in the fragment shader. The depth pass needs only the alpha cutout of each pixel.
+        bool shadePerSplat = isVulkan && !depthOcclusionOnly;
+        string header = BuildQuadShaderHeader(isVulkan, depthOcclusionOnly, shadePerSplat);
+
+        XRShader vertexShader = new(EShaderType.Vertex, new TextFile
         {
-            sb.AppendLine("#extension GL_EXT_nonuniform_qualifier : require");
-            sb.AppendLine("#define XRENGINE_VULKAN 1");
-        }
+            FilePath = vertexTemplate.Source.FilePath,
+            Text = header + (vertexTemplate.Source.Text ?? string.Empty),
+        })
+        {
+            Name = depthOcclusionOnly ? "GaussianSplatUberDepth.vs" : "GaussianSplatUberQuad.vs",
+        };
 
-        if (depthOcclusionOnly)
-            sb.AppendLine("#define XR_SPLAT_DEPTH_OCCLUSION_PASS 1");
-
-        sb.AppendLine(string.Create(CultureInfo.InvariantCulture, $"#define XR_SPLAT_ACTIVE_UBER_FEATURES 0x{_activeUberFeatureMask:X8}u"));
-        AdvancedStandardMaterialShaderContract.AppendDefines(sb);
-        NativeUberMaterialSchema.AppendShaderDefines(sb);
-        sb.AppendLine(fragmentTemplate.Source.Text ?? string.Empty);
-
-        TextFile fragmentSource = new()
+        XRShader fragmentShader = new(EShaderType.Fragment, new TextFile
         {
             FilePath = fragmentTemplate.Source.FilePath,
-            Text = sb.ToString(),
-        };
-        XRShader fragmentShader = new(EShaderType.Fragment, fragmentSource)
+            Text = header + (fragmentTemplate.Source.Text ?? string.Empty),
+        })
         {
             Name = depthOcclusionOnly ? "GaussianSplatUberDepth.fs" : "GaussianSplatUberQuad.fs",
         };
@@ -374,6 +372,32 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
             slots.Add(i < _texturesCube.Count ? _texturesCube[i] : _fallbackWhiteCube);
         quadMaterial.Textures = slots;
         return quadMaterial;
+    }
+
+    /// <summary>
+    /// Builds the lines that the material table puts before the quad vertex and fragment shader sources: the version,
+    /// the backend extensions, the pass and shading-mode defines, and the material schema defines that the Uber
+    /// shading code reads. Both stages get the same lines, so their shared declarations match.
+    /// </summary>
+    private string BuildQuadShaderHeader(bool isVulkan, bool depthOcclusionOnly, bool shadePerSplat)
+    {
+        StringBuilder sb = new(32768);
+        sb.AppendLine("#version 460");
+        if (isVulkan)
+        {
+            sb.AppendLine("#extension GL_EXT_nonuniform_qualifier : require");
+            sb.AppendLine("#define XRENGINE_VULKAN 1");
+        }
+
+        if (depthOcclusionOnly)
+            sb.AppendLine("#define XR_SPLAT_DEPTH_OCCLUSION_PASS 1");
+        if (shadePerSplat)
+            sb.AppendLine("#define XR_SPLAT_SHADE_PER_SPLAT 1");
+
+        sb.AppendLine(string.Create(CultureInfo.InvariantCulture, $"#define XR_SPLAT_ACTIVE_UBER_FEATURES 0x{_activeUberFeatureMask:X8}u"));
+        AdvancedStandardMaterialShaderContract.AppendDefines(sb);
+        NativeUberMaterialSchema.AppendShaderDefines(sb);
+        return sb.ToString();
     }
 
     /// <summary>Releases GPU storage buffers, residency holds, and owned fallback textures.</summary>
