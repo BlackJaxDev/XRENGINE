@@ -582,8 +582,12 @@ public partial class AdvancedRenderPipeline
             .Factory(CreateEditorHighlightOutputFBO).Add();
 
         DeclareEditorHighlightCompositeMaterial(builder, FinalPostProcessOutputTextureName);
-        DeclareEditorHighlightCompositeMaterial(builder, FxaaOutputTextureName);
-        DeclareEditorHighlightCompositeMaterial(builder, SmaaOutputTextureName);
+        // The FXAA and SMAA outputs exist only in their anti-aliasing mode, so their
+        // composites are declared only in that mode.
+        if (builder.Profile.AntiAliasingMode == EAntiAliasingMode.Fxaa)
+            DeclareEditorHighlightCompositeMaterial(builder, FxaaOutputTextureName);
+        if (builder.Profile.AntiAliasingMode == EAntiAliasingMode.Smaa)
+            DeclareEditorHighlightCompositeMaterial(builder, SmaaOutputTextureName);
         DeclareEditorHighlightCompositeMaterial(builder, TsrOutputTextureName);
     }
 
