@@ -77,10 +77,13 @@ public sealed class UnityShaderTranslationMaterialImportTests
         AssertVector4(material, "_MainTex_ST", new Vector4(2.0f, 3.0f, 0.5f, 0.25f));
         material.Parameter<ShaderFloat>("_Strength").ShouldNotBeNull().Value.ShouldBe(1.5f, 0.0001f);
 
-        // The texture GUID has no asset, so _MainTex uses its default texture. Both samplers are bound by name.
+        // The texture GUID has no asset, so _MainTex uses its default texture. All samplers are bound by name.
+        // _GlobalTex is not a material texture, so it gets the black texture on every backend.
         string[] samplers = [.. material.Textures.OfType<XRTexture2D>().Select(texture => texture.SamplerName ?? string.Empty)];
         samplers.ShouldContain("_MainTex");
         samplers.ShouldContain("_MaskTex");
+        samplers.ShouldContain("_GlobalTex");
+        result.Warnings.ShouldContain(warning => warning.Contains("'_GlobalTex'", StringComparison.Ordinal) && warning.Contains("black", StringComparison.Ordinal));
     }
 
     private static void WriteAsset(string path, string content, string guid)
@@ -128,6 +131,7 @@ public sealed class UnityShaderTranslationMaterialImportTests
                     sampler2D _MainTex;
                     float4 _MainTex_ST;
                     sampler2D _MaskTex;
+                    sampler2D _GlobalTex;
                     float4 _Color;
                     float _Strength;
 
@@ -147,7 +151,7 @@ public sealed class UnityShaderTranslationMaterialImportTests
 
                     float4 frag(v2f i) : SV_Target
                     {
-                        return tex2D(_MainTex, i.uv) * tex2D(_MaskTex, i.uv).r * _Color * _Strength;
+                        return tex2D(_MainTex, i.uv) * tex2D(_MaskTex, i.uv).r * tex2D(_GlobalTex, i.uv).r * _Color * _Strength;
                     }
                     ENDCG
                 }

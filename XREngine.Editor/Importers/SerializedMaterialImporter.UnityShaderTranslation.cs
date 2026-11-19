@@ -127,9 +127,13 @@ public static partial class SerializedMaterialImporter
     }
 
     /// <summary>
-    /// Returns one texture for each sampler uniform that is a texture property of the shader or the material.
-    /// The sampler name of each texture is the uniform name, which the engine uses to bind it.
+    /// Returns one texture for each 2D sampler uniform of the pass. The sampler name of each texture is the
+    /// uniform name, which the engine uses to bind it.
     /// </summary>
+    /// <remarks>
+    /// A material texture uses its asset, then the Unity default of its property. A sampler that is not a
+    /// material texture, for example a global texture that a Unity script sets, gets a black texture.
+    /// </remarks>
     private static XRTexture?[] ResolveTranslatedTextures(
         SerializedMaterialDocument document,
         SourceAssetResolver resolver,
@@ -148,16 +152,19 @@ public static partial class SerializedMaterialImporter
                 if (!seen.Add(name))
                     continue;
 
-                ShaderLabProperty? property = shader.FindProperty(name);
-                if (property is null && !document.Textures.ContainsKey(name))
+                if (!string.Equals(type, "sampler2D", StringComparison.Ordinal))
                 {
-                    warnings.Add($"Shader '{shader.Name}' samples '{name}', which is not a material texture. The engine does not bind it.");
+                    warnings.Add($"Shader '{shader.Name}' texture '{name}' is a {type}. Only 2D textures are bound now.");
                     continue;
                 }
 
-                if (!string.Equals(type, "sampler2D", StringComparison.Ordinal))
+                ShaderLabProperty? property = shader.FindProperty(name);
+                if (property is null && !document.Textures.ContainsKey(name))
                 {
-                    warnings.Add($"Shader '{shader.Name}' texture '{name}' is a {type}. Only 2D material textures are bound now.");
+                    // A Unity global texture, such as the AudioLink _AudioTexture. The backend fallbacks are
+                    // not the same on OpenGL and Vulkan, so the importer binds black, which means no data.
+                    warnings.Add($"Shader '{shader.Name}' samples '{name}', which is not a material texture. A black texture is bound.");
+                    textures.Add(GetTranslatedDefaultTexture(name, "black"));
                     continue;
                 }
 
