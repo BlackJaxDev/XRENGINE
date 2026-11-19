@@ -6,7 +6,7 @@ The Unity shader translator converts Unity built-in pipeline `.shader` files int
 
 The translator replaces hand-written ports of specific Unity shaders. Do not add per-shader GLSL ports for imported content. Fix the translator or the compatibility includes instead.
 
-The translator is in an early state. It is a library and a command-line tool. It is not connected to `XRMaterial` or to the model importer yet.
+The translator is in an early state. It is a library, a command-line tool, and an opt-in path of the Unity material importer. See [Material Import](#material-import).
 
 ## Pipeline
 
@@ -53,6 +53,21 @@ FXC also evaluates function calls in `static const` initializers at compile time
 | `Meta`, `Deferred`, `PrepassBase`, `PrepassFinal`, `MotionVectors`, and other modes | Skipped | Not applicable |
 
 `GrabPass` and `UsePass` are skipped with a warning. Surface shaders (`#pragma surface`) are not supported yet.
+
+## Material Import
+
+Set `XRE_UNITY_SHADER_TRANSLATION=1` to let the Unity material importer translate shaders. The importer uses the translation for a material that is not a Poiyomi or lilToon material and whose shader is a `.shader` file in the source project. When the translation fails, the importer adds a warning and uses the generic conversion. Without the variable, the importer does not change.
+
+The importer builds the material as follows:
+
+1. It translates the shader with the material keywords (`m_ShaderKeywords` and `m_ValidKeywords`). It keeps each result by shader path, file write time, and keyword set, so materials that share a variant translate one time.
+2. It uses the first `ForwardBase` pass, or the first unlit pass. The pass must have vertex and fragment stages. The translated stages become the material shaders.
+3. It binds one texture for each `sampler2D` uniform that is a texture property. A missing texture uses the Unity default color of the property (`white`, `black`, `gray`, `bump`, `red`). Samplers that are not material textures, and samplers of other types, cause a warning.
+4. It sets each uniform that the material found. `_X_ST` takes the scale and offset of texture `_X`. Other uniforms take the material value, then the property default. In a Linear project, color properties use the sRGB-to-linear transfer, with the same `HDR` and `Gamma` rules as the Poiyomi conversion. Engine uniforms are not changed.
+5. It maps `Cull`, `ZWrite`, `ZTest`, `Blend`, `BlendOp`, `ColorMask`, and `AlphaToMask`. A `[_Property]` argument takes the material value, then the property default. Numeric values use the Unity enums. `Stencil` blocks and per-target blend state cause a warning.
+6. It selects the engine pass from the render queue (the material custom queue, then the `Queue` tag): below 2450 is opaque forward, 2450 to 2500 is masked forward, and above 2500 or any blending is transparent forward. `AlphaToMask On` selects alpha to coverage. `_Cutoff` sets the alpha cutoff.
+
+The translated vertex stage replaces the engine vertex shader. Skinned meshes therefore do not skin, and the engine stereo paths do not apply. Use static meshes to compare translated materials with Unity.
 
 ## Vertex Attributes
 
@@ -129,7 +144,7 @@ The Vulkan SDK contains both tools. If a tool is missing, the translator reports
 
 ## Limitations
 
-- The translator is not connected to `XRMaterial`, render state, or the model importer.
+- The material import is opt-in. It uses one color pass. It does not use `ForwardAdd` or `ShadowCaster` passes, `Stencil` blocks, or `_X_TexelSize` values.
 - The forward add light loop and received shadows are not complete.
 - Stereo rendering and compute skinning of translated vertex stages are not supported.
 - Include files from `Library/PackageCache` are not mapped.
@@ -139,7 +154,7 @@ The Vulkan SDK contains both tools. If a tool is missing, the translator reports
 
 ## Tests
 
-`XREngine.UnitTests/Rendering/ShaderTranslation/` tests the parser, the pragma reader, the variant selector, the assembler, the include expander, the switch, static const, and global-write rewriters, the diagnostic ordering, and the post-processor. `ShaderTranslatorToolTests` runs the full path on the shaders in `XREngine.UnitTests/TestData/UnityShaders/`. These tests are ignored when `slangc` or `spirv-cross` is not available.
+`XREngine.UnitTests/Rendering/ShaderTranslation/` tests the parser, the pragma reader, the variant selector, the assembler, the include expander, the switch, static const, and global-write rewriters, the diagnostic ordering, and the post-processor. `ShaderTranslatorToolTests` runs the full path on the shaders in `XREngine.UnitTests/TestData/UnityShaders/`. `UnityShaderTranslationMaterialImportTests` imports a `.mat` with the translation enabled and checks the stages, render state, and parameter values. These tests are ignored when `slangc` or `spirv-cross` is not available.
 
 ## Key Files
 
@@ -154,6 +169,9 @@ The Vulkan SDK contains both tools. If a tool is missing, the translator reports
 - `XREngine.ShaderTranslation/Compilation/SlangSpirvCompiler.cs`
 - `XREngine.ShaderTranslation/Compilation/SpirvCrossGlslEmitter.cs`
 - `XREngine.ShaderTranslation/Compilation/GlslPostProcessor.cs`
+- `XREngine.Editor/Importers/SerializedMaterialImporter.UnityShaderTranslation.cs`
+- `XREngine.Editor/Importers/UnityShaderTranslation/UnityShaderTranslationCache.cs`
+- `XREngine.Editor/Importers/UnityShaderTranslation/ShaderLabRenderStateMapper.cs`
 - `Build/CommonAssets/Shaders/UnityCompat/`
 - `Tools/UnityShaderTranslator/Program.cs`
 

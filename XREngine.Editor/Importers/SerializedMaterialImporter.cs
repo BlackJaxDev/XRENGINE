@@ -549,6 +549,9 @@ public static partial class SerializedMaterialImporter
         SourceAssetResolver resolver,
         List<string> warnings)
     {
+        if (TryConvertTranslatedUnityShaderMaterial(document, resolver, warnings, out XRMaterial? translatedMaterial))
+            return translatedMaterial;
+
         if (TryConvertOpaqueStandardMaterial(document, resolver, warnings, out XRMaterial standardMaterial))
             return standardMaterial;
 
