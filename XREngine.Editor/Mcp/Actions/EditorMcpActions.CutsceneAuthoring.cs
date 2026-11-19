@@ -8,6 +8,7 @@ using XREngine.Data.Geometry;
 using XREngine.Editor.Cutscenes;
 using XREngine.Rendering.Info;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor.Mcp;
 
@@ -118,11 +119,15 @@ public sealed partial class EditorMcpActions
     /// <summary>Returns the world bounds of the meshes under a node.</summary>
     [XRMcp(Name = "get_node_bounds")]
     [McpThreadAffinity(McpThreadAffinity.Update)]
-    [Description("Return the world-space bounding box of the renderable meshes on a node and its descendants, in the current pose. Scripts use it to place cameras relative to an object.")]
+    [Description(
+        "Return the world-space bounding box of a node and its descendants. With source 'meshes' (the default), each static mesh adds its vertex bounds at the transform of its node, " +
+        "and skinned meshes are skipped. With source 'transforms', each descendant transform adds its world position, which measures a skinned avatar by its skeleton. " +
+        "Scripts use it to place cameras relative to an object.")]
     public static Task<McpToolResponse> GetNodeBoundsAsync(
         McpToolContext context,
         [McpName("node_id"), Description("ID of the root node.")] string nodeId,
-        [McpName("include_inactive"), Description("True to include inactive components and nodes.")] bool includeInactive = false)
+        [McpName("include_inactive"), Description("True to include inactive components and nodes.")] bool includeInactive = false,
+        [McpName("source"), Description("'meshes' (default) or 'transforms'.")] string source = "meshes")
     {
         if (!TryGetNodeById(context.World, nodeId, out SceneNode? node, out string? error) || node is null)
             return Task.FromResult(new McpToolResponse(error ?? $"The node '{nodeId}' was not found.", isError: true));
@@ -131,19 +136,36 @@ public sealed partial class EditorMcpActions
         Vector3 min = new(float.PositiveInfinity);
         Vector3 max = new(float.NegativeInfinity);
         int meshCount = 0;
+        int skippedSkinned = 0;
+        if (string.Equals(source, "transforms", StringComparison.OrdinalIgnoreCase))
+        {
+            int transformCount = AddTransformPositions(node.Transform, includeInactive, ref min, ref max);
+            return Task.FromResult(BoundsResponse(min, max, transformCount, transformCount == 0));
+        }
         node.IterateComponents<RenderableComponent>(component =>
         {
             if (!includeInactive && (!component.IsActive || component.SceneNode?.IsActiveInHierarchy == false))
                 return;
 
+            // A static mesh adds its vertex bounds at the transform of its node. A skinned mesh is skipped: its vertex bounds
+            // are in bind space, and its render culling volumes exist only after it renders, so an edit-mode scene gives no
+            // reliable value. The skeleton measures a skinned avatar instead (source 'transforms').
+            Matrix4x4 toWorld = component.Transform.WorldMatrix;
             foreach (RenderableMesh mesh in component.Meshes)
             {
-                RenderInfo3D info = mesh.RenderInfo;
-                if (info.LocalCullingVolume is not { IsValid: true } local)
+                if (mesh.IsSkinned)
+                {
+                    skippedSkinned++;
                     continue;
+                }
 
-                // The local box moves with the culling matrix of the render info, so its eight corners give the world box.
-                Matrix4x4 toWorld = info.CullingOffsetMatrix;
+                if (mesh.LODs.First?.Value.Renderer?.Mesh is not { } sourceMesh ||
+                    sourceMesh.VertexCount <= 0 ||
+                    sourceMesh.Bounds is not { IsValid: true } local)
+                {
+                    continue;
+                }
+
                 for (int corner = 0; corner < 8; corner++)
                 {
                     Vector3 point = new(
@@ -159,17 +181,40 @@ public sealed partial class EditorMcpActions
             }
         }, iterateChildHierarchy: true);
 
-        if (meshCount == 0)
-            return Task.FromResult(new McpToolResponse("The node has no renderable mesh with bounds.", isError: true));
+        if (meshCount == 0 && skippedSkinned > 0)
+            return Task.FromResult(new McpToolResponse($"The node has only skinned meshes ({skippedSkinned}). Use source 'transforms' to measure the skeleton.", isError: true));
 
-        return Task.FromResult(new McpToolResponse("Computed the node bounds.", new
+        return Task.FromResult(BoundsResponse(min, max, meshCount, meshCount == 0));
+    }
+
+    private static McpToolResponse BoundsResponse(Vector3 min, Vector3 max, int count, bool empty)
+    {
+        if (empty)
+            return new McpToolResponse("The node has nothing that gives bounds.", isError: true);
+
+        return new McpToolResponse("Computed the node bounds.", new
         {
             min = new[] { min.X, min.Y, min.Z },
             max = new[] { max.X, max.Y, max.Z },
             center = new[] { (min.X + max.X) * 0.5f, (min.Y + max.Y) * 0.5f, (min.Z + max.Z) * 0.5f },
             size = new[] { max.X - min.X, max.Y - min.Y, max.Z - min.Z },
-            meshCount,
-        }));
+            count,
+        });
+    }
+
+    private static int AddTransformPositions(TransformBase transform, bool includeInactive, ref Vector3 min, ref Vector3 max)
+    {
+        if (!includeInactive && transform.SceneNode is { IsActiveSelf: false })
+            return 0;
+
+        Vector3 position = transform.WorldMatrix.Translation;
+        min = Vector3.Min(min, position);
+        max = Vector3.Max(max, position);
+        int count = 1;
+        foreach (TransformBase child in transform.Children)
+            count += AddTransformPositions(child, includeInactive, ref min, ref max);
+
+        return count;
     }
 
     private static CutsceneTrack CreateTrack(

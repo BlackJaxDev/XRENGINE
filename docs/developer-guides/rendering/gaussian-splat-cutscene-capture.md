@@ -169,7 +169,7 @@ The editor MCP server has tools that build a cutscene asset from a script:
 | `cutscene_create_asset` | Creates an empty cutscene asset and assigns it to the director of a node. |
 | `cutscene_add_track` | Adds a track with its clips and curves: transform, camera cut, camera property, property, animation clip, or simulation control. |
 | `cutscene_save_asset` | Saves the cutscene asset of a director. |
-| `get_node_bounds` | Returns the world bounds of the meshes under a node, so a script can place cameras relative to an object. |
+| `get_node_bounds` | Returns the world bounds of the static meshes under a node, or of its skeleton with `source = transforms`, so a script can place cameras relative to an object. |
 
 The scene tools (`create_scene_node`, `add_component_to_node`, `set_component_properties`, `set_node_transform`, and
 `save_world`) build the rest of the world. `Tools/Cutscenes/New-SplatShowcaseCutscene.ps1` uses these tools in an
