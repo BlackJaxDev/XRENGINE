@@ -1316,6 +1316,17 @@ internal static partial class SerializedSceneImporter
         if (string.Equals(Path.GetExtension(assetPath), ".mat", StringComparison.OrdinalIgnoreCase))
             return LoadSerializedMaterial(assetPath, state);
 
+        // A reference into a model file (for example a material that Unity made from an FBX) has no material asset that
+        // the engine can load by path. The asset manager would try to import the model file as a material and fail.
+        if (SupportedExternalModelExtensions.Contains(Path.GetExtension(assetPath).ToLowerInvariant()))
+        {
+            if (state.Context.AllowPartialImport)
+                return GetMissingMaterial(materialReference, state);
+            throw new SourceVisualImportException(
+                $"Unity material reference '{materialReference.Guid}:{materialReference.FileId}' points into the model file " +
+                $"'{assetPath}'. Extract the material in Unity, or import with partial import allowed to use a fallback material.");
+        }
+
         AssetManager? assets = Engine.Assets;
         return assets?.Load<XRMaterial>(assetPath);
     }
