@@ -625,7 +625,7 @@ namespace XREngine.Rendering.OpenGL
                 Dbg("Programs ready - binding SSBOs and uniforms", "Render");
                 ConfigureDrawTopology(vtx!, mat);
 
-                if (BuffersBound && VertexArrayBindingsStale())
+                if (BuffersBound && (VertexArrayBindingsStale() || !VertexArrayMatchesProgram(vtx!)))
                 {
                     BuffersBound = false;
                     LogBatchedTextDraw("Render vao-stale-rebind", instances);

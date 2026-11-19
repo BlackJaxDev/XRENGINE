@@ -81,6 +81,8 @@ The mesh renderers bind each vertex buffer to the shader input with the same nam
 | `TEXCOORD0` to `TEXCOORD3` | 3 to 6 | `TexCoord0` to `TexCoord3` |
 | `COLOR` | 7 | `Color0` |
 
+Engine-generated vertex shaders pack their inputs, so for a mesh without tangents `TexCoord0` is at location 2 there. One OpenGL VAO serves all passes of a mesh renderer, so the OpenGL mesh renderer binds the VAO again when a pass uses a vertex program with other attribute locations.
+
 Another identifier in the stage that already has one of these names gets the `_xrUser` suffix. Other vertex inputs cause a `UNITYSHADER0007` error.
 
 ## Compatibility Includes
