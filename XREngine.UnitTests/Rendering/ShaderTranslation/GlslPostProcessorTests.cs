@@ -106,4 +106,28 @@ public sealed class GlslPostProcessorTests
         result.Glsl.ShouldContain("vec3 d = DirectionalLights[0].Direction;");
         result.Glsl.ShouldContain("#define XRENGINE_FORWARD_DESCRIPTOR_SET set = 3,");
     }
+
+    [Test]
+    public void Process_RewrittenGlobal_RestoresUniformName()
+    {
+        const string glsl = """
+            #version 460
+            uniform vec4 _Color_xrUniform;
+            vec4 _Color;
+            out vec4 color;
+            void main()
+            {
+                _Color = _Color_xrUniform;
+                _Color.w = 1.0;
+                color = _Color;
+            }
+            """;
+
+        GlslPostProcessResult result = GlslPostProcessor.Process(glsl, new SlangStageReflection(), isVertexStage: false, ["_Color"]);
+
+        result.Glsl.ShouldContain("uniform vec4 _Color;\nvec4 _Color_xrLocal;");
+        result.Glsl.ShouldContain("_Color_xrLocal = _Color;");
+        result.Glsl.ShouldContain("_Color_xrLocal.w = 1.0;");
+        result.Glsl.ShouldNotContain("_xrUniform");
+    }
 }

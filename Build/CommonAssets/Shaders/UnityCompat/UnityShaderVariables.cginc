@@ -91,10 +91,12 @@ float4x4 XR_Inverse(float4x4 m)
 #define UNITY_MATRIX_MVP mul(UNITY_MATRIX_VP, UNITY_MATRIX_M)
 
 // Camera and screen.
-#define _WorldSpaceCameraPos CameraPosition
-#define _ProjectionParams float4(1.0, CameraNearZ, CameraFarZ, 1.0 / CameraFarZ)
-#define _ScreenParams float4(ScreenWidth, ScreenHeight, 1.0 + 1.0 / ScreenWidth, 1.0 + 1.0 / ScreenHeight)
-#define _ZBufferParams float4(1.0 - CameraFarZ / CameraNearZ, CameraFarZ / CameraNearZ, (1.0 - CameraFarZ / CameraNearZ) / CameraFarZ, (CameraFarZ / CameraNearZ) / CameraFarZ)
+// Unity shaders can write to these globals, because Unity compiles in a legacy mode that allows it.
+// Static copies keep that legal. Each invocation starts from the engine value.
+static float3 _WorldSpaceCameraPos = CameraPosition;
+static float4 _ProjectionParams = float4(1.0, CameraNearZ, CameraFarZ, 1.0 / CameraFarZ);
+static float4 _ScreenParams = float4(ScreenWidth, ScreenHeight, 1.0 + 1.0 / ScreenWidth, 1.0 + 1.0 / ScreenHeight);
+static float4 _ZBufferParams = float4(1.0 - CameraFarZ / CameraNearZ, CameraFarZ / CameraNearZ, (1.0 - CameraFarZ / CameraNearZ) / CameraFarZ, (CameraFarZ / CameraNearZ) / CameraFarZ);
 #define unity_OrthoParams float4(0.0, 0.0, 0.0, 0.0)
 #define unity_CameraWorldClipPlanes XR_Unsupported_unity_CameraWorldClipPlanes
 #define unity_StereoEyeIndex 0
@@ -103,10 +105,10 @@ float4x4 XR_Inverse(float4x4 m)
 #define unity_RenderingLayer float4(0.0, 0.0, 0.0, 0.0)
 
 // Time. Unity packs t/20, t, 2t, 3t and sine and cosine variants.
-#define _Time float4(RenderTime / 20.0, RenderTime, RenderTime * 2.0, RenderTime * 3.0)
-#define _SinTime float4(sin(RenderTime / 8.0), sin(RenderTime / 4.0), sin(RenderTime / 2.0), sin(RenderTime))
-#define _CosTime float4(cos(RenderTime / 8.0), cos(RenderTime / 4.0), cos(RenderTime / 2.0), cos(RenderTime))
-#define unity_DeltaTime float4(DeltaTime, 1.0 / max(DeltaTime, 1.0e-6), DeltaTime, 1.0 / max(DeltaTime, 1.0e-6))
+static float4 _Time = float4(RenderTime / 20.0, RenderTime, RenderTime * 2.0, RenderTime * 3.0);
+static float4 _SinTime = float4(sin(RenderTime / 8.0), sin(RenderTime / 4.0), sin(RenderTime / 2.0), sin(RenderTime));
+static float4 _CosTime = float4(cos(RenderTime / 8.0), cos(RenderTime / 4.0), cos(RenderTime / 2.0), cos(RenderTime));
+static float4 unity_DeltaTime = float4(DeltaTime, 1.0 / max(DeltaTime, 1.0e-6), DeltaTime, 1.0 / max(DeltaTime, 1.0e-6));
 
 // Ambient. The engine supplies one ambient color; spherical harmonics use it as the constant band.
 uniform float3 GlobalAmbient;

@@ -13,15 +13,27 @@ The translator is in an early state. It is a library and a command-line tool. It
 1. `ShaderLabParser` reads the `.shader` text into a `ShaderLabDocument`: properties, subshaders, passes, tags, render state commands, and program blocks.
 2. `ShaderTranslator` selects the first subshader that has a normal pass with a program. It reads the `#pragma` lines of each pass with `ShaderProgramPragmas`.
 3. `ShaderVariantSelector` selects one keyword from each `multi_compile` and `shader_feature` set. The first enabled keyword wins. If no keyword in a set is enabled, the selector uses the empty option, or the first keyword when the set has no empty option.
-4. `ShaderPassAssembler` writes one HLSL unit for each stage. The unit has the Unity defines, the selected keywords, the `CGINCLUDE` or `HLSLINCLUDE` blocks, and the pass program. `#line` directives keep compiler messages on the source lines of the `.shader` file.
-5. `SlangSpirvCompiler` runs `slangc` with row-major matrix layout and writes SPIR-V and reflection JSON.
-6. `SpirvCrossGlslEmitter` runs `spirv-cross` and writes desktop GLSL 4.60.
-7. `GlslPostProcessor` changes the GLSL for the engine:
+4. `ShaderPassAssembler` writes one HLSL unit for each stage. The unit has the Unity defines, the selected keywords, the legacy conversion include, the `CGINCLUDE` or `HLSLINCLUDE` blocks, and the pass program. `#line` directives keep compiler messages on the source lines of the `.shader` file.
+5. `ShaderIncludeExpander` replaces each `#include` with the file text, so that the next step can see all declarations. `#line` directives keep the original file names and line numbers.
+6. `GlobalWriteRewriter` gives each global variable that the code writes to a private copy. See [Legacy HLSL Rules](#legacy-hlsl-rules).
+7. `SlangSpirvCompiler` runs `slangc` with row-major matrix layout and writes SPIR-V and reflection JSON.
+8. `SpirvCrossGlslEmitter` runs `spirv-cross` and writes desktop GLSL 4.60.
+9. `GlslPostProcessor` changes the GLSL for the engine:
    - It changes the default uniform block into loose uniforms.
    - It gives combined samplers the name of their texture. A texture that a shader samples with more than one sampler gets the name `<texture>__<sampler>`, and the translator reports a `UNITYSHADER0012` warning.
    - It removes sampler bindings, so that the engine binds samplers by name.
    - It changes the known light buffers to the engine storage blocks, for example `ForwardDirectionalLightsBuffer`, with `XRENGINE_FORWARD_DESCRIPTOR_SET`.
    - It moves vertex inputs to the engine attribute locations.
+   - It gives the shader parameters of rewritten globals their original names again.
+
+## Legacy HLSL Rules
+
+Unity compiles HLSL with the legacy FXC rules. Slang is stricter, so the translator adds two compatibility steps:
+
+- **Implicit truncation.** FXC converts a larger vector or matrix to a smaller one without a cast, for example `float2 uv = worldPos;` or `float x = tex2D(...);`. FXC also accepts mixed sizes in operators, for example `float2 + float4`, and uses the leading components. `UnityCompat/HLSLLegacyConversions.cginc` declares these conversions and operators for Slang. The assembler includes it in every program.
+- **Writes to globals.** FXC lets a function write to a global variable, for example `_Time.y += 10;`. The write changes a private copy for the current invocation. `GlobalWriteRewriter` renames the shader parameter to `name_xrUniform` and declares `static T name = name_xrUniform;`. The post-processor gives the parameter its original name in the GLSL, so material binding does not change. The engine values in the compatibility includes, such as `_Time` and `_ScreenParams`, are static copies for the same reason.
+
+The file has no conversion from an `int` vector to a `uint` scalar. With that conversion, Slang resolves `uint2 + int2` to an invalid type.
 
 ## Pass Mapping
 
@@ -114,13 +126,15 @@ The Vulkan SDK contains both tools. If a tool is missing, the translator reports
 
 ## Tests
 
-`XREngine.UnitTests/Rendering/ShaderTranslation/` tests the parser, the pragma reader, the variant selector, the assembler, and the post-processor. `ShaderTranslatorToolTests` runs the full path on the shaders in `XREngine.UnitTests/TestData/UnityShaders/`. These tests are ignored when `slangc` or `spirv-cross` is not available.
+`XREngine.UnitTests/Rendering/ShaderTranslation/` tests the parser, the pragma reader, the variant selector, the assembler, the include expander, the global-write rewriter, and the post-processor. `ShaderTranslatorToolTests` runs the full path on the shaders in `XREngine.UnitTests/TestData/UnityShaders/`. These tests are ignored when `slangc` or `spirv-cross` is not available.
 
 ## Key Files
 
 - `XREngine.ShaderTranslation/ShaderLab/ShaderLabParser.cs`
 - `XREngine.ShaderTranslation/Translation/ShaderTranslator.cs`
 - `XREngine.ShaderTranslation/Translation/ShaderPassAssembler.cs`
+- `XREngine.ShaderTranslation/Preprocessing/ShaderIncludeExpander.cs`
+- `XREngine.ShaderTranslation/Preprocessing/GlobalWriteRewriter.cs`
 - `XREngine.ShaderTranslation/Translation/ShaderVariantSelector.cs`
 - `XREngine.ShaderTranslation/Compilation/SlangSpirvCompiler.cs`
 - `XREngine.ShaderTranslation/Compilation/SpirvCrossGlslEmitter.cs`

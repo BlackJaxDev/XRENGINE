@@ -37,7 +37,7 @@ public sealed class SpirvCrossGlslEmitter(ExternalTool spirvCross)
         ];
         ExternalToolResult result = await Tool.RunAsync(arguments, workDirectory, cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0 || !File.Exists(glslPath))
-            throw new ShaderCompileException("spirv-cross", result.CombinedOutput);
+            throw new ShaderCompileException("spirv-cross", result.FailureText);
 
         return await File.ReadAllTextAsync(glslPath, cancellationToken).ConfigureAwait(false);
     }

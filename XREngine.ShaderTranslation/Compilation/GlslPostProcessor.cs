@@ -25,7 +25,16 @@ public static partial class GlslPostProcessor
     /// <param name="reflection">The Slang reflection of the same stage.</param>
     /// <param name="isVertexStage">True to remap vertex inputs.</param>
     public static GlslPostProcessResult Process(string glsl, SlangStageReflection reflection, bool isVertexStage)
+        => Process(glsl, reflection, isVertexStage, []);
+
+    /// <summary>Changes cross-compiled GLSL to the engine conventions.</summary>
+    /// <param name="glsl">The GLSL from SPIRV-Cross.</param>
+    /// <param name="reflection">The Slang reflection of the stage.</param>
+    /// <param name="isVertexStage">True for a vertex stage, which gets engine attribute locations.</param>
+    /// <param name="rewrittenGlobals">The globals that <see cref="Preprocessing.GlobalWriteRewriter"/> gave a private copy.</param>
+    public static GlslPostProcessResult Process(string glsl, SlangStageReflection reflection, bool isVertexStage, IReadOnlyCollection<string> rewrittenGlobals)
     {
+        ArgumentNullException.ThrowIfNull(rewrittenGlobals);
         ArgumentNullException.ThrowIfNull(glsl);
         ArgumentNullException.ThrowIfNull(reflection);
 
@@ -36,10 +45,27 @@ public static partial class GlslPostProcessor
         glsl = RenameCombinedSamplers(glsl, reflection, notes);
         glsl = ExpandUniformStructs(glsl);
         glsl = RewriteStorageBuffers(glsl);
+        glsl = RestoreRewrittenGlobalNames(glsl, rewrittenGlobals);
         if (isVertexStage)
             glsl = RemapVertexInputs(glsl, reflection, unsupported);
 
         return new GlslPostProcessResult(glsl, unsupported, notes);
+    }
+
+    /// <summary>
+    /// Gives renamed shader parameters their original names, so that materials bind them by property name.
+    /// The private copy, when SPIRV-Cross keeps it as a named global, gets the <c>_xrLocal</c> suffix.
+    /// </summary>
+    private static string RestoreRewrittenGlobalNames(string glsl, IReadOnlyCollection<string> rewrittenGlobals)
+    {
+        foreach (string name in rewrittenGlobals)
+        {
+            string escaped = Regex.Escape(name);
+            glsl = Regex.Replace(glsl, $@"(?<![\w.]){escaped}\b(?!{Regex.Escape(Preprocessing.GlobalWriteRewriter.UniformSuffix)})", name + "_xrLocal", RegexOptions.CultureInvariant);
+            glsl = Regex.Replace(glsl, $@"(?<![\w.]){escaped}{Regex.Escape(Preprocessing.GlobalWriteRewriter.UniformSuffix)}\b", name, RegexOptions.CultureInvariant);
+        }
+
+        return glsl;
     }
 
     private static string RenameCombinedSamplers(string glsl, SlangStageReflection reflection, List<string> notes)

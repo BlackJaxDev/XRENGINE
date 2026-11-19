@@ -8,8 +8,8 @@ namespace XREngine.ShaderTranslation.Translation;
 /// Builds the HLSL translation unit for one stage of one pass.
 /// </summary>
 /// <remarks>
-/// The unit holds, in order: the platform and pass defines, the selected keywords, Unity's implicit
-/// includes for <c>CGPROGRAM</c>, the include blocks of the shader, subshader, and pass, and the program.
+/// The unit holds, in order: the platform and pass defines, the selected keywords, the legacy conversion
+/// include, Unity's implicit includes for <c>CGPROGRAM</c>, the include blocks of the shader, subshader, and pass, and the program.
 /// Line directives map compiler diagnostics back to the <c>.shader</c> file. <c>#pragma</c> lines are
 /// blanked, because translation reads them separately; blank lines keep the line numbers.
 /// </remarks>
@@ -60,6 +60,8 @@ public static partial class ShaderPassAssembler
         foreach (string keyword in keywords)
             builder.Append("#define ").Append(keyword).Append(" 1\n");
 
+        // Unity compiles every program with the legacy FXC rules, which allow implicit truncation.
+        builder.Append("#include \"HLSLLegacyConversions.cginc\"\n");
         if (program.Language == ShaderLabProgramLanguage.Cg)
         {
             // Unity adds these two files to every CGPROGRAM block.

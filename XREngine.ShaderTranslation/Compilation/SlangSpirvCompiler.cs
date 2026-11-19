@@ -65,7 +65,7 @@ public sealed class SlangSpirvCompiler(ExternalTool slangc)
 
         ExternalToolResult result = await Tool.RunAsync(arguments, workDirectory, cancellationToken).ConfigureAwait(false);
         if (result.ExitCode != 0 || !File.Exists(spirvPath))
-            throw new ShaderCompileException("slangc", result.CombinedOutput);
+            throw new ShaderCompileException("slangc", result.FailureText);
 
         byte[] spirv = await File.ReadAllBytesAsync(spirvPath, cancellationToken).ConfigureAwait(false);
         string reflectionJson = await File.ReadAllTextAsync(reflectionPath, cancellationToken).ConfigureAwait(false);

@@ -18,6 +18,7 @@ public sealed class ShaderTranslatorToolTests
     [TestCase("TranslationUnlit.shader", 1)]
     [TestCase("TranslationToonLit.shader", 3)]
     [TestCase("TranslationScreenEye.shader", 1)]
+    [TestCase("TranslationLegacyHlsl.shader", 1)]
     public async Task TranslateFile_SyntheticShader_ProducesEngineGlsl(string fileName, int expectedPasses)
     {
         SlangSpirvCompiler? compiler = SlangSpirvCompiler.FindDefault();
@@ -48,5 +49,30 @@ public sealed class ShaderTranslatorToolTests
         TranslatedStage vertex = result.Passes[0].Stages.First(stage => stage.Stage == ShaderProgramStage.Vertex);
         vertex.Glsl.ShouldContain("uniform mat4 ModelMatrix;");
         vertex.Glsl.ShouldContain("layout(location = 0) in ");
+    }
+
+    [Test]
+    public async Task TranslateFile_LegacyHlsl_KeepsMaterialUniformNames()
+    {
+        SlangSpirvCompiler? compiler = SlangSpirvCompiler.FindDefault();
+        SpirvCrossGlslEmitter? crossCompiler = SpirvCrossGlslEmitter.FindDefault();
+        if (compiler is null || crossCompiler is null)
+            Assert.Ignore("slangc and spirv-cross are not installed (set XRE_SLANGC and XRE_SPIRV_CROSS, or install the Vulkan SDK).");
+
+        ShaderTranslator translator = new(compiler!, crossCompiler!);
+        ShaderTranslationResult result = await translator.TranslateFileAsync(
+            UnityShaderTestData.PathOf("TranslationLegacyHlsl.shader"),
+            new ShaderTranslationRequest
+            {
+                IncludeDirectories = [UnityShaderTestData.CompatDirectory],
+                WorkDirectory = Path.Combine(Path.GetTempPath(), "xre-shader-translation-tests"),
+            });
+
+        result.Succeeded.ShouldBeTrue(string.Join("\n", result.Diagnostics));
+        string fragment = result.Passes[0].Stages.First(stage => stage.Stage == ShaderProgramStage.Fragment).Glsl;
+        fragment.ShouldContain("uniform vec4 _Color;");
+        fragment.ShouldContain("uniform float scratchMask;");
+        fragment.ShouldContain("uniform float RenderTime;");
+        fragment.ShouldNotContain("_xrUniform");
     }
 }

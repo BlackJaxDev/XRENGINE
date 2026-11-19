@@ -1,5 +1,6 @@
 using XREngine.ShaderTranslation.Compilation;
 using XREngine.ShaderTranslation.Diagnostics;
+using XREngine.ShaderTranslation.Preprocessing;
 using XREngine.ShaderTranslation.ShaderLab;
 
 namespace XREngine.ShaderTranslation.Translation;
@@ -173,7 +174,9 @@ public sealed class ShaderTranslator(SlangSpirvCompiler compiler, SpirvCrossGlsl
         foreach (string keyword in GetEngineKeywords(kind.Value))
             enabled.Add(keyword);
 
-        List<string> includeDirectories = [Path.GetDirectoryName(Path.GetFullPath(document.SourcePath))!, .. request.IncludeDirectories];
+        string shaderDirectory = Path.GetDirectoryName(Path.GetFullPath(document.SourcePath))!;
+        List<string> includeDirectories = [shaderDirectory, .. request.IncludeDirectories];
+        ShaderIncludeExpander includeExpander = new(includeDirectories);
         List<TranslatedStage> stages = [];
         foreach ((ShaderProgramStage stage, string entryPoint) in OrderedStages(pragmas))
         {
@@ -185,7 +188,21 @@ public sealed class ShaderTranslator(SlangSpirvCompiler compiler, SpirvCrossGlsl
             }
 
             IReadOnlyList<string> keywords = ShaderVariantSelector.Select(pragmas, enabled, stage);
-            string hlsl = ShaderPassAssembler.Assemble(document, includeBlocks, pass.Program, stage, entryPoint, kind.Value, pragmas.Target, keywords);
+            string hlsl;
+            GlobalWriteRewriteResult globals;
+            try
+            {
+                string assembled = ShaderPassAssembler.Assemble(document, includeBlocks, pass.Program, stage, entryPoint, kind.Value, pragmas.Target, keywords);
+                globals = GlobalWriteRewriter.Rewrite(includeExpander.Expand(assembled, shaderDirectory, document.SourcePath.Replace('\\', '/')));
+                hlsl = globals.Text;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                diagnostics.Add(new ShaderTranslationDiagnostic(ShaderTranslationDiagnosticCodes.CompileFailed,
+                    ShaderTranslationSeverity.Error, $"{stage} stage '{entryPoint}': {ex.Message}", document.SourcePath, pass.Program.FirstLine, label));
+                return null;
+            }
+
             string stageDirectory = Path.Combine(jobRoot, $"pass{index}-{stage.ToString().ToLowerInvariant()}");
             Directory.CreateDirectory(stageDirectory);
             try
@@ -194,7 +211,7 @@ public sealed class ShaderTranslator(SlangSpirvCompiler compiler, SpirvCrossGlsl
                     hlsl, $"pass{index}_{stage.ToString().ToLowerInvariant()}.hlsl", stage, entryPoint, includeDirectories,
                     stageDirectory, cancellationToken).ConfigureAwait(false);
                 string crossGlsl = await _crossCompiler.EmitAsync(spirv.Spirv, stageDirectory, cancellationToken).ConfigureAwait(false);
-                GlslPostProcessResult processed = GlslPostProcessor.Process(crossGlsl, spirv.Reflection, stage == ShaderProgramStage.Vertex);
+                GlslPostProcessResult processed = GlslPostProcessor.Process(crossGlsl, spirv.Reflection, stage == ShaderProgramStage.Vertex, globals.RewrittenGlobals);
                 foreach (string semantic in processed.UnsupportedVertexInputs)
                 {
                     diagnostics.Add(new ShaderTranslationDiagnostic(ShaderTranslationDiagnosticCodes.UnsupportedVertexInput,
