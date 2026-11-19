@@ -21,9 +21,12 @@ internal sealed partial class SkinningPrepassDispatcher
             if (CanOverwriteOutput(backendOwner, out failureReason, out failureSnapshot))
                 return true;
 
-            if (!HasRotatablePendingOutput(in failureSnapshot) ||
-                _outputReceipt is not { } receipt ||
-                receipt.HasConsumerUses ||
+            // A frozen consumer (a retained frame plan, for example the held desktop frame
+            // while the eyes render) can keep its use on the current output for many frames.
+            // Another producer pass then writes a different slot; the retired slot keeps the
+            // receipt, so it is not overwritten while that consumer still holds it.
+            if (_outputReceipt is not { } receipt ||
+                !HasRotatableOutput(in failureSnapshot, receipt.HasConsumerUses) ||
                 receipt.Fence?.SubmissionStatus == EGpuFenceSubmissionStatus.AwaitingSubmission ||
                 backendOwner is not IRuntimeRendererHost host ||
                 !host.TryGetBackendCapability<IGpuBufferContentReuseCapability>(out var capability) ||
@@ -69,14 +72,19 @@ internal sealed partial class SkinningPrepassDispatcher
             return true;
         }
 
-        private static bool HasRotatablePendingOutput(in OutputReuseFailureSnapshot snapshot)
+        /// <summary>
+        /// Returns true when the current output may move to another slot: every output buffer is
+        /// ready or pending GPU completion, and the output is still in use, either by pending GPU
+        /// work or by a frozen consumer that holds the current receipt.
+        /// </summary>
+        private static bool HasRotatableOutput(in OutputReuseFailureSnapshot snapshot, bool heldByFrozenConsumer)
         {
             bool hasPendingCompletion = false;
             return AllowsRotation(snapshot.PositionsReuse, ref hasPendingCompletion) &&
                    AllowsRotation(snapshot.NormalsReuse, ref hasPendingCompletion) &&
                    AllowsRotation(snapshot.TangentsReuse, ref hasPendingCompletion) &&
                    AllowsRotation(snapshot.InterleavedReuse, ref hasPendingCompletion) &&
-                   hasPendingCompletion;
+                   (hasPendingCompletion || heldByFrozenConsumer);
         }
 
         private static bool AllowsRotation(
@@ -102,6 +110,11 @@ internal sealed partial class SkinningPrepassDispatcher
                 _renderer.ValidateResourcePublicationLease();
                 _activeOutputSlot = slotIndex;
                 slot.HasBeenSelected = true;
+                slot.ReleaseRetiredReceipt();
+                // The prior slot keeps the receipt of its last output, so a frozen consumer that
+                // still reads it blocks reuse of that slot.
+                if (!ReferenceEquals(prior, slot))
+                    prior?.RetireWithReceipt(_outputReceipt);
                 ClearOutputReceipt();
                 _outputAttemptUnfenced = false;
                 _hasValidOutput = false;
