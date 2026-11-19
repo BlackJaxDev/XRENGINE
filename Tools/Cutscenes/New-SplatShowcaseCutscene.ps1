@@ -9,7 +9,7 @@ The script does these steps:
 1. Starts an isolated MCP editor session and loads the authoring project.
 2. Creates a new world with a two-light stage, imports the Unity avatar prefab and its walk clip, and instantiates the
    avatar. Without -TrianglesOnly, it adds a GaussianAvatarSplatComponent to the avatar root.
-3. Reads the avatar bounds with get_node_bounds and computes five orbit camera paths around the avatar.
+3. Reads the avatar skeleton bounds with get_node_bounds and computes five orbit camera paths around the avatar.
 4. Creates one camera for each shot, a screen-space canvas with a title and a subtitle, and a director.
 5. Writes the camera cut, camera transform, field of view, animation clip, and overlay tracks with the cutscene
    authoring tools, then saves the cutscene asset and the world.
@@ -146,9 +146,9 @@ function Deg([double]$degrees) { return $degrees * [Math]::PI / 180.0 }
 # ---------------------------------------------------------------------------------------------------------------------
 # MCP helpers.
 # ---------------------------------------------------------------------------------------------------------------------
-function Invoke-Tool([string]$Name, [hashtable]$Arguments) {
+function Invoke-Tool([string]$Name, [hashtable]$Arguments, [int]$TimeoutSec = 1800) {
     Write-Host ("[{0:HH:mm:ss}] {1}" -f (Get-Date), $Name)
-    $raw = & (Join-Path $repoRoot 'Tools\Invoke-Mcp.ps1') -Session $SessionName -Method 'tools/call' -Params @{ name = $Name; arguments = $Arguments } -TimeoutSec 1800 -OutputDepth 30
+    $raw = & (Join-Path $repoRoot 'Tools\Invoke-Mcp.ps1') -Session $SessionName -Method 'tools/call' -Params @{ name = $Name; arguments = $Arguments } -TimeoutSec $TimeoutSec -OutputDepth 30
     $response = ($raw -join "`n") | ConvertFrom-Json
     if ($null -ne $response.PSObject.Properties['error'] -and $null -ne $response.error) {
         throw "MCP tool '$Name' failed: $($response.error.message)"
@@ -224,7 +224,8 @@ try {
         [void](Add-Component $lightId 'DirectionalLightComponent' @{ Color = (Color3 @(1.0, 1.0, 1.0)); DiffuseIntensity = $light.Intensity; CastsShadows = $false })
     }
 
-    $prefabImport = Invoke-Tool 'import_third_party_asset' @{ source_path = [System.IO.Path]::GetFullPath($UnityPrefab); dest_folder = $AssetFolder; overwrite = $true; allow_partial_import = [bool]$AllowPartialImport }
+    $prefabArguments = @{ source_path = [System.IO.Path]::GetFullPath($UnityPrefab); dest_folder = $AssetFolder; overwrite = $true; allow_partial_import = [bool]$AllowPartialImport }
+    $prefabImport = Invoke-Tool 'import_third_party_asset' $prefabArguments
     $clipImport = Invoke-Tool 'import_third_party_asset' @{ source_path = [System.IO.Path]::GetFullPath($AnimationFile); dest_folder = $AssetFolder; overwrite = $true }
     $avatar = Invoke-Tool 'instantiate_prefab' @{ prefab_path = [string]$prefabImport.path }
     $avatarId = [string]$avatar.instanceId
@@ -233,13 +234,17 @@ try {
     }
 
     if ($ClipLengthSeconds -le 0.0) {
-        $clipAsset = Invoke-Tool 'read_game_asset' @{ path = [string]$clipImport.path }
-        $match = [regex]::Match(($clipAsset | ConvertTo-Json -Depth 5), 'LengthInSeconds\\?"?:\s*([0-9.]+)')
-        if (-not $match.Success) { throw 'The clip length is not in the imported clip. Pass -ClipLengthSeconds.' }
-        $ClipLengthSeconds = [double]::Parse($match.Groups[1].Value, $inv)
+        # The imported clip is cooked binary, so the length comes from the clip settings of the Unity source file.
+        $animText = Get-Content -LiteralPath $AnimationFile -Raw
+        $startMatch = [regex]::Match($animText, 'm_StartTime:\s*([0-9.eE+-]+)')
+        $stopMatch = [regex]::Match($animText, 'm_StopTime:\s*([0-9.eE+-]+)')
+        if (-not $stopMatch.Success) { throw 'The animation file has no m_StopTime. Pass -ClipLengthSeconds.' }
+        $startTime = if ($startMatch.Success) { [double]::Parse($startMatch.Groups[1].Value, $inv) } else { 0.0 }
+        $ClipLengthSeconds = [double]::Parse($stopMatch.Groups[1].Value, $inv) - $startTime
     }
 
-    $bounds = Invoke-Tool 'get_node_bounds' @{ node_id = $avatarId }
+    # The skeleton measures a skinned avatar in the editor, because the skinned mesh bounds exist only after rendering.
+    $bounds = Invoke-Tool 'get_node_bounds' @{ node_id = $avatarId; source = 'transforms' }
     $min = @([double]$bounds.min[0], [double]$bounds.min[1], [double]$bounds.min[2])
     $max = @([double]$bounds.max[0], [double]$bounds.max[1], [double]$bounds.max[2])
     $height = [Math]::Max($max[1] - $min[1], 0.4)
