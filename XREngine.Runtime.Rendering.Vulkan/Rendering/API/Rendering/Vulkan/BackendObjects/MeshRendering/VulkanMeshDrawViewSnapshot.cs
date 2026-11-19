@@ -179,6 +179,38 @@ internal sealed class VulkanMeshDrawViewSnapshot
             renderAreaHeight = (int)producer.TargetExtent.Height;
         }
 
+        RenderFrameViewDescriptor? frozenLeftView = null;
+        RenderFrameViewDescriptor? frozenRightView = null;
+        bool hasTemporalView = pipeline?.RenderState.TemporalAuthoringViewSet is not null;
+        if ((pipeline?.RenderState.TemporalAuthoringViewSet ?? pipeline?.RenderState.FrameViewSet) is { } candidateFrameViews)
+        {
+            bool matchLogicalView = producer.Context.ContextKind is
+                EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror;
+            if (isStereoPass)
+            {
+                if (TryGetUniqueFrozenView(in candidateFrameViews, camera, rightEye: false,
+                        logicalViewId: producer.Context.LogicalViewId,
+                        matchLogicalView: matchLogicalView, out RenderFrameViewDescriptor leftView))
+                    frozenLeftView = leftView;
+                if (TryGetUniqueFrozenView(in candidateFrameViews, rightEyeCamera, rightEye: true,
+                        logicalViewId: 0UL, matchLogicalView: false, out RenderFrameViewDescriptor rightView))
+                    frozenRightView = rightView;
+            }
+            else if (TryGetUniqueFrozenView(in candidateFrameViews, camera, rightEye: null,
+                         logicalViewId: producer.Context.LogicalViewId,
+                         matchLogicalView: matchLogicalView, out RenderFrameViewDescriptor monoView))
+            {
+                frozenLeftView = monoView;
+            }
+        }
+
+        bool useLeftUnjitteredProjection = useUnjitteredProjection ||
+            (hasTemporalView && frozenLeftView is { } leftTemporalView &&
+             leftTemporalView.CurrentJitter != Vector2.Zero && camera?.HasProjectionJitter != true);
+        bool useRightUnjitteredProjection = useUnjitteredProjection ||
+            (hasTemporalView && frozenRightView is { } rightTemporalView &&
+             rightTemporalView.CurrentJitter != Vector2.Zero && rightEyeCamera?.HasProjectionJitter != true);
+
         // The snapshot reads camera, render-area and layered shadow state only.
         // Per-draw scoped bindings change ScopedBindingRevision for almost every
         // draw, so the key uses the layered shadow revision.
@@ -190,11 +222,15 @@ internal sealed class VulkanMeshDrawViewSnapshot
             pipeline,
             camera,
             rightEyeCamera,
+            frozenLeftView,
+            frozenRightView,
             renderAreaWidth,
             renderAreaHeight,
             descriptorViewFamilyIdentity,
             isStereoPass,
             useUnjitteredProjection,
+            useLeftUnjitteredProjection,
+            useRightUnjitteredProjection,
             in shadowUniformState);
         VulkanMeshDrawViewSnapshotCacheKey[] cacheKeys = s_cacheKeys ??= new VulkanMeshDrawViewSnapshotCacheKey[CacheCapacity];
         VulkanMeshDrawViewSnapshot?[] cacheSnapshots = s_cacheSnapshots ??= new VulkanMeshDrawViewSnapshot?[CacheCapacity];
@@ -334,6 +370,112 @@ internal sealed class VulkanMeshDrawViewSnapshot
                 previousRightEyeViewProjectionMatrixUnjittered = rightEyeViewProjectionMatrixUnjittered;
         }
 
+        Vector3 cameraPosition = camera?.Transform.RenderTranslation ?? Vector3.Zero;
+        Vector3 cameraForward = camera?.Transform.RenderForward ?? Vector3.UnitZ;
+        Vector3 cameraUp = camera?.Transform.RenderUp ?? Vector3.UnitY;
+        Vector3 cameraRight = camera?.Transform.RenderRight ?? Vector3.UnitX;
+        if (frozenLeftView is { } frozenLeft)
+        {
+            viewMatrix = frozenLeft.ViewMatrix;
+            if (!Matrix4x4.Invert(viewMatrix, out inverseViewMatrix))
+                throw new NotSupportedException("VulkanMeshDraw.InvalidFrameView: the frozen view matrix is not invertible.");
+
+            Matrix4x4 unjitteredProjection = frozenLeft.ProjectionMatrixUnjittered == default
+                ? frozenLeft.ProjectionMatrix : frozenLeft.ProjectionMatrixUnjittered;
+            projectionMatrix = useLeftUnjitteredProjection
+                ? unjitteredProjection : frozenLeft.ProjectionMatrix;
+            if (!Matrix4x4.Invert(projectionMatrix, out inverseProjectionMatrix))
+                throw new NotSupportedException("VulkanMeshDraw.InvalidFrameView: the frozen projection matrix is not invertible.");
+
+            viewProjectionMatrix = viewMatrix * projectionMatrix;
+            viewProjectionMatrixUnjittered = viewMatrix * unjitteredProjection;
+            leftEyeHistoryReady = frozenLeft.HasValidTemporalHistory &&
+                frozenLeft.PreviousViewProjectionMatrixUnjittered != default;
+            previousViewMatrix = viewMatrix;
+            previousProjectionMatrix = projectionMatrix;
+            previousViewProjectionMatrixUnjittered = leftEyeHistoryReady
+                ? frozenLeft.PreviousViewProjectionMatrixUnjittered : viewProjectionMatrixUnjittered;
+            previousViewProjectionMatrix = leftEyeHistoryReady
+                ? useLeftUnjitteredProjection
+                    ? previousViewProjectionMatrixUnjittered
+                    : frozenLeft.PreviousViewProjectionMatrix == default
+                        ? viewProjectionMatrix : frozenLeft.PreviousViewProjectionMatrix
+                : viewProjectionMatrix;
+            if (leftEyeHistoryReady && pipeline is not null &&
+                VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(pipeline, out var leftTemporalData) &&
+                leftTemporalData.LeftEyeHistoryReady &&
+                leftTemporalData.CurrViewProjectionUnjittered == viewProjectionMatrixUnjittered &&
+                leftTemporalData.PrevViewProjectionUnjittered == previousViewProjectionMatrixUnjittered)
+            {
+                previousViewMatrix = leftTemporalData.PrevViewMatrix;
+                previousProjectionMatrix = leftTemporalData.PrevProjection;
+            }
+
+            Vector3 frozenPosition = new(frozenLeft.CameraPositionAndNear.X,
+                frozenLeft.CameraPositionAndNear.Y, frozenLeft.CameraPositionAndNear.Z);
+            Vector3 frozenForward = new(frozenLeft.CameraForwardAndFar.X,
+                frozenLeft.CameraForwardAndFar.Y, frozenLeft.CameraForwardAndFar.Z);
+            cameraPosition = frozenLeft.CameraPositionAndNear == default
+                ? inverseViewMatrix.Translation : frozenPosition;
+            cameraForward = frozenForward.LengthSquared() > 1e-8f
+                ? Vector3.Normalize(frozenForward)
+                : Vector3.Normalize(Vector3.TransformNormal(Globals.Forward, inverseViewMatrix));
+            cameraUp = Vector3.Normalize(Vector3.TransformNormal(Globals.Up, inverseViewMatrix));
+            cameraRight = Vector3.Normalize(Vector3.TransformNormal(Globals.Right, inverseViewMatrix));
+
+            if (rightEyeCamera is null)
+            {
+                rightEyeViewMatrix = viewMatrix;
+                rightEyeInverseViewMatrix = inverseViewMatrix;
+                rightEyeProjectionMatrix = projectionMatrix;
+                rightEyeInverseProjectionMatrix = inverseProjectionMatrix;
+                rightEyeViewProjectionMatrix = viewProjectionMatrix;
+                rightEyeViewProjectionMatrixUnjittered = viewProjectionMatrixUnjittered;
+                previousRightEyeViewMatrix = viewMatrix;
+                previousRightEyeProjectionMatrix = projectionMatrix;
+                previousRightEyeViewProjectionMatrix = viewProjectionMatrix;
+                previousRightEyeViewProjectionMatrixUnjittered = viewProjectionMatrixUnjittered;
+                rightEyeHistoryReady = false;
+            }
+        }
+        if (frozenRightView is { } frozenRight)
+        {
+            rightEyeViewMatrix = frozenRight.ViewMatrix;
+            if (!Matrix4x4.Invert(rightEyeViewMatrix, out rightEyeInverseViewMatrix))
+                throw new NotSupportedException("VulkanMeshDraw.InvalidFrameView: the frozen right-eye view matrix is not invertible.");
+
+            Matrix4x4 unjitteredProjection = frozenRight.ProjectionMatrixUnjittered == default
+                ? frozenRight.ProjectionMatrix : frozenRight.ProjectionMatrixUnjittered;
+            rightEyeProjectionMatrix = useRightUnjitteredProjection
+                ? unjitteredProjection : frozenRight.ProjectionMatrix;
+            if (!Matrix4x4.Invert(rightEyeProjectionMatrix, out rightEyeInverseProjectionMatrix))
+                throw new NotSupportedException("VulkanMeshDraw.InvalidFrameView: the frozen right-eye projection matrix is not invertible.");
+
+            rightEyeViewProjectionMatrix = rightEyeViewMatrix * rightEyeProjectionMatrix;
+            rightEyeViewProjectionMatrixUnjittered = rightEyeViewMatrix * unjitteredProjection;
+            rightEyeHistoryReady = frozenRight.HasValidTemporalHistory &&
+                frozenRight.PreviousViewProjectionMatrixUnjittered != default;
+            previousRightEyeViewMatrix = rightEyeViewMatrix;
+            previousRightEyeProjectionMatrix = rightEyeProjectionMatrix;
+            previousRightEyeViewProjectionMatrixUnjittered = rightEyeHistoryReady
+                ? frozenRight.PreviousViewProjectionMatrixUnjittered : rightEyeViewProjectionMatrixUnjittered;
+            previousRightEyeViewProjectionMatrix = rightEyeHistoryReady
+                ? useRightUnjitteredProjection
+                    ? previousRightEyeViewProjectionMatrixUnjittered
+                    : frozenRight.PreviousViewProjectionMatrix == default
+                        ? rightEyeViewProjectionMatrix : frozenRight.PreviousViewProjectionMatrix
+                : rightEyeViewProjectionMatrix;
+            if (rightEyeHistoryReady && pipeline is not null &&
+                VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(pipeline, out var rightTemporalData) &&
+                rightTemporalData.RightEyeHistoryReady &&
+                rightTemporalData.RightEyeCurrViewProjectionUnjittered == rightEyeViewProjectionMatrixUnjittered &&
+                rightTemporalData.RightEyePrevViewProjectionUnjittered == previousRightEyeViewProjectionMatrixUnjittered)
+            {
+                previousRightEyeViewMatrix = rightTemporalData.RightEyePrevViewMatrix;
+                previousRightEyeProjectionMatrix = rightTemporalData.RightEyePrevProjection;
+            }
+        }
+
         // One immutable snapshot is allocated per distinct view/pass/frame and
         // shared by every draw, replacing hundreds of multi-kilobyte copies.
         // Frame-slot ownership or pooling can remove this final bounded allocation.
@@ -367,10 +509,10 @@ internal sealed class VulkanMeshDrawViewSnapshot
             previousRightEyeViewProjectionMatrixUnjittered,
             leftEyeHistoryReady,
             rightEyeHistoryReady,
-            camera?.Transform.RenderTranslation ?? Vector3.Zero,
-            camera?.Transform.RenderForward ?? Vector3.UnitZ,
-            camera?.Transform.RenderUp ?? Vector3.UnitY,
-            camera?.Transform.RenderRight ?? Vector3.UnitX,
+            cameraPosition,
+            cameraForward,
+            cameraUp,
+            cameraRight,
             renderAreaWidth,
             renderAreaHeight,
             descriptorViewFamilyIdentity,
@@ -392,5 +534,50 @@ internal sealed class VulkanMeshDrawViewSnapshot
 
         Interlocked.Exchange(ref s_nextPacketId, 1);
         return 1UL;
+    }
+
+    private static bool TryGetUniqueFrozenView(
+        in RenderFrameViewSet frameViews,
+        XRCamera? camera,
+        bool? rightEye,
+        ulong logicalViewId,
+        bool matchLogicalView,
+        out RenderFrameViewDescriptor result)
+    {
+        result = default;
+        if (camera is null)
+            return false;
+
+        int matchCount = 0;
+        int logicalMatchCount = 0;
+        RenderFrameViewDescriptor logicalMatch = default;
+        for (int index = 0; index < frameViews.ViewCount; index++)
+        {
+            RenderFrameViewDescriptor view = frameViews.GetView(index);
+            if (view.SourceCameraIdentity != camera.RenderIdentity ||
+                (rightEye.HasValue && view.IsRightEyeFamily != rightEye.Value))
+                continue;
+
+            result = view;
+            matchCount++;
+            if (matchLogicalView && view.EffectiveHistoryKey == logicalViewId)
+            {
+                logicalMatch = view;
+                logicalMatchCount++;
+            }
+        }
+
+        if (matchCount == 1)
+            return true;
+        if (matchCount == 0)
+            return false;
+        if (logicalMatchCount == 1)
+        {
+            result = logicalMatch;
+            return true;
+        }
+
+        throw new NotSupportedException(
+            "VulkanMeshDraw.AmbiguousFrameView: more than one frozen view matches the draw camera and eye.");
     }
 }

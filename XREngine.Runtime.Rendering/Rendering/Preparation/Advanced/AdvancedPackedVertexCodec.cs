@@ -39,7 +39,8 @@ public static partial class AdvancedPackedVertexCodec
             GetOrDefault(vertex.TextureCoordinateSets, 2),
             GetOrDefault(vertex.TextureCoordinateSets, 3),
             vertex.TextureCoordinateSets is { Count: > 2 },
-            vertex.TextureCoordinateSets is { Count: > 3 });
+            vertex.TextureCoordinateSets is { Count: > 3 },
+            vertex.TextureCoordinateSets is { Count: > 0 });
     }
 
     /// <summary>
@@ -74,7 +75,8 @@ public static partial class AdvancedPackedVertexCodec
             texCoordCount > 2u ? mesh.GetTexCoord(vertexIndex, 2u) : Vector2.Zero,
             texCoordCount > 3u ? mesh.GetTexCoord(vertexIndex, 3u) : Vector2.Zero,
             texCoordCount > 2u,
-            texCoordCount > 3u);
+            texCoordCount > 3u,
+            texCoordCount > 0u);
     }
 
     /// <summary>
@@ -101,7 +103,8 @@ public static partial class AdvancedPackedVertexCodec
         Vector2 texCoord2 = default,
         Vector2 texCoord3 = default,
         bool hasTexCoord2 = false,
-        bool hasTexCoord3 = false)
+        bool hasTexCoord3 = false,
+        bool hasTexCoord0 = true)
         => new()
         {
             Position = position,
@@ -121,6 +124,11 @@ public static partial class AdvancedPackedVertexCodec
                 (PackSourceTile(texCoord1) << 5) |
                 (PackSourceTile(texCoord2) << 10) |
                 (PackSourceTile(texCoord3) << 15),
+            Reserved3 = SourceUvTilesValidFlag |
+                PackSourceTile(hasTexCoord0 ? new Vector2(texCoord0.X, 1.0f - texCoord0.Y) : Vector2.Zero) |
+                (PackSourceTile(hasTexCoord1 ? new Vector2(texCoord1.X, 1.0f - texCoord1.Y) : Vector2.Zero) << 5) |
+                (PackSourceTile(hasTexCoord2 ? new Vector2(texCoord2.X, 1.0f - texCoord2.Y) : Vector2.Zero) << 10) |
+                (PackSourceTile(hasTexCoord3 ? new Vector2(texCoord3.X, 1.0f - texCoord3.Y) : Vector2.Zero) << 15),
             Flags = (hasTexCoord1 ? HasTexCoord1Flag : 0u) |
                 (hasTexCoord2 ? HasTexCoord2Flag : 0u) |
                 (hasTexCoord3 ? HasTexCoord3Flag : 0u),

@@ -592,9 +592,11 @@ namespace XREngine.Rendering
             bool generateMipChainOnGpu = texture.AutoGenerateMipmaps
                 && Math.Max(baseMip.Width, baseMip.Height) > 1u;
 
+            long probeCopyStart = System.Diagnostics.Stopwatch.GetTimestamp();
             Mipmap2D[] retainedMipmaps = [.. mipmaps];
             for (int i = 0; i < retainedMipmaps.Length; ++i)
                 retainedMipmaps[i].StreamingPBO = null;
+            long probeCopyEnd = System.Diagnostics.Stopwatch.GetTimestamp();
 
             TextureStreamingResidentData residentData = new(
                 retainedMipmaps,
@@ -602,6 +604,7 @@ namespace XREngine.Rendering
                 Math.Max(texture.Height, baseMip.Height),
                 Math.Max(baseMip.Width, baseMip.Height),
                 generateMipChainOnGpu);
+            long probeConstructEnd = System.Diagnostics.Stopwatch.GetTimestamp();
 
             RuntimeGraphicsApiKind backend = RuntimeGraphicsApiKind.Vulkan;
             void OnFailed(Exception error)
@@ -627,8 +630,14 @@ namespace XREngine.Rendering
                 onFailed: OnFailed);
             double scheduleMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(scheduleStart).TotalMilliseconds;
             if (scheduleMilliseconds >= 4.0)
-                Debug.TexturesWarning(
+                Debug.WriteAuxiliaryLog("texture-upload-timing.log",
                     $"[UploadMipmaps] Vulkan upload service scheduling for '{texture.Name}' took {scheduleMilliseconds:F2} ms (gpuMips={generateMipChainOnGpu}).");
+            double copyMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(probeCopyStart, probeCopyEnd).TotalMilliseconds;
+            double constructMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(probeCopyEnd, probeConstructEnd).TotalMilliseconds;
+            if (scheduleMilliseconds + copyMilliseconds + constructMilliseconds >= 4.0)
+                Debug.WriteAuxiliaryLog("texture-upload-timing.log",
+                    $"[TextureSchedulePhases] texture='{texture.Name}' mips={retainedMipmaps.Length} copyMipArray={copyMilliseconds:F2} ms " +
+                    $"constructResidentData={constructMilliseconds:F2} ms managerSchedule={scheduleMilliseconds:F2} ms");
             return scheduled;
         }
 
@@ -1326,7 +1335,10 @@ namespace XREngine.Rendering
                 or IOException
                 or UnauthorizedAccessException;
 
-        private static RuntimeImage ResizePreviewIfNeeded(RuntimeImage previewImage, uint maxPreviewSize)
+        private static RuntimeImage ResizePreviewIfNeeded(
+            RuntimeImage previewImage,
+            uint maxPreviewSize,
+            ETextureImportUsage? usage = null)
         {
             ArgumentNullException.ThrowIfNull(previewImage);
             if (maxPreviewSize == 0)
@@ -1343,7 +1355,10 @@ namespace XREngine.Rendering
             double scale = maxPreviewSize / (double)largest;
             uint scaledWidth = Math.Max(1u, (uint)Math.Round(width * scale));
             uint scaledHeight = Math.Max(1u, (uint)Math.Round(height * scale));
-            return RuntimeImageCodecs.Require().Resize(previewImage, scaledWidth, scaledHeight, RuntimeImageResizeMode.Standard);
+            RuntimeImageResizeMode mode = usage is ETextureImportUsage.Data or ETextureImportUsage.Normal
+                ? RuntimeImageResizeMode.IndependentChannels
+                : RuntimeImageResizeMode.Standard;
+            return RuntimeImageCodecs.Require().Resize(previewImage, scaledWidth, scaledHeight, mode);
         }
 
         /// <summary>
@@ -1355,9 +1370,12 @@ namespace XREngine.Rendering
         /// <see cref="XRTexture.AutoGenerateMipmaps"/> to <c>true</c> and let the GPU generate mipmaps.
         /// </para>
         /// </summary>
-        public static Mipmap2D[] GetMipmapsFromImage(RuntimeImage image)
+        public static Mipmap2D[] GetMipmapsFromImage(RuntimeImage image, ETextureImportUsage? usage = null)
         {
             ArgumentNullException.ThrowIfNull(image);
+            RuntimeImageResizeMode mode = usage is ETextureImportUsage.Data or ETextureImportUsage.Normal
+                ? RuntimeImageResizeMode.IndependentChannels
+                : RuntimeImageResizeMode.Standard;
             int mipCount = Math.Max(1, GetSmallestMipmapLevel(image.Width, image.Height) + 1);
             Mipmap2D[] mips = new Mipmap2D[mipCount];
             mips[0] = new Mipmap2D(image);
@@ -1369,7 +1387,7 @@ namespace XREngine.Rendering
                     uint mipWidth = Math.Max(1u, image.Width >> i);
                     uint mipHeight = Math.Max(1u, image.Height >> i);
                     RuntimeImage previousImage = workingImage;
-                    workingImage = RuntimeImageCodecs.Require().Resize(previousImage, mipWidth, mipHeight, RuntimeImageResizeMode.Standard);
+                    workingImage = RuntimeImageCodecs.Require().Resize(previousImage, mipWidth, mipHeight, mode);
                     if (!ReferenceEquals(previousImage, image))
                         previousImage.Dispose();
                     mips[i] = new Mipmap2D(workingImage);

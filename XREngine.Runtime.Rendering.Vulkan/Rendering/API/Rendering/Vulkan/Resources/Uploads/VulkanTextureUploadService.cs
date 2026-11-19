@@ -664,6 +664,7 @@ internal sealed partial class VulkanTextureUploadService
         VulkanTextureUploadGenerationState state,
         string? detail = null)
     {
+        long start = Stopwatch.GetTimestamp();
         UpdateUploadGeneration(request, state, detail);
         TextureRuntimeDiagnostics.LogVulkanImportedTextureUploadState(
             RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks,
@@ -675,6 +676,7 @@ internal sealed partial class VulkanTextureUploadService
             request.PriorityClass,
             state,
             detail);
+        VulkanTextureUploadTimingProbe.AddRecordState(Stopwatch.GetTimestamp() - start);
     }
 
     public bool TryQueueImportedTextureUpload(

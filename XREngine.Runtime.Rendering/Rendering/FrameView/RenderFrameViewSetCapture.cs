@@ -11,7 +11,27 @@ public static class RenderFrameViewSetCapture
     [ThreadStatic]
     private static float? s_elapsedTimeOverride;
 
-    internal static float ResolveElapsedTime(float elapsedTime) => s_elapsedTimeOverride ?? elapsedTime;
+    private static float s_diagnosticElapsedTime = float.NaN;
+
+    internal static float ResolveElapsedTime(float elapsedTime)
+    {
+        if (s_elapsedTimeOverride is float scopedTime)
+            return scopedTime;
+        float diagnosticTime = Volatile.Read(ref s_diagnosticElapsedTime);
+        return float.IsNaN(diagnosticTime) ? elapsedTime : diagnosticTime;
+    }
+
+    /// <summary>
+    /// Freezes render-side elapsed time for a visual comparison without changing the physics clock.
+    /// This includes shared shader time and the CPU exposure update cadence.
+    /// A scoped capture time takes priority. Pass null to restore the engine time.
+    /// </summary>
+    public static void SetDiagnosticElapsedTime(float? elapsedTime)
+    {
+        if (elapsedTime.HasValue && !float.IsFinite(elapsedTime.Value))
+            throw new ArgumentOutOfRangeException(nameof(elapsedTime));
+        Volatile.Write(ref s_diagnosticElapsedTime, elapsedTime ?? float.NaN);
+    }
 
     /// <summary>Freezes shared view uniforms for a multi-frame scene capture without changing the engine clock.</summary>
     public static ElapsedTimeScope PushElapsedTime(float? elapsedTime) => new(elapsedTime);

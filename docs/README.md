@@ -26,6 +26,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
 - [Texture Streaming](architecture/rendering/texture-streaming.md)
 - [Advanced Render Pipeline](architecture/rendering/advanced-render-pipeline.md)
+- [Editor Highlight Module](architecture/rendering/editor-highlight-module.md)
 - [Shadow Atlas](architecture/rendering/shadow-atlas.md)
 - [Transparency And OIT](architecture/rendering/transparency-and-oit.md)
 - [GPU Hi-Z Occlusion Culling](architecture/rendering/gpu-hiz-occlusion-culling.md)
@@ -60,11 +61,12 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [Windows CI Test Coverage](developer-guides/testing/windows-ci.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
-- [MCP Assistant](developer-guides/ai/mcp-assistant.md)
+- [Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
 - [Unity Conversion](developer-guides/assets/unity-conversion-integrations.md): package startup imports, scene and prefab roots, source dependencies, and Poiyomi materials.
+- [Unity Script Host](developer-guides/assets/unity-script-host.md): source inventory, assembly graphs, source compilation, and explicit execution limits.
 - [Editor Notifications](user-guide/editor/notifications.md): asset alerts and panel close controls in the ImGui editor.
 - [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)
 - [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)

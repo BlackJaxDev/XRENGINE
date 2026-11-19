@@ -2716,7 +2716,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			reason = "program pending";
 			return false;
@@ -2829,7 +2829,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			reason = "program pending after frame-wide prewarm";
 			return false;
@@ -2935,7 +2935,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			reason = "program pending";
 			return false;

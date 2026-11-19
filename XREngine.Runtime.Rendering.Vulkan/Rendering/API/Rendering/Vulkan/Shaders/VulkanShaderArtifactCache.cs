@@ -377,7 +377,7 @@ internal static class VulkanShaderArtifactCache
             SourceLanguage: "GLSL",
             OptimizationLevel: OptimizationLevel.Performance.ToString(),
             OptimizerIdentity: ResolvedShaderSourceOptimizer.BuildIdentitySegment(),
-            RewriteIdentity: "VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine+ReflectionSourcePreprocessor:v3");
+            RewriteIdentity: "VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine+ReflectionSourcePreprocessor:v4");
 
     private static string GetShadercNativeIdentity()
     {

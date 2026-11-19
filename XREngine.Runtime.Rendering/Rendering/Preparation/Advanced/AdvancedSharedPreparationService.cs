@@ -88,6 +88,7 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 service._extractor.FrameUploadTelemetry,
                 service._extractor.VisibilityContentTelemetry)
             {
+                MeshPreparation = service._extractor.GpuDeformation.GetMeshPreparationDiagnostics(),
                 DeformationSourceGeneration = service._extractor.DeformationSourceGeneration,
                 DeformationSourceMeshCount = service._extractor.DeformationSourceMeshCount,
                 DeformationSourceChanges = service._extractor.DeformationSourceChanges,

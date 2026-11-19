@@ -23,7 +23,8 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     private static void RenderGPU(VPRC_RenderMeshesPassShared command, EMeshSubmissionStrategy meshSubmissionStrategy)
     {
-        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.ResolveRenderGraphPassIndex());
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(
+            command.ResolveRenderGraphPassIndex(), command.RenderPass);
         using var prof = RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU", ProfilerScopeKind.AlwaysOnHotPathLoop);
         var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (activeInstance is null)
@@ -98,7 +99,8 @@ internal static class VPRC_RenderMeshesPassTraditional
 
     private static void RenderCPU(VPRC_RenderMeshesPassShared command)
     {
-        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(command.ResolveRenderGraphPassIndex());
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(
+            command.ResolveRenderGraphPassIndex(), command.RenderPass);
         var activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (activeInstance is null)
         {
@@ -115,7 +117,8 @@ internal static class VPRC_RenderMeshesPassTraditional
             false,
             camera,
             enforceAdvancedLatePassEligibility:
-                command.EnforceAdvancedLatePassEligibility);
+                command.EnforceAdvancedLatePassEligibility,
+            sourceOrderedSlice: command.SourceOrderedSlice);
     }
 
     private static void WarnMissingPipeline(string path, int renderPass)

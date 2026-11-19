@@ -20,6 +20,20 @@ internal unsafe partial class VkMeshRenderer
 
 	public string LastPrepareDetail => _lastPrepareDetail;
 
+	internal bool HasTerminalProgramPreparationFailure
+	{
+		get
+		{
+			if (_program is null)
+				return false;
+			XRRenderProgram.EShaderProgramBackendStage stage =
+				_program.Data.ShaderMetadata.Backend.Stage;
+			return stage is XRRenderProgram.EShaderProgramBackendStage.Failed or
+				XRRenderProgram.EShaderProgramBackendStage.BinaryUploadFailed or
+				XRRenderProgram.EShaderProgramBackendStage.Abandoned;
+		}
+	}
+
 	public bool TryPrepareForRendering()
 		=> TryPrepareForDrawEnqueue(ResolveMaterial(null, 1u), false, out _);
 
@@ -51,6 +65,9 @@ internal unsafe partial class VkMeshRenderer
 
 		if (MeshRenderer.HasRenderDataPreparation)
 			MeshRenderer.OnPreparingRenderData();
+
+		if (!TryEnsureUberRasterSourceReady(material, out reason))
+			return false;
 
 		EnsureRuntimeDeformationBuffersCurrent();
 		XRMaterial coverageSource = material.ShadowBindingSourceMaterial ?? material;
@@ -106,7 +123,8 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		bool requireExactGeometry,
 		out string reason,
-		bool indexedIndirect = false)
+		bool indexedIndirect = false,
+		EditorHighlightRasterOutput editorHighlightOutput = default)
 	{
 		reason = "Ready";
 
@@ -133,6 +151,9 @@ internal unsafe partial class VkMeshRenderer
 		if (MeshRenderer.HasRenderDataPreparation)
 			MeshRenderer.OnPreparingRenderData();
 
+		if (!TryEnsureUberRasterSourceReady(material, out reason))
+			return false;
+
 		EnsureRuntimeDeformationBuffersCurrent();
 
 		RequestIndexPreparationBeforeDrawAdmission();
@@ -153,7 +174,7 @@ internal unsafe partial class VkMeshRenderer
 			_activeProgramLinkGeneration == _program.LinkGeneration &&
 			!_buffersDirty &&
 			!shaderConfigurationChanged &&
-			IsActiveGeneratedProgramCurrent(material);
+			IsActiveGeneratedProgramCurrent(material, editorHighlightOutput);
 		if (canReuseProgramAndBuffers &&
 			AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices()))
 		{
@@ -164,7 +185,7 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
-		if (!EnsureProgram(material))
+		if (!EnsureProgram(material, editorHighlightOutput))
 			return SetPrepareResult(false, "ProgramsPending", DescribePendingProgram(), out reason);
 		if (requiresTriangleCoverage && ProgramUsesShaderGeneratedVertices())
 			return SetPrepareResult(false, "UnsupportedVertexUdimDraw", "Vertex-mode UDIM discard requires the original triangle vertex stream.", out reason);
@@ -277,6 +298,33 @@ internal unsafe partial class VkMeshRenderer
 
 		XRRenderProgram.ShaderProgramBackendStatus status = _program.Data.ShaderMetadata.Backend;
 		return $"Program='{_program.Data.Name}' active={_program.IsActive} linkReady={_program.Data.LinkReady} stage={status.Stage} failure='{status.FailureReason}' detail='{status.Detail}'";
+	}
+
+	private bool TryEnsureUberRasterSourceReady(XRMaterial material, out string reason)
+	{
+		if (material.IsUberRasterSourceReady())
+		{
+			reason = "Ready";
+			return true;
+		}
+
+		UberMaterialVariantStatus status = material.UberVariantStatus;
+		if (status.Stage is not (EUberMaterialVariantStage.Requested or
+			EUberMaterialVariantStage.Preparing or
+			EUberMaterialVariantStage.Compiling or
+			EUberMaterialVariantStage.Failed))
+		{
+			material.RequestUberVariantRebuild();
+			status = material.UberVariantStatus;
+		}
+
+		string detail = $"Authored Uber raster source is not ready: material='{material.Name ?? "<unnamed>"}' " +
+			$"stage={status.Stage} activeHash={status.ActiveVariantHash:x16} " +
+			$"requestedHash={status.RequestedVariantHash:x16} failure='{status.FailureReason ?? "<none>"}'.";
+		return SetPrepareResult(false,
+			status.Stage == EUberMaterialVariantStage.Failed ? "UberVariantFailed" : "UberVariantPending",
+			detail,
+			out reason);
 	}
 
 	private bool TryPrepareCapturedProgramForRecording(

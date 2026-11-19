@@ -1,9 +1,13 @@
+using System.Numerics;
+
 namespace XREngine.Rendering.Meshlets;
 
 /// <summary>Adapts the meshoptimizer native binding to the engine mesh contract.</summary>
 internal sealed class NativeMeshOptimizerBackend : IMeshOptimizerBackend
 {
     public string VersionKey => NativeMeshOptimizer.VersionKey;
+    public void GenerateTangents(Span<Vector4> destination, ReadOnlySpan<uint> indices, ReadOnlySpan<Vector3> positions, ReadOnlySpan<Vector3> normals, ReadOnlySpan<Vector2> texCoords)
+        => NativeMeshOptimizer.GenerateTangents(destination, indices, positions, normals, texCoords);
     public nuint BuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles)
         => NativeMeshOptimizer.BuildMeshletsBound(indexCount, maxVertices, maxTriangles);
     public nuint BuildNativeMeshletClusters(MeshletBuildMode buildMode, MeshOptimizerMeshlet[] meshlets, uint[] meshletVertices, byte[] meshletTriangles, uint[] indices, float[] vertexPositions, nuint vertexCount, uint maxVertices, uint minTriangles, uint maxTriangles, float coneWeight, float splitFactor, float fillWeight)

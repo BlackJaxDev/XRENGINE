@@ -94,6 +94,8 @@ public static class ImGuiFileBrowser
 
     private static readonly Dictionary<string, DialogState> _activeDialogs = new();
     private static readonly object _stateLock = new();
+    private static nint _lastDialogContext;
+    private static int _lastDialogFrame = -1;
     private static readonly bool _allowStandaloneDialogs = false;
         //!string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DisableImGuiFileDialogs), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _standaloneDisabledNotified;
@@ -170,9 +172,18 @@ public static class ImGuiFileBrowser
     /// </summary>
     public static void DrawDialogs()
     {
+        nint context = ImGui.GetCurrentContext();
+        int frame = ImGui.GetFrameCount();
         List<DialogState> fallbackStates;
         lock (_stateLock)
         {
+            // Several editor panels can request a file browser draw in one frame.
+            // Draw each modal once so ImGui receives one BeginPopupModal call.
+            if (_lastDialogContext == context && _lastDialogFrame == frame)
+                return;
+            _lastDialogContext = context;
+            _lastDialogFrame = frame;
+
             fallbackStates = _activeDialogs.Values
                 .Where(s => s.RenderMode == DialogRenderMode.ModalFallback)
                 .ToList();

@@ -4,19 +4,21 @@ using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using XREngine.Extensions;
 using XREngine.Rendering;
+using XREngine.Rendering.Models;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine;
 
 /// <summary>Builds neutral runtime meshes from Assimp data without exposing Assimp to Rendering.</summary>
-internal static class AssimpMeshFactory
+internal static partial class AssimpMeshFactory
 {
     public static XRMesh Create(
         Mesh mesh,
         IReadOnlyDictionary<string, List<SceneNode>> nodeCache,
         Matrix4x4 dataTransform,
-        bool importBlendShapeNormals = true)
+        bool importBlendShapeNormals = true,
+        ModelTangentImportPolicy tangentPolicy = ModelTangentImportPolicy.Default)
     {
         ArgumentNullException.ThrowIfNull(mesh);
         ArgumentNullException.ThrowIfNull(nodeCache);
@@ -25,7 +27,8 @@ internal static class AssimpMeshFactory
         if (IsTriangleDominant(mesh))
         {
             using RenderObjectPublicationScope packedPublication = GenericRenderObject.BeginDeferredPublication();
-            XRMesh packed = CreateTriangleMesh(mesh, nodeCache, dataTransform, importBlendShapeNormals);
+            XRMesh packed = CreateTriangleMesh(mesh, nodeCache, dataTransform,
+                importBlendShapeNormals, tangentPolicy);
             packedPublication.Complete();
             return packed;
         }
@@ -93,12 +96,14 @@ internal static class AssimpMeshFactory
         Mesh mesh,
         IReadOnlyDictionary<string, List<SceneNode>> nodeCache,
         Matrix4x4 dataTransform,
-        bool importBlendShapeNormals)
+        bool importBlendShapeNormals,
+        ModelTangentImportPolicy tangentPolicy)
     {
         int texCoordSets = CountLeadingChannels(mesh.TextureCoordinateChannelCount, channel => mesh.TextureCoordinateChannels[channel]?.Count ?? 0);
         int colorSets = CountLeadingChannels(mesh.VertexColorChannelCount, channel => mesh.VertexColorChannels[channel]?.Count ?? 0);
         bool hasNormals = mesh.HasNormals || (mesh.HasTangentBasis && mesh.BiTangents.Count > 0);
-        bool hasTangents = mesh.HasTangentBasis || (mesh.HasNormals && mesh.BiTangents.Count > 0);
+        bool hasTangents = tangentPolicy == ModelTangentImportPolicy.CalculateMikkCompatible ||
+            mesh.HasTangentBasis || (mesh.HasNormals && mesh.BiTangents.Count > 0);
         XRMeshPackedSource source = new(hasNormals, hasTangents, texCoordSets, colorSets, mesh.VertexCount);
         List<(int bone, float weight)>?[] influences = CollectBoneInfluences(mesh, nodeCache, source);
         if (mesh.HasMeshAnimationAttachments)
@@ -111,6 +116,12 @@ internal static class AssimpMeshFactory
 
         int[] packedIndexBySource = new int[mesh.VertexCount];
         Array.Fill(packedIndexBySource, -1);
+        Dictionary<(int sourceIndex, Vector4 tangent), int>? generatedVariantIndices =
+            tangentPolicy == ModelTangentImportPolicy.CalculateMikkCompatible ? new() : null;
+        Vector4[]? generatedTangents = generatedVariantIndices is not null
+            ? GenerateCompatibleTangents(mesh, dataTransform, texCoordSets)
+            : null;
+        int generatedCorner = 0;
         Vector2[] texCoords = new Vector2[texCoordSets];
         Vector4[] colors = new Vector4[colorSets];
         List<int> indices = new(mesh.FaceCount * 3);
@@ -121,17 +132,21 @@ internal static class AssimpMeshFactory
                 continue;
             for (int triangleIndex = 0; triangleIndex < face.IndexCount - 2; triangleIndex++)
             {
-                indices.Add(GetPackedVertex(face.Indices[0]));
-                indices.Add(GetPackedVertex(face.Indices[triangleIndex + 1]));
-                indices.Add(GetPackedVertex(face.Indices[triangleIndex + 2]));
+                indices.Add(GetPackedVertex(face.Indices[0], generatedTangents is null ? null : generatedTangents[generatedCorner++]));
+                indices.Add(GetPackedVertex(face.Indices[triangleIndex + 1], generatedTangents is null ? null : generatedTangents[generatedCorner++]));
+                indices.Add(GetPackedVertex(face.Indices[triangleIndex + 2], generatedTangents is null ? null : generatedTangents[generatedCorner++]));
             }
         }
 
         return new XRMesh(source, indices);
 
-        int GetPackedVertex(int sourceIndex)
+        int GetPackedVertex(int sourceIndex, Vector4? generatedTangent)
         {
-            int packed = packedIndexBySource[sourceIndex];
+            int packed = generatedVariantIndices is null
+                ? packedIndexBySource[sourceIndex]
+                : generatedVariantIndices.TryGetValue((sourceIndex, generatedTangent!.Value), out int variant)
+                    ? variant
+                    : -1;
             if (packed >= 0)
                 return packed;
 
@@ -148,17 +163,22 @@ internal static class AssimpMeshFactory
             packed = source.AddVertex(
                 position,
                 normal ?? Vector3.Zero,
-                new Vector4(tangent ?? Vector3.Zero, bitangentSign),
+                generatedTangent ?? new Vector4(tangent ?? Vector3.Zero, bitangentSign),
                 texCoords,
                 colors);
-            packedIndexBySource[sourceIndex] = packed;
+            if (generatedVariantIndices is null)
+                packedIndexBySource[sourceIndex] = packed;
+            else
+                generatedVariantIndices.Add((sourceIndex, generatedTangent!.Value), packed);
 
             if (influences[sourceIndex] is { } vertexInfluences)
                 foreach ((int bone, float weight) in vertexInfluences)
                     source.AddInfluence(bone, weight);
 
             if (mesh.HasMeshAnimationAttachments)
-                AddBlendshapeDeltas(mesh, sourceIndex, position, normal, tangent, dataTransform, source, importBlendShapeNormals);
+                AddBlendshapeDeltas(mesh, sourceIndex, position, normal,
+                    generatedTangent is null ? tangent : null, dataTransform, source,
+                    importBlendShapeNormals, generatedTangent is null);
             return packed;
         }
     }
@@ -255,7 +275,8 @@ internal static class AssimpMeshFactory
         Vector3? tangent,
         Matrix4x4 dataTransform,
         XRMeshPackedSource source,
-        bool importBlendShapeNormals)
+        bool importBlendShapeNormals,
+        bool importBlendShapeTangents)
     {
         for (int blendshapeIndex = 0; blendshapeIndex < mesh.MeshAnimationAttachmentCount; blendshapeIndex++)
         {
@@ -270,14 +291,14 @@ internal static class AssimpMeshFactory
             Vector3 targetNormal = blendshape.Normals is { } normals && vertexIndex < normals.Count
                 ? Vector3.TransformNormal(normals[vertexIndex], dataTransform)
                 : Vector3.Zero;
-            Vector3 targetTangent = blendshape.Tangents is { } tangents && vertexIndex < tangents.Count
+            Vector3 targetTangent = importBlendShapeTangents && blendshape.Tangents is { } tangents && vertexIndex < tangents.Count
                 ? Vector3.TransformNormal(tangents[vertexIndex], dataTransform)
                 : Vector3.Zero;
             source.AddBlendshapeDelta(
                 blendshapeIndex,
                 targetPosition - position,
                 targetNormal - (normal ?? Vector3.Zero),
-                targetTangent - (tangent ?? Vector3.Zero));
+                importBlendShapeTangents ? targetTangent - (tangent ?? Vector3.Zero) : Vector3.Zero);
         }
     }
 

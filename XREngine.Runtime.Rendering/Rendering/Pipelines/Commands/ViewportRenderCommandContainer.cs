@@ -484,6 +484,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
                 catch (Exception ex)
                 {
+                    if (ex is RequiredRenderCommandException or RenderResourcePreparationPendingException)
+                    {
+                        // A pending required resource must defer the complete frame.
+                        UnwindFrameBufferBindings(i);
+                        throw;
+                    }
                     if (instance.PropagateCommandExceptions)
                     {
                         commandFailure ??= ex;

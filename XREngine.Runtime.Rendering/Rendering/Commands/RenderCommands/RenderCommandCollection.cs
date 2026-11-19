@@ -1316,12 +1316,39 @@ namespace XREngine.Rendering.Commands
             bool allowExcludedGpuFallbackMeshes = true,
             Action<IRenderCommandMesh>? onExcludedGpuFallbackMesh = null,
             bool suppressCpuOcclusionForPass = false,
-            bool enforceAdvancedLatePassEligibility = false)
+            bool enforceAdvancedLatePassEligibility = false,
+            EAdvancedSourceOrderedSlice sourceOrderedSlice = EAdvancedSourceOrderedSlice.All)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
             if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
                 return;
+
+            int firstCommandIndex = 0;
+            int lastCommandIndex = list.Count;
+            if (sourceOrderedSlice != EAdvancedSourceOrderedSlice.All)
+            {
+                if (!_renderingBackendReadyPackage.TryGetPass(renderPass, out BackendReadyRenderPass frozenPass) ||
+                    !ReferenceEquals(frozenPass.Commands, list))
+                    throw new RenderResourcePreparationPendingException(
+                        "The source-ordered draw list does not match its published frame package.");
+
+                int boundary = _renderingBackendReadyPackage.SourceSceneColorFirstCommandIndex;
+                if (boundary >= 0)
+                {
+                    if (boundary >= frozenPass.CommandCount ||
+                        GetCommandAt(list, boundary).StableQueryKey !=
+                            _renderingBackendReadyPackage.SourceSceneColorFirstStableQueryKey)
+                        throw new RenderResourcePreparationPendingException(
+                            "The source scene-color boundary does not match its published draw.");
+                    if (sourceOrderedSlice == EAdvancedSourceOrderedSlice.BeforeSceneColor)
+                        lastCommandIndex = boundary;
+                    else
+                        firstCommandIndex = boundary;
+                }
+                else if (sourceOrderedSlice == EAdvancedSourceOrderedSlice.FromSceneColor)
+                    firstCommandIndex = list.Count;
+            }
 
             // Deferred Vulkan frame-op callbacks can execute after the ambient pipeline
             // render-state scope has unwound. The collection owner remains authoritative
@@ -1409,8 +1436,8 @@ namespace XREngine.Rendering.Commands
             }
 
             bool filterExactTransparentSps = BeginCpuExactTransparentSpsFilter(renderPass);
-            uint cpuCmdIndex = 0;
-            for (int commandIndex = 0; commandIndex < list.Count; commandIndex++)
+            uint cpuCmdIndex = checked((uint)firstCommandIndex);
+            for (int commandIndex = firstCommandIndex; commandIndex < lastCommandIndex; commandIndex++)
             {
                 RenderCommand cmd = GetCommandAt(list, commandIndex);
                 if (enforceAdvancedLatePassEligibility &&
@@ -1425,8 +1452,20 @@ namespace XREngine.Rendering.Commands
                     !TryAdmitAdvancedLatePassCommand(
                         cmd,
                         renderPass,
-                        out string? latePassRejection))
+                        out string? latePassRejection,
+                        out bool retryableLatePassRejection))
                 {
+                    if (ResolveRejectedSourceSurfaceContract(cmd) is
+                            EAdvancedSourceSurfaceContract.OrderedToonV1 or
+                            EAdvancedSourceSurfaceContract.SceneColorToonV1)
+                    {
+                        string reason = latePassRejection ??
+                            "A required source-ordered draw was not admitted.";
+                        if (retryableLatePassRejection)
+                            throw new RenderResourcePreparationPendingException(reason);
+                        throw new RequiredRenderCommandException(reason,
+                            new NotSupportedException(reason));
+                    }
                     ReportAdvancedLatePassRejection(
                         cmd,
                         renderPass,
@@ -1907,8 +1946,10 @@ namespace XREngine.Rendering.Commands
         private static bool TryAdmitAdvancedLatePassCommand(
             RenderCommand command,
             int renderPass,
-            out string? rejectionReason)
+            out string? rejectionReason,
+            out bool retryable)
         {
+            retryable = false;
             if (command is RenderCommandMesh3D
                 {
                     RenderSupplementalMaterialPass: EMaterialPassIdentity.Outline,
@@ -1929,6 +1970,7 @@ namespace XREngine.Rendering.Commands
                         out XRMaterial? materialOverride, out _, out _))
                 {
                     rejectionReason = "The late-pass command has no published mesh snapshot.";
+                    retryable = true;
                     return false;
                 }
                 material = materialOverride ?? mesh?.Material;
@@ -1943,7 +1985,36 @@ namespace XREngine.Rendering.Commands
                         { SupportsUdimTriangleCoverage: true }))
                 return false;
 
+            bool sourceOrdered = material?.ResolveAdvancedLatePassMetadata()?.SourceSurfaceContract is
+                EAdvancedSourceSurfaceContract.OrderedToonV1 or
+                EAdvancedSourceSurfaceContract.SceneColorToonV1;
+            XRMeshRenderer? sourceRenderer = command is RenderCommandMesh3D frozenSource
+                ? frozenSource.CaptureGpuSceneSnapshot().Renderer
+                : meshCommand.Mesh;
+            if (sourceOrdered && sourceRenderer?.Submeshes.Count > 1)
+            {
+                rejectionReason = "A source-ordered draw with multiple primitives needs a per-primitive order contract.";
+                return false;
+            }
+
             return TryAdmitSoftOutlineBaseWithFin(command, material, renderPass, out rejectionReason);
+        }
+
+        private static EAdvancedSourceSurfaceContract ResolveRejectedSourceSurfaceContract(
+            RenderCommand command)
+        {
+            XRMaterial? material;
+            if (command is RenderCommandMesh3D frozen)
+            {
+                GpuSceneMeshCommandSnapshot snapshot = frozen.CaptureGpuSceneSnapshot();
+                material = snapshot.MaterialOverride ?? snapshot.Renderer?.Material;
+            }
+            else if (command is IRenderCommandMesh mesh)
+                material = mesh.MaterialOverride ?? mesh.Mesh?.Material;
+            else
+                material = null;
+            return material?.ResolveAdvancedLatePassMetadata()?.SourceSurfaceContract ??
+                EAdvancedSourceSurfaceContract.None;
         }
 
         /// <summary>
@@ -2410,6 +2481,11 @@ namespace XREngine.Rendering.Commands
 
         private static void RenderWithOptionalCpuSocMeasurement(RenderCommand command, bool measureCpuSocSubmission)
         {
+            using var requiredScope = RequiredMeshSubmissionScope.EnterIf(
+                command.RenderPass == (int)EDefaultRenderPass.TransparentForward &&
+                ResolveRejectedSourceSurfaceContract(command) is
+                    EAdvancedSourceSurfaceContract.OrderedToonV1 or
+                    EAdvancedSourceSurfaceContract.SceneColorToonV1);
             if (!measureCpuSocSubmission)
             {
                 command.Render();
@@ -2957,6 +3033,10 @@ namespace XREngine.Rendering.Commands
                     _renderingSwapQueueMembership.Clear();
                 }
 
+                _renderingBackendReadyPackage.RefreshFrozenDrawContractsAfterCommandSwap(
+                    (_ownerPipeline as XRRenderPipelineInstance)?.Pipeline?
+                        .ResolveAdvancedStageFamily() is not null);
+
                 using (RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers.ClearPasses"))
                 {
                     foreach (var pass in _updatingPasses.Values)
@@ -3175,6 +3255,8 @@ namespace XREngine.Rendering.Commands
                     XRMaterial? material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
                     if (meshCommand.Enabled &&
                         material?.AdvancedLatePassMetadata?.RequiresSceneColorSnapshot == true &&
+                        material?.AdvancedLatePassMetadata?.SourceSurfaceContract !=
+                            EAdvancedSourceSurfaceContract.SceneColorToonV1 &&
                         AdvancedLatePassEligibilityValidator.TryValidateLatePass(
                             material,
                             meshCommand.RenderPass,
@@ -3222,6 +3304,28 @@ namespace XREngine.Rendering.Commands
                     {
                         if (cmd is IRenderCommandMesh meshCmd)
                             yield return meshCmd;
+                    }
+                }
+            }
+            finally
+            {
+                _renderingBufferLock.ExitReadLock();
+            }
+        }
+
+        internal void VisitRenderingMeshCommands(Action<IRenderCommandMesh> visitor)
+        {
+            ArgumentNullException.ThrowIfNull(visitor);
+            _renderingBufferLock.EnterReadLock();
+            try
+            {
+                foreach (ICollection<RenderCommand> pass in _renderingPasses.Values)
+                {
+                    int count = pass.Count;
+                    for (int index = 0; index < count; index++)
+                    {
+                        if (GetCommandAt(pass, index) is IRenderCommandMesh meshCommand)
+                            visitor(meshCommand);
                     }
                 }
             }

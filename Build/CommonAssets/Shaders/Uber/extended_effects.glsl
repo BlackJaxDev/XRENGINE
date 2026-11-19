@@ -64,7 +64,10 @@ bool uberApplyCoverageEffects(in ToonMesh mesh)
 
     if (_UvTileDiscard > 0.5 && _UDIMDiscardMode == 1)
     {
-        vec2 tile = floor(mesh.uv[clamp(_UDIMDiscardUV, 0, 3)]);
+        vec2 tileUv = mesh.uv[clamp(_UDIMDiscardUV, 0, 3)];
+        if (_SourceUdimFlipV > 0.5)
+            tileUv.y = 1.0 - tileUv.y;
+        vec2 tile = floor(tileUv);
         if (all(greaterThanEqual(tile, vec2(0.0))) &&
             all(lessThan(tile, vec2(4.0))))
         {

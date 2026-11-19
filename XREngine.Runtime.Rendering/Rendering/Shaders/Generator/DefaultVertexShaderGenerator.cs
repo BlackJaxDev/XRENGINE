@@ -37,6 +37,8 @@ namespace XREngine.Rendering.Shaders.Generator
     public class DefaultVertexShaderGenerator : ShaderGeneratorBase
     {
         private const uint MaxVertexAttribs = 16;
+        private const string VertexManipulationResourceName = "XREngine.Rendering.Shaders.Generator.VertexManipulation.glsl";
+        private static readonly string VertexManipulationSource = LoadVertexManipulationSource();
 
         private bool _useNormals;
         private bool _useTangents;
@@ -54,6 +56,7 @@ namespace XREngine.Rendering.Shaders.Generator
             _blendshapeState = Mesh.GetBlendshapeBufferStateSnapshot();
 
             HelperMethodWriters.Add(WriteAdjointMethod);
+            HelperMethodWriters.Add(WriteVertexManipulationMethod);
 
             ComputeAttributeBudget();
             AddUniforms();
@@ -182,6 +185,8 @@ namespace XREngine.Rendering.Shaders.Generator
         {
             UniformNames.Add(EEngineUniform.ModelMatrix.ToStringFast(), (EShaderVarType._mat4, false));
             UniformNames.Add(EEngineUniform.EngineTime.ToStringFast(), (EShaderVarType._float, false));
+            UniformNames.Add(EEngineUniform.CameraPosition.ToStringFast(), (EShaderVarType._vec3, false));
+            UniformNames.Add("ClipSpaceYDirection", (EShaderVarType._int, false));
 
             if (Mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning && !UseComputeSkinning)
             {
@@ -436,6 +441,10 @@ namespace XREngine.Rendering.Shaders.Generator
             Line("uniform float _OutlineFixedSize;");
             Line("uniform float _OutlineUseVertexColors;");
             Line("uniform float _OutlineZOffset;");
+            Line("uniform int _SourceOutlineBasic;");
+            Line("uniform float _OutlineFixWidth;");
+            Line("uniform float _OutlinesMaxDistance;");
+            Line("uniform sampler2D _OutlineMask;");
             Line("uniform float ScreenWidth;");
             Line("uniform float ScreenHeight;");
             Line("#endif");
@@ -469,11 +478,26 @@ namespace XREngine.Rendering.Shaders.Generator
             Line("uniform float _VertexBarrelWidth;");
             Line("uniform float _VertexBarrelAlpha;");
             Line("uniform float _VertexBarrelHeight;");
+            Line("uniform float _VertexLookAtWeight;");
+            Line("uniform vec3 _VertexLookAtAxis;");
             Line("uniform vec4 _VertexGlitch;");
             Line("uniform vec4 _VertexWave;");
             Line("uniform vec4 _VertexEquation;");
             Line("uniform vec4 _VertexDepthBulge;");
+            Line("uniform vec4 _VertexColorPositionOffset;");
+            Line("uniform vec4 _VertexColorNormalOffset;");
             Line();
+        }
+
+        private void WriteVertexManipulationMethod()
+            => Line(VertexManipulationSource);
+
+        private static string LoadVertexManipulationSource()
+        {
+            using Stream stream = typeof(DefaultVertexShaderGenerator).Assembly.GetManifestResourceStream(VertexManipulationResourceName)
+                ?? throw new InvalidOperationException($"Missing embedded vertex manipulation shader: {VertexManipulationResourceName}");
+            using StreamReader reader = new(stream);
+            return reader.ReadToEnd();
         }
 
         /// <summary>
@@ -669,20 +693,38 @@ namespace XREngine.Rendering.Shaders.Generator
             if (hasNormals)
             {
                 Line("#if defined(XRENGINE_OUTLINE_PASS)");
-                Line($"float xreOutlineVertexWidth = mix(1.0f, max({(_colorsUsed > 0 ? $"{ECommonBufferType.Color}0.a" : "1.0f")}, 0.0f), clamp(_OutlineUseVertexColors, 0.0f, 1.0f));");
-                Line("float xreOutlineWidth = _OutlineWidth * 0.01f * xreOutlineVertexWidth;");
-                Line($"vec3 xreOutlineDirection = {FinalNormalName};");
-                Line($"if (_OutlineExpansionMode == 1) xreOutlineDirection = normalize({FinalPositionName}.xyz + {FinalNormalName} * 0.001f);");
-                Line("else if (_OutlineExpansionMode == 2) xreOutlineDirection = normalize(_OutlinePersonaDirection);");
-                Line("else if (_OutlineExpansionMode == 3) xreOutlineDirection = normalize(_OutlineDropShadowOffset);");
-                Line($"if (_OutlineExpansionMode == 3) {FinalPositionName}.xyz += _OutlineDropShadowOffset * xreOutlineWidth;");
-                Line("else if (_OutlineSpace == 1)");
+                Line("if (_SourceOutlineBasic != 0)");
                 using (OpenBracketState())
                 {
-                    Line($"vec3 xreOutlineWorldDirection = normalize({NormalMatrixName} * xreOutlineDirection);");
-                    Line($"{FinalPositionName}.xyz += (inverse({EEngineUniform.ModelMatrix}) * vec4(xreOutlineWorldDirection * xreOutlineWidth, 0.0f)).xyz;");
+                    Line($"float xreSourceOutlineMask = textureLod(_OutlineMask, {(_texCoordsUsed > 0 ? $"{ECommonBufferType.TexCoord}0" : "vec2(0.0f)")}, 0.0f).r;");
+                    Line("float xreSourceOutlineDistanceFactor = 1.0f;");
+                    Line("if (_OutlineFixedSize > 0.5f)");
+                    using (OpenBracketState())
+                    {
+                        Line($"vec3 xreSourceOutlineWorldPosition = ({EEngineUniform.ModelMatrix} * {FinalPositionName}).xyz;");
+                        Line($"float xreSourceOutlineDistance = length({EEngineUniform.CameraPosition} - xreSourceOutlineWorldPosition);");
+                        Line("xreSourceOutlineDistanceFactor = mix(1.0f, clamp(xreSourceOutlineDistance, 0.0f, _OutlinesMaxDistance), _OutlineFixWidth);");
+                    }
+                    Line($"{FinalPositionName}.xyz += {FinalNormalName} * (_OutlineWidth * 0.01f * xreSourceOutlineMask * xreSourceOutlineDistanceFactor);");
                 }
-                Line($"else if (_OutlineSpace != 2) {FinalPositionName}.xyz += normalize(xreOutlineDirection) * xreOutlineWidth;");
+                Line("else");
+                using (OpenBracketState())
+                {
+                    Line($"float xreOutlineVertexWidth = mix(1.0f, max({(_colorsUsed > 0 ? $"{ECommonBufferType.Color}0.a" : "1.0f")}, 0.0f), clamp(_OutlineUseVertexColors, 0.0f, 1.0f));");
+                    Line("float xreOutlineWidth = _OutlineWidth * 0.01f * xreOutlineVertexWidth;");
+                    Line($"vec3 xreOutlineDirection = {FinalNormalName};");
+                    Line($"if (_OutlineExpansionMode == 1) xreOutlineDirection = normalize({FinalPositionName}.xyz + {FinalNormalName} * 0.001f);");
+                    Line("else if (_OutlineExpansionMode == 2) xreOutlineDirection = normalize(_OutlinePersonaDirection);");
+                    Line("else if (_OutlineExpansionMode == 3) xreOutlineDirection = normalize(_OutlineDropShadowOffset);");
+                    Line($"if (_OutlineExpansionMode == 3) {FinalPositionName}.xyz += _OutlineDropShadowOffset * xreOutlineWidth;");
+                    Line("else if (_OutlineSpace == 1)");
+                    using (OpenBracketState())
+                    {
+                        Line($"vec3 xreOutlineWorldDirection = normalize({NormalMatrixName} * xreOutlineDirection);");
+                        Line($"{FinalPositionName}.xyz += (inverse({EEngineUniform.ModelMatrix}) * vec4(xreOutlineWorldDirection * xreOutlineWidth, 0.0f)).xyz;");
+                    }
+                    Line($"else if (_OutlineSpace != 2) {FinalPositionName}.xyz += normalize(xreOutlineDirection) * xreOutlineWidth;");
+                }
                 Line("#endif");
             }
 
@@ -705,44 +747,18 @@ namespace XREngine.Rendering.Shaders.Generator
         }
 
         /// <summary>
-        /// Applies vertex effects to the final position, and optionally the normal, of a vertex.
-        /// Effects include scaling, rotation, translation, height offset, wave motion, rounding, and barrel distortion.
+        /// Applies the shared source vertex effects after mesh deformation and before outline expansion.
         /// </summary>
-        /// <param name="hasNormals">Indicates whether the vertex has normals.</param>
+        /// <param name="hasNormals">Specifies if the mesh supplies a normal for the effects.</param>
         private void WriteVertexEffects(bool hasNormals)
         {
-            Line("if (_VertexEffectsEnabled > 0.0001f)");
-            using (OpenBracketState())
-            {
-                Line("vec3 xreVertexScale = max(abs(_VertexManipulationLocalScale), vec3(0.0001f));");
-                Line($"{FinalPositionName}.xyz *= xreVertexScale;");
-                Line("vec3 xreVertexAngles = radians(_VertexManipulationLocalRotation + _VertexManipulationLocalRotationSpeed * EngineTime);");
-                Line("vec3 xreVertexC = cos(xreVertexAngles);");
-                Line("vec3 xreVertexS = sin(xreVertexAngles);");
-                Line("mat3 xreVertexRotation = mat3(xreVertexC.y*xreVertexC.z, xreVertexC.z*xreVertexS.x*xreVertexS.y-xreVertexC.x*xreVertexS.z, xreVertexS.x*xreVertexS.z+xreVertexC.x*xreVertexC.z*xreVertexS.y, xreVertexC.y*xreVertexS.z, xreVertexC.x*xreVertexC.z+xreVertexS.x*xreVertexS.y*xreVertexS.z, xreVertexC.x*xreVertexS.y*xreVertexS.z-xreVertexC.z*xreVertexS.x, -xreVertexS.y, xreVertexC.y*xreVertexS.x, xreVertexC.x*xreVertexC.y);");
-                Line($"{FinalPositionName}.xyz = xreVertexRotation * {FinalPositionName}.xyz;");
-                if (hasNormals)
-                    Line($"{FinalNormalName} = normalize(xreVertexRotation * {FinalNormalName});");
-                Line($"{FinalPositionName}.xyz += _VertexManipulationLocalTranslation;");
-                if (hasNormals)
-                    Line($"{FinalPositionName}.xyz += normalize({FinalNormalName}) * _VertexManipulationHeight;");
-                Line("float xreVertexWavePhase = dot(" + FinalPositionName + ".xyz, _VertexWave.xyz) + EngineTime * _VertexWave.w;");
-                if (hasNormals)
-                    Line($"{FinalPositionName}.xyz += normalize({FinalNormalName}) * sin(xreVertexWavePhase) * _VertexWave.w;");
-                Line($"{FinalPositionName}.xyz += (inverse({EEngineUniform.ModelMatrix}) * vec4(_VertexManipulationWorldTranslation, 0.0f)).xyz;");
-                Line("if (_VertexRoundingEnabled > 0.5f)");
-                using (OpenBracketState())
-                {
-                    Line("float xreVertexInterval = max(abs(_VertexRoundingDivision), 0.0001f);");
-                    Line($"{FinalPositionName}.xyz = floor({FinalPositionName}.xyz / xreVertexInterval + 0.5f) * xreVertexInterval;");
-                }
-                Line("if (_VertexBarrelMode > 0.5f)");
-                using (OpenBracketState())
-                {
-                    Line($"float xreVertexBarrel = smoothstep(0.0f, max(_VertexBarrelHeight, 0.0001f), abs({FinalPositionName}.y));");
-                    Line($"{FinalPositionName}.xz *= 1.0f + _VertexBarrelWidth * mix(_VertexBarrelAlpha, 1.0f, xreVertexBarrel);");
-                }
-            }
+            if (!hasNormals)
+                Line("vec3 xreVertexEffectNormal = vec3(0.0f, 0.0f, 1.0f);");
+
+            string normal = hasNormals ? FinalNormalName : "xreVertexEffectNormal";
+            string uv = _texCoordsUsed > 0 ? $"{ECommonBufferType.TexCoord}0" : "vec2(0.0f)";
+            string color = _colorsUsed > 0 ? $"{ECommonBufferType.Color}0" : "vec4(1.0f)";
+            Line($"uberApplyVertexEffects({FinalPositionName}.xyz, {normal}, {uv}, {color}, {EEngineUniform.CameraPosition}, {EEngineUniform.ModelMatrix}, {EEngineUniform.EngineTime});");
         }
 
         private void WriteComputeBaseAssignments(bool hasNormals, bool hasTangents)
@@ -1291,7 +1307,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 if (_useNormals)
                 {
                     Line("#if defined(XRENGINE_OUTLINE_PASS)");
-                    Line("if (_OutlineSpace == 2 || _OutlineFixedSize > 0.5f)");
+                    Line("if (_SourceOutlineBasic == 0 && (_OutlineSpace == 2 || _OutlineFixedSize > 0.5f))");
                     using (OpenBracketState())
                     {
                         Line("vec2 xreOutlineScreen = max(vec2(ScreenWidth, ScreenHeight), vec2(1.0f));");

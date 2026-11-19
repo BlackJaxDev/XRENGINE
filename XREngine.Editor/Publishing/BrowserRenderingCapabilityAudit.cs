@@ -219,7 +219,7 @@ internal sealed class BrowserRenderingCapabilityAudit(IShaderProgramArtifactReso
         bool nativeVertex = AdvancedNativeVertexMaterialSource.IsRequested(material, resolver);
         string? nativeDepthNormalReason = null;
         if (nativeVertex && !AdvancedNativeVertexMaterialSource.TryResolveAuxiliary(material, resolver,
-            Rendering.Shaders.Generation.EngineNativeVertexAuxiliaryPass.DepthNormal, out _, out string nativeReason))
+            global::XREngine.Rendering.Shaders.Generation.EngineNativeVertexAuxiliaryPass.DepthNormal, out _, out string nativeReason))
             nativeDepthNormalReason = nativeReason;
         InspectPass(material.RenderPass, material.RenderOptions, "base");
         foreach (MaterialPassDefinition pass in material.PassSet.Passes)

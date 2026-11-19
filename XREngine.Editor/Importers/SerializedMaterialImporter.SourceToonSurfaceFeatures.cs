@@ -39,6 +39,7 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_SourceCubeMap", IsCubemapEnabled(document) ? 1 : 0);
 
         BindExactSurfaceParameters(material, document);
+        BindSourceCubemapMask(material, document, resolver);
         BindSourceToonGlitter(material, document, resolver, sourceVersion, diagnostics);
         BindSourceToonFlipbook(material, document);
         BindSourceToonDissolve(material, document, diagnostics);
@@ -46,6 +47,8 @@ public static partial class SerializedMaterialImporter
         BindCompositeSurfaceParameters(material, document, resolver, sourceVersion);
         BindSourceAnisotropy(material, document, resolver, warnings);
         BindSourceRimParameters(material, document, diagnostics, warnings);
+        BindSourceRim2Parameters(material, document, resolver);
+        BindSourceStylizedSpecular(material, document, resolver, warnings);
         BindSourceLightingParameters(material, document, diagnostics, warnings);
         BindSourceClearCoatParameters(material, document, diagnostics, warnings);
         BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings, sourceVersion);
@@ -113,6 +116,45 @@ public static partial class SerializedMaterialImporter
     private static bool IsCubemapEnabled(SerializedMaterialDocument document)
         => document.TryGetPositive("_CubeMapEnabled");
 
+    private static void BindSourceCubemapMask(
+        XRMaterial material,
+        SerializedMaterialDocument document,
+        SourceAssetResolver resolver)
+    {
+        if (!IsCubemapEnabled(document))
+            return;
+
+        int globalMask = GetInt(document, "_CubeMapMaskGlobalMask");
+        int globalBlend = GetInt(document, "_CubeMapMaskGlobalMaskBlendType", 2);
+        bool globalMasksEnabled = document.TryGetPositive("_GlobalMaskTexturesEnable");
+        if (globalMask > 0)
+        {
+            if (globalMask > 16 || globalBlend is < 0 or > 7)
+                throw new SourceVisualImportException($"Source cubemap global mask is outside its supported range on '{document.Name}'.");
+
+            string maskName = $"_GlobalMaskTexture{(globalMask - 1) / 4}";
+            bool hasGlobalTexture = HasExternalTexture(document, maskName) ||
+                globalMask <= 4 && HasExternalTexture(document, "_GlobalMaskTexture") ||
+                HasWhiteShaderTextureDefault(resolver.Resolve(document.Shader.Guid), maskName);
+            if (globalMasksEnabled && !hasGlobalTexture || !globalMasksEnabled && globalBlend != 2)
+                throw new SourceVisualImportException($"Source cubemap global mask has no supported texture or blend on '{document.Name}'.");
+            if (!globalMasksEnabled)
+                globalMask = 0;
+        }
+        else if (globalMask < 0)
+            throw new SourceVisualImportException($"Source cubemap global mask index is invalid on '{document.Name}'.");
+
+        if (GetInt(document, "_CubeMapMaskUV") != 0 ||
+            document.TryGetVector("_CubeMapMaskPan", out Vector4 pan) && pan != Vector4.Zero)
+            throw new SourceVisualImportException($"Source cubemap mask UV or pan is not supported on '{document.Name}'.");
+        if (!HasExternalTexture(document, "_CubeMapMask") &&
+            !HasWhiteShaderTextureDefault(resolver.Resolve(document.Shader.Guid), "_CubeMapMask"))
+            throw new SourceVisualImportException($"Source cubemap mask has no white default on '{document.Name}'.");
+
+        SetInt(material, "_CubeMapMaskGlobalMask", globalMask);
+        SetInt(material, "_CubeMapMaskGlobalMaskBlendType", globalBlend);
+    }
+
     private static void BindSourceAnisotropy(
         XRMaterial material,
         SerializedMaterialDocument document,
@@ -147,7 +189,7 @@ public static partial class SerializedMaterialImporter
         if (colorMap is not null)
         {
             ReplaceMaterialSampler(material, "_AnisoColorMap", colorMap);
-            ApplyTextureTransform(material, document, "_AnisoColorMap", "_AnisoColorMap");
+            ApplySourceToonMeshTextureTransform(material, document, "_AnisoColorMap", "_AnisoColorMap");
         }
         SetInt(material, "_AnisoColorMapUV", colorMapUv);
         SetVector4(material, "_SourceAnisoMapSettings", new Vector4(
@@ -312,6 +354,17 @@ public static partial class SerializedMaterialImporter
                         : 0.0f,
                     GetFloat(document, $"_DecalAlphaIntensity{suffix}", 1.0f),
                     GetFloat(document, $"_DecalEmissionStrength{suffix}")));
+            // The fourth value identifies source decals and stores one plus the mask blend mode.
+            SetVector4(
+                material,
+                $"_SourceDecalAlphaParams{slot}",
+                new Vector4(
+                    document.TryGetPositive($"_DecalEnabled{suffix}")
+                        ? GetInt(document, $"_DecalOverrideAlpha{suffix}")
+                        : 0,
+                    GetInt(document, $"{indexedPrefix}OverrideAlphaMode"),
+                    GetInt(document, $"_DecalTiled{suffix}"),
+                    1.0f + GetInt(document, $"{indexedPrefix}GlobalMaskBlendType", 2)));
             SetInt(material, $"_DecalUvMode{slot}", GetInt(document, $"_DecalTexture{suffix}UV"));
             SetVector4(
                 material,
@@ -341,15 +394,18 @@ public static partial class SerializedMaterialImporter
                     GetFloat(document, $"_EmissiveBlink_Velocity{emissionSuffix}"),
                     GetFloat(document, $"_EmissionHueShiftSpeed{emissionSuffix}")));
             MapVector4(document, material, $"_EmissionSlotColor{slot}", $"_EmissionColor{emissionSuffix}");
-            MapVector2(document, material, $"_EmissionSlotPan{slot}", $"_EmissionMap{emissionSuffix}Pan");
+            MapSourceToonMeshPan(document, material, $"_EmissionSlotPan{slot}", $"_EmissionMap{emissionSuffix}Pan");
             MapInt(document, material, $"_EmissionSlotUv{slot}", $"_EmissionMap{emissionSuffix}UV");
+            MapFloat(document, material, $"_EmissionSlotCenterOutSpeed{slot}", $"_EmissionCenterOutSpeed{emissionSuffix}");
+            int emissionGlobalMask = GetInt(document, $"_EmissionMask{slot}GlobalMask",
+                slot == 0 ? GetInt(document, "_EmissionMaskGlobalMask") : 0);
             SetVector4(
                 material,
                 $"_EmissionSlotModifiers{slot}",
                 new Vector4(
                     GetFloat(document, $"_EmissionReplace{emissionSuffix}"),
                     GetFloat(document, $"_EmissionCenterOutEnabled{emissionSuffix}"),
-                    GetInt(document, $"_EmissionMask{emissionSuffix}GlobalMask"),
+                    emissionGlobalMask,
                     GetInt(document, $"_EmissionColor{emissionSuffix}ThemeIndex")));
             SetVector4(
                 material,
@@ -499,7 +555,9 @@ public static partial class SerializedMaterialImporter
                 GetFloat(document, "_Rim2Width"),
                 GetFloat(document, "_Rim2Sharpness", 1.0f),
                 GetFloat(document, "_Rim2HideInShadow"),
-                GetFloat(document, "_Rim2Intensity", 1.0f)));
+                document.TryGetPositive("_EnableRim2Lighting")
+                    ? GetFloat(document, "_Rim2Intensity", 1.0f)
+                    : 0.0f));
     }
 
     private static void BindSourceRimParameters(
@@ -646,7 +704,10 @@ public static partial class SerializedMaterialImporter
                     continue;
 
                 ReplaceMaterialSampler(material, destination, texture);
-                ApplyTextureTransform(material, document, source, destination);
+                if (destination is "_Matcap0Tex" or "_Matcap1Tex" or "_Matcap2Tex" or "_Matcap3Tex")
+                    ApplyTextureTransform(material, document, source, destination);
+                else
+                    ApplySourceToonMeshTextureTransform(material, document, source, destination);
                 break;
             }
         }

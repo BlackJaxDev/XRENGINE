@@ -30,7 +30,8 @@ public static class SourceToonFeatureLossNormalizer
         SerializedMaterialDocument source,
         ICollection<MaterialConversionDiagnostic> diagnostics,
         string? resolvedShaderPath = null,
-        bool isLockedShader = false)
+        bool isLockedShader = false,
+        bool preserveCertifiedGrabPass = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(diagnostics);
@@ -52,11 +53,11 @@ public static class SourceToonFeatureLossNormalizer
         CopyDictionary(source.OverrideTags, result.OverrideTags);
         var reportedGroups = new HashSet<string>(StringComparer.Ordinal);
         bool grabPassAbsent = IsGrabPassAbsentFromLockedShader(source, resolvedShaderPath, isLockedShader);
-        CopyFiltered(source.Textures, result.Textures, source, diagnostics, reportedGroups, grabPassAbsent);
-        CopyFiltered(source.Floats, result.Floats, source, diagnostics, reportedGroups, grabPassAbsent);
-        CopyFiltered(source.Ints, result.Ints, source, diagnostics, reportedGroups, grabPassAbsent);
-        CopyFiltered(source.Vectors, result.Vectors, source, diagnostics, reportedGroups, grabPassAbsent);
-        CopyFiltered(source.Strings, result.Strings, source, diagnostics, reportedGroups, grabPassAbsent);
+        CopyFiltered(source.Textures, result.Textures, source, diagnostics, reportedGroups, grabPassAbsent, preserveCertifiedGrabPass);
+        CopyFiltered(source.Floats, result.Floats, source, diagnostics, reportedGroups, grabPassAbsent, preserveCertifiedGrabPass);
+        CopyFiltered(source.Ints, result.Ints, source, diagnostics, reportedGroups, grabPassAbsent, preserveCertifiedGrabPass);
+        CopyFiltered(source.Vectors, result.Vectors, source, diagnostics, reportedGroups, grabPassAbsent, preserveCertifiedGrabPass);
+        CopyFiltered(source.Strings, result.Strings, source, diagnostics, reportedGroups, grabPassAbsent, preserveCertifiedGrabPass);
         CopyDictionary(source.UnknownSerializedFields, result.UnknownSerializedFields);
         CopyDictionary(source.UnknownSavedProperties, result.UnknownSavedProperties);
         return result;
@@ -68,12 +69,13 @@ public static class SourceToonFeatureLossNormalizer
         SerializedMaterialDocument sourceDocument,
         ICollection<MaterialConversionDiagnostic> diagnostics,
         ISet<string> reportedGroups,
-        bool grabPassAbsent)
+        bool grabPassAbsent,
+        bool preserveCertifiedGrabPass)
     {
         foreach ((string name, T value) in sourceValues)
         {
             string? group = ResolveDiscardedGroup(name);
-            if (group is null)
+            if (group is null || (preserveCertifiedGrabPass && group == "Grab Pass"))
             {
                 destination[name] = value;
                 continue;

@@ -44,6 +44,36 @@ visibility collection publishes no mesh commands. The GPU scene and the pass
 culling mask own mesh membership; CPU visibility must not suppress a default,
 capture, or shadow pass before its GPU dispatch.
 
+Non-interleaved deformation inputs use three floats per position and normal,
+and four floats per tangent. Tangent XYZ is the direction; W is handedness.
+Both skinning prepass variants must step four floats when they load tangent
+XYZ and preserve source W in the complete output tangent. The shared atlas
+copies that full output. The authored vertex input also retains handedness for
+the final shading frame. Skinning and blendshapes do not change the sign.
+
+For source-pose comparison, the on-demand
+`ModelComponent.GetRuntimeSkinningMatrixDiagnosticSummary` report includes the
+bind root, each named bone's inverse bind and current matrices, the composed
+palette, and its CPU buffer value. Matrices use row-vector order and invariant
+round-trip float text. The report reads CPU data and does not request GPU
+readback. It allocates diagnostic text and must not run per frame.
+`XRMesh.GetSkinningSourceDiagnosticSummary` exports the matching CPU source
+positions, normals, four-component tangents, all UV channels, named bone indices, decoded
+packed weights, and triangle indices as JSON. It rejects missing CPU buffers
+and invalid index ranges. Use geometry and bone identity to compare imported
+meshes whose vertex splitting differs. This report also runs only on demand.
+Each vertex retains its original UV0 field and appends all UV channels in
+channel order. The report includes the channel count for source tile-mask checks.
+
+Cold deformation mesh preparation keeps its partial CPU payload across output
+retries. The canonical source walk refreshes each present owner before it
+retires an absent owner's payload. A long gap between output retries must not
+discard a mesh that is still present. Source and topology changes invalidate
+the payload immediately. The on-demand Advanced preparation diagnostic includes
+`MeshPreparation`: the pending mesh, stage, vertex and shape cursors, record
+counts, budget frame, owner visit frame, and source-witness status. This query
+does not read GPU data.
+
 The retained scene publication can contain ordered exceptions for commands
 outside the current view. Prepared Vulkan ingress imports an exception only
 when the exact submission row's stable command key is in the frame package's

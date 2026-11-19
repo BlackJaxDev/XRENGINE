@@ -366,7 +366,8 @@ public partial class XRTexture2D
         bool includeMipChain,
         string? timingLabel = null,
         double decodeMilliseconds = 0.0,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ETextureImportUsage? usage = null)
     {
         uint sourceWidth = image.Width;
         uint sourceHeight = image.Height;
@@ -379,7 +380,7 @@ public partial class XRTexture2D
         long resizeStartTimestamp = StartImportedTextureTiming();
         uint residentLimit = Math.Max(1u, maxResidentDimension);
         using RuntimeImage? resizedImage = Math.Max(image.Width, image.Height) > residentLimit
-            ? ResizePreviewIfNeeded(image, residentLimit)
+            ? ResizePreviewIfNeeded(image, residentLimit, usage)
             : null;
         RuntimeImage residentSource = resizedImage ?? image;
         double resizeMilliseconds = CompleteImportedTextureTiming(resizeStartTimestamp);
@@ -387,7 +388,7 @@ public partial class XRTexture2D
         cancellationToken.ThrowIfCancellationRequested();
         long mipBuildStartTimestamp = StartImportedTextureTiming();
         Mipmap2D[] mipmaps = includeMipChain
-            ? GetMipmapsFromImage(residentSource)
+            ? GetMipmapsFromImage(residentSource, usage)
             : [new Mipmap2D(residentSource)];
         try
         {

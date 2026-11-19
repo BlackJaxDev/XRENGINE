@@ -15,4 +15,8 @@ public sealed record VulkanPipelineCacheDiagnostic
     public string IdentityPath { get; init; } = string.Empty;
     public VulkanPipelineCacheIdentity Identity { get; init; } = new();
     public VulkanPipelineTelemetrySnapshot Telemetry { get; init; } = new();
+    public int PendingGraphicsJobCount { get; init; }
+    public int PendingComputeJobCount { get; init; }
+    public VulkanGraphicsPipelineJobDiagnostic[] PendingGraphicsJobs { get; init; } = [];
+    public VulkanComputePipelineJobDiagnostic[] PendingComputeJobs { get; init; } = [];
 }

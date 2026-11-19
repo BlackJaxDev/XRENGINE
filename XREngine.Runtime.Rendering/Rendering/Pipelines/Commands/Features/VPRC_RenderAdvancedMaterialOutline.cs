@@ -112,6 +112,15 @@ public sealed class VPRC_RenderAdvancedMaterialOutline : ViewportRenderCommand
 
         builder.UseColorAttachment(MakeFboColorResource(target.Name), target.ColorAccess,
                 target.ConsumeColorLoadOp(), target.GetColorStoreOp());
+        if (target.Name == AdvancedRenderPipeline.ForwardPassFBOName &&
+            context.HasResource(AdvancedRenderPipeline.EditorHighlightMaskTextureName))
+        {
+            builder.DependsOn(context.GetOrCreateSyntheticPass(
+                    "Advanced.EditorHighlightSeed", ERenderGraphPassStage.Compute).PassIndex)
+                .UseColorAttachment(
+                    MakeTextureResource(AdvancedRenderPipeline.EditorHighlightMaskTextureName),
+                    ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+        }
         UseRenderTargetDepthStencilAttachments(builder, target,
             target.ConsumeDepthLoadOp(), target.ConsumeStencilLoadOp());
     }

@@ -17,6 +17,7 @@ public partial class AdvancedRenderPipeline
     private const ulong OpenXrTwoPassEyeFamilyFeatureBit = 1UL << 63;
     private const ulong MinimalVisibilityOffscreenFeatureBit = 1UL << 62;
     private const ulong MaterialSurfaceExportResourcesFeatureBit = 1UL << 56;
+    private const ulong EditorHighlightResourcesFeatureBit = 1UL << 57;
     public const string ExternalOutputResourceName = "$ExternalOutput";
 
     // Forward late/debug consumers retain the existing probe-array contract.
@@ -138,6 +139,9 @@ public partial class AdvancedRenderPipeline
             (GlobalIlluminationPlan.RequiresNativeMaterialSurfaceExports && !UsesMinimalVisibilityOutput
                 ? MaterialSurfaceExportResourcesFeatureBit
                 : 0UL) |
+            (EditorHighlightModule is not null && !UsesMinimalVisibilityOutput
+                ? EditorHighlightResourcesFeatureBit
+                : 0UL) |
             BuildAmbientOcclusionFeatureMask(instance, viewport);
         return (ulong)visibilityFeatures |
             (ulong)reconstructionFeatures |
@@ -158,6 +162,17 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
+        if (EditorHighlightModule is not null &&
+            (RuntimeRenderingHostServices.FrameTiming.CurrentRenderer?.GetAdvancedRenderPipelineCapabilities().Backend
+                ?? CapabilityResult.Capabilities.Backend) != RuntimeGraphicsApiKind.Vulkan)
+            throw new NotSupportedException(
+                "The editor highlight module requires Vulkan same-fragment mask output. Disable EnableEditorHighlightModule for this pipeline instance.");
+        if (EditorHighlightModule is not null &&
+            builder.Profile.AntiAliasingMode == EAntiAliasingMode.Msaa &&
+            builder.Profile.MsaaSampleCount > 1u)
+            throw new NotSupportedException(
+                "The editor highlight module does not support multisample scene targets. Disable EnableEditorHighlightModule or MSAA.");
+
         DeclareVisibilityBufferResources(builder);
         if (UsesMinimalVisibilityOutput)
         {
@@ -247,9 +262,26 @@ public partial class AdvancedRenderPipeline
         RenderPipelineResourceLayoutBuilder builder,
         RenderResourceSizePolicy internalSize)
     {
+        if (EditorHighlightModule is not null)
+        {
+            if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+                throw new NotSupportedException("The editor highlight module requires a supported same-fragment mask output on this backend.");
+
+            DeclareLatePostColor(builder, EditorHighlightMaskTextureName, internalSize,
+                Stereo ? 2u : 1u, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba,
+                EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8, nearest: true);
+            DeclareLatePostColor(builder, EditorPickingIdentityTextureName, internalSize,
+                Stereo ? 2u : 1u, EPixelInternalFormat.Rgba16, EPixelFormat.Rgba,
+                EPixelType.UnsignedShort, ESizedInternalFormat.Rgba16, nearest: true);
+        }
+
         var framebuffer = builder.FrameBuffer(ForwardPassFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
             .Color(0, HDRSceneTextureName).DepthStencil(AdvancedVisibilityResourceNames.DepthStencil);
+        if (EditorHighlightModule is not null)
+            framebuffer.Color(1, EditorHighlightMaskTextureName);
+        if (EditorHighlightModule is not null)
+            framebuffer.Color(2, EditorPickingIdentityTextureName);
         if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             framebuffer.Factory(CreateAdvancedWebForwardFbo).Add();
         else
@@ -306,11 +338,24 @@ public partial class AdvancedRenderPipeline
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
 
         DeclareLatePostColor(builder, TransparentSceneCopyTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        ReconstructionTexture(builder, SourceOrderedSceneCopyTextureName, internalSize,
+                EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
+                ESizedInternalFormat.Rgba16f)
+            .Layers(layers).StereoCompatible(layers > 1u)
+            .Usage(RenderPipelineResourceUsage.SampledTexture |
+                RenderPipelineResourceUsage.ColorAttachment |
+                RenderPipelineResourceUsage.TransferSource |
+                RenderPipelineResourceUsage.TransferDestination)
+            .Factory(CreateSourceOrderedSceneCopyTexture)
+            .Add();
         DeclareLatePostColor(builder, TransparentAccumTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TransparentRevealageTextureName, internalSize, layers, EPixelInternalFormat.R8, EPixelFormat.Red, EPixelType.UnsignedByte, ESizedInternalFormat.R8);
         builder.FrameBuffer(TransparentSceneCopyFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TransparentSceneCopyTextureName)
             .Factory(CreateTransparentSceneCopyFBO).Add();
+        builder.FrameBuffer(SourceOrderedSceneCopyFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, SourceOrderedSceneCopyTextureName)
+            .Factory(CreateSourceOrderedSceneCopyFBO).Add();
         builder.FrameBuffer(TransparentAccumulationFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
             .Color(0, TransparentAccumTextureName).Color(1, TransparentRevealageTextureName)
@@ -356,6 +401,9 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostColor(builder, TsrHistoryColorTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
         DeclareLatePostColor(builder, TsrHistoryMetadataOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrHistoryMetadataTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
+        if (EditorHighlightModule is not null)
+            DeclareLatePostColor(builder, EditorHighlightOutputTextureName, windowSize, layers,
+                EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         builder.TextureView(DepthStencilTextureName, AdvancedVisibilityResourceNames.DepthStencil).Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent).Usage(RenderPipelineResourceUsage.DepthStencilAttachment | RenderPipelineResourceUsage.SampledTexture)
             .SizedFormat(ESizedInternalFormat.Depth32fStencil8).LayerRange(0u, layers).Target(array: Stereo, multisample: false)
@@ -388,7 +436,9 @@ public partial class AdvancedRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, FinalPostProcessOutputTextureName)
             .Factory(CreateFinalPostProcessOutputFBO).Add();
         var postProcessMaterial = builder.QuadMaterial(PostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
-            .DependsOn(HDRSceneTextureName, BloomBlurTextureName, DepthViewTextureName, StencilViewTextureName, AutoExposureTextureName);
+            .DependsOn(HDRSceneTextureName, BloomBlurTextureName, DepthViewTextureName, AutoExposureTextureName);
+        if (EditorHighlightModule is not null)
+            postProcessMaterial.DependsOn(EditorHighlightMaskTextureName);
         if (!builder.Profile.Stereo)
             postProcessMaterial.DependsOn(AtmosphereColorTextureName, VolumetricFogColorTextureName);
         postProcessMaterial.IncrementalFactory(CreatePostProcessFBOIncrementally).Add();
@@ -416,12 +466,41 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostDestination(builder, TsrAccumulationFBOName, TsrAccumulationTextureName, windowSize, CreateTsrAccumulationFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataOutputTextureName, windowSize, CreateTsrHistoryMetadataOutputFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataFBOName, TsrHistoryMetadataTextureName, windowSize, CreateTsrHistoryMetadataFBO);
-        builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
+        var tsrFrameBuffer = builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName)
-            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName)
-            .IncrementalFactory(CreateTsrUpscaleFBOIncrementally).Add();
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName);
+        if (EditorHighlightModule is not null)
+            tsrFrameBuffer.DependsOn(EditorHighlightMaskTextureName);
+        tsrFrameBuffer.IncrementalFactory(CreateTsrUpscaleFBOIncrementally).Add();
+
+        if (EditorHighlightModule is not null)
+            DeclareEditorHighlightCompositeResources(builder, windowSize);
 
     }
+
+    private void DeclareEditorHighlightCompositeResources(
+        RenderPipelineResourceLayoutBuilder builder,
+        RenderResourceSizePolicy windowSize)
+    {
+        builder.FrameBuffer(EditorHighlightOutputFBOName).Size(windowSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, EditorHighlightOutputTextureName)
+            .Factory(CreateEditorHighlightOutputFBO).Add();
+
+        DeclareEditorHighlightCompositeMaterial(builder, FinalPostProcessOutputTextureName);
+        DeclareEditorHighlightCompositeMaterial(builder, FxaaOutputTextureName);
+        DeclareEditorHighlightCompositeMaterial(builder, SmaaOutputTextureName);
+        DeclareEditorHighlightCompositeMaterial(builder, TsrOutputTextureName);
+    }
+
+    private void DeclareEditorHighlightCompositeMaterial(
+        RenderPipelineResourceLayoutBuilder builder,
+        string sourceTextureName)
+        => builder.QuadMaterial(GetEditorHighlightCompositeFboName(sourceTextureName))
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(sourceTextureName, EditorHighlightMaskTextureName)
+            .Factory(() => CreateEditorHighlightCompositeFbo(sourceTextureName)).Add();
 
     /// <summary>
     /// Declares only the inputs and two color-composition passes executed by
@@ -433,6 +512,7 @@ public partial class AdvancedRenderPipeline
         RenderPipelineResourceLayoutBuilder builder)
     {
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
         RenderResourceSizePolicy neutralSize = RenderResourceSizePolicy.Absolute(1u, 1u);
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
 
@@ -458,6 +538,10 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostColor(builder, FinalPostProcessOutputTextureName, internalSize, layers,
             EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
             ESizedInternalFormat.Rgba16f);
+        if (EditorHighlightModule is not null)
+            DeclareLatePostColor(builder, EditorHighlightOutputTextureName, windowSize, layers,
+                EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
+                ESizedInternalFormat.Rgba16f);
 
         builder.TextureView(DepthStencilTextureName, AdvancedVisibilityResourceNames.DepthStencil)
             .Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
@@ -490,19 +574,29 @@ public partial class AdvancedRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
             .Color(0, FinalPostProcessOutputTextureName)
             .Factory(CreateFinalPostProcessOutputFBO).Add();
-        builder.QuadMaterial(PostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
+        var postProcessMaterial = builder.QuadMaterial(PostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
             .DependsOn(
                 HDRSceneTextureName,
                 BloomBlurTextureName,
                 DepthViewTextureName,
-                StencilViewTextureName,
                 AutoExposureTextureName,
                 AtmosphereColorTextureName,
-                VolumetricFogColorTextureName)
-            .IncrementalFactory(CreatePostProcessFBOIncrementally).Add();
+                VolumetricFogColorTextureName);
+        if (EditorHighlightModule is not null)
+            postProcessMaterial.DependsOn(EditorHighlightMaskTextureName);
+        postProcessMaterial.IncrementalFactory(CreatePostProcessFBOIncrementally).Add();
         builder.QuadMaterial(FinalPostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
             .DependsOn(PostProcessOutputTextureName)
             .Factory(CreateFinalPostProcessFBO).Add();
+        if (EditorHighlightModule is not null)
+        {
+            builder.FrameBuffer(EditorHighlightOutputFBOName).Size(windowSize)
+                .Lifetime(RenderResourceLifetime.Persistent)
+                .Usage(RenderPipelineResourceUsage.ColorAttachment)
+                .Color(0, EditorHighlightOutputTextureName)
+                .Factory(CreateEditorHighlightOutputFBO).Add();
+            DeclareEditorHighlightCompositeMaterial(builder, FinalPostProcessOutputTextureName);
+        }
     }
 
     private void DeclareAdvancedExactTransparencyResources(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy internalSize, uint layers)
@@ -609,7 +703,7 @@ public partial class AdvancedRenderPipeline
     }
 
     private void DeclareLatePostColor(RenderPipelineResourceLayoutBuilder builder, string name, RenderResourceSizePolicy size, uint layers,
-        EPixelInternalFormat internalFormat, EPixelFormat pixelFormat, EPixelType pixelType, ESizedInternalFormat sizedFormat, bool history = false, uint mips = 1u)
+        EPixelInternalFormat internalFormat, EPixelFormat pixelFormat, EPixelType pixelType, ESizedInternalFormat sizedFormat, bool history = false, uint mips = 1u, bool nearest = false)
     {
         RenderPipelineResourceProfile profile = builder.Profile;
         uint width = ResolveLatePostExtent(size, profile.DisplayWidth, profile.InternalWidth, size.Width, size.ScaleX);
@@ -622,7 +716,7 @@ public partial class AdvancedRenderPipeline
                 RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.TransferSource |
                 RenderPipelineResourceUsage.TransferDestination)
             .Factory(() => CreateLatePostColor(name, width, height, layers, mips,
-                internalFormat, pixelFormat, pixelType, sizedFormat));
+                internalFormat, pixelFormat, pixelType, sizedFormat, nearest));
         if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             texture.RequiresStorageUsage(false)
                 .Format(internalFormat, pixelFormat, pixelType).SizedFormat(sizedFormat)
@@ -649,7 +743,7 @@ public partial class AdvancedRenderPipeline
 
     private static XRTexture CreateLatePostColor(string name, uint width, uint height, uint layers,
         uint mips, EPixelInternalFormat internalFormat, EPixelFormat pixelFormat,
-        EPixelType pixelType, ESizedInternalFormat sizedFormat)
+        EPixelType pixelType, ESizedInternalFormat sizedFormat, bool nearest = false)
     {
         XRTexture result;
         if (layers > 1u)
@@ -659,9 +753,9 @@ public partial class AdvancedRenderPipeline
             array.OVRMultiViewParameters = new(0, layers);
             array.SmallestAllowedMipmapLevel = checked((int)mips - 1);
             array.LargestMipmapLevel = 0;
-            array.MinFilter = pixelFormat == EPixelFormat.RedInteger ? ETexMinFilter.Nearest :
+            array.MinFilter = nearest || pixelFormat == EPixelFormat.RedInteger ? ETexMinFilter.Nearest :
                 mips > 1u ? ETexMinFilter.LinearMipmapLinear : ETexMinFilter.Linear;
-            array.MagFilter = pixelFormat == EPixelFormat.RedInteger ? ETexMagFilter.Nearest : ETexMagFilter.Linear;
+            array.MagFilter = nearest || pixelFormat == EPixelFormat.RedInteger ? ETexMagFilter.Nearest : ETexMagFilter.Linear;
             array.UWrap = array.VWrap = ETexWrapMode.ClampToEdge;
             array.SizedInternalFormat = sizedFormat;
             array.Resizable = false;
@@ -673,9 +767,9 @@ public partial class AdvancedRenderPipeline
                 width, height, internalFormat, pixelFormat, pixelType, EFrameBufferAttachment.ColorAttachment0);
             mono.SmallestAllowedMipmapLevel = checked((int)mips - 1);
             mono.LargestMipmapLevel = 0;
-            mono.MinFilter = pixelFormat == EPixelFormat.RedInteger ? ETexMinFilter.Nearest :
+            mono.MinFilter = nearest || pixelFormat == EPixelFormat.RedInteger ? ETexMinFilter.Nearest :
                 mips > 1u ? ETexMinFilter.LinearMipmapLinear : ETexMinFilter.Linear;
-            mono.MagFilter = pixelFormat == EPixelFormat.RedInteger ? ETexMagFilter.Nearest : ETexMagFilter.Linear;
+            mono.MagFilter = nearest || pixelFormat == EPixelFormat.RedInteger ? ETexMagFilter.Nearest : ETexMagFilter.Linear;
             mono.UWrap = mono.VWrap = ETexWrapMode.ClampToEdge;
             mono.SizedInternalFormat = sizedFormat;
             mono.Resizable = false;

@@ -16,8 +16,6 @@ internal sealed partial class VulkanCommandRuntime
     private static readonly string[] NativeOpaqueGpuProfilerPath = ["Advanced", "Shading", "NativeOpaque"];
     private static readonly string[] NativeOpaqueRepairGpuProfilerPath = ["Advanced", "Shading", "GpuOverflowRepair"];
     private static readonly string[] NativeOpaqueUberGpuProfilerPath = ["Advanced", "Shading", "NativeOpaqueUber"];
-    // Matches XR_ADV_SHADING_UBER_FALLBACK in ShadeNativeOpaqueEvaluator.glslinc.
-    private const uint NativeUberFallbackShadingFlag = 1u << 29;
     // Matches XR_ADV_SHADING_DECAL_BUFFER in ShadeNativeOpaqueEvaluator.glslinc.
     private const uint NativeDecalBufferShadingFlag = 1u << 16;
 
@@ -52,7 +50,9 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanPrimaryOperationRecordingInfo info)
     {
         if (payload.NativeComputeClosure is not { IsValid: true } closure ||
-            !payload.NativeComputePipelines.IsCurrentFor(closure.UsesMultisampleVisibility) ||
+            !payload.NativeComputePipelines.IsCurrentFor(
+                closure.UsesMultisampleVisibility,
+                payload.SceneState.KernelFamilies.HasUber) ||
             payload.NativeComputeDescriptorSet.Handle == 0 ||
             !payload.State.IsValid || !payload.SceneState.IsValid)
             throw new VulkanPlanPreconditionException("Advanced native compute reached recording without its immutable resources and pipeline generation.");
@@ -191,20 +191,14 @@ internal sealed partial class VulkanCommandRuntime
             TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
             TransitionNativeDdgiOutputs(state.CommandBuffer, in closure);
         }
-        // Native shading families. The standard kernel shades standard materials and,
-        // while the Uber kernel is not ready, Uber materials with a base-color fallback.
-        // The Uber kernel then shades only Uber materials in its own pass. Multisample
-        // shading resolves every sample of a pixel in one pass, so a scene with Uber
-        // materials uses the combined multisample kernel when it is ready.
+        // The standard and Uber kernels shade their own material families.
+        // Multisample shading resolves all samples of a pixel in one pass.
         VulkanAdvancedNativeShadingKernelFamilies families = payload.SceneState.KernelFamilies;
         VulkanAdvancedComputePipeline uberShade = payload.NativeComputePipelines.ShadeUber;
         VulkanAdvancedComputePipeline combinedMultisampleShade = payload.NativeComputePipelines.ShadeMultisampleCombined;
-        bool uberPass = !closure.UsesMultisampleVisibility && families.HasUber && uberShade.IsCurrent;
-        bool combinedMultisample = closure.UsesMultisampleVisibility && families.HasUber && combinedMultisampleShade.IsCurrent;
-        bool uberFallback = families.HasUber && !uberPass && !combinedMultisample;
-        if (uberFallback)
-            push = push with { Flags = push.Flags | NativeUberFallbackShadingFlag };
-        UInt128 standardKernels = families.Standard | (uberFallback ? families.Uber : UInt128.Zero);
+        bool uberPass = !closure.UsesMultisampleVisibility && families.HasUber;
+        bool combinedMultisample = closure.UsesMultisampleVisibility && families.HasUber;
+        UInt128 standardKernels = families.Standard;
         // A publication without family masks keeps the full kernel range.
         if ((families.Standard | families.Uber) == UInt128.Zero)
             standardKernels = UInt128.MaxValue;

@@ -14,6 +14,8 @@ uniform vec2 _UvTileDiscardGrid;
 uniform vec2 _UvTileDiscardRange;
 uniform int _UDIMDiscardMode;
 uniform int _UDIMDiscardUV;
+//@property(name="_SourceUdimFlipV", display="Source UDIM V Conversion", mode=static, default="0.0")
+uniform float _SourceUdimFlipV;
 uniform float _UDIMDiscardRow0_0;
 uniform float _UDIMDiscardRow0_1;
 uniform float _UDIMDiscardRow0_2;

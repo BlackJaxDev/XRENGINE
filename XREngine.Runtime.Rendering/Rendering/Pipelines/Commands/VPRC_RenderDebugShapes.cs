@@ -39,7 +39,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                             BvhDebugOverlayLayer.Base);
                         RenderEnabledSpatialTreeDebug(instance, camera);
                     }
-                    RuntimeEngine.Rendering.Debug.RenderShapes(DepthTested);
+                    bool renderPointLines = RuntimeEngine.Rendering.Debug.PrepareShapeResources(DepthTested);
+                    RuntimeEngine.Rendering.Debug.RenderShapes(DepthTested, renderPointLines);
                     if (!DepthTested)
                     {
                         GpuBvhDebugLineRenderer.RenderQueued(

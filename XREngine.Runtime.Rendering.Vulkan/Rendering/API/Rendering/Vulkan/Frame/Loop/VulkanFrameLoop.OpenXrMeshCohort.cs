@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Vulkan.Commands;
 
 namespace XREngine.Rendering.Vulkan;
@@ -139,7 +140,10 @@ internal sealed partial class VulkanFrameLoop
                 if (cohort.GetEntry(index).IsReusable)
                 {
                     VulkanMeshOperationRequest template = cohort.GetOperation(index);
-                    if (!IsOpenXrCohortBindingArtifactCurrent(in request, in template))
+                    if (!IsOpenXrCohortBindingArtifactCurrent(in request, in template) ||
+                        !SkinningPrepassDispatcher.ValidateVulkanOutputWitness(
+                            request.Renderer.MeshRenderer,
+                            request.DeformationOutputWitness))
                     {
                         cohort.Invalidate();
                         _openXrMeshCohortMisses++;
@@ -226,6 +230,8 @@ internal sealed partial class VulkanFrameLoop
             ModelMatrix = request.ModelMatrix,
             PreviousModelMatrix = request.PreviousModelMatrix,
             SourceFlatDirection = request.SourceFlatDirection,
+            EditorHighlightBits = request.EditorHighlightBits,
+            EditorHighlightOutput = request.EditorHighlightOutput,
             MaterialOverride = request.ResolvedMaterial.Material,
             Instances = request.ExpandedInstances,
             BillboardMode = request.BillboardMode,
@@ -234,6 +240,8 @@ internal sealed partial class VulkanFrameLoop
             ShadowCasterRelevance = request.ShadowCasterRelevance,
             CanonicalDrawIdentitySnapshot = request.CanonicalDrawIdentitySnapshot,
             WindowPresentationSourceMarker = request.WindowPresentationSourceMarker,
+            DeformationOutputWitness = request.DeformationOutputWitness,
+            SkinnedOutputSetIdentity = request.SkinnedOutputSetIdentity,
         };
         draw = draw with
         {
@@ -327,6 +335,8 @@ internal sealed partial class VulkanFrameLoop
         if (a.TransformId != b.TransformId) return nameof(a.TransformId);
         if (!ReferenceEquals(a.ViewSnapshot, b.ViewSnapshot) && !Equals(a.ViewSnapshot, b.ViewSnapshot)) return nameof(a.ViewSnapshot);
         if (!a.SourceFlatDirection.Equals(b.SourceFlatDirection)) return nameof(a.SourceFlatDirection);
+        if (a.EditorHighlightBits != b.EditorHighlightBits) return nameof(a.EditorHighlightBits);
+        if (a.EditorHighlightOutput != b.EditorHighlightOutput) return nameof(a.EditorHighlightOutput);
         if (a.PreparationCompatibilitySignature != b.PreparationCompatibilitySignature) return nameof(a.PreparationCompatibilitySignature);
         if (reused.RequiresExternalUploadBlock != fresh.RequiresExternalUploadBlock) return nameof(reused.RequiresExternalUploadBlock);
         return null;

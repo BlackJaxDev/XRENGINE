@@ -1399,18 +1399,19 @@ internal static partial class UberShaderVariantBuilder
         if (float.IsNaN(value) || float.IsInfinity(value))
             throw new InvalidOperationException($"Uber static literal '{value}' is not a finite float.");
 
+        if (value == 0.0f)
+            return "0.0";
+
         if (TryFormatCommonFloatLiteral(value, out string? literal))
             return literal!;
 
-        string text = value.ToString("0.0################", CultureInfo.InvariantCulture);
-        return text.StartsWith("-0.0", StringComparison.Ordinal) ? "0.0" : text;
+        return value.ToString("0.0################", CultureInfo.InvariantCulture);
     }
 
     private static bool TryFormatCommonFloatLiteral(float value, out string? literal)
     {
         literal = value switch
         {
-            0.0f => "0.0",
             1.0f => "1.0",
             -1.0f => "-1.0",
             0.5f => "0.5",

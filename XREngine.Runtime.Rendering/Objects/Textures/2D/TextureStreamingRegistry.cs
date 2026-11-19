@@ -140,7 +140,6 @@ internal sealed class TextureStreamingRegistry
         {
             lock (record.Sync)
             {
-                record.Format = texture.SizedInternalFormat;
                 if (!string.Equals(record.FilePath, filePath, StringComparison.OrdinalIgnoreCase) || record.Source is null)
                 {
                     record.FilePath = filePath;

@@ -493,27 +493,8 @@ internal static partial class VulkanShaderAutoUniforms
             _ => 32u
         };
 
-    private const uint AutoUniformBindingBase = 64u;
+    private const uint AutoUniformBindingBase = 256u;
     private const uint AutoUniformBindingWindowSize = 8u;
-
-    private static uint FindAvailableAutoUniformBinding(string source, EShaderType shaderType)
-    {
-        uint binding = GetAutoUniformBindingBase(shaderType);
-        uint bindingEnd = binding + AutoUniformBindingWindowSize;
-        HashSet<uint> usedBindings = CollectLayoutBindings(source);
-
-        while (binding < bindingEnd && usedBindings.Contains(binding))
-            binding++;
-
-        if (binding < bindingEnd)
-            return binding;
-
-        binding = Math.Max(FindNextBinding(source), bindingEnd);
-        while (usedBindings.Contains(binding))
-            binding++;
-
-        return binding;
-    }
 
     private static uint GetAutoUniformBindingBase(EShaderType shaderType)
     {
@@ -527,7 +508,7 @@ internal static partial class VulkanShaderAutoUniforms
             EShaderType.Compute => 5u,
             EShaderType.Task => 6u,
             EShaderType.Mesh => 7u,
-            _ => 1u,
+            _ => throw new ArgumentOutOfRangeException(nameof(shaderType), shaderType, "Unsupported Vulkan auto-uniform shader stage."),
         };
 
         return AutoUniformBindingBase + (stageSlot * AutoUniformBindingWindowSize);

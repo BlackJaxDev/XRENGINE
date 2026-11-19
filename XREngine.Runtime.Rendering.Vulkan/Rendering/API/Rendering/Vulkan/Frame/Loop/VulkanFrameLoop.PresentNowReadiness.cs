@@ -16,6 +16,7 @@ internal sealed partial class VulkanFrameLoop
     private long _presentNowFailureDiagnosticSequence;
     private long _presentNowRecoveryRequestSequence;
     private long _presentNowConsumedRecoveryRequestSequence;
+    private ulong _presentNowConsumedPipelineCompileActivityGeneration;
     private string _presentNowRecoveryRequestReason = "renderer state changed";
     private int _presentNowRecoveryProbeAttempts;
     private int _presentNowAutomaticRecoveryPending;
@@ -1332,14 +1333,23 @@ internal sealed partial class VulkanFrameLoop
             Volatile.Read(ref _presentNowRecoveryRequestSequence);
         long consumedSequence =
             Volatile.Read(ref _presentNowConsumedRecoveryRequestSequence);
+        ulong compileActivityGeneration =
+            _resourceRuntime.PipelineManager.CompileActivityGeneration;
+        ulong previousCompileActivityGeneration =
+            _presentNowConsumedPipelineCompileActivityGeneration;
+        bool pipelineCompletionProbe =
+            recoverableFailure.Stage == EVulkanPresentNowReadinessStage.PipelineCompilation &&
+            compileActivityGeneration != previousCompileActivityGeneration;
         bool automaticProbe =
             Interlocked.Exchange(ref _presentNowAutomaticRecoveryPending, 0) != 0;
-        if (!automaticProbe && requestedSequence <= consumedSequence)
+        bool explicitRequest = requestedSequence > consumedSequence;
+        if (!automaticProbe && !explicitRequest && !pipelineCompletionProbe)
             return false;
 
         Volatile.Write(
             ref _presentNowConsumedRecoveryRequestSequence,
             requestedSequence);
+        _presentNowConsumedPipelineCompileActivityGeneration = compileActivityGeneration;
         _presentNowRecoverableFailure = null;
         _presentNowRecoverySourceFailure = recoverableFailure;
         _presentNowRecoveryProbeAttempts = 0;
@@ -1348,12 +1358,18 @@ internal sealed partial class VulkanFrameLoop
             "PresentNow state-change recovery probe");
 
         Debug.VulkanWarning(
-            "[Vulkan][PresentNow][RecoveryProbe] frame={0} sourceFrame={1} stage={2} request={3} automatic={4} reason={5}",
+            "[Vulkan][PresentNow][RecoveryProbe] frame={0} sourceFrame={1} stage={2} " +
+            "request={3} automatic={4} explicit={5} pipelineCompletion={6} " +
+            "previousCompileGeneration={7} compileGeneration={8} reason={9}",
             attempt.FrameNumber,
             recoverableFailure.FrameId,
             recoverableFailure.Stage,
             requestedSequence,
             automaticProbe,
+            explicitRequest,
+            pipelineCompletionProbe,
+            previousCompileActivityGeneration,
+            compileActivityGeneration,
             Volatile.Read(ref _presentNowRecoveryRequestReason));
         return true;
     }

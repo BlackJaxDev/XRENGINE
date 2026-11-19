@@ -10,6 +10,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Input;
 using XREngine.Input.Devices;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Shadows;
@@ -3000,25 +3001,39 @@ namespace XREngine.Rendering
                 //LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
                 ApplyForcedDebugOpaquePipelineOverride();
 
+                SkinningPrepassDispatcher.DeformationCohortToken desktopDeformationCohort = default;
+                if (!interactiveResizeFrame &&
+                    RuntimeEngine.Rendering.State.IsVulkan &&
+                    !RuntimeRenderingHostServices.Presentation.IsInVR)
+                {
+                    desktopDeformationCohort =
+                        SkinningPrepassDispatcher.CreateDeformationCohortToken();
+                }
+
                 if (!interactiveResizeFrame)
                 {
-                    PublishAdvancedDirectionalShadowConsumerAuthority(renderFrameId);
-                    frameRenderer.PrepareRenderFramePacing();
-                    using var preRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPreRender");
-                    long preRenderStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                    try
+                    using (desktopDeformationCohort.IsValid
+                               ? SkinningPrepassDispatcher.PushDeformationCohort(desktopDeformationCohort)
+                               : default)
                     {
-                        TargetWorldInstance?.GlobalPreRender();
-                        RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.PreRender, preRenderStart);
-                    }
-                    catch (Exception preRenderEx)
-                    {
-                        string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
-                        Debug.RenderingWarningEvery(
-                            keyBase + ".GlobalPreRenderException",
-                            TimeSpan.FromSeconds(1),
-                            "[RenderDiag] GlobalPreRender failed (Vulkan present will still run). {0}",
-                            preRenderEx);
+                        PublishAdvancedDirectionalShadowConsumerAuthority(renderFrameId);
+                        frameRenderer.PrepareRenderFramePacing();
+                        using var preRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPreRender");
+                        long preRenderStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                        try
+                        {
+                            TargetWorldInstance?.GlobalPreRender();
+                            RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.PreRender, preRenderStart);
+                        }
+                        catch (Exception preRenderEx)
+                        {
+                            string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
+                            Debug.RenderingWarningEvery(
+                                keyBase + ".GlobalPreRenderException",
+                                TimeSpan.FromSeconds(1),
+                                "[RenderDiag] GlobalPreRender failed (Vulkan present will still run). {0}",
+                                preRenderEx);
+                        }
                     }
                 }
 
@@ -3042,49 +3057,54 @@ namespace XREngine.Rendering
                 // Vulkan requires explicit present — skipping it leaves the window uninitialized (white).
                 bool viewportRenderFailed = false;
                 Exception? viewportRenderException = null;
-                try
+                using (desktopDeformationCohort.IsValid
+                           ? SkinningPrepassDispatcher.PushDeformationCohort(desktopDeformationCohort)
+                           : default)
                 {
-                    IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
-                    if (frameTiming.IsPlayModeTransitioning)
+                    try
                     {
-                        Debug.RenderingEvery(
-                            $"XRWindow.RenderCallback.TransitionSuspended.{GetHashCode()}",
-                            TimeSpan.FromSeconds(1),
-                            "[RenderDiag] Window viewport rendering suspended during play-mode transition. Window={0} State={1} Viewports={2}",
-                            GetHashCode(),
-                            frameTiming.PlayModeStateName,
-                            Viewports.Count);
-                    }
-                    else
-                    {
-                        // Scoped so scene/viewport rendering cost is attributed in profiler
-                        // captures instead of appearing as unexplained XRWindow.RenderFrame self time.
-                        long viewportsPhaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                        using (var renderViewportsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderWindowViewports"))
+                        IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
+                        if (frameTiming.IsPlayModeTransitioning)
                         {
-                            // Live resize still needs new projection and screen-space UI
-                            // layout. Backend admission may defer an unready frame while
-                            // the expensive internal resource generation stays frozen.
-                            if (!windowHeldForXrFrame)
-                            {
-                                FramePacingTimeline.Mark(EFramePacingMark.DesktopRenderStart);
-                                RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
-                            }
+                            Debug.RenderingEvery(
+                                $"XRWindow.RenderCallback.TransitionSuspended.{GetHashCode()}",
+                                TimeSpan.FromSeconds(1),
+                                "[RenderDiag] Window viewport rendering suspended during play-mode transition. Window={0} State={1} Viewports={2}",
+                                GetHashCode(),
+                                frameTiming.PlayModeStateName,
+                                Viewports.Count);
                         }
-                        RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);
-                        RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.Viewports, viewportsPhaseStart);
+                        else
+                        {
+                            // Scoped so scene/viewport rendering cost is attributed in profiler
+                            // captures instead of appearing as unexplained XRWindow.RenderFrame self time.
+                            long viewportsPhaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                            using (var renderViewportsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderWindowViewports"))
+                            {
+                                // Live resize still needs new projection and screen-space UI
+                                // layout. Backend admission may defer an unready frame while
+                                // the expensive internal resource generation stays frozen.
+                                if (!windowHeldForXrFrame)
+                                {
+                                    FramePacingTimeline.Mark(EFramePacingMark.DesktopRenderStart);
+                                    RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
+                                }
+                            }
+                            RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);
+                            RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.Viewports, viewportsPhaseStart);
+                        }
                     }
-                }
-                catch (Exception vpEx)
-                {
-                    viewportRenderFailed = true;
-                    viewportRenderException = vpEx;
-                    string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
-                    Debug.RenderingWarningEvery(
-                        keyBase + ".ViewportException",
-                        TimeSpan.FromSeconds(1),
-                        "[RenderDiag] Viewport/pipeline rendering failed (Vulkan present will still run). {0}",
-                        vpEx);
+                    catch (Exception vpEx)
+                    {
+                        viewportRenderFailed = true;
+                        viewportRenderException = vpEx;
+                        string keyBase = $"XRWindow.RenderCallback.{GetHashCode()}";
+                        Debug.RenderingWarningEvery(
+                            keyBase + ".ViewportException",
+                            TimeSpan.FromSeconds(1),
+                            "[RenderDiag] Viewport/pipeline rendering failed (Vulkan present will still run). {0}",
+                            vpEx);
+                    }
                 }
 
                 if (frameRenderer.IsDeviceLost)
@@ -3142,6 +3162,9 @@ namespace XREngine.Rendering
                 // This MUST run even when viewport rendering fails, otherwise Vulkan never presents and the window
                 // shows uninitialized (white) content. With empty/partial frame ops, the Vulkan backend will at
                 // minimum clear to the background color and render the debug triangle + ImGui overlay.
+                using (desktopDeformationCohort.IsValid
+                           ? SkinningPrepassDispatcher.PushDeformationCohort(desktopDeformationCohort)
+                           : default)
                 using (var renderWindowSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.Renderer.RenderWindow"))
                 {
                     long presentStart = System.Diagnostics.Stopwatch.GetTimestamp();

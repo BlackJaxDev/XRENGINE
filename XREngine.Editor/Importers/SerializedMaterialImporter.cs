@@ -94,10 +94,15 @@ public static partial class SerializedMaterialImporter
         SourceResolvedAsset shaderAsset = resolver.Resolve(document.Shader);
         SourceToonShaderMatchResult sourceToonMatch = MatchSourceToonMaterial(document, resolver, out string? shaderPath);
         diagnostics.AddRange(sourceToonMatch.Diagnostics);
+        bool requiresSourceBasicOutline = RequiresSourceBasicOutline(document, sourceToonMatch);
+        SourceOrderedSurfacePlan orderedSurface = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
+            ? ClassifySourceOrderedSurface(document, shaderPath, sourceToonMatch.IsLocked)
+            : default;
         SerializedMaterialDocument conversionDocument;
         if (sourceToonMatch.IsDowngradeSource)
             conversionDocument = SourceToonFeatureLossNormalizer.Normalize(
-                document, diagnostics, shaderPath, sourceToonMatch.IsLocked);
+                document, diagnostics, shaderPath, sourceToonMatch.IsLocked,
+                preserveCertifiedGrabPass: orderedSurface.HasSceneColor);
         else if (sourceToonMatch.IsAccepted && sourceToonMatch.Version == SourceToon10Catalog.Version)
             conversionDocument = SourceToon10Catalog.CreateConversionDocument(document, sourceToonMatch);
         else
@@ -126,11 +131,15 @@ public static partial class SerializedMaterialImporter
                     diagnostics,
                     isSourceToonFeatureLoss,
                     sourceToonMatch.Version,
-                    sourceToonDescriptor)
+                    sourceToonDescriptor,
+                    orderedSurface)
                 : isLilToon
                     ? ConvertLilToonToUberMaterial(document, resolver, warnings, shaderPath)
                     : ConvertGenericSerializedMaterial(
                         document, resolver, warnings, reportUnconvertedProjectShader: true);
+
+            if (requiresSourceBasicOutline)
+                ApplySourceBasicOutline(material, document, sourceToonMatch);
 
             material.OriginalPath = normalizedPath;
             EMaterialConversionOutcome outcome = isSourceToonFeatureLoss
@@ -169,6 +178,26 @@ public static partial class SerializedMaterialImporter
                 Warnings = [.. warnings],
                 Diagnostics = [.. diagnostics],
                 ConversionReport = conversionReport,
+            };
+        }
+        catch (Exception ex) when ((requiresSourceBasicOutline ||
+              orderedSurface.UnsupportedReason is not null ||
+              orderedSurface.Contract != EAdvancedSourceSurfaceContract.None) &&
+             ex is not OperationCanceledException)
+        {
+            string message = $"Source material conversion failed for '{document.Name}': {ex.Message}";
+            warnings.Add(message);
+            context?.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Failed);
+            if (context is { AllowPartialImport: true })
+                context.ReportPartialImport("UNITYMAT0004", message, normalizedPath);
+            return new SerializedMaterialImportResult
+            {
+                ShaderPath = shaderPath,
+                SourceDocument = document,
+                ShaderAsset = shaderAsset,
+                Warnings = [.. warnings],
+                Diagnostics = [.. diagnostics],
+                ConversionReport = MaterialConversionReportBuilder.CreateFailure(normalizedPath, message),
             };
         }
         catch (Exception ex) when ((isSourceToonConversion || isLilToon) && ex is not OperationCanceledException)
@@ -261,7 +290,8 @@ public static partial class SerializedMaterialImporter
         List<MaterialConversionDiagnostic> diagnostics,
         bool isSourceToonFeatureLoss,
         SourceToonShaderVersion? sourceVersion,
-        SourceToonMaterialDescriptor? descriptor)
+        SourceToonMaterialDescriptor? descriptor,
+        SourceOrderedSurfacePlan orderedSurface)
     {
         document = SourceToonColorSpaceNormalizer.Normalize(
             document,
@@ -335,34 +365,34 @@ public static partial class SerializedMaterialImporter
         material.SetShader(EShaderType.Fragment, ShaderHelper.UberFragForward(), coerceShaderType: true);
         material.EnsureUberStateInitialized();
 
-        ApplyTextureTransform(material, document, "_MainTex", "_MainTex");
-        ApplyTextureTransform(material, document, "_BumpMap", "_BumpMap");
-        ApplyTextureTransform(material, document, alphaSource, "_AlphaMask");
-        ApplyTextureTransform(material, document, colorAdjustSource, "_MainColorAdjustTexture");
-        ApplyTextureTransform(material, document, shadowColorSource, "_ShadowColorTex");
+        ApplySourceToonMeshTextureTransform(material, document, "_MainTex", "_MainTex");
+        ApplySourceToonMeshTextureTransform(material, document, "_BumpMap", "_BumpMap");
+        ApplySourceToonMeshTextureTransform(material, document, alphaSource, "_AlphaMask");
+        ApplySourceToonMeshTextureTransform(material, document, colorAdjustSource, "_MainColorAdjustTexture");
+        ApplySourceToonMeshTextureTransform(material, document, shadowColorSource, "_ShadowColorTex");
         ApplySourceToonTextureTransform(material, document, toonRampSource, "_ToonRamp", "_ToonRampUVSelector", diagnostics);
         ApplySourceToonTextureTransform(material, document, firstShadeSource, "_FirstShadeMap", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, secondShadeSource, "_SecondShadeMap", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, aoSource, "_LightingAOMaps", null, diagnostics);
-        ApplyTextureTransform(material, document, shadowMaskSource, "_LightingShadowMasks");
-        ApplyTextureTransform(material, document, emissionSource, "_EmissionMap");
-        ApplyTextureTransform(material, document, matcapMaskSource, "_MatcapMask");
+        ApplySourceToonMeshTextureTransform(material, document, shadowMaskSource, "_LightingShadowMasks");
+        ApplySourceToonMeshTextureTransform(material, document, emissionSource, "_EmissionMap");
+        ApplySourceToonMeshTextureTransform(material, document, matcapMaskSource, "_MatcapMask");
         ApplySourceToonTextureTransform(material, document, rimMaskSource, "_RimMask", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, rimColorSource, "_RimColorTexture", null, diagnostics);
-        ApplyTextureTransform(material, document, specularSource, "_SpecularMap");
+        ApplySourceToonMeshTextureTransform(material, document, specularSource, "_SpecularMap");
         ApplySourceToonTextureTransform(material, document, metallicSource, "_PBRMetallicMaps", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, smoothnessSource, "_PBRSmoothnessMaps", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, clearCoatSource, "_SourceClearCoatMaps", null, diagnostics);
-        ApplyTextureTransform(material, document, detailMaskSource, "_DetailMask");
-        ApplyTextureTransform(material, document, detailTexSource, "_DetailTex");
-        ApplyTextureTransform(material, document, detailNormalSource, "_DetailNormalMap");
-        ApplyTextureTransform(material, document, outlineMaskSource, "_OutlineMask");
+        ApplySourceToonMeshTextureTransform(material, document, detailMaskSource, "_DetailMask");
+        ApplySourceToonMeshTextureTransform(material, document, detailTexSource, "_DetailTex");
+        ApplySourceToonMeshTextureTransform(material, document, detailNormalSource, "_DetailNormalMap");
+        ApplySourceToonMeshTextureTransform(material, document, outlineMaskSource, "_OutlineMask");
         ApplySourceToonTextureTransform(material, document, dissolveNoiseSource, "_DissolveNoiseTexture", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, dissolveDetailSource, "_DissolveDetailNoise", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, dissolveMaskSource, "_DissolveMask", null, diagnostics);
         ApplyTextureTransform(material, document, dissolveGradientSource, "_DissolveEdgeGradient");
         ApplySourceToonTextureTransform(material, document, dissolveEdgeSource, "_DissolveEdgeTexture", null, diagnostics);
-        ApplyTextureTransform(material, document, parallaxSource, "_ParallaxMap");
+        ApplySourceToonMeshTextureTransform(material, document, parallaxSource, "_ParallaxMap");
 
         ApplySourceToonScalarAndColorProperties(material, document, diagnostics);
         ApplySourceToonPackedPbrProperties(material, document, metallicSource, smoothnessSource, diagnostics);
@@ -404,7 +434,8 @@ public static partial class SerializedMaterialImporter
         ApplySourceToonSurfaceFeatures(material, document, resolver, diagnostics, warnings, sourceVersion);
         NormalizeSourceToonDetailColor(material, document, detailTexSource, resolver.ProjectRoot);
         ApplySourceToonEffectsAndIntegrations(material, document, resolver, diagnostics, warnings);
-        ApplySourceToonRenderState(material, document, resolver, diagnostics, warnings);
+        BindSourceOrderedSurface(material, document, orderedSurface, diagnostics, warnings);
+        ApplySourceToonRenderState(material, document, resolver, diagnostics, warnings, orderedSurface);
         // Pro material animation/controller semantics are not part of the lossy
         // Toon conversion contract. Keep their imported authored values as
         // variant constants so inactive branches can be pruned instead of
@@ -632,8 +663,8 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_LightingMapMode", SourceToonEnumMapper.Identity(document, "_LightingMapMode", 0, 0, 3, diagnostics));
         SetInt(material, "_LightingDirectionMode", SourceToonEnumMapper.Identity(document, "_LightingDirectionMode", 0, 0, 3, diagnostics));
         MapFloat(document, material, "_LightingCapEnabled", "_LightingCapEnabled");
-        // The source shaders read only their own AO maps and never a screen-space AO texture.
-        SetFloat(material, "_WorldAmbientOcclusionStrength", 0.0f);
+        // Camera AO settings control converted materials at full strength.
+        SetFloat(material, "_WorldAmbientOcclusionStrength", 1.0f);
         MapFloat(document, material, "_LightingCap", "_LightingCap");
         MapFloat(document, material, "_LightingMinLightBrightness", "_LightingMinLightBrightness");
         MapFloat(document, material, "_LightingMonochromatic", "_LightingMonochromatic");
@@ -662,7 +693,7 @@ public static partial class SerializedMaterialImporter
         MapVector4(document, material, "_EmissionColor", "_EmissionColor");
         SetInt(material, "_EmissionColorThemeIndex", SourceToonEnumMapper.Identity(document, "_EmissionColorThemeIndex", 0, 0, 12, diagnostics));
         MapFloat(document, material, "_EmissionStrength", "_EmissionStrength");
-        MapVector2(document, material, "_EmissionScrollingSpeed", "_EmissionScrollingSpeed", "_EmissionMapPan");
+        MapSourceToonMeshPan(document, material, "_EmissionScrollingSpeed", "_EmissionScrollingSpeed", "_EmissionMapPan");
         MapFloat(document, material, "_EmissionScrollingVertexColor", "_EmissionScrollingVertexColor");
 
         MapVector4(document, material, "_MatcapColor", "_MatcapColor");
@@ -1087,13 +1118,17 @@ public static partial class SerializedMaterialImporter
                 ["_EnableRimLighting"],
                 ["_GLOSSYREFLECTIONS_OFF"]));
 
-        material.SetUberFeatureEnabled("advanced-specular",
-            SourceToonFeatureStateResolver.IsEnabled(
-                document,
-                specularSource is not null || metallicSource is not null || smoothnessSource is not null ||
-                document.TryGetPositive("_ApplySpecular") || document.TryGetPositive("_SpecularStrength"),
-                ["_MochieBRDF", "_StylizedSpecular"],
-                ["MOCHIE_PBR", "POI_STYLIZED_StylizedSpecular"]));
+        bool sourceSpecularEnabled = SourceToonFeatureStateResolver.IsEnabled(
+            document,
+            specularSource is not null || metallicSource is not null || smoothnessSource is not null ||
+            document.TryGetPositive("_ApplySpecular") || document.TryGetPositive("_SpecularStrength"),
+            ["_MochieBRDF", "_StylizedSpecular"],
+            ["MOCHIE_PBR", "POI_STYLIZED_StylizedSpecular"]);
+        material.SetUberFeatureEnabled("advanced-specular", sourceSpecularEnabled);
+        // Cubemap and clear-coat features also require the specular shader code.
+        // Keep a disabled source section inactive when that dependency is present.
+        if (!sourceSpecularEnabled)
+            SetFloat(material, "_SpecularStrength", 0.0f);
 
         material.SetUberFeatureEnabled("detail-textures",
             SourceToonFeatureStateResolver.IsEnabled(
@@ -1293,9 +1328,10 @@ public static partial class SerializedMaterialImporter
         SerializedMaterialDocument document,
         SourceAssetResolver resolver,
         ICollection<MaterialConversionDiagnostic> diagnostics,
-        List<string> warnings)
+        List<string> warnings,
+        SourceOrderedSurfacePlan orderedSurface)
     {
-        SourceToonRenderStateConversion conversion = SourceToonRenderStateConverter.Convert(document, diagnostics);
+        SourceToonRenderStateConversion conversion = SourceToonRenderStateConverter.Convert(document, diagnostics, orderedSurface.Contract);
         material.PassSet = conversion.PassSet;
         material.AlphaCutoff = document.TryGetFloat("_Cutoff", out float authoredCutoff)
             ? Math.Clamp(authoredCutoff, 0.0f, 1.0f)
@@ -1306,6 +1342,7 @@ public static partial class SerializedMaterialImporter
                 SourceToonRenderPreset.Fade => 0.002f,
                 _ => 0.0f,
             };
+        SetFloat(material, "_SourceAlphaClip", 1.0f);
 
         // Synchronize opacity uniforms/shader family before restoring the
         // source-authored fixed-function state verbatim.
@@ -1327,7 +1364,20 @@ public static partial class SerializedMaterialImporter
                     "The soft outline uses neutral AudioLink values. Filtered AudioLink input is not mapped for this pass.",
                     "_AlEnabled"));
         }
-        ApplySourceToonLatePassMetadata(material, document, diagnostics);
+        ApplySourceToonLatePassMetadata(material, document, diagnostics, orderedSurface);
+
+        // Publish source opacity values after the fixed-function pass state. An opaque
+        // material can already have the Opaque mode, so its setter does not update
+        // the default Uber parameters.
+        SetInt(material, "_Mode", conversion.TransparencyMode switch
+        {
+            ETransparencyMode.Opaque => 0,
+            ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage => 1,
+            ETransparencyMode.Additive => 4,
+            _ => 3,
+        });
+        SetFloat(material, "_AlphaForceOpaque", GetFloat(document, "_AlphaForceOpaque",
+            conversion.TransparencyMode == ETransparencyMode.Opaque ? 1.0f : 0.0f));
     }
 
     private static void ApplyLilToonRenderState(XRMaterial material, SerializedMaterialDocument document, string? shaderPath)
@@ -1773,7 +1823,10 @@ public static partial class SerializedMaterialImporter
         string? sourceUvSelector,
         ICollection<MaterialConversionDiagnostic> diagnostics)
     {
-        ApplyTextureTransform(material, document, sourceProperty, destinationSampler);
+        if (destinationSampler == "_ToonRamp")
+            ApplyTextureTransform(material, document, sourceProperty, destinationSampler);
+        else
+            ApplySourceToonMeshTextureTransform(material, document, sourceProperty, destinationSampler);
         if (string.IsNullOrWhiteSpace(sourceProperty))
             return;
 
@@ -1785,16 +1838,44 @@ public static partial class SerializedMaterialImporter
         SetInt(material, $"{destinationSampler}UV", uvChannel);
     }
 
-    private static void ApplyTextureTransform(XRMaterial material, SerializedMaterialDocument document, string? sourceProperty, string destinationSampler)
+    /// <summary>Maps a source Toon mesh UV transform to the imported mesh's reflected V axis.</summary>
+    private static void ApplySourceToonMeshTextureTransform(
+        XRMaterial material,
+        SerializedMaterialDocument document,
+        string? sourceProperty,
+        string destinationSampler)
+    {
+        if (sourceProperty is not null &&
+            document.TryGetInt($"{sourceProperty}UV", out int uvChannel) &&
+            uvChannel is < 0 or > 3)
+            throw new SourceVisualImportException(
+                $"Source Toon mesh texture '{sourceProperty}' uses unsupported UV channel {uvChannel}.");
+
+        ApplyTextureTransform(material, document, sourceProperty, destinationSampler, flipSourceV: true);
+    }
+
+    private static void ApplyTextureTransform(
+        XRMaterial material,
+        SerializedMaterialDocument document,
+        string? sourceProperty,
+        string destinationSampler,
+        bool flipSourceV = false)
     {
         if (string.IsNullOrWhiteSpace(sourceProperty))
             return;
 
         if (document.Textures.TryGetValue(sourceProperty, out SerializedTexturePropertyDocument? textureProperty) && textureProperty is not null)
-            SetVector4(material, $"{destinationSampler}_ST", new Vector4(textureProperty.Scale.X, textureProperty.Scale.Y, textureProperty.Offset.X, textureProperty.Offset.Y));
+        {
+            Vector4 transform = new(textureProperty.Scale.X, textureProperty.Scale.Y,
+                textureProperty.Offset.X, textureProperty.Offset.Y);
+            if (flipSourceV)
+                transform.W = 1.0f - transform.Y - transform.W;
+            SetVector4(material, $"{destinationSampler}_ST", transform);
+        }
 
         if (document.TryGetVector($"{sourceProperty}Pan", out Vector4 pan))
-            SetVector2(material, $"{destinationSampler}Pan", new Vector2(pan.X, pan.Y));
+            SetVector2(material, $"{destinationSampler}Pan",
+                new Vector2(pan.X, flipSourceV ? -pan.Y : pan.Y));
 
         if (document.TryGetInt($"{sourceProperty}UV", out int uv))
             SetInt(material, $"{destinationSampler}UV", uv);
@@ -1998,6 +2079,23 @@ public static partial class SerializedMaterialImporter
                 continue;
 
             SetVector2(material, destination, new Vector2(value.X, value.Y));
+            return;
+        }
+    }
+
+    /// <summary>Negates source V pan so an imported mesh texture moves in the source direction.</summary>
+    private static void MapSourceToonMeshPan(
+        SerializedMaterialDocument document,
+        XRMaterial material,
+        string destination,
+        params string[] sources)
+    {
+        foreach (string source in sources)
+        {
+            if (!document.TryGetVector(source, out Vector4 value))
+                continue;
+
+            SetVector2(material, destination, new Vector2(value.X, -value.Y));
             return;
         }
     }

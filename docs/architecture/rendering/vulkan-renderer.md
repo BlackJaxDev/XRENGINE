@@ -1049,6 +1049,14 @@ Multiple files handle descriptor set management:
 
 Compute auto-uniform and unresolved fallback uniform buffers are cached per program/image/set/binding. They are updated in place and destroyed with the program instead of being allocated as one-frame transient buffers.
 
+Generated GLSL auto-uniform blocks use eight bindings per shader stage, starting
+at set 0, binding 256. The rewrite skips explicit bindings inside its stage
+range and fails when the range cannot hold all generated frequency blocks.
+Program linking rejects any other stage descriptor at a generated block's
+binding, even when both descriptors are uniform buffers. Slang resources with
+a shared native ABI retain their explicit binding contract. Shader ABI and
+rewrite identities invalidate cached artifacts when this binding layout changes.
+
 Unannotated supplemental lighting and ambient-occlusion uniforms use `RuntimeCallback` blocks rather
 than material-owned blocks. Explicit shader frequency annotations and core
 engine camera/time classifications take precedence. Callback storage is owned

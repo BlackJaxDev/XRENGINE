@@ -449,7 +449,8 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 			hasBlendState ? pipeline.DstAlphaBlendFactor : default,
 			hasBlendState ? pipeline.ColorWriteMask : default,
 			hasRasterState ? Math.Max(pipeline.ViewportScissorCount, 1u) : 1u,
-			hasRasterState && pipeline.NativeNegativeOneToOneDepth);
+			hasRasterState && pipeline.NativeNegativeOneToOneDepth,
+			hasBlendState ? pipeline.EditorHighlightOutput : default);
 	}
 
 	private static DynamicRenderingFormatSignature CreateGraphicsPipelineLibraryDynamicRenderingFormatSignature(

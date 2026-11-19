@@ -35,4 +35,5 @@ internal readonly record struct VulkanGraphicsPipelineLibraryKey(
         BlendFactor DstAlphaBlendFactor,
         ColorComponentFlags ColorWriteMask,
         uint ViewportScissorCount,
-        bool NativeNegativeOneToOneDepth);
+        bool NativeNegativeOneToOneDepth,
+        EditorHighlightRasterOutput EditorHighlightOutput = default);

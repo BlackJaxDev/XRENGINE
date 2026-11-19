@@ -187,6 +187,7 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         private uint _pointDirtyBytes;
         private uint _lineDirtyBytes;
         private uint _triangleDirtyBytes;
+        private Action? _emitPointLinePreparationDraws;
 
         private const uint MinimumCapacity = 256;
         private const uint MaximumWebInstances = 65536;
@@ -199,22 +200,75 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         public uint PointCapacity => _pointCapacity;
         public uint LineCapacity => _lineCapacity;
         public uint TriangleCapacity => _triangleCapacity;
+        private EDebugPrimitivePreparationStatus _pointLinePreparationStatus =
+            EDebugPrimitivePreparationStatus.Ready;
+        private string _pointLinePreparationDetail = string.Empty;
+        public EDebugPrimitivePreparationStatus PointLinePreparationStatus
+            => _pointLinePreparationStatus;
+        public string PointLinePreparationDetail => _pointLinePreparationDetail;
+
+        /// <summary>
+        /// Creates the point and line draw resources with minimum storage while their
+        /// active counts stay zero. The render pass can prepare their programs before
+        /// the first debug shape requests either draw.
+        /// </summary>
+        internal void ReservePointAndLineResources(out XRMeshRenderer? points, out XRMeshRenderer? lines)
+        {
+            if (_debugPointsRenderer is null || _debugPointsBuffer is null)
+                CreateOrResizePoints(PointCount, reserve: true);
+            if (_debugLinesRenderer is null || _debugLinesBuffer is null)
+                CreateOrResizeLines(LineCount, reserve: true);
+            points = _debugPointsRenderer;
+            lines = _debugLinesRenderer;
+        }
+
+        private void EmitPointLinePreparationDraws()
+        {
+            _debugPointsRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null,
+                Math.Max(PointCount, 1u));
+            _debugLinesRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null,
+                Math.Max(LineCount, 1u));
+        }
+
+        internal bool TryPreparePointAndLineDraws()
+        {
+            if (AbstractRenderer.Current is not IDebugPrimitivePreparationBackendCapability
+                { CanPrepareDebugPrimitives: true } backend)
+                return true;
+
+            ReservePointAndLineResources(out XRMeshRenderer? points, out XRMeshRenderer? lines);
+            if (points?.Material is null || lines?.Material is null)
+            {
+                SetField(ref _pointLinePreparationStatus, EDebugPrimitivePreparationStatus.Failed);
+                SetField(ref _pointLinePreparationDetail, "Debug point or line material is unavailable.");
+                return false;
+            }
+
+            _emitPointLinePreparationDraws ??= EmitPointLinePreparationDraws;
+            EDebugPrimitivePreparationStatus status = backend.TryPrepareDebugPrimitives(
+                _emitPointLinePreparationDraws, 2,
+                PointCount == 0 && LineCount == 0, out string reason);
+            SetField(ref _pointLinePreparationStatus, status);
+            SetField(ref _pointLinePreparationDetail, reason);
+            return PointLinePreparationStatus is EDebugPrimitivePreparationStatus.Ready or
+                EDebugPrimitivePreparationStatus.Unsupported;
+        }
 
         /// <summary>
         /// Renders all points, lines, and triangles in the visualizer.
         /// </summary>
-        public void Render()
+        public void Render(bool renderPointLines = true)
         {
             if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable)
                 return;
 
-            if (PointCount > 0 && _debugPointsRenderer is { } pointsRenderer)
+            if (renderPointLines && PointCount > 0 && _debugPointsRenderer is { } pointsRenderer)
             {
                 pointsRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, PointCount);
                 DrawCallCount++;
             }
 
-            if (LineCount > 0 && _debugLinesRenderer is { } linesRenderer)
+            if (renderPointLines && LineCount > 0 && _debugLinesRenderer is { } linesRenderer)
             {
                 linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, LineCount);
                 DrawCallCount++;
@@ -627,15 +681,21 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         }
 
         public void CreateOrResizePoints(uint count)
+            => CreateOrResizePoints(count, reserve: false);
+
+        private void CreateOrResizePoints(uint count, bool reserve)
         {
             if (!UsesWebDebugPrimitives)
                 _debugPointsRenderer?.Material?.SetInt(0, (int)count);
 
             uint previousCapacity = _pointCapacity;
-            UpdateCapacity(count, ref _pointCapacity, ref _pointUnderuseFrames);
+            UpdateCapacity(
+                reserve ? Math.Max(count, MinimumCapacity) : count,
+                ref _pointCapacity,
+                ref _pointUnderuseFrames);
             if (UsesWebDebugPrimitives)
                 _pointCapacity = Math.Min(_pointCapacity, MaximumWebInstances);
-            if (count == 0 && _debugPointsBuffer is null)
+            if (count == 0 && _debugPointsBuffer is null && !reserve)
                 return;
 
             bool createdRenderer = _debugPointsRenderer is null;
@@ -679,15 +739,21 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         }
 
         public void CreateOrResizeLines(uint count)
+            => CreateOrResizeLines(count, reserve: false);
+
+        private void CreateOrResizeLines(uint count, bool reserve)
         {
             if (!UsesWebDebugPrimitives)
                 _debugLinesRenderer?.Material?.SetInt(0, (int)count);
 
             uint previousCapacity = _lineCapacity;
-            UpdateCapacity(count, ref _lineCapacity, ref _lineUnderuseFrames);
+            UpdateCapacity(
+                reserve ? Math.Max(count, MinimumCapacity) : count,
+                ref _lineCapacity,
+                ref _lineUnderuseFrames);
             if (UsesWebDebugPrimitives)
                 _lineCapacity = Math.Min(_lineCapacity, MaximumWebInstances);
-            if (count == 0 && _debugLinesBuffer is null)
+            if (count == 0 && _debugLinesBuffer is null && !reserve)
                 return;
 
             bool createdRenderer = _debugLinesRenderer is null;

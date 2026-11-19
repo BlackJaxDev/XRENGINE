@@ -18,7 +18,12 @@ uniform sampler2DArray Velocity;
 uniform sampler2DArray DepthView;
 uniform sampler2DArray HistoryDepth;
 uniform sampler2DArray TsrHistoryColor;
+// Editor gizmos have no valid temporal history. Scene stencil is independent.
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+uniform sampler2DArray EditorHighlightMask;
+#elif !defined(XR_SCENE_STENCIL_AUTHORED)
 uniform usampler2DArray StencilView;
+#endif
 
 #ifdef XR_ADVANCED_REACTIVE_MASK
 // Canonical opaque/late reactivity is independent of final output alpha.
@@ -128,8 +133,14 @@ vec3 SampleCurrentReconstruction(sampler2DArray tex, vec2 uv, vec2 texelSize)
 
 float SamplePostTemporalForwardMask(vec2 uv)
 {
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+    return step(0.5, texture(EditorHighlightMask, EyeUv(clamp(uv, vec2(0.0), vec2(1.0)))).b);
+#elif !defined(XR_SCENE_STENCIL_AUTHORED)
     uint stencilBits = texture(StencilView, EyeUv(clamp(uv, vec2(0.0), vec2(1.0)))).r;
     return ((stencilBits & 0x80u) != 0u) ? 1.0 : 0.0;
+#else
+    return 0.0;
+#endif
 }
 
 vec2 FindClosestVelocity(vec2 uv)

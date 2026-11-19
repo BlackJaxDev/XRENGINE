@@ -22,6 +22,7 @@ public partial class AdvancedRenderPipeline
 
     private static readonly string[] AdvancedPipelinePreferredPreviewTextureNames =
     [
+        EditorHighlightOutputTextureName,
         FinalPostProcessOutputTextureName,
         PostProcessOutputTextureName,
         HDRSceneTextureName,
@@ -31,6 +32,7 @@ public partial class AdvancedRenderPipeline
 
     private static readonly string[] AdvancedPipelinePreferredPreviewFrameBufferNames =
     [
+        EditorHighlightOutputFBOName,
         FinalPostProcessOutputFBOName,
         PostProcessOutputFBOName,
         ForwardPassFBOName,
@@ -42,8 +44,6 @@ public partial class AdvancedRenderPipeline
     public override IReadOnlyList<string> PreferredPreviewTextureNames => AdvancedPipelinePreferredPreviewTextureNames;
     public override IReadOnlyList<string> PreferredPreviewFrameBufferNames => AdvancedPipelinePreferredPreviewFrameBufferNames;
 
-    private static readonly Vector3 DefaultHoverOutlineColor = new(1.0f, 1.0f, 0.0f);
-    private static readonly Vector3 DefaultSelectionOutlineColor = new(0.0f, 1.0f, 0.0f);
 
     private const string TemporalFeedbackMinParameterName = PostProcessParameterNames.TemporalFeedbackMin;
     private const string TemporalFeedbackMaxParameterName = PostProcessParameterNames.TemporalFeedbackMax;
@@ -214,9 +214,9 @@ public partial class AdvancedRenderPipeline
 
     private static void ApplyLensDistortionUniforms(in LensDistortionInputs inputs, XRRenderProgram program, bool enabled)
     {
-        if (enabled)
+        if (enabled && inputs.Lens is { } lens)
         {
-            (inputs.Lens ?? new LensDistortionSettings()).SetUniforms(
+            lens.SetUniforms(
                 program,
                 inputs.CameraFov,
                 inputs.AspectRatio,
@@ -246,19 +246,6 @@ public partial class AdvancedRenderPipeline
     {
         materialProgram.Uniform("OutputHDR", ResolveOutputHDR());
 
-        var prefs = RuntimeEngine.EditorPreferences;
-        var hoverOutlineColor = prefs is null
-            ? DefaultHoverOutlineColor
-            : new Vector3((float)prefs.HoverOutlineColor.R, (float)prefs.HoverOutlineColor.G, (float)prefs.HoverOutlineColor.B);
-        var selectionOutlineColor = prefs is null
-            ? DefaultSelectionOutlineColor
-            : new Vector3((float)prefs.SelectionOutlineColor.R, (float)prefs.SelectionOutlineColor.G, (float)prefs.SelectionOutlineColor.B);
-        bool enableEditorOutline = RuntimeRenderingHostServices.DebugDrawing.HoverOutlineEnabled ||
-            RuntimeRenderingHostServices.DebugDrawing.SelectionOutlineEnabled;
-        materialProgram.Uniform("HoverOutlineColor", hoverOutlineColor);
-        materialProgram.Uniform("SelectionOutlineColor", selectionOutlineColor);
-        materialProgram.Uniform("EnableEditorOutline", enableEditorOutline);
-
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram, applyLensDistortion: false, frozenView);
         if (Shaders.Compilation.WebPipelineRasterProgram.IsActive && GetTexture<XRTexture>(BloomBlurTextureName) is null)
@@ -281,7 +268,14 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     private void BindCurrentPostProcessTextures(XRMaterial material, XRRenderProgram materialProgram)
     {
-        int expectedTextureCount = Stereo ? 6 : 8;
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+        {
+            BindCurrentWebPostProcessTextures(material, materialProgram);
+            return;
+        }
+
+        int baseTextureCount = Stereo ? 4 : 6;
+        int expectedTextureCount = baseTextureCount + (EditorHighlightModule is null ? 0 : 1);
         if (material.Textures.Count != expectedTextureCount)
         {
             throw new InvalidOperationException(
@@ -291,19 +285,29 @@ public partial class AdvancedRenderPipeline
         BindCurrentPostProcessTexture(material, materialProgram, HDRSceneTextureName, 0);
         BindCurrentPostProcessTexture(material, materialProgram, BloomBlurTextureName, 1);
         BindCurrentPostProcessTexture(material, materialProgram, DepthViewTextureName, 2);
-        BindCurrentPostProcessTexture(material, materialProgram, StencilViewTextureName, 3);
-        BindCurrentPostProcessTexture(material, materialProgram, AutoExposureTextureName, 4);
+        BindCurrentPostProcessTexture(material, materialProgram, AutoExposureTextureName, 3);
         if (!Stereo)
         {
-            BindCurrentPostProcessTexture(material, materialProgram, AtmosphereColorTextureName, 5);
-            BindCurrentPostProcessTexture(material, materialProgram, VolumetricFogColorTextureName, 6);
+            BindCurrentPostProcessTexture(material, materialProgram, AtmosphereColorTextureName, 4);
+            BindCurrentPostProcessTexture(material, materialProgram, VolumetricFogColorTextureName, 5);
         }
-        BindCurrentPostProcessTexture(
-            material,
-            materialProgram,
-            AdvancedVisibilityResourceNames.Metadata,
-            Stereo ? 5 : 7,
-            "AdvancedVisibilityMetadata");
+        if (EditorHighlightModule is not null)
+            BindCurrentPostProcessTexture(material, materialProgram, EditorHighlightMaskTextureName, baseTextureCount);
+    }
+
+    private void BindCurrentWebPostProcessTextures(XRMaterial material, XRRenderProgram materialProgram)
+    {
+        if (material.Textures.Count != 8 || Stereo || EditorHighlightModule is not null)
+            throw new InvalidOperationException("The Web post-process recipe requires its eight-slot mono scene layout.");
+
+        BindCurrentPostProcessTexture(material, materialProgram, HDRSceneTextureName, 0);
+        BindCurrentPostProcessTexture(material, materialProgram, BloomBlurTextureName, 1);
+        BindCurrentPostProcessTexture(material, materialProgram, DepthViewTextureName, 2);
+        BindCurrentPostProcessTexture(material, materialProgram, StencilViewTextureName, 3);
+        BindCurrentPostProcessTexture(material, materialProgram, AutoExposureTextureName, 4);
+        BindCurrentPostProcessTexture(material, materialProgram, AtmosphereColorTextureName, 5);
+        BindCurrentPostProcessTexture(material, materialProgram, VolumetricFogColorTextureName, 6);
+        BindCurrentPostProcessTexture(material, materialProgram, AdvancedVisibilityResourceNames.Metadata, 7, "AdvancedVisibilityMetadata");
     }
 
     private void BindCurrentPostProcessTexture(
@@ -409,7 +413,11 @@ public partial class AdvancedRenderPipeline
 
     private void ApplyTsrUpscaleProgramBindings(XRRenderProgram program)
     {
-        BindAdvancedTemporalReactiveMask(program);
+        program.Sampler("AdvancedReactiveMask",
+            RequirePostProcessTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName), 5);
+        if (EditorHighlightModule is not null)
+            program.Sampler(EditorHighlightMaskTextureName,
+                RequirePostProcessTexture(EditorHighlightMaskTextureName), 7);
         XRTexture? source = GetTexture<XRTexture>(FinalPostProcessOutputTextureName);
         if (source is not null)
             program.Sampler(PostProcessOutputTextureName, source, 0);

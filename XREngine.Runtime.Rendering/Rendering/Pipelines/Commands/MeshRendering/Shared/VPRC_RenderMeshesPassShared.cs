@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Commands;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Vulkan;
 using XREngine.Components.Lights;
@@ -101,6 +102,17 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     }
 
     private int _renderPass;
+    private EAdvancedSourceOrderedSlice _sourceOrderedSlice;
+    /// <summary>Selects commands around the frozen source scene-color boundary.</summary>
+    public EAdvancedSourceOrderedSlice SourceOrderedSlice
+    {
+        get => _sourceOrderedSlice;
+        set
+        {
+            if (SetField(ref _sourceOrderedSlice, value))
+                ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
+    }
     public int RenderPass
     {
         get => _renderPass;
@@ -449,6 +461,16 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                 target.ColorAccess,
                 colorLoad,
                 target.GetColorStoreOp());
+
+            if (target.Name == AdvancedRenderPipeline.ForwardPassFBOName &&
+                context.HasResource(AdvancedRenderPipeline.EditorHighlightMaskTextureName))
+            {
+                builder.DependsOn(context.GetOrCreateSyntheticPass(
+                        "Advanced.EditorHighlightSeed", ERenderGraphPassStage.Compute).PassIndex)
+                    .UseColorAttachment(
+                        MakeTextureResource(AdvancedRenderPipeline.EditorHighlightMaskTextureName),
+                        ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+            }
 
             UseRenderTargetDepthStencilAttachments(builder, target, depthLoad, stencilLoad);
         }

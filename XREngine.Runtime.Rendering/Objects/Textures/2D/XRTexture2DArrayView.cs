@@ -55,9 +55,9 @@ namespace XREngine.Rendering
         public override bool HasAlphaChannel => ViewedTexture.HasAlphaChannel;
 
         public override ETextureTarget TextureTarget
-            => NumLayers == 1 
-            ? ETextureTarget.Texture2D
-            : ETextureTarget.Texture2DArray;
+            => Array || NumLayers > 1
+                ? ETextureTarget.Texture2DArray
+                : ETextureTarget.Texture2D;
 
         public void Resize(uint width, uint height)
         {

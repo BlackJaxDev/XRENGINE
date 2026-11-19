@@ -52,6 +52,21 @@ pipeline dependency leases, cache locks, and device retirement drains retain
 their existing rules. This scheduling change does not make cold pipelines
 ready immediately or change GPU resource lifetime.
 
+A bounded foreground wait can end while a graphics or compute compile still
+runs. Missing admission, a wait timeout, or a completed job that has not been
+published reports `Pending`. A completed compile reports `Failed` only when
+its result is not retryable. The next preparation can use the same queued job
+or its published result.
+
+`CapturePipelineCompilationDiagnostics` reports the total tracked graphics and
+compute job counts and up to eight of the oldest jobs in each group. Each row
+uses the program name, selected pipeline key fields, shader stage, and native module handle
+captured with its build request. A module handle identifies a native object;
+it is not a shader artifact fingerprint. The row age starts when the job enters
+the compile queue. `WorkerPromiseStatus` and `PublicationPromiseStatus` describe
+task completion, not the driver's internal compile step. Compare the total
+count with the row count to identify omitted jobs.
+
 ## Depth-Only Graphics Pipelines
 
 Graphics stage selection preserves every stage requested by the program, even

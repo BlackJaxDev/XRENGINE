@@ -218,7 +218,13 @@ namespace XREngine.Rendering
         internal void EnqueueRender(bool forceNoStereo = true)
         {
             if (IsDestroyQueued || IsDestroyed || Volatile.Read(ref _tearingDown) != 0)
+            {
+                if (RequiredMeshSubmissionScope.IsActive)
+                    throw new XREngine.Rendering.Pipelines.Commands.RequiredRenderCommandException(
+                        "The required fullscreen source was destroyed before draw enqueue.",
+                        new ObjectDisposedException(nameof(XRQuadFrameBuffer)));
                 return;
+            }
 
             forceNoStereo &= !_useMultiview;
             if (RenderDiagnosticsFlags.VkTraceDraw)

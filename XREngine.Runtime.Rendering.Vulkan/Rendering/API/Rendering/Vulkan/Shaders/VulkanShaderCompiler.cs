@@ -18,14 +18,14 @@ using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal static class VulkanShaderCompiler
+internal static partial class VulkanShaderCompiler
 {
     // shaderc_env_version_vulkan_1_4 from shaderc/env.h. Keep the numeric value
     // here because Silk.NET exposes the environment kind but not its versions.
     internal const uint Vulkan14TargetEnvironmentVersion = 0x00404000u;
     internal const SpirvVersion VulkanTargetSpirvVersion = SpirvVersion.Shaderc16;
     internal const string TargetProfileIdentity = "Vulkan1.4-SPIRV1.6";
-    internal const string ShaderAbiIdentity = "XREngine.VulkanShaderAbi.v3";
+    internal const string ShaderAbiIdentity = "XREngine.VulkanShaderAbi.v4";
 
     private static readonly Shaderc ShadercApi = VulkanShaderCompilerLibrary.CreateApi();
     private static readonly Regex OvrMultiviewExtensionRegex = new(
@@ -196,6 +196,9 @@ internal static class VulkanShaderCompiler
         rewrittenSource = RemoveVulkanMultiviewNumViewsLayout(rewrittenSource);
         if (RequiresExtMultiviewDirective(rewrittenSource))
             rewrittenSource = EnsureExtMultiviewDirective(rewrittenSource);
+        if (shader.Type == EShaderType.Fragment &&
+            rewrittenSource.Contains(EditorHighlightFragmentSourceAdapter.PickingColorFunctionName, StringComparison.Ordinal))
+            rewrittenSource = FinalizeEditorPickingSource(shader, rewrittenSource);
         return new PreparedSource(
             entryPoint,
             shader.Source?.Text ?? string.Empty,

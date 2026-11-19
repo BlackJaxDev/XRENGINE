@@ -16,6 +16,7 @@ using XREngine.Core.Files;
 using XREngine.Editor.AssetEditors;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.TransformEditors;
+using XREngine.Editor.UI.Tools;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
@@ -1829,6 +1830,20 @@ public static partial class EditorImGuiUI
                     bool searching = !string.IsNullOrWhiteSpace(_inspectorPropertySearch);
                     PrepareInspectorComponentSearchExpansion(component, searching);
                     open = ImGui.CollapsingHeader(cachedLabels.Header);
+                    if (ImGui.BeginPopupContextItem("##ExplainComponent"))
+                    {
+                        if (ImGui.MenuItem("Explain this"))
+                            AssistantHelpRequests.Publish(new AssistantHelpRequest(
+                                "component",
+                                fullDisplayLabel,
+                                "Inspector / Components",
+                                component.GetType().FullName,
+                                component.ID.ToString(),
+                                component.SceneNode?.Name,
+                                component.IsActive ? "Active" : "Inactive",
+                                component.GetType().GetCustomAttribute<DescriptionAttribute>()?.Description));
+                        ImGui.EndPopup();
+                    }
                     RecordInspectorComponentHeaderState(component, open, searching);
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip(fullDisplayLabel);
@@ -2142,6 +2157,18 @@ public static partial class EditorImGuiUI
                 if (!string.IsNullOrWhiteSpace(_inspectorPropertySearch))
                     ImGui.SetNextItemOpen(true, ImGuiCond.Always);
                 open = ImGui.CollapsingHeader(headerLabel);
+                if (ImGui.BeginPopupContextItem("##ExplainComponentMulti"))
+                {
+                    if (ImGui.MenuItem("Explain this"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest(
+                            "component",
+                            cachedLabels.FullDisplay,
+                            "Inspector / Components",
+                            componentType.FullName,
+                            TargetName: $"{_multiComponentListScratch.Count} selected components",
+                            Description: componentType.GetCustomAttribute<DescriptionAttribute>()?.Description));
+                    ImGui.EndPopup();
+                }
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip($"{componentType.FullName} ({_multiComponentListScratch.Count} selected)");
 

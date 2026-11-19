@@ -369,7 +369,7 @@ public static class CommonPostProcessStages
         stage.AddParameter(
             nameof(ColorGradingSettings.Contrast),
             PostProcessParameterKind.Float,
-            1.0f,
+            0.0f,
             displayName: "Contrast",
             min: -50.0f,
             max: 50.0f,

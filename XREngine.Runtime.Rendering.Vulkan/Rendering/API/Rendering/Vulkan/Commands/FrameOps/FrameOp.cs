@@ -8,13 +8,16 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     private FrameOpResourceUseList _resourceUses;
     private ComputeDispatchSnapshot? _ownedAuthoringSnapshot;
     private IRenderResourceLeaseOwner? _ownedAuthoringResource;
+    private IRenderResourceLeaseOwner? _ownedTransientReadResource;
     internal IRenderResourceLeaseOwner? AuthoringResource => _ownedAuthoringResource;
+    internal IRenderResourceLeaseOwner? TransientReadResource => _ownedTransientReadResource;
 
     /// <summary>
     /// Gets whether a workspace pool may hand this operation out again. An
     /// operation that still owns an authoring resource or lease stays in use.
     /// </summary>
-    internal virtual bool CanReuseFromPool => _ownedAuthoringResource is null;
+    internal virtual bool CanReuseFromPool
+        => _ownedAuthoringResource is null && _ownedTransientReadResource is null;
 
     public int PassIndex
     {
@@ -79,9 +82,22 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     {
         FrameOp copy = (FrameOp)MemberwiseClone();
         copy._ownedAuthoringSnapshot = null;
-        copy._ownedAuthoringResource?.RetainAuthoringUse();
+        IRenderResourceLeaseOwner? authoringResource = copy._ownedAuthoringResource;
+        IRenderResourceLeaseOwner? transientReadResource = copy._ownedTransientReadResource;
+        copy._ownedAuthoringResource = null;
+        copy._ownedTransientReadResource = null;
         try
         {
+            if (authoringResource is not null)
+            {
+                authoringResource.RetainAuthoringUse();
+                copy._ownedAuthoringResource = authoringResource;
+            }
+            if (transientReadResource is not null)
+            {
+                transientReadResource.RetainAuthoringUse();
+                copy._ownedTransientReadResource = transientReadResource;
+            }
             copy._resourceUses = _resourceUses.CreateSealedCopy();
             copy.OnSealedAuthoringCopyCreated();
             return copy;
@@ -107,13 +123,22 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
         _ownedAuthoringSnapshot = null;
         IRenderResourceLeaseOwner? owner = _ownedAuthoringResource;
         _ownedAuthoringResource = null;
+        IRenderResourceLeaseOwner? transientReadOwner = _ownedTransientReadResource;
+        _ownedTransientReadResource = null;
         try
         {
             snapshot?.ReleaseReadOnlyStorageBindings();
         }
         finally
         {
-            owner?.ReleaseAuthoringUse();
+            try
+            {
+                owner?.ReleaseAuthoringUse();
+            }
+            finally
+            {
+                transientReadOwner?.ReleaseAuthoringUse();
+            }
         }
     }
 
@@ -125,6 +150,23 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
             throw new InvalidOperationException("A frame operation already owns a resource lease.");
         owner.RetainAuthoringUse();
         _ownedAuthoringResource = owner;
+    }
+
+    internal void AttachTransientReadResource(IRenderResourceLeaseOwner? owner)
+    {
+        if (owner is null)
+            return;
+        if (_ownedTransientReadResource is not null)
+            throw new InvalidOperationException("A frame operation already owns a transient read lease.");
+        owner.RetainAuthoringUse();
+        _ownedTransientReadResource = owner;
+    }
+
+    internal void ReleaseTransientReadResource()
+    {
+        IRenderResourceLeaseOwner? owner = _ownedTransientReadResource;
+        _ownedTransientReadResource = null;
+        owner?.ReleaseAuthoringUse();
     }
 
     /// <summary>

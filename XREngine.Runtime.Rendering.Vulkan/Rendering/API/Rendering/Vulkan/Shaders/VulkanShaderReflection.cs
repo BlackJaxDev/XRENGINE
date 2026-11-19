@@ -18,7 +18,7 @@ using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal static class VulkanShaderReflection
+internal static partial class VulkanShaderReflection
 {
     private static readonly Regex LayoutRegex = new(
         @"layout\s*\((?<qualifiers>[^)]*)\)\s*(?:(?:readonly|writeonly|coherent|volatile|restrict)\s+)*(?<storage>uniform|buffer)\s+(?<declaration>[^;{]+)",
@@ -546,7 +546,7 @@ internal static class VulkanShaderReflection
         return null;
     }
 
-    private sealed class SpirvModule
+    private sealed partial class SpirvModule
     {
         private readonly uint[] _words;
         private readonly ShaderStageFlags _stage;
@@ -629,6 +629,20 @@ internal static class VulkanShaderReflection
                 ReadOnlySpan<uint> operands = new(_words, index + 1, wordCount - 1);
                 switch ((SpirvOp)opCode)
                 {
+                    case SpirvOp.OpEntryPoint:
+                        ParseFragmentEntryPoint(operands);
+                        break;
+                    case SpirvOp.OpDecorationGroup:
+                    case SpirvOp.OpGroupDecorate:
+                    case SpirvOp.OpGroupMemberDecorate:
+                        _hasDecorationGroups = true;
+                        break;
+                    case SpirvOp.OpTypeFloat:
+                        ParseOutputFloatType(operands);
+                        break;
+                    case SpirvOp.OpTypeVector:
+                        ParseOutputVectorType(operands);
+                        break;
                     case SpirvOp.OpName:
                         ParseOpName(operands);
                         break;
@@ -691,6 +705,21 @@ internal static class VulkanShaderReflection
 
             switch (decoration)
             {
+                case SpirvDecoration.BuiltIn:
+                    info.BuiltIn = true;
+                    break;
+                case SpirvDecoration.Location:
+                    if (operands.Length >= 3)
+                        info.Location = operands[2];
+                    break;
+                case SpirvDecoration.Index:
+                    if (operands.Length >= 3)
+                        info.Index = operands[2];
+                    break;
+                case SpirvDecoration.Component:
+                    if (operands.Length >= 3)
+                        info.Component = operands[2];
+                    break;
                 case SpirvDecoration.DescriptorSet:
                     if (operands.Length >= 3)
                         info.DescriptorSet = operands[2];
@@ -987,6 +1016,7 @@ internal static class VulkanShaderReflection
     {
         OpName = 5,
         OpMemberName = 6,
+        OpEntryPoint = 15,
         OpTypeInt = 21,
         OpTypeFloat = 22,
         OpTypeVector = 23,
@@ -1002,6 +1032,9 @@ internal static class VulkanShaderReflection
         OpConstant = 43,
         OpSpecConstant = 45,
         OpDecorate = 71,
+        OpDecorationGroup = 73,
+        OpGroupDecorate = 74,
+        OpGroupMemberDecorate = 75,
     }
 
     private enum SpirvStorageClass : uint
@@ -1025,6 +1058,10 @@ internal static class VulkanShaderReflection
     {
         Block = 2,
         BufferBlock = 3,
+        BuiltIn = 11,
+        Location = 30,
+        Component = 31,
+        Index = 32,
         Binding = 33,
         DescriptorSet = 34,
     }
@@ -1046,6 +1083,8 @@ internal static class VulkanShaderReflection
     private enum SpirvTypeKind
     {
         Unknown,
+        Float,
+        Vector,
         Pointer,
         Struct,
         Array,
@@ -1061,6 +1100,8 @@ internal static class VulkanShaderReflection
         public SpirvStorageClass? StorageClass { get; init; }
         public uint? ElementTypeId { get; init; }
         public uint? LengthId { get; init; }
+        public uint Width { get; init; }
+        public uint ComponentCount { get; init; }
         public uint[] Members { get; init; } = [];
         public SpirvImageInfo? ImageType { get; init; }
     }
@@ -1073,6 +1114,10 @@ internal static class VulkanShaderReflection
         public uint? Binding { get; set; }
         public bool Block { get; set; }
         public bool BufferBlock { get; set; }
+        public bool BuiltIn { get; set; }
+        public uint? Location { get; set; }
+        public uint? Index { get; set; }
+        public uint? Component { get; set; }
         public bool HasBinding => Binding.HasValue;
     }
 

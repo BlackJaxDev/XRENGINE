@@ -287,8 +287,10 @@ internal unsafe partial class VkRenderProgram
 
         if (foregroundRequired)
         {
-            if (!manager.TryCompleteComputePipelineForForeground(key, out completed, out reason))
-                return VulkanComputePipelineReadiness.Failed;
+            if (!manager.TryCompleteComputePipelineForForeground(key, out completed, out reason, out bool retryable))
+                return retryable
+                    ? VulkanComputePipelineReadiness.Pending
+                    : VulkanComputePipelineReadiness.Failed;
             if (TryAdoptCompletedComputePipeline(
                     completed,
                     key,

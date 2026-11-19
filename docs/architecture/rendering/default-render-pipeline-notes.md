@@ -4,6 +4,22 @@ This document records bugs that were found and fixed in `DefaultRenderPipeline` 
 
 ---
 
+## Required Command Resources
+
+`ViewportRenderCommandContainer` propagates
+`RenderResourcePreparationPendingException` after it unwinds framebuffer bindings.
+The pipeline then discards the incomplete invocation and retries a later frame.
+Do not isolate this exception as an ordinary command failure. A pending mesh
+resource must not remove a required outline or other draw from the frame.
+
+Required Advanced native stages also propagate authoring failures on desktop.
+An offscreen rejection receipt alone does not stop a desktop command chain.
+If native scene preparation or stage enqueue fails, stop the invocation before
+late authored draws can consume retained native color or depth targets. Pending
+resources request a retry; unsupported configurations remain explicit failures.
+The native Uber shading kernel must be current before a scene that uses it is
+admitted. A simpler standard shader is not a substitute for that kernel.
+
 ## Point Light Publication
 
 `PointLightComponent.RegisterDynamicLight` prepares the shadow cameras and
@@ -65,6 +81,8 @@ names, null slots, and texture targets match. Value and resource revisions
 still advance. Texture views also track their viewed resource and effective
 target. Unknown texture types use conservative layout invalidation. Repeated
 slots share one change subscription, and material destruction removes it.
+An `XRTexture2DArrayView` with `Array=true` keeps the array target even when
+it has one layer. Its Vulkan descriptor must match a `sampler2DArray` shader binding.
 
 Static deformation uses a separate exact mesh-input generation. Material
 layout and camera changes do not discard unchanged deformation inputs. See
@@ -105,6 +123,13 @@ the result of that compute pass.
 
 ## Vulkan Shader Module Publication
 
+A recoverable PresentNow pipeline compilation failure can outlast its bounded
+recovery probes. New pipeline compile activity permits another bounded probe.
+The render thread consumes that activity generation when the probe starts, so
+a completion during the probe remains visible. The probe must still pass all
+readiness and dependency checks. A terminal resource failure is not recoverable
+through this trigger.
+
 Shader module destruction and publication use the same pipeline dependency gate.
 Read the current native module after entering that gate. Cold publication has no
 pipeline jobs to drain. Replacement of a live module uses the scoped shader
@@ -144,6 +169,21 @@ An existing window with an uninitialized renderer defers its binding check.
 Required mode still rejects an unsupported initialized renderer.
 
 ## Resource Generation Lifecycle
+
+### Material Parameter Lookup
+
+Visibility collection and rendering can query one material at the same time.
+`XRMaterialBase` uses a concurrent name-index cache because a lookup can add or
+remove an index. Each lookup captures one parameter array and validates the
+cached slot's name before it returns that same slot. Array replacement or a
+cache reset can force another scan; it must not corrupt the cache or mix array
+lengths and indices. This lookup does not make all material values one atomic
+snapshot. Warm cache hits do not allocate memory.
+
+Derived pass materials can share the source parameter objects to receive live
+value changes. Set the variant's pass, alpha cutoff, and transparency state
+before attaching those shared parameters. These setters can change shader
+opacity values; running them after attachment changes the source material too.
 
 ### Imported And Forward Buffer Ownership
 
@@ -750,6 +790,8 @@ Use the standard `SceneCopy.fs` / `SceneCopyStereo.fs` material for `ForwardPass
 ## 5. Auto-Exposure: Constructor vs Schema Defaults
 
 **Rule:** `ColorGradingSettings` constructor defaults **must** match the pipeline schema defaults in `DefaultRenderPipeline.PostProcessing.cs` / `AdvancedRenderPipeline.PostProcessing.cs`. Keep the regression test `Defaults_MatchPipelineSchemaDefaults` in sync.
+
+The default authored `Contrast` is `0`. Its shader multiplier is `(1 + Contrast / 100)^2`, so the initial cached multiplier must be `1`. A default authored value of `1` increases contrast and clamps small positive HDR colors to black. Explicit authored contrast values keep this conversion.
 
 ### What went wrong
 
@@ -1688,6 +1730,49 @@ use the same ownership. Do not upload a CPU image across GPU-owned gaps or
 read the GPU-owned rows back. Prepare copy-range storage before the frame and
 bound it by the admitted palette capacity.
 
+The Vulkan `SkinningPrepassDispatcher` produces late mesh deformation inside
+the pipeline frame-resource scope. Compute enqueue success does not prove that
+the GPU output exists. An unchanged pose can reuse output across frames only
+when its producer has a healthy submitted receipt, its input version and pose
+still match, and its native output allocations have not changed.
+
+A queued mesh draw carries a frozen deformation-output witness. Deferred draw
+materialization checks that witness instead of relying on a later thread's
+active pipeline invocation. A transient read lease prevents output overwrite
+until native submission pins protect the draw, or until the frame is discarded.
+Keep this lease with the logical frame attempt through cold preparation. Do not
+retain it in cached physical draw payloads, which outlive an individual read.
+
+Changing poses use at most four output buffer sets per renderer. A set can be
+replaced as the active output only after its authoring leases end and its
+producer leaves the awaiting-submission state. Submitted draws retain the old
+native allocations. A retired set becomes writable only when every buffer
+reports `Ready`; a full busy pool defers the producer without a CPU wait or
+readback. Select the writable set before output initialization or bounds writes.
+Slot changes preserve the settled input state. Each set has a stable identity
+in the Vulkan preparation key, so cached draws cannot combine a new receipt
+with the previous set's buffer bindings. Publishing a prepared set does not
+allocate a new renderer resource-state object.
+
+Draw requests freeze the selected set identity while they hold the deformation
+lease. Preparation signatures also include the exact native output allocation.
+Prepared and resident draw reuse checks both values before it installs the
+current witness. Output-only binding switches retain the preparation revision
+when all other buffer identities match. Structural edits and native allocation
+replacement still invalidate preparation. Resident variants include the set
+identity, and a bounded cache reuses immutable handle publications. The inline
+draw path does not publish resident templates; its counters must not be used
+to claim resident reuse.
+
+Vulkan buffer collection copies mesh entries into reusable storage under the
+collection lock, then creates backend wrappers after releasing that lock. An
+eight-entry cache retains immutable readiness snapshots for repeated buffer
+sets. Reuse requires exact buffer membership and geometry metadata. Readiness
+and native allocation identity remain live checks; the membership cache does
+not prove that a buffer is ready. Terminal renderer destruction releases all
+deformation sets after the renderer publication gate is released, preserving
+the dispatcher-to-publication lock order.
+
 The GPU scene owns the command records used for removal. Mesh disposal can
 clear the producer's command list before queued scene removal runs. Removal
 must use the registration records under the scene lock.
@@ -1697,6 +1782,29 @@ Desktop frame data is owned by the logical frame-in-flight slot, independently o
 Advanced light records use the light emitter's render transform. Do not use `LightMeshMatrix` for the light origin or direction: a spot volume shifts its center by half the light distance. The volume transform is for volume geometry only. Cone attenuation and shadow projection must share the emitter origin.
 
 Retired render-resource generations require a Signaled completion fence before disposal. Missing fences remain pending; failed fences may be replaced but cannot authorize disposal. A request to wait for GPU progress is not itself a completion proof.
+
+Pending Vulkan resource preparation takes its registry, pass metadata, extents,
+and queue-family selection from the same resource generation. The current draw
+package can still describe an older generation. Desktop depth and image readback
+require an exact submitted receipt; preparation alone does not permit readback.
+
+Vulkan mesh draw camera uniforms use the unique matching frozen frame view.
+Native visibility, late material geometry, and background draws must not read
+different camera poses in one frame. Preserve each pass's jitter choice and exact
+eye identity. View snapshot caches include the frozen descriptor and projection
+choice; auto-uniform reuse includes the snapshot packet identity. Scopes without
+a matching frame view retain their camera-at-enqueue behavior.
+
+The typed uniform writer converts accepted vector widths from the value's
+actual storage field. A vec4 camera position supplies XYZ to a vec3 destination.
+A vec3 write covers 12 bytes, so it preserves a scalar at the next packed
+offset. CPU serialization parity cannot prove this conversion when both paths
+use the same writer; verify the uploaded value against the frozen view.
+
+OpenXR applies a pending eye pipeline transition on the render thread before
+checking pipeline family and output binding. The check reads the fully applied
+pipeline. A cold eye must not wait for a render entry that its own admission check
+prevents. Resource readiness and strict stereo checks remain required.
 
 A minimized desktop window is not a new 1x1 render profile. Suspend managed resource preparation and preserve the last complete generation until restoration; externally owned swapchain outputs remain independent.
 

@@ -15,6 +15,14 @@ Streamed media playback uses `HlsReferenceRuntime` as a renderer-facing entry po
 
 Source font import asks the installed FreeType character enumerator for supported Unicode codepoints. Bitmap atlas creation asks the installed Skia rasterizer for a cooked PNG and glyph metrics. `FontGlyphSet` stores the resulting glyphs and texture without a SharpFont or Skia object in those public service contracts. The desktop authoring composition installs both services. Existing serialized `FontGlyphSet` names and fields remain unchanged.
 
+Editor startup prepares the default UI bitmap font and the default world text
+font on workers. The world text request uses the same MTSDF import profile and
+allowed fallback as `LoadDefaultFont()`. Debug labels wait for this exact font
+request without blocking the render thread. Boxes and points still draw while
+the font is pending or failed. Debug text preparation diagnostics report the
+font status before GPU text status. A change to the configured default font
+starts a new request; a late result from the old request cannot replace it.
+
 `UISvgComponent` lives in `XREngine.Runtime.UI.Skia` with its original namespace and type redirect. That project owns `SkiaSharp` and `Svg.Skia`; `XREngine.Runtime.Text.FreeType` owns `SharpFont` and the selected `freetype6.dll`; `XREngine.Runtime.Media.FFmpeg` owns its managed package and HLS native DLL copy target. `XREngine.Runtime.Imaging.Magick` owns ImageMagick. Bootstrap installs these backends explicitly during engine initialization; the runtime kernel does not install them by default.
 
 Texture import, mip handling, GPU readback capture, editor screenshots, and browser cooked texture publishing now exchange `RuntimeImage` or encoded bytes through neutral contracts. Rendering, Core, the model asset pipeline, and editor source no longer reference `MagickImage`; the codec implementation stays in the imaging leaf. Browser cooked pixels can be consumed without initializing the desktop decoder. The source split still needs runtime checks for both GPU readback backends, editor screenshots, import/mips, and browser cooked texture loading.

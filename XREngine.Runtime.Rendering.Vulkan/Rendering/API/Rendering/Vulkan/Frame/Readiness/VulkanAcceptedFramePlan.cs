@@ -1,6 +1,7 @@
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -38,6 +39,9 @@ internal sealed class VulkanAcceptedFramePlan
         new VulkanFrameDependencyTicket[DependencyCapacity];
     private readonly VulkanTimelineGpuFence?[] _submissionMarkers =
         new VulkanTimelineGpuFence?[StaticCapacity + UiCapacity + UploadCapacity];
+    private readonly SkinningPrepassDispatcher.VulkanOutputReceipt?[] _deformationReadLeases =
+        new SkinningPrepassDispatcher.VulkanOutputReceipt?[
+            SkinningPrepassDispatcher.VulkanReceiptPoolCapacity];
     private readonly int[] _dependencyIndex = new int[DependencyIndexCapacity];
     private readonly int[] _dependencyIndexSlots = new int[DependencyCapacity];
     private readonly RenderFrameViewHistoryBackendReservation[] _frameViewHistory =
@@ -58,6 +62,8 @@ internal sealed class VulkanAcceptedFramePlan
     private int _dependencyIndexSlotCount;
     private int _submissionMarkerCount;
     private bool _submissionMarkerOwnershipTransferred;
+    private int _deformationReadLeaseCount;
+    private bool _nativeSubmissionAcceptedWithoutLifetimePins;
     private VulkanDescriptorManager? _bindlessReceiptLeaseOwner;
     private int _bindlessReceiptCount;
     private int _bindlessDescriptorReferenceCount;
@@ -867,6 +873,9 @@ internal sealed class VulkanAcceptedFramePlan
                 _authoredTextureUploadOperationCount + textureUploadOperations.Length);
         }
 
+        CaptureDeformationReadLeases(operations);
+        CaptureDeformationReadLeases(textureUploadOperations);
+
         operations.CopyTo(
             _authoredOperations.AsSpan(_authoredOperationCount));
         _authoredOperationCount += operations.Length;
@@ -906,6 +915,10 @@ internal sealed class VulkanAcceptedFramePlan
     {
         if (IsSealed)
             throw new InvalidOperationException("The accepted frame plan is already sealed.");
+
+        CaptureDeformationReadLeases(staticOperations);
+        CaptureDeformationReadLeases(dynamicUiOperations);
+        CaptureDeformationReadLeases(textureUploadOperations);
 
         int terminalOperationCount = 0;
         int mainSceneOperationCount = 0;
@@ -1591,7 +1604,12 @@ internal sealed class VulkanAcceptedFramePlan
     /// </summary>
     internal void ResetAuthoredOperations()
     {
+        if (_nativeSubmissionAcceptedWithoutLifetimePins)
+            throw new InvalidOperationException(
+                "Accepted deformation reads cannot release before native lifetime pins exist.");
+
         SettleUnsubmittedSubmissionMarkers();
+        ReleaseDeformationReadLeases();
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
             _authoredOperations.AsSpan(0, _authoredOperationCount));
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
@@ -1604,6 +1622,53 @@ internal sealed class VulkanAcceptedFramePlan
             _authoredTextureUploadOperationCount).Clear();
         _authoredOperationCount = 0;
         _authoredTextureUploadOperationCount = 0;
+    }
+
+    internal void ReleaseDeformationReadLeasesAfterLifetimePinsTransferred()
+    {
+        ReleaseDeformationReadLeases();
+        PreparedMeshIngress.ReleaseTransientReadResources();
+    }
+
+    internal void MarkNativeSubmissionAcceptedWithoutLifetimePins()
+        => _nativeSubmissionAcceptedWithoutLifetimePins = true;
+
+    private void CaptureDeformationReadLeases(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations[index].TransientReadResource is
+                SkinningPrepassDispatcher.VulkanOutputReceipt receipt)
+            {
+                RetainDeformationReadLease(receipt);
+                operations[index].ReleaseTransientReadResource();
+            }
+    }
+
+    private void RetainDeformationReadLease(
+        SkinningPrepassDispatcher.VulkanOutputReceipt receipt)
+    {
+        for (int index = 0; index < _deformationReadLeaseCount; index++)
+            if (ReferenceEquals(_deformationReadLeases[index], receipt))
+                return;
+        if (_deformationReadLeaseCount >= _deformationReadLeases.Length)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.MainScene,
+                _deformationReadLeases.Length,
+                _deformationReadLeaseCount + 1,
+                "Accepted frame exceeded its deformation receipt lease capacity.");
+
+        receipt.RetainAuthoringUse();
+        _deformationReadLeases[_deformationReadLeaseCount++] = receipt;
+    }
+
+    private void ReleaseDeformationReadLeases()
+    {
+        for (int index = 0; index < _deformationReadLeaseCount; index++)
+        {
+            _deformationReadLeases[index]?.ReleaseAuthoringUse();
+            _deformationReadLeases[index] = null;
+        }
+        _deformationReadLeaseCount = 0;
     }
 
     internal bool TryGetFailedDependency(
@@ -1674,6 +1739,10 @@ internal sealed class VulkanAcceptedFramePlan
 
     internal void Reset()
     {
+        if (_nativeSubmissionAcceptedWithoutLifetimePins)
+            throw new InvalidOperationException(
+                "The accepted frame plan cannot reset after queue acceptance without native lifetime pins.");
+
         _recordedAdvancedPickingPipelines.AsSpan(
             0,
             _recordedAdvancedPickingSourceCount).Clear();

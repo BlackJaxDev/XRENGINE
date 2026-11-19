@@ -1899,21 +1899,28 @@ namespace XREngine.Rendering
             return material;
         }
 
+        private uint _editorOverlayFlags;
+
         /// <summary>
-        /// Stencil bit reserved for tagging editor gizmo pixels (e.g. transform tool, light probe preview).
-        /// PostProcess.fs / PostProcessStereo.fs early-out for pixels with this bit set so gizmos bypass
-        /// tonemap, color grading, vignette, exposure, atmosphere, fog, and bloom add.
-        /// Bits 0x1 and 0x2 are reserved for hover and selection highlighting; mirrors use the low bit
-        /// range as well via increments. 0x80 (bit 7) is the highest free bit unlikely to collide.
+        /// Identifies built-in editor overlays without reading authored stencil values.
+        /// </summary>
+        public uint EditorOverlayFlags
+        {
+            get => _editorOverlayFlags;
+            set => SetField(ref _editorOverlayFlags, value);
+        }
+
+        public const uint GizmoOverlayFlag = 4u;
+
+        /// <summary>
+        /// The Default pipeline reads this bit to keep editor gizmo pixels outside scene color grading.
+        /// Advanced and RVC use <see cref="GizmoOverlayFlag"/> in the independent editor mask.
         /// </summary>
         public const uint GizmoStencilBit = 0x80u;
 
         /// <summary>
-        /// Configures a gizmo material so it bypasses post-processing:
-        ///   - Forces RenderPass to OnTopForward so the draw runs after bloom/temporal/atmosphere/fog.
-        ///   - Writes <see cref="GizmoStencilBit"/> into the stencil buffer for every drawn pixel so the
-        ///     post-process shaders can early-out on those pixels.
-        /// Safe to call multiple times.
+        /// Marks a built-in gizmo draw and places it after scene effects.
+        /// The Default pipeline uses its stencil marker. Advanced and RVC use the material overlay flag.
         /// </summary>
         public static void ConfigureGizmoMaterial(XRMaterial material)
         {
@@ -1922,6 +1929,7 @@ namespace XREngine.Rendering
 
             material.RenderPass = (int)EDefaultRenderPass.OnTopForward;
             material.ShaderProgramPriority = EProgramPriority.Interactive;
+            material.EditorOverlayFlags |= GizmoOverlayFlag;
 
             var ro = material.RenderOptions;
             ro.CullMode = ECullMode.None;

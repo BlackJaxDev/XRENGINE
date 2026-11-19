@@ -37,6 +37,7 @@ public static class SerializedModelImporterDocumentParser
             FileIdsGeneration = GetInt(meshes, "fileIdsGeneration") ?? GetInt(importer, "fileIdsGeneration") ?? 2,
             ImportBlendShapes = (GetInt(meshes, "importBlendShapes") ?? GetInt(importer, "importBlendShapes") ?? 1) != 0,
             BlendShapeNormalImportMode = GetInt(tangentSpace, "blendShapeNormalImportMode") ?? 0,
+            TangentImportMode = GetInt(tangentSpace, "tangentImportMode") ?? -1,
             ImportAnimation = (GetInt(animations, "importAnimation") ?? GetInt(importer, "importAnimation") ?? 1) != 0,
             AnimationType = GetInt(importer, "animationType") ?? 0,
             GlobalScale = GetFloat(meshes, "globalScale") ?? GetFloat(importer, "globalScale") ?? 1.0f,

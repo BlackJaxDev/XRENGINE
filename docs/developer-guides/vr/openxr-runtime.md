@@ -139,6 +139,14 @@ The visible simulated-HMD preview is the `monado-service.exe` windowed composito
 
 Monado lane baselines, CI promotion, and persistent smoke settings remain open decisions for XR validation.
 
+For simulated-HMD rate checks, set `XRT_COMPOSITOR_DEFAULT_FRAMERATE` in the
+editor launch environment. Editor bootstrap can replace an existing Monado
+service when its runtime profile changes. That replacement inherits the editor
+environment. A setting applied only to a separate service launcher can be lost.
+Verify the service log's `estimated_frame_period` and measure submitted frames;
+the requested rate alone is not a performance result. Monado uses this setting
+only when the device does not supply a nominal frame interval.
+
 ## Implementation References
 
 - `XREngine.Runtime.XR.OpenXR/`

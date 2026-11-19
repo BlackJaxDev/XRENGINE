@@ -88,7 +88,10 @@ internal unsafe partial class VkMeshRenderer
 				Unsafe.WriteUnaligned(ref data[offset], value.Int);
 				return true;
 			case EShaderVarType._uint:
-				Unsafe.WriteUnaligned(ref data[offset], value.UInt);
+				uint unsignedValue = valueType == EShaderVarType._bool
+					? value.Int != 0 ? 1u : 0u
+					: value.UInt;
+				Unsafe.WriteUnaligned(ref data[offset], unsignedValue);
 				return true;
 			case EShaderVarType._bool:
 				int booleanValue = valueType == EShaderVarType._uint
@@ -100,10 +103,16 @@ internal unsafe partial class VkMeshRenderer
 				Unsafe.WriteUnaligned(ref data[offset], value.Vector2);
 				return true;
 			case EShaderVarType._vec3:
-				Unsafe.WriteUnaligned(ref data[offset], new Vector4(value.Vector3, 0f));
+				Vector3 vector3 = valueType == EShaderVarType._vec4
+					? new Vector3(value.Vector4.X, value.Vector4.Y, value.Vector4.Z)
+					: value.Vector3;
+				Unsafe.WriteUnaligned(ref data[offset], vector3);
 				return true;
 			case EShaderVarType._vec4:
-				Unsafe.WriteUnaligned(ref data[offset], value.Vector4);
+				Vector4 vector4 = valueType == EShaderVarType._vec3
+					? new Vector4(value.Vector3, 0f)
+					: value.Vector4;
+				Unsafe.WriteUnaligned(ref data[offset], vector4);
 				return true;
 			case EShaderVarType._mat4:
 				Unsafe.WriteUnaligned(ref data[offset], value.Matrix4x4);

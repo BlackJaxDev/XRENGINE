@@ -1,3 +1,5 @@
+using XREngine.Data.Rendering;
+
 namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public unsafe partial class OpenXRAPI
@@ -36,12 +38,28 @@ public unsafe partial class OpenXRAPI
             return false;
         }
 
-        RenderPipeline? pipeline = viewport.RenderPipeline;
+        XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
+        if (!instance.ApplyLatestRequestedPipelineIfNeeded())
+        {
+            RenderPipelineRequest request = viewport.PipelineRequest;
+            diagnostic =
+                $"The {eyeName} eye pipeline transition did not complete. " +
+                $"Instance={instance.InstanceId} Revision={instance.PipelineRevision} " +
+                $"Applied={OpenXrEyeRenderPipelineFactory.Describe(instance.GetFullyAppliedPipeline())} " +
+                $"Request={request.Purpose} Stereo={request.Stereo} OutputId={request.OutputId}. " +
+                $"{instance.LastRenderDeclineReason ?? "No transition reason was recorded."}";
+            return false;
+        }
+
+        RenderPipeline? pipeline = instance.GetFullyAppliedPipeline();
         if (!OpenXrEyeRenderPipelineFactory.Matches(pipeline, stereo, family, rvcMode))
         {
+            RenderPipelineRequest request = viewport.PipelineRequest;
             diagnostic =
                 $"The {eyeName} eye runs {OpenXrEyeRenderPipelineFactory.Describe(pipeline)}, " +
-                $"but the selection requires VR.RenderPipeline={family} (stereo={stereo}, RvcPipelineMode={rvcMode}).";
+                $"but the selection requires VR.RenderPipeline={family} (stereo={stereo}, RvcPipelineMode={rvcMode}). " +
+                $"Instance={instance.InstanceId} Revision={instance.PipelineRevision} " +
+                $"Request={request.Purpose} Stereo={request.Stereo} OutputId={request.OutputId}.";
             return false;
         }
 
@@ -89,9 +107,15 @@ public unsafe partial class OpenXRAPI
         if (!binding.IsBound)
         {
             pendingResources = binding.State == EAdvancedRenderPipelineOutputBindingState.PendingResources;
+            RenderPipelineRequest request = viewport.PipelineRequest;
+            XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
             diagnostic =
                 $"The Advanced {eyeName} eye output is not bound (state={binding.State}). " +
-                $"{binding.FailureReason ?? "No reason was recorded."}";
+                $"{binding.FailureReason ?? "No reason was recorded."} " +
+                $"Request={request.Purpose} Stereo={request.Stereo} OutputId={request.OutputId} " +
+                $"Applied={OpenXrEyeRenderPipelineFactory.Describe(instance.GetFullyAppliedPipeline())} " +
+                $"Instance={instance.InstanceId} Revision={instance.PipelineRevision} " +
+                $"LastDecline={instance.LastRenderDeclineReason ?? "<none>"}.";
             return false;
         }
 

@@ -55,6 +55,8 @@ internal sealed class TextureTransitionQueue
 
     public bool TryForceClearStuckTransition(
         ImportedTextureStreamingRecord record,
+        long expectedUploadGeneration,
+        long expectedTransitionFrameId,
         long frameId,
         out CancellationTokenSource? pendingLoadCts)
     {
@@ -62,6 +64,9 @@ internal sealed class TextureTransitionQueue
         lock (record.Sync)
         {
             if (record.PendingMaxDimension == 0 ||
+                record.UploadGeneration != expectedUploadGeneration ||
+                record.LastTransitionFrameId != expectedTransitionFrameId ||
+                record.PendingTransitionReason == ImportedTextureStreamingManager.PublishedSourceRehydrationReason ||
                 record.PendingSparseTransitionResult is { ExposureDeferred: true })
                 return false;
 

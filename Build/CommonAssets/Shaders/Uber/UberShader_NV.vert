@@ -102,7 +102,7 @@ void main() {
 	float tanSign = Tangent.w;
 	uberApplyVertexEffects(pos, norm, TexCoord0, Color0, u_CameraPosition, u_ModelMatrix, u_Time);
 
-	uberApplyOutlineLocal(pos, norm, Color0, u_ModelMatrix);
+	uberApplyOutlineLocal(pos, norm, Color0, u_ModelMatrix, TexCoord0, u_CameraPosition);
 
 	// Object -> world (shared by both eyes).
 	vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);

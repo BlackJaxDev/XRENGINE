@@ -9,6 +9,7 @@ using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
@@ -160,29 +161,32 @@ internal sealed partial class VulkanFrameLoop
         {
             // Planner replacement can retire descriptor references globally. Finish both
             // eyes' resource preparation before either command buffer captures descriptors.
-            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareLeftEye"))
+            using (SkinningPrepassDispatcher.PushDeformationCohort())
             {
-                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareLeftEye"))
                 {
-                    throw CreateOpenXrEyePresentNowFailure(
-                        firstEye.OpenXrViewIndex,
-                        EVulkanPresentNowReadinessStage.FramePlanSeal,
-                        "left-eye-prepare",
-                        "OpenXREyeSubmit -> left logical plan",
-                        "Foreground left-eye preparation returned no immutable input.");
+                    if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out firstPrepared))
+                    {
+                        throw CreateOpenXrEyePresentNowFailure(
+                            firstEye.OpenXrViewIndex,
+                            EVulkanPresentNowReadinessStage.FramePlanSeal,
+                            "left-eye-prepare",
+                            "OpenXREyeSubmit -> left logical plan",
+                            "Foreground left-eye preparation returned no immutable input.");
+                    }
                 }
-            }
 
-            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareRightEye"))
-            {
-                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out secondPrepared))
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PrepareRightEye"))
                 {
-                    throw CreateOpenXrEyePresentNowFailure(
-                        secondEye.OpenXrViewIndex,
-                        EVulkanPresentNowReadinessStage.FramePlanSeal,
-                        "right-eye-prepare",
-                        "OpenXREyeSubmit -> right logical plan",
-                        "Foreground right-eye preparation returned no immutable input.");
+                    if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out secondPrepared))
+                    {
+                        throw CreateOpenXrEyePresentNowFailure(
+                            secondEye.OpenXrViewIndex,
+                            EVulkanPresentNowReadinessStage.FramePlanSeal,
+                            "right-eye-prepare",
+                            "OpenXREyeSubmit -> right logical plan",
+                            "Foreground right-eye preparation returned no immutable input.");
+                    }
                 }
             }
 

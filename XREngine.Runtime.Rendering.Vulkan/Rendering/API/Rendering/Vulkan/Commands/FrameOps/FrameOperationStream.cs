@@ -939,16 +939,19 @@ internal sealed class FrameOperationStream
         in VulkanAdvancedVisibilityStageRequest request,
         in VulkanAdvancedNativeComputeClosure closure,
         DescriptorSet descriptorSet,
-        in VulkanAdvancedNativeComputePipelines pipelines)
+        in VulkanAdvancedNativeComputePipelines pipelines,
+        bool sealedHasUber)
     {
         if (!closure.IsValid || descriptorSet.Handle == 0 ||
-            !pipelines.IsCurrentFor(closure.UsesMultisampleVisibility) ||
+            !pipelines.IsCurrentFor(closure.UsesMultisampleVisibility, sealedHasUber) ||
             (uint)index >= (uint)_count ||
             _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
             return false;
         ref readonly FrameOperationHeader header = ref _headers[index];
         VulkanAdvancedVisibilityOperationPayload payload = _payloads.AdvancedVisibilities[header.PayloadIndex];
         if (!payload.Request.Equals(request) ||
+            !payload.SceneState.IsValid ||
+            payload.SceneState.KernelFamilies.HasUber != sealedHasUber ||
             payload.NativeComputeClosure is { } current && current != closure ||
             payload.NativeComputePipelines != default && payload.NativeComputePipelines != pipelines)
             return false;

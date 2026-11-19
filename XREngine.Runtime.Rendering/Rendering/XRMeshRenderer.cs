@@ -12,6 +12,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Shaders.Parameters;
 using XREngine.Rendering.Shaders.Generator;
@@ -238,7 +239,7 @@ namespace XREngine.Rendering
             /// <param name="modelMatrix"></param>
             /// <param name="prevModelMatrix"></param>
             /// <param name="materialOverride"></param>
-            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot, Vector4 sourceFlatDirection = default)
+            public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot, Vector4 sourceFlatDirection, uint editorHighlightBits)
             {
                 // Published mesh versions are backend-neutral until their first draw.
                 // Resolve this draw's owner explicitly so cold versions cannot silently
@@ -249,7 +250,7 @@ namespace XREngine.Rendering
                     renderOptionsOverride = (materialOverride ?? Parent?.Material)?.GetMultisampleBackgroundParameters()
                         ?? throw new InvalidOperationException("Advanced MSAA background requires an admitted material.");
                 renderer.Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride,
-                    instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot, sourceFlatDirection);
+                    instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot, sourceFlatDirection, editorHighlightBits);
             }
 
             /// <summary>Submits one indexed draw with GPU-authored arguments.</summary>
@@ -1472,8 +1473,8 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="modelMatrix"></param>
         /// <param name="materialOverride"></param>
-        public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot = default, Vector4 sourceFlatDirection = default)
-            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo, canonicalDrawIdentitySnapshot, sourceFlatDirection);
+        public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot = default, Vector4 sourceFlatDirection = default, uint editorHighlightBits = 0u)
+            => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo, canonicalDrawIdentitySnapshot, sourceFlatDirection, editorHighlightBits);
 
         /// <summary>Submits one indexed mesh draw from a GPU-authored command.</summary>
         public bool RenderIndexedIndirect(XRDataBuffer arguments, nuint byteOffset,
@@ -1696,6 +1697,10 @@ namespace XREngine.Rendering
                 if (!IsDestroyed)
                     _resourcePublicationTerminated = false;
                 Monitor.Exit(_resourcePublicationGate);
+
+                // Release the publication gate before taking the dispatcher's resource lock.
+                if (IsDestroyed)
+                    SkinningPrepassDispatcher.Instance.InvalidateRenderer(this);
             }
         }
 
@@ -2822,15 +2827,25 @@ namespace XREngine.Rendering
             internal set { SkinnedOutputResourceSnapshot state = CaptureSkinnedOutputResources(); InstallSkinnedOutputResources(state.Positions, state.Normals, state.Tangents, value); }
         }
 
-        private SkinnedOutputResourceState _skinnedOutputResourceState = new();
+        private SkinnedOutputResourceState _skinnedOutputResourceState = new(0UL, null, null, null, null);
+        private static long _nextSkinnedOutputSetIdentity;
 
-        private sealed class SkinnedOutputResourceState
+        internal sealed class SkinnedOutputResourceState(
+            ulong identity,
+            XRDataBuffer? positions,
+            XRDataBuffer? normals,
+            XRDataBuffer? tangents,
+            XRDataBuffer? interleaved)
         {
-            internal XRDataBuffer? Positions;
-            internal XRDataBuffer? Normals;
-            internal XRDataBuffer? Tangents;
-            internal XRDataBuffer? Interleaved;
+            internal readonly ulong Identity = identity;
+            internal readonly XRDataBuffer? Positions = positions;
+            internal readonly XRDataBuffer? Normals = normals;
+            internal readonly XRDataBuffer? Tangents = tangents;
+            internal readonly XRDataBuffer? Interleaved = interleaved;
         }
+
+        /// <summary>Identifies the currently published compute output buffer set.</summary>
+        public ulong SkinnedOutputSetIdentity => Volatile.Read(ref _skinnedOutputResourceState).Identity;
 
         /// <summary>Captures one coherent generation of compute-skinning outputs.</summary>
         public readonly record struct SkinnedOutputResourceSnapshot(
@@ -2854,13 +2869,20 @@ namespace XREngine.Rendering
             XRDataBuffer? normals,
             XRDataBuffer? tangents,
             XRDataBuffer? interleaved)
-            => Volatile.Write(ref _skinnedOutputResourceState, new SkinnedOutputResourceState
-            {
-                Positions = positions,
-                Normals = normals,
-                Tangents = tangents,
-                Interleaved = interleaved,
-            });
+            => InstallSkinnedOutputResources(CreateSkinnedOutputResourceState(
+                positions, normals, tangents, interleaved));
+
+        internal static SkinnedOutputResourceState CreateSkinnedOutputResourceState(
+            XRDataBuffer? positions,
+            XRDataBuffer? normals,
+            XRDataBuffer? tangents,
+            XRDataBuffer? interleaved)
+            => new(
+                unchecked((ulong)Interlocked.Increment(ref _nextSkinnedOutputSetIdentity)),
+                positions, normals, tangents, interleaved);
+
+        internal void InstallSkinnedOutputResources(SkinnedOutputResourceState state)
+            => Volatile.Write(ref _skinnedOutputResourceState, state);
 
         /// <summary>
         /// Precombined position deltas for active blendshapes. The compute pre-pass writes this and

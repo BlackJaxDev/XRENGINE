@@ -251,6 +251,8 @@ bool XR_UBER_ApplyCoverage(
         vec2 tileDx;
         vec2 tileDy;
         XR_UBER_CoverageUv(coordinates, UBER_I(_UDIMDiscardUV), tileUv, tileDx, tileDy);
+        if (UBER_F(_SourceUdimFlipV) > 0.5)
+            tileUv.y = 1.0 - tileUv.y;
         vec2 tile = floor(tileUv);
         if (all(greaterThanEqual(tile, vec2(0.0))) &&
             all(lessThan(tile, vec2(4.0))))
@@ -311,7 +313,7 @@ bool XR_UBER_ApplyCoverage(
         else if (mode == 4) alpha = clamp(alpha - mask, 0.0, 1.0);
     }
     alpha = clamp(alpha + UBER_F(_AlphaMod), 0.0, 1.0);
-    if (UBER_F(_AlphaForceOpaque) > 0.5)
+    if (UBER_F(_SourceAlphaClip) <= 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
         alpha = 1.0;
 
     base.a = alpha;
@@ -322,7 +324,11 @@ bool XR_UBER_ApplyCoverage(
     vec3 dissolveEmission;
     bool keep = XR_UBER_ApplyDissolve(coordinates, baseColor, dissolveEmission);
     edgeEmission += dissolveEmission;
-    return keep && (blendMode != 1 || baseColor.a >= UBER_F(_Cutoff));
+    // Source ForceOpaque runs after decals and dissolve but before the clip test.
+    if (UBER_F(_SourceAlphaClip) > 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
+        baseColor.a = 1.0;
+    return keep && ((blendMode != 1 && UBER_F(_SourceAlphaClip) <= 0.5) ||
+        baseColor.a >= UBER_F(_Cutoff));
 }
 
 bool XR_UBER_ApplyCoverage(

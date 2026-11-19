@@ -15,6 +15,7 @@ The implementation lives in two layers:
 - Assimp remains the default path for non-FBX model formats that do not have their own native importer.
 - `FbxPivotPolicy` and `CollapseGeneratedFbxHelperNodes` are the FBX-specific transform controls. They replace the older Assimp-shaped pivot/helper-node settings, while hidden YAML aliases keep old import settings readable.
 - `NativeFbxMeshBuildMaxDegreeOfParallelism` caps native FBX mesh-build workers. `0` uses the importer's editor-friendly automatic cap.
+- `ModelImportOptions.TangentImportPolicy` selects `Default`, `Import`, or `CalculateMikkCompatible`. `Default` keeps the existing behavior. `Import` uses authored FBX tangents. `CalculateMikkCompatible` calculates tangents from the complete mesh delivered by the selected FBX backend before engine vertex splits. The external file import dialog exposes this choice for selected FBX files. The calculated mode requires an available meshoptimizer library.
 - Native mesh-build workers also pack managed deformation inputs before scene attachment. A weak mesh-keyed cache reuses those immutable payloads across renderer recreation; source revision/reference changes invalidate reuse. This trades retained CPU memory for shorter render-thread preparation. Skinning-buffer reads and GPU publication still run on the render owner. Other import and binary-cache paths retain bounded incremental preparation.
 - `ProcessMeshesAsynchronously`, `GenerateMeshRenderersAsync`, `SplitSubmeshesIntoSeparateModelComponents`, `GenerateSceneNodesPerSubmesh`, `SeparateMeshIslands`, and `BatchSubmeshAddsDuringAsyncImport` continue to apply through the normal model import settings.
 
@@ -49,7 +50,7 @@ shader path. Native FBX cache version 11 invalidates older converted materials a
 mesh tangent signs.
 
 An absent FBX `Roughness` property retains the material factory default.
-With `CalculateTangentSpace` enabled, meshes without authored tangents generate
+With the `Default` tangent policy and `CalculateTangentSpace` enabled, meshes without authored tangents generate
 UV0 tangents before packed mesh construction. Generation uses transformed
 positions and the final UVs after `FlipUVs`. Within each material chunk, corners
 share angle-weighted tangents only when position, normal, UV, and handedness
@@ -58,6 +59,13 @@ Authored tangents remain unchanged. Degenerate UV triangles use a finite
 normal-based fallback if the mesh contains other valid UV triangles. This
 generation covers the base mesh; it does not synthesize blendshape tangent
 deltas or smooth across chunk boundaries.
+
+`CalculateMikkCompatible` replaces authored base tangents. Native FBX generates
+them before material and chunk splits. Assimp generates them over each mesh
+delivered by its parser. Both paths preserve skin weights and morph positions
+when tangent seams require extra vertices. Finite zero normals remain valid
+degenerate input. Non-finite normals fail import. The pinned meshoptimizer
+generator provides Mikk compatibility; bit equality with Unity is not guaranteed.
 
 Authored tangent layers use the FBX binormal layer to set the tangent sign.
 The sign uses the transformed normal, tangent, and binormal, and follows

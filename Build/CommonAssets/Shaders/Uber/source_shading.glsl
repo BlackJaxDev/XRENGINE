@@ -286,7 +286,8 @@ float xrSourceWrappedMap(vec3 normal, vec3 light, vec3 rawDirect,
 vec3 xrSourceWrappedDiffuse(vec3 baseColor, vec3 normal, vec3 light,
     vec3 rawDirect, XrSourceShCoefficients sh, vec3 wrappedColor,
     vec3 shadowColor, float wrapAmount, float normalization,
-    float materialAo, float shadowVisibility, float castedShadows,
+    float materialAo, vec3 worldDiffuseOcclusion,
+    float shadowVisibility, float castedShadows,
     float detailShadow, float monochromatic, float shadowStrength,
     float ignoreAmbient, float gradientStart, float gradientEnd,
     float minimumBrightness, float capEnabled, float cap,
@@ -306,6 +307,7 @@ vec3 xrSourceWrappedDiffuse(vec3 baseColor, vec3 normal, vec3 light,
         clamp(monochromatic, 0.0, 1.0));
     indirect = mix(indirect, vec3(xrSourceLuminance(indirect)),
         clamp(monochromatic, 0.0, 1.0));
+    indirect *= worldDiffuseOcclusion;
     float map = xrSourceWrappedMap(normal, light, rawDirect, sh,
         wrapAmount, normalization, materialAo, shadowVisibility,
         castedShadows, detailShadow, monochromatic);
@@ -455,6 +457,21 @@ vec3 xrSourceRimBlend(vec3 baseColor, vec3 rimColor, float amount, int mode)
     if (mode == 4)
         return mix(baseColor, 1.0 - (1.0 - baseColor) * (1.0 - rimColor), amount);
     return baseColor + rimColor * amount;
+}
+
+void xrSourceRim2Apply(inout vec3 baseColor, inout vec3 emission,
+    vec3 vertexNormal, vec3 pixelNormal, vec3 view, float width,
+    float sharpness, vec4 settings, vec4 colorSettings, vec4 strengths,
+    vec4 themedTint, float mask)
+{
+    float rim = xrSourceRimAmount(vertexNormal, pixelNormal, view,
+        width, sharpness, settings, false);
+    rim *= themedTint.a * themedTint.a * mask;
+    vec3 rimColor = themedTint.rgb *
+        mix(vec3(1.0), baseColor, colorSettings.x) * colorSettings.y;
+    baseColor = xrSourceRimBlend(baseColor, rimColor,
+        rim * strengths.x, int(colorSettings.z + 0.5));
+    emission += rimColor * rim * strengths.y;
 }
 
 float xrSourceAnisoLayerResponse(vec3 tangent, vec3 binormal, vec3 normal,
@@ -663,5 +680,46 @@ vec3 xrSourceMultilayerDiffuse(vec3 base, vec3 direct, vec3 indirect,
         strength *= data.strengthMask;
     shade = mix(direct, shade, strength);
     return base * mix(shade, direct, bands.x);
+}
+vec3 xrSourceStylizedSpecular(vec3 vertexNormal, vec3 mappedNormal,
+    vec3 viewDirection, vec3 lightDirection, vec3 directColor,
+    float rampedLightMap, float attenuation, float shadowVisibility,
+    float occlusion, float specularMask, float specularFootprint,
+    vec3 highColorMap, vec4 tint, vec4 settings, vec4 layers,
+    vec4 maskSettings, vec4 occlusionSettings)
+{
+    vec3 normal = normalize(mix(vertexNormal, mappedNormal, settings.z));
+    vec3 halfDirection = normalize(lightDirection + viewDirection);
+    float specArea = 0.5 * dot(normal, halfDirection) + 0.5;
+    float first, second;
+    if (settings.y > 0.5)
+    {
+        first = pow(specArea, exp2(mix(11.0, 1.0, layers.x))) * layers.y;
+        second = pow(specArea, exp2(mix(11.0, 1.0, layers.z))) * layers.w;
+    }
+    else
+    {
+        float firstBorder = 1.0 - pow(layers.x, 5.0);
+        float secondBorder = 1.0 - pow(layers.z, 5.0);
+        float firstLower = clamp(firstBorder - maskSettings.x * 0.5, 0.0, 1.0);
+        float firstUpper = clamp(firstBorder + maskSettings.x * 0.5, 0.0, 1.0);
+        float secondLower = clamp(secondBorder - maskSettings.y * 0.5, 0.0, 1.0);
+        float secondUpper = clamp(secondBorder + maskSettings.y * 0.5, 0.0, 1.0);
+        first = smoothstep(firstLower - specularFootprint,
+            firstUpper + specularFootprint, specArea) * layers.y;
+        second = smoothstep(secondLower - specularFootprint,
+            secondUpper + specularFootprint, specArea) * layers.w;
+    }
+    float mask = mix(specularMask, 1.0 - specularMask, occlusionSettings.x);
+    mask = clamp(mask + occlusionSettings.y, 0.0, 1.0);
+    float ramp = mix(rampedLightMap, 1.0, occlusionSettings.w);
+    float response = clamp(first + second, 0.0, 1.0) * mask * ramp;
+    float normalAttenuation = mix(max(dot(mappedNormal, lightDirection), 0.0),
+        1.0, occlusionSettings.z);
+    float lightAttenuation = attenuation * shadowVisibility;
+    float finalMask = min(min(response, occlusion),
+        min(normalAttenuation, lightAttenuation)) * maskSettings.z;
+    return max(highColorMap * tint.rgb *
+        mix(vec3(1.0), directColor, settings.w) * finalMask, vec3(0.0));
 }
 #endif

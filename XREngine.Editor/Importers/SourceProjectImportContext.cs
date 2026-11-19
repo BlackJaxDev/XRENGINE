@@ -1,6 +1,7 @@
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene.Prefabs;
+using XREngine.UnityScriptHost.Contracts;
 
 namespace XREngine.Scene.Importers;
 
@@ -21,6 +22,8 @@ public sealed class SourceProjectImportContext
     private readonly Dictionary<SerializedAvatarAnimationGraphRecord, SceneNode> _avatarAnimationGraphOwners = [];
     private readonly HashSet<string> _reportedIndexDiagnostics = new(StringComparer.Ordinal);
     private bool _recoveredPartialContent;
+    private readonly UnityConversionCoverageBuilder _conversionCoverage =
+        new(UnityConversionAssessmentStage.NativeConversion);
 
     public SourceProjectImportContext(
         string entrySourcePath,
@@ -59,6 +62,8 @@ public sealed class SourceProjectImportContext
     public List<SerializedAnimatorRecord> Animators { get; } = [];
     public List<SerializedAvatarAnimationGraphRecord> AvatarAnimationGraphs { get; } = [];
     public List<UnsupportedSourceBehaviourMetadata> UnsupportedBehaviours { get; } = [];
+    /// <summary>Gets a partial snapshot of the native conversion observations made by this import.</summary>
+    public UnityConversionCoverageReport ConversionCoverage => _conversionCoverage.Build();
     public HashSet<string> ActiveImports { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<SourceAssetIdentity, object> ImportCache { get; } = [];
     /// <summary>Parsed source data for the active root import. Returned documents are read-only.</summary>
@@ -294,6 +299,10 @@ public sealed class SourceProjectImportContext
         node.OutputAssetPath = outputAssetPath;
     }
 
+    /// <summary>Records one observed source feature without changing its native conversion result.</summary>
+    internal void RecordConversionFeature(UnityConversionFeature feature)
+        => _conversionCoverage.Add(feature);
+
     internal void ValidatePrefabModificationDependencies(
         string sourcePath,
         long prefabInstanceFileId,
@@ -392,6 +401,7 @@ public sealed class SourceProjectImportContext
             Animators = [.. Animators],
             AvatarAnimationGraphs = [.. AvatarAnimationGraphs],
             UnsupportedBehaviours = [.. UnsupportedBehaviours],
+            ConversionCoverage = ConversionCoverage,
         };
 
         if (DependencyGraph is null)

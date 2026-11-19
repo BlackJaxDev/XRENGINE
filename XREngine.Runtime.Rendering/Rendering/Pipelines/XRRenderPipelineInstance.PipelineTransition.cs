@@ -269,7 +269,7 @@ public sealed partial class XRRenderPipelineInstance
     /// Applies an outstanding request before command recording if the scheduler has not yet
     /// drained its queued transition job.
     /// </summary>
-    private bool ApplyLatestRequestedPipelineIfNeeded()
+    internal bool ApplyLatestRequestedPipelineIfNeeded()
     {
         if (System.Threading.Volatile.Read(ref _terminalTeardownRequested) != 0)
             return false;

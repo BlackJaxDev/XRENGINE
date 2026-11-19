@@ -38,6 +38,7 @@ internal sealed class VulkanFrameOpWorkspace
     private readonly Pool<MeshDrawOp> _meshDrawOps = new();
     private readonly Pool<IndirectDrawOp> _indirectDrawOps = new();
     private readonly Pool<MemoryBarrierOp> _memoryBarrierOps = new();
+    private readonly Pool<SubmissionMarkerOp> _submissionMarkerOps = new();
     private readonly Pool<ComputeDispatchOp> _computeDispatchOps = new();
     private readonly Pool<BufferCopyOp> _bufferCopyOps = new();
     private readonly Pool<AdvancedVisibilityOp> _advancedVisibilityOps = new();
@@ -123,6 +124,7 @@ internal sealed class VulkanFrameOpWorkspace
         _meshDrawOps.Reset();
         _indirectDrawOps.Reset();
         _memoryBarrierOps.Reset();
+        _submissionMarkerOps.Reset();
         _computeDispatchOps.Reset();
         _bufferCopyOps.Reset();
         _advancedVisibilityOps.Reset();
@@ -139,6 +141,8 @@ internal sealed class VulkanFrameOpWorkspace
             return (Pool<T>)(object)_indirectDrawOps;
         if (typeof(T) == typeof(MemoryBarrierOp))
             return (Pool<T>)(object)_memoryBarrierOps;
+        if (typeof(T) == typeof(SubmissionMarkerOp))
+            return (Pool<T>)(object)_submissionMarkerOps;
         if (typeof(T) == typeof(ComputeDispatchOp))
             return (Pool<T>)(object)_computeDispatchOps;
         if (typeof(T) == typeof(BufferCopyOp))

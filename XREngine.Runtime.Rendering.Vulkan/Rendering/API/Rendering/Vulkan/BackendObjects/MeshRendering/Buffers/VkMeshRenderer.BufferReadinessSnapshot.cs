@@ -11,7 +11,8 @@ internal unsafe partial class VkMeshRenderer
     private sealed class BufferReadinessSnapshot
     {
         public static BufferReadinessSnapshot Empty { get; } =
-            new([], [], string.Empty, 0u, 0u, 0u, 0u, fallbackIsTriangleClass: false);
+            new([], [], string.Empty, 0u, 0u, 0u, 0u,
+                fallbackIsTriangleClass: false, indexBuffersIncluded: false);
 
         public BufferReadinessSnapshot(
             KeyValuePair<string, VkDataBuffer>[] requiredBuffers,
@@ -21,7 +22,8 @@ internal unsafe partial class VkMeshRenderer
             uint lineIndexCount,
             uint pointIndexCount,
             uint fallbackVertexCount,
-            bool fallbackIsTriangleClass)
+            bool fallbackIsTriangleClass,
+            bool indexBuffersIncluded)
         {
             RequiredBuffers = requiredBuffers;
             ShaderGeneratedRequiredBuffers = shaderGeneratedRequiredBuffers;
@@ -31,6 +33,7 @@ internal unsafe partial class VkMeshRenderer
             PointIndexCount = pointIndexCount;
             FallbackVertexCount = fallbackVertexCount;
             FallbackIsTriangleClass = fallbackIsTriangleClass;
+            IndexBuffersIncluded = indexBuffersIncluded;
         }
 
         public KeyValuePair<string, VkDataBuffer>[] RequiredBuffers { get; }
@@ -41,5 +44,6 @@ internal unsafe partial class VkMeshRenderer
         public uint PointIndexCount { get; }
         public uint FallbackVertexCount { get; }
         public bool FallbackIsTriangleClass { get; }
+        public bool IndexBuffersIncluded { get; }
     }
 }

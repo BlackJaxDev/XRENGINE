@@ -92,6 +92,8 @@ public static partial class EditorImGuiUI
         public bool OverwriteExisting;
         public bool ImportAfterCopy = true;
         public bool HasDirectSerializedPrefabImport;
+        public bool HasFbxImport;
+        public ModelTangentImportPolicy TangentImportPolicy;
         public string SourceProjectRoot = string.Empty;
         public string? Error;
     }
@@ -197,6 +199,8 @@ public static partial class EditorImGuiUI
             SourcePaths = normalized,
             DestinationRelativePath = destination.Replace('\\', '/'),
             HasDirectSerializedPrefabImport = hasDirectSerializedPrefabImport,
+            HasFbxImport = !sourceIsFolder && normalized.Any(static path =>
+                string.Equals(Path.GetExtension(path), ".fbx", StringComparison.OrdinalIgnoreCase)),
             SourceProjectRoot = sourceProjectRoot,
             Error = detectionError,
         };
@@ -313,6 +317,15 @@ public static partial class EditorImGuiUI
             ImGui.TextWrapped(
                 "Unity prefabs are converted directly from this project into native .asset output. " +
                 "The source prefab and its Unity project are not copied or modified.");
+        }
+
+        if (state.HasFbxImport)
+        {
+            ImGui.Separator();
+            int tangentPolicy = (int)state.TangentImportPolicy;
+            if (ImGui.Combo("FBX tangents", ref tangentPolicy,
+                "Default\0Import authored\0Calculate Mikk compatible\0"))
+                state.TangentImportPolicy = (ModelTangentImportPolicy)tangentPolicy;
         }
 
         ImGui.Separator();
@@ -497,7 +510,8 @@ public static partial class EditorImGuiUI
                     CopyExternalImportEntry(entry, targetPath, overwrite);
                     copied++;
 
-                    if (importAfterCopy && entry.ImportAfterCopy && TryImportCopiedExternalAsset(assets, targetPath))
+                    if (importAfterCopy && entry.ImportAfterCopy &&
+                        TryImportCopiedExternalAsset(assets, targetPath, state.TangentImportPolicy))
                         imported++;
                 }
 
@@ -580,13 +594,25 @@ public static partial class EditorImGuiUI
         File.Copy(entry.SourcePath, normalizedTarget, overwrite);
     }
 
-    private static bool TryImportCopiedExternalAsset(AssetManager assets, string targetPath)
+    private static bool TryImportCopiedExternalAsset(
+        AssetManager assets, string targetPath, ModelTangentImportPolicy tangentPolicy)
     {
         if (!ShouldAttemptExternalAssetImport(targetPath))
             return false;
 
         try
         {
+            if (tangentPolicy != ModelTangentImportPolicy.Default &&
+                string.Equals(Path.GetExtension(targetPath), ".fbx", StringComparison.OrdinalIgnoreCase))
+            {
+                ModelImportOptions options = assets.GetOrCreateThirdPartyImportOptions(
+                    targetPath, typeof(XREngine.Scene.Prefabs.XRPrefabSource)) as ModelImportOptions
+                    ?? new ModelImportOptions();
+                options.TangentImportPolicy = tangentPolicy;
+                if (!assets.SaveThirdPartyImportOptions(targetPath,
+                    typeof(XREngine.Scene.Prefabs.XRPrefabSource), options))
+                    throw new IOException($"Could not save FBX tangent import options for '{targetPath}'.");
+            }
             return assets.ReimportThirdPartyFile(targetPath);
         }
         catch (Exception ex)

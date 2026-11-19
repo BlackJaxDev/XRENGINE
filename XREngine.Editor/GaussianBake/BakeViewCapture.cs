@@ -286,8 +286,8 @@ internal sealed class BakeViewCapture
             camera.RenderPipeline = pipeline;
 
         // The captures must be scene-referred linear values. HDR output skips the tonemap; a fixed exposure of 1
-        // keeps every view on the same scale. Contrast is a percent offset: the default 1 scales the color by
-        // 1.0201 around 0.5, so 0 makes the grade an identity. Tint, hue, saturation, and brightness default to identity.
+        // keeps every view on the same scale. Contrast is a percent offset, so 0 makes the grade an identity.
+        // Tint, hue, saturation, and brightness default to identity.
         var colorStage = camera.GetPostProcessStageState<ColorGradingSettings>();
         if (colorStage?.TryGetBacking(out ColorGradingSettings? grading) == true && grading is not null)
         {

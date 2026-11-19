@@ -102,28 +102,71 @@ public partial class AdvancedRenderPipeline
 
         private void PrepareTexturesAndShader()
         {
+            if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            {
+                _textureReferences = owner.Stereo
+                    ?
+                    [
+                        owner.RequirePostProcessTexture(HDRSceneTextureName),
+                        owner.RequirePostProcessTexture(BloomBlurTextureName),
+                        owner.RequirePostProcessTexture(DepthViewTextureName),
+                        owner.RequirePostProcessTexture(StencilViewTextureName),
+                        owner.RequirePostProcessTexture(AutoExposureTextureName),
+                        owner.RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata),
+                    ]
+                    :
+                    [
+                        owner.RequirePostProcessTexture(HDRSceneTextureName),
+                        owner.RequirePostProcessTexture(BloomBlurTextureName),
+                        owner.RequirePostProcessTexture(DepthViewTextureName),
+                        owner.RequirePostProcessTexture(StencilViewTextureName),
+                        owner.RequirePostProcessTexture(AutoExposureTextureName),
+                        owner.RequirePostProcessTexture(AtmosphereColorTextureName),
+                        owner.RequirePostProcessTexture(VolumetricFogColorTextureName),
+                        owner.RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata),
+                    ];
+                _shader = owner.CreateAdvancedPostProcessShader(owner.PostProcessShaderName());
+                return;
+            }
+
             _textureReferences = owner.Stereo
-                ?
+                ? owner.EditorHighlightModule is null
+                    ?
+                    [
+                        owner.RequirePostProcessTexture(HDRSceneTextureName),
+                        owner.RequirePostProcessTexture(BloomBlurTextureName),
+                        owner.RequirePostProcessTexture(DepthViewTextureName),
+                        owner.RequirePostProcessTexture(AutoExposureTextureName),
+                    ]
+                    :
+                    [
+                        owner.RequirePostProcessTexture(HDRSceneTextureName),
+                        owner.RequirePostProcessTexture(BloomBlurTextureName),
+                        owner.RequirePostProcessTexture(DepthViewTextureName),
+                        owner.RequirePostProcessTexture(AutoExposureTextureName),
+                        owner.RequirePostProcessTexture(EditorHighlightMaskTextureName),
+                    ]
+                : owner.EditorHighlightModule is null
+                    ?
+                    [
+                        owner.RequirePostProcessTexture(HDRSceneTextureName),
+                        owner.RequirePostProcessTexture(BloomBlurTextureName),
+                        owner.RequirePostProcessTexture(DepthViewTextureName),
+                        owner.RequirePostProcessTexture(AutoExposureTextureName),
+                        owner.RequirePostProcessTexture(AtmosphereColorTextureName),
+                        owner.RequirePostProcessTexture(VolumetricFogColorTextureName),
+                    ]
+                    :
                 [
                     owner.RequirePostProcessTexture(HDRSceneTextureName),
                     owner.RequirePostProcessTexture(BloomBlurTextureName),
                     owner.RequirePostProcessTexture(DepthViewTextureName),
-                    owner.RequirePostProcessTexture(StencilViewTextureName),
-                    owner.RequirePostProcessTexture(AutoExposureTextureName),
-                    owner.RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata),
-                ]
-                :
-                [
-                    owner.RequirePostProcessTexture(HDRSceneTextureName),
-                    owner.RequirePostProcessTexture(BloomBlurTextureName),
-                    owner.RequirePostProcessTexture(DepthViewTextureName),
-                    owner.RequirePostProcessTexture(StencilViewTextureName),
                     owner.RequirePostProcessTexture(AutoExposureTextureName),
                     owner.RequirePostProcessTexture(AtmosphereColorTextureName),
                     owner.RequirePostProcessTexture(VolumetricFogColorTextureName),
-                    owner.RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata),
+                    owner.RequirePostProcessTexture(EditorHighlightMaskTextureName),
                 ];
-            _shader = CreateAdvancedPostProcessShader(owner.PostProcessShaderName());
+            _shader = owner.CreateAdvancedPostProcessShader(owner.PostProcessShaderName());
         }
 
         private void CreateMaterial()
@@ -175,11 +218,19 @@ public partial class AdvancedRenderPipeline
         }
     }
 
-    private static XRShader CreateAdvancedPostProcessShader(string fileName)
-        => ShaderHelper.CreateDefinedShaderVariant(
+    private XRShader CreateAdvancedPostProcessShader(string fileName)
+    {
+        if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
+            return XRShader.EngineShader(Path.Combine(SceneShaderPath, fileName), EShaderType.Fragment);
+
+        XRShader? shader = ShaderHelper.CreateDefinedShaderVariant(
             XRShader.EngineShader(Path.Combine(SceneShaderPath, fileName), EShaderType.Fragment),
-            "XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA")
-        ?? throw new InvalidOperationException($"Advanced post-process shader '{fileName}' is unavailable.");
+            "XR_SCENE_STENCIL_AUTHORED");
+        if (EditorHighlightModule is not null)
+            shader = ShaderHelper.CreateDefinedShaderVariant(shader, "XR_EDITOR_HIGHLIGHT_MODULE");
+        return shader ?? throw new InvalidOperationException(
+            $"Advanced post-process shader '{fileName}' is unavailable.");
+    }
 
     private XRTexture RequirePostProcessTexture(string resourceName)
         => GetTexture<XRTexture>(resourceName)
@@ -235,6 +286,26 @@ public partial class AdvancedRenderPipeline
             ForceOvrMultiview = Stereo,
             Name = FinalPostProcessOutputFBOName
         };
+    }
+
+    private XRFrameBuffer CreateEditorHighlightOutputFBO()
+    {
+        IFrameBufferAttachement attachment = EnsureTextureAttachment(
+            EditorHighlightOutputTextureName, CreateEditorHighlightOutputTexture);
+
+        return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            ForceOvrMultiview = Stereo,
+            Name = EditorHighlightOutputFBOName
+        };
+    }
+
+    private XRTexture CreateEditorHighlightOutputTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeFull();
+        return CreateLatePostColor(EditorHighlightOutputTextureName, width, height,
+            Stereo ? 2u : 1u, 1u, EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
     }
 
     private XRFrameBuffer CreateAtmosphereHalfDepthQuadFBO()
@@ -530,14 +601,15 @@ public partial class AdvancedRenderPipeline
                 GetTexture<XRTexture>(DepthViewTextureName)!,
                 GetTexture<XRTexture>(HistoryDepthViewTextureName)!,
                 GetTexture<XRTexture>(TsrHistoryColorTextureName)!,
-                GetTexture<XRTexture>(StencilViewTextureName)!,
                 GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!,
                 GetTexture<XRTexture>(TsrHistoryMetadataTextureName)!,
             ];
+            if (owner.EditorHighlightModule is not null)
+                _textureReferences = [.. _textureReferences, owner.RequirePostProcessTexture(EditorHighlightMaskTextureName)];
             _outputTexture = GetTexture<XRTexture>(TsrOutputTextureName)!;
             _metadataOutputTexture = GetTexture<XRTexture>(TsrHistoryMetadataOutputTextureName)!;
             _accumulationTexture = GetTexture<XRTexture>(TsrAccumulationTextureName)!;
-            _shader = CreateAdvancedTsrShader(
+            _shader = owner.CreateAdvancedTsrShader(
                 owner.Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
         }
 
@@ -644,6 +716,19 @@ public partial class AdvancedRenderPipeline
         {
             ForceOvrMultiview = Stereo,
             Name = TransparentSceneCopyFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateSourceOrderedSceneCopyFBO()
+    {
+        IFrameBufferAttachement colorAttachment = EnsureTextureAttachment(
+            SourceOrderedSceneCopyTextureName,
+            CreateSourceOrderedSceneCopyTexture);
+        return new XRFrameBuffer((colorAttachment, EFrameBufferAttachment.ColorAttachment0,
+            0, -1))
+        {
+            ForceOvrMultiview = Stereo,
+            Name = SourceOrderedSceneCopyFBOName,
         };
     }
 
@@ -963,9 +1048,22 @@ public partial class AdvancedRenderPipeline
             XRTexture hdrSceneTexture = _hdrSceneTexture
                 ?? throw new InvalidOperationException("Forward-pass HDR texture was not prepared.");
             frameBuffer.PrepareForInitialRendering();
-            frameBuffer.SetRenderTargets(
-                ((IFrameBufferAttachement)hdrSceneTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
+            if (owner.EditorHighlightModule is not null)
+            {
+                XRTexture mask = owner.RequirePostProcessTexture(EditorHighlightMaskTextureName);
+                XRTexture identity = owner.RequirePostProcessTexture(EditorPickingIdentityTextureName);
+                frameBuffer.SetRenderTargets(
+                    ((IFrameBufferAttachement)hdrSceneTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                    ((IFrameBufferAttachement)mask, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                    ((IFrameBufferAttachement)identity, EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                    (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
+            }
+            else
+            {
+                frameBuffer.SetRenderTargets(
+                    ((IFrameBufferAttachement)hdrSceneTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                    (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
+            }
         }
 
         public void Dispose()

@@ -29,6 +29,7 @@ internal sealed partial class ImportedTextureStreamingManager
     /// </summary>
     private static bool CanReleasePublishedResidentPixels(ImportedTextureStreamingRecord record)
         => record.Source is not null &&
+           record.Format == ESizedInternalFormat.Rgba8 &&
            ReferenceEquals(record.Backend, VulkanDenseBackend) &&
            RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan;
 
@@ -73,17 +74,52 @@ internal sealed partial class ImportedTextureStreamingManager
         Func<bool> isCurrentTransition,
         VulkanResidentRehydrationUploadScheduler scheduleUpload)
     {
+        long startedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        int textureIdentity = record.Texture.TryGetTarget(out XRTexture2D? target)
+            ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(target)
+            : 0;
+
+        void LogStage(string stage)
+        {
+            string state;
+            lock (record.Sync)
+            {
+                state = $"published={record.PublishedGeneration} upload={record.UploadGeneration} " +
+                    $"ownsTransition={ReferenceEquals(record.PendingLoadCts, cts)} canceled={cts.IsCancellationRequested} " +
+                    $"reason='{record.PendingTransitionReason}'";
+            }
+            Debug.WriteAuxiliaryLog("texture-upload-timing.log",
+                $"[TextureRehydration.{stage}] texture={textureIdentity} source='{source.SourcePath}' generation={scheduledGeneration} " +
+                $"owner={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(cts)} " +
+                $"frame={frameId} collectFrame={Volatile.Read(ref _collectFrameId)} " +
+                $"elapsedMs={System.Diagnostics.Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds:F2} {state}");
+        }
+
+        void Cancel(string stage)
+        {
+            LogStage(stage);
+            ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId);
+        }
+
         void Fail(string reason)
         {
             Interlocked.Increment(ref s_sourceRehydrationFailureCount);
             ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId, failed: true, cancelReason: reason);
+            Debug.WriteAuxiliaryLog("texture-upload-timing.log",
+                $"[TextureRehydration.Failed] source='{source.SourcePath}' generation={scheduledGeneration} " +
+                $"frame={frameId} dimension={targetDimension} mips={expectedMipCount} format={expectedFormat} reason='{reason}'");
             Debug.TexturesWarning($"Texture rehydration from source '{source.SourcePath}' failed: {reason}");
         }
 
         void Reload()
         {
             if (!isCurrentTransition())
+            {
+                LogStage("InactiveBeforeDecode");
                 return;
+            }
+
+            LogStage("DecodeStarted");
 
             TextureStreamingResidentData residentData;
             try
@@ -92,7 +128,7 @@ internal sealed partial class ImportedTextureStreamingManager
             }
             catch (OperationCanceledException)
             {
-                ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId);
+                Cancel("DecodeCanceled");
                 return;
             }
             catch (Exception ex)
@@ -121,9 +157,13 @@ internal sealed partial class ImportedTextureStreamingManager
                     scheduledGeneration,
                     isCurrentTransition,
                     cts.Token,
-                    completed => ClearPendingTransition(record, cts, completed, targetDimension, frameId),
-                    error => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId, failed: true),
-                    () => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId));
+                    completed =>
+                    {
+                        LogStage("UploadCompleted");
+                        ClearPendingTransition(record, cts, completed, targetDimension, frameId);
+                    },
+                    error => Fail($"upload failed: {error.Message}"),
+                    () => Cancel("UploadCanceled"));
             }
             catch (Exception ex)
             {
@@ -133,12 +173,15 @@ internal sealed partial class ImportedTextureStreamingManager
 
             if (!queued)
                 Fail("the Vulkan rehydration upload was rejected before scheduling");
+            else
+                LogStage("UploadQueued");
         }
 
+        LogStage("Scheduled");
         RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
             RunOnce(Reload),
             error: ex => Fail($"{ex.GetType().Name}: {ex.Message}"),
-            canceled: () => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId));
+            canceled: () => Cancel("JobCanceled"));
     }
 
     /// <summary>

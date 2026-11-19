@@ -4,6 +4,8 @@ using System.Numerics;
 using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
+using XREngine.Rendering.Compute;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Vulkan.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
@@ -19,6 +21,20 @@ internal sealed partial class VulkanFrameLoop
     private long _presentNowMeshLastProgressTimestamp;
     private readonly HashSet<ulong> _presentNowMeshCompletedSignatures =
         new(MaxWarmMeshPreparationSignatures);
+
+    private static bool SameDeformationOutput(
+        in PendingMeshDraw cached,
+        in VulkanMeshRenderRequest current)
+    {
+        if (cached.SkinnedOutputSetIdentity != current.SkinnedOutputSetIdentity)
+            return false;
+
+        DeformationOutputWitness cachedWitness = cached.DeformationOutputWitness;
+        DeformationOutputWitness currentWitness = current.DeformationOutputWitness;
+        return !cachedWitness.IsValid && !currentWitness.IsValid ||
+               cachedWitness.IsValid && currentWitness.IsValid &&
+               cachedWitness.AllocationIdentity.Matches(currentWitness.AllocationIdentity);
+    }
 
     private VulkanPrimaryCommandRecordingResult RecordPreparedDesktopPrimary(
         ref VulkanFrameAttempt attempt,
@@ -1273,6 +1289,13 @@ internal sealed partial class VulkanFrameLoop
                     _quarantinedMeshOperationSignatures.Contains(
                         preparationSignature))
                 {
+                    if (request.RequiredForOutput)
+                    {
+                        string reason = $"Required mesh draw is quarantined: pass={request.PassIndex}, " +
+                            $"mesh='{request.Renderer.Mesh?.Name ?? "<unnamed>"}'.";
+                        throw new RequiredRenderCommandException(reason,
+                            new NotSupportedException(reason));
+                    }
                     quarantinedRequestCount++;
                     cohortMaterializationComplete = false;
                     continue;
@@ -1281,6 +1304,12 @@ internal sealed partial class VulkanFrameLoop
                 XRRenderPipelineInstance? pipeline = request.Pipeline;
                 if (pipeline is null)
                 {
+                    if (request.RequiredForOutput)
+                    {
+                        const string reason = "A required mesh draw lost its rendering pipeline.";
+                        throw new RequiredRenderCommandException(reason,
+                            new InvalidOperationException(reason));
+                    }
                     cohortMaterializationComplete = false;
                     continue;
                 }
@@ -1435,6 +1464,13 @@ internal sealed partial class VulkanFrameLoop
                         allowFrameOwnedAuthoringOperations,
                         out FrameOp? enqueuedOperation))
                 {
+                    if (request.RequiredForOutput)
+                    {
+                        string reason = $"Required mesh draw could not enter the frame operation queue: " +
+                            $"pass={request.PassIndex}, mesh='{request.Renderer.Mesh?.Name ?? "<unnamed>"}'.";
+                        throw new RequiredRenderCommandException(reason,
+                            new NotSupportedException(reason));
+                    }
                     _meshOperationWarmPreparationSignatures.Remove(
                         preparationSignature);
                     if (preparationSignature != 0)
@@ -1866,17 +1902,36 @@ internal sealed partial class VulkanFrameLoop
                 }
                 else
                 {
+                    PendingMeshDraw cachedDraw = template.Draw;
+                    if (!SameDeformationOutput(
+                            in cachedDraw, in request) ||
+                        !SkinningPrepassDispatcher.ValidateVulkanOutputWitness(
+                            request.Renderer.MeshRenderer,
+                            request.DeformationOutputWitness))
+                    {
+                        _preparedMeshOperationCohort.Invalidate();
+                        deferredReason =
+                            "Prepared mesh-operation cohort has no valid deformation output receipt.";
+                        return false;
+                    }
+
                     PendingMeshDraw draw = template.Draw with
                     {
                         ModelMatrix = request.ModelMatrix,
                         PreviousModelMatrix = request.PreviousModelMatrix,
                         SourceFlatDirection = request.SourceFlatDirection,
+                        EditorHighlightBits = request.EditorHighlightBits,
+                        EditorHighlightOutput = request.EditorHighlightOutput,
                         MaterialOverride = request.ResolvedMaterial.Material,
                         Instances = request.ExpandedInstances,
                         BillboardMode = request.BillboardMode,
                         TransformId = request.TransformId,
                         ViewSnapshot = request.ViewSnapshot,
                         ShadowCasterRelevance = request.ShadowCasterRelevance,
+                        CanonicalDrawIdentitySnapshot = request.CanonicalDrawIdentitySnapshot,
+                        ResidentTemplateHandle = request.ResidentTemplateHandle,
+                        DeformationOutputWitness = request.DeformationOutputWitness,
+                        SkinnedOutputSetIdentity = request.SkinnedOutputSetIdentity,
                     };
                     draw = draw with
                     {
@@ -1966,8 +2021,23 @@ internal sealed partial class VulkanFrameLoop
             {
                 ref readonly VulkanMeshRenderRequest request =
                     ref _meshOperationRequestScratch[index];
+                if (!SkinningPrepassDispatcher.ValidateVulkanOutputWitness(
+                        request.Renderer.MeshRenderer,
+                        request.DeformationOutputWitness))
+                {
+                    deferredReason =
+                        "Resident mesh template has no valid deformation output receipt.";
+                    return false;
+                }
+
                 VulkanResidentDrawTemplate template =
                     _residentTemplateHitScratch[index]!;
+                PendingMeshDraw templateDraw = template.NativeState.DrawTemplate;
+                if (!SameDeformationOutput(in templateDraw, in request))
+                {
+                    deferredReason = "Resident mesh template binds a different deformation output allocation.";
+                    return false;
+                }
                 XRRenderPipelineInstance pipeline = request.Pipeline!;
                 XRCamera? camera = pipeline.LastRenderingCamera ??
                     pipeline.LastSceneCamera;
@@ -1988,6 +2058,8 @@ internal sealed partial class VulkanFrameLoop
                     ModelMatrix = request.ModelMatrix,
                     PreviousModelMatrix = request.PreviousModelMatrix,
                     SourceFlatDirection = request.SourceFlatDirection,
+                    EditorHighlightBits = request.EditorHighlightBits,
+                    EditorHighlightOutput = request.EditorHighlightOutput,
                     MaterialOverride = request.ResolvedMaterial.Material,
                     Instances = request.ExpandedInstances,
                     BillboardMode = request.BillboardMode,
@@ -1998,6 +2070,8 @@ internal sealed partial class VulkanFrameLoop
                         request.CanonicalDrawIdentitySnapshot,
                     ResidentTemplateHandle =
                         _residentTemplateHandleScratch[index],
+                    DeformationOutputWitness = request.DeformationOutputWitness,
+                    SkinnedOutputSetIdentity = request.SkinnedOutputSetIdentity,
                 };
                 draw = draw with
                 {
@@ -2127,6 +2201,8 @@ internal sealed partial class VulkanFrameLoop
             !ReferenceEquals(current.ResolvedMaterial.Material, cached.Material) ||
             current.PreparationCompatibilitySignature !=
                 cached.PreparationCompatibilitySignature ||
+            (cached.IsReusable &&
+             !SameDeformationOutput(template.Draw, in current)) ||
             !ReferenceEquals(current.MaterialOverride, cached.MaterialOverride) ||
             !ReferenceEquals(current.RenderOptionsOverride,
                 cached.RenderOptionsOverride) ||
@@ -2405,12 +2481,14 @@ internal sealed partial class VulkanFrameLoop
                 context.PreserveSubmissionOrderBlock ||
                 queueThread.OrderedComputeBatchCapture is not null);
         }
+        operation.AttachTransientReadResource(
+            request.Draw.DeformationOutputWitness.Receipt);
         bool accepted = _commandRuntime.TryEnqueueContentFrameOperation(
             _frameOperationQueue,
             operation,
             passIndex,
             out _);
-        if (!accepted && request.IndexedIndirect is not null)
+        if (!accepted)
             operation.ReleaseAuthoringSnapshot();
         return accepted;
     }

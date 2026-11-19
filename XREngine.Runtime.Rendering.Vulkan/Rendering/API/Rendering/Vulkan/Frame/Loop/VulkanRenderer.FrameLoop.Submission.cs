@@ -331,6 +331,13 @@ namespace XREngine.Rendering.Vulkan
                             // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
                             // settlement flags before profiling/telemetry scopes can unwind.
                             attempt.Submitted = true;
+                            if (attempt.AcceptedFramePlan is { } acceptedPlan)
+                            {
+                                if (submitReceipt.LifetimePinsTransferred)
+                                    acceptedPlan.ReleaseDeformationReadLeasesAfterLifetimePinsTransferred();
+                                else
+                                    acceptedPlan.MarkNativeSubmissionAcceptedWithoutLifetimePins();
+                            }
                             attempt.AcceptedFramePlan?.CommitAttestedFrameViewHistory();
                             attempt.AcceptedFramePlan?.CommitRecordedAdvancedPickingSources();
                             _gpuDiagnosticReadbackSidecar?.MarkPrimarySubmissionAccepted(

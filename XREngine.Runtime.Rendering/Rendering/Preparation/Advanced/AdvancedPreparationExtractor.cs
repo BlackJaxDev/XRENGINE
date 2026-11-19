@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using XREngine.Rendering.Compute;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
 
@@ -771,6 +772,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 Ready: true);
             _preparedDeformationMeshes[commandIndex] = lastReady;
         }
+        _gpuDeformation.RetireAbsentMeshPreparation();
         return allReady;
     }
 
@@ -1690,7 +1692,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             EAdvancedVelocityValidityReason.HistoryReset,
             source.ForceCpuRendering,
             source.MaterialOverride,
-            source.RenderOptionsOverride);
+            LegacyEditorHighlightRenderingParameters.ResolveAuthoredOptions(
+                source.RenderOptionsOverride));
     }
 
     private static AdvancedSceneGeometryOffsets ResolveGeometryOffsets(

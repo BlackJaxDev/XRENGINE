@@ -1,9 +1,14 @@
+using System.Numerics;
+
 namespace XREngine.Rendering.Meshlets;
 
 /// <summary>Provides optional mesh optimization without native imports in the rendering kernel.</summary>
 public interface IMeshOptimizerBackend
 {
     string VersionKey { get; }
+    /// <summary>Writes one Mikk-compatible tangent for each triangle corner.</summary>
+    void GenerateTangents(Span<Vector4> destination, ReadOnlySpan<uint> indices, ReadOnlySpan<Vector3> positions, ReadOnlySpan<Vector3> normals, ReadOnlySpan<Vector2> texCoords)
+        => throw new NotSupportedException("The installed mesh processing backend does not support tangent generation.");
     nuint BuildMeshletsBound(nuint indexCount, uint maxVertices, uint maxTriangles);
     nuint BuildNativeMeshletClusters(MeshletBuildMode buildMode, MeshOptimizerMeshlet[] meshlets, uint[] meshletVertices, byte[] meshletTriangles, uint[] indices, float[] vertexPositions, nuint vertexCount, uint maxVertices, uint minTriangles, uint maxTriangles, float coneWeight, float splitFactor, float fillWeight);
     void OptimizeMeshletLevel(Span<uint> meshletVertices, Span<byte> meshletTriangles, int level);

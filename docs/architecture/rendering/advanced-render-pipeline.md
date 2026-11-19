@@ -69,7 +69,7 @@ below them. They do not enter the visibility buffer.
   - A slope-scaled depth bias pulls the decal toward the camera.
   - Both targets use premultiplied "over" blending. Alpha accumulates coverage, so a cleared
     texel means "no decal".
-- **Shading.** The native shading kernels (standard, Uber, Uber fallback, and both MSAA
+- **Shading.** The native shading kernels (standard, Uber, and both MSAA
   kernels) read the targets through set-1 bindings 69 and 70 when push flag bit 16 is set.
   They resolve `value = surface * (1 - coverage) + decal` for albedo, roughness, and metallic
   before lighting. The standard path applies the decal buffer before the projected decals
@@ -85,23 +85,21 @@ preamble define `XR_ADV_NATIVE_SHADING_FAMILY` selects the family:
 
 | Family | Define | Shades | When it compiles |
 |---|---|---|---|
-| Standard | `1` | Standard, masked, forward, and mirror materials. Native Uber pixels get a fallback while the Uber kernel is not ready. | Always. Advanced admission waits for it. |
-| Uber | `2` | Native Uber materials only. | In the background after the standard kernel is ready (prewarm, the default). With `XRE_ADVANCED_UBER_KERNEL_PREWARM=0`, only when the published scene has native Uber shading kernels. Admission never waits for it. |
+| Standard | `1` | Standard, masked, forward, and mirror materials. | Always. Advanced admission waits for it. |
+| Uber | `2` | Native Uber materials only. | After the standard kernel is ready. Admission waits for it only when the sealed scene has native Uber shading kernels. The default background prewarm can request it earlier. |
 
 - `VulkanAdvancedNativeShadingKernelFamilies` splits the published shading
   kernel records into a standard mask and an Uber mask by material layout hash.
   Each pass records indirect dispatches only for the kernels in its mask.
-- When the Uber kernel is ready, the standard pass runs first. A
+- When the sealed scene has Uber kernels, the standard pass runs first. A
   compute-to-compute barrier follows, then the Uber pass with its own repair
   dispatch.
-- Until the Uber kernel is ready, the standard pass also owns the Uber kernels
-  and sets the Uber fallback push flag. The fallback shades the material base
-  color and base texture (UV0) as a rough dielectric with the world ambient and
-  the directional lights. It never writes the magenta error color.
+- The standard pass does not shade Uber materials. A pending Uber kernel
+  defers a sealed scene that needs it. Standard-only scenes do not wait for it.
 - Multisample visibility resolves all samples of a pixel in one pass. A scene
-  with Uber kernels uses the combined multisample kernel (no family define) when
-  it is ready, and the standard multisample kernel with the fallback before
-  that. Only the kernel for the current visibility mode is requested.
+  with Uber kernels requires the combined multisample kernel (no family
+  define). A standard-only scene requires the standard multisample kernel.
+  Admission requests only the kernel for the current visibility mode.
 
 ### Scene registration identity reuse
 
@@ -612,6 +610,9 @@ Each declared resource has one ownership class (`EAdvancedRenderResourceOwnershi
 - An imported texture starts with a small loading placeholder: the red and blue filler checker for color slots and a flat normal for normal slots. The model importer marks this placeholder with `XRTexture2D.MarkAwaitingFirstResidency()`. While a texture is in this state, the Vulkan publication treats it as still loading, so the binding fallback shows instead of the checker. The first imported resident publication clears the state. This includes the filler data of a missing source file, so a missing texture still shows the checker. The state is runtime-only: it is not serialized and is not part of the asset or a cache key.
 - Readiness is backend state that the canonical table generations do not cover. The Vulkan runtime keeps a texture readiness generation that advances when the encoded reference of any texture row changes. The resident texture table stores the generation it wrote. A different generation blocks the unchanged reuse and the journal patch, and forces one full rewrite of the texture table in that frame slot.
 - Imported transparent materials draw in the late lane. `XRMaterial.ResolveAdvancedLatePassMetadata()` returns the explicit `AdvancedLatePassMetadata` when a material authors it. Otherwise it derives shared, immutable metadata from the transparency mode: `AlphaBlend` in the `TransparentForward` pass becomes sorted alpha, and `WeightedBlendedOit` in the weighted blended OIT pass becomes OIT. Derived metadata never requests the scene color snapshot, and it is not serialized, so no asset changes. A material that samples scene color must author its metadata.
+- A verified imported source surface can use `AdvancedLatePassMetadata.SourceSurfaceContract` to draw in source queue order after native opaque shading. The validator requires a canonical Uber Base pass, an imported queue above 2500, matching queue priority, and the supported pass options. The published frame package freezes the first scene-color consumer by sorted command index and stable key. One read scope holds that package while the late stage draws the prefix, copies the full HDR attachment to a dedicated Rgba16f array, and draws the suffix. The copy uses one layer on desktop and one layer per stereo eye. `_SourceSceneColor` samples the copied attachment with full framebuffer pixel coordinates and linear clamp filtering. The ordinary transparency copy is separate and cannot replace this source copy. A required source draw with an unsupported contract fails frame authoring; a missing render snapshot reports pending preparation.
+- A source-ordered command must have one primitive. The current command sorter and scene-color boundary cannot split different source materials inside one renderer. Admission rejects a multi-primitive source command before it draws.
+- Advanced frame admission checks each enabled primary mesh in passes 1, 3, and 4 against an exact compatible canonical submission in the same published package. It reports the missing count and the first pass, stable key, and reason before authoring. Supplemental and disabled Base draws do not require a primary submission. Verified source-ordered materials use pass 5 and the separate required source route.
 - The model importers resolve a material opacity: `Opacity` when present, otherwise one minus `TransparencyFactor` times `TransparentColor` (white when absent). A transparent color with a zero factor is opaque. An untextured material below the opaque threshold becomes lit forward glass (`LitColoredForward.fs`, opacity in `MatColor.a`). A textured blended material keeps `LitTexturedForward.fs` and gets `MaterialTransparency = 1 - opacity`; an unset uniform reads 0, so other users of that shader stay opaque. Imported blended materials use sorted alpha; weighted blended OIT needs the explicit Blended import option. Imported transparent surfaces cast no shadows and have no refraction.
 - A viewport whose scene is not due skips its swap (for example the desktop view with the VR mirror off, or a desktop held for XR frames). Its last rendering package and its picking leases would then pin one old scene publication. The table journals cannot reclaim past that pin, so the database rejects every later publication and each collect swap stalls. On each skipped swap, `XRViewport` therefore drops the rendering package pin (`RenderCommandCollection.ReleaseLaggingRenderingCanonicalPin`) and the picking leases (`XRRenderPipelineInstance.ReleaseLaggingAdvancedPickingRetention`) when they lag more than 16 publications behind the newest one. The next swap takes a new pin before the viewport renders its scene again.
 
@@ -655,13 +656,22 @@ use interpolated UVs.
 
 `AdvancedPackedVertexCodec` classifies UV0 through UV3 before half precision
 packing. `AdvancedDeformedVertex.Reserved2` stores four five-bit tile IDs and a
-validity bit at bit 31. IDs 0–15 identify the four-by-four tile grid; 16 means
+validity bit at bit 31. `Reserved3` stores the same classification after applying
+`1 - v` to each present UV channel. Both use full-precision source coordinates;
+half-precision UVs cannot classify integer tile boundaries reliably.
+IDs 0–15 identify the four-by-four tile grid; 16 means
 outside the grid, and 17 means a non-finite source UV. The record remains 64
 bytes. Its layout identity changes when this coverage data becomes required.
-Deformation preserves the field. Native material admission permits
+Deformation preserves both fields. Native material admission permits
 UV0 through UV3. Visibility and directional shadows use the same tile selector.
 Missing or invalid classification rejects the triangle and increments
 the existing decode diagnostic counter.
+
+Serialized source toon materials set `_SourceUdimFlipV` because their Unity model
+import flips V. The flag selects the reflected tile codes for vertex-mode
+coverage and converts the interpolated V coordinate for pixel-mode coverage.
+Authored triangle coverage uses the same convention and includes it in its
+cache identity. Generic materials default to the original coordinates.
 
 ## Source Flat Lighting Direction
 

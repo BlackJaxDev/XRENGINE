@@ -35,7 +35,8 @@ internal unsafe partial class VkMeshRenderer
             EPointShadowMaterialKind pointShadowKind,
             bool useDepthNormalVariants,
             ERenderClipDepthRange clipDepthRange,
-            ERenderClipSpaceYDirection clipYDirection)
+            ERenderClipSpaceYDirection clipYDirection,
+            EditorHighlightRasterOutput editorHighlightOutput)
         {
             Material = material;
             ShaderStateRevision = shaderStateRevision;
@@ -61,6 +62,7 @@ internal unsafe partial class VkMeshRenderer
             UseDepthNormalVariants = useDepthNormalVariants;
             ClipDepthRange = clipDepthRange;
             ClipYDirection = clipYDirection;
+            EditorHighlightOutput = editorHighlightOutput;
         }
 
         public XRMaterial Material { get; }
@@ -87,6 +89,7 @@ internal unsafe partial class VkMeshRenderer
         public bool UseDepthNormalVariants { get; }
         public ERenderClipDepthRange ClipDepthRange { get; }
         public ERenderClipSpaceYDirection ClipYDirection { get; }
+        public EditorHighlightRasterOutput EditorHighlightOutput { get; }
 
         public bool Equals(GeneratedProgramState other)
             => ReferenceEquals(Material, other.Material) &&
@@ -112,7 +115,8 @@ internal unsafe partial class VkMeshRenderer
                PointShadowKind == other.PointShadowKind &&
                UseDepthNormalVariants == other.UseDepthNormalVariants &&
                ClipDepthRange == other.ClipDepthRange &&
-               ClipYDirection == other.ClipYDirection;
+               ClipYDirection == other.ClipYDirection &&
+               EditorHighlightOutput == other.EditorHighlightOutput;
 
         public override bool Equals(object? obj)
             => obj is GeneratedProgramState other && Equals(other);
@@ -146,6 +150,7 @@ internal unsafe partial class VkMeshRenderer
                 Add(ref hash, UseDepthNormalVariants);
                 Add(ref hash, (int)ClipDepthRange);
                 Add(ref hash, (int)ClipYDirection);
+                Add(ref hash, EditorHighlightOutput.GetHashCode());
                 return hash;
             }
         }

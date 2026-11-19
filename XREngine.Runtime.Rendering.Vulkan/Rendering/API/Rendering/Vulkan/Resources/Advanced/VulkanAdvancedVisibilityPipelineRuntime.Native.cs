@@ -34,25 +34,22 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     /// Returns the native Uber kernels for a scene that has Uber shading kernels. The first
     /// call creates the programs and requests their compile; it does not wait. Call it only
     /// after the standard family is ready, so the Uber compile never delays standard shading.
-    /// A pipeline that is not ready stays default; the standard kernel then uses its fallback.
     /// Only the kernel for the current visibility mode is requested, so a single-sample view
     /// never compiles the multisample kernel, and the reverse.
     /// </summary>
-    internal void TryGetUberShadingPipelines(bool multisample,
-        out VulkanAdvancedComputePipeline uber, out VulkanAdvancedComputePipeline combinedMultisample)
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetUberShadingPipelines(bool multisample,
+        out VulkanAdvancedComputePipeline uber, out VulkanAdvancedComputePipeline combinedMultisample,
+        out string reason)
     {
         uber = default;
         combinedMultisample = default;
         if (multisample)
         {
-            if (TryGetNativeComputePipeline(ShadeCombinedMultisampleProgramIndex, ShadeMultisampleShaderPath,
-                    out combinedMultisample, out _) != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                combinedMultisample = default;
-            return;
+            return TryGetNativeComputePipeline(ShadeCombinedMultisampleProgramIndex,
+                ShadeMultisampleShaderPath, out combinedMultisample, out reason);
         }
-        if (TryGetNativeComputePipeline(ShadeUberProgramIndex, ShadeShaderPath, out uber, out _) !=
-            VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            uber = default;
+        return TryGetNativeComputePipeline(ShadeUberProgramIndex, ShadeShaderPath,
+            out uber, out reason);
     }
 
     /// <summary>Program name and preamble prefix for one native program slot.</summary>
@@ -66,7 +63,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             _ => (path, string.Empty),
         };
 
-    /// <summary>Uber kernel slots: optional, created lazily, and never part of admission.</summary>
+    /// <summary>Uber kernel slots are selected only when the scene needs them.</summary>
     private static bool IsOptionalNativeShadingProgram(int index)
         => index is ShadeUberProgramIndex or ShadeCombinedMultisampleProgramIndex;
 

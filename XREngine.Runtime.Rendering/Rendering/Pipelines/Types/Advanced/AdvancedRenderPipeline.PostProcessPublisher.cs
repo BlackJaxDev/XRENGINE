@@ -54,7 +54,6 @@ public partial class AdvancedRenderPipeline
                 (resolvedAtmosphere.Enabled && resolvedAtmosphere.MaxDistance > 0.0f) ||
                 cpuAutoExposure;
 
-            var prefs = RuntimeEngine.EditorPreferences;
             bool webActive = Shaders.Compilation.WebPipelineRasterProgram.IsActive;
             // Browser builds substitute web post inputs that this key does not track.
             perFrameInputs |= webActive;
@@ -66,11 +65,10 @@ public partial class AdvancedRenderPipeline
                     GetTexture<XRTexture>(HDRSceneTextureName),
                     GetTexture<XRTexture>(BloomBlurTextureName),
                     GetTexture<XRTexture>(DepthViewTextureName),
-                    GetTexture<XRTexture>(StencilViewTextureName),
                     GetTexture<XRTexture>(AutoExposureTextureName),
                     GetTexture<XRTexture>(AtmosphereColorTextureName),
                     GetTexture<XRTexture>(VolumetricFogColorTextureName),
-                    GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)),
+                    owner.EditorHighlightModule is null ? null : GetTexture<XRTexture>(EditorHighlightMaskTextureName)),
                 new PostProcessSettingsKey(
                     vignette, vignette?.BindingGeneration ?? 0UL,
                     color, color?.BindingGeneration ?? 0UL,
@@ -84,11 +82,6 @@ public partial class AdvancedRenderPipeline
                 color?.UseGpuAutoExposureThisFrame ?? false,
                 RuntimeEngine.Rendering.Settings.DefaultLuminance,
                 ResolveOutputHDR(),
-                prefs,
-                prefs is null ? default : new Vector3((float)prefs.HoverOutlineColor.R, (float)prefs.HoverOutlineColor.G, (float)prefs.HoverOutlineColor.B),
-                prefs is null ? default : new Vector3((float)prefs.SelectionOutlineColor.R, (float)prefs.SelectionOutlineColor.G, (float)prefs.SelectionOutlineColor.B),
-                RuntimeRenderingHostServices.DebugDrawing.HoverOutlineEnabled ||
-                    RuntimeRenderingHostServices.DebugDrawing.SelectionOutlineEnabled,
                 webActive,
                 webActive && GetTexture<XRTexture>(BloomBlurTextureName) is null,
                 instance is not null && GlobalIlluminationDiagnosticPresentation.IsCurrentFrame(instance));
@@ -99,11 +92,10 @@ public partial class AdvancedRenderPipeline
         XRTexture? HdrScene,
         XRTexture? BloomBlur,
         XRTexture? DepthView,
-        XRTexture? StencilView,
         XRTexture? AutoExposure,
         XRTexture? AtmosphereColor,
         XRTexture? VolumetricFogColor,
-        XRTexture? VisibilityMetadata);
+        XRTexture? EditorHighlightMask);
 
     private readonly record struct PostProcessSettingsKey(
         VignetteSettings? Vignette, ulong VignetteGeneration,
@@ -124,10 +116,6 @@ public partial class AdvancedRenderPipeline
         bool UseGpuAutoExposure,
         Vector3 DefaultLuminance,
         bool OutputHdr,
-        object? EditorPreferences,
-        Vector3 HoverOutlineColor,
-        Vector3 SelectionOutlineColor,
-        bool EditorOutlineEnabled,
         bool WebActive,
         bool WebBloomMissing,
         bool GlobalIlluminationDiagnostic);

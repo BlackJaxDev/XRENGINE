@@ -345,6 +345,8 @@ internal ref struct VulkanFrameAttempt
     /// renderer-terminal failure.
     /// </summary>
     public Exception? RejectedFailure;
+    /// <summary>Retains the recording deferral reason for Release telemetry without an exception.</summary>
+    public string? RecordingDeferralDetail;
     /// <summary>An expected pre-acquire retry that rejected this frame without an exception.</summary>
     public VulkanPresentNowReadinessRetry PresentNowReadinessRetry;
     /// <summary>

@@ -100,6 +100,17 @@ uniform float _CameraAngleMin;
 uniform float _CameraAngleMax;
 //@property(name="_AngleMinAlpha", display="Angular Minimum Alpha", mode=static, default="0.0")
 uniform float _AngleMinAlpha;
+uniform vec4 _SourceStylizedSpecularSettings;
+uniform vec4 _SourceStylizedSpecularLayers;
+uniform vec4 _SourceStylizedSpecularMask;
+uniform vec4 _SourceStylizedSpecularOcclusion;
+uniform vec4 _SourceStylizedSpecularTint;
+uniform vec4 _SourceHighColorTex_ST;
+uniform vec4 _SourceHighColorMask_ST;
+//@property(name="_SourceHighColorTex", display="Source High Color", slot=texture)
+uniform sampler2D _SourceHighColorTex;
+//@property(name="_SourceHighColorMask", display="Source High Color Mask", slot=texture, semantic=mask)
+uniform sampler2D _SourceHighColorMask;
 #endif
 
 //@category("Advanced")
@@ -334,6 +345,10 @@ uniform vec4 _CubeMapMask_ST;
 uniform int _CubeMapMaskChannel;
 //@property(name="_CubeMapMaskInvert", display="Invert Cubemap Mask", mode=static, default="0.0")
 uniform float _CubeMapMaskInvert;
+//@property(name="_CubeMapMaskGlobalMask", display="Cubemap Global Mask", mode=static, default="0")
+uniform int _CubeMapMaskGlobalMask;
+//@property(name="_CubeMapMaskGlobalMaskBlendType", display="Cubemap Global Mask Blend", mode=static, default="2")
+uniform int _CubeMapMaskGlobalMaskBlendType;
 //@property(name="_RimEnviroIntensity", display="Environmental Rim", mode=static, default="0.0")
 uniform float _RimEnviroIntensity;
 //@property(name="_RimEnviroWidth", display="Environmental Rim Width", mode=static, default="0.45")
@@ -487,6 +502,10 @@ uniform sampler2D _Rim2Mask;
 uniform vec4 _Rim2Mask_ST;
 //@property(name="_Rim2Params", display="Rim 2 Params", mode=static, default="vec4(0.5, 1.0, 0.0, 1.0)")
 uniform vec4 _Rim2Params;
+uniform vec4 _SourceRim2Settings;
+uniform vec4 _SourceRim2ColorSettings;
+uniform vec4 _SourceRim2Strengths;
+uniform vec4 _SourceRim2Tint;
 //@property(name="_DepthRimColor", display="Depth Rim Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _DepthRimColor;
 //@property(name="_DepthRimStrength", display="Depth Rim Strength", mode=static, default="0.0")
@@ -568,6 +587,14 @@ uniform float _DecalRotationSpeed3;
 uniform vec4 _DecalBlendParams0;
 //@property(name="_DecalBlendParams1", display="Decal 1 Blend", mode=static, default="vec4(0.0, 1.0, 1.0, 0.0)")
 uniform vec4 _DecalBlendParams1;
+//@property(name="_SourceDecalAlphaParams0", display="Source Decal 0 Alpha", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceDecalAlphaParams0;
+//@property(name="_SourceDecalAlphaParams1", display="Source Decal 1 Alpha", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceDecalAlphaParams1;
+//@property(name="_SourceDecalAlphaParams2", display="Source Decal 2 Alpha", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceDecalAlphaParams2;
+//@property(name="_SourceDecalAlphaParams3", display="Source Decal 3 Alpha", mode=static, default="vec4(0.0)")
+uniform vec4 _SourceDecalAlphaParams3;
 //@property(name="_DecalBlendParams2", display="Decal 2 Blend", mode=static, default="vec4(0.0, 1.0, 1.0, 0.0)")
 uniform vec4 _DecalBlendParams2;
 //@property(name="_DecalBlendParams3", display="Decal 3 Blend", mode=static, default="vec4(0.0, 1.0, 1.0, 0.0)")
@@ -635,6 +662,22 @@ uniform vec4 _Emission1Mask_ST;
 uniform vec4 _Emission2Mask_ST;
 //@property(name="_Emission3Mask_ST", display="Emission 3 Mask Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
 uniform vec4 _Emission3Mask_ST;
+//@property(name="_Emission0MaskPan", display="Emission 0 Mask Pan", mode=animated, default="vec2(0.0)")
+uniform vec2 _Emission0MaskPan;
+//@property(name="_Emission1MaskPan", display="Emission 1 Mask Pan", mode=animated, default="vec2(0.0)")
+uniform vec2 _Emission1MaskPan;
+//@property(name="_Emission2MaskPan", display="Emission 2 Mask Pan", mode=animated, default="vec2(0.0)")
+uniform vec2 _Emission2MaskPan;
+//@property(name="_Emission3MaskPan", display="Emission 3 Mask Pan", mode=animated, default="vec2(0.0)")
+uniform vec2 _Emission3MaskPan;
+//@property(name="_Emission0MaskUV", display="Emission 0 Mask UV", mode=static, default="0")
+uniform int _Emission0MaskUV;
+//@property(name="_Emission1MaskUV", display="Emission 1 Mask UV", mode=static, default="0")
+uniform int _Emission1MaskUV;
+//@property(name="_Emission2MaskUV", display="Emission 2 Mask UV", mode=static, default="0")
+uniform int _Emission2MaskUV;
+//@property(name="_Emission3MaskUV", display="Emission 3 Mask UV", mode=static, default="0")
+uniform int _Emission3MaskUV;
 //@property(name="_EmissionSlotColor0", display="Emission 0 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _EmissionSlotColor0;
 //@property(name="_EmissionSlotColor1", display="Emission 1 Color", mode=animated, default="vec4(1.0)")
@@ -667,6 +710,14 @@ uniform int _EmissionSlotUv1;
 uniform int _EmissionSlotUv2;
 //@property(name="_EmissionSlotUv3", display="Emission 3 UV", mode=static, default="0")
 uniform int _EmissionSlotUv3;
+//@property(name="_EmissionSlotCenterOutSpeed0", display="Emission 0 Center Out Speed", mode=animated, default="0.0")
+uniform float _EmissionSlotCenterOutSpeed0;
+//@property(name="_EmissionSlotCenterOutSpeed1", display="Emission 1 Center Out Speed", mode=animated, default="0.0")
+uniform float _EmissionSlotCenterOutSpeed1;
+//@property(name="_EmissionSlotCenterOutSpeed2", display="Emission 2 Center Out Speed", mode=animated, default="0.0")
+uniform float _EmissionSlotCenterOutSpeed2;
+//@property(name="_EmissionSlotCenterOutSpeed3", display="Emission 3 Center Out Speed", mode=animated, default="0.0")
+uniform float _EmissionSlotCenterOutSpeed3;
 //@property(name="_EmissionSlotModifiers0", display="Emission 0 Modifiers", mode=static, default="vec4(0.0)")
 uniform vec4 _EmissionSlotModifiers0;
 //@property(name="_EmissionSlotModifiers1", display="Emission 1 Modifiers", mode=static, default="vec4(0.0)")

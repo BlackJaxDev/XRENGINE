@@ -4,6 +4,44 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanResourceRuntime
 {
+    internal bool TryCaptureBufferAllocationIdentity(
+        XRDataBuffer owner,
+        out GpuBufferAllocationIdentity identity)
+    {
+        identity = default;
+        if (owner is null ||
+            WrapperLookup.GetOrCreate(owner, generateNow: false) is not VkDataBuffer buffer ||
+            !buffer.TryCaptureComputeBufferSnapshot(
+                allowSynchronousUpload: false,
+                out VulkanComputeBufferBinding snapshot) ||
+            !TryCaptureNativeBufferRange(
+                owner,
+                0u,
+                snapshot.Range,
+                BufferUsageFlags.StorageBufferBit,
+                out VulkanNativeBufferRange range,
+                out _))
+        {
+            return false;
+        }
+
+        identity = new GpuBufferAllocationIdentity(
+            owner,
+            range.Buffer.Handle,
+            range.Offset,
+            range.Length,
+            range.LifetimeSlot.Index,
+            range.NativeGeneration,
+            (ulong)range.Usage);
+        if (range.Length != snapshot.Range)
+        {
+            identity = default;
+            return false;
+        }
+
+        return true;
+    }
+
     internal bool TryCaptureNativeBufferRange(XRDataBuffer owner, ulong offset, ulong length, BufferUsageFlags requiredUsage, out VulkanNativeBufferRange range, out string reason)
     {
         range = default;

@@ -1115,6 +1115,26 @@ public partial class AdvancedRenderPipeline
         return texture;
     }
 
+    private XRTexture CreateSourceOrderedSceneCopyTexture()
+    {
+        uint layers = Stereo ? 2u : 1u;
+        XRTexture2DArray texture = XRTexture2DArray.CreateFrameBufferTexture(
+            layers, InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
+            EFrameBufferAttachment.ColorAttachment0);
+        texture.Resizable = false;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        if (Stereo)
+            texture.OVRMultiViewParameters = new(0, layers);
+        texture.MinFilter = ETexMinFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.UWrap = ETexWrapMode.ClampToEdge;
+        texture.VWrap = ETexWrapMode.ClampToEdge;
+        texture.SamplerName = SourceOrderedSceneCopyTextureName;
+        texture.Name = SourceOrderedSceneCopyTextureName;
+        return texture;
+    }
+
     private XRTexture CreateTransparentAccumTexture()
     {
         if (Stereo)

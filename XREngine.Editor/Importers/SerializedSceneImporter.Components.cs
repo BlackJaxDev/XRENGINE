@@ -1177,8 +1177,13 @@ internal static partial class SerializedSceneImporter
                     SerializedMaterialImportResult result = SerializedMaterialImporter.ImportWithReport(materialPath, state.Context);
                     foreach (string warning in result.Warnings)
                         Debug.LogWarning(warning);
-                    return result.Material
-                        ?? throw new SourceVisualImportException($"Unity material importer returned no material for '{materialPath}'.");
+                    if (result.Material is not null)
+                        return result.Material;
+
+                    string failure = result.ConversionReport is { Failures.Count: > 0 } report
+                        ? string.Join("; ", report.Failures)
+                        : $"Unity material importer returned no material for '{materialPath}'.";
+                    throw new SourceVisualImportException(failure);
                 }
                 catch (Exception ex) when (IsRecoverableMaterialImportFailure(ex))
                 {

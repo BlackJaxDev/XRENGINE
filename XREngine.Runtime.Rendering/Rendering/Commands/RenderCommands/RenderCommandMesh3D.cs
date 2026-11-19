@@ -744,9 +744,13 @@ namespace XREngine.Rendering.Commands
                     previousModelMatrix,
                     _renderMaterialOverride,
                     _renderInstances,
-                    renderOptionsOverride: _renderRenderOptionsOverride,
+                    renderOptionsOverride: RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
+                        IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true }
+                            ? LegacyEditorHighlightRenderingParameters.ResolveAuthoredOptions(_renderRenderOptionsOverride)
+                            : _renderRenderOptionsOverride,
                     canonicalDrawIdentitySnapshot: _renderCanonicalDrawIdentitySnapshot,
-                    sourceFlatDirection: _renderSourceFlatDirection);
+                    sourceFlatDirection: _renderSourceFlatDirection,
+                    editorHighlightBits: _renderEditorHighlightBits);
             }
             finally
             {
@@ -967,7 +971,7 @@ namespace XREngine.Rendering.Commands
                 _renderModelHistoryReason,
                 _renderForceCpuRendering,
                 _renderMaterialOverride,
-                _renderRenderOptionsOverride,
+                LegacyEditorHighlightRenderingParameters.ResolveAuthoredOptions(_renderRenderOptionsOverride),
                 _renderSourceFlatBasis);
 
         /// <summary>Returns the command inputs sealed before swap callbacks run.</summary>

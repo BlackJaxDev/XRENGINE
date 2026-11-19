@@ -87,12 +87,47 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
     protected override void Execute()
     {
+        if (!IsNativeSceneConsumer(Stage))
+        {
+            ExecuteStage();
+            return;
+        }
+
+        try
+        {
+            ExecuteStage();
+        }
+        catch (Exception exception) when (exception is not
+            RenderResourcePreparationPendingException and not RequiredRenderCommandException)
+        {
+            RetainUnexpectedRequiredStageFailure(exception.Message);
+            throw new RequiredRenderCommandException(
+                $"Required Advanced stage '{Stage}' failed during authoring.", exception);
+        }
+    }
+
+    private void RetainUnexpectedRequiredStageFailure(string reason)
+    {
+        if (ActivePipelineInstance.RenderState.HasRequiredOffscreenAuthoringFailure)
+            return;
+
+        ActivePipelineInstance.RenderState.RejectRequiredOffscreenAuthoring(reason);
+        PublishStageDiagnostic(
+            EAdvancedVisibilityStageBackendPhase.Complete,
+            EAdvancedProfileStageDiagnosticState.RejectedAdmission,
+            reason);
+    }
+
+    private void ExecuteStage()
+    {
         XRRenderPipelineInstance.RenderingState state =
             ActivePipelineInstance.RenderState;
         if (state.WorldSnapshot is not RenderWorldSnapshot world)
         {
             string snapshotType = state.WorldSnapshot?.GetType().FullName ?? "null";
-            ReportExecutionPrerequisiteRejection($"Render world snapshot is unavailable (actual: {snapshotType}).");
+            ReportExecutionPrerequisiteRejection(
+                $"Render world snapshot is unavailable (actual: {snapshotType}).",
+                retryable: true);
             return;
         }
 
@@ -242,7 +277,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             failureReason = "The active renderer does not expose the runtime renderer host contract.";
             if (reportRejections)
-                ReportExecutionPrerequisiteRejection(failureReason);
+                ReportExecutionPrerequisiteRejection(failureReason, retryable: false);
             return false;
         }
         renderer = rendererHost;
@@ -251,7 +286,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             string pipelineType = ActivePipelineInstance.Pipeline?.GetType().FullName ?? "null";
             failureReason = $"The active pipeline does not host the Advanced stage family (actual: {pipelineType}).";
             if (reportRejections)
-                ReportExecutionPrerequisiteRejection(failureReason);
+                ReportExecutionPrerequisiteRejection(failureReason, retryable: false);
             return false;
         }
         AdvancedRenderPipeline pipeline = familyHost.AdvancedStageFamilyDefinition;
@@ -274,7 +309,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             failureReason = "The authored decal operation changed after frame collection; recollect the selected command graph.";
             if (reportRejections)
-                ReportExecutionPrerequisiteRejection(failureReason);
+                ReportExecutionPrerequisiteRejection(failureReason, retryable: true);
             return false;
         }
         bool isMinimalVisibilityOutput =
@@ -294,7 +329,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             failureReason = $"Ambient occlusion provider '{ambientOcclusionProvider.ProviderName}' has no native Advanced compute implementation.";
             if (reportRejections)
-                ReportAdmissionRejection(failureReason);
+                ReportAdmissionRejection(failureReason, retryable: false);
             return false;
         }
         GlobalIlluminationPlan giPlan = GlobalIlluminationPlan ?? pipeline.GlobalIlluminationPlan;
@@ -307,7 +342,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             failureReason = giPlan.Support.Diagnostic;
             if (reportRejections)
-                ReportAdmissionRejection(failureReason);
+                ReportAdmissionRejection(failureReason, retryable: false);
             return false;
         }
 
@@ -321,7 +356,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             {
                 failureReason = "The Advanced output binding was unavailable before visibility preparation in this frame.";
                 if (reportRejections)
-                    ReportAdmissionRejection(failureReason);
+                    ReportAdmissionRejection(failureReason, retryable: true);
                 return false;
             }
 
@@ -331,7 +366,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             {
                 failureReason = "No viewport is available to refresh the Advanced output binding.";
                 if (reportRejections)
-                    ReportAdmissionRejection(failureReason);
+                    ReportAdmissionRejection(failureReason, retryable: true);
                 return false;
             }
 
@@ -344,19 +379,25 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 failureReason = binding.FailureReason
                     ?? "The Advanced output binding remained unbound or stale after refresh.";
                 if (reportRejections)
-                    ReportAdmissionRejection(failureReason);
+                    ReportAdmissionRejection(failureReason, retryable: true);
                 return false;
             }
         }
 
         if (!rendererHost.TryGetBackendCapability<IAdvancedVisibilityStageBackendCapability>(
                 out IAdvancedVisibilityStageBackendCapability? stageBackend) ||
-            stageBackend is null ||
-            !stageBackend.SupportsAdvancedVisibilityStage(Stage))
+            stageBackend is null)
         {
             failureReason = "The active Advanced visibility backend does not support this stage.";
             if (reportRejections)
-                ReportStageCapabilityRejection();
+                ReportStageCapabilityRejection(failureReason, retryable: false);
+            return false;
+        }
+        if (!stageBackend.SupportsAdvancedVisibilityStage(Stage))
+        {
+            failureReason = "The active Advanced visibility backend is not ready for this stage.";
+            if (reportRejections)
+                ReportStageCapabilityRejection(failureReason, retryable: true);
             return false;
         }
         visibility = stageBackend;
@@ -376,11 +417,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             failureReason = $"The active resource generation has no realized '{targetName}' target.";
             if (reportRejections)
-            {
-                ReportExecutionPrerequisiteRejection(failureReason);
-                Debug.Out(
-                    $"Advanced visibility stage '{Stage}' has no realized '{targetName}' target in the active resource generation.");
-            }
+                ReportExecutionPrerequisiteRejection(failureReason, retryable: true);
             return false;
         }
 
@@ -596,7 +633,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
             : null;
 
-    private void ReportExecutionPrerequisiteRejection(string reason)
+    private void ReportExecutionPrerequisiteRejection(string reason, bool retryable)
     {
         ActivePipelineInstance.RenderState.RejectRequiredOffscreenAuthoring(reason);
         PublishStageDiagnostic(
@@ -609,8 +646,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             "[AdvancedPipeline] Stage '{0}' cannot execute: {1}",
             Stage,
             reason);
+        ThrowRequiredStageFailure(reason, retryable);
     }
-    private void ReportAdmissionRejection(string reason)
+    private void ReportAdmissionRejection(string reason, bool retryable)
     {
         ActivePipelineInstance.RenderState.RejectRequiredOffscreenAuthoring(reason);
         PublishStageDiagnostic(
@@ -620,24 +658,28 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         Debug.RenderingWarningEvery(
             $"AdvancedVisibility.Admission.{Stage}.{reason}",
             TimeSpan.FromSeconds(30),
-            "[AdvancedPipeline] Stage '{0}' is waiting for a current Advanced output binding: {1}",
+            "[AdvancedPipeline] Stage '{0}' cannot author the current scene: {1}",
             Stage,
             reason);
+        ThrowRequiredStageFailure(reason, retryable);
     }
 
-    private void ReportStageCapabilityRejection()
+    private void ReportStageCapabilityRejection(string reason, bool retryable)
     {
-        const string reason = "The active Advanced visibility backend does not support this stage.";
         ActivePipelineInstance.RenderState.RejectRequiredOffscreenAuthoring(reason);
         PublishStageDiagnostic(
             EAdvancedVisibilityStageBackendPhase.Complete,
-            EAdvancedProfileStageDiagnosticState.RejectedCapability,
+            retryable
+                ? EAdvancedProfileStageDiagnosticState.RejectedAdmission
+                : EAdvancedProfileStageDiagnosticState.RejectedCapability,
             reason);
         Debug.RenderingWarningEvery(
             $"AdvancedVisibility.StageCapability.{Stage}",
             TimeSpan.FromSeconds(30),
-            "[AdvancedPipeline] Stage '{0}' is not supported by the active Advanced visibility backend.",
-            Stage);
+            "[AdvancedPipeline] Stage '{0}' cannot use the active Advanced visibility backend: {1}",
+            Stage,
+            reason);
+        ThrowRequiredStageFailure(reason, retryable);
     }
 
     private void ReportRejectedPhase(
@@ -656,6 +698,20 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             Stage,
             phase,
             failureReason);
+        ThrowRequiredStageFailure(failureReason, retryable: true);
+    }
+
+    private void ThrowRequiredStageFailure(string reason, bool retryable)
+    {
+        if (!IsNativeSceneConsumer(Stage))
+            return;
+
+        if (retryable)
+            throw new RenderResourcePreparationPendingException(reason);
+
+        throw new RequiredRenderCommandException(
+            $"Required Advanced stage '{Stage}' cannot author the scene.",
+            new InvalidOperationException(reason));
     }
 
     private void PublishStageDiagnostic(

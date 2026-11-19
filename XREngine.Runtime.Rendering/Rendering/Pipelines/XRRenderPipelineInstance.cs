@@ -8,6 +8,7 @@ using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.RenderGraph;
@@ -80,7 +81,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         _occlusionViewOwnership = OcclusionViewOwnership.Independent(InstanceId);
         MeshRenderCommands.SetOwnerPipeline(this);
+        _editorPickingReadbackCompleted = CompleteEditorPicking;
         CacheClearing += CancelPendingAdvancedPicking;
+        CacheClearing += CancelPendingEditorPicking;
+        CommandChainExecutionAborted += AbortEditorPickingCandidate;
     }
 
     /// <summary>
@@ -597,7 +601,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         long outputCompletionCollectGeneration,
         long? consumedCollectGenerationOverride,
         out XRGpuFence? completionFence,
-        out bool outputCompletionAuthoringStarted)
+        out bool outputCompletionAuthoringStarted,
+        bool suppressDeformationPrepass = false,
+        bool vrEyeRender = false)
     {
         completionFence = null;
         outputCompletionAuthoringStarted = false;
@@ -625,7 +631,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 consumedCollectGenerationOverride,
                 out historyOwnershipTransferred,
                 out completionFence,
-                out outputCompletionAuthoringStarted);
+                out outputCompletionAuthoringStarted,
+                suppressDeformationPrepass,
+                vrEyeRender);
         }
         finally
         {
@@ -655,7 +663,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         long? consumedCollectGenerationOverride,
         out bool historyOwnershipTransferred,
         out XRGpuFence? completionFence,
-        out bool outputCompletionAuthoringStarted)
+        out bool outputCompletionAuthoringStarted,
+        bool suppressDeformationPrepass,
+        bool vrEyeRender)
     {
         historyOwnershipTransferred = false;
         completionFence = null;
@@ -893,6 +903,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     return ReportExactOutputPreconditionFailure(in outputCompletionRequest, packageFailure ?? "The backend-ready frame package is invalid.");
                 }
 
+                PublishEditorPickingCandidate(
+                    activeCommands.RenderingBackendReadyPackage);
+
                 BeginRenderGraphValidationFrame();
 
                 if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
@@ -910,6 +923,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 {
                     using (AbstractRenderer.Current?.EnterRenderPipelineFrameResourceScope(this, viewport))
                     {
+                        SkinningPrepassDispatcher dispatcher = SkinningPrepassDispatcher.Instance;
+                        using SkinningPrepassDispatcher.DeformationInvocationScope deformationInvocation =
+                            RuntimeEngine.Rendering.State.IsVulkan
+                                ? dispatcher.PushDeformationInvocation()
+                                : default;
+                        if (RuntimeEngine.Rendering.State.IsVulkan &&
+                            !suppressDeformationPrepass &&
+                            SkinningPrepassDispatcher.OwnsDeformation(vrEyeRender, RenderState.ShadowPass))
+                        {
+                            using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(
+                                       (int)EDefaultRenderPass.PreRender))
+                            {
+                                dispatcher.RunVisible(ActiveMeshRenderCommands);
+                            }
+                        }
+
                         long consumptionStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                         DirectionalShadowPipelineDiagnostics.Record(
                             EDirectionalShadowPipelineReceiptStage.BeforeCommandChainExecute,
@@ -918,7 +947,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                             targetFBO);
                         try
                         {
+                            BeginEditorPickingCandidateAuthoring();
                             Pipeline.CommandChain.Execute();
+                            EndEditorPickingCandidateExecution();
                         }
                         catch
                         {
@@ -934,6 +965,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     return ReportExactOutputPreconditionFailure(
                         in outputCompletionRequest,
                         exception.Message);
+                }
+                catch (RequiredRenderCommandException exception)
+                    when (exception.InnerException is RenderResourcePreparationPendingException)
+                {
+                    return ReportExactOutputPreconditionFailure(
+                        in outputCompletionRequest,
+                        exception.InnerException.Message);
                 }
 
                 if (RenderState.HasRequiredOffscreenAuthoringFailure)
@@ -970,6 +1008,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                             out completionFence);
                     completionReservationOwned = false;
                 }
+                CompleteEditorPickingCandidateAuthoring();
                 }
                 finally
                 {
@@ -1105,6 +1144,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         BackendReadyFramePackageValidationResult result =
             BackendReadyFramePackageValidator.Validate(package, in context);
         bool accepted = result.Accepted;
+        string? primaryOwnerFailure = null;
+        if (accepted && Pipeline?.ResolveAdvancedStageFamily() is not null &&
+            package.MissingPrimaryNativeOwnerCount > 0)
+        {
+            accepted = false;
+            primaryOwnerFailure =
+                $"The Advanced frame package has {package.MissingPrimaryNativeOwnerCount} enabled primary meshes without exact native submissions. First pass={package.FirstMissingPrimaryNativePass}, key={package.FirstMissingPrimaryNativeStableQueryKey}, reason={package.FirstMissingPrimaryNativeReason}.";
+        }
         if (!accepted && Debug.ShouldLogEvery(
                 "RenderFramePackage.ValidationMismatch",
                 TimeSpan.FromMilliseconds(250)))
@@ -1128,7 +1175,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 activeRegistry?.LastDescriptorMutationResourceName ?? "<none>",
                 result.Failure);
         }
-        failureReason = accepted ? null : result.Failure.ToString();
+        failureReason = accepted ? null : primaryOwnerFailure ?? result.Failure.ToString();
         RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageValidation(
             System.Diagnostics.Stopwatch.GetTimestamp() - started,
             accepted,

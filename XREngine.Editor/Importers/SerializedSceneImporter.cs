@@ -613,6 +613,15 @@ internal static partial class SerializedSceneImporter
 
             bool importedModel = SupportedExternalModelExtensions.Contains(
                 Path.GetExtension(hierarchy.SourcePath));
+            if (importedModel && materialArraySize is null &&
+                hierarchy.ComponentsByFileId.TryGetValue(group.Key, out XRComponent? sourceComponent) &&
+                sourceComponent is ModelComponent { Model: { } sourceModel })
+            {
+                SortedDictionary<int, int> sourceSlots = GetDrawableSourceMaterialSlots(sourceModel);
+                if (sourceSlots.Count > 0)
+                    materialArraySize = sourceSlots.Keys.Max() + 1;
+            }
+
             if (importedModel && materialArraySize is int authoredSize)
             {
                 state.Context.IgnorePrefabMaterialOverridesOutsideArraySize(

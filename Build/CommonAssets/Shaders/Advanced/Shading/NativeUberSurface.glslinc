@@ -359,12 +359,31 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
 
 void XR_UBER_EmissionSlot(XRUberCoordinates c, uint textureSlot, uint maskSlot,
     vec4 st, vec4 maskSt, vec4 tint, vec4 parameters, vec2 pan, int selector,
+    vec2 maskPan, int maskSelector, float centerOutSpeed,
     vec4 modifiers, vec4 sampling, vec3 directColor, vec3 cameraPosition,
-    vec3 normal, vec3 viewDir, inout vec3 base, inout vec3 emission)
+    vec3 normal, vec3 normalDx, vec3 normalDy,
+    vec3 viewDir, vec3 viewDx, vec3 viewDy,
+    inout vec3 base, inout vec3 emission)
 {
     if (parameters.x == 0.0) return;
-    vec4 texel = XR_UBER_SurfaceTexture(c, textureSlot, selector, st, pan, vec4(1.0));
-    vec4 maskValue = XR_UBER_SurfaceTexture(c, maskSlot, selector, maskSt, vec2(0.0), vec4(1.0));
+    bool sourceLayered = UBER_F(_SourceLayeredEmission) > 0.5;
+    bool centerOutSample = sourceLayered && modifiers.y > 0.5;
+    vec4 texel;
+    if (centerOutSample)
+    {
+        float center = 0.5 + abs(dot(normal, viewDir)) * 0.5;
+        float centerX = 0.5 + abs(dot(normal + normalDx, viewDir + viewDx)) * 0.5;
+        float centerY = 0.5 + abs(dot(normal + normalDy, viewDir + viewDy)) * 0.5;
+        vec2 uv = vec2(center) * st.xy + vec2(centerOutSpeed * c.time * 0.05);
+        vec2 dx = vec2(centerX - center) * st.xy;
+        vec2 dy = vec2(centerY - center) * st.xy;
+        texel = XR_UBER_Sample(textureSlot, uv, dx, dy, vec4(1.0));
+    }
+    else
+        texel = XR_UBER_SurfaceTexture(c, textureSlot, selector, st, pan, vec4(1.0));
+    vec4 maskValue = XR_UBER_SurfaceTexture(c, maskSlot,
+        sourceLayered ? maskSelector : selector, maskSt,
+        sourceLayered ? maskPan * 0.05 : vec2(0.0), vec4(1.0));
     float mask = maskValue[int(clamp(sampling.y, 0.0, 3.0) + 0.5)];
     mask = mix(mask, 1.0 - mask, clamp(sampling.z, 0.0, 1.0));
     float pulse = mix(1.0, 0.5 + 0.5 * sin(c.time * parameters.z), clamp(parameters.y, 0.0, 1.0));
@@ -374,7 +393,9 @@ void XR_UBER_EmissionSlot(XRUberCoordinates c, uint textureSlot, uint maskSlot,
     vec2 sourceUv, sourceDx, sourceDy;
     XR_UBER_CoverageUv(c, selector, sourceUv, sourceDx, sourceDy);
     float uvX = sourceUv.x * st.x + st.z + pan.x * c.time;
-    float center = modifiers.y > 0.5 ? smoothstep(0.0, 0.5, abs(fract(uvX + c.time * parameters.z) - 0.5)) : 1.0;
+    float center = !sourceLayered && modifiers.y > 0.5
+        ? smoothstep(0.0, 0.5, abs(fract(uvX + c.time * parameters.z) - 0.5))
+        : 1.0;
     if (parameters.w != 0.0) source = XR_UBER_hueShift(source, parameters.w * c.time);
     float sourceAlpha = UBER_F(_SourceLayeredEmission) > 0.5 ? texel.a : 1.0;
     float globalMask = modifiers.z > 0.5

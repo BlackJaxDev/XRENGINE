@@ -1948,6 +1948,7 @@ namespace XREngine.Rendering
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
                 _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
                 _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
+                _renderPipeline.ReleaseLaggingEditorPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -1967,6 +1968,7 @@ namespace XREngine.Rendering
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
                 _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
                 _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
+                _renderPipeline.ReleaseLaggingEditorPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -2425,7 +2427,8 @@ namespace XREngine.Rendering
                 // only read the results of the owning output. A two-pass VR eye uses this mono
                 // path, so it passes its eye identity, not the stereo flag.
                 var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-                if (!Suppress3DSceneRendering &&
+                if (!RuntimeEngine.Rendering.State.IsVulkan &&
+                    !Suppress3DSceneRendering &&
                     SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
                     SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
@@ -2524,7 +2527,9 @@ namespace XREngine.Rendering
                             consumedCollectGenerationOverride,
                         completionFence: out completionFence,
                         outputCompletionAuthoringStarted:
-                            out outputCompletionAuthoringStarted);
+                            out outputCompletionAuthoringStarted,
+                        suppressDeformationPrepass: Suppress3DSceneRendering,
+                        vrEyeRender: IsVrEyeOutput);
                 }
                 finally
                 {
@@ -2689,7 +2694,8 @@ namespace XREngine.Rendering
             // The stereo pipeline is installed as the current pipeline while it
             // dispatches, so that the dispatches use that pipeline's frame snapshot pool
             // and frame-operation context instead of allocating new snapshots each frame.
-            if (!Suppress3DSceneRendering &&
+            if (!RuntimeEngine.Rendering.State.IsVulkan &&
+                !Suppress3DSceneRendering &&
                 SkinningPrepassDispatcher.OwnsDeformation(vrEyeRender: true, shadowPass: false))
             {
                 using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
@@ -2718,7 +2724,9 @@ namespace XREngine.Rendering
                 outputCompletionCollectGeneration: -1L,
                 consumedCollectGenerationOverride,
                 out _,
-                out _);
+                out _,
+                suppressDeformationPrepass: Suppress3DSceneRendering,
+                vrEyeRender: true);
 
             if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);
@@ -3866,6 +3874,88 @@ namespace XREngine.Rendering
                     completed,
                     out request,
                     out failure);
+        }
+
+        /// <summary>
+        /// Queues one editor identity pixel from the accepted render package.
+        /// The result names the exact collected mesh owner when one exists.
+        /// </summary>
+        public bool TryPickEditorAsync(
+            Vector2 normalizedViewportPosition,
+            uint viewIndex,
+            Action<EditorPickingResult> completed,
+            out EditorPickingRequest? request,
+            out string? failure)
+        {
+            if (!RuntimeEngine.IsRenderThread)
+            {
+                if (_destroyed || RuntimeRenderingHostServices.FrameTiming.IsShuttingDown ||
+                    RuntimeEngine.Windows.Count == 0)
+                {
+                    request = null;
+                    failure = "Editor picking cannot be queued after viewport destruction or during shutdown.";
+                    return false;
+                }
+
+                var queued = RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
+                    () =>
+                    {
+                        bool accepted = TryPickEditorAsync(normalizedViewportPosition,
+                            viewIndex, completed, out EditorPickingRequest? renderRequest,
+                            out string? renderFailure);
+                        return (accepted, renderRequest, renderFailure);
+                    },
+                    "XRViewport.EditorPickingReadback",
+                    RenderThreadJobKind.Readback);
+                request = queued.renderRequest;
+                failure = queued.renderFailure;
+                return queued.accepted;
+            }
+
+            int width = InternalWidth;
+            int height = InternalHeight;
+            if (width <= 0 || height <= 0 ||
+                !float.IsFinite(normalizedViewportPosition.X) ||
+                !float.IsFinite(normalizedViewportPosition.Y) ||
+                normalizedViewportPosition.X < 0.0f ||
+                normalizedViewportPosition.X > 1.0f ||
+                normalizedViewportPosition.Y < 0.0f ||
+                normalizedViewportPosition.Y > 1.0f)
+            {
+                request = null;
+                failure = "The editor picking coordinate is outside the active internal viewport.";
+                return false;
+            }
+
+            AbstractRenderer? renderer = Window?.Renderer ?? AbstractRenderer.Current;
+            if (renderer is null)
+            {
+                request = null;
+                failure = "The viewport has no renderer for editor picking readback.";
+                return false;
+            }
+
+            uint x = (uint)Math.Min(width - 1, (int)(normalizedViewportPosition.X * width));
+            uint y = (uint)Math.Min(height - 1, (int)(normalizedViewportPosition.Y * height));
+            RuntimeGraphicsApiKind backend = renderer.GetAdvancedRenderPipelineCapabilities().Backend;
+            if (backend == RuntimeGraphicsApiKind.Unknown)
+                backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
+            if (backend != RuntimeGraphicsApiKind.Unknown &&
+                RenderClipSpacePolicy.FramebufferTextureYDirection(backend) ==
+                    ERenderClipSpaceYDirection.YDown)
+                y = (uint)(height - 1) - y;
+
+            AdvancedPickingQuery query = new(x, y, viewIndex);
+            if (!TryEnterRenderPipelineReadbackScope(out IDisposable? readbackScope))
+            {
+                request = null;
+                failure = "The viewport's render-resource generation is not available for editor picking readback.";
+                return false;
+            }
+
+            using (readbackScope)
+                return _renderPipeline.TryQueueEditorPicking(renderer, in query,
+                    completed, out request, out failure);
         }
 
         //TODO: provide PickScene with a List<(XRComponent item, object? data)> pool to take from and release to. As few allocations as possible for constant picking every frame.

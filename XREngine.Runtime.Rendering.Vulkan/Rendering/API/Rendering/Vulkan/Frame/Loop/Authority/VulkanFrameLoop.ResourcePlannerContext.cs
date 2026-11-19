@@ -493,6 +493,7 @@ internal sealed partial class VulkanFrameLoop
         FrameOpContext context = CreateFrameOpContext(pipeline, viewport) with
         {
             ResourceRegistry = generation.Registry,
+            PassMetadata = generation.PassMetadata,
             DisplayWidth = generation.Key.DisplayWidth,
             DisplayHeight = generation.Key.DisplayHeight,
             InternalWidth = generation.Key.InternalWidth,
@@ -501,6 +502,7 @@ internal sealed partial class VulkanFrameLoop
             DescriptorGeneration = VulkanFramePlanner.ResolveFrameOpContextDescriptorGeneration(generation.Registry),
             ResourceRegistrySignatureSnapshot = VulkanFramePlanner.ComputeResourceRegistrySignature(generation.Registry),
             ResourceRegistryInstanceRevisionSnapshot = generation.Registry.InstanceRevision,
+            SubmissionQueueFamily = ResolveFrameOpSubmissionQueueFamily(generation.PassMetadata),
         };
         context = VulkanFramePlanner.RefreshFrameOpContextRecordingFingerprint(context);
 

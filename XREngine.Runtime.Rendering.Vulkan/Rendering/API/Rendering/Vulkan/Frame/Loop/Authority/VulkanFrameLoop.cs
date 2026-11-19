@@ -609,6 +609,18 @@ internal sealed partial class VulkanFrameLoop
             {
                 AddDesktopSettlementFailure(ref settlementFailure, failure);
             }
+
+            if (!attempt.Submitted && attempt.AcceptedFramePlan is not null)
+            {
+                try
+                {
+                    ResetIncompleteAcceptedPresentNowPlan(ref attempt);
+                }
+                catch (Exception failure)
+                {
+                    AddDesktopSettlementFailure(ref settlementFailure, failure);
+                }
+            }
         }
 
         try
@@ -655,6 +667,9 @@ internal sealed partial class VulkanFrameLoop
                 attempt.SubmitResult,
                 attempt.PresentResult,
                 terminalException);
+        if (terminalFailure.Detail is null &&
+            attempt.Reason == EDesktopFrameReason.RecordingDeferred)
+            terminalFailure = terminalFailure with { Detail = attempt.RecordingDeferralDetail };
         attempt.PublishTerminalResult(
             new VulkanDesktopFrameTerminalResult(
                 outcome,

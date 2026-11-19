@@ -127,10 +127,7 @@ public sealed partial class AdvancedGpuDeformationResources
         if (pending is not null &&
             (pending.Unsupported || !MatchesPendingSource(pending, _meshPreparationPolicy) ||
              (ReferenceEquals(pending.Mesh, mesh) &&
-              pending.TopologyGeneration != topologyGeneration) ||
-             (renderFrame >= pending.LastOwnerVisitFrame &&
-              renderFrame - pending.LastOwnerVisitFrame >
-                AbsentMeshPreparationRetirementFrames)))
+              pending.TopologyGeneration != topologyGeneration)))
             _pendingMeshPreparation = pending = null;
         if (pending is not null &&
             !ReferenceEquals(pending.Mesh, mesh))
@@ -344,6 +341,32 @@ public sealed partial class AdvancedGpuDeformationResources
         }
         pending = null!;
         return false;
+    }
+
+    /// <summary>Retires an absent owner after every current source has received its preparation visit.</summary>
+    internal void RetireAbsentMeshPreparation()
+    {
+        PendingGpuDeformationMeshPreparation? pending = _pendingMeshPreparation;
+        ulong renderFrame = RuntimeEngine.Rendering.State.RenderFrameId;
+        // Output preparation retries can be farther apart than this age limit.
+        // A complete source walk must refresh a present owner before this check.
+        if (pending is not null && renderFrame >= pending.LastOwnerVisitFrame &&
+            renderFrame - pending.LastOwnerVisitFrame > AbsentMeshPreparationRetirementFrames)
+            _pendingMeshPreparation = null;
+    }
+
+    /// <summary>Captures CPU preparation progress while the shared preparation owner is locked.</summary>
+    internal AdvancedMeshPreparationDiagnosticSnapshot GetMeshPreparationDiagnostics()
+    {
+        PendingGpuDeformationMeshPreparation? pending = _pendingMeshPreparation;
+        return new(
+            pending?.Mesh.Name, pending?.Stage ?? -3,
+            pending?.VertexIndex ?? 0, pending?.VertexCount ?? 0,
+            pending?.ShapeIndex ?? 0, pending?.ActiveBlendshapeCount ?? 0,
+            pending?.PackedRecordCount ?? 0u, pending?.RecordCount ?? 0u,
+            _meshPreparationBudgetFrame, pending?.LastOwnerVisitFrame ?? 0UL,
+            _meshPreparationBudgetStarted == 0 ? 0.0 : Stopwatch.GetElapsedTime(_meshPreparationBudgetStarted).TotalMilliseconds,
+            _meshSlices.Count, pending is null || MatchesPendingSource(pending, _meshPreparationPolicy));
     }
 
     private bool OutOfMeshPreparationBudget()

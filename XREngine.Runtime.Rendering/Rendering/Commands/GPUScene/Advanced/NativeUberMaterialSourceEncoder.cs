@@ -12,6 +12,7 @@ public static class NativeUberMaterialSourceEncoder
     private static readonly string[] EmissionUvs = ["_EmissionSlotUv0", "_EmissionSlotUv1", "_EmissionSlotUv2", "_EmissionSlotUv3"];
     private static readonly string[] EmissionModifiers = ["_EmissionSlotModifiers0", "_EmissionSlotModifiers1", "_EmissionSlotModifiers2", "_EmissionSlotModifiers3"];
     private static readonly string[] DecalBlendParams = ["_DecalBlendParams0", "_DecalBlendParams1", "_DecalBlendParams2", "_DecalBlendParams3"];
+    private static readonly string[] SourceDecalAlphaParams = ["_SourceDecalAlphaParams0", "_SourceDecalAlphaParams1", "_SourceDecalAlphaParams2", "_SourceDecalAlphaParams3"];
     private static readonly string[] DecalUvs = ["_DecalUvMode0", "_DecalUvMode1", "_DecalUvMode2", "_DecalUvMode3"];
     private static readonly string[] DecalModifiers = ["_DecalSlotModifiers0", "_DecalSlotModifiers1", "_DecalSlotModifiers2", "_DecalSlotModifiers3"];
     private static readonly string[] DecalFx = ["_DecalSlotFx0", "_DecalSlotFx1", "_DecalSlotFx2", "_DecalSlotFx3"];
@@ -347,6 +348,11 @@ public static class NativeUberMaterialSourceEncoder
                 return false;
             }
         }
+        if (IsNonZero(material, "_SourceSceneColorMode"))
+        {
+            reason = "Native Uber has no ordered scene-color sample for this source surface.";
+            return false;
+        }
         if (material.IsUberFeatureEnabled("surface-extensions", false) &&
             (IsNonZero(material, "_DistanceFade") || IsNonZero(material, "_AlphaFresnel") ||
              IsNonZero(material, "_AlphaAngular") || IsNonZero(material, "_AlphaDither") ||
@@ -367,8 +373,11 @@ public static class NativeUberMaterialSourceEncoder
             reason = "Native Uber forced light direction or color has no matching native operation.";
             return false;
         }
+        Vector4 rim2Shape = material.Parameter<ShaderVector4>("_Rim2Params")?.Value ?? Vector4.Zero;
+        Vector4 sourceRim2 = material.Parameter<ShaderVector4>("_SourceRim2Settings")?.Value ?? Vector4.Zero;
         if (material.IsUberFeatureEnabled("layered-matcap-rim", false) &&
-            IsNonZero(material, "_Rim2Enable"))
+            (IsNonZero(material, "_Rim2Enable") ||
+             rim2Shape.W > 0f && sourceRim2.X <= 0.5f))
         {
             reason = "Native Uber second rim layer has no matching native operation.";
             return false;
@@ -406,7 +415,23 @@ public static class NativeUberMaterialSourceEncoder
         for (int slot = 0; slot < 4; ++slot)
         {
             Vector4 decalBlend = material.Parameter<ShaderVector4>(DecalBlendParams[slot])?.Value ?? Vector4.Zero;
-            if (material.IsUberFeatureEnabled("layered-decals", false) && decalBlend.Y > 0f)
+            Vector4 sourceAlpha = material.Parameter<ShaderVector4>(SourceDecalAlphaParams[slot])?.Value ?? Vector4.Zero;
+            if (material.IsUberFeatureEnabled("layered-decals", false) &&
+                (!IsFinite(sourceAlpha) ||
+                 sourceAlpha.W != MathF.Truncate(sourceAlpha.W) ||
+                 sourceAlpha.W is < 0f or > 8f ||
+                 (sourceAlpha.W != 0f &&
+                  (sourceAlpha.X != MathF.Truncate(sourceAlpha.X) ||
+                   sourceAlpha.X is < 0f or > 6f ||
+                   sourceAlpha.Y != MathF.Truncate(sourceAlpha.Y) ||
+                   sourceAlpha.Y is < 0f or > 3f ||
+                   sourceAlpha.Z is not (0f or 1f)))))
+            {
+                reason = $"Native Uber source decal slot {slot} requires finite integer alpha operation (0-6), selector (0-3), tiled flag (0 or 1), and marker (0-8).";
+                return false;
+            }
+            if (material.IsUberFeatureEnabled("layered-decals", false) &&
+                (decalBlend.Y > 0f || (sourceAlpha.W > 0.5f && sourceAlpha.X > 0f)))
             {
                 if (!Allowed(material, DecalUvs[slot], [0, 1, 2, 3], out reason))
                     return false;

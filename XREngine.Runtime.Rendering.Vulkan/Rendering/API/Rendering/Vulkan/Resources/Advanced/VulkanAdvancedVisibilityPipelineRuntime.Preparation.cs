@@ -637,8 +637,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         AddProgramIdentity(ref hash, _maskedMultiviewRasterProgram);
         AddProgramIdentity(ref hash, _opaqueMultiviewMeshRasterProgram);
         AddProgramIdentity(ref hash, _maskedMultiviewMeshRasterProgram);
-        // The optional Uber kernels are created after admission, only for scenes that need
-        // them. Their lazy creation must not invalidate the admitted family.
+        // Uber kernels stay outside global standard-family readiness. A sealed
+        // scene that uses Uber materials checks its selected kernel at admission.
         for (int i = 0; i < _nativeComputePrograms.Length; i++)
             if (!IsOptionalNativeShadingProgram(i) && i != ShadeStandardMultisampleProgramIndex)
                 AddProgramIdentity(ref hash, _nativeComputePrograms[i]);

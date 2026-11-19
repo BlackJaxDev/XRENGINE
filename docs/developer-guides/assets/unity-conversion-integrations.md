@@ -292,10 +292,13 @@ invisible placeholder.
 
 For external-model prefab instances with generation 2 file IDs, material-slot
 overrides are checked after target resolution. Overrides for absent model
-objects or indices beyond an explicit `m_Materials.Array.size` are stale and
-do not require the old material. Cleanup applies only to the owning prefab
-instance. Missing materials in retained slots still fail a strict import. A
-final dependency check runs before the composed hierarchy is published.
+objects or indices beyond the renderer material array length are stale and do
+not require the old material. An explicit `m_Materials.Array.size` sets that
+length. Otherwise, the imported source renderer slot count sets it. A stale
+element must not add a renderer slot or repeat mesh geometry. Cleanup applies
+only to the owning prefab instance. Missing materials in retained slots still
+fail a strict import. A final dependency check runs before the composed
+hierarchy is published.
 
 ## Supported Source Assets
 
@@ -346,9 +349,16 @@ modifications are diagnosed and ignored.
 
 `tangentSpace.blendShapeNormalImportMode` in the `ModelImporter` metadata sets `ModelImportOptions.ImportBlendShapeNormals`. Mode 2 ignores blendshape normals: shapes then move positions only and keep the base normals and tangents. Other modes use the authored normal deltas; mode 1 does not recalculate them. Both FBX producers honor this setting, and it is part of the model cache identity.
 
+`tangentSpace.tangentImportMode` sets `ModelImportOptions.TangentImportPolicy`.
+Mode 0 imports authored tangents. Mode 3 calculates Mikk-compatible tangents with
+the selected FBX importer. Other source modes use the default engine policy until
+their calculation rules are supported. The selected policy is part of the model
+cache identity. Mode 3 fails if the native generator cannot run.
+
 ### Forced Anisotropic Filtering
 
 When the current quality level in `ProjectSettings/QualitySettings.asset` sets `anisotropicTextures: 2`, the importer raises mipmapped, non-point textures to at least anisotropy level 9. A texture with level 0 keeps anisotropy off.
+
 
 ### Source Rim Blur
 
@@ -384,6 +394,10 @@ The importer stores that list on `HumanoidAuthoredTPoseComponent` at the model r
 Humanoid clip tracks use the FBX contract, which mirrors X and faces +Z. Unity prefab imports mirror Z and face -Z. `HumanoidComponent` converts the requested Body frame by the yaw between `BodyAxes.Forward` and +Z. Without this conversion, Body pitch and roll have the opposite sign on the avatar. The pose audit common space still assumes the FBX contract, so prefab avatars report a 180 degree yaw difference there. Compare their local rotations instead.
 
 ## PhysBone Conversion
+
+Explicit source collider lists remain active when `allowCollision` is false.
+That source setting controls unlisted global colliders. It does not remove
+colliders assigned directly to the chain.
 
 The importer converts VRChat PhysBone components to `PhysicsChainComponent`. VRChat does not publish the solver equations. The mapping and the chain settings below come from black-box measurement of plain test chains in Unity Play mode.
 
@@ -515,10 +529,15 @@ monochromatic, cap, multiplier, and addition controls. It does not include
 shadow visibility or ambient occlusion. Zero strength retains the previous
 emission result. This operation does not change other emission sources.
 
-The source toon converter sets `_WorldAmbientOcclusionStrength` to 0, because the
-source shaders read only their own AO maps and no screen-space AO texture. The
-uber shader mixes screen AO toward 1 by this value, in standard and source light
-modes. Set it above 0 to let world AO darken a converted material.
+The source toon converter sets `_WorldAmbientOcclusionStrength` to 1. Converted
+materials use the full camera ambient occlusion result, including GTAO. Set the
+AO mode, strength, and enabled state in the camera post-processing settings.
+Both native Advanced and forward Uber shading apply camera diffuse AO to
+source indirect light, wrapped light, and environment rim lighting. Camera
+specular occlusion also affects Mochie and clear-coat probe reflections.
+Direct light and emission remain separate. Source material AO maps remain
+separate. A camera with AO
+disabled supplies neutral occlusion, so this default does not darken the material.
 
 The serialized prefab cache version invalidates output that lacks this mapping.
 
@@ -655,7 +674,8 @@ creating a source-runtime emulation layer.
 
 ## Manifest, Reimport, And Failure Policy
 
-Every imported Unity prefab embeds a `SerializedPrefabImportManifest`. It records the
+Each imported Unity prefab has editor evidence in a `SerializedPrefabImportManifest`
+sidecar. This evidence is separate from the native runtime asset. It records the
 entry source, Unity project root and editor version, completion tier,
 SHA-256-fingerprinted reached dependencies, GUID/local-file-ID identity,
 dependency kind, referring property, timestamps, source length, conversion
@@ -684,7 +704,15 @@ recorded as non-blocking intentional conversion loss and are never resolved to
 runtime methods by reflection. Animation manifest schema 3 likewise stores
 only bounded digests for opaque source payloads.
 
+The manifest also retains partial per-feature conversion coverage for selected
+avatar components. Each record names the source component, observed native
+mapping or loss, and any known missing capability. Unclassified causes remain
+unknown. Old manifests default to unassessed coverage. See
+[conversion coverage records](unity-script-host.md#conversion-coverage-records)
+for the schema and current limits. This reporting adds no runtime behavior.
+
 ## Related Documentation
 
+- [Unity Script Host](unity-script-host.md)
 - [Model Import](model-import.md)
 - [Poiyomi Toon Material Conversion](../rendering/poiyomi-toon-material-conversion.md)

@@ -45,11 +45,6 @@ namespace XREngine.Rendering
             IgnoreTopPercent = 3,
         }
 
-        public ColorGradingSettings()
-        {
-            Contrast = 1.0f;
-        }
-
         private ExposureControlMode _exposureMode = ExposureControlMode.Artist;
         private float _physicalApertureFNumber = 2.8f;
         private float _physicalShutterSpeedSeconds = 1.0f / 60.0f;
@@ -58,7 +53,7 @@ namespace XREngine.Rendering
         private float _physicalExposureScale = 1.0f;
 
         private float _contrast = 0.0f;
-        private float _contrastUniformValue;
+        private float _contrastUniformValue = 1.0f;
         private float _exposureTransitionSpeed = 0.5f;
         private ColorF3 _tint = new(1.0f, 1.0f, 1.0f);
         private bool _autoExposure = true;

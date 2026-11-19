@@ -23,17 +23,15 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
     internal VulkanAdvancedComputePipeline FoveatedQuadFill { get; init; }
 
     /// <summary>
-    /// Native Uber shading kernel. It is prepared only for scenes with Uber kernels, after
-    /// the standard kernels are ready. While it is not current, the standard kernel shades
-    /// Uber pixels with a base-color fallback. It is not part of <see cref="IsCurrent"/>.
+    /// Native Uber shading kernel. A single-sample scene with Uber materials
+    /// requires this kernel before the native closure is admitted.
     /// </summary>
     internal VulkanAdvancedComputePipeline ShadeUber { get; init; }
 
     /// <summary>
     /// Combined multisample kernel (standard and Uber in one pass, because one pixel can
-    /// hold samples of both families). It is prepared only for scenes with Uber kernels.
-    /// While it is not current, <see cref="ShadeMultisample"/> shades Uber samples with the
-    /// base-color fallback. It is not part of <see cref="IsCurrent"/>.
+    /// hold samples of both families). A multisample scene with Uber materials
+    /// requires this kernel before the native closure is admitted.
     /// </summary>
     internal VulkanAdvancedComputePipeline ShadeMultisampleCombined { get; init; }
 
@@ -42,6 +40,9 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
         RvcShadeletTelemetry.IsCurrent && FoveatedQuadFill.IsCurrent;
 
     /// <summary>Checks the shading program selected by the sealed visibility mode.</summary>
-    internal bool IsCurrentFor(bool multisampleVisibility)
-        => IsCurrent && (!multisampleVisibility || ShadeMultisample.IsCurrent);
+    internal bool IsCurrentFor(bool multisampleVisibility, bool requiresUber)
+        => IsCurrent &&
+           (multisampleVisibility
+               ? requiresUber ? ShadeMultisampleCombined.IsCurrent : ShadeMultisample.IsCurrent
+               : !requiresUber || ShadeUber.IsCurrent);
 }

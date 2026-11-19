@@ -26,7 +26,8 @@ public static class SourceToonRenderStateConverter
 
     public static SourceToonRenderStateConversion Convert(
         SerializedMaterialDocument document,
-        ICollection<MaterialConversionDiagnostic> diagnostics)
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        EAdvancedSourceSurfaceContract sourceSurfaceContract = EAdvancedSourceSurfaceContract.None)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(diagnostics);
@@ -35,7 +36,8 @@ public static class SourceToonRenderStateConverter
         int presetQueue = GetPresetQueue(preset);
         int sourceQueue = document.CustomRenderQueue >= 0 ? document.CustomRenderQueue : presetQueue;
         bool hornsSoftOutline = IsHornsSoftOutlineSource(document);
-        int queuePriority = sourceQueue - (hornsSoftOutline ? TransparentQueue : presetQueue);
+        bool sourceOrdered = sourceSurfaceContract != EAdvancedSourceSurfaceContract.None;
+        int queuePriority = sourceQueue - (hornsSoftOutline || sourceOrdered ? TransparentQueue : presetQueue);
         bool alphaToCoverage = GetBool(document, "_AlphaToCoverage", false);
         float cutoff = Math.Clamp(GetFloat(document, "_Cutoff", GetPresetCutoff(preset)), 0.0f, 1.0f);
         float polygonOffsetFactor = GetFloat(document, "_OffsetFactor", 0.0f);
@@ -65,7 +67,7 @@ public static class SourceToonRenderStateConverter
                               IsSourcePassEnabled(document, "Outline");
         bool forwardAddEnabled = IsSourcePassEnabled(document, "Add");
 
-        int baseRenderPass = hornsSoftOutline
+        int baseRenderPass = hornsSoftOutline || sourceOrdered
             ? (int)EDefaultRenderPass.TransparentForward
             : ResolveRenderPass(preset, alphaToCoverage);
         List<MaterialPassDefinition> passes = new(9)

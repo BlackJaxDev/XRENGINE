@@ -157,7 +157,7 @@ public partial class DefaultRenderPipeline
         ColorGradingSettings? color = GetSettings<ColorGradingSettings>(state);
         if (color is not null && (color.ExposureMode != ColorGradingSettings.ExposureControlMode.Artist ||
             !float.IsFinite(color.Exposure) || !float.IsFinite(color.Gamma) || color.Exposure < 0 || color.Gamma <= 0 ||
-            color.Contrast != 1 || color.Saturation != 1 || color.Brightness != 1 || color.Hue != 1 ||
+            color.Contrast != 0 || color.Saturation != 1 || color.Brightness != 1 || color.Hue != 1 ||
             (Vector3)color.Tint != Vector3.One))
             return "Use finite artist exposure and positive gamma with neutral color grading.";
         pass = CommonPostProcessStages.TonemappingStageKey;

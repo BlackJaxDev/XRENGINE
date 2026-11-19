@@ -349,6 +349,7 @@ public sealed partial class BackendReadyFramePackage
         PopulateCanonicalDiagnosticReadbackRequests();
         BuildDiagnosticReadbackPlan();
 
+
         // Keep the package lease through prepared-frame capture.  The native
         // consumer obtains its own completion-owned lease there; releasing this
         // one early made the supposedly canonical stream fall back to mutable

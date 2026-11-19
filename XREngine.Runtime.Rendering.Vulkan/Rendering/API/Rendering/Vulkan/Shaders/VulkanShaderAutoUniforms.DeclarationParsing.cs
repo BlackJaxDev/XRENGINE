@@ -215,11 +215,16 @@ internal static partial class VulkanShaderAutoUniforms
 
         HashSet<uint> usedBindings = CollectLayoutBindings(source);
         uint candidate = GetAutoUniformBindingBase(shaderType);
+        uint bindingEnd = candidate + AutoUniformBindingWindowSize;
         uint[] bindings = new uint[count];
         for (int index = 0; index < count; index++)
         {
-            while (usedBindings.Contains(candidate))
+            while (candidate < bindingEnd && usedBindings.Contains(candidate))
                 candidate++;
+
+            if (candidate >= bindingEnd)
+                throw new InvalidOperationException(
+                    $"Vulkan {shaderType} auto-uniform bindings exceed the reserved range {GetAutoUniformBindingBase(shaderType)}..{bindingEnd - 1} for {count} frequency blocks.");
 
             bindings[index] = candidate;
             usedBindings.Add(candidate);

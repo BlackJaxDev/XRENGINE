@@ -1556,31 +1556,56 @@ namespace XREngine.Rendering.Vulkan
                                 : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                         return false;
                     }
-                    // The standard family is ready. A scene with Uber kernels also gets the
-                    // Uber kernels; their first request starts the compile in the background.
-                    // Until they are ready, the standard kernel shades Uber pixels with its
-                    // lit base-color fallback, so admission never waits for them.
-                    if (familySceneState.KernelFamilies.HasUber ||
-                        VulkanAdvancedVisibilityPipelineRuntime.PrewarmUberShadingKernels)
+                    bool sealedHasUber = familySceneState.KernelFamilies.HasUber;
+                    if (sealedHasUber)
                     {
-                        ResourceRuntime.AdvancedVisibilityPipelines.TryGetUberShadingPipelines(
+                        VulkanAdvancedVisibilityPipelineReadiness uberReadiness =
+                            ResourceRuntime.AdvancedVisibilityPipelines.TryGetUberShadingPipelines(
                             nativeClosure.UsesMultisampleVisibility,
                             out VulkanAdvancedComputePipeline uberShade,
-                            out VulkanAdvancedComputePipeline combinedMultisampleShade);
+                            out VulkanAdvancedComputePipeline combinedMultisampleShade,
+                            out string uberReason);
+                        if (uberReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                        {
+                            recordingState.RecordingDeferredReason = uberReadiness is
+                                VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                    ? $"Advanced visibility operation is waiting for the selected Uber shading pipeline: {uberReason}."
+                                    : $"Advanced visibility operation is Unsupported: selected Uber shading pipeline failed: {uberReason}.";
+                            recordingState.FailureKind = uberReadiness is
+                                VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                    ? EVulkanCommandRecordingFailureKind.RetryFrame
+                                    : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                            return false;
+                        }
                         nativePipelines = nativePipelines with
                         {
                             ShadeUber = uberShade,
                             ShadeMultisampleCombined = combinedMultisampleShade,
                         };
                     }
+                    else if (VulkanAdvancedVisibilityPipelineRuntime.PrewarmUberShadingKernels)
+                    {
+                        // This request does not affect standard-only scene admission.
+                        _ = ResourceRuntime.AdvancedVisibilityPipelines.TryGetUberShadingPipelines(
+                            nativeClosure.UsesMultisampleVisibility,
+                            out _, out _, out _);
+                    }
                     S13aPublicationTelemetry.StepProbe nativeAssociationProbe =
                         S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                     VulkanAdvancedComputePipeline selectedShade = nativeClosure.UsesMultisampleVisibility
-                        ? nativePipelines.ShadeMultisample
+                        ? sealedHasUber
+                            ? nativePipelines.ShadeMultisampleCombined
+                            : nativePipelines.ShadeMultisample
                         : nativePipelines.Shade;
                     if (selectedShade.UsesAddressRoot &&
                         selectedShade.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion)
                         throw new VulkanPlanPreconditionException("The native shading pipeline root ABI is not supported by this recorder.");
+                    if (sealedHasUber && !nativeClosure.UsesMultisampleVisibility &&
+                        nativePipelines.ShadeUber.UsesAddressRoot &&
+                        nativePipelines.ShadeUber.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion)
+                        throw new VulkanPlanPreconditionException("The native Uber shading pipeline root ABI is not supported by this recorder.");
                     if (selectedShade.UsesAddressRoot && request.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
                         !nativeClosure.ShadingAddressRoot.IsValid)
                     {
@@ -1594,7 +1619,8 @@ namespace XREngine.Rendering.Vulkan
                             in request,
                             in nativeClosure,
                             nativeDescriptorSet,
-                            in nativePipelines))
+                            in nativePipelines,
+                            sealedHasUber))
                     {
                         recordingState.RecordingDeferredReason =
                             "Advanced visibility operation is Unsupported: immutable native-compute closure publication was rejected.";

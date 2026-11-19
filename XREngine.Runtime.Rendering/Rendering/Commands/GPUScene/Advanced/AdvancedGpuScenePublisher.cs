@@ -1389,7 +1389,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             material = null;
         }
         material = snapshot.MaterialOverride ?? material;
-        renderOptions = snapshot.RenderOptionsOverride ?? material?.RenderOptions;
+        renderOptions = LegacyEditorHighlightRenderingParameters.ResolveAuthoredOptions(
+            snapshot.RenderOptionsOverride) ?? material?.RenderOptions;
     }
 
     /// <summary>Reads the published CPU cull bounds row of one command.</summary>

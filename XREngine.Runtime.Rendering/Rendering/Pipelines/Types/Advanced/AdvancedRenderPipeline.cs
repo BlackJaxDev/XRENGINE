@@ -13,6 +13,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.EditorHighlight.Contracts;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.Integration;
@@ -28,6 +29,29 @@ namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider, IAdvancedRenderStageFamilyHost
 {
+    /// <summary>
+    /// Gets the optional editor highlight module installed when this pipeline was created.
+    /// </summary>
+    private readonly IEditorHighlightModule? _editorHighlightModule;
+    private bool _enableEditorHighlightModule = true;
+
+    /// <summary>
+    /// Enables this pipeline instance to use the installed editor highlight module.
+    /// </summary>
+    public bool EnableEditorHighlightModule
+    {
+        get => _enableEditorHighlightModule;
+        set
+        {
+            if (!SetField(ref _enableEditorHighlightModule, value))
+                return;
+            InvalidateStereoResourceProfile();
+            RebuildCommandChain();
+        }
+    }
+
+    public IEditorHighlightModule? EditorHighlightModule
+        => EnableEditorHighlightModule && OffscreenProfile is null ? _editorHighlightModule : null;
     internal override bool RequiresCanonicalGpuScenePublication => true;
 
     public enum DeferredDebugViewMode
@@ -869,7 +893,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 8)
+        if (textures.Count != (EditorHighlightModule is null ? 7 : 8))
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(FinalPostProcessOutputTextureName))
@@ -877,9 +901,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName))
-            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(StencilViewTextureName))
-            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
-            || !ReferenceEquals(textures[7], GetTexture<XRTexture>(TsrHistoryMetadataTextureName)))
+            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(TsrHistoryMetadataTextureName)))
+            return true;
+
+        if (EditorHighlightModule is not null &&
+            !ReferenceEquals(textures[7], GetTexture<XRTexture>(EditorHighlightMaskTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -910,22 +937,32 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        int expectedCount = Stereo ? 6 : 8;
+        bool web = Shaders.Compilation.WebPipelineRasterProgram.IsActive;
+        int baseCount = Stereo ? 4 : 6;
+        int expectedCount = web ? (Stereo ? 6 : 8) : baseCount + (EditorHighlightModule is null ? 0 : 1);
         if (textures.Count != expectedCount)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(HDRSceneTextureName))
             || !ReferenceEquals(textures[1], GetTexture<XRTexture>(BloomBlurTextureName))
-            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
-            || !ReferenceEquals(textures[3], GetTexture<XRTexture>(StencilViewTextureName))
-            || !ReferenceEquals(textures[4], GetTexture<XRTexture>(AutoExposureTextureName)))
+            || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName)))
             return true;
 
-        if (!Stereo && (!ReferenceEquals(textures[5], GetTexture<XRTexture>(AtmosphereColorTextureName))
-            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(VolumetricFogColorTextureName))))
+        int exposureSlot = web ? 4 : 3;
+        if (!ReferenceEquals(textures[exposureSlot], GetTexture<XRTexture>(AutoExposureTextureName)))
+            return true;
+        if (!Stereo && (!ReferenceEquals(textures[exposureSlot + 1], GetTexture<XRTexture>(AtmosphereColorTextureName))
+            || !ReferenceEquals(textures[exposureSlot + 2], GetTexture<XRTexture>(VolumetricFogColorTextureName))))
             return true;
 
-        if (!ReferenceEquals(textures[Stereo ? 5 : 7], GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)))
+        if (web)
+        {
+            if (!ReferenceEquals(textures[3], GetTexture<XRTexture>(StencilViewTextureName))
+                || !ReferenceEquals(textures[Stereo ? 5 : 7], GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)))
+                return true;
+        }
+        else if (EditorHighlightModule is not null &&
+            !ReferenceEquals(textures[baseCount], GetTexture<XRTexture>(EditorHighlightMaskTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -1511,10 +1548,15 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string LightingAccumFBOName = "LightingAccumFBO";
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
+    public const string EditorHighlightMaskTextureName = "EditorHighlightMask";
+    public const string EditorPickingIdentityTextureName = "EditorPickingIdentity";
+    public const string EditorHighlightOutputTextureName = "EditorHighlightOutput";
+    public const string EditorHighlightOutputFBOName = "EditorHighlightOutputFBO";
     public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
     public const string ForwardPassMsaaColorRenderBufferName = "ForwardPassMSAAColor";
     public const string SceneCopyFBOName = "SceneCopyFBO";
     public const string TransparentSceneCopyFBOName = "TransparentSceneCopyFBO";
+    public const string SourceOrderedSceneCopyFBOName = "SourceOrderedSceneCopyFBO";
     public const string DeferredTransparencyBlurFBOName = "DeferredTransparencyBlurFBO";
     public const string TransparentAccumulationFBOName = "TransparentAccumulationFBO";
     public const string TransparentResolveFBOName = "TransparentResolveFBO";
@@ -1621,6 +1663,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string DiffuseTextureName = "LightingTexture";
     public const string HDRSceneTextureName = "HDRSceneTex";
     public const string TransparentSceneCopyTextureName = "TransparentSceneCopyTex";
+    public const string SourceOrderedSceneCopyTextureName = "SourceOrderedSceneCopyTex";
     public const string TransparentAccumTextureName = "TransparentAccumTex";
     public const string TransparentRevealageTextureName = "TransparentRevealageTex";
     public const string FullOverdrawCountTextureName = "FullOverdrawCountTex";
@@ -1718,6 +1761,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         if (debugMode >= 0 && debugMode <= 18)
             _deferredDebugView = (DeferredDebugViewMode)debugMode;
         GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
+        _editorHighlightModule = EditorHighlightModuleRegistry.Create();
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
@@ -2679,66 +2723,16 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const int StencilRefSelection = 2;
 
     /// <summary>
-    /// This pipeline is set up to use the stencil buffer to highlight objects.
-    /// This will highlight the given material.
-    /// </summary>
-    /// <param name="material">The material to highlight.</param>
-    /// <param name="enabled">Whether to enable or disable highlighting.</param>
-    /// <param name="isSelection">If true, uses the selection stencil value; otherwise uses hover stencil value.</param>
-    public static void SetHighlighted(XRMaterial? material, bool enabled, bool isSelection = false)
-    {
-        if (material is null)
-            return;
-
-        // Preserve both highlight bits so hover and selection can coexist on the same material.
-        int bit = isSelection ? StencilRefSelection : StencilRefHover;
-        var stencil = material.RenderOptions.StencilTest;
-        int currentRef = stencil.FrontFace.Reference;
-        int currentBits = currentRef & 0x3;
-        int nextBits = enabled ? (currentBits | bit) : (currentBits & ~bit);
-
-        if (nextBits == 0)
-        {
-            stencil.Enabled = ERenderParamUsage.Disabled;
-            return;
-        }
-
-        stencil.Enabled = ERenderParamUsage.Enabled;
-        stencil.FrontFace = new StencilTestFace()
-        {
-            Function = EComparison.Always,
-            Reference = nextBits,
-            ReadMask = 3,
-            WriteMask = 3,
-            BothFailOp = EStencilOp.Keep,
-            StencilPassDepthFailOp = EStencilOp.Keep,
-            BothPassOp = EStencilOp.Replace,
-        };
-        stencil.BackFace = new StencilTestFace()
-        {
-            Function = EComparison.Always,
-            Reference = nextBits,
-            ReadMask = 3,
-            WriteMask = 3,
-            BothFailOp = EStencilOp.Keep,
-            StencilPassDepthFailOp = EStencilOp.Keep,
-            BothPassOp = EStencilOp.Replace,
-        };
-    }
-
-    /// <summary>
-    /// This pipeline is set up to use the stencil buffer to highlight objects.
-    /// This will highlight the given renderable mesh without mutating its shared source material.
+    /// Publishes highlight flags on the renderable mesh without changing its material stencil state.
     /// </summary>
     /// <param name="mesh">The renderable mesh to highlight.</param>
     /// <param name="enabled">Whether to enable or disable highlighting.</param>
     /// <param name="isSelection">If true, uses the selection stencil value; otherwise uses hover stencil value.</param>
     public static void SetHighlighted(RenderableMesh? mesh, bool enabled, bool isSelection = false)
-        => mesh?.SetHighlightStencilBit(isSelection ? StencilRefSelection : StencilRefHover, enabled);
+        => mesh?.SetEditorHighlightBit(isSelection ? StencilRefSelection : StencilRefHover, enabled);
 
     /// <summary>
-    /// This pipeline is set up to use the stencil buffer to highlight objects.
-    /// This will highlight the given model.
+    /// Publishes highlight flags on each renderable mesh in the model.
     /// </summary>
     /// <param name="model">The model component to highlight.</param>
     /// <param name="enabled">Whether to enable or disable highlighting.</param>
@@ -2747,8 +2741,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         => model?.Meshes.ForEach(m => SetHighlighted(m, enabled, isSelection));
 
     /// <summary>
-    /// This pipeline is set up to use the stencil buffer to highlight objects.
-    /// This will highlight the model representing the given rigid body.
+    /// Publishes highlight flags on the model for the given rigid body.
     /// The model component must be a sibling component of the rigid body, or this will do nothing.
     /// </summary>
     /// <param name="body">The rigid body whose model to highlight.</param>
