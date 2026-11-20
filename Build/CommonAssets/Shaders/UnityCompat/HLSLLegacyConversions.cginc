@@ -210,6 +210,14 @@ XR_SCALAR_ARGUMENT_LERP(2)
 XR_SCALAR_ARGUMENT_LERP(3)
 XR_SCALAR_ARGUMENT_LERP(4)
 
+// lerp with scalar end points and a vector weight. FXC changes the end points to the size of the weight.
+#define XR_SCALAR_ENDS_LERP(SIZE) \
+    __generic<T : __BuiltinFloatingPointType> vector<T, SIZE> lerp(T a, T b, vector<T, SIZE> t) { return lerp(vector<T, SIZE>(a), vector<T, SIZE>(b), t); }
+
+XR_SCALAR_ENDS_LERP(2)
+XR_SCALAR_ENDS_LERP(3)
+XR_SCALAR_ENDS_LERP(4)
+
 // A scalar argument would match several mixed-size overloads through promotion. These exact overloads
 // remove that ambiguity. They give the same result as the built-in functions.
 #define XR_SCALAR_ARGUMENT_FUNCTION_SIZE(NAME, SIZE) \

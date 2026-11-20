@@ -15,7 +15,7 @@ The translator is in an early state. It is a library, a command-line tool, and a
 3. `ShaderVariantSelector` selects one keyword from each `multi_compile` and `shader_feature` set. The first enabled keyword wins. If no keyword in a set is enabled, the selector uses the empty option, or the first keyword when the set has no empty option.
 4. `ShaderPassAssembler` writes one HLSL unit for each stage. The unit has the Unity defines, the selected keywords, the legacy conversion include, the `CGINCLUDE` or `HLSLINCLUDE` blocks, and the pass program. `#line` directives keep compiler messages on the source lines of the `.shader` file.
 5. `ShaderIncludeExpander` replaces each `#include` with the file text, so that the next step can see all declarations. `#line` directives keep the original file names and line numbers. When a file includes a guarded file that is still being expanded higher in the include chain, the expander leaves that include out, because the guard is already defined.
-6. `SwitchSelectorRewriter` converts each `switch` selector to `int`. `MatrixConstructorRewriter` converts matrix constructors that mix scalars and vectors. `MutatingMethodRewriter` adds `[mutating]` to struct methods that change their own fields. `StaticConstRewriter` removes `const` from a `static const` variable whose initializer calls a function. `GlobalWriteRewriter` gives each global variable that the code writes to a private copy, and removes initializers of shader parameters. See [Legacy HLSL Rules](#legacy-hlsl-rules).
+6. `StructVariableRewriter` removes `struct` from variable declarations such as `struct Light light;`. `InoutArgumentRewriter` adds a converted copy for an `out` or `inout` argument of another numeric type. `SwitchSelectorRewriter` converts each `switch` selector to `int`. `MatrixConstructorRewriter` converts matrix constructors that mix scalars and vectors. `MutatingMethodRewriter` adds `[mutating]` to struct methods that change their own fields. `StaticConstRewriter` removes `const` from a `static const` variable whose initializer calls a function. `GlobalWriteRewriter` gives each global variable that the code writes to a private copy, and removes initializers of shader parameters. See [Legacy HLSL Rules](#legacy-hlsl-rules).
 7. `SlangSpirvCompiler` runs `slangc` with row-major matrix layout and writes SPIR-V and reflection JSON. It turns off the warnings for code that FXC accepts without a warning. If the compile fails, the errors come before the warnings in the diagnostic text.
 8. `SpirvCrossGlslEmitter` runs `spirv-cross` and writes desktop GLSL 4.60.
 9. `GlslPostProcessor` changes the GLSL for the engine:
@@ -36,7 +36,9 @@ Unity compiles HLSL with the legacy FXC rules. Slang is stricter, so the transla
 - **Mixed matrix constructors.** FXC builds a matrix from any mix of scalars and vectors with the correct component count, for example `float4x4(red, 0, green, 0, blue, 0, 0, 0, 0, 1)` with `float3` rows. Slang accepts one argument, one vector for each row, or one scalar for each component. `MatrixConstructorRewriter` changes a constructor with another argument count to `float4x4(XrMatrixComponentsStart().add(red).add(0)...toFloat4x4())`. The `XrMatrixComponents` type in `HLSLLegacyConversions.cginc` collects the components in row order, and Slang selects the `add` overload from each argument type.
 - **Float switch selectors.** FXC accepts `switch (_Mode)` on a `float`. Slang requires an integer, so `SwitchSelectorRewriter` changes the selector to `int(_Mode)`. FXC also accepts `[flatten]`, `[branch]`, `[forcecase]`, and `[call]` before `switch`. Slang rejects them, so the rewriter replaces them with spaces. The hints do not change the result.
 - **Struct methods that change fields.** FXC lets a struct method assign to the fields of its struct. Slang makes `this` read-only unless the method has `[mutating]`. `MutatingMethodRewriter` adds `[mutating]` to each method that writes a field, directly, through `this.`, or by a call to another such method of the same struct. Other methods do not change, because Slang does not let code call a `[mutating]` method on a read-only value.
-- **Mixed lerp weights.** FXC accepts `lerp(float4, float4, float3)` and uses the leading components. `HLSLLegacyConversions.cginc` declares these overloads, plus an exact overload for a scalar weight that removes the ambiguity.
+- **Mixed lerp weights.** FXC accepts `lerp(float4, float4, float3)` and uses the leading components. `HLSLLegacyConversions.cginc` declares these overloads, plus exact overloads for a scalar weight and for scalar end points with a vector weight, such as `lerp(x, 1, color)`. The exact overloads remove the ambiguity.
+- **Struct keyword in variable declarations.** FXC accepts the C form `struct Light light;`. Slang reads `struct Light` as a new struct definition. `StructVariableRewriter` replaces the keyword with spaces when an identifier follows the type name.
+- **Out and inout arguments of another type.** FXC accepts a `float` variable for an `inout int` parameter, and converts the value into the parameter and back. Slang requires the exact type. `InoutArgumentRewriter` changes the call statement `F(value);` to `{ int _xrArgument0 = int(value); F(_xrArgument0); value = float(_xrArgument0); }`. It changes only a call that is a full statement, to a function with one definition for that argument count, with a local variable or parameter of a numeric scalar or vector type with the same component count.
 - **Writes to globals.** FXC lets a function write to a global variable, for example `_Time.y += 10;`. The write changes a private copy for the current invocation. `GlobalWriteRewriter` renames the shader parameter to `name_xrUniform` and declares `static T name = name_xrUniform;`. The post-processor gives the parameter its original name in the GLSL, so material binding does not change. The engine values in the compatibility includes, such as `_Time` and `_ScreenParams`, are static copies for the same reason.
 
 - **Initializers of shader parameters.** FXC accepts `uniform float x = 0.0;` and stores the value as a default that Unity does not use. Slang rejects it. `GlobalWriteRewriter` removes the initializer of each numeric shader parameter. Use `static const` for a constant.
@@ -83,6 +85,7 @@ The mesh renderers bind each vertex buffer to the shader input with the same nam
 | `TANGENT` | 2 | `Tangent` |
 | `TEXCOORD0` to `TEXCOORD3` | 3 to 6 | `TexCoord0` to `TexCoord3` |
 | `COLOR` | 7 | `Color0` |
+| `TEXCOORD4` to `TEXCOORD7` | 8 to 11 | `TexCoord4` to `TexCoord7` |
 
 Engine-generated vertex shaders pack their inputs, so for a mesh without tangents `TexCoord0` is at location 2 there. One OpenGL VAO serves all passes of a mesh renderer, so the OpenGL mesh renderer binds the VAO again when a pass uses a vertex program with other attribute locations.
 
@@ -103,6 +106,7 @@ Unity gives every mesh tangents, and many Unity shaders normalize the tangent. A
 - `UnityShaderVariables.cginc` includes `HLSLSupport.cginc` and `UnityShaderUtilities.cginc`, so that `HLSLPROGRAM` blocks and programs with no includes get the same names as in Unity.
 - `UnityStandardShadow.cginc` gives `vertShadowCaster` and `fragShadowCaster`. The blended modes clip at an alpha of 0.5, because the engine shadow pass has no dither pattern.
 - `UnityPBSLighting.cginc` gives `SurfaceOutputStandard`, `SurfaceOutputStandardSpecular`, and the `LightingStandard` functions for programs that call them directly. `UnityStandardBRDF.cginc` gives `BRDF3_Direct`, `BRDF3_Indirect`, and `BRDF3_Unity_PBS`. Unity reads the BRDF3 specular lobe from a lookup texture; the compat version computes a normalized Phong lobe, so highlights can differ slightly.
+- `Tessellation.cginc` gives Unity's tessellation factor functions, such as `UnityEdgeLengthBasedTessCull` and `UnityDistanceBasedTess`. The engine has no `unity_CameraWorldClipPlanes`, so the frustum test gets the side planes from `UNITY_MATRIX_VP`.
 - `AutoLight.cginc` declares `unity_WorldToLight` and `_LightTexture0` with the same keyword conditions as Unity. The engine does not draw `ForwardAdd` passes yet, so these values are not set. `UNITY_LIGHT_ATTENUATION` ends with `;`, as in Unity, because many shaders use it without one.
 - `UnityUI.cginc` gives the UI clipping helpers. `UnityMetaPass.cginc` gives declarations only, because the engine skips `Meta` passes.
 
@@ -159,7 +163,7 @@ The Vulkan SDK contains both tools. If a tool is missing, the translator reports
 - The forward add light loop and received shadows are not complete.
 - Stereo rendering and compute skinning of translated vertex stages are not supported.
 - Include files from `Library/PackageCache` are not mapped.
-- `UnityStandardCoreForward.cginc`, `Tessellation.cginc`, and the URP shader library have no compatibility version yet.
+- `UnityStandardCoreForward.cginc` and the URP shader library have no compatibility version yet.
 - A `Category` block is supported. Fixed-function passes and `UsePass` are not.
 - Matrix properties of a shader need a transposed upload.
 
@@ -174,6 +178,8 @@ The Vulkan SDK contains both tools. If a tool is missing, the translator reports
 - `XREngine.ShaderTranslation/Translation/ShaderPassAssembler.cs`
 - `XREngine.ShaderTranslation/Preprocessing/ShaderIncludeExpander.cs`
 - `XREngine.ShaderTranslation/Preprocessing/GlobalWriteRewriter.cs`
+- `XREngine.ShaderTranslation/Preprocessing/StructVariableRewriter.cs`
+- `XREngine.ShaderTranslation/Preprocessing/InoutArgumentRewriter.cs`
 - `XREngine.ShaderTranslation/Preprocessing/SwitchSelectorRewriter.cs`
 - `XREngine.ShaderTranslation/Preprocessing/MatrixConstructorRewriter.cs`
 - `XREngine.ShaderTranslation/Preprocessing/MutatingMethodRewriter.cs`

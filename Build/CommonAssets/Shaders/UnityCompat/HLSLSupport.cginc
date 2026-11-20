@@ -26,6 +26,13 @@
 #define UNITY_UNROLLX(n) [unroll(n)]
 #define UNITY_LOOP [loop]
 #define UNITY_FASTOPT
+// Unity writes the hull and domain attributes through these macros. Without them, Slang ignores the
+// attributes, and the hull stage has no control point count, no patch constant function, and scalar outputs.
+#define UNITY_domain domain
+#define UNITY_outputcontrolpoints outputcontrolpoints
+#define UNITY_outputtopology outputtopology
+#define UNITY_partitioning partitioning
+#define UNITY_patchconstantfunc patchconstantfunc
 #define UNITY_POSITION(pos) float4 pos : SV_POSITION
 #define UNITY_VPOS_TYPE float4
 #define VPOS SV_POSITION

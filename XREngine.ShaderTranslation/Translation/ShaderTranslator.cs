@@ -194,7 +194,7 @@ public sealed class ShaderTranslator(SlangSpirvCompiler compiler, SpirvCrossGlsl
             {
                 string assembled = ShaderPassAssembler.Assemble(document, includeBlocks, pass.Program, stage, entryPoint, kind.Value, pragmas.Target, keywords);
                 string expanded = includeExpander.Expand(assembled, shaderDirectory, document.SourcePath.Replace('\\', '/'));
-                globals = GlobalWriteRewriter.Rewrite(StaticConstRewriter.Rewrite(MutatingMethodRewriter.Rewrite(MatrixConstructorRewriter.Rewrite(SwitchSelectorRewriter.Rewrite(expanded)))));
+                globals = GlobalWriteRewriter.Rewrite(StaticConstRewriter.Rewrite(MutatingMethodRewriter.Rewrite(MatrixConstructorRewriter.Rewrite(SwitchSelectorRewriter.Rewrite(InoutArgumentRewriter.Rewrite(StructVariableRewriter.Rewrite(expanded)))))));
                 hlsl = globals.Text;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -226,7 +226,13 @@ public sealed class ShaderTranslator(SlangSpirvCompiler compiler, SpirvCrossGlsl
                         ShaderTranslationSeverity.Warning, note, document.SourcePath, pass.Program.FirstLine, label));
                 }
 
-                stages.Add(new TranslatedStage(stage, entryPoint, keywords, hlsl, spirv.Spirv, processed.Glsl));
+                string glsl = processed.Glsl;
+                if (stage == ShaderProgramStage.Hull)
+                    glsl = GlslPostProcessor.IndexOutputsByInvocation(glsl);
+                else if (stage == ShaderProgramStage.Domain && stages.Find(static s => s.Stage == ShaderProgramStage.Hull) is { } hull)
+                    glsl = GlslPostProcessor.ApplyHullPartitioning(glsl, hull.Hlsl, hull.EntryPoint);
+
+                stages.Add(new TranslatedStage(stage, entryPoint, keywords, hlsl, spirv.Spirv, glsl));
             }
             catch (ShaderCompileException ex)
             {

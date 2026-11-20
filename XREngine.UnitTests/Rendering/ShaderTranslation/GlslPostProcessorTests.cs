@@ -74,7 +74,7 @@ public sealed class GlslPostProcessorTests
             new VertexInputReflection("POSITION", 0, 0, 4),
             new VertexInputReflection("TEXCOORD", 1, 1, 2),
             new VertexInputReflection("COLOR", 0, 2, 4),
-            new VertexInputReflection("TEXCOORD", 6, 3, 4),
+            new VertexInputReflection("BLENDWEIGHT", 0, 3, 4),
         ]);
 
         GlslPostProcessResult result = GlslPostProcessor.Process(glsl, reflection, isVertexStage: true);
@@ -90,7 +90,7 @@ public sealed class GlslPostProcessorTests
         result.Glsl.ShouldContain("layout(location = 0) out vec4 Color0_xrUser;");
         result.Glsl.ShouldContain("Color0_xrUser = Color0;");
         result.Glsl.ShouldNotContain("v_vertex");
-        result.UnsupportedVertexInputs.ShouldBe(["TEXCOORD6"]);
+        result.UnsupportedVertexInputs.ShouldBe(["BLENDWEIGHT"]);
     }
 
     [Test]
