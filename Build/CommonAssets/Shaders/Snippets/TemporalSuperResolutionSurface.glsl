@@ -172,23 +172,18 @@ bool TsrHistoryFootprintMatchesPlane(vec2 sourceUv, bool background,
             predictedNdc, depthPlane, depthTolerance))
         return true;
 
-    // On stationary subpixel edges, allow any active bilinear tap in the previous
-    // depth footprint to validate the same surface without admitting moving disocclusions.
+    // On stationary subpixel edges, projection jitter can shift a silhouette up to
+    // one source texel between frames. Validate against the 3x3 previous depth
+    // neighborhood only when both camera and local velocity are stationary.
     if (!stationary)
         return false;
 
     ivec2 extent = textureSize(HistoryDepth, 0).xy;
-    vec2 position = sourceUv * vec2(extent) - 0.5;
-    ivec2 basePixel = ivec2(floor(position));
-    vec2 fraction = fract(position);
-    for (int y = 0; y < 2; ++y)
-    for (int x = 0; x < 2; ++x)
+    ivec2 center = clamp(ivec2(floor(sourceUv * vec2(extent))), ivec2(0), extent - 1);
+    for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x)
     {
-        float weight = (x == 0 ? 1.0 - fraction.x : fraction.x)
-            * (y == 0 ? 1.0 - fraction.y : fraction.y);
-        if (weight <= 1e-5)
-            continue;
-        ivec2 pixel = clamp(basePixel + ivec2(x, y), ivec2(0), extent - 1);
+        ivec2 pixel = clamp(center + ivec2(x, y), ivec2(0), extent - 1);
         vec2 tapUv = (vec2(pixel) + 0.5) / vec2(extent);
         float tapDepth = TsrLoadHistoryDepth(pixel);
         if (TsrDepthSampleMatchesPlane(tapUv, tapDepth, background,
@@ -196,6 +191,20 @@ bool TsrHistoryFootprintMatchesPlane(vec2 sourceUv, bool background,
             return true;
     }
     return false;
+}
+
+bool TsrLocalVelocityStationary(vec2 sourceUv, vec2 extent)
+{
+    ivec2 velocityExtent = textureSize(Velocity, 0).xy;
+    ivec2 center = clamp(ivec2(floor(sourceUv * vec2(velocityExtent))), ivec2(0), velocityExtent - 1);
+    for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x)
+    {
+        ivec2 pixel = clamp(center + ivec2(x, y), ivec2(0), velocityExtent - 1);
+        if (any(greaterThan(abs(TsrLoadVelocity(pixel) * 0.5) * extent, vec2(0.1))))
+            return false;
+    }
+    return true;
 }
 
 bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
@@ -243,7 +252,7 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
             return false;
         }
         stationary = all(lessThanEqual(abs(projectedUv - staticUv) * historyDepthExtent, vec2(0.1)))
-            && all(lessThanEqual(abs(surface.velocity * 0.5) * historyDepthExtent, vec2(0.1)));
+            && TsrLocalVelocityStationary(surface.uv, historyDepthExtent);
         vec3 previousView = TsrPreviousViewPosition(previousNdc.xy, previousNdc.z);
         predictedViewDepth = abs(previousView.z);
         vec2 depthTexel = 1.0 / historyDepthExtent;
@@ -257,7 +266,7 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
     }
     else
     {
-        stationary = all(lessThanEqual(abs(surface.velocity * 0.5) * historyDepthExtent, vec2(0.1)));
+        stationary = TsrLocalVelocityStationary(surface.uv, historyDepthExtent);
     }
 
     ivec2 historyExtent = textureSize(TsrHistoryColor, 0).xy;

@@ -182,7 +182,7 @@ void ComputeNeighborhoodBounds(vec2 uv, out vec3 minColor, out vec3 maxColor,
         for (int y = -1; y <= 1; ++y)
         {
             vec2 sampleUv = ClampSourceUv(uv + vec2(float(x), float(y)) * sourceTexelSize);
-            vec3 s = TsrRgbToYCoCg(texture(PostProcessOutputTexture, EyeUv(sampleUv)).rgb);
+            vec3 s = TsrRgbToYCoCg(TsrCompressHdrColor(texture(PostProcessOutputTexture, EyeUv(sampleUv)).rgb));
             sampleMin = min(sampleMin, s);
             sampleMax = max(sampleMax, s);
             m1 += s;
@@ -350,8 +350,8 @@ void main()
         ? currentColorRaw
         : mix(currentColorRaw, SampleCurrentReconstruction(PostProcessOutputTexture, uv, sourceTexelSize), 0.25);
 #endif
-    vec3 currentYCoCg = TsrRgbToYCoCg(currentColor);
-    float currentLuma = currentYCoCg.x;
+    vec3 currentYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(currentColor));
+    float currentLuma = TsrRgbToYCoCg(max(currentColor, vec3(0.0))).x;
 
     vec3 minBound;
     vec3 maxBound;
@@ -378,13 +378,13 @@ void main()
         canUseHistory = TsrSampleSurfaceHistory(surface, historyUV,
             currentJitter, previousJitter, historyRGB, surfaceSupport, historyAge, rejectionReason);
         if (canUseHistory)
-            historyYCoCg = TsrRgbToYCoCg(historyRGB);
+            historyYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(historyRGB));
 #else
         vec2 historySampleUv = ClampHistoryUv(historyUV);
         float historyDepth = texture(HistoryDepth,
             EyeUv(ClampUvToTexels(historyDepthUv, TextureTexelSize(HistoryDepth)))).r;
         if (TsrDepthMatches(currentDepth, historyDepth, DepthRejectThreshold))
-            historyYCoCg = TsrRgbToYCoCg(SampleCatmullRom(TsrHistoryColor, historySampleUv, historyTexelSize));
+            historyYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(SampleCatmullRom(TsrHistoryColor, historySampleUv, historyTexelSize)));
         else
             canUseHistory = false;
 #endif
@@ -396,19 +396,21 @@ void main()
     TsrCoverageResult coverage = TsrResolveCoverage(uv, historyUV, currentJitter, previousJitter,
         historyAllowed, isPostTemporalForward ? 1.0 : canonicalReactive,
         TsrComputeMotionMask(velocity, ReactiveVelocityScale), currentLuma, depthDiscontinuity);
+    bool writeCoverageState = false;
     if (coverage.historyValid)
     {
         canUseHistory = true;
         historyAge = coverage.historyAge;
-        historyYCoCg = TsrRgbToYCoCg(coverage.historyColor);
+        historyYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(coverage.historyColor));
+        writeCoverageState = true;
     }
-    else if (coverage.currentCoverage >= 0.0)
+    else if (!canUseHistory && coverage.currentCoverage >= 0.0)
     {
-        // Seed color and coverage together. An ordinary history mixture has
-        // no matching coverage state and cannot be relabeled as this frame.
-        canUseHistory = false;
+        // Seed coverage metadata only when ordinary surface history is unavailable.
+        // Never discard a validated surface history or mark it as unvalidated coverage.
         historyAge = 0.0;
         historyYCoCg = currentYCoCg;
+        writeCoverageState = true;
     }
     float detailProtection = TsrComputeDetailProtection(canUseHistory, historyAge,
         TsrComputeMotionMask(velocity, ReactiveVelocityScale), canonicalReactive);
@@ -418,12 +420,13 @@ void main()
     maxBound = mix(maxBound, max(maxBound, coverage.colorMax), coverage.retention);
 #endif
     vec3 clippedHistory = TsrClipHistoryToNeighborhood(historyYCoCg, minBound, maxBound);
+    float historyLuma = TsrRgbToYCoCg(TsrExpandHdrColor(TsrYCoCgToRgb(clippedHistory))).x;
     float motionMask = TsrComputeMotionMask(velocity, ReactiveVelocityScale);
     float geometryInstability = TsrComputeGeometryInstability(depthDiscontinuity, motionMask);
     float reactiveMask = TsrComputeReactiveMask(
         currentSample.a,
         currentLuma,
-        clippedHistory.x,
+        historyLuma,
         motionMask,
         ReactiveTransparencyRange,
         ReactiveLumaThreshold);
@@ -447,11 +450,11 @@ void main()
     historyWeight = mix(historyWeight, max(historyWeight, clamp(FeedbackMax, 0.0, 0.99)), coverage.retention);
     OutHistoryMetadata = vec4(TsrAdvanceHistoryAge(canUseHistory, historyAge, reactiveMask),
         coverage.historyValid ? mix(coverage.currentCoverage, coverage.historyCoverage, historyWeight)
-            : coverage.currentCoverage,
+            : (writeCoverageState ? coverage.currentCoverage : -1.0),
         TsrCompressLuma(currentLuma), coverage.flicker);
 #endif
 
-    vec3 result = TsrYCoCgToRgb(mix(currentYCoCg, clippedHistory, historyWeight));
+    vec3 result = TsrExpandHdrColor(TsrYCoCgToRgb(mix(currentYCoCg, clippedHistory, historyWeight)));
 #ifdef XR_TSR_STABLE_OUTPUT
     // Persist the real, unsharpened resolve even while viewing diagnostics.
     OutAccumulation = vec4(max(result, vec3(0.0)), 1.0);

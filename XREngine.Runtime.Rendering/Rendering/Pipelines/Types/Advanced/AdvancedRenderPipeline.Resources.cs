@@ -902,7 +902,7 @@ public partial class AdvancedRenderPipeline
             // The shared GTAO generation and blur shaders read the half-resolution depth here.
             // Generation reads the linear copy; the blur passes read the raw depth.
             name == AoHalfDepthTextureName || name == AoHalfLinearDepthTextureName ? DepthViewTextureName : name;
-        if (name == AoHalfDepthTextureName || name == AoHalfLinearDepthTextureName)
+        if (name == AoNormalTextureName || name == AoHalfDepthTextureName || name == AoHalfLinearDepthTextureName)
             SetNearestFilter(result);
         result.AutoGenerateMipmaps = false;
         result.RequiresStorageUsage = !Shaders.Compilation.WebPipelineRasterProgram.IsActive || name == AutoExposureTextureName;
