@@ -81,6 +81,48 @@ float4 BRDF1_Unity_PBS(
     return float4(color, 1.0);
 }
 
+// Unity reads the BRDF3 specular lobe from the unity_NHxRoughness lookup texture and scales it by 16.
+// The engine has no such texture, so this function computes a normalized Phong lobe directly:
+// pow(rl, n) * (n + 2) / 2, where rl is the cosine between the reflection and the light direction and n is the
+// specular power. The 1/pi of the normalization is left out, as Unity leaves it out of the diffuse term.
+// The result is limited to the 0..16 range of the lookup texture.
+float XR_BRDF3SpecularLobe(float rlPow4, float smoothness)
+{
+    float specPower = PerceptualRoughnessToSpecPower(SmoothnessToPerceptualRoughness(smoothness));
+    float rl = sqrt(sqrt(saturate(rlPow4)));
+    return min(pow(rl, specPower) * (specPower + 2.0) * 0.5, 16.0);
+}
+
+float3 BRDF3_Direct(float3 diffColor, float3 specColor, float rlPow4, float smoothness)
+{
+    float specular = XR_BRDF3SpecularLobe(rlPow4, smoothness);
+#if defined(_SPECULARHIGHLIGHTS_OFF)
+    specular = 0.0;
+#endif
+    return diffColor + specular * specColor;
+}
+
+float3 BRDF3_Indirect(float3 diffColor, float3 specColor, UnityIndirect indirect, float grazingTerm, float fresnelTerm)
+{
+    float3 color = indirect.diffuse * diffColor;
+    color += indirect.specular * lerp(specColor, grazingTerm.xxx, fresnelTerm);
+    return color;
+}
+
+float4 BRDF3_Unity_PBS(
+    float3 diffColor, float3 specColor, float oneMinusReflectivity, float smoothness,
+    float3 normal, float3 viewDir, UnityLight light, UnityIndirect gi)
+{
+    float3 reflDir = reflect(viewDir, normal);
+    float nl = saturate(dot(normal, light.dir));
+    float nv = saturate(dot(normal, viewDir));
+    float2 rlPow4AndFresnelTerm = Pow4(float2(dot(reflDir, light.dir), 1.0 - nv));
+    float grazingTerm = saturate(smoothness + (1.0 - oneMinusReflectivity));
+    float3 color = BRDF3_Direct(diffColor, specColor, rlPow4AndFresnelTerm.x, smoothness) * light.color * nl;
+    color += BRDF3_Indirect(diffColor, specColor, gi, grazingTerm, rlPow4AndFresnelTerm.y);
+    return float4(color, 1.0);
+}
+
 #define UNITY_BRDF_PBS BRDF1_Unity_PBS
 
 #endif // UNITY_STANDARD_BRDF_INCLUDED

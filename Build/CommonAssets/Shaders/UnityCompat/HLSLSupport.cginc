@@ -12,6 +12,8 @@
 #define UNITY_UV_STARTS_AT_TOP 0
 #define UNITY_NEAR_CLIP_VALUE (-1.0)
 #define UNITY_RAW_FAR_CLIP_VALUE (1.0)
+// Clip depth to a 0..far range, for fog. With OpenGL clip depth and no reversed Z, Unity uses the value as it is.
+#define UNITY_Z_0_FAR_FROM_CLIPSPACE(coord) (coord)
 #define UNITY_CAN_COMPILE_TESSELLATION 1
 #define UNITY_ATTEN_CHANNEL r
 #define UNITY_NO_DXT5nm 0
@@ -67,6 +69,16 @@
 #define samplerCUBE SamplerCube
 #define samplerCUBE_float SamplerCube
 #define samplerCUBE_half SamplerCube
+
+// Precision-named texture types. Direct3D 11 uses full-precision textures for all of them.
+#define Texture2D_float Texture2D
+#define Texture2D_half Texture2D
+#define Texture3D_float Texture3D
+#define Texture3D_half Texture3D
+#define TextureCube_float TextureCube
+#define TextureCube_half TextureCube
+#define Texture2DArray_float Texture2DArray
+#define Texture2DArray_half Texture2DArray
 
 float4 tex2D(Sampler2D s, float2 uv) { return s.Sample(uv); }
 float4 tex2D(Sampler2D s, float2 uv, float2 ddxUv, float2 ddyUv) { return s.SampleGrad(uv, ddxUv, ddyUv); }

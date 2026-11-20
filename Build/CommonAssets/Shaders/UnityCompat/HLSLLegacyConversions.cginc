@@ -180,6 +180,27 @@ XR_MIXED_LERP(3, 2, 2, .xy, )
 XR_MIXED_LERP(4, 2, 2, .xy, )
 XR_MIXED_LERP(4, 3, 3, .xyz, )
 
+// lerp with end points of one size and a vector weight of another size. FXC uses the leading components.
+#define XR_MIXED_WEIGHT_LERP(SIZE_ENDS, SIZE_WEIGHT, SIZE, SWIZZLE_ENDS, SWIZZLE_WEIGHT) \
+    XR_MIXED_FUNCTION_RANK __generic<T : __BuiltinFloatingPointType> \
+    vector<T, SIZE> lerp(vector<T, SIZE_ENDS> a, vector<T, SIZE_ENDS> b, vector<T, SIZE_WEIGHT> t) { return lerp(a SWIZZLE_ENDS, b SWIZZLE_ENDS, t SWIZZLE_WEIGHT); }
+
+XR_MIXED_WEIGHT_LERP(3, 2, 2, .xy, )
+XR_MIXED_WEIGHT_LERP(4, 2, 2, .xy, )
+XR_MIXED_WEIGHT_LERP(4, 3, 3, .xyz, )
+XR_MIXED_WEIGHT_LERP(2, 3, 2, , .xy)
+XR_MIXED_WEIGHT_LERP(2, 4, 2, , .xy)
+XR_MIXED_WEIGHT_LERP(3, 4, 3, , .xyz)
+
+// lerp with a scalar weight. A scalar would match the mixed-weight overloads above through promotion. This
+// exact overload removes that ambiguity and gives the same result as the built-in function.
+#define XR_SCALAR_WEIGHT_LERP(SIZE) \
+    __generic<T : __BuiltinFloatingPointType> vector<T, SIZE> lerp(vector<T, SIZE> a, vector<T, SIZE> b, T t) { return lerp(a, b, vector<T, SIZE>(t)); }
+
+XR_SCALAR_WEIGHT_LERP(2)
+XR_SCALAR_WEIGHT_LERP(3)
+XR_SCALAR_WEIGHT_LERP(4)
+
 // lerp with one scalar end point. Without these exact overloads, the scalar would match several of the overloads above.
 #define XR_SCALAR_ARGUMENT_LERP(SIZE) \
     __generic<T : __BuiltinFloatingPointType> vector<T, SIZE> lerp(vector<T, SIZE> a, T b, T t) { return lerp(a, vector<T, SIZE>(b), vector<T, SIZE>(t)); } \

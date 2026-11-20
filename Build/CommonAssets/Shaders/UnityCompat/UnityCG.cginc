@@ -125,6 +125,11 @@ float3 UnityObjectToWorldNormal(float3 normal)
 
 float3 UnityWorldSpaceViewDir(float3 worldPosition) { return _WorldSpaceCameraPos.xyz - worldPosition; }
 float3 WorldSpaceViewDir(float4 objectPosition) { return UnityWorldSpaceViewDir(mul(unity_ObjectToWorld, objectPosition).xyz); }
+// Declares 'rotation', the object-to-tangent matrix of the vertex input 'v' (rows: tangent, binormal, normal).
+#define TANGENT_SPACE_ROTATION \
+    float3 binormal = cross(normalize(v.normal), normalize(v.tangent.xyz)) * v.tangent.w; \
+    float3x3 rotation = float3x3(v.tangent.xyz, binormal, v.normal)
+
 float3 ObjSpaceViewDir(float4 objectPosition) { return mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1.0)).xyz - objectPosition.xyz; }
 
 float3 UnityWorldSpaceLightDir(float3 worldPosition)

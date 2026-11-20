@@ -48,6 +48,9 @@ float3 PreMultiplyAlpha(float3 diffColor, float alpha, float oneMinusReflectivit
     return diffColor;
 }
 
+float LerpOneTo(float b, float t) { return 1.0 - t + b * t; }
+float3 LerpWhiteTo(float3 b, float t) { return (1.0 - t).xxx + b * t; }
+
 float3 BlendNormals(float3 n1, float3 n2) { return normalize(float3(n1.xy + n2.xy, n1.z * n2.z)); }
 
 float3x3 CreateTangentToWorldPerVertex(float3 normal, float3 tangent, float tangentSign)
