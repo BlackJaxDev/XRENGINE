@@ -12,7 +12,7 @@ void uberApplyOutlineLocal(
     vec3 cameraPosition)
 {
 #if defined(XRENGINE_OUTLINE_PASS) && !defined(XRENGINE_UBER_DISABLE_OUTLINE)
-    if (_SourceOutlineBasic != 0)
+    if (_OutlineBasicModel != 0)
     {
         float mask = textureLod(_OutlineMask, uv, 0.0).r;
         float distanceFactor = 1.0;
@@ -51,7 +51,7 @@ void uberApplyOutlineLocal(
 void uberApplyOutlineClip(inout vec4 clipPosition, vec3 normal, mat4 transform)
 {
 #if defined(XRENGINE_OUTLINE_PASS) && !defined(XRENGINE_UBER_DISABLE_OUTLINE)
-    if (_SourceOutlineBasic == 0 && (_OutlineSpace == 2 || _OutlineFixedSize > 0.5))
+    if (_OutlineBasicModel == 0 && (_OutlineSpace == 2 || _OutlineFixedSize > 0.5))
     {
         vec2 screen = max(u_ScreenParams.xy, vec2(1.0));
         vec2 clipNormal = normalize((transform * vec4(normal, 0.0)).xy);

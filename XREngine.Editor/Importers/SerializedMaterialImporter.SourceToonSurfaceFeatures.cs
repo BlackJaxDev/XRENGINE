@@ -29,20 +29,20 @@ public static partial class SerializedMaterialImporter
         material.SetUberFeatureEnabled("layered-emission", HasAnyPositive(document, "_EnableEmission", "_EnableEmission1", "_EnableEmission2", "_EnableEmission3"));
         material.SetUberFeatureEnabled("texture-array-flipbook", document.TryGetPositive("_EnableFlipbook"));
         material.EnsureUberStateInitialized();
-        SetFloat(material, "_SourceLayeredEmission", 1.0f);
+        SetFloat(material, "_EmissionToonModel", 1.0f);
 
         // The source toon shader reserves _ColorMask for the render-target channel mask. It is
         // normally an integer (15), not a color-mask texture. Keep the native
         // texture extension inert unless a source shader actually authored a
         // texture with that name; otherwise its white fallback replaces albedo.
         SetFloat(material, "_ColorMaskEnabled", HasExternalTexture(document, "_ColorMask") ? 1.0f : 0.0f);
-        SetInt(material, "_SourceCubeMap", IsCubemapEnabled(document) ? 1 : 0);
+        SetInt(material, "_CubeMapToonModel", IsCubemapEnabled(document) ? 1 : 0);
 
         BindExactSurfaceParameters(material, document);
         bool cubemapKept = BindOptionalSourceFeature(
             "cubemap",
             () => BindSourceCubemapMask(material, document, resolver),
-            () => SetInt(material, "_SourceCubeMap", 0),
+            () => SetInt(material, "_CubeMapToonModel", 0),
             warnings,
             diagnostics);
         BindSourceToonAlphaOptions(material, document);
@@ -215,18 +215,18 @@ public static partial class SerializedMaterialImporter
             ApplySourceToonMeshTextureTransform(material, document, "_AnisoColorMap", "_AnisoColorMap");
         }
         SetInt(material, "_AnisoColorMapUV", colorMapUv);
-        SetVector4(material, "_SourceAnisoMapSettings", new Vector4(
+        SetVector4(material, "_AnisotropyMapSettings", new Vector4(
             colorMap is null ? 0.0f : 1.0f, globalMask, globalBlend, 0.0f));
-        SetVector2(material, "_SourceAnisoOffsetMapStrength", new Vector2(
+        SetVector2(material, "_AnisotropyOffsetMapStrength", new Vector2(
             GetFloat(document, "_Aniso0OffsetMapStrength"),
             GetFloat(document, "_Aniso1OffsetMapStrength")));
 
-        SetVector4(material, "_SourceAnisoSettings", new Vector4(
+        SetVector4(material, "_AnisotropySettings", new Vector4(
             1.0f,
             GetFloat(document, "_AnisoAdd", 1.0f),
             GetFloat(document, "_AnisoReplace"),
             GetFloat(document, "_AnisoNormalBlend", 1.0f)));
-        SetVector4(material, "_SourceAnisoMix", new Vector4(
+        SetVector4(material, "_AnisotropyMix", new Vector4(
             GetFloat(document, "_AnisoUseBaseColor"),
             GetFloat(document, "_AnisoUseLightColor", 1.0f),
             GetFloat(document, "_AnisoHideInShadow", 1.0f),
@@ -235,12 +235,12 @@ public static partial class SerializedMaterialImporter
         for (int layer = 0; layer < 2; ++layer)
         {
             string prefix = $"_Aniso{layer}";
-            SetVector4(material, $"_SourceAnisoToon{layer}", new Vector4(
+            SetVector4(material, $"_AnisotropyToon{layer}", new Vector4(
                 GetFloat(document, $"{prefix}ToonMode"),
                 GetFloat(document, $"{prefix}Edge", 0.5f),
                 GetFloat(document, $"{prefix}Blur"),
                 0.0f));
-            SetVector4(material, $"_SourceAnisoLayer{layer}", new Vector4(
+            SetVector4(material, $"_AnisotropyLayer{layer}", new Vector4(
                 GetFloat(document, $"{prefix}Strength", 1.0f),
                 GetFloat(document, $"{prefix}Power"),
                 GetFloat(document, $"{prefix}Offset"),
@@ -248,7 +248,7 @@ public static partial class SerializedMaterialImporter
             Vector4 tint = document.TryGetVector($"{prefix}Tint", out Vector4 authoredTint)
                 ? authoredTint
                 : Vector4.One;
-            SetVector4(material, $"_SourceAnisoTint{layer}", new Vector4(
+            SetVector4(material, $"_AnisotropyTint{layer}", new Vector4(
                 tint.X, tint.Y, tint.Z, GetInt(document, $"{prefix}TintIndex")));
         }
     }
@@ -332,7 +332,7 @@ public static partial class SerializedMaterialImporter
         // Saved values can remain after the source module is disabled.
         SetFloat(material, "_RimEnviroIntensity", document.TryGetPositive("_EnableEnvironmentalRim")
             ? GetFloat(document, "_RimEnviroIntensity", 1.0f) : 0.0f);
-        SetVector4(material, "_SourceEnviroRim", new Vector4(
+        SetVector4(material, "_EnviroRimSettings", new Vector4(
             document.TryGetPositive("_EnableEnvironmentalRim") ? 1.0f : 0.0f,
             GetFloat(document, "_RimEnviroBlur", 0.7f),
             GetFloat(document, "_RimEnviroMinBrightness"),
@@ -380,7 +380,7 @@ public static partial class SerializedMaterialImporter
             // The fourth value identifies source decals and stores one plus the mask blend mode.
             SetVector4(
                 material,
-                $"_SourceDecalAlphaParams{slot}",
+                $"_DecalAlphaParams{slot}",
                 new Vector4(
                     document.TryGetPositive($"_DecalEnabled{suffix}")
                         ? GetInt(document, $"_DecalOverrideAlpha{suffix}")
@@ -449,7 +449,7 @@ public static partial class SerializedMaterialImporter
             bool matcapEnabled = document.TryGetPositive($"{matcapPrefix}Enable");
             if (matcapEnabled)
             {
-                SetFloat(material, "_SourceMatcap", 1.0f);
+                SetFloat(material, "_MatcapToonModel", 1.0f);
                 if (document.TryGetPositive($"{matcapPrefix}TPSDepthEnabled"))
                     throw new SourceVisualImportException($"Source matcap option '{matcapPrefix}TPSDepthEnabled' is enabled on '{document.Name}'.");
                 bool audioLink = document.TryGetPositive($"_Matcap{slot}ALEnabled");
@@ -594,13 +594,13 @@ public static partial class SerializedMaterialImporter
                 $"Source rim option '{unsupportedOption}' on '{document.Name}' uses the approximate Uber shading path.",
                 unsupportedOption);
         }
-        SetVector4(material, "_SourceRimSettings", new Vector4(
+        SetVector4(material, "_RimShapeSettings", new Vector4(
             enabled && unsupportedOption is null ? 1.0f : 0.0f,
             GetFloat(document, "_RimLightingInvert"),
             GetFloat(document, "_RimPower", 1.0f),
             GetFloat(document, "_Is_NormalMapToRimLight", 1.0f)));
         float rimBlur = GetFloat(document, "_RimBlur", -1.0f);
-        SetVector4(material, "_SourceRimColorSettings", new Vector4(
+        SetVector4(material, "_RimColorSettings", new Vector4(
             GetFloat(document, "_RimBaseColorMix"),
             GetFloat(document, "_RimBrightness", 1.0f),
             GetInt(document, "_RimPoiBlendMode"),

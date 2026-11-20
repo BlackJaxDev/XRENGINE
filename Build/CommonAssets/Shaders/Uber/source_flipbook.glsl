@@ -18,11 +18,11 @@ void xrApplySourceFlipbook(vec2 uv, vec2 dx, vec2 dy, vec3 dimensions,
     uv.y = 1.0 - uv.y;
     dx.y = -dx.y;
     dy.y = -dy.y;
-    vec4 placement = XR_FLIP_V(_SourceFlipbookLayout);
-    vec4 options = XR_FLIP_V(_SourceFlipbookOptions);
-    vec4 motion = XR_FLIP_V(_SourceFlipbookMotion);
-    vec4 flags = XR_FLIP_V(_SourceFlipbookFlags);
-    vec4 sides = XR_FLIP_V(_SourceFlipbookSides) * vec4(-1.0, 1.0, -1.0, 1.0);
+    vec4 placement = XR_FLIP_V(_FlipbookLayout);
+    vec4 options = XR_FLIP_V(_FlipbookOptions);
+    vec4 motion = XR_FLIP_V(_FlipbookMotion);
+    vec4 flags = XR_FLIP_V(_FlipbookFlags);
+    vec4 sides = XR_FLIP_V(_FlipbookSides) * vec4(-1.0, 1.0, -1.0, 1.0);
     vec2 scale = placement.xy;
     if (options.w > 0.5)
     {
@@ -83,7 +83,7 @@ void xrApplySourceFlipbook(vec2 uv, vec2 dx, vec2 dy, vec3 dimensions,
     sampleValue.a = (options.z > 0.5 ? max(max(sampleValue.r, sampleValue.g), sampleValue.b) : sampleValue.a) * edge;
     vec4 tint = XR_FLIP_V(_FlipbookColor);
     sampleValue.rgb = options.y > 0.5 ? tint.rgb : sampleValue.rgb * tint.rgb;
-    vec4 hue = XR_FLIP_V(_SourceFlipbookHue);
+    vec4 hue = XR_FLIP_V(_FlipbookHue);
     if (hue.x > 0.5)
     {
         float shift = hue.y + hue.z * time * 0.05;

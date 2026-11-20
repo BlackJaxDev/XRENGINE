@@ -605,14 +605,14 @@ void uberApplyDecals(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_DECALS
     vec3 alphaControl;
-    vec4 decal = uberSampleDecal(_DecalTexture, _DecalColor, _DecalPosition, _DecalScale, _DecalSideOffset, _DecalTexturePan, _DecalRotation, _DecalRotationSpeed, _DecalUvMode0, 0, _DecalSlotModifiers0, _DecalSlotFx0, _SourceDecalAlphaParams0, mesh, alphaControl);
-    uberBlendDecal(fragData, decal, _DecalBlendParams0, _SourceDecalAlphaParams0, alphaControl);
-    decal = uberSampleDecal(_DecalTexture1, _DecalColor1, _DecalPosition1, _DecalScale1, _DecalSideOffset1, _DecalTexturePan1, _DecalRotation1, _DecalRotationSpeed1, _DecalUvMode1, 1, _DecalSlotModifiers1, _DecalSlotFx1, _SourceDecalAlphaParams1, mesh, alphaControl);
-    uberBlendDecal(fragData, decal, _DecalBlendParams1, _SourceDecalAlphaParams1, alphaControl);
-    decal = uberSampleDecal(_DecalTexture2, _DecalColor2, _DecalPosition2, _DecalScale2, _DecalSideOffset2, _DecalTexturePan2, _DecalRotation2, _DecalRotationSpeed2, _DecalUvMode2, 2, _DecalSlotModifiers2, _DecalSlotFx2, _SourceDecalAlphaParams2, mesh, alphaControl);
-    uberBlendDecal(fragData, decal, _DecalBlendParams2, _SourceDecalAlphaParams2, alphaControl);
-    decal = uberSampleDecal(_DecalTexture3, _DecalColor3, _DecalPosition3, _DecalScale3, _DecalSideOffset3, _DecalTexturePan3, _DecalRotation3, _DecalRotationSpeed3, _DecalUvMode3, 3, _DecalSlotModifiers3, _DecalSlotFx3, _SourceDecalAlphaParams3, mesh, alphaControl);
-    uberBlendDecal(fragData, decal, _DecalBlendParams3, _SourceDecalAlphaParams3, alphaControl);
+    vec4 decal = uberSampleDecal(_DecalTexture, _DecalColor, _DecalPosition, _DecalScale, _DecalSideOffset, _DecalTexturePan, _DecalRotation, _DecalRotationSpeed, _DecalUvMode0, 0, _DecalSlotModifiers0, _DecalSlotFx0, _DecalAlphaParams0, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams0, _DecalAlphaParams0, alphaControl);
+    decal = uberSampleDecal(_DecalTexture1, _DecalColor1, _DecalPosition1, _DecalScale1, _DecalSideOffset1, _DecalTexturePan1, _DecalRotation1, _DecalRotationSpeed1, _DecalUvMode1, 1, _DecalSlotModifiers1, _DecalSlotFx1, _DecalAlphaParams1, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams1, _DecalAlphaParams1, alphaControl);
+    decal = uberSampleDecal(_DecalTexture2, _DecalColor2, _DecalPosition2, _DecalScale2, _DecalSideOffset2, _DecalTexturePan2, _DecalRotation2, _DecalRotationSpeed2, _DecalUvMode2, 2, _DecalSlotModifiers2, _DecalSlotFx2, _DecalAlphaParams2, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams2, _DecalAlphaParams2, alphaControl);
+    decal = uberSampleDecal(_DecalTexture3, _DecalColor3, _DecalPosition3, _DecalScale3, _DecalSideOffset3, _DecalTexturePan3, _DecalRotation3, _DecalRotationSpeed3, _DecalUvMode3, 3, _DecalSlotModifiers3, _DecalSlotFx3, _DecalAlphaParams3, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams3, _DecalAlphaParams3, alphaControl);
 #endif
 }
 
@@ -637,7 +637,7 @@ void uberEmissionSlot(
 {
     vec2 baseUv = getUV(uvMode, mesh);
     vec2 uv = panUV(transformUV(baseUv, sourceTransform), pan, u_Time);
-    bool sourceLayered = _SourceLayeredEmission > 0.5;
+    bool sourceLayered = _EmissionToonModel > 0.5;
     if (sourceLayered && modifiers.y > 0.5)
     {
         float nDotV = abs(dot(mesh.worldNormal, mesh.viewDir));
@@ -651,7 +651,7 @@ void uberEmissionSlot(
     float mask = maskTexel[int(clamp(sampling.y, 0.0, 3.0) + 0.5)];
     mask = mix(mask, 1.0 - mask, saturate(sampling.z));
     float pulse = mix(1.0, 0.5 + 0.5 * sin(u_Time * parameters.z), saturate(parameters.y));
-    vec3 sourceColor = _SourceLayeredEmission > 0.5
+    vec3 sourceColor = _EmissionToonModel > 0.5
         ? texel.rgb * mix(vec3(1.0), fragData.baseColor, saturate(sampling.x))
         : mix(texel.rgb, fragData.baseColor, saturate(sampling.x));
     vec3 shifted = parameters.w == 0.0 ? sourceColor : hueShift(sourceColor, parameters.w * u_Time);
@@ -660,7 +660,7 @@ void uberEmissionSlot(
         ? smoothstep(0.0, 0.5, abs(fract(uv.x + u_Time * parameters.z) - 0.5))
         : 1.0;
     float globalMask = uberGlobalMask(int(modifiers.z + 0.5), mesh);
-    float sourceAlpha = _SourceLayeredEmission > 0.5 ? texel.a : 1.0;
+    float sourceAlpha = _EmissionToonModel > 0.5 ? texel.a : 1.0;
     vec3 emission = shifted * themedColor * max(parameters.x, 0.0) * sourceAlpha * mask * pulse * centerOut * globalMask;
     emission *= xrSourceEmissionFluorescence(directColor, sampling.w);
     fragData.emission += emission;
@@ -687,7 +687,7 @@ float uberAudioBandValue(int band, float history);
 vec2 uberMatcapUv(ToonMesh mesh, ToonLight light, vec4 projection, vec3 projectedNormal)
 {
     vec3 normal = projectedNormal;
-    if (_SourceMatcap <= 0.5) normal = normalize(normal);
+    if (_MatcapToonModel <= 0.5) normal = normalize(normal);
     int uvMode = int(projection.z + 0.5);
     float border = max(projection.y, 0.0);
 
@@ -696,7 +696,7 @@ vec2 uberMatcapUv(ToonMesh mesh, ToonLight light, vec4 projection, vec3 projecte
         vec3 viewUp = normalize(vec3(0.0, 1.0, 0.0) - mesh.viewDir * dot(mesh.viewDir, vec3(0.0, 1.0, 0.0)));
         vec3 viewRight = normalize(cross(mesh.viewDir, viewUp));
         // The source Z reflection reverses this cross-product axis.
-        if (_SourceMatcap > 0.5) viewRight = -viewRight;
+        if (_MatcapToonModel > 0.5) viewRight = -viewRight;
         return vec2(dot(viewRight, normal), dot(viewUp, normal)) * border + 0.5;
     }
 
@@ -715,18 +715,18 @@ vec2 uberMatcapUv(ToonMesh mesh, ToonLight light, vec4 projection, vec3 projecte
         // A vertical normal has no cross product with the up axis. Use the forward axis for it.
         // The source forward axis is the engine -Z axis.
         if (dot(tangent, tangent) < 1e-12)
-            tangent = cross(normal, vec3(0.0, 0.0, _SourceMatcap > 0.5 ? -1.0 : 1.0));
+            tangent = cross(normal, vec3(0.0, 0.0, _MatcapToonModel > 0.5 ? -1.0 : 1.0));
         tangent = normalize(tangent);
         // The source Z reflection reverses this cross-product axis.
-        if (_SourceMatcap > 0.5)
+        if (_MatcapToonModel > 0.5)
             tangent = -tangent;
         vec3 bitangent = normalize(cross(normal, tangent));
-        if (_SourceMatcap > 0.5)
+        if (_MatcapToonModel > 0.5)
             bitangent = -bitangent;
         return vec2(dot(light.halfDir, tangent), dot(light.halfDir, bitangent)) * border + 0.5;
     }
 
-    if (_SourceMatcap > 0.5)
+    if (_MatcapToonModel > 0.5)
     {
         vec3 detail = (mat3(u_ViewMatrix) * normal) * vec3(-1.0, -1.0, 1.0);
         vec3 base = (mat3(u_ViewMatrix) * mesh.viewDir) * vec3(-1.0, -1.0, 1.0) + vec3(0.0, 0.0, 1.0);
@@ -783,7 +783,7 @@ vec4 uberMatcapSlot(
             mesh.TBN[1] * mappedNormal.y + mesh.worldNormal * mappedNormal.z);
     }
     vec2 uv = uberMatcapUv(mesh, light, projection, projectedNormal);
-    bool sourceMatcap = _SourceMatcap > 0.5;
+    bool sourceMatcap = _MatcapToonModel > 0.5;
     vec4 maskSample = vec4(1.0);
     // The circle mask uses the projected UV before pan, rotation, and transform.
     vec2 circleUv = uv;
@@ -953,7 +953,7 @@ vec3 uberApplySecondRim(ToonMesh mesh, ToonLight light)
 #ifdef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
     return vec3(0.0);
 #else
-    if (_SourceRim2Settings.x > 0.5)
+    if (_Rim2Settings.x > 0.5)
         return vec3(0.0);
     float fresnel = pow(1.0 - saturate(dot(mesh.worldNormal, mesh.viewDir)),
         max(_Rim2Params.y, EPSILON));
@@ -1100,9 +1100,9 @@ vec3 uberApplyAdvancedPbr(
     finalColor += vec3(coat);
 
     vec3 environment = vec3(0.0);
-    if (_SourceCubeMap == 0 && _SourceEnviroRim.x < 0.5)
+    if (_CubeMapToonModel == 0 && _EnviroRimSettings.x < 0.5)
         environment = uberApplyCubemap(mesh, light, false, finalColor, emission);
-    else if (_SourceEnviroRim.x < 0.5 && _RimEnviroIntensity > 0.0)
+    else if (_EnviroRimSettings.x < 0.5 && _RimEnviroIntensity > 0.0)
     {
         vec3 direction = reflect(-mesh.viewDir, mesh.worldNormal);
         if (_CubeMapUvMode == 0) direction = -mesh.viewDir;
@@ -1116,7 +1116,7 @@ vec3 uberApplyAdvancedPbr(
     float rim = pow(1.0 - saturate(dot(mesh.worldNormal, mesh.viewDir)),
         mix(0.25, 16.0, saturate(_RimEnviroSharpness)));
     rim = smoothstep(1.0 - _RimEnviroWidth, 1.0, rim);
-    if (_SourceEnviroRim.x < 0.5)
+    if (_EnviroRimSettings.x < 0.5)
         finalColor += environment * rim * _RimEnviroIntensity;
 
     float backlight = saturate(dot(-mesh.worldNormal, light.direction));
@@ -1132,15 +1132,15 @@ vec3 uberApplySourceEnviroRim(ToonMesh mesh, vec3 baseColor,
 #ifdef XRENGINE_UBER_DISABLE_ADVANCED_PBR
     return vec3(0.0);
 #else
-    if (_SourceEnviroRim.x < 0.5 || _RimEnviroIntensity <= 0.0)
+    if (_EnviroRimSettings.x < 0.5 || _RimEnviroIntensity <= 0.0)
         return vec3(0.0);
     float width = _RimEnviroWidth;
     float edge = saturate(1.0 - smoothstep(min(_RimEnviroSharpness, width),
         width, abs(dot(mesh.worldNormal, mesh.viewDir))));
     vec2 uv = panUV(transformUV(getUV(_RimEnviroMaskUV, mesh),
         _RimEnviroMask_ST), _RimEnviroMaskPan, u_Time);
-    float mask = texture(_RimEnviroMask, uv)[clamp(int(_SourceEnviroRim.w + 0.5), 0, 3)];
-    return max((probeRadiance - vec3(_SourceEnviroRim.z)) * baseColor,
+    float mask = texture(_RimEnviroMask, uv)[clamp(int(_EnviroRimSettings.w + 0.5), 0, 3)];
+    return max((probeRadiance - vec3(_EnviroRimSettings.z)) * baseColor,
         vec3(0.0)) * edge * mask * _RimEnviroIntensity;
 #endif
 }
@@ -1172,7 +1172,7 @@ vec3 uberApplySourceEnviroRim(ToonMesh mesh, vec3 baseColor,
 void uberApplySourceFlipbook(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_TEXTURE_ARRAY_FLIPBOOK
-    if (_SourceFlipbook == 0) return;
+    if (_FlipbookToonModel == 0) return;
 #if defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS) || defined(XRENGINE_OUTLINE_PASS)
     const bool shadowPass = true;
     if (_FlipbookAlphaControlsFinalAlpha != 1) return;
@@ -1185,7 +1185,7 @@ void uberApplySourceFlipbook(inout FragmentData fragData, ToonMesh mesh)
     vec4 mask = texture(_FlipbookMask, maskUv);
     vec4 base = vec4(fragData.baseColor, fragData.alpha);
     xrApplySourceFlipbook(uv, dFdx(uv), dFdy(uv), vec3(textureSize(_FlipbookTexArray, 0)),
-        mask[clamp(int(_SourceFlipbookFlags.z), 0, 3)], u_Time, shadowPass, base, fragData.emission);
+        mask[clamp(int(_FlipbookFlags.z), 0, 3)], u_Time, shadowPass, base, fragData.emission);
     fragData.baseColor = base.rgb;
     fragData.alpha = base.a;
 #endif
@@ -1194,7 +1194,7 @@ void uberApplySourceFlipbook(inout FragmentData fragData, ToonMesh mesh)
 void uberApplyFlipbookArray(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_TEXTURE_ARRAY_FLIPBOOK
-    if (_SourceFlipbook != 0) return;
+    if (_FlipbookToonModel != 0) return;
     int layerCount = max(textureSize(_FlipbookTexArray, 0).z, 1);
     float firstFrame = clamp(_FlipbookStartFrame, 0.0, float(layerCount - 1));
     float lastFrame = _FlipbookEndFrame > firstFrame

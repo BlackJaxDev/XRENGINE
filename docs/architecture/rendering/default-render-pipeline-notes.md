@@ -1720,7 +1720,7 @@ an approximation.
 pair. Publication reads this value from the retained generation, never from the
 component's requested producer. `PerceptualRoughness` stores uniformly spaced
 perceptual roughness. `UnityMip` stores the seven source mip levels. Generic PBR
-maps roughness r to Unity LOD `6*r*(1.7-0.7*r)`. Source Mochie and clearcoat use
+maps roughness r to the source LOD `6*r*(1.7-0.7*r)`. Toon specular and clearcoat use
 `6*r`. Source normal blur uses `6*blur`. GGX retains its existing receiver rules.
 Each selected probe applies its own mapping before weighted composition.
 

@@ -21,7 +21,7 @@ public static partial class SerializedMaterialImporter
             HasExternalTexture(document, "_GlitterMask"),
             ["_GlitterEnable"],
             ["_SUNDISK_SIMPLE"]);
-        SetInt(material, "_SourceGlitter", enabled ? 1 : 0);
+        SetInt(material, "_GlitterModel", enabled ? 1 : 0);
         if (!enabled)
             return;
 
@@ -105,7 +105,7 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_GlitterShape", shape);
         SetInt(material, "_GlitterBlendType", blendType);
         SetInt(material, "_GlitterLayers", layers);
-        SetInt(material, "_SourceGlitterVersion", legacy81 ? 81 : sourceVersion == SourceToon10Catalog.Version ? 100 : 92);
+        SetInt(material, "_GlitterFlakeShading", legacy81 ? 81 : sourceVersion == SourceToon10Catalog.Version ? 100 : 92);
         SetInt(material, "_GlitterMaskChannel", maskChannel);
         SetInt(material, "_GlitterColorMapUV", colorMapUv);
         SetFloat(material, "_GlitterFrequency", GetFloat(document, "_GlitterFrequency", legacy81 ? 100.0f : 300.0f));

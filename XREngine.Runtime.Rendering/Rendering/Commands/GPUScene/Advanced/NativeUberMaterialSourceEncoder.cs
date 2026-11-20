@@ -12,7 +12,7 @@ public static class NativeUberMaterialSourceEncoder
     private static readonly string[] EmissionUvs = ["_EmissionSlotUv0", "_EmissionSlotUv1", "_EmissionSlotUv2", "_EmissionSlotUv3"];
     private static readonly string[] EmissionModifiers = ["_EmissionSlotModifiers0", "_EmissionSlotModifiers1", "_EmissionSlotModifiers2", "_EmissionSlotModifiers3"];
     private static readonly string[] DecalBlendParams = ["_DecalBlendParams0", "_DecalBlendParams1", "_DecalBlendParams2", "_DecalBlendParams3"];
-    private static readonly string[] SourceDecalAlphaParams = ["_SourceDecalAlphaParams0", "_SourceDecalAlphaParams1", "_SourceDecalAlphaParams2", "_SourceDecalAlphaParams3"];
+    private static readonly string[] SourceDecalAlphaParams = ["_DecalAlphaParams0", "_DecalAlphaParams1", "_DecalAlphaParams2", "_DecalAlphaParams3"];
     private static readonly string[] DecalUvs = ["_DecalUvMode0", "_DecalUvMode1", "_DecalUvMode2", "_DecalUvMode3"];
     private static readonly string[] DecalModifiers = ["_DecalSlotModifiers0", "_DecalSlotModifiers1", "_DecalSlotModifiers2", "_DecalSlotModifiers3"];
     private static readonly string[] DecalFx = ["_DecalSlotFx0", "_DecalSlotFx1", "_DecalSlotFx2", "_DecalSlotFx3"];
@@ -244,7 +244,7 @@ public static class NativeUberMaterialSourceEncoder
     private static bool ValidateModes(XRMaterial material, out string reason)
     {
         if (material.IsUberFeatureEnabled("texture-array-flipbook", false) &&
-            material.Parameter<ShaderInt>("_SourceFlipbook") is not { Value: 1 })
+            material.Parameter<ShaderInt>("_FlipbookToonModel") is not { Value: 1 })
         {
             reason = "Native Uber array flipbook requires the source playback contract.";
             return false;
@@ -260,22 +260,22 @@ public static class NativeUberMaterialSourceEncoder
             !Allowed(material, "_DissolveCoordinateSpace", [0, 1], out reason))
             return false;
         if (material.Parameter<ShaderInt>("_LightingMode") is { Value: 1 } &&
-            (material.Parameter<ShaderInt>("_SourceLightMode") is not { Value: 1 } ||
+            (material.Parameter<ShaderInt>("_LightModel") is not { Value: 1 } ||
              !material.IsUberFeatureEnabled("advanced-stylized-lighting", false)))
         {
             reason = "Native Uber multilayer lighting requires the source lighting contract.";
             return false;
         }
         if (material.Parameter<ShaderInt>("_LightingMode") is { Value: 1 } &&
-            material.Parameter<ShaderVector4>("_SourceMultilayerOptions") is { Value: var options } &&
+            material.Parameter<ShaderVector4>("_MultilayerOptions") is { Value: var options } &&
             options.Y is not (0f or 1f))
         {
             reason = "Native Uber multilayer lighting requires shadow mask type 0 or 1.";
             return false;
         }
-        if (!Allowed(material, "_SourceGlitter", [0, 1], out reason))
+        if (!Allowed(material, "_GlitterModel", [0, 1], out reason))
             return false;
-        if (material.IsUberFeatureEnabled("glitter", false) && IsNonZero(material, "_SourceGlitter") &&
+        if (material.IsUberFeatureEnabled("glitter", false) && IsNonZero(material, "_GlitterModel") &&
             (!Allowed(material, "_GlitterLayers", [1, 2, 3, 4, 5, 6, 7, 8], out reason) ||
              !Allowed(material, "_GlitterMode", [0, 1, 2], out reason) ||
              !Allowed(material, "_GlitterShape", [0], out reason) ||
@@ -393,7 +393,7 @@ public static class NativeUberMaterialSourceEncoder
                 return false;
             }
         }
-        if (IsNonZero(material, "_SourceSceneColorMode"))
+        if (IsNonZero(material, "_SceneColorMode"))
         {
             reason = "Native Uber has no ordered scene-color sample for this source surface.";
             return false;
@@ -419,7 +419,7 @@ public static class NativeUberMaterialSourceEncoder
             return false;
         }
         Vector4 rim2Shape = material.Parameter<ShaderVector4>("_Rim2Params")?.Value ?? Vector4.Zero;
-        Vector4 sourceRim2 = material.Parameter<ShaderVector4>("_SourceRim2Settings")?.Value ?? Vector4.Zero;
+        Vector4 sourceRim2 = material.Parameter<ShaderVector4>("_Rim2Settings")?.Value ?? Vector4.Zero;
         if (material.IsUberFeatureEnabled("layered-matcap-rim", false) &&
             (IsNonZero(material, "_Rim2Enable") ||
              rim2Shape.W > 0f && sourceRim2.X <= 0.5f))

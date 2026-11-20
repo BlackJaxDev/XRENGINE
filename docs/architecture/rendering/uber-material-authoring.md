@@ -110,6 +110,13 @@ preview reports unavailable or incompatible semantic values before application.
 Expansion and local note storage is also versioned. Schema fingerprints prevent
 stale state from crossing upgrades.
 
+Some Uber parameters had earlier names. `UberLegacyParameterNames` maps each
+earlier parameter, sampler, and authored property name to its current name.
+`XRMaterial` renames these entries before it syncs parameters to the shader
+uniforms and before `EnsureUberStateInitialized` adds missing defaults, so
+saved materials keep their values. When a material has
+both names, the parameter with the current name is kept.
+
 ## Tools
 
 The widget and editor-command registries are closed allowlists. Shader source can

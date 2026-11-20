@@ -93,15 +93,15 @@ effects such as GrabPass and applies the override to final coverage and output.
 Verified source surfaces with a queue above 2500 use the ordered late pass.
 The base draw keeps its authored blend, depth, and stencil state, and its sort
 priority is the source queue minus 3000. An active, verified named GrabPass uses
-the `_SourceSceneColor` array sampler. The pipeline copies linear HDR scene
+the `_SceneColorTexture` array sampler. The pipeline copies linear HDR scene
 color before the first such draw and binds the matching view layer. The shader
 divides absolute framebuffer coordinates by the full copy extent, including
 views with a nonzero viewport origin. It uses source alpha and Fresnel before
 the late opaque override, blends scene
 color into base color before decals, matcaps, and rim, and then lights the
 result. The blend uses the source shader blend factor table: `_GrabSrcBlend` and
-`_GrabDstBlend` map to `_SourceGrabSrcBlend` and `_SourceGrabDstBlend` (indices
-0 to 10). Source toon refraction maps to `_SourceRefraction*`. The shader moves the
+`_GrabDstBlend` map to `_SceneGrabSrcBlend` and `_SceneGrabDstBlend` (indices
+0 to 10). Source toon refraction maps to `_SceneRefraction*`. The shader moves the
 scene-color sample by the view-space normal, multiplied by `(index - 1)`,
 `(1 - N.V)`, half the vertical projection scale, and the inverse camera distance
 (at least 1). Chromatic aberration samples green at `offset * (1 - aberration)`

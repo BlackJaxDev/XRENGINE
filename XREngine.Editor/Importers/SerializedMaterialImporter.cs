@@ -332,7 +332,7 @@ public static partial class SerializedMaterialImporter
         string? specularSource = AddMappedTexture(document, resolver, warnings, textures, "_SpecularMap", "_SpecularMap");
         string? metallicSource = AddMappedTexture(document, resolver, warnings, textures, "_PBRMetallicMaps", "_MochieMetallicMaps", "_RGBAMetallicMaps", "_MetallicGlossMap");
         string? smoothnessSource = AddMappedTexture(document, resolver, warnings, textures, "_PBRSmoothnessMaps", "_RGBASmoothnessMaps", "_SmoothnessTex", "_MochieMetallicMaps", "_MetallicGlossMap");
-        string? clearCoatSource = AddMappedTexture(document, resolver, warnings, textures, "_SourceClearCoatMaps", "_ClearCoatMaps");
+        string? clearCoatSource = AddMappedTexture(document, resolver, warnings, textures, "_ClearCoatMaskMaps", "_ClearCoatMaps");
         string? detailMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailMask", "_DetailMask");
         string? detailTexSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailTex", "_DetailTex");
         string? detailNormalSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailNormalMap", "_DetailNormalMap");
@@ -385,7 +385,7 @@ public static partial class SerializedMaterialImporter
         ApplySourceToonMeshTextureTransform(material, document, specularSource, "_SpecularMap");
         ApplySourceToonTextureTransform(material, document, metallicSource, "_PBRMetallicMaps", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, smoothnessSource, "_PBRSmoothnessMaps", null, diagnostics);
-        ApplySourceToonTextureTransform(material, document, clearCoatSource, "_SourceClearCoatMaps", null, diagnostics);
+        ApplySourceToonTextureTransform(material, document, clearCoatSource, "_ClearCoatMaskMaps", null, diagnostics);
         ApplySourceToonMeshTextureTransform(material, document, detailMaskSource, "_DetailMask");
         ApplySourceToonMeshTextureTransform(material, document, detailTexSource, "_DetailTex");
         ApplySourceToonMeshTextureTransform(material, document, detailNormalSource, "_DetailNormalMap");
@@ -821,7 +821,7 @@ public static partial class SerializedMaterialImporter
                 $"Source PBR option '{unsupportedSourceBrdfOption}' on '{document.Name}' uses the approximate Uber shading path.",
                 unsupportedSourceBrdfOption));
         }
-        SetInt(material, "_PBRMochiePackedMasksEnabled", mochieBrdfEnabled ? 1 : 0);
+        SetInt(material, "_PBRPackedMasksEnabled", mochieBrdfEnabled ? 1 : 0);
         SetFloat(material, "_PBRReflectionStrength", mochieBrdfEnabled &&
             document.TryGetFloat("_MochieReflectionStrength", out float mochieReflectionStrength)
                 ? mochieReflectionStrength
@@ -895,21 +895,21 @@ public static partial class SerializedMaterialImporter
 
         SetInt(material, "_PBRSmoothnessMapsChannel", smoothnessChannel);
         SetFloat(material, "_PBRSmoothnessMapInvert", smoothnessInvert ? 1.0f : 0.0f);
-        SetVector4(material, "_SourceMochieSettings", new Vector4(
+        SetVector4(material, "_SpecularAASettings", new Vector4(
             mochieBrdfEnabled && document.TryGetPositive("_MochieGSAAEnabled") ? 1.0f : 0.0f,
             document.TryGetFloat("_PoiGSAAVariance", out float gsaaVariance) ? gsaaVariance : 0.15f,
             document.TryGetFloat("_PoiGSAAThreshold", out float gsaaThreshold) ? gsaaThreshold : 0.1f,
             mochieBrdfEnabled && document.TryGetPositive("_Specular2ndLayer") ? 1.0f : 0.0f));
-        SetVector4(material, "_SourceMochieSecond", new Vector4(
+        SetVector4(material, "_SecondSpecularSettings", new Vector4(
             document.TryGetFloat("_MochieRoughnessMultiplier2", out float secondSmoothness) ? secondSmoothness : 1.0f,
             document.TryGetFloat("_MochieSpecularStrength2", out float secondStrength) ? secondStrength : 0.0f,
             document.TryGetFloat("_IgnoreCastedShadows", out float ignoreShadows) ? ignoreShadows : 0.0f,
             mochieBrdfEnabled && unsupportedSourceBrdfOption is null ? 1.0f : 0.0f));
-        SetVector4(material, "_SourceMochieReflection", new Vector4(
+        SetVector4(material, "_ReflectionResponse", new Vector4(
             GetFloat(document, "_RefSpecFresnelStrength", 1.0f),
             GetFloat(document, "_SFExposureOcclusion"),
             0.0f, 0.0f));
-        SetVector4(material, "_SourceMochieReflectionTint",
+        SetVector4(material, "_ReflectionTint",
             document.TryGetVector("_MochieReflectionTint", out Vector4 reflectionTint)
                 ? reflectionTint : Vector4.One);
     }
@@ -1367,7 +1367,7 @@ public static partial class SerializedMaterialImporter
         material.AlphaCutoff = document.TryGetFloat("_Cutoff", out float authoredCutoff)
             ? Math.Clamp(authoredCutoff, 0.0f, 1.0f)
             : SourceToonRenderStateConverter.GetPresetCutoff(conversion.Preset);
-        SetFloat(material, "_SourceAlphaClip", 1.0f);
+        SetFloat(material, "_AlphaClipAllModes", 1.0f);
 
         // Synchronize opacity uniforms/shader family before restoring the
         // source-authored fixed-function state verbatim.

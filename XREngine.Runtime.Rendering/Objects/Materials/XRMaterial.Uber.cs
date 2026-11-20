@@ -255,6 +255,8 @@ public partial class XRMaterial
 
     internal void EnsureUberStateInitialized(XRShader fragmentShader, ShaderUiManifest manifest)
     {
+        MigrateLegacyUberParameterNames();
+
         UberMaterialAuthoredState current = UberAuthoredState ?? UberMaterialAuthoredState.Empty;
         UberMaterialAuthoredState next = current;
         XRShader canonicalShader = ResolveCanonicalUberFragmentShader(fragmentShader);
@@ -279,6 +281,64 @@ public partial class XRMaterial
 
         EnsureUberAuthorableParameters(manifest);
         EnsureUberEnabledFeatureResources(manifest);
+    }
+
+    /// <summary>
+    /// Renames parameters, samplers, and authored property states that use earlier Uber names.
+    /// A parameter keeps its earlier name when a parameter with the current name already exists.
+    /// </summary>
+    private void MigrateLegacyUberParameterNames()
+    {
+        bool parametersChanged = false;
+        foreach (ShaderVar parameter in Parameters)
+        {
+            if (parameter is null ||
+                !UberLegacyParameterNames.TryGetCurrentName(parameter.Name, out string? currentName) ||
+                HasParameterNamed(currentName))
+                continue;
+
+            parameter.Name = currentName;
+            parametersChanged = true;
+        }
+
+        EventList<XRTexture?> textures = Textures;
+        for (int i = 0; i < textures.Count; i++)
+        {
+            XRTexture? texture = textures[i];
+            if (texture is not null && UberLegacyParameterNames.TryGetCurrentName(texture.SamplerName, out string? currentName))
+                texture.SamplerName = currentName;
+        }
+
+        UberMaterialAuthoredState? authored = UberAuthoredState;
+        if (authored is not null)
+        {
+            UberMaterialAuthoredState renamed = authored;
+            foreach (UberMaterialPropertyState property in authored.Properties)
+            {
+                if (UberLegacyParameterNames.TryGetCurrentName(property.Name, out string? currentName))
+                    renamed = renamed.RenameProperty(property.Name, currentName);
+            }
+
+            if (!ReferenceEquals(renamed, authored))
+                UberAuthoredState = renamed;
+        }
+
+        if (!parametersChanged)
+            return;
+
+        ResetNameIndexCache();
+        MarkDirty();
+    }
+
+    private bool HasParameterNamed(string name)
+    {
+        foreach (ShaderVar parameter in Parameters)
+        {
+            if (parameter is not null && string.Equals(parameter.Name, name, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
     }
 
     private void EnsureUberAuthorableParameters(ShaderUiManifest manifest)

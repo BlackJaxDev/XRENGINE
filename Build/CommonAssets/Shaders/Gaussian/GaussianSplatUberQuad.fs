@@ -199,8 +199,8 @@ void main()
 #if defined(XR_UBER_WORD_AlphaPremultiply)
             isPremultiplied = isPremultiplied || (isUber && UBER_F(_AlphaPremultiply) > 0.5);
 #endif
-#if defined(XR_UBER_WORD_SourceGrabPassBlendMode)
-            isPremultiplied = isPremultiplied || (isUber && UBER_F(_SourceGrabPassBlendMode) > 0.5);
+#if defined(XR_UBER_WORD_SceneGrabBlendMode)
+            isPremultiplied = isPremultiplied || (isUber && UBER_F(_SceneGrabBlendMode) > 0.5);
 #endif
             float opticalDepth = coverageAlpha >= 0.99995
                 ? kMaxOpticalDepth

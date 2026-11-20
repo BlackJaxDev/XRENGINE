@@ -142,7 +142,7 @@ public static partial class SerializedMaterialImporter
         MapInt(document, material, "_UDIMDiscardMode", "_UDIMDiscardMode");
         MapInt(document, material, "_UDIMDiscardUV", "_UDIMDiscardUV");
         // Serialized Unity models import with FlipUVs. Source tile rows use the pre-flip V coordinate.
-        SetFloat(material, "_SourceUdimFlipV", 1.0f);
+        SetFloat(material, "_UdimFlipV", 1.0f);
         bool activeUdimCell = false;
         for (int row = 0; row < 4; ++row)
         {

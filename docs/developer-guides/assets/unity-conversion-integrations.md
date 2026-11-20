@@ -490,7 +490,7 @@ values, and descriptor metadata remain available for diagnostics. The bounded
 opaque Standard converter also converts its ordinary `_Color` RGB tint in a
 Linear project.
 
-The importer sets `_SourceCubeMap` for enabled source cubemaps. Both native
+The importer sets `_CubeMapToonModel` for enabled source cubemaps. Both native
 Advanced shading and canonical Uber shading apply that cubemap to base color
 before diffuse lighting and PBR evaluation. Its emission remains separate and
 is added once. The source light-mask blend uses `min(mask, lightMask)`. Generic
@@ -519,7 +519,7 @@ Environmental rim conversion uses the source `_EnableEnvironmentalRim` flag.
 When it is disabled, the converted `_RimEnviroIntensity` is zero. A saved
 intensity can remain in the source material after its module is disabled;
 enabling another shared PBR feature must not activate that value.
-Enabled source rim uses `_SourceEnviroRim` and the selected reflection probes.
+Enabled source rim uses `_EnviroRimSettings` and the selected reflection probes.
 It samples the prefiltered probe in the world-normal direction without box
 parallax correction. The source blur maps to the native prefilter mip range.
 The source view rim, brightness threshold, base color, mask channel, mask UV,
@@ -547,7 +547,7 @@ materials use the full camera ambient occlusion result, including GTAO. Set the
 AO mode, strength, and enabled state in the camera post-processing settings.
 Both native Advanced and forward Uber shading apply camera diffuse AO to
 source indirect light, wrapped light, and environment rim lighting. Camera
-specular occlusion also affects Mochie and clear-coat probe reflections.
+specular occlusion also affects toon-specular and clear-coat probe reflections.
 Direct light and emission remain separate. Source material AO maps remain
 separate. A camera with AO
 disabled supplies neutral occlusion, so this default does not darken the material.

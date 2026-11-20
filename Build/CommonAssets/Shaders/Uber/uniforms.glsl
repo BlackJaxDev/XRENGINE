@@ -5,28 +5,28 @@
 #define TOON_UNIFORMS_GLSL
 //@category("Surface")
 //@subcategory("Normals")
-//@property(name="_SourceBackfaceNormals", display="Backface Normal Control", mode=static, range=[0,1], toggle=true)
+//@property(name="_BackfaceNormalControl", display="Backface Normal Control", mode=static, range=[0,1], toggle=true)
 //@tooltip("When on, Flip Backface Normals selects whether back faces flip the normal and the tangent frame. When off, back faces flip only the normal.")
-uniform int _SourceBackfaceNormals;
-//@property(name="_FlipBackfaceNormals", display="Flip Backface Normals", mode=static, range=[0,1], toggle=true, visible="_SourceBackfaceNormals > 0")
+uniform int _BackfaceNormalControl;
+//@property(name="_FlipBackfaceNormals", display="Flip Backface Normals", mode=static, range=[0,1], toggle=true, visible="_BackfaceNormalControl > 0")
 uniform int _FlipBackfaceNormals;
 //@category("Lighting")
 //@subcategory("Light Model")
-//@property(name="_SourceLightMode", display="Light Model", mode=static, enum="0:Stylized|1:Toon")
+//@property(name="_LightModel", display="Light Model", mode=static, enum="0:Stylized|1:Toon")
 //@tooltip("Stylized uses the engine light response. Toon uses the toon light pipeline with the settings below.")
-uniform int _SourceLightMode;
+uniform int _LightModel;
 //@property(name="_WorldAmbientOcclusionStrength", display="World AO Strength", mode=static, range=[0,1])
 uniform float _WorldAmbientOcclusionStrength;
-//@property(name="_SourceLightSettings", display="Toon Light", mode=static, components="Unlit Intensity|Cast Shadows|Light Multiplier|Light Addition", visible="_SourceLightMode > 0")
-uniform vec4 _SourceLightSettings;
-//@property(name="_SourceAdditiveSettings", display="Additive Lights", mode=static, components="Enabled:toggle|Ignore Directional:toggle|Limit Brightness:toggle|Brightness Limit", visible="_SourceLightMode > 0")
-uniform vec4 _SourceAdditiveSettings;
-//@property(name="_SourceAdditiveColor", display="Additive Light Color", mode=static, components="Monochromatic|Passthrough|Type (0 Lambert, 1 Gradient, 2 Ramp, 3 Match Base)|Cast Shadows", visible="_SourceLightMode > 0")
-uniform vec4 _SourceAdditiveColor;
-//@property(name="_SourceAdditiveGradient", display="Additive Gradient", mode=static, components="Start|End", visible="_SourceLightMode > 0")
-uniform vec4 _SourceAdditiveGradient;
-//@property(name="_SourceWrappedColor", display="Wrapped Light Color", mode=static, visible="_SourceLightMode > 0")
-uniform vec4 _SourceWrappedColor;
+//@property(name="_ToonLightSettings", display="Toon Light", mode=static, components="Unlit Intensity|Cast Shadows|Light Multiplier|Light Addition", visible="_LightModel > 0")
+uniform vec4 _ToonLightSettings;
+//@property(name="_AdditiveLightSettings", display="Additive Lights", mode=static, components="Enabled:toggle|Ignore Directional:toggle|Limit Brightness:toggle|Brightness Limit", visible="_LightModel > 0")
+uniform vec4 _AdditiveLightSettings;
+//@property(name="_AdditiveLightColor", display="Additive Light Color", mode=static, components="Monochromatic|Passthrough|Type (0 Lambert, 1 Gradient, 2 Ramp, 3 Match Base)|Cast Shadows", visible="_LightModel > 0")
+uniform vec4 _AdditiveLightColor;
+//@property(name="_AdditiveLightGradient", display="Additive Gradient", mode=static, components="Start|End", visible="_LightModel > 0")
+uniform vec4 _AdditiveLightGradient;
+//@property(name="_WrappedLightColor", display="Wrapped Light Color", mode=static, visible="_LightModel > 0")
+uniform vec4 _WrappedLightColor;
 
 // ============================================
 // Transform Matrices (Provided by engine - matches EEngineUniform names)
@@ -160,10 +160,10 @@ uniform float _AlphaMaskInvert;
 #endif
 
 //@property(name="_Cutoff", display="Alpha Cutoff", mode=static, range=[0,1])
-//@tooltip("Threshold below which fragments are discarded in the cutout, transparent cutout, and fade presets, or when Source Alpha Clip is enabled.")
+//@tooltip("Threshold below which fragments are discarded in the cutout, transparent cutout, and fade presets, or when Clip Alpha In All Modes is on.")
 uniform float _Cutoff;              // Alpha cutoff threshold
-//@property(name="_SourceAlphaClip", display="Source Alpha Clip", mode=static, default="0.0")
-uniform float _SourceAlphaClip;
+//@property(name="_AlphaClipAllModes", display="Clip Alpha In All Modes", mode=static, default="0.0")
+uniform float _AlphaClipAllModes;
 uniform int _Mode;                  // Shader blend mode. The render preset sets it.
 uniform float _AlphaForceOpaque;
 uniform float _AlphaMod;
@@ -173,22 +173,22 @@ uniform float _AlphaPremultiply;
 
 //@feature(id="source-scene-color", name="Source Scene Color", default=off, cost=high)
 #ifndef XRENGINE_UBER_DISABLE_SOURCE_SCENE_COLOR
-uniform sampler2DArray _SourceSceneColor;
-uniform float _SourceSceneColorMode;
-uniform vec4 _SourceGrabColor;
-uniform float _SourceGrabBrightness;
-uniform float _SourceGrabAddBrightness;
-uniform float _SourceGrabBlendFactor;
-uniform float _SourceGrabUseAlpha;
+uniform sampler2DArray _SceneColorTexture;
+uniform float _SceneColorMode;
+uniform vec4 _SceneGrabColor;
+uniform float _SceneGrabBrightness;
+uniform float _SceneGrabAddBrightness;
+uniform float _SceneGrabBlendFactor;
+uniform float _SceneGrabUseAlpha;
 // Source shader blend factor-table indices (0 to 10) for the surface and scene-color terms.
-uniform float _SourceGrabSrcBlend;
-uniform float _SourceGrabDstBlend;
+uniform float _SceneGrabSrcBlend;
+uniform float _SceneGrabDstBlend;
 // Source toon GrabPass refraction: on/off, index of refraction (0 to 3), chromatic
 // aberration (0 to 1), and the facing falloff power (0 disables the falloff).
-uniform float _SourceRefractionEnabled;
-uniform float _SourceRefractionIndex;
-uniform float _SourceRefractionChromaticAberration;
-uniform float _SourceRefractionFresnelPower;
+uniform float _SceneRefractionEnabled;
+uniform float _SceneRefractionIndex;
+uniform float _SceneRefractionChromaticAberration;
+uniform float _SceneRefractionFresnelPower;
 #endif
 
 // ============================================
@@ -333,8 +333,8 @@ uniform int _ShadowStrengthMaskUV;
 //@property(name="_ShadowBorderMask", display="Shadow Border Mask", slot=texture, visible="_LightingMode == 1")
 uniform sampler2D _ShadowBorderMask;
 // The border mask with trilinear filtering. The importer binds the same image as _ShadowBorderMask.
-//@property(name="_SourceShadowBorderMaskLod", slot=texture, hidden=true)
-uniform sampler2D _SourceShadowBorderMaskLod;
+//@property(name="_ShadowBorderMaskTrilinear", slot=texture, hidden=true)
+uniform sampler2D _ShadowBorderMaskTrilinear;
 uniform vec4 _ShadowBorderMask_ST;
 uniform vec2 _ShadowBorderMaskPan;
 uniform int _ShadowBorderMaskUV;
@@ -344,18 +344,18 @@ uniform vec4 _Shadow2ndColor;
 uniform vec4 _Shadow3rdColor;
 //@property(name="_ShadowBorderColor", display="Border Color", mode=static, visible="_LightingMode == 1")
 uniform vec4 _ShadowBorderColor;
-//@property(name="_SourceMultilayerBorders", display="Layer Borders", mode=static, components="First|Second|Third|Border Range", visible="_LightingMode == 1")
-uniform vec4 _SourceMultilayerBorders;
-//@property(name="_SourceMultilayerBlurs", display="Layer Blurs", mode=static, components="First|Second|Third|Non-Linear", visible="_LightingMode == 1")
-uniform vec4 _SourceMultilayerBlurs;
-//@property(name="_SourceMultilayerReceive", display="Layer Shadow Receive", mode=static, components="First|Second|Third|Main Strength", visible="_LightingMode == 1")
-uniform vec4 _SourceMultilayerReceive;
-//@property(name="_SourceMultilayerMix", display="Layer Mix", mode=static, components="Environment Strength|Shadow Strength|Ignore Ambient Color|Layered Light Map:toggle", visible="_LightingMode == 1")
-uniform vec4 _SourceMultilayerMix;
-//@property(name="_SourceMultilayerOptions", display="Layer Options", mode=static, components="Use Border Map:toggle|Mask Type (0 Strength, 1 Flat)|Border After AO:toggle|Border Mask LOD", visible="_LightingMode == 1")
-uniform vec4 _SourceMultilayerOptions;
-//@property(name="_SourceMultilayerFlat", display="Flat Layer", mode=static, components="Border|Blur", visible="_LightingMode == 1")
-uniform vec4 _SourceMultilayerFlat;
+//@property(name="_MultilayerBorders", display="Layer Borders", mode=static, components="First|Second|Third|Border Range", visible="_LightingMode == 1")
+uniform vec4 _MultilayerBorders;
+//@property(name="_MultilayerBlurs", display="Layer Blurs", mode=static, components="First|Second|Third|Non-Linear", visible="_LightingMode == 1")
+uniform vec4 _MultilayerBlurs;
+//@property(name="_MultilayerReceive", display="Layer Shadow Receive", mode=static, components="First|Second|Third|Main Strength", visible="_LightingMode == 1")
+uniform vec4 _MultilayerReceive;
+//@property(name="_MultilayerMix", display="Layer Mix", mode=static, components="Environment Strength|Shadow Strength|Ignore Ambient Color|Layered Light Map:toggle", visible="_LightingMode == 1")
+uniform vec4 _MultilayerMix;
+//@property(name="_MultilayerOptions", display="Layer Options", mode=static, components="Use Border Map:toggle|Mask Type (0 Strength, 1 Flat)|Border After AO:toggle|Border Mask LOD", visible="_LightingMode == 1")
+uniform vec4 _MultilayerOptions;
+//@property(name="_MultilayerFlat", display="Flat Layer", mode=static, components="Border|Blur", visible="_LightingMode == 1")
+uniform vec4 _MultilayerFlat;
 //@property(name="_ShadowAOShift", display="Border Map Shift", mode=static, components="First Min|First Max|Second Min|Second Max", visible="_LightingMode == 1")
 uniform vec4 _ShadowAOShift;
 //@property(name="_ShadowAOShift2", display="Border Map Shift 2", mode=static, components="Third Min|Third Max", visible="_LightingMode == 1")
@@ -511,10 +511,10 @@ uniform float _RimSharpness;
 uniform float _RimLightColorBias;
 //@property(name="_RimEmission", display="Emission Amount", mode=static, range=[0,8], default="1.0")
 uniform float _RimEmission;
-//@property(name="_SourceRimSettings", display="Rim Shape", mode=static, components="Extended Rim:toggle|Invert:toggle|Power|Use Normal Map:toggle")
-uniform vec4 _SourceRimSettings;
-//@property(name="_SourceRimColorSettings", display="Rim Color Options", mode=static, components="Base Color Mix|Brightness|Blend Mode|Blur Plus One (0 Uses Sharpness)")
-uniform vec4 _SourceRimColorSettings;
+//@property(name="_RimShapeSettings", display="Rim Shape", mode=static, components="Extended Rim:toggle|Invert:toggle|Power|Use Normal Map:toggle")
+uniform vec4 _RimShapeSettings;
+//@property(name="_RimColorSettings", display="Rim Color Options", mode=static, components="Base Color Mix|Brightness|Blend Mode|Blur Plus One (0 Uses Sharpness)")
+uniform vec4 _RimColorSettings;
 //@property(name="_RimHideInShadow", display="Hide In Shadow", mode=static, range=[0,1], toggle=true, default="0.0")
 uniform float _RimHideInShadow;
 //@property(name="_RimStyle", display="Rim Style", mode=static, enum="0:Smooth|1:Exponential|2:Sharp", default="1")
@@ -580,16 +580,16 @@ uniform int _PBRSmoothnessMapsChannel;
 uniform float _PBRSmoothnessMapInvert;
 //@property(name="_PBRRoughnessMultiplier", display="Roughness Multiplier", mode=static, range=[0,2])
 uniform float _PBRRoughnessMultiplier;
-//@property(name="_PBRMochiePackedMasksEnabled", display="Use Packed Reflection And Specular Masks", mode=static, default="0")
-uniform int _PBRMochiePackedMasksEnabled;
-//@property(name="_SourceMochieSettings", display="Specular Anti-Aliasing", mode=static, components="Enabled:toggle|Variance|Threshold|Second Specular Layer:toggle")
-uniform vec4 _SourceMochieSettings;
-//@property(name="_SourceMochieSecond", display="Second Specular", mode=static, components="Smoothness|Strength|Ignore Cast Shadows:toggle|Extended BRDF:toggle")
-uniform vec4 _SourceMochieSecond;
-//@property(name="_SourceMochieReflection", display="Reflection Response", mode=static, components="Fresnel Strength|Exposure Occlusion")
-uniform vec4 _SourceMochieReflection;
-//@property(name="_SourceMochieReflectionTint", display="Reflection Tint", mode=static)
-uniform vec4 _SourceMochieReflectionTint;
+//@property(name="_PBRPackedMasksEnabled", display="Use Packed Reflection And Specular Masks", mode=static, default="0")
+uniform int _PBRPackedMasksEnabled;
+//@property(name="_SpecularAASettings", display="Specular Anti-Aliasing", mode=static, components="Enabled:toggle|Variance|Threshold|Second Specular Layer:toggle")
+uniform vec4 _SpecularAASettings;
+//@property(name="_SecondSpecularSettings", display="Second Specular", mode=static, components="Smoothness|Strength|Ignore Cast Shadows:toggle|Extended BRDF:toggle")
+uniform vec4 _SecondSpecularSettings;
+//@property(name="_ReflectionResponse", display="Reflection Response", mode=static, components="Fresnel Strength|Exposure Occlusion")
+uniform vec4 _ReflectionResponse;
+//@property(name="_ReflectionTint", display="Reflection Tint", mode=static)
+uniform vec4 _ReflectionTint;
 //@property(name="_PBRReflectionStrength", display="Reflection Strength", mode=static, default="1.0")
 uniform float _PBRReflectionStrength;
 //@property(name="_PBRMetallicMapsReflectionMaskChannel", display="Reflection Mask Channel", mode=static, default="2")
@@ -719,7 +719,7 @@ uniform float _OutlineFixedSize;
 uniform float _OutlineUseVertexColors;
 //@property(name="_OutlineZOffset", display="Depth Offset", mode=animated, range=[-1,1])
 uniform float _OutlineZOffset;
-uniform int _SourceOutlineBasic;
+uniform int _OutlineBasicModel;
 uniform float _OutlineFixWidth;
 uniform float _OutlinesMaxDistance;
 uniform vec4 _OutlineTexture_ST;
@@ -799,7 +799,7 @@ uniform float _BackFaceEmissionLimiter;
 #ifndef XRENGINE_UBER_DISABLE_GLITTER
 //@property(name="_GlitterColor", display="Glitter Color", mode=static)
 uniform vec4 _GlitterColor;
-//@property(name="_GlitterDensity", display="Density", mode=static, range=[0,10], visible="_SourceGlitter == 0")
+//@property(name="_GlitterDensity", display="Density", mode=static, range=[0,10], visible="_GlitterModel == 0")
 uniform float _GlitterDensity;
 //@property(name="_GlitterSize", display="Size", mode=static, range=[0,1])
 uniform float _GlitterSize;
@@ -819,63 +819,63 @@ uniform vec2 _GlitterAudioMaskRange;
 uniform float _GlitterSpeed;
 //@property(name="_GlitterBrightness", display="Brightness", mode=static, range=[0,16])
 uniform float _GlitterBrightness;
-//@property(name="_GlitterMinAngle", display="Min View Angle", mode=static, range=[0,1], visible="_SourceGlitter == 0")
+//@property(name="_GlitterMinAngle", display="Min View Angle", mode=static, range=[0,1], visible="_GlitterModel == 0")
 uniform float _GlitterMinAngle;
-//@property(name="_GlitterMaxAngle", display="Max View Angle", mode=static, range=[0,1], visible="_SourceGlitter == 0")
+//@property(name="_GlitterMaxAngle", display="Max View Angle", mode=static, range=[0,1], visible="_GlitterModel == 0")
 uniform float _GlitterMaxAngle;
-//@property(name="_GlitterRainbow", display="Rainbow Blend", mode=static, range=[0,1], visible="_SourceGlitter == 0")
+//@property(name="_GlitterRainbow", display="Rainbow Blend", mode=static, range=[0,1], visible="_GlitterModel == 0")
 uniform float _GlitterRainbow;
 //@property(name="_GlitterMask", display="Glitter Mask", slot=texture)
 uniform sampler2D _GlitterMask;
 //@property(name="_GlitterTexture", display="Glitter Shape", slot=texture)
 uniform sampler2D _GlitterTexture;
-//@property(name="_GlitterColorMap", display="Glitter Color Map", slot=texture, visible="_SourceGlitter > 0")
+//@property(name="_GlitterColorMap", display="Glitter Color Map", slot=texture, visible="_GlitterModel > 0")
 uniform sampler2D _GlitterColorMap;
-//@property(name="_SourceGlitter", display="Glitter Model", mode=static, enum="0:Sparkle|1:Flakes")
+//@property(name="_GlitterModel", display="Glitter Model", mode=static, enum="0:Sparkle|1:Flakes")
 //@tooltip("Sparkle uses density, rainbow, and view angle. Flakes uses a cell grid of oriented flakes.")
-uniform int _SourceGlitter;
-//@property(name="_SourceGlitterVersion", display="Flake Shading", mode=static, enum="81:Classic|92:Standard|100:Light Ramped", visible="_SourceGlitter > 0")
+uniform int _GlitterModel;
+//@property(name="_GlitterFlakeShading", display="Flake Shading", mode=static, enum="81:Classic|92:Standard|100:Light Ramped", visible="_GlitterModel > 0")
 //@tooltip("Classic uses one view-aligned layer. Standard uses layered flakes. Light Ramped also scales flakes by the light map and can reduce density with distance.")
-uniform int _SourceGlitterVersion;
-//@property(name="_GlitterFrequency", display="Flake Frequency", mode=static, range=[1,1000], visible="_SourceGlitter > 0")
+uniform int _GlitterFlakeShading;
+//@property(name="_GlitterFrequency", display="Flake Frequency", mode=static, range=[1,1000], visible="_GlitterModel > 0")
 uniform float _GlitterFrequency;
-//@property(name="_GlitterDistanceLOD", display="Distance Density Reduction", mode=static, range=[0,1], toggle=true, visible="_SourceGlitter > 0 && _SourceGlitterVersion == 100")
+//@property(name="_GlitterDistanceLOD", display="Distance Density Reduction", mode=static, range=[0,1], toggle=true, visible="_GlitterModel > 0 && _GlitterFlakeShading == 100")
 uniform float _GlitterDistanceLOD;
-//@property(name="_GlitterLayers", display="Flake Layers", mode=static, range=[1,8], visible="_SourceGlitter > 0")
+//@property(name="_GlitterLayers", display="Flake Layers", mode=static, range=[1,8], visible="_GlitterModel > 0")
 uniform int _GlitterLayers;
 uniform int _GlitterUV;
-//@property(name="_GlitterMode", display="Flake Response", mode=static, enum="0:View Angle|1:Pulse|2:Light Reflection", visible="_SourceGlitter > 0")
+//@property(name="_GlitterMode", display="Flake Response", mode=static, enum="0:View Angle|1:Pulse|2:Light Reflection", visible="_GlitterModel > 0")
 uniform int _GlitterMode;
 // The flake shading supports only circle flakes, so the shader does not read this value.
 //@property(name="_GlitterShape", hidden=true)
 uniform int _GlitterShape;
-//@property(name="_GlitterAngleRange", display="Flake Angle Range", mode=static, range=[0,90], visible="_SourceGlitter > 0")
+//@property(name="_GlitterAngleRange", display="Flake Angle Range", mode=static, range=[0,90], visible="_GlitterModel > 0")
 uniform float _GlitterAngleRange;
-//@property(name="_GlitterContrast", display="Flake Contrast", mode=static, range=[1,1000], visible="_SourceGlitter > 0 && _GlitterMode != 1")
+//@property(name="_GlitterContrast", display="Flake Contrast", mode=static, range=[1,1000], visible="_GlitterModel > 0 && _GlitterMode != 1")
 uniform float _GlitterContrast;
-//@property(name="_GlitterBias", display="View Bias", mode=static, range=[0,1], visible="_SourceGlitter > 0 && _GlitterMode == 0")
+//@property(name="_GlitterBias", display="View Bias", mode=static, range=[0,1], visible="_GlitterModel > 0 && _GlitterMode == 0")
 uniform float _GlitterBias;
-//@property(name="_GlitterMinBrightness", display="Minimum Brightness", mode=static, range=[0,1], visible="_SourceGlitter > 0")
+//@property(name="_GlitterMinBrightness", display="Minimum Brightness", mode=static, range=[0,1], visible="_GlitterModel > 0")
 uniform float _GlitterMinBrightness;
-//@property(name="_GlitterCenterSize", display="Pulse Center Size", mode=static, range=[0,1], visible="_SourceGlitter > 0 && _GlitterMode == 1")
+//@property(name="_GlitterCenterSize", display="Pulse Center Size", mode=static, range=[0,1], visible="_GlitterModel > 0 && _GlitterMode == 1")
 uniform float _GlitterCenterSize;
-//@property(name="_GlitterRandomLocation", display="Random Location", mode=static, range=[0,1], visible="_SourceGlitter > 0")
+//@property(name="_GlitterRandomLocation", display="Random Location", mode=static, range=[0,1], visible="_GlitterModel > 0")
 uniform float _GlitterRandomLocation;
-//@property(name="_GlitterUseNormals", display="Use Normal Map", mode=static, range=[0,1], visible="_SourceGlitter > 0")
+//@property(name="_GlitterUseNormals", display="Use Normal Map", mode=static, range=[0,1], visible="_GlitterModel > 0")
 uniform float _GlitterUseNormals;
-//@property(name="_GlitterUseSurfaceColor", display="Use Surface Color", mode=static, range=[0,1], visible="_SourceGlitter > 0")
+//@property(name="_GlitterUseSurfaceColor", display="Use Surface Color", mode=static, range=[0,1], visible="_GlitterModel > 0")
 uniform float _GlitterUseSurfaceColor;
-//@property(name="_GlitterHideInShadow", display="Hide In Shadow", mode=static, range=[0,1], visible="_SourceGlitter > 0")
+//@property(name="_GlitterHideInShadow", display="Hide In Shadow", mode=static, range=[0,1], visible="_GlitterModel > 0")
 uniform float _GlitterHideInShadow;
-//@property(name="_GlitterScaleWithLighting", display="Scale With Lighting", mode=static, range=[0,1], visible="_SourceGlitter > 0")
+//@property(name="_GlitterScaleWithLighting", display="Scale With Lighting", mode=static, range=[0,1], visible="_GlitterModel > 0")
 uniform float _GlitterScaleWithLighting;
-//@property(name="_GlitterBlendType", display="Flake Blend", mode=static, enum="0:Add Emission|1:Replace Surface", visible="_SourceGlitter > 0")
+//@property(name="_GlitterBlendType", display="Flake Blend", mode=static, enum="0:Add Emission|1:Replace Surface", visible="_GlitterModel > 0")
 uniform int _GlitterBlendType;
-//@property(name="_GlitterMaskChannel", display="Mask Channel", mode=static, enum="0:R|1:G|2:B|3:A", visible="_SourceGlitter > 0")
+//@property(name="_GlitterMaskChannel", display="Mask Channel", mode=static, enum="0:R|1:G|2:B|3:A", visible="_GlitterModel > 0")
 uniform int _GlitterMaskChannel;
-//@property(name="_GlitterMaskInvert", display="Invert Mask", mode=static, range=[0,1], toggle=true, visible="_SourceGlitter > 0")
+//@property(name="_GlitterMaskInvert", display="Invert Mask", mode=static, range=[0,1], toggle=true, visible="_GlitterModel > 0")
 uniform float _GlitterMaskInvert;
-//@property(name="_GlitterUVPanning", display="Flake Panning", mode=static, visible="_SourceGlitter > 0")
+//@property(name="_GlitterUVPanning", display="Flake Panning", mode=static, visible="_GlitterModel > 0")
 uniform vec2 _GlitterUVPanning;
 uniform vec4 _GlitterMask_ST;
 uniform vec2 _GlitterMaskPan;
@@ -941,8 +941,8 @@ uniform float _SSSAmbient;
 #ifndef XRENGINE_UBER_DISABLE_DISSOLVE
 //@property(name="_DissolveType", display="Dissolve Mode", mode=static, enum="0:Linear|1:Spherical|2:Point to Point|3:Center Out|4:UV Tile|5:Source Basic")
 uniform float _DissolveType;
-//@property(name="_SourceDissolveParams", display="Source Dissolve Parameters", mode=static, default="vec4(0.5, 0.0, 0.0, 0.0)")
-uniform vec4 _SourceDissolveParams;
+//@property(name="_DissolveSettings", display="Dissolve Settings", mode=static, default="vec4(0.5, 0.0, 0.0, 0.0)")
+uniform vec4 _DissolveSettings;
 //@property(name="_DissolveTextureColor", display="Dissolved Color", mode=static, default="vec4(1.0)")
 uniform vec4 _DissolveTextureColor;
 //@property(name="_DissolveToEmissionStrength", display="Dissolved Emission", mode=static, default=0)

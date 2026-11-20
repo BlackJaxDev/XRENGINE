@@ -503,8 +503,8 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         if (isCanonicalNativeUber)
         {
             // Match NativeUberMaterialSourceEncoder.TryEncode directly so canonical NativeUberV1
-            // materials preserve composite source vectors (such as _SourceRimSettings,
-            // _SourceLightSettings, and _SourceMochieSettings) without manifest static-literal overrides.
+            // materials preserve composite source vectors (such as _RimShapeSettings,
+            // _ToonLightSettings, and _SpecularAASettings) without manifest static-literal overrides.
             SeedNativeUberVectorDefaults(words);
             foreach (ShaderVar? parameter in material.Parameters)
             {

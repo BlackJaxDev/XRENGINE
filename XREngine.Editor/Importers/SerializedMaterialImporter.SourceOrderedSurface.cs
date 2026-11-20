@@ -183,20 +183,20 @@ public static partial class SerializedMaterialImporter
         warnings.Add(lightingDiagnostic.ToString());
 
         material.SetUberFeatureEnabled("source-scene-color", true);
-        SetFloat(material, "_SourceSceneColorMode", 1.0f);
+        SetFloat(material, "_SceneColorMode", 1.0f);
         Vector4 grabColor = document.TryGetVector("_GrabpassColor", out Vector4 sourceGrabColor) && IsFinite(sourceGrabColor)
             ? sourceGrabColor
             : Vector4.One;
-        SetVector4(material, "_SourceGrabColor", grabColor);
-        SetFloat(material, "_SourceGrabBrightness", FiniteOr(GetSourceFloat(document, "_GrabPassBrightness", 1.0f), 1.0f));
-        SetFloat(material, "_SourceGrabAddBrightness", FiniteOr(GetSourceFloat(document, "_GrabPassAddBrightness"), 0.0f));
-        SetFloat(material, "_SourceGrabBlendFactor", Saturate(FiniteOr(GetSourceFloat(document, "_GrabPassBlendFactor", 1.0f), 1.0f)));
-        SetFloat(material, "_SourceGrabUseAlpha", FiniteOr(GetSourceFloat(document, "_GrabPassUseAlpha", 1.0f), 1.0f));
+        SetVector4(material, "_SceneGrabColor", grabColor);
+        SetFloat(material, "_SceneGrabBrightness", FiniteOr(GetSourceFloat(document, "_GrabPassBrightness", 1.0f), 1.0f));
+        SetFloat(material, "_SceneGrabAddBrightness", FiniteOr(GetSourceFloat(document, "_GrabPassAddBrightness"), 0.0f));
+        SetFloat(material, "_SceneGrabBlendFactor", Saturate(FiniteOr(GetSourceFloat(document, "_GrabPassBlendFactor", 1.0f), 1.0f)));
+        SetFloat(material, "_SceneGrabUseAlpha", FiniteOr(GetSourceFloat(document, "_GrabPassUseAlpha", 1.0f), 1.0f));
         float srcBlend = GetSourceFloat(document, "_GrabSrcBlend", SourceGrabDefaultSrcBlend);
         float dstBlend = GetSourceFloat(document, "_GrabDstBlend", SourceGrabDefaultDstBlend);
         bool validBlend = IsSourceGrabBlendFactor(srcBlend) && IsSourceGrabBlendFactor(dstBlend);
-        SetFloat(material, "_SourceGrabSrcBlend", validBlend ? srcBlend : SourceGrabDefaultSrcBlend);
-        SetFloat(material, "_SourceGrabDstBlend", validBlend ? dstBlend : SourceGrabDefaultDstBlend);
+        SetFloat(material, "_SceneGrabSrcBlend", validBlend ? srcBlend : SourceGrabDefaultSrcBlend);
+        SetFloat(material, "_SceneGrabDstBlend", validBlend ? dstBlend : SourceGrabDefaultDstBlend);
         BindSourceRefraction(material, document);
         SetFloat(material, "_AlphaFresnel", GetSourceFloat(document, "_AlphaFresnel") == 1.0f ? 1.0f : 0.0f);
         SetFloat(material, "_AlphaFresnelAlpha", Saturate(FiniteOr(GetSourceFloat(document, "_AlphaFresnelAlpha"), 0.0f)));
@@ -215,12 +215,12 @@ public static partial class SerializedMaterialImporter
     private static void BindSourceRefraction(XRMaterial material, SerializedMaterialDocument document)
     {
         bool enabled = document.TryGetPositive("_RefractionEnabled");
-        SetFloat(material, "_SourceRefractionEnabled", enabled ? 1.0f : 0.0f);
-        SetFloat(material, "_SourceRefractionIndex",
+        SetFloat(material, "_SceneRefractionEnabled", enabled ? 1.0f : 0.0f);
+        SetFloat(material, "_SceneRefractionIndex",
             Math.Clamp(FiniteOr(GetSourceFloat(document, "_RefractionIndex", 1.333333f), 1.333333f), 0.0f, 3.0f));
-        SetFloat(material, "_SourceRefractionChromaticAberration",
+        SetFloat(material, "_SceneRefractionChromaticAberration",
             Saturate(FiniteOr(GetSourceFloat(document, "_RefractionChromaticAberration"), 0.0f)));
-        SetFloat(material, "_SourceRefractionFresnelPower",
+        SetFloat(material, "_SceneRefractionFresnelPower",
             Math.Clamp(FiniteOr(GetSourceFloat(document, "_RefractionFresnelPower"), 0.0f), 0.0f, 10.0f));
     }
 

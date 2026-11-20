@@ -148,7 +148,7 @@ bool XR_UBER_ApplyDissolve(XRUberCoordinates coordinates, inout vec4 baseColor, 
         vec3 result = xrSourceBasicDissolve(noise, detail, mask,
             UBER_F(_DissolveProgress), UBER_F(_DissolveEdgeWidth),
             UBER_F(_DissolveDetailStrength), UBER_F(_DissolveInvert),
-            UBER_V(_SourceDissolveParams), coordinates.time);
+            UBER_V(_DissolveSettings), coordinates.time);
         vec4 dissolvedColor = XR_UBER_CoverageTexture(UBER_T(_DissolveEdgeTexture),
             UBER_I(_DissolveEdgeTextureUV), UBER_V(_DissolveEdgeTexture_ST),
             UBER_V(_DissolveEdgeTexturePan).xy * panTimeScale, coordinates, vec4(1.0)) *
@@ -253,7 +253,7 @@ bool XR_UBER_ApplyCoverage(
         vec2 tileDx;
         vec2 tileDy;
         XR_UBER_CoverageUv(coordinates, UBER_I(_UDIMDiscardUV), tileUv, tileDx, tileDy);
-        if (UBER_F(_SourceUdimFlipV) > 0.5)
+        if (UBER_F(_UdimFlipV) > 0.5)
             tileUv.y = 1.0 - tileUv.y;
         vec2 tile = floor(tileUv);
         if (all(greaterThanEqual(tile, vec2(0.0))) &&
@@ -315,7 +315,7 @@ bool XR_UBER_ApplyCoverage(
         else if (mode == 4) alpha = clamp(alpha - mask, 0.0, 1.0);
     }
     alpha = clamp(alpha + UBER_F(_AlphaMod), 0.0, 1.0);
-    if (UBER_F(_SourceAlphaClip) <= 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
+    if (UBER_F(_AlphaClipAllModes) <= 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
         alpha = 1.0;
 
     base.a = alpha;
@@ -333,12 +333,12 @@ bool XR_UBER_ApplyCoverage(
     bool keep = XR_UBER_ApplyDissolve(coordinates, baseColor, dissolveEmission);
     edgeEmission += dissolveEmission;
     // Source ForceOpaque runs after decals and dissolve but before the clip test.
-    if (UBER_F(_SourceAlphaClip) > 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
+    if (UBER_F(_AlphaClipAllModes) > 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
         baseColor.a = 1.0;
     // Modes 1 (cutout), 2 (fade), and 5 (transparent cutout) clip at the cutoff, as in the forward Uber shader.
     // Imported source materials always clip at the cutoff.
     bool alphaClipMode = blendMode == 1 || blendMode == 2 || blendMode == 5 ||
-        UBER_F(_SourceAlphaClip) > 0.5;
+        UBER_F(_AlphaClipAllModes) > 0.5;
     return keep && (!alphaClipMode || baseColor.a >= UBER_F(_Cutoff));
 }
 
