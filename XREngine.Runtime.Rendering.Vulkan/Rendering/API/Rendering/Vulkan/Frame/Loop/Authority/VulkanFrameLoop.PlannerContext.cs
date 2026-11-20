@@ -230,6 +230,13 @@ internal sealed partial class VulkanFrameLoop
         new(VulkanAcceptedFramePlan.UploadCapacity);
     private readonly VulkanTextureUploadManifest _openXrEyeRequiredUploads = new();
 
+    // True when the next eye frame must declare its material textures as required uploads. A new
+    // frame loop (one per renderer, so also after a renderer restart) starts with the check
+    // pending. A frame whose texture check or mesh materialization failed sets it again, because a
+    // texture may lack a descriptor-ready image. A frame where every eye texture was ready clears
+    // it, so steady-state eye frames skip the capture. Render thread only.
+    private bool _openXrEyeTextureResidencyCheckPending = true;
+
     /// <summary>
     /// Declares the material textures of the captured eye mesh requests as required uploads, the
     /// same way the desktop PresentNow path does. The upload ledger then requests the restoration
@@ -300,7 +307,8 @@ internal sealed partial class VulkanFrameLoop
 
         try
         {
-            if (!TryRequestOpenXrEyeTextureResidency(requestCount, out string textureDetail))
+            if (_openXrEyeTextureResidencyCheckPending &&
+                !TryRequestOpenXrEyeTextureResidency(requestCount, out string textureDetail))
             {
                 TimeSpan textureElapsed = Stopwatch.GetElapsedTime(readinessStart);
                 throw new VulkanPresentNowReadinessException(
@@ -322,6 +330,7 @@ internal sealed partial class VulkanFrameLoop
                     sourceFrameId: RuntimeEngine.Rendering.State.RenderFrameId,
                     openXrEyeCohort: s_openXrMeshCohortEnabled))
             {
+                _openXrEyeTextureResidencyCheckPending = false;
                 return;
             }
 
@@ -337,6 +346,9 @@ internal sealed partial class VulkanFrameLoop
         }
         catch
         {
+            // A failed texture check or materialization may come from a texture without a
+            // descriptor-ready image, so the next eye frame checks the textures again.
+            _openXrEyeTextureResidencyCheckPending = true;
             VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
                 _meshOperationRequestScratch.AsSpan(0, requestCount));
             _meshOperationMaterializationScratch.AsSpan(0, requestCount).Clear();
