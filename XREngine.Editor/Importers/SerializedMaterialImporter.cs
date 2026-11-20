@@ -693,6 +693,14 @@ public static partial class SerializedMaterialImporter
             GetFloat(document, "_LightDataAOStrengthA")));
         MapFloat(document, material, "_LightDataAOStrengthR", "_LightDataAOStrengthR");
         MapFloat(document, material, "_LightingShadowMaskStrengthR", "_LightingShadowMaskStrengthR");
+        // The source defaults are 1 for the R strength and 0 for the other channels.
+        SetVector4(material, "_LightingShadowMaskStrengths", new Vector4(
+            GetFloat(document, "_LightingShadowMaskStrengthR", 1.0f),
+            GetFloat(document, "_LightingShadowMaskStrengthG"),
+            GetFloat(document, "_LightingShadowMaskStrengthB"),
+            GetFloat(document, "_LightingShadowMaskStrengthA")));
+        SetInt(material, "_LightDataAOGlobalMaskBlendTypeR", GetInt(document, "_LightDataAOGlobalMaskBlendTypeR", 2));
+        SetInt(material, "_LightDataShadowMaskGlobalMaskBlendTypeR", GetInt(document, "_LightDataShadowMaskGlobalMaskBlendTypeR", 2));
 
         MapVector4(document, material, "_EmissionColor", "_EmissionColor");
         SetInt(material, "_EmissionColorThemeIndex", SourceToonEnumMapper.Identity(document, "_EmissionColorThemeIndex", 0, 0, 12, diagnostics));

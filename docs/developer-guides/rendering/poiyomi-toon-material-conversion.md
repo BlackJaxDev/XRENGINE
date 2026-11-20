@@ -205,6 +205,18 @@ The back face color now applies directly after the detail color, before the
 color mask and lighting, as in the source. The ambient and PBR terms therefore
 use the back face color.
 
+## Light Data Masks
+
+| Source control | Uber control | Notes |
+| --- | --- | --- |
+| `_LightingShadowMasksUV`, `_LightingShadowMasksPan` | Same names | The shadow mask uses the authored UV channel and panning. |
+| `_LightingShadowMaskStrengthR` to `_LightingShadowMaskStrengthA` | `_LightingShadowMaskStrengthR`, `_LightingShadowMaskStrengths` | The source defaults are 1 for R and 0 for G, B, and A. |
+| `_LightDataShadowMaskGlobalMaskR` and its blend type | Same names | The global mask blends with the product of the shadow mask channels. |
+| `_LightDataAOGlobalMaskR` and its blend type | Same names | The global mask blends with the material occlusion. |
+
+Detail shadow maps are not converted yet. In the source they multiply the light
+map, but the Uber shader applies its detail shadow as a shadow strength factor.
+
 ## Support Contract
 
 Every source feature and property has one of three outcomes:

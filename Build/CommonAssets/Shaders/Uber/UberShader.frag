@@ -716,11 +716,14 @@ float sampleMaterialAmbientOcclusion(ToonMesh mesh) {
     aoUV = panUV(aoUV, _LightingAOMapsPan, u_Time);
     vec4 aoSample = texture(_LightingAOMaps, aoUV);
 #ifdef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
-    return mix(1.0, aoSample.r, saturate(_LightDataAOStrengthR));
+    float occlusion = mix(1.0, aoSample.r, saturate(_LightDataAOStrengthR));
 #else
     vec4 weighted = mix(vec4(1.0), aoSample, saturate(_LightDataAOStrengths));
-    return min(min(weighted.r, weighted.g), min(weighted.b, weighted.a));
+    float occlusion = min(min(weighted.r, weighted.g), min(weighted.b, weighted.a));
 #endif
+    if (_LightDataAOGlobalMaskR > 0)
+        occlusion = uberMaskBlend(occlusion, uberGlobalMask(_LightDataAOGlobalMaskR, mesh), _LightDataAOGlobalMaskBlendTypeR);
+    return occlusion;
 #endif
 }
 
@@ -728,16 +731,20 @@ float sampleLightingShadowMask(ToonMesh mesh) {
 #ifdef XRENGINE_UBER_DISABLE_SHADOW_MASKS
     return 1.0;
 #else
-    vec2 maskUV = transformUV(mesh.uv[0], _LightingShadowMasks_ST);
+    vec2 maskUV = panUV(transformUV(getUV(_LightingShadowMasksUV, mesh), _LightingShadowMasks_ST), _LightingShadowMasksPan, u_Time);
     vec4 mask = texture(_LightingShadowMasks, maskUV);
 #ifdef XRENGINE_UBER_DISABLE_ADVANCED_STYLIZED_LIGHTING
-    return mix(1.0, mask.r, saturate(_LightingShadowMaskStrengthR));
+    float shadowMask = mix(1.0, mask.r, saturate(_LightingShadowMaskStrengthR));
+    float detail = 1.0;
 #else
     vec4 weighted = mix(vec4(1.0), mask, saturate(_LightingShadowMaskStrengths));
+    float shadowMask = weighted.r * weighted.g * weighted.b * weighted.a;
     vec2 detailUv = panUV(transformUV(getUV(0, mesh), _LightingDetailShadowMap_ST), vec2(0.0), u_Time);
     float detail = mix(1.0, texture(_LightingDetailShadowMap, detailUv).r, saturate(_LightingDetailShadowStrength));
-    return weighted.r * weighted.g * weighted.b * weighted.a * detail;
 #endif
+    if (_LightDataShadowMaskGlobalMaskR > 0)
+        shadowMask = uberMaskBlend(shadowMask, uberGlobalMask(_LightDataShadowMaskGlobalMaskR, mesh), _LightDataShadowMaskGlobalMaskBlendTypeR);
+    return shadowMask * detail;
 #endif
 }
 

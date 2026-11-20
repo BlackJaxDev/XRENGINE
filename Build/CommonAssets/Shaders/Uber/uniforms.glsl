@@ -365,6 +365,10 @@ uniform vec2 _LightingAOMapsPan;
 uniform int _LightingAOMapsUV;
 //@property(name="_LightDataAOStrengthR", display="AO Strength", mode=static, range=[0,1])
 uniform float _LightDataAOStrengthR;
+//@property(name="_LightDataAOGlobalMaskR", display="AO Global Mask", mode=static, range=[0,16])
+uniform int _LightDataAOGlobalMaskR;
+//@property(name="_LightDataAOGlobalMaskBlendTypeR", display="AO Global Mask Blend", mode=static, default="2")
+uniform int _LightDataAOGlobalMaskBlendTypeR;
 #endif
 
 // Shadow Mask
@@ -375,8 +379,14 @@ uniform float _LightDataAOStrengthR;
 //@property(name="_LightingShadowMasks", display="Shadow Mask", slot=texture)
 uniform sampler2D _LightingShadowMasks;
 uniform vec4 _LightingShadowMasks_ST;
+uniform vec2 _LightingShadowMasksPan;
+uniform int _LightingShadowMasksUV;
 //@property(name="_LightingShadowMaskStrengthR", display="Mask Strength", mode=static, range=[0,1])
 uniform float _LightingShadowMaskStrengthR;
+//@property(name="_LightDataShadowMaskGlobalMaskR", display="Shadow Mask Global Mask", mode=static, range=[0,16])
+uniform int _LightDataShadowMaskGlobalMaskR;
+//@property(name="_LightDataShadowMaskGlobalMaskBlendTypeR", display="Shadow Mask Global Mask Blend", mode=static, default="2")
+uniform int _LightDataShadowMaskGlobalMaskBlendTypeR;
 #endif
 
 // ============================================
