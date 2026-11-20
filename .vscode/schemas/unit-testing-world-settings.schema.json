@@ -805,6 +805,10 @@
           "type": "boolean",
           "description": "Enables or disables SkinnedVirtualGeometry."
         },
+        "SkinnedPosedClusterBounds": {
+          "type": "boolean",
+          "description": "Enables or disables SkinnedPosedClusterBounds."
+        },
         "VirtualGeometryPixelThreshold": {
           "type": "number",
           "description": "Generated from VirtualGeometryPixelThreshold on UnitTestingRenderSettings."

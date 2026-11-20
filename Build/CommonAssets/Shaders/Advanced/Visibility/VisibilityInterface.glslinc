@@ -224,12 +224,12 @@ buffer XRAdvancedVisibilityMeshletHistory { uint words[]; } XR_ADV_VisibilityMes
 // Skin palette rows of the current frame slot: three vec4 rows per palette
 // matrix, world space (out_i = dot(row_i, vec4(bindPosition, 1))). A visibility
 // payload's paletteOffset is the index of its first matrix (the identity row);
-// utilized bone i is matrix paletteOffset + i + 1. Only the skinned cluster-cut
-// task variant declares it, to bound posed clusters.
+// utilized bone i is matrix paletteOffset + i + 1. Only the posed skinned
+// cluster-cut task variant (XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED) declares it.
 #ifndef XR_ADV_BINDING_VISIBILITY_SKIN_PALETTES
 #define XR_ADV_BINDING_VISIBILITY_SKIN_PALETTES 72
 #endif
-#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_SKIN_PALETTES)
 readonly buffer XRAdvancedVisibilitySkinPalettes { vec4 rows[]; } XR_ADV_VisibilitySkinPalettes;
 #endif

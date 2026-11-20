@@ -2924,6 +2924,26 @@ public static partial class RuntimeEngine
                     set => SetField(ref _advancedSkinnedVirtualGeometry, value);
                 }
 
+                private bool _advancedSkinnedPosedClusterBounds = true;
+
+                /// <summary>
+                /// With <see cref="AdvancedSkinnedVirtualGeometry"/> on, chooses how the cluster cut
+                /// of a skinned draw measures distance. On (the default): each cluster group of a
+                /// skinned draw that the GPU deformed this frame is bounded by its own posed box, made
+                /// from its bones' current matrices, so distant parts of the draw get coarser clusters
+                /// and clusters outside the view are culled. Off: every cluster of a skinned draw uses
+                /// one distance, from the nearest point of the draw's bounds, and no skinned cluster is
+                /// culled. Use off to compare or to rule out the posed bounds. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With skinned virtual geometry on, bound each skinned cluster group by its posed bone box (finer distance and frustum culling per cluster). Off uses one distance per skinned draw. On by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedPosedClusterBounds
+                {
+                    get => _advancedSkinnedPosedClusterBounds;
+                    set => SetField(ref _advancedSkinnedPosedClusterBounds, value);
+                }
+
                 private float _advancedVirtualGeometryPixelThreshold = 1.0f;
 
                 /// <summary>

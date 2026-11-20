@@ -124,6 +124,7 @@ public static class BootstrapRenderSettings
             renderSettings.VulkanPresentationTargetRefreshHz = settings.Rendering.Vulkan.TargetRefreshHz;
             renderSettings.AdvancedVirtualGeometry = settings.Rendering.VirtualGeometry;
             renderSettings.AdvancedSkinnedVirtualGeometry = settings.Rendering.SkinnedVirtualGeometry;
+            renderSettings.AdvancedSkinnedPosedClusterBounds = settings.Rendering.SkinnedPosedClusterBounds;
             renderSettings.AdvancedVirtualGeometryPixelThreshold = settings.Rendering.VirtualGeometryPixelThreshold;
             Engine.GameSettings.VulkanPresentationProfileOverride = new(
                 settings.Rendering.Vulkan.PresentationProfile,

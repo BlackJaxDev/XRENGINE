@@ -463,6 +463,7 @@ void XR_ADV_ClusterCutUseDrawBound(
         return;
     cut.sharedDistance = max(nearest - margin * draw.maxScale, cut.nearDistance);
 
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
     // Posed path: the skin header (the word right before the cluster records)
     // holds the offset of the cluster skin records, zero without skin tables.
     uint wordCount = uint(XR_ADV_VisibilityMeshletTriangleWords.records.length());
@@ -479,8 +480,10 @@ void XR_ADV_ClusterCutUseDrawBound(
     cut.skinRecordWordBase = skinBase;
     cut.paletteMatrixBase = payload.paletteOffset;
     cut.margin = margin;
+#endif
 }
 
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
 // Box (world space) around a bind sphere moved by each bone of one bone list,
 // and the largest axis scale of those bones. A list with no bones uses the
 // draw's identity matrix (palette matrix 0). The radius grows by the
@@ -575,6 +578,7 @@ bool XR_ADV_SkinnedClusterWorldSphere(
     return true;
 }
 #endif
+#endif
 
 // Projected error in render pixels of one group's simplified bound. The bound
 // is in mesh space; the draw's world matrix moves the center, and its largest
@@ -598,7 +602,7 @@ float XR_ADV_ClusterGroupProjectedError(
     float error = uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 4u]);
     if (isnan(error) || isinf(error) || error >= 3.0e38 || any(isnan(sphere)) || any(isinf(sphere)))
         return 3.402823e38;
-#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
     if (cut.posed)
     {
         // Group record words 6 and 7: bone list offset (relative to the

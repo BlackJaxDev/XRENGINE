@@ -137,7 +137,7 @@ void main()
                     view.viewProjectionUnjittered,
                     view.cameraPositionAndNear.xyz)
                 : XR_ADV_MESHLET_CULL_LOD;
-#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
             // A posed skinned cluster gets the frustum test with the sphere around
             // its posed box. It still skips the cone test (normals change with
             // the pose), history and Hi-Z. The early and late variants compute

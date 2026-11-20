@@ -30,6 +30,15 @@ public class UnitTestingRenderSettings
     public bool SkinnedVirtualGeometry { get; set; } = true;
 
     /// <summary>
+    /// Sets the <c>AdvancedSkinnedPosedClusterBounds</c> engine setting: with
+    /// <see cref="SkinnedVirtualGeometry"/> on, true (the default) bounds each skinned cluster group
+    /// by its posed bone box, so distant parts of a skinned draw get coarser clusters and clusters
+    /// outside the view are culled; false uses one distance per skinned draw and culls no skinned
+    /// cluster.
+    /// </summary>
+    public bool SkinnedPosedClusterBounds { get; set; } = true;
+
+    /// <summary>
     /// Sets the <c>AdvancedVirtualGeometryPixelThreshold</c> engine setting: the cluster cut
     /// threshold in render pixels of projected error.
     /// </summary>

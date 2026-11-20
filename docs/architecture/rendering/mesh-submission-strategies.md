@@ -455,6 +455,12 @@ largest projected error, in render pixels, that a drawn cluster may have.
   against this frame's depth pyramid. Every cluster keeps its own sphere and
   cone for culling; the group sphere is used only for the error test.
 - Directional shadow casters still draw the full-detail canonical index buffer.
+- Posed bounds are on while `AdvancedSkinnedPosedClusterBounds`
+  (`Rendering.SkinnedPosedClusterBounds`, on by default, read with the other
+  settings) is on; the task stage then also compiles
+  `XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED`. Off makes every skinned draw use one
+  distance and culls no skinned cluster, which is useful to compare or to rule
+  out the posed bounds.
 - Skinned draws (`XR_ADV_CLUSTER_LOD_CUT_SKINNED`) with posed bounds: the cooked
   group spheres are bind pose. When the GPU deformed the draw this frame (its
   prepared deformation is active) and the geometry has skin tables, each group
