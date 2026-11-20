@@ -84,8 +84,10 @@ public sealed class UnitTestingCrowdBenchmarkSettingsTests
         settings.CrowdBenchmark.RingRadii = [2.0f, 4.0f];
         settings.CrowdBenchmark.Mode = UnitTestCrowdBenchmarkMode.ClusterCut;
 
+        // The editor copies the settings with preserved references, which an array setting cannot survive.
+        JsonSerializerSettings editorJson = new() { PreserveReferencesHandling = PreserveReferencesHandling.All };
         UnitTestingWorldSettings copy = JsonConvert.DeserializeObject<UnitTestingWorldSettings>(
-            JsonConvert.SerializeObject(settings))!;
+            JsonConvert.SerializeObject(settings, editorJson), editorJson)!;
 
         copy.CrowdBenchmark.Enabled.ShouldBeTrue();
         copy.CrowdBenchmark.AvatarCount.ShouldBe(100);

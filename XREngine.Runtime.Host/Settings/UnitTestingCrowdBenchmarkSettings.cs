@@ -1,3 +1,5 @@
+using Newtonsoft.Json;
+
 namespace XREngine.Runtime.Bootstrap;
 
 /// <summary>
@@ -28,7 +30,13 @@ public class UnitTestingCrowdBenchmarkSettings
     /// so each ring gets the same number of avatars, plus or minus one. An empty list uses
     /// <see cref="DefaultRingRadii"/>.
     /// </summary>
-    public float[] RingRadii { get; set; } = [.. DefaultRingRadii];
+    /// <remarks>
+    /// This is a list, not an array: the editor copies the settings through JSON with preserved
+    /// references, and the JSON reader cannot read a preserved array back. The read replaces the
+    /// default list, so the saved radii do not add to the default radii.
+    /// </remarks>
+    [JsonProperty(ObjectCreationHandling = ObjectCreationHandling.Replace)]
+    public List<float> RingRadii { get; set; } = [.. DefaultRingRadii];
 
     /// <summary>The world position at the center of the rings. Every avatar faces it.</summary>
     public UnitTestingWorldSettings.TranslationXYZ Center { get; set; } = new();
@@ -82,8 +90,8 @@ public class UnitTestingCrowdBenchmarkSettings
     /// </summary>
     public void ResolvePlacement(int index, int avatarCount, out System.Numerics.Vector3 position, out float yaw)
     {
-        float[] radii = RingRadii is { Length: > 0 } configured ? configured : DefaultRingRadii;
-        int ringCount = radii.Length;
+        IReadOnlyList<float> radii = RingRadii is { Count: > 0 } configured ? configured : DefaultRingRadii;
+        int ringCount = radii.Count;
         int ring = index % ringCount;
         int slot = index / ringCount;
         // Avatars of the ring: ceil((avatarCount - ring) / ringCount).

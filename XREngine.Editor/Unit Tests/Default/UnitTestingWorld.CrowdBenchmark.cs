@@ -56,8 +56,7 @@ public static partial class EditorUnitTests
             List<CrowdAvatar> avatars = new(avatarCount);
             if (!TryResolveChildPath(template, templateAvatarRoot, out int[] avatarPath))
             {
-                Debug.MeshesWarning(
-                    $"[CrowdBenchmark] The avatar root '{templateAvatarRoot.Name}' is not under '{template.Name}'. The crowd is not created.");
+                LogCrowdWarning($"[CrowdBenchmark] The avatar root '{templateAvatarRoot.Name}' is not under '{template.Name}'. The crowd is not created.");
                 return avatars;
             }
 
@@ -92,17 +91,32 @@ public static partial class EditorUnitTests
 
                 if (!TryFollowChildPath(root, avatarPath, out SceneNode avatarRoot))
                 {
-                    Debug.MeshesWarning($"[CrowdBenchmark] Crowd avatar {index + 1} lost its avatar root after cloning.");
+                    LogCrowdWarning($"[CrowdBenchmark] Crowd avatar {index + 1} lost its avatar root after cloning.");
                     continue;
                 }
                 avatars.Add(new CrowdAvatar(root, avatarRoot));
             }
 
             stopwatch.Stop();
-            Debug.Meshes(
-                $"[CrowdBenchmark] Created {avatars.Count} avatars of '{template.Name}' on {Math.Max(1, crowd.RingRadii?.Length ?? 0)} rings " +
+            // The auxiliary log also writes in Release builds, where the category logs are compiled out.
+            Debug.WriteAuxiliaryLog(
+                CrowdBenchmarkLogFileName,
+                $"[CrowdBenchmark] Created {avatars.Count} avatars of '{template.Name}' on {Math.Max(1, crowd.RingRadii?.Count ?? 0)} rings " +
                 $"in {stopwatch.Elapsed.TotalMilliseconds:F1} ms (mode {crowd.Mode}).");
             return avatars;
+        }
+
+        /// <summary>The auxiliary log file that gets the crowd benchmark lines.</summary>
+        private const string CrowdBenchmarkLogFileName = "crowd-benchmark.log";
+
+        /// <summary>
+        /// Writes a crowd benchmark warning to the Meshes log and to the auxiliary crowd log, so
+        /// that a Release build also records it.
+        /// </summary>
+        private static void LogCrowdWarning(string message)
+        {
+            Debug.MeshesWarning(message);
+            Debug.WriteAuxiliaryLog(CrowdBenchmarkLogFileName, message);
         }
 
         /// <summary>

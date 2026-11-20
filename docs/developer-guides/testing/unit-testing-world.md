@@ -173,7 +173,7 @@ Use `CrowdBenchmark` to measure avatar render paths at known distances. Set `Ena
 - `RingRadii`: the ring radii in meters (default 1.5, 3, 6, 12, 25, and 50). Avatar `i` goes on ring `i` modulo the ring count, so each ring gets about the same number of avatars. Every avatar faces the center.
 - `Mode`: `Triangles` (M0, skinned cluster cut off), `ClusterCut` (M1, the skinned cut on), or `DeformationLod` (M2, the cut with deformation level of detail). These modes replace `Rendering.VirtualGeometry`, `Rendering.SkinnedVirtualGeometry`, and `Rendering.SkinnedDeformationLod` for the run. `UseRenderSettings` (the default) keeps them.
 
-A serialized prefab avatar takes the first ring slot. A model file avatar that `Locomotion` binds to the player pawn stays on the pawn, and the crowd gets `AvatarCount` copies. Every crowd avatar gets the normal avatar setup: the startup animation clip, physics chains when `PhysicsChain` is on, and the other avatar toggles. The world writes one `[CrowdBenchmark]` line to the `Meshes` log with the avatar count and the time to make the copies.
+A serialized prefab avatar takes the first ring slot. A model file avatar that `Locomotion` binds to the player pawn stays on the pawn, and the crowd gets `AvatarCount` copies. Every crowd avatar gets the normal avatar setup: the startup animation clip, physics chains when `PhysicsChain` is on, and the other avatar toggles. The world writes one `[CrowdBenchmark]` line to `crowd-benchmark.log` in the session log folder with the avatar count and the time to make the copies. This log also writes in Release builds. The cook writes the deformation prefix share of each level (`[DeformationPrefix]`) to `meshlet-cache.log`.
 
 ### Lock procedural sky time
 
