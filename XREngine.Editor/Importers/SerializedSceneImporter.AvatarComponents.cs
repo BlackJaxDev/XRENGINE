@@ -312,6 +312,8 @@ internal static partial class SerializedSceneImporter
         component.SolveInLocalSpace = (GetScalarInt(fields, "SolveInLocalSpace") ?? 0) != 0;
         component.Locked = (GetScalarInt(fields, "Locked") ?? 0) != 0;
         component.Channels = ParseConstraintChannels(fields);
+        ApplyConstraintOffsetsAndRestPose(component, fields);
+        component.FreezeToWorld = (GetScalarInt(fields, "FreezeToWorld") ?? 0) != 0;
         component.IsActive = behaviour.Enabled && (GetScalarInt(fields, "IsActive") ?? 1) != 0;
 
         hierarchy.ComponentsByFileId[behaviour.FileId] = component;
@@ -321,8 +323,7 @@ internal static partial class SerializedSceneImporter
             "The importer attached a native weighted transform constraint and mapped its supported fields.",
             nativeTarget: typeof(WeightedTransformConstraintComponent).FullName);
 
-        if ((GetScalarInt(fields, "FreezeToWorld") ?? 0) != 0 ||
-            (GetScalarInt(fields, "RebakeOffsetsWhenUnfrozen") ?? 0) != 0)
+        if ((GetScalarInt(fields, "RebakeOffsetsWhenUnfrozen") ?? 0) != 0)
         {
             RecordAvatarFeature(state, behaviour, hierarchy, "avatar.constraint.freeze-rebake",
                 UnityConversionFeatureStatus.Unknown, "Constraint freeze and offset rebake",
@@ -334,7 +335,7 @@ internal static partial class SerializedSceneImporter
                 hierarchy,
                 "UNITYVRC0004",
                 SourceImportDiagnosticSeverity.Warning,
-                "VRChat constraint freeze/rebake editor semantics were not reproduced; weighted runtime source offsets remain active.");
+                "VRChat constraint offset rebake on unfreeze was not reproduced; the authored offsets stay fixed.");
         }
     }
 
@@ -644,6 +645,24 @@ internal static partial class SerializedSceneImporter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Reads the constraint-level offsets and the rest pose of a VRChat constraint. The offsets are
+    /// added to the weighted source pose (PositionOffset in the target's parent space, RotationOffset as Euler
+    /// degrees after the source rotation). The rest pose (PositionAtRest and RotationAtRest, the
+    /// target's local pose) is where the constraint blends from by its weight and what it holds when
+    /// the total source weight is zero. Unity coordinates convert to engine coordinates.
+    /// </summary>
+    private static void ApplyConstraintOffsetsAndRestPose(WeightedTransformConstraintComponent component, YamlMappingNode fields)
+    {
+        component.PositionOffset = ConvertPosition(GetVector3(fields, "PositionOffset", Vector3.Zero));
+        component.RotationOffset = ConvertEulerDegrees(GetVector3(fields, "RotationOffset", Vector3.Zero));
+        bool hasPositionAtRest = GetNode(fields, "PositionAtRest") is not null;
+        bool hasRotationAtRest = GetNode(fields, "RotationAtRest") is not null;
+        component.HasRestPose = hasPositionAtRest || hasRotationAtRest;
+        component.PositionAtRest = ConvertPosition(GetVector3(fields, "PositionAtRest", Vector3.Zero));
+        component.RotationAtRest = ConvertEulerDegrees(GetVector3(fields, "RotationAtRest", Vector3.Zero));
     }
 
     private static List<TransformConstraintSource> ParseConstraintSources(
