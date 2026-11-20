@@ -75,6 +75,12 @@ and maps normal, darken, multiply, lighten, linear dodge, subtract, and divide
 to the native mask blend modes. Other color blend modes still fail the
 conversion.
 
+A material that uses the source procedural eye shader converts to a native Uber
+material with procedural mode 6 (`_ProceduralEyeParams0` to
+`_ProceduralEyeParams3`). The forward Uber, native Uber, and splat paths draw
+the same unlit layered parallax iris, smoke rings, glare, and dithered vignette.
+A nonzero vignette transparency makes the material masked.
+
 Imported source materials apply `_AlphaForceOpaque` after decal, flipbook, and
 dissolve effects, before the final alpha cutoff. Dissolve can still discard a
 fragment. Native visibility, masked shadow, and native shading use the same

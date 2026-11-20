@@ -121,6 +121,39 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         normalize(cross(geometricY, tangentY)) * surface.tangentHandedness) - N;
     vec3 toCamera = view.cameraPositionAndNear.xyz - surface.worldPosition;
     vec3 V = normalize(toCamera);
+    if (XR_UBER_HasFeature(XR_UBER_FEATURE_EXTENDED_EFFECTS) && UBER_I(_ProceduralMode) == 6)
+    {
+        // The procedural eye is unlit. It replaces the lit result with its own color.
+        mat3 eyeTbn = mat3(surface.tangent * frameFacing, surface.bitangent * frameFacing, geometric);
+        vec3 tangentView = transpose(eyeTbn) * V;
+        float viewLength = length(tangentView);
+        vec3 tangentViewNorm = viewLength > 1.0e-5 ? tangentView / viewLength : vec3(0.0, 0.0, 1.0);
+        // The engine bitangent points along +V, and the eye math uses the source V direction.
+        tangentViewNorm.y = -tangentViewNorm.y;
+        vec3 eyeColor = max(xrEvaluateProceduralEye(
+            c.uv0,
+            UBER_V(_MainTex_ST),
+            tangentViewNorm,
+            UBER_V(_ProceduralColor).rgb,
+            UBER_V(_ProceduralEyeParams0),
+            UBER_V(_ProceduralEyeParams1),
+            UBER_V(_ProceduralEyeParams2),
+            UBER_V(_ProceduralEyeParams3),
+            c.time), vec3(0.0));
+        result.radiance = eyeColor;
+        result.opacity = base.a;
+        result.velocity = surface.motionNdc;
+        result.reactive = (surface.flags & (XR_ADV_SURFACE_REACTIVE | XR_ADV_SURFACE_MASKED_EDGE)) != 0u ? 1.0 : 0.0;
+        result.diagnostics = 0u;
+        result.emittedRadiance = eyeColor;
+        result.albedoOpacity = vec4(eyeColor, base.a);
+        result.normal = N;
+        result.rmse = vec4(1.0, 0.0, 0.0, 0.0);
+        result.roughness = 1.0;
+        result.metallic = 0.0;
+        result.hasMaterialSurface = 1u;
+        return;
+    }
     vec3 Vx = normalize(toCamera - surface.worldPositionDx) - V;
     vec3 Vy = normalize(toCamera - surface.worldPositionDy) - V;
     bool stylized = XR_UBER_HasFeature(XR_UBER_FEATURE_STYLIZED_SHADING) && UBER_I(_LightingMode) != 6;

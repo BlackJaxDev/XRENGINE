@@ -407,7 +407,8 @@ public static class NativeUberMaterialSourceEncoder
              IsNonZero(material, "_ProximityStrength") ||
              IsNonZero(material, "_TouchGlowStrength") ||
              IsNonZero(material, "_VideoBlend") ||
-             IsNonZero(material, "_ProceduralMode")))
+             IsNonZero(material, "_ProceduralMode") &&
+             material.Parameter<ShaderInt>("_ProceduralMode") is not { Value: 6 }))
         {
             reason = "Native Uber active extended effect has no matching native operation.";
             return false;

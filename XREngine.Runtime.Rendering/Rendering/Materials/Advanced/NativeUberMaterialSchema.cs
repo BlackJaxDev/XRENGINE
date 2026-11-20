@@ -78,6 +78,8 @@ public static class NativeUberMaterialSchema
             "_SourceHighColorMask_ST" });
         names.Add("_SourceUdimFlipV");
         names.Add("_SourceAlphaClip");
+        names.AddRange(new[] { "_ProceduralEyeParams0", "_ProceduralEyeParams1",
+            "_ProceduralEyeParams2", "_ProceduralEyeParams3" });
         names.Add("_SourceLayeredEmission");
         names.Add("_SourceGlitterVersion");
         names.Add("_GlitterDistanceLOD");

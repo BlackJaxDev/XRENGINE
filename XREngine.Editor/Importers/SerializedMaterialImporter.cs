@@ -118,8 +118,13 @@ public static partial class SerializedMaterialImporter
         bool isSourceToon = sourceToonMatch.IsAccepted;
         bool isSourceToonFeatureLoss = sourceToonMatch.IsDowngradeSource;
         bool isLilToon = false;
+        bool isProceduralEye = false;
         if (!isSourceToonConversion && !sourceToonMatch.IsSourceToonFamily)
+        {
             isLilToon = IsLilToonMaterial(document, resolver, out shaderPath);
+            if (!isLilToon)
+                isProceduralEye = IsProceduralEyeMaterial(document, resolver, out shaderPath);
+        }
 
         try
         {
@@ -135,8 +140,10 @@ public static partial class SerializedMaterialImporter
                     orderedSurface)
                 : isLilToon
                     ? ConvertLilToonToUberMaterial(document, resolver, warnings, shaderPath)
-                    : ConvertGenericSerializedMaterial(
-                        document, resolver, warnings, reportUnconvertedProjectShader: true);
+                    : isProceduralEye
+                        ? ConvertProceduralEyeToUberMaterial(document, resolver, warnings)
+                        : ConvertGenericSerializedMaterial(
+                            document, resolver, warnings, reportUnconvertedProjectShader: true);
 
             if (requiresSourceBasicOutline)
             {
@@ -187,14 +194,16 @@ public static partial class SerializedMaterialImporter
                 ConversionReport = conversionReport,
             };
         }
-        catch (Exception ex) when ((isSourceToonConversion || isLilToon || requiresSourceBasicOutline) &&
+        catch (Exception ex) when ((isSourceToonConversion || isLilToon || isProceduralEye || requiresSourceBasicOutline) &&
             ex is not OperationCanceledException)
         {
             // A failed shader-specific conversion must not remove the material from the import.
             // The generic importer keeps the main texture and color, and the report records the failure.
             string shaderFamily = isLilToon
                 ? "lilToon"
-                : isSourceToonFeatureLoss ? "Poiyomi Pro downgrade" : "Poiyomi Toon";
+                : isProceduralEye
+                    ? "procedural eye"
+                    : isSourceToonFeatureLoss ? "Poiyomi Pro downgrade" : "Poiyomi Toon";
             warnings.Add($"{shaderFamily} material conversion failed for '{document.Name}'. Falling back to generic Unity material import. {ex.Message}");
             Debug.LogWarning(warnings[^1]);
             try
