@@ -274,7 +274,8 @@ public static partial class MeshOptimizerIntegration
         MeshletLodGroupRecord[]? lodGroups = null,
         MeshletClusterSkinRecord[]? clusterSkins = null,
         ushort[]? clusterBones = null,
-        MeshletDeformationOrderBuilder.Result? deformationOrder = null)
+        MeshletDeformationOrderBuilder.Result? deformationOrder = null,
+        MeshletLevelCoverBuilder.Result? levelCovers = null)
     {
         MeshletGenerationSettingsSnapshot meshletSnapshot = MeshletGenerationSettingsSnapshot.From(settings);
         MeshLodGenerationSettingsSnapshot lodSnapshot = MeshLodGenerationSettingsSnapshot.From(lodSettings);
@@ -314,6 +315,9 @@ public static partial class MeshOptimizerIntegration
             DeformationVertexOrder = (deformationOrder?.VertexOrder ?? []).ToImmutableArray(),
             DeformationPrefixCounts = (deformationOrder?.PrefixCounts ?? []).ToImmutableArray(),
             LevelMaxErrors = (deformationOrder?.LevelMaxErrors ?? []).ToImmutableArray(),
+            LevelCoverIndices = (levelCovers?.Indices ?? []).ToImmutableArray(),
+            LevelCoverFirstIndex = (levelCovers?.LevelFirstIndex ?? []).ToImmutableArray(),
+            LevelCoverIndexCount = (levelCovers?.LevelIndexCount ?? []).ToImmutableArray(),
         };
         payload.ValidatePortablePayload();
         return payload;

@@ -83,11 +83,17 @@ public partial class XRMesh
         return size;
     }
 
-    /// <summary>The vertex order, the prefix counts and the level errors, each with a count (4 bytes per entry).</summary>
+    /// <summary>
+    /// The vertex order, the prefix counts, the level errors and the three level cover tables, each
+    /// with a count (4 bytes per entry).
+    /// </summary>
     private static long CalculateDeformationOrderSize(MeshletPayload payload)
         => sizeof(int) + (long)payload.DeformationVertexOrder.Length * sizeof(uint)
            + sizeof(int) + (long)payload.DeformationPrefixCounts.Length * sizeof(uint)
-           + sizeof(int) + (long)payload.LevelMaxErrors.Length * sizeof(float);
+           + sizeof(int) + (long)payload.LevelMaxErrors.Length * sizeof(float)
+           + sizeof(int) + (long)payload.LevelCoverIndices.Length * sizeof(uint)
+           + sizeof(int) + (long)payload.LevelCoverFirstIndex.Length * sizeof(uint)
+           + sizeof(int) + (long)payload.LevelCoverIndexCount.Length * sizeof(uint);
 
     private static void WriteDeformationOrder(RuntimeCookedBinaryWriter writer, MeshletPayload payload)
     {
@@ -100,28 +106,52 @@ public partial class XRMesh
         writer.Write(payload.LevelMaxErrors.Length);
         foreach (float error in payload.LevelMaxErrors)
             writer.Write(error);
+        WriteUInt32Table(writer, payload.LevelCoverIndices);
+        WriteUInt32Table(writer, payload.LevelCoverFirstIndex);
+        WriteUInt32Table(writer, payload.LevelCoverIndexCount);
     }
 
-    private static (uint[] Order, uint[] PrefixCounts, float[] LevelErrors) ReadDeformationOrder(RuntimeCookedBinaryReader reader)
+    private static void WriteUInt32Table(RuntimeCookedBinaryWriter writer, ImmutableArray<uint> table)
     {
-        int orderCount = reader.ReadInt32();
-        ValidateArrayCount(orderCount, sizeof(uint), reader.Remaining, "deformation order entry");
-        uint[] order = new uint[orderCount];
-        for (int i = 0; i < orderCount; i++)
-            order[i] = reader.ReadUInt32();
+        writer.Write(table.Length);
+        foreach (uint value in table)
+            writer.Write(value);
+    }
 
-        int prefixCount = reader.ReadInt32();
-        ValidateArrayCount(prefixCount, sizeof(uint), reader.Remaining, "deformation prefix count");
-        uint[] prefixCounts = new uint[prefixCount];
-        for (int i = 0; i < prefixCount; i++)
-            prefixCounts[i] = reader.ReadUInt32();
+    /// <summary>The deformation order tables and the level cover tables of a version 7 payload.</summary>
+    private readonly record struct DeformationTables(
+        uint[] Order,
+        uint[] PrefixCounts,
+        float[] LevelErrors,
+        uint[] CoverIndices,
+        uint[] CoverFirstIndex,
+        uint[] CoverIndexCount);
+
+    private static DeformationTables ReadDeformationOrder(RuntimeCookedBinaryReader reader)
+    {
+        uint[] order = ReadUInt32Table(reader, "deformation order entry");
+        uint[] prefixCounts = ReadUInt32Table(reader, "deformation prefix count");
 
         int errorCount = reader.ReadInt32();
         ValidateArrayCount(errorCount, sizeof(float), reader.Remaining, "deformation level error");
         float[] levelErrors = new float[errorCount];
         for (int i = 0; i < errorCount; i++)
             levelErrors[i] = reader.ReadSingle();
-        return (order, prefixCounts, levelErrors);
+
+        uint[] coverIndices = ReadUInt32Table(reader, "level cover index");
+        uint[] coverFirstIndex = ReadUInt32Table(reader, "level cover first index");
+        uint[] coverIndexCount = ReadUInt32Table(reader, "level cover index count");
+        return new DeformationTables(order, prefixCounts, levelErrors, coverIndices, coverFirstIndex, coverIndexCount);
+    }
+
+    private static uint[] ReadUInt32Table(RuntimeCookedBinaryReader reader, string entryName)
+    {
+        int count = reader.ReadInt32();
+        ValidateArrayCount(count, sizeof(uint), reader.Remaining, entryName);
+        uint[] table = new uint[count];
+        for (int i = 0; i < count; i++)
+            table[i] = reader.ReadUInt32();
+        return table;
     }
 
     /// <summary>The skin record count and records (8 bytes each), then the bone count and bones (2 bytes each).</summary>
@@ -300,9 +330,7 @@ public partial class XRMesh
         MeshletLodGroupRecord[] lodGroups = [];
         MeshletClusterSkinRecord[] clusterSkins = [];
         ushort[] clusterBones = [];
-        uint[] deformationOrder = [];
-        uint[] deformationPrefixCounts = [];
-        float[] levelMaxErrors = [];
+        DeformationTables deformation = new([], [], [], [], [], []);
         if (payloadVersion >= MeshletPayload.FirstClusterHierarchyPayloadVersion)
         {
             (level0Count, clusterLods, lodGroups) = ReadClusterHierarchy(reader);
@@ -311,7 +339,7 @@ public partial class XRMesh
         if (payloadVersion >= MeshletPayload.ClusterSkinningPayloadVersion)
             (clusterSkins, clusterBones) = ReadClusterSkinning(reader);
         if (payloadVersion >= MeshletPayload.DeformationOrderPayloadVersion)
-            (deformationOrder, deformationPrefixCounts, levelMaxErrors) = ReadDeformationOrder(reader);
+            deformation = ReadDeformationOrder(reader);
 
         if (payloadVersion < 2)
             runtimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSettings);
@@ -355,9 +383,12 @@ public partial class XRMesh
             LodGroups = lodGroups.ToImmutableArray(),
             ClusterSkins = clusterSkins.ToImmutableArray(),
             ClusterBones = clusterBones.ToImmutableArray(),
-            DeformationVertexOrder = deformationOrder.ToImmutableArray(),
-            DeformationPrefixCounts = deformationPrefixCounts.ToImmutableArray(),
-            LevelMaxErrors = levelMaxErrors.ToImmutableArray(),
+            DeformationVertexOrder = deformation.Order.ToImmutableArray(),
+            DeformationPrefixCounts = deformation.PrefixCounts.ToImmutableArray(),
+            LevelMaxErrors = deformation.LevelErrors.ToImmutableArray(),
+            LevelCoverIndices = deformation.CoverIndices.ToImmutableArray(),
+            LevelCoverFirstIndex = deformation.CoverFirstIndex.ToImmutableArray(),
+            LevelCoverIndexCount = deformation.CoverIndexCount.ToImmutableArray(),
         };
         payload.ValidatePortablePayload();
         return payload;
@@ -413,8 +444,9 @@ public partial class XRMesh
         if (payloadVersion < MeshletPayload.DeformationOrderPayloadVersion)
             return true;
 
-        // The vertex order, the prefix counts and the level errors: 4 bytes per entry each.
-        for (int table = 0; table < 3; table++)
+        // The vertex order, the prefix counts, the level errors and the three level cover tables:
+        // 4 bytes per entry each.
+        for (int table = 0; table < 6; table++)
         {
             int count = reader.ReadInt32();
             if (count < 0 || !TrySkipBytes(reader, (long)count * sizeof(uint)))

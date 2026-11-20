@@ -129,6 +129,58 @@ public sealed class MeshletDeformationOrderTests
     }
 
     [Test]
+    public void LevelCovers_HoldTheClustersOfEachLevel()
+    {
+        MeshletLevelCoverBuilder.Result covers = BuildCovers(MeshletVertices, ClusterLods, Groups);
+
+        // Level 1: meshlets 2 (0, 2, 3) and 3 (4, 7, 7). Level 2: the root meshlet 4 (0, 4, 7).
+        covers.Indices.ShouldBe([0u, 2u, 3u, 4u, 7u, 7u, 0u, 4u, 7u]);
+        covers.LevelFirstIndex.ShouldBe([0u, 0u, 6u]);
+        covers.LevelIndexCount.ShouldBe([0u, 6u, 3u]);
+    }
+
+    [Test]
+    public void LevelCovers_AddARootClusterOfAFinerLevelToEveryCoarserCover()
+    {
+        MeshletLodGroupRecord[] groups = [.. Groups];
+        groups[1] = groups[1] with { SimplifiedError = float.MaxValue };
+        MeshletClusterLodRecord[] clusterLods = [new(0, -1), new(1, -1), new(2, 0), new(3, 2)];
+        uint[][] meshletVertices = [[0u, 1u, 2u, 3u], [4u, 5u, 6u, 7u], [0u, 2u, 3u], [0u, 3u]];
+
+        MeshletLevelCoverBuilder.Result covers = BuildCovers(meshletVertices, clusterLods, groups);
+
+        // Meshlet 1 ended its branch at level 0, so it is in the covers of levels 1 and 2.
+        covers.LevelIndexCount.ShouldBe([0u, 6u, 6u]);
+        covers.Indices.AsSpan((int)covers.LevelFirstIndex[1], 6).ToArray().ShouldBe([4u, 5u, 6u, 0u, 2u, 3u]);
+        covers.Indices.AsSpan((int)covers.LevelFirstIndex[2], 6).ToArray().ShouldBe([4u, 5u, 6u, 0u, 3u, 3u]);
+    }
+
+    [Test]
+    public void LevelCovers_ReadOnlyVerticesInTheDeformationPrefix()
+    {
+        MeshletDeformationOrderBuilder.Result order = BuildOrder();
+        MeshletLevelCoverBuilder.Result covers = BuildCovers(MeshletVertices, ClusterLods, Groups);
+
+        for (int level = 1; level < order.PrefixCounts.Length; level++)
+        {
+            HashSet<uint> prefix = [.. order.VertexOrder.Take((int)order.PrefixCounts[level])];
+            for (uint index = 0; index < covers.LevelIndexCount[level]; index++)
+                prefix.ShouldContain(covers.Indices[covers.LevelFirstIndex[level] + index], $"level {level}");
+        }
+    }
+
+    [Test]
+    public void Payload_RejectsALevelCoverOutsideItsPrefix()
+    {
+        MeshletLevelCoverBuilder.Result covers = BuildCovers(MeshletVertices, ClusterLods, Groups);
+        uint[] broken = (uint[])covers.Indices.Clone();
+        // Vertex 1 is a level-0 vertex, outside the prefix of level 2.
+        broken[6] = 1u;
+
+        Should.Throw<InvalidDataException>(() => CreateSkinnedHierarchyPayload(BuildOrder(), covers with { Indices = broken }));
+    }
+
+    [Test]
     public void Payload_RoundTripsTheDeformationOrderTables()
     {
         MeshletPayload payload = CreateSkinnedHierarchyPayload(BuildOrder());
@@ -142,6 +194,9 @@ public sealed class MeshletDeformationOrderTests
         read.DeformationVertexOrder.ToArray().ShouldBe(payload.DeformationVertexOrder.ToArray());
         read.DeformationPrefixCounts.ToArray().ShouldBe(payload.DeformationPrefixCounts.ToArray());
         read.LevelMaxErrors.ToArray().ShouldBe(payload.LevelMaxErrors.ToArray());
+        read.LevelCoverIndices.ToArray().ShouldBe(payload.LevelCoverIndices.ToArray());
+        read.LevelCoverFirstIndex.ToArray().ShouldBe(payload.LevelCoverFirstIndex.ToArray());
+        read.LevelCoverIndexCount.ToArray().ShouldBe(payload.LevelCoverIndexCount.ToArray());
     }
 
     [Test]
@@ -165,6 +220,15 @@ public sealed class MeshletDeformationOrderTests
 
     private static MeshletDeformationOrderBuilder.Result BuildOrder()
         => Build(MeshletVertices, ClusterLods, Groups);
+
+    private static MeshletLevelCoverBuilder.Result BuildCovers(
+        uint[][] meshletVertices,
+        MeshletClusterLodRecord[] clusterLods,
+        MeshletLodGroupRecord[] groups)
+    {
+        (CpuMeshletDescriptor[] descriptors, uint[] vertexIndices, byte[] triangles) = CreateStreams(meshletVertices);
+        return MeshletLevelCoverBuilder.Build(descriptors, vertexIndices, triangles, clusterLods, groups);
+    }
 
     private static MeshletDeformationOrderBuilder.Result Build(
         uint[][] meshletVertices,
@@ -210,6 +274,11 @@ public sealed class MeshletDeformationOrderTests
     }
 
     private static MeshletPayload CreateSkinnedHierarchyPayload(MeshletDeformationOrderBuilder.Result order)
+        => CreateSkinnedHierarchyPayload(order, BuildCovers(MeshletVertices, ClusterLods, Groups));
+
+    private static MeshletPayload CreateSkinnedHierarchyPayload(
+        MeshletDeformationOrderBuilder.Result order,
+        MeshletLevelCoverBuilder.Result covers)
     {
         (CpuMeshletDescriptor[] descriptors, uint[] vertexIndices, byte[] triangles) = CreateStreams(MeshletVertices);
         MeshletGenerationSettingsSnapshot settings = MeshletGenerationSettingsSnapshot.From(
@@ -238,6 +307,9 @@ public sealed class MeshletDeformationOrderTests
             DeformationVertexOrder = [.. order.VertexOrder],
             DeformationPrefixCounts = [.. order.PrefixCounts],
             LevelMaxErrors = [.. order.LevelMaxErrors],
+            LevelCoverIndices = [.. covers.Indices],
+            LevelCoverFirstIndex = [.. covers.LevelFirstIndex],
+            LevelCoverIndexCount = [.. covers.LevelIndexCount],
         };
         payload.ValidatePortablePayload();
         return payload;

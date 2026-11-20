@@ -52,9 +52,10 @@ public static class MeshletClusterHierarchyBuilder
     /// that change a locked border, and keeps ended branches locked. Version 4 adds, for a skinned
     /// mesh, the skinning centroid attribute, the blendshape vertex locks and the cluster skinning
     /// tables (payload version 6). Version 5 zeroes a skinning centroid that is not finite. Version 6
-    /// adds, for a skinned mesh, the deformation order tables (payload version 7).
+    /// adds, for a skinned mesh, the deformation order tables (payload version 7). Version 7 adds,
+    /// for a skinned mesh, the level cover tables.
     /// </summary>
-    public const int CookVersion = 6;
+    public const int CookVersion = 7;
 
     private static readonly Lock InvariantSync = new();
     private static InvariantReport _invariantTotals;

@@ -154,7 +154,9 @@ public sealed class MeshletPayload
     /// <summary>
     /// Version 7 is version 6 plus the deformation order tables of a skinned hierarchy payload
     /// (<see cref="DeformationVertexOrder"/>, <see cref="DeformationPrefixCounts"/> and
-    /// <see cref="LevelMaxErrors"/>, empty for an unskinned mesh).
+    /// <see cref="LevelMaxErrors"/>) and its level cover tables (<see cref="LevelCoverIndices"/>,
+    /// <see cref="LevelCoverFirstIndex"/> and <see cref="LevelCoverIndexCount"/>), all empty for an
+    /// unskinned mesh.
     /// </summary>
     public const int DeformationOrderPayloadVersion = 7;
     /// <summary>
@@ -237,6 +239,24 @@ public sealed class MeshletPayload
     /// mesh.
     /// </summary>
     public ImmutableArray<float> LevelMaxErrors { get; init; } = [];
+    /// <summary>
+    /// For a skinned hierarchy payload, the source vertex indices of the level covers, three per
+    /// triangle (see <see cref="MeshletLevelCoverBuilder"/>). The cover of level L holds the clusters
+    /// of level L and the root clusters of finer levels, and it reads only the vertices in the
+    /// deformation prefix of level L. A path without the cluster cut draws it for a draw whose
+    /// deformation job deformed only that prefix. Empty for an unskinned mesh.
+    /// </summary>
+    public ImmutableArray<uint> LevelCoverIndices { get; init; } = [];
+    /// <summary>
+    /// For a skinned hierarchy payload, one entry per hierarchy level: the first entry of the level
+    /// cover in <see cref="LevelCoverIndices"/>. Level 0 has no cover and stores 0.
+    /// </summary>
+    public ImmutableArray<uint> LevelCoverFirstIndex { get; init; } = [];
+    /// <summary>
+    /// For a skinned hierarchy payload, one entry per hierarchy level: the index count of the level
+    /// cover. Level 0 has no cover and stores 0.
+    /// </summary>
+    public ImmutableArray<uint> LevelCoverIndexCount { get; init; } = [];
 
     public bool HasMeshlets => State == MeshletPayloadState.Present && Meshlets.Length > 0;
 
@@ -465,7 +485,8 @@ public sealed class MeshletPayload
         bool hasOrder = DeformationVertexOrder.Length > 0;
         if (!hasOrder)
         {
-            if (DeformationPrefixCounts.Length != 0 || LevelMaxErrors.Length != 0)
+            if (DeformationPrefixCounts.Length != 0 || LevelMaxErrors.Length != 0 ||
+                LevelCoverIndices.Length != 0 || LevelCoverFirstIndex.Length != 0 || LevelCoverIndexCount.Length != 0)
                 throw new InvalidDataException("The meshlet deformation prefix tables have no vertex order.");
             return;
         }
@@ -499,6 +520,40 @@ public sealed class MeshletPayload
             if (!float.IsFinite(error) || error < 0.0f)
                 throw new InvalidDataException($"The meshlet deformation level error of level {level} is not finite.");
             previous = count;
+        }
+
+        ValidateLevelCovers(levelCount);
+    }
+
+    /// <summary>
+    /// Checks the level cover tables: one first index and one count per level, no cover for level
+    /// 0, whole triangles, ranges inside <see cref="LevelCoverIndices"/>, and every cover index
+    /// inside the deformation prefix of its level.
+    /// </summary>
+    private void ValidateLevelCovers(int levelCount)
+    {
+        if (LevelCoverFirstIndex.Length != levelCount || LevelCoverIndexCount.Length != levelCount)
+            throw new InvalidDataException("The meshlet level cover tables do not have one entry per hierarchy level.");
+        if (levelCount > 0 && (LevelCoverFirstIndex[0] != 0u || LevelCoverIndexCount[0] != 0u))
+            throw new InvalidDataException("Level 0 of a meshlet hierarchy has no level cover.");
+
+        uint[] rank = new uint[DeformationVertexOrder.Length];
+        for (int position = 0; position < DeformationVertexOrder.Length; position++)
+            rank[DeformationVertexOrder[position]] = (uint)position;
+
+        for (int level = 1; level < levelCount; level++)
+        {
+            uint first = LevelCoverFirstIndex[level];
+            uint count = LevelCoverIndexCount[level];
+            if (count % 3u != 0u || (ulong)first + count > (ulong)LevelCoverIndices.Length)
+                throw new InvalidDataException($"The meshlet level cover of level {level} has an invalid range.");
+            uint prefix = DeformationPrefixCounts[level];
+            for (uint index = first; index < first + count; index++)
+            {
+                uint vertex = LevelCoverIndices[(int)index];
+                if (vertex >= (uint)rank.Length || rank[vertex] >= prefix)
+                    throw new InvalidDataException($"The meshlet level cover of level {level} reads a vertex outside its deformation prefix.");
+            }
         }
     }
 

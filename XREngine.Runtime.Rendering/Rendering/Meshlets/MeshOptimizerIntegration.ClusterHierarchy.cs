@@ -183,6 +183,11 @@ public static partial class MeshOptimizerIntegration
         MeshletDeformationOrderBuilder.Result? deformationOrder = skin is null
             ? null
             : MeshletDeformationOrderBuilder.Build(descriptors, vertexIndexArray, records, groups, vertexCount);
+        // The level covers let the directional shadow raster draw a far instance from only its
+        // deformed vertices (see MeshletLevelCoverBuilder).
+        MeshletLevelCoverBuilder.Result? levelCovers = skin is null
+            ? null
+            : MeshletLevelCoverBuilder.Build(descriptors, vertexIndexArray, triangleArray, records, groups);
         MeshOptimizerMeshletStats stats = new(descriptors.Length, vertexIndexArray.Length, triangleArray.Length, encodedByteCount);
         MeshletPayload payload = CreatePayload(
             mesh,
@@ -198,7 +203,8 @@ public static partial class MeshOptimizerIntegration
             groups,
             skinRecords,
             clusterBones?.ToArray(),
-            deformationOrder);
+            deformationOrder,
+            levelCovers);
 
         LastClusterHierarchyStats = new ClusterHierarchyCookStats(
             descriptors.Length,
