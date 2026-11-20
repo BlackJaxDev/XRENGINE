@@ -1,4 +1,4 @@
-// Ported from meshoptimizer demo/clusterlod.h (clodBuild and its helpers).
+﻿// Ported from meshoptimizer demo/clusterlod.h (clodBuild and its helpers).
 //
 // Copyright (C) 2016-2026, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
 //
@@ -49,9 +49,11 @@ public static class MeshletClusterHierarchyBuilder
     /// Version of the hierarchy cook. The meshlet settings hash of a hierarchy payload includes it,
     /// so a change of the cook recooks cached hierarchy payloads and leaves level-0 payloads alone.
     /// Version 3 has no sloppy fallback and no placeholder triangle, rejects simplifications
-    /// that change a locked border, and keeps ended branches locked.
+    /// that change a locked border, and keeps ended branches locked. Version 4 adds, for a skinned
+    /// mesh, the skinning centroid attribute, the blendshape vertex locks and the cluster skinning
+    /// tables (payload version 6). Version 5 zeroes a skinning centroid that is not finite.
     /// </summary>
-    public const int CookVersion = 3;
+    public const int CookVersion = 5;
 
     private static readonly Lock InvariantSync = new();
     private static InvariantReport _invariantTotals;
@@ -109,6 +111,9 @@ public static class MeshletClusterHierarchyBuilder
     /// Simplifications that changed the open edges between locked vertices. The cook rejects them
     /// (the group ends its branch), so no accepted level has a changed border.
     /// </param>
+    /// <param name="EndedEmpty">Groups that ended because the simplification removed every triangle.</param>
+    /// <param name="EndedNoReduction">Groups that ended because the simplification kept more than the threshold share of triangles.</param>
+    /// <param name="EndedNonFiniteError">Groups that ended because the simplification error was not finite.</param>
     public readonly record struct InvariantReport(
         int SelfChecks,
         int SelfFailures,
@@ -117,7 +122,10 @@ public static class MeshletClusterHierarchyBuilder
         int ContainmentChecks,
         int ContainmentFailures,
         int BorderChecks,
-        int BorderRejections)
+        int BorderRejections,
+        int EndedEmpty = 0,
+        int EndedNoReduction = 0,
+        int EndedNonFiniteError = 0)
     {
         /// <summary>Adds two reports.</summary>
         public static InvariantReport operator +(InvariantReport a, InvariantReport b)
@@ -125,7 +133,9 @@ public static class MeshletClusterHierarchyBuilder
                 a.SelfChecks + b.SelfChecks, a.SelfFailures + b.SelfFailures,
                 a.MonotonicChecks + b.MonotonicChecks, a.MonotonicFailures + b.MonotonicFailures,
                 a.ContainmentChecks + b.ContainmentChecks, a.ContainmentFailures + b.ContainmentFailures,
-                a.BorderChecks + b.BorderChecks, a.BorderRejections + b.BorderRejections);
+                a.BorderChecks + b.BorderChecks, a.BorderRejections + b.BorderRejections,
+                a.EndedEmpty + b.EndedEmpty, a.EndedNoReduction + b.EndedNoReduction,
+                a.EndedNonFiniteError + b.EndedNonFiniteError);
     }
 
     /// <summary>One cluster of the hierarchy: a triangle list into the original vertex buffer.</summary>
@@ -216,6 +226,9 @@ public static class MeshletClusterHierarchyBuilder
         int selfFailures = 0;
         int borderChecks = 0;
         int borderRejections = 0;
+        int endedEmpty = 0;
+        int endedNoReduction = 0;
+        int endedNonFiniteError = 0;
 
         List<uint> clusterIndices = new(indices.Length);
         List<WorkCluster> clusters = [];
@@ -266,6 +279,12 @@ public static class MeshletClusterHierarchyBuilder
                 bool simplifiable = simplified.Length != 0 &&
                     simplified.Length <= merged.Length * config.SimplifyThreshold &&
                     float.IsFinite(simplifyError);
+                if (simplified.Length == 0)
+                    endedEmpty++;
+                else if (simplified.Length > merged.Length * config.SimplifyThreshold)
+                    endedNoReduction++;
+                else if (!float.IsFinite(simplifyError))
+                    endedNonFiniteError++;
                 if (simplifiable)
                 {
                     // The simplifier can still change the border around a locked vertex (for
@@ -314,7 +333,9 @@ public static class MeshletClusterHierarchyBuilder
             OutputGroup(outputClusters, outputGroups, clusters, 0, 1, clusterIndices, clusters[0].Sphere, float.MaxValue, depth, ref selfChecks, ref selfFailures);
 
         InvariantReport links = CheckLinks(outputClusters, outputGroups);
-        InvariantReport invariants = links + new InvariantReport(selfChecks, selfFailures, 0, 0, 0, 0, borderChecks, borderRejections);
+        InvariantReport invariants = links + new InvariantReport(
+            selfChecks, selfFailures, 0, 0, 0, 0, borderChecks, borderRejections,
+            endedEmpty, endedNoReduction, endedNonFiniteError);
         return new Result(outputClusters, outputGroups, endedGroups, invariants);
     }
 

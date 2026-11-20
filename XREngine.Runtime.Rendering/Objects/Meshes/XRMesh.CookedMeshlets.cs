@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Immutable;
 using System.Numerics;
 using System.Text;
@@ -74,10 +74,19 @@ public partial class XRMesh
         if (payload.PayloadVersion <= MeshletPayload.LastPayloadVersionWithVertexStream)
             size += sizeof(int); // empty legacy vertex stream
         size += sizeof(int) * 4; // stats
-        if (payload.PayloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+        if (payload.PayloadVersion >= MeshletPayload.FirstClusterHierarchyPayloadVersion)
             size += CalculateClusterHierarchySize(payload);
+        if (payload.PayloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+            size += CalculateClusterSkinningSize(payload);
         return size;
     }
+
+    /// <summary>The skin record count and records (8 bytes each), then the bone count and bones (2 bytes each).</summary>
+    private static long CalculateClusterSkinningSize(MeshletPayload payload)
+        => sizeof(int) + (long)payload.ClusterSkins.Length * ClusterSkinRecordBytes
+           + sizeof(int) + (long)payload.ClusterBones.Length * sizeof(ushort);
+
+    private const int ClusterSkinRecordBytes = sizeof(uint) + sizeof(ushort) * 2;
 
     /// <summary>Level-0 count, then the cluster records (8 bytes each) and group records (32 bytes each), each with a count.</summary>
     private static long CalculateClusterHierarchySize(MeshletPayload payload)
@@ -165,8 +174,40 @@ public partial class XRMesh
         writer.Write(payload.Stats.VertexReferenceCount);
         writer.Write(payload.Stats.TriangleByteCount);
         writer.Write(payload.Stats.EncodedByteCount);
-        if (payload.PayloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+        if (payload.PayloadVersion >= MeshletPayload.FirstClusterHierarchyPayloadVersion)
             WriteClusterHierarchy(writer, payload);
+        if (payload.PayloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+            WriteClusterSkinning(writer, payload);
+    }
+
+    private static void WriteClusterSkinning(RuntimeCookedBinaryWriter writer, MeshletPayload payload)
+    {
+        writer.Write(payload.ClusterSkins.Length);
+        foreach (MeshletClusterSkinRecord skin in payload.ClusterSkins)
+        {
+            writer.Write(skin.FirstBone);
+            writer.Write(skin.BoneCount);
+            writer.Write(skin.Flags);
+        }
+        writer.Write(payload.ClusterBones.Length);
+        foreach (ushort bone in payload.ClusterBones)
+            writer.Write(bone);
+    }
+
+    private static (MeshletClusterSkinRecord[] Skins, ushort[] Bones) ReadClusterSkinning(RuntimeCookedBinaryReader reader)
+    {
+        int skinCount = reader.ReadInt32();
+        ValidateArrayCount(skinCount, ClusterSkinRecordBytes, reader.Remaining, "cluster skinning record");
+        MeshletClusterSkinRecord[] skins = new MeshletClusterSkinRecord[skinCount];
+        for (int i = 0; i < skinCount; i++)
+            skins[i] = new MeshletClusterSkinRecord(reader.ReadUInt32(), reader.ReadUInt16(), reader.ReadUInt16());
+
+        int boneCount = reader.ReadInt32();
+        ValidateArrayCount(boneCount, sizeof(ushort), reader.Remaining, "cluster bone");
+        ushort[] bones = new ushort[boneCount];
+        for (int i = 0; i < boneCount; i++)
+            bones[i] = reader.ReadUInt16();
+        return (skins, bones);
     }
 
     internal static MeshletPayload? ReadMeshletPayload(RuntimeCookedBinaryReader reader)
@@ -212,11 +253,15 @@ public partial class XRMesh
         int level0Count = 0;
         MeshletClusterLodRecord[] clusterLods = [];
         MeshletLodGroupRecord[] lodGroups = [];
-        if (payloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+        MeshletClusterSkinRecord[] clusterSkins = [];
+        ushort[] clusterBones = [];
+        if (payloadVersion >= MeshletPayload.FirstClusterHierarchyPayloadVersion)
         {
             (level0Count, clusterLods, lodGroups) = ReadClusterHierarchy(reader);
             meshletSettings = meshletSettings with { BuildClusterHierarchy = true };
         }
+        if (payloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+            (clusterSkins, clusterBones) = ReadClusterSkinning(reader);
 
         if (payloadVersion < 2)
             runtimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSettings);
@@ -258,6 +303,8 @@ public partial class XRMesh
             ClusterLevel0Count = level0Count,
             ClusterLods = clusterLods.ToImmutableArray(),
             LodGroups = lodGroups.ToImmutableArray(),
+            ClusterSkins = clusterSkins.ToImmutableArray(),
+            ClusterBones = clusterBones.ToImmutableArray(),
         };
         payload.ValidatePortablePayload();
         return payload;
@@ -290,7 +337,7 @@ public partial class XRMesh
 
         if (!TrySkipBytes(reader, sizeof(int) * 4L))
             return false;
-        if (payloadVersion < MeshletPayload.ClusterHierarchyPayloadVersion)
+        if (payloadVersion < MeshletPayload.FirstClusterHierarchyPayloadVersion)
             return true;
 
         if (!TrySkipBytes(reader, sizeof(int)))
@@ -299,7 +346,16 @@ public partial class XRMesh
         if (clusterCount < 0 || !TrySkipBytes(reader, (long)clusterCount * ClusterLodRecordBytes))
             return false;
         int groupCount = reader.ReadInt32();
-        return groupCount >= 0 && TrySkipBytes(reader, (long)groupCount * LodGroupRecordBytes);
+        if (groupCount < 0 || !TrySkipBytes(reader, (long)groupCount * LodGroupRecordBytes))
+            return false;
+        if (payloadVersion < MeshletPayload.ClusterHierarchyPayloadVersion)
+            return true;
+
+        int skinCount = reader.ReadInt32();
+        if (skinCount < 0 || !TrySkipBytes(reader, (long)skinCount * ClusterSkinRecordBytes))
+            return false;
+        int boneCount = reader.ReadInt32();
+        return boneCount >= 0 && TrySkipBytes(reader, (long)boneCount * sizeof(ushort));
     }
 
     private static bool TrySkipCpuMeshletDescriptors(RuntimeCookedBinaryReader reader)

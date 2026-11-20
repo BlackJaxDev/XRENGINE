@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Collections.Immutable;
 using System.IO.Hashing;
 using System.Numerics;
@@ -141,11 +141,17 @@ public sealed class MeshletPayload
     public const int CurrentPayloadVersion = 4;
     /// <summary>
     /// Version 5 is version 4 plus a cluster hierarchy: <see cref="ClusterLevel0Count"/>, one
-    /// <see cref="MeshletClusterLodRecord"/> per meshlet and the <see cref="LodGroups"/> table. Only a
+    /// <see cref="MeshletClusterLodRecord"/> per meshlet and the <see cref="LodGroups"/> table. It is
+    /// still readable, so a version 5 payload is found stale and recooked as version 6.
+    /// </summary>
+    public const int FirstClusterHierarchyPayloadVersion = 5;
+    /// <summary>
+    /// Version 6 is version 5 plus the skinning tables of a skinned hierarchy payload
+    /// (<see cref="ClusterSkins"/> and <see cref="ClusterBones"/>, empty for an unskinned mesh). Only a
     /// payload cooked with <see cref="MeshletGenerationSettings.BuildClusterHierarchy"/> uses it, so
     /// every version 4 payload (caches and cooked assets) stays valid without a recook.
     /// </summary>
-    public const int ClusterHierarchyPayloadVersion = 5;
+    public const int ClusterHierarchyPayloadVersion = 6;
     /// <summary>The last version that stored a per-vertex stream.</summary>
     public const int LastPayloadVersionWithVertexStream = 3;
     public const uint PortableMaxVertices = 64u;
@@ -189,11 +195,25 @@ public sealed class MeshletPayload
     public ImmutableArray<MeshletClusterLodRecord> ClusterLods { get; init; } = [];
     /// <summary>The groups of the cluster hierarchy; empty without a hierarchy.</summary>
     public ImmutableArray<MeshletLodGroupRecord> LodGroups { get; init; } = [];
+    /// <summary>
+    /// The skinning record of each meshlet, in meshlet order: the range of its bones in
+    /// <see cref="ClusterBones"/> and its blendshape flag. Empty for an unskinned mesh or a payload
+    /// without a hierarchy.
+    /// </summary>
+    public ImmutableArray<MeshletClusterSkinRecord> ClusterSkins { get; init; } = [];
+    /// <summary>
+    /// The palette bone indices (the mesh's utilized-bone order) that <see cref="ClusterSkins"/> refer
+    /// to. A meshlet's bones are the union of the bones that influence any of its vertices.
+    /// </summary>
+    public ImmutableArray<ushort> ClusterBones { get; init; } = [];
 
     public bool HasMeshlets => State == MeshletPayloadState.Present && Meshlets.Length > 0;
 
     /// <summary>True when the payload holds a cluster hierarchy (version 5).</summary>
     public bool HasClusterHierarchy => ClusterLods.Length > 0;
+
+    /// <summary>True when the hierarchy payload also holds the skinning tables (version 6, skinned mesh).</summary>
+    public bool HasClusterSkinning => ClusterSkins.Length > 0;
 
     /// <summary>
     /// The number of meshlets that a renderer without cut selection draws: the level-0 meshlets of a
@@ -376,6 +396,17 @@ public sealed class MeshletPayload
                 throw new InvalidDataException($"Meshlet {index} has an invalid cluster hierarchy record.");
         }
 
+        if (ClusterSkins.Length != 0 && ClusterSkins.Length != Meshlets.Length)
+            throw new InvalidDataException("The meshlet cluster skinning table does not have one record per meshlet.");
+        if (ClusterSkins.Length == 0 && ClusterBones.Length != 0)
+            throw new InvalidDataException("The meshlet cluster bone list has no skinning records.");
+        for (int index = 0; index < ClusterSkins.Length; index++)
+        {
+            MeshletClusterSkinRecord skin = ClusterSkins[index];
+            if ((ulong)skin.FirstBone + skin.BoneCount > (ulong)ClusterBones.Length)
+                throw new InvalidDataException($"Meshlet {index} has a skinning record outside the cluster bone list.");
+        }
+
         for (int index = 0; index < LodGroups.Length; index++)
         {
             MeshletLodGroupRecord group = LodGroups[index];
@@ -503,10 +534,14 @@ public static class MeshletPayloadUtility
     // Version 4 requires lossless source-stream persistence whenever an XRMesh
     // carries an ownership-validated meshlet payload.
     private const int SharedMeshletCodecVersion = 4;
+    // Version 1: a skinned sub-mesh with meshlets gets a cluster hierarchy by default (with its
+    // skinning tables). Part of the cook provenance, so model caches and payload caches that were
+    // cooked before this policy recook once.
+    private const int SkinnedClusterHierarchyPolicyVersion = 1;
 
     /// <summary>Import/cache provenance; runtime compatibility is deliberately separate.</summary>
     public static string CurrentCookProvenanceKey
-        => $"meshoptimizer={MeshOptimizerIntegration.MeshOptimizerVersionKey};payload={MeshletPayload.CurrentPayloadVersion};sourceHash={SourceMeshHashVersion};meshletSettings={MeshletSettingsHashVersion};lodSettings={LodSettingsHashVersion};freshness={FreshnessHashVersion};topologyPolicy={TopologyPolicyVersion};codec={SharedMeshletCodecVersion}";
+        => $"meshoptimizer={MeshOptimizerIntegration.MeshOptimizerVersionKey};payload={MeshletPayload.CurrentPayloadVersion};skinnedClusterLod={SkinnedClusterHierarchyPolicyVersion};sourceHash={SourceMeshHashVersion};meshletSettings={MeshletSettingsHashVersion};lodSettings={LodSettingsHashVersion};freshness={FreshnessHashVersion};topologyPolicy={TopologyPolicyVersion};codec={SharedMeshletCodecVersion}";
 
     public static ulong ComputeOwnerValidationToken(string identity, ulong sourceHash, ulong freshnessHash)
     {
