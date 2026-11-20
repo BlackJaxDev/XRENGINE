@@ -126,10 +126,12 @@ public static class UberAuthoringSchemaCatalog
     }
 
     /// <summary>
-    /// Returns true for an annotated material property. Engine-driven uniforms are not authorable.
+    /// Returns true for an annotated material property. Engine-driven uniforms and properties annotated with
+    /// <c>hidden=true</c> are not authorable.
     /// </summary>
     private static bool IsAuthorable(ShaderUiProperty property)
         => property.HasExplicitMetadata &&
+           !property.IsHidden &&
            (property.Name.StartsWith('_') || property.Name.Equals("AlphaCutoff", StringComparison.Ordinal)) &&
            UniformRequirementsDetection.GetAllProviders(property.Name) == EUniformRequirements.None;
 

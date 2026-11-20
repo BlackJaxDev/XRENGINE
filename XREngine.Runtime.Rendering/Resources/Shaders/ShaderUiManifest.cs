@@ -115,7 +115,9 @@ namespace XREngine.Rendering
         EShaderUiPropertyMutability Mutability = EShaderUiPropertyMutability.Runtime,
         bool HasExplicitMutability = false,
         string? VisibleCondition = null,
-        string? EnableCondition = null);
+        string? EnableCondition = null,
+        string? ComponentLabels = null,
+        bool IsHidden = false);
 
     public sealed record ShaderBindingMetadata(
         string Name,
@@ -250,7 +252,9 @@ namespace XREngine.Rendering
                     mutability,
                     hasExplicitMutability,
                     propertyAnnotation?.Visible,
-                    propertyAnnotation?.Enabled));
+                    propertyAnnotation?.Enabled,
+                    propertyAnnotation?.Components,
+                    propertyAnnotation?.IsHidden ?? false));
 
                 state.PendingProperty = null;
                 state.PendingBinding = null;
@@ -509,7 +513,9 @@ namespace XREngine.Rendering
                         namedArgs.TryGetValue("storage", out string? propertyStorage) ? Unquote(propertyStorage) : null,
                         ParsePropertyMutability(namedArgs),
                         namedArgs.TryGetValue("visible", out string? visible) ? Unquote(visible) : null,
-                        namedArgs.TryGetValue("enabled", out string? enabledCondition) ? Unquote(enabledCondition) : null);
+                        namedArgs.TryGetValue("enabled", out string? enabledCondition) ? Unquote(enabledCondition) : null,
+                        namedArgs.TryGetValue("components", out string? components) ? Unquote(components) : null,
+                        ParseBool(namedArgs, "hidden"));
                     break;
 
                 case "binding":
@@ -1235,7 +1241,9 @@ namespace XREngine.Rendering
             string? Storage,
             EShaderUiPropertyMutability? Mutability,
             string? Visible,
-            string? Enabled);
+            string? Enabled,
+            string? Components,
+            bool IsHidden);
 
         private sealed record PendingBindingAnnotation(
             string? Name,

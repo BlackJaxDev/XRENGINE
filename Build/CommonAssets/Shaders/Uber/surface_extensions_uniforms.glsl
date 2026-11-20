@@ -69,12 +69,6 @@ uniform int _NormalCorrectVertexColor;
 //@property(name="_NormalCorrectOrigin", display="Normal Correction Origin", mode=static, default="vec3(0.0, 0.4, -0.025)")
 uniform vec3 _NormalCorrectOrigin;
 
-//@property(name="_BackFaceTexture_ST", display="Backface Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
-uniform vec4 _BackFaceTexture_ST;
-//@property(name="_BackFaceTexturePan", display="Backface Pan", mode=animated, default="vec2(0.0)")
-uniform vec2 _BackFaceTexturePan;
-//@property(name="_BackFaceTextureUV", display="Backface UV", mode=static, default="0")
-uniform int _BackFaceTextureUV;
 //@property(name="_BackFaceNormalMap", display="Backface Normal", slot=texture, semantic=normal)
 uniform sampler2D _BackFaceNormalMap;
 //@property(name="_BackFaceNormalMap_ST", display="Backface Normal Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")

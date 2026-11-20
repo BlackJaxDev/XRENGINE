@@ -19,6 +19,8 @@ The Uber shader inspector is now driven by shader-source annotations instead of 
 - `//@property(name="...", display="...", mode=static|animated, slot=texture, range=[min,max], enum="...")`: declares a curated property surface.
 - `visible="expr"` on `//@property(...)`: shows the property only when the expression is true. For example, `visible="_MainHueShiftToggle > 0"` hides the hue controls while the hue toggle is off.
 - `enabled="expr"` on `//@property(...)`: shows the property, but makes it read-only when the expression is false.
+- `components="Label|Label:toggle|..."` on a `vec2`, `vec3`, or `vec4` property: shows one labeled control for each named component of a packed vector. The editor does not show components that have no label. A `:toggle` suffix shows that component as a check box that writes 0 or 1.
+- `hidden=true` on `//@property(...)`: marks an internal uniform, such as a second binding of the same texture. The parser does not warn about it, and the material editor does not show it.
 
 A condition uses the material authoring expression syntax. It can read other
 property values, `feature:<id>` (true when that feature is on), `texture:<name>`,
