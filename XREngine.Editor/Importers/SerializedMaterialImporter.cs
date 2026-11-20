@@ -1083,11 +1083,16 @@ public static partial class SerializedMaterialImporter
         // (and a needless sampler/variant) changes no authored behavior.
         material.SetUberFeatureEnabled("alpha-masks", alphaSource is not null);
 
+        // "_MainColorAdjustToggle" is the color adjust section toggle (keyword COLOR_GRADING_HDR), which
+        // controls hue, saturation, and brightness. "_ColorGradingToggle" only enables the grading
+        // subsection, so a material can keep it at 0 while its saturation and brightness apply.
         material.SetUberFeatureEnabled("color-adjustments",
             SourceToonFeatureStateResolver.IsEnabled(
                 document,
                 colorAdjustSource is not null || document.TryGetPositive("_MainHueShiftToggle"),
-                ["_ColorGradingToggle"],
+                document.HasAnyProperty("_MainColorAdjustToggle")
+                    ? ["_MainColorAdjustToggle"]
+                    : ["_ColorGradingToggle"],
                 ["COLOR_GRADING_HDR"]));
 
         material.SetUberFeatureEnabled("material-ao",

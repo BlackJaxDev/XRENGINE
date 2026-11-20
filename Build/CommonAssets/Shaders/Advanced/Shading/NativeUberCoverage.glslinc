@@ -96,9 +96,7 @@ vec3 XR_UBER_AdjustBaseColor(XRUberCoordinates coordinates, vec3 color)
     vec4 mask = XR_UBER_CoverageTexture(UBER_T(_MainColorAdjustTexture),
         UBER_I(_MainColorAdjustTextureUV), UBER_V(_MainColorAdjustTexture_ST),
         UBER_V(_MainColorAdjustTexturePan).xy, coordinates, vec4(1.0));
-    color = mix(vec3(XR_UBER_Luminance(color)), color,
-        1.0 + UBER_F(_Saturation) * mask.b);
-    color += UBER_F(_MainBrightness) * mask.g;
+    // Hue shift runs first, then saturation, then brightness, as in the forward Uber shader.
     if (UBER_F(_MainHueShiftToggle) > 0.5)
     {
         float shift = (UBER_F(_MainHueShift) + UBER_F(_MainHueShiftSpeed) * coordinates.time) * mask.r;
@@ -106,7 +104,10 @@ vec3 XR_UBER_AdjustBaseColor(XRUberCoordinates coordinates, vec3 color)
             ? XR_UBER_hueShiftOklab(color, shift) : XR_UBER_hueShift(color, shift);
         color = mix(color, shifted, UBER_F(_MainHueShiftReplace));
     }
-    return color;
+    color = mix(vec3(XR_UBER_Luminance(color)), color,
+        1.0 + UBER_F(_Saturation) * mask.b);
+    // Brightness scales the color by (1 + brightness) and clamps it to 0..1.
+    return clamp(color * (1.0 + UBER_F(_MainBrightness) * mask.g), 0.0, 1.0);
 }
 
 #include "Advanced/Shading/NativeUberEffects.glslinc"

@@ -139,6 +139,16 @@ reachable canonical render-pass path. The variant builder prunes disabled
 feature guards and sampler declarations and computes transitive feature
 dependency closure before generating the variant.
 
+## Color Adjustments
+
+The `color-adjustments` feature follows the source section toggle
+`_MainColorAdjustToggle` (keyword `COLOR_GRADING_HDR`). `_ColorGradingToggle`
+only enables the gradation subsection, so the importer reads it only when the
+section toggle is absent. The forward and native Uber shaders apply the source
+order: hue shift, then saturation, then brightness. Brightness scales the color
+by `1 + _MainBrightness` and clamps it to 0 through 1. The adjustment texture
+masks each step (R hue, G brightness, B saturation).
+
 ## Locked Shader Reconciliation And Cooked Textures
 
 A locked source toon shader renames each animated property with the tag mode

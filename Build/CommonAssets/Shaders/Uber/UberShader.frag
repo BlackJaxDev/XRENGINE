@@ -472,14 +472,7 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
     adjustUV = panUV(adjustUV, _MainColorAdjustTexturePan, u_Time);
     vec4 adjustMask = texture(_MainColorAdjustTexture, adjustUV);
     
-    // Saturation adjustment
-    float lum = luminance(color);
-    color = mix(vec3(lum), color, 1.0 + _Saturation * adjustMask.b);
-    
-    // Brightness adjustment
-    color += _MainBrightness * adjustMask.g;
-    
-    // Hue shift
+    // Hue shift runs first, then saturation, then brightness.
     if (_MainHueShiftToggle > 0.5) {
         float hueShiftAmount = _MainHueShift + _MainHueShiftSpeed * u_Time;
         hueShiftAmount *= adjustMask.r;
@@ -493,6 +486,13 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
         
         color = mix(color, shiftedColor, _MainHueShiftReplace);
     }
+    
+    // Saturation adjustment
+    float lum = luminance(color);
+    color = mix(vec3(lum), color, 1.0 + _Saturation * adjustMask.b);
+    
+    // Brightness scales the color by (1 + brightness) and clamps it to 0..1.
+    color = clamp(color * (1.0 + _MainBrightness * adjustMask.g), 0.0, 1.0);
     
     return color;
 #endif
