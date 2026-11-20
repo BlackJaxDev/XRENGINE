@@ -95,6 +95,7 @@ public static partial class SourceToonShaderMatcher
             {
                 Kind = SourceToonShaderMatchKind.SourceToonFeatureLossSource,
                 Version = sourceVersion,
+                BehaviorVersion = SourceToonReleaseLineCatalog.GetBehaviorVersion(sourceVersion),
                 SourceFamily = SourceToonShaderFamily.Pro,
                 IsSourceToonFamily = true,
                 IsAccepted = false,
@@ -141,6 +142,10 @@ public static partial class SourceToonShaderMatcher
                 PropertyDefinitions = SourceToon10Catalog.ReadPropertyDefinitions(source),
             };
 
+        SourceToonShaderMatchResult? releaseLineMatch = MatchReleaseLine(input, source, sourceVersion, isLockedName, hasSignature);
+        if (releaseLineMatch is not null)
+            return releaseLineMatch;
+
         bool familyEvidence = hasCanonicalName || hasSourceToonPath || hasCanonicalToonPath || hasSignature || sourceGuidMatches92;
         if (hasSignature && hasOptimizerMarker && sourceVersion is null && !sourceGuidMatches92)
         {
@@ -161,7 +166,7 @@ public static partial class SourceToonShaderMatcher
             MaterialConversionDiagnostic diagnostic = new(
                 MaterialConversionDiagnosticCodes.UnknownVersion,
                 MaterialConversionDiagnosticSeverity.Warning,
-                $"Poiyomi Toon version '{foundVersion}' has no verified source identity for conversion. Supported sources are verified 8.1.167, 9.2.66, 9.2.79, 9.3.64, and 10.0.25 shaders.");
+                $"Toon source shader version '{foundVersion}' has no verified identity and no admitted release line. Admitted release lines are {SourceToonReleaseLineCatalog.DescribeLines()}. Verified releases are 8.1.167, 9.2.66, 9.2.79, 9.3.64, and 10.0.25.");
             return new SourceToonShaderMatchResult
             {
                 Kind = SourceToonShaderMatchKind.UnsupportedVersion,
@@ -193,12 +198,97 @@ public static partial class SourceToonShaderMatcher
         {
             Kind = kind,
             Version = version,
+            BehaviorVersion = version,
             SourceFamily = SourceToonShaderFamily.Toon,
             IsSourceToonFamily = true,
             IsAccepted = true,
             IsLocked = isLocked,
             Diagnostics = diagnostics,
         };
+
+    /// <summary>
+    /// Admits a release of a known release line that has no exact verified identity, or returns null.
+    /// </summary>
+    /// <remarks>
+    /// An unlocked shader needs the main toon shader GUID of the line, or a version marker of the line and the main
+    /// toon shader name. A locked shader needs the main toon shader GUID of the line as its original shader, or a
+    /// version marker of the line, a locked name, and the property signature. Evidence that names two different
+    /// lines, or an original shader that is not a main toon shader, is not admitted.
+    /// </remarks>
+    private static SourceToonShaderMatchResult? MatchReleaseLine(
+        SourceToonShaderMatchInput input,
+        string source,
+        SourceToonShaderVersion? sourceVersion,
+        bool isLockedName,
+        bool hasSignature)
+    {
+        input.OverrideTags.TryGetValue(OriginalShaderGuidTag, out string? originalGuid);
+        SourceToonReleaseLine? versionLine = SourceToonReleaseLineCatalog.FindByVersion(sourceVersion);
+        SourceToonReleaseLine? guidLine = SourceToonReleaseLineCatalog.FindByGuid(input.ShaderGuid);
+        SourceToonReleaseLine? originalLine = SourceToonReleaseLineCatalog.FindByGuid(originalGuid);
+        SourceToonReleaseLine? line = versionLine ?? guidLine ?? originalLine;
+        if (line is null)
+            return null;
+
+        // A version marker of one line with the GUID of another line is contradictory evidence.
+        if (guidLine is not null && guidLine != line || originalLine is not null && originalLine != line)
+            return null;
+
+        // Locked variants of other shaders, such as two-pass or grab-pass shaders, keep the version marker
+        // and the signature. Their original shader GUID is the only evidence that separates them.
+        if (!string.IsNullOrWhiteSpace(originalGuid) && originalLine is null)
+            return null;
+
+        bool isLocked = isLockedName || originalLine is not null;
+        bool admitted = isLocked
+            ? originalLine is not null || versionLine is not null && hasSignature
+            : guidLine is not null || versionLine is not null && MainToonShaderNameRegex().IsMatch(source);
+        if (!admitted)
+            return null;
+
+        string versionText = sourceVersion?.ToString() ?? $"{line}.x";
+        MaterialConversionDiagnostic diagnostic = new(
+            MaterialConversionDiagnosticCodes.UnverifiedRelease,
+            MaterialConversionDiagnosticSeverity.Warning,
+            $"Toon source shader {versionText} has no exact verified identity. The converter admits it as a release of the {line} line and applies the conversion rules of verified {line.BehaviorVersion}. Compare the converted material with the source.");
+        return new SourceToonShaderMatchResult
+        {
+            Kind = SourceToonShaderMatchKind.ReleaseLineSource,
+            Version = sourceVersion,
+            BehaviorVersion = line.BehaviorVersion,
+            ReleaseLine = line,
+            SourceFamily = SourceToonShaderFamily.Toon,
+            IsSourceToonFamily = true,
+            IsAccepted = true,
+            IsLocked = isLocked,
+            PropertyDefinitions = ReadReleaseLinePropertyDefinitions(line, source),
+            Diagnostics = [diagnostic],
+        };
+    }
+
+    /// <summary>
+    /// Reads the property definitions that the conversion rules of the line need, or returns an empty set.
+    /// </summary>
+    /// <remarks>
+    /// Only the 10.0 rules read definitions, to fill the defaults of properties that the material does not store.
+    /// A source that cannot be read gives no defaults. The material values stay unchanged in that case.
+    /// </remarks>
+    private static IReadOnlyDictionary<string, SourceToonPropertyDefinition> ReadReleaseLinePropertyDefinitions(
+        SourceToonReleaseLine line,
+        string source)
+    {
+        if (line.BehaviorVersion != SourceToon10Catalog.Version || source.Length == 0)
+            return new Dictionary<string, SourceToonPropertyDefinition>(StringComparer.Ordinal);
+
+        try
+        {
+            return SourceToon10Catalog.ReadPropertyDefinitions(source);
+        }
+        catch (InvalidDataException)
+        {
+            return new Dictionary<string, SourceToonPropertyDefinition>(StringComparer.Ordinal);
+        }
+    }
 
     private static SourceToonShaderVersion? ExtractVersion(string source)
     {
@@ -210,4 +300,8 @@ public static partial class SourceToonShaderMatcher
 
     [GeneratedRegex(@"\bPoiyomi\s+(?<version>\d+\.\d+\.\d+)\b", RegexOptions.CultureInvariant)]
     private static partial Regex VersionMarkerRegex();
+
+    /// <summary>Matches the name of the main toon shader in the current folder or in an older-version folder.</summary>
+    [GeneratedRegex(@"\bShader\s+""\.poiyomi/(?:[^""/]+/)*Poiyomi Toon""", RegexOptions.CultureInvariant)]
+    private static partial Regex MainToonShaderNameRegex();
 }

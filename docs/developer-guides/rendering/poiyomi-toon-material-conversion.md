@@ -2,8 +2,10 @@
 
 XRENGINE provides versioned conversion support for **Poiyomi Toon 9.2.66,
 9.2.79, 9.3.64, and verified 10.0.25 sources**. The 9.3.64 catalog comes from commit
-`c5aaeeb3a67782b7e8a26e184d5e0a1970792294`. Other explicit versions produce
-`POI0001` and preserve inspectable source data.
+`c5aaeeb3a67782b7e8a26e184d5e0a1970792294`. Other releases of the 8.0 to 10.0
+release lines are admitted with `POI0016`. See [Release Lines](#release-lines).
+Versions outside these lines produce `POI0001` and preserve inspectable source
+data.
 
 `SourceToon92Catalog` records the two verified 9.2 source identities and hashes.
 Both releases use GUID `104003ab15a9f7a47b6ef0597225e771`; the matcher also
@@ -92,6 +94,44 @@ not mark the import as partial. Texture conversion checks the exact GUID and
 file ID and verifies both source hashes. The manifest fingerprints invalidate
 the import when either source changes. A new import must prove use again; activation with
 the texture still missing fails strict import.
+
+## Release Lines
+
+`SourceToonReleaseLineCatalog` lists the release lines that the matcher admits
+without an exact verified identity. Each line is one major and minor version.
+All releases of a line keep the GUID of the main toon shader of the line.
+
+| Line | Last release | Main toon shader GUID | Conversion rules |
+| --- | --- | --- | --- |
+| 8.0 | 8.0.426 | `231d95ff7213dd74f82af136b256fb32` | 8.1.167 |
+| 8.1 | 8.1.167 | `5ca92f1e9fc35504aba297fd1acd62df` | 8.1.167 |
+| 9.0 | 9.0.62 | `23f6705aff8bf964c87bfb3dd66ab345` | 9.2.79 |
+| 9.1 | 9.1.30 | `cef5dc16b30fdbb46b08ab424d41d1c0` | 9.2.79 |
+| 9.2 | 9.2.80 | `104003ab15a9f7a47b6ef0597225e771` | 9.2.79 |
+| 9.3 | 9.3.64 | `9444ce77bf4418748b1e8591b9d97f85` | 9.3.64 |
+| 10.0 | 10.0.29 | `e9f30272e2d12c945851329f504df73d` | 10.0.25 |
+
+The matcher tries the exact verified identities first. When they fail, it
+admits a release of a line with one of this evidence:
+
+- An unlocked shader with the GUID of the line.
+- An unlocked shader with a version marker of the line and the name of the main
+  toon shader. The name can be in the current folder or in an older-version
+  folder.
+- A locked shader whose original shader GUID is the GUID of the line.
+- A locked shader with a version marker of the line and the property signature.
+
+The matcher does not admit a shader when the version marker and a GUID name
+different lines. It does not admit a locked shader whose original shader GUID
+is not a main toon shader GUID. This keeps locked two-pass, grab-pass, and fur
+variants out.
+
+An admitted release gets `SourceToonShaderMatchKind.ReleaseLineSource` and a
+`POI0016` warning. `SourceToonShaderMatchResult.BehaviorVersion` holds the
+verified version whose conversion rules apply. All version-specific rules, such
+as color normalization, glitter, surface features, and the 10.0 defaults, read
+`BehaviorVersion`. `Version` keeps the exact source release for the report.
+Lines before 8.0 use different property names and are not admitted.
 
 ## Support Contract
 
@@ -212,6 +252,7 @@ over-limit material receives a deterministic failure reason before rendering.
 | `POI0013` | Requested UV channel is absent. | Import a mesh containing that UV channel or change the material selector. |
 | `POI0014` | Enum value is outside the pinned schema. | Correct the source value or add a reviewed version-specific mapping. |
 | `POI0015` | Pass prewarm failed. | Inspect shader diagnostics; the last-known-good variant remains active. |
+| `POI0016` | Source release is admitted by its release line, not by an exact verified identity. | Compare the converted material with the source. Add a verified identity when the release needs exact rules. |
 | `POIPRO0001` | A Pro-authored material was accepted through the lossy Toon downgrade. | Review the downgrade report; use an authored Toon material when exact conversion is required. |
 | `POIPRO0002` | An active Pro-only feature group was discarded. | Replace the feature with an engine-native equivalent or accept the documented visual difference. |
 

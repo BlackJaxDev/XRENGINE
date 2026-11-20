@@ -12,4 +12,7 @@ public enum SourceToonShaderMatchKind
     LockedPropertySignature,
     SourceToonFeatureLossSource,
     UnsupportedVersion,
+
+    /// <summary>A release of an admitted release line that has no exact verified identity.</summary>
+    ReleaseLineSource,
 }

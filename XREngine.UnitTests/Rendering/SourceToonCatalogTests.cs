@@ -92,7 +92,7 @@ public sealed class SourceToonCatalogTests
     }
 
     [Test]
-    public void Matcher_AcceptsOnlyPinnedVersionAndEmitsActionableUnknownVersionDiagnostic()
+    public void Matcher_AcceptsPinnedVersionAndEmitsActionableUnknownVersionDiagnostic()
     {
         SourceToonShaderMatchResult exact = SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
         {
@@ -103,12 +103,13 @@ public sealed class SourceToonCatalogTests
         exact.IsAccepted.ShouldBeTrue();
         exact.Kind.ShouldBe(SourceToonShaderMatchKind.ExactUnlockedSource);
         exact.Version.ShouldBe(SourceToon93Catalog.Version);
+        exact.BehaviorVersion.ShouldBe(SourceToon93Catalog.Version);
         exact.Diagnostics.ShouldBeEmpty();
 
         SourceToonShaderMatchResult unknown = SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
         {
-            ShaderPath = "Assets/_PoiyomiShaders/Shaders/10.0/Toon/Poiyomi Toon.shader",
-            ShaderSource = "Shader \".poiyomi/Poiyomi Toon\" { /* Poiyomi 10.0.1 */ }",
+            ShaderPath = "Assets/_PoiyomiShaders/Shaders/7.3/Toon/Poiyomi Toon.shader",
+            ShaderSource = "Shader \".poiyomi/Poiyomi Toon\" { /* Poiyomi 7.3.50 */ }",
         });
 
         unknown.IsAccepted.ShouldBeFalse();
@@ -116,6 +117,76 @@ public sealed class SourceToonCatalogTests
         unknown.Kind.ShouldBe(SourceToonShaderMatchKind.UnsupportedVersion);
         unknown.Diagnostics.Single().Code.ShouldBe(MaterialConversionDiagnosticCodes.UnknownVersion);
         unknown.Diagnostics.Single().Message.ShouldContain("9.3.64");
+    }
+
+    [Test]
+    public void Matcher_AdmitsReleaseLinesWithTheNearestVerifiedRules()
+    {
+        HashSet<string> signature = new(
+            ["shader_master_label", "shader_is_using_thry_editor", "_ShaderOptimizerEnabled", "_MainTex", "_ShadingEnabled"],
+            StringComparer.Ordinal);
+
+        SourceToonShaderMatchResult unlocked = SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
+        {
+            ShaderPath = "Assets/_PoiyomiShaders/Shaders/10.0/Toon/Poiyomi Toon.shader",
+            ShaderSource = "Shader \".poiyomi/Poiyomi Toon\" { /* Poiyomi 10.0.1 */ }",
+        });
+        unlocked.IsAccepted.ShouldBeTrue();
+        unlocked.IsLocked.ShouldBeFalse();
+        unlocked.Kind.ShouldBe(SourceToonShaderMatchKind.ReleaseLineSource);
+        unlocked.Version.ShouldBe(new SourceToonShaderVersion(10, 0, 1));
+        unlocked.BehaviorVersion.ShouldBe(SourceToon10Catalog.Version);
+        unlocked.Diagnostics.Single().Code.ShouldBe(MaterialConversionDiagnosticCodes.UnverifiedRelease);
+
+        SourceToonShaderMatchResult olderFolder = SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
+        {
+            ShaderSource = "Shader \".poiyomi/Old Versions/9.1/Poiyomi Toon\" { /* Poiyomi 9.1.30 */ }",
+        });
+        olderFolder.IsAccepted.ShouldBeTrue();
+        olderFolder.BehaviorVersion.ShouldBe(SourceToon92Catalog.Version79);
+
+        SourceToonShaderMatchResult lockedByGuid = SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
+        {
+            ShaderPath = "Assets/OptimizedShaders/Body/Locked.shader",
+            OverrideTags = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["OriginalShaderGUID"] = "231d95ff7213dd74f82af136b256fb32",
+            },
+        });
+        lockedByGuid.IsAccepted.ShouldBeTrue();
+        lockedByGuid.IsLocked.ShouldBeTrue();
+        lockedByGuid.Version.ShouldBeNull();
+        lockedByGuid.BehaviorVersion.ShouldBe(SourceToon81Catalog.Version);
+
+        SourceToonShaderMatchResult conflicting = SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
+        {
+            ShaderPath = "Assets/OptimizedShaders/Body/Locked.shader",
+            ShaderSource = "Shader \"Hidden/Locked/Body\" { // Poiyomi 9.1.30 }",
+            PropertyNames = signature,
+            OverrideTags = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["OriginalShaderGUID"] = SourceToon10Catalog.OriginalShaderGuid,
+            },
+        });
+        conflicting.IsAccepted.ShouldBeFalse();
+
+        SourceToonShaderMatchResult lockedVariant = SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
+        {
+            ShaderPath = "Assets/OptimizedShaders/Body/Locked.shader",
+            ShaderSource = "Shader \"Hidden/Locked/Body\" { // Poiyomi 9.3.10 }",
+            PropertyNames = signature,
+            OverrideTags = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["OriginalShaderGUID"] = "00000000000000000000000000000001",
+            },
+        });
+        lockedVariant.Kind.ShouldNotBe(SourceToonShaderMatchKind.ReleaseLineSource);
+
+        SourceToonShaderMatchResult twoPass = SourceToonShaderMatcher.Match(new SourceToonShaderMatchInput
+        {
+            ShaderSource = "Shader \".poiyomi/Poiyomi Toon Two Pass\" { /* Poiyomi 10.0.1 */ }",
+        });
+        twoPass.Kind.ShouldNotBe(SourceToonShaderMatchKind.ReleaseLineSource);
     }
 
     [Test]

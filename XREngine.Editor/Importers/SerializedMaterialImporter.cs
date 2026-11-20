@@ -107,14 +107,14 @@ public static partial class SerializedMaterialImporter
             conversionDocument = SourceToonFeatureLossNormalizer.Normalize(
                 effectiveDocument, diagnostics, shaderPath, sourceToonMatch.IsLocked,
                 preserveCertifiedGrabPass: orderedSurface.HasSceneColor);
-        else if (sourceToonMatch.IsAccepted && sourceToonMatch.Version == SourceToon10Catalog.Version)
+        else if (sourceToonMatch.IsAccepted && sourceToonMatch.BehaviorVersion == SourceToon10Catalog.Version)
             conversionDocument = SourceToon10Catalog.CreateConversionDocument(effectiveDocument, sourceToonMatch);
         else
             conversionDocument = effectiveDocument;
         SourceToonMaterialDescriptor? sourceToonDescriptor = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
             ? SourceToonMaterialDescriptorFactory.Create(conversionDocument, resolver, sourceToonMatch, diagnostics)
             : null;
-        if (sourceToonMatch.IsAccepted && SourceToon92Catalog.Supports(sourceToonMatch.Version))
+        if (sourceToonMatch.IsAccepted && SourceToon92Catalog.Supports(sourceToonMatch.BehaviorVersion))
             SourceToon92Catalog.AppendUnmappedFeatureDiagnostics(conversionDocument, diagnostics);
         bool isSourceToonConversion = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource;
         foreach (MaterialConversionDiagnostic diagnostic in diagnostics)
@@ -139,7 +139,8 @@ public static partial class SerializedMaterialImporter
                     warnings,
                     diagnostics,
                     isSourceToonFeatureLoss,
-                    sourceToonMatch.Version,
+                    // Version-specific conversion rules follow the verified behavior version, not the exact release.
+                    sourceToonMatch.BehaviorVersion,
                     sourceToonDescriptor,
                     orderedSurface)
                 : isLilToon

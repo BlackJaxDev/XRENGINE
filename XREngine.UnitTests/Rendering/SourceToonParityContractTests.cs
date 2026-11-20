@@ -135,8 +135,8 @@ public sealed class SourceToonParityContractTests
         });
         SourceToonShaderMatchResult rejected = SourceToonShaderMatcher.Match(new()
         {
-            ShaderPath = "Assets/_PoiyomiShaders/Shaders/10/Poiyomi Toon.shader",
-            ShaderSource = "Shader \".poiyomi/Poiyomi Toon\" { // Poiyomi 10.0.0 }",
+            ShaderPath = "Assets/_PoiyomiShaders/Shaders/11.0/Poiyomi Toon.shader",
+            ShaderSource = "Shader \".poiyomi/Poiyomi Toon\" { // Poiyomi 11.0.0 }",
             PropertyNames = signature,
         });
 

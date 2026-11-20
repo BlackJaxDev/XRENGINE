@@ -124,8 +124,8 @@ public static partial class SourceToon10Catalog
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(match);
-        if (!match.IsAccepted || match.Version != Version)
-            throw new ArgumentException("A verified Toon 10.0.25 match is required.", nameof(match));
+        if (!match.IsAccepted || match.BehaviorVersion != Version)
+            throw new ArgumentException("An accepted match with the 10.0.25 conversion rules is required.", nameof(match));
 
         SerializedMaterialDocument result = source.CreateConversionCopy();
         foreach (string name in ConversionDefaultProperties)
