@@ -94,6 +94,12 @@ source materials for reimport. Source decal alpha intensity affects a separate
 per-layer global-mask output after the alpha override in Unity. That output is
 not implemented here; alpha intensity does not change the source alpha override.
 
+Each decal slot also has a side offset (`_DecalSideOffset`, `_DecalSideOffset1`
+to `_DecalSideOffset3`). Its x and y values move the left and right edges of the
+decal rectangle, and its z and w values move the bottom and top edges. The
+forward Uber, native Uber, and splat paths move the decal center and change its
+span by these values before they sample the decal.
+
 Texture arrays remain native `sampler2DArray` / `XRTexture2DArray` resources.
 Unity array metadata preserves layer order and sampling settings. When the
 source is a single image with explicit `flipbookRows` and `flipbookColumns`,

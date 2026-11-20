@@ -178,6 +178,7 @@ public static class NativeUberMaterialSchema
             Add("_DecalColor" + suffix);
             Add("_DecalPosition" + suffix);
             Add("_DecalScale" + suffix);
+            Add("_DecalSideOffset" + suffix);
             Add("_DecalTexturePan" + suffix);
             Add("_DecalRotation" + suffix);
             Add("_DecalRotationSpeed" + suffix);

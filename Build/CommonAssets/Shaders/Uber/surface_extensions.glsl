@@ -329,6 +329,7 @@ vec4 uberSampleDecal(
     vec4 decalColor,
     vec2 position,
     vec2 scale,
+    vec4 sideOffset,
     vec2 pan,
     float rotation,
     float rotationSpeed,
@@ -344,6 +345,11 @@ vec4 uberSampleDecal(
     int mirrorMode = int(modifiers.z + 0.5);
     if (mirrorMode == 1 || (mirrorMode == 4 && mesh.viewDir.x < 0.0))
         uv.x = 1.0 - uv.x;
+    // A side offset moves each edge of the decal rectangle: x and y move the left and right
+    // edges, z and w move the bottom and top edges. It shifts the center and changes the span.
+    vec4 sideAdjust = vec4(-sideOffset.x, sideOffset.y, -sideOffset.z, sideOffset.w);
+    position += 0.5 * vec2(sideAdjust.x + sideAdjust.y, sideAdjust.z + sideAdjust.w);
+    scale += vec2(sideAdjust.y - sideAdjust.x, sideAdjust.w - sideAdjust.z);
     uv = panUV(uv, pan, u_Time);
     uv = (uv - position) / max(abs(scale), vec2(EPSILON)) + vec2(0.5);
     uv = rotateUV(uv, radians(rotation + rotationSpeed * u_Time), vec2(0.5));
@@ -424,13 +430,13 @@ void uberApplyDecals(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_DECALS
     vec3 alphaControl;
-    vec4 decal = uberSampleDecal(_DecalTexture, _DecalColor, _DecalPosition, _DecalScale, _DecalTexturePan, _DecalRotation, _DecalRotationSpeed, _DecalUvMode0, 0, _DecalSlotModifiers0, _DecalSlotFx0, _SourceDecalAlphaParams0, mesh, alphaControl);
+    vec4 decal = uberSampleDecal(_DecalTexture, _DecalColor, _DecalPosition, _DecalScale, _DecalSideOffset, _DecalTexturePan, _DecalRotation, _DecalRotationSpeed, _DecalUvMode0, 0, _DecalSlotModifiers0, _DecalSlotFx0, _SourceDecalAlphaParams0, mesh, alphaControl);
     uberBlendDecal(fragData, decal, _DecalBlendParams0, _SourceDecalAlphaParams0, alphaControl);
-    decal = uberSampleDecal(_DecalTexture1, _DecalColor1, _DecalPosition1, _DecalScale1, _DecalTexturePan1, _DecalRotation1, _DecalRotationSpeed1, _DecalUvMode1, 1, _DecalSlotModifiers1, _DecalSlotFx1, _SourceDecalAlphaParams1, mesh, alphaControl);
+    decal = uberSampleDecal(_DecalTexture1, _DecalColor1, _DecalPosition1, _DecalScale1, _DecalSideOffset1, _DecalTexturePan1, _DecalRotation1, _DecalRotationSpeed1, _DecalUvMode1, 1, _DecalSlotModifiers1, _DecalSlotFx1, _SourceDecalAlphaParams1, mesh, alphaControl);
     uberBlendDecal(fragData, decal, _DecalBlendParams1, _SourceDecalAlphaParams1, alphaControl);
-    decal = uberSampleDecal(_DecalTexture2, _DecalColor2, _DecalPosition2, _DecalScale2, _DecalTexturePan2, _DecalRotation2, _DecalRotationSpeed2, _DecalUvMode2, 2, _DecalSlotModifiers2, _DecalSlotFx2, _SourceDecalAlphaParams2, mesh, alphaControl);
+    decal = uberSampleDecal(_DecalTexture2, _DecalColor2, _DecalPosition2, _DecalScale2, _DecalSideOffset2, _DecalTexturePan2, _DecalRotation2, _DecalRotationSpeed2, _DecalUvMode2, 2, _DecalSlotModifiers2, _DecalSlotFx2, _SourceDecalAlphaParams2, mesh, alphaControl);
     uberBlendDecal(fragData, decal, _DecalBlendParams2, _SourceDecalAlphaParams2, alphaControl);
-    decal = uberSampleDecal(_DecalTexture3, _DecalColor3, _DecalPosition3, _DecalScale3, _DecalTexturePan3, _DecalRotation3, _DecalRotationSpeed3, _DecalUvMode3, 3, _DecalSlotModifiers3, _DecalSlotFx3, _SourceDecalAlphaParams3, mesh, alphaControl);
+    decal = uberSampleDecal(_DecalTexture3, _DecalColor3, _DecalPosition3, _DecalScale3, _DecalSideOffset3, _DecalTexturePan3, _DecalRotation3, _DecalRotationSpeed3, _DecalUvMode3, 3, _DecalSlotModifiers3, _DecalSlotFx3, _SourceDecalAlphaParams3, mesh, alphaControl);
     uberBlendDecal(fragData, decal, _DecalBlendParams3, _SourceDecalAlphaParams3, alphaControl);
 #endif
 }
