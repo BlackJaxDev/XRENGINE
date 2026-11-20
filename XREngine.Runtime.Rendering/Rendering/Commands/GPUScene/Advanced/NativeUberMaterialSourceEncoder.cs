@@ -341,10 +341,14 @@ public static class NativeUberMaterialSourceEncoder
         {
             if (IsNonZero(material, "_MainTexDistortionStrength") ||
                 IsNonZero(material, "_NormalCorrectStrength") ||
-                IsNonZero(material, "_MainTexStochasticMode") ||
+                IsNonZero(material, "_MainTexStochastic") ||
+                IsNonZero(material, "_BumpMapStochastic") ||
+                IsNonZero(material, "_MainPixelMode") ||
+                IsNonZero(material, "_MainIgnoreTexAlpha") ||
                 IsNonZero(material, "_ColorMaskEnabled"))
             {
-                reason = "Native Uber surface distortion, normal correction, or color mask is active without a matching native operation.";
+                reason = "Native Uber surface distortion, normal correction, stochastic or pixel sampling, ignored main alpha, " +
+                    "or color mask is active without a matching native operation.";
                 return false;
             }
         }

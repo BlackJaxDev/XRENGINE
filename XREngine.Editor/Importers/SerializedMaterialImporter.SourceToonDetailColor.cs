@@ -30,8 +30,10 @@ public static partial class SerializedMaterialImporter
             : Vector3.One;
 
         // The source multiplies the detail sample, tint, brightness, and color-space factor.
-        // The engine adds brightness, so put the source factor in tint and clear the offset.
-        SetVector3(material, "_DetailTint", tint * (brightness * colorSpaceDouble * sampleScale));
+        // The engine adds brightness, so put the source factor in the tint scale and clear the
+        // offset. The tint stays as authored because a theme color can replace it.
+        SetVector3(material, "_DetailTint", tint);
+        SetFloat(material, "_DetailTintScale", brightness * colorSpaceDouble * sampleScale);
         SetFloat(material, "_DetailBrightness", 0.0f);
         SetInt(material, "_DetailTexBlendMode", 2);
     }

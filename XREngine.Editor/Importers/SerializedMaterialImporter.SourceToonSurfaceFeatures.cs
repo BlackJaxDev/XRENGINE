@@ -47,6 +47,8 @@ public static partial class SerializedMaterialImporter
             diagnostics);
         BindSourceToonAlphaOptions(material, document);
         BindSourceToonColorAdjustOptions(material, document);
+        BindSourceToonSamplingOptions(material, document);
+        BindSourceToonBackFaceOptions(material, document);
         BindSourceToonGlitter(material, document, resolver, sourceVersion, diagnostics);
         BindSourceToonFlipbook(material, document);
         BindSourceToonDissolve(material, document, diagnostics);
@@ -679,6 +681,7 @@ public static partial class SerializedMaterialImporter
             ("_MainTintTexture", ["_MainTintTexture"]),
             ("_MainTexDistortionMask", ["_MainTexDistortionMask"]),
             ("_BackFaceNormalMap", ["_BackFaceNormalMap"]),
+            ("_BackFaceMask", ["_BackFaceMask"]),
             ("_ColorMaskTexture", ["_ColorMask"]),
             ("_GlobalMaskTexture0", ["_GlobalMaskTexture0", "_GlobalMaskTexture"]),
             ("_GlobalMaskTexture1", ["_GlobalMaskTexture1"]),

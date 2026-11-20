@@ -287,6 +287,7 @@ struct FragmentData {
     vec3 finalColor;      // lit color being accumulated
     float alpha;
     vec3 emission;        // additive emissive term added on top at the end
+    float emissionScale;  // multiplies the emissive term when it is added
 };
 
 // Classic PBR inputs for the forward PBR path.
@@ -423,7 +424,11 @@ vec3 calculateTangentNormal(ToonMesh mesh) {
         float heightScale = abs(HeightMapScale) > EPSILON ? HeightMapScale : 1.0;
         tangentNormal = heightMapToTangentNormal(normalUV, heightScale * _BumpScale);
     } else {
+#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+        tangentNormal = unpackNormal(uberSampleStochastic(_BumpMap, normalUV, _BumpMapStochastic), _BumpScale);
+#else
         tangentNormal = unpackNormal(texture(_BumpMap, normalUV), _BumpScale);
+#endif
         if (_BumpMapFlipGreen != 0) tangentNormal.y = -tangentNormal.y;
     }
     return tangentNormal;
@@ -464,26 +469,6 @@ vec4 calculateBaseColor(ToonMesh mesh) {
 // can also blend with a global mask. The order is hue, gradation map, gamma,
 // saturation, chromatize, tint, brightness, and then the optional clamp.
 #ifndef XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS
-// Shifts the hue (selectOrShift = 1) or replaces it with the shift value
-// (selectOrShift = 0). The shift is in turns. colorSpace 0 is OKLab and 1 is HSV.
-vec3 uberSelectOrShiftHue(vec3 color, float shift, int colorSpace, int selectOrShift)
-{
-    if (colorSpace != 0)
-    {
-        vec3 hsv = rgbToHsv(color);
-        hsv.x = hsv.x * float(selectOrShift) + shift;
-        return hsvToRgb(hsv);
-    }
-
-    vec3 lab = rgbToOklab(color);
-    if (selectOrShift == 0)
-        lab.yz = vec2(length(lab.yz), 0.0);
-    float s = sin(shift * TWO_PI);
-    float c = cos(shift * TWO_PI);
-    lab.yz = vec2(c * lab.y - s * lab.z, s * lab.y + c * lab.z);
-    return oklabToRgb(lab);
-}
-
 // Scales the OKLab chroma by (1 + chromatize). The chroma stays at or below the
 // chroma of the most saturated color with the same hue.
 vec3 uberChromatize(vec3 color, float chromatize)
@@ -531,16 +516,6 @@ vec3 uberApplyGradationMap(vec3 color)
     return sRGBToLinear_Accurate(mapped);
 }
 
-float uberSelectAdjustChannel(vec4 mask, int channel)
-{
-    if (channel == 1)
-        return mask.r;
-    if (channel == 2)
-        return mask.g;
-    if (channel == 3)
-        return mask.b;
-    return mask.a;
-}
 #endif
 
 vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
@@ -573,7 +548,7 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
 
     if (_ColorGradingToggle > 0.5 && _MainGradationStrength != 0.0)
     {
-        float gradationMask = _MainGradationMaskChannel > 0 ? uberSelectAdjustChannel(adjustMask, _MainGradationMaskChannel) : 1.0;
+        float gradationMask = _MainGradationMaskChannel > 0 ? uberChannelAt(adjustMask, _MainGradationMaskChannel - 1) : 1.0;
         color = mix(color, uberApplyGradationMap(color), _MainGradationStrength * gradationMask);
     }
 
@@ -766,6 +741,25 @@ float sampleLightingShadowMask(ToonMesh mesh) {
 #endif
 }
 
+#ifndef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
+// Returns the detail mask: R gates the detail color and G gates the detail normal.
+// Back faces scale both channels, and each channel can blend with a global mask.
+vec2 uberDetailMask(ToonMesh mesh)
+{
+    vec2 maskUv = panUV(transformUV(getUV(_DetailMaskUV, mesh), _DetailMask_ST), _DetailMaskPan, u_Time);
+    vec2 mask = uberSampleStochastic(_DetailMask, maskUv, _DetailMaskStochastic).rg;
+#ifndef XRENGINE_UBER_DISABLE_BACKFACE
+    if (mesh.isFrontFace < 0.0)
+        mask *= _BackFaceDetailIntensity;
+#endif
+    if (_DetailTexGlobalMask > 0)
+        mask.r = uberMaskBlend(mask.r, uberGlobalMask(_DetailTexGlobalMask, mesh), _DetailTexGlobalMaskBlendType);
+    if (_DetailNormalGlobalMask > 0)
+        mask.g = uberMaskBlend(mask.g, uberGlobalMask(_DetailNormalGlobalMask, mesh), _DetailNormalGlobalMaskBlendType);
+    return mask;
+}
+#endif
+
 vec3 applyDetailTangentNormal(ToonMesh mesh, vec3 normal) {
 #ifdef XRENGINE_UBER_DISABLE_DETAIL_TEXTURES
     return normal;
@@ -776,9 +770,10 @@ vec3 applyDetailTangentNormal(ToonMesh mesh, vec3 normal) {
 
     vec2 detailNormalUV = transformUV(getUV(_DetailNormalMapUV, mesh), _DetailNormalMap_ST);
     detailNormalUV = panUV(detailNormalUV, _DetailNormalMapPan, u_Time);
-    vec2 maskUv = panUV(transformUV(getUV(_DetailMaskUV, mesh), _DetailMask_ST), _DetailMaskPan, u_Time);
-    float mask = texture(_DetailMask, maskUv).g;
-    vec3 detailTangentNormal = unpackNormal(texture(_DetailNormalMap, detailNormalUV), _DetailNormalMapScale * mask);
+    float mask = uberDetailMask(mesh).g;
+    vec3 detailTangentNormal = unpackNormal(
+        uberSampleStochastic(_DetailNormalMap, detailNormalUV, _DetailNormalMapStochastic),
+        _DetailNormalMapScale * mask);
     if (_DetailNormalMapFlipGreen != 0) detailTangentNormal.y = -detailTangentNormal.y;
     return blendNormals(normal, detailTangentNormal);
 #endif
@@ -2408,6 +2403,7 @@ void main() {
     // ---- 4. Base color, color adjustments, alpha ----------------------------
     FragmentData fragData;
     fragData.emission = vec3(0.0);
+    fragData.emissionScale = 1.0;
 
     vec4 baseColor = calculateBaseColor(mesh);
     baseColor.rgb = applyColorAdjustments(baseColor.rgb, mesh);
@@ -2511,14 +2507,44 @@ void main() {
     {
         vec2 detailUV = transformUV(getUV(_DetailTexUV, mesh), _DetailTex_ST);
         detailUV = panUV(detailUV, _DetailTexPan, u_Time);
-        vec3 detailColor = texture(_DetailTex, detailUV).rgb * _DetailTint + _DetailBrightness;
-
-        vec2 detailMaskUV = transformUV(getUV(_DetailMaskUV, mesh), _DetailMask_ST);
-        detailMaskUV = panUV(detailMaskUV, _DetailMaskPan, u_Time);
-        float detailMask = texture(_DetailMask, detailMaskUV).r;
-        float detailStrength = saturate(_DetailTexIntensity * detailMask);
+        vec3 detailTint = uberResolveThemeColor(_DetailTintThemeIndex, _DetailTint) * _DetailTintScale;
+        vec3 detailColor = uberSampleStochastic(_DetailTex, detailUV, _DetailTexStochastic).rgb * detailTint + _DetailBrightness;
+        float detailStrength = saturate(_DetailTexIntensity * uberDetailMask(mesh).r);
 
         fragData.baseColor = mix(fragData.baseColor, uberBlendRgb(fragData.baseColor, detailColor, _DetailTexBlendMode), detailStrength);
+    }
+#endif
+
+    // Back faces replace the base color before the color mask and lighting, so the
+    // ambient and PBR terms use the back face color.
+#ifndef XRENGINE_UBER_DISABLE_BACKFACE
+    if (mesh.isFrontFace < 0.0) {
+        vec2 backUv = panUV(transformUV(getUV(_BackFaceTextureUV, mesh), _BackFaceTexture_ST), _BackFaceTexturePan, u_Time);
+        vec4 backFaceColor = vec4(uberResolveThemeColor(_BackFaceColorThemeIndex, _BackFaceColor.rgb), _BackFaceColor.a)
+            * texture(_BackFaceTexture, backUv);
+        if (_BackFaceHueShiftEnabled > 0.5)
+            backFaceColor.rgb = uberSelectOrShiftHue(
+                backFaceColor.rgb,
+                fract(_BackFaceHueShift + _BackFaceHueShiftSpeed * u_Time),
+                _BackFaceShiftColorSpace,
+                _BackFaceHueSelectOrShift);
+
+        vec2 backMaskUv = panUV(transformUV(getUV(_BackFaceMaskUV, mesh), _BackFaceMask_ST), _BackFaceMaskPan, u_Time);
+        float backFaceMask = uberChannelAt(texture(_BackFaceMask, backMaskUv), _BackFaceMaskChannel);
+        if (_BackFaceReplaceAlpha < 0.5)
+            backFaceMask *= backFaceColor.a;
+
+        // 0 replaces the color, 1 adds to it, and 2 multiplies it. The mask blends the result.
+        int backBlendMode = int(_BackFaceBlendMode + 0.5);
+        vec3 backColor = backBlendMode == 1
+            ? fragData.baseColor + backFaceColor.rgb
+            : (backBlendMode == 2 ? fragData.baseColor * backFaceColor.rgb : backFaceColor.rgb);
+        fragData.baseColor = mix(fragData.baseColor, backColor, backFaceMask);
+        if (_BackFaceReplaceAlpha > 0.5)
+            fragData.alpha = backFaceColor.a;
+        fragData.alpha = clamp(fragData.alpha * _BackFaceAlpha, 0.0, 1.0);
+        fragData.emission += backFaceColor.rgb * _BackFaceEmission * backFaceMask;
+        fragData.emissionScale *= _BackFaceEmissionLimiter;
     }
 #endif
 
@@ -2679,21 +2705,6 @@ void main() {
 
     // ---- 7. Feature overlays (back face, SSS, matcap, rim, etc.) ----------
     // Separate material for the back side of double-sided geometry.
-#ifndef XRENGINE_UBER_DISABLE_BACKFACE
-    if (mesh.isFrontFace < 0.0) {
-        vec2 backUv = panUV(transformUV(getUV(_BackFaceTextureUV, mesh), _BackFaceTexture_ST), _BackFaceTexturePan, u_Time);
-        vec4 backTex = texture(_BackFaceTexture, backUv);
-        vec3 backLayer = backTex.rgb * _BackFaceColor.rgb;
-        int backBlendMode = int(_BackFaceBlendMode + 0.5);
-        vec3 backColor = backBlendMode == 1
-            ? _BackFaceColor.rgb + backLayer
-            : (backBlendMode == 2 ? _BackFaceColor.rgb * backLayer : backLayer);
-        fragData.baseColor = mix(fragData.baseColor, backColor, _BackFaceColor.a);
-        fragData.alpha = clamp(fragData.alpha * _BackFaceAlpha, 0.0, 1.0);
-        fragData.emission += backColor * _BackFaceEmission;
-    }
-#endif
-    
 #ifndef XRENGINE_UBER_DISABLE_GLITTER
     if (_SourceGlitter != 0) {
         vec2 uv = getUV(_GlitterUV, mesh);
@@ -2986,7 +2997,7 @@ void main() {
 
     // Final composite: emission is always added on top of lit color so it
     // remains bright through tonemap and bloom.
-    fragData.finalColor += fragData.emission;
+    fragData.finalColor += fragData.emission * fragData.emissionScale;
     fragData.finalColor = uberApplyPostEffects(mesh, fragData.finalColor);
     fragData.alpha = uberApplyDepthIntersectionAlpha(fragData.alpha, mesh);
     if (_SourceAlphaClip > 0.5 && _AlphaForceOpaque > 0.5)

@@ -179,6 +179,31 @@ keyword, and then the authored adjustment evidence.
 
 The audio-reactive hue shift has no Uber equivalent yet.
 
+## Sampling, Detail, And Back Face
+
+The Uber surface extensions use the source stochastic sampling. Each texture
+toggle turns stochastic sampling on for that texture, and `_StochasticMode`
+selects the method for the whole material.
+
+| Source control | Uber control | Notes |
+| --- | --- | --- |
+| `_StochasticMode` and its density, rotation, and falloff values | Same names | 0 is Deliot-Heitz, 1 is hextile, and 2 is off. Hextile rotates each tile and blends toward the brighter sample. |
+| `_MainTexStochastic`, `_BumpMapStochastic`, `_DetailTexStochastic`, `_DetailMaskStochastic`, `_DetailNormalMapStochastic` | Same names | One toggle for each texture. |
+| `_MainPixelMode` | Same name | Snaps the main UV to texel centers with a smooth one-pixel edge. |
+| `_MainIgnoreTexAlpha` | Same name | Raises the main texture alpha to 1. |
+| `_DetailTintThemeIndex` | Same name | A theme color replaces the detail tint. `_DetailTintScale` keeps the source brightness and color-space factor. |
+| `_DetailTexGlobalMask`, `_DetailNormalGlobalMask` and their blend types | Same names | The global mask channel blends with the R or G channel of the detail mask. |
+| `_BackFaceColorThemeIndex` | Same name | A theme color replaces the back face color. |
+| `_BackFaceMask`, `_BackFaceMaskChannel` | Same names | The selected channel blends the back face color. |
+| `_BackFaceReplaceAlpha` | Same name | The back face alpha replaces the fragment alpha. Otherwise the alpha scales the mask. |
+| `_BackFaceHueShiftEnabled` and its values | Same names | The importer converts the speed to the Uber time unit. |
+| `_BackFaceDetailIntensity` | Same name | Scales both detail mask channels on back faces. |
+| `_BackFaceEmissionLimiter` | Same name | Multiplies all emission of a back face fragment. |
+
+The back face color now applies directly after the detail color, before the
+color mask and lighting, as in the source. The ambient and PBR terms therefore
+use the back face color.
+
 ## Support Contract
 
 Every source feature and property has one of three outcomes:

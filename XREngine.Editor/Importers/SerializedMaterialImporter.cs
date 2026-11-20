@@ -750,7 +750,8 @@ public static partial class SerializedMaterialImporter
 
         MapVector4(document, material, "_BackFaceColor", "_BackFaceColor");
         MapFloat(document, material, "_BackFaceEmission", "_BackFaceEmission", "_BackFaceEmissionStrength");
-        MapFloat(document, material, "_BackFaceAlpha", "_BackFaceAlpha", "_BackFaceReplaceAlpha");
+        // The source replace-alpha toggle is not an alpha multiplier. BindSourceToonBackFaceOptions binds it.
+        SetFloat(material, "_BackFaceAlpha", 1.0f);
 
         MapVector4(document, material, "_GlitterColor", "_GlitterColor");
         MapFloat(document, material, "_GlitterSize", "_GlitterSize");

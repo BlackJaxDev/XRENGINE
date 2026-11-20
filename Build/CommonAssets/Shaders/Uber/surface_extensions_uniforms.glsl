@@ -11,8 +11,26 @@
 #ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
 //@property(name="_MainTexRotation", display="Main Rotation", mode=animated, default="0.0")
 uniform float _MainTexRotation;
-//@property(name="_MainTexStochasticMode", display="Stochastic Sampling", mode=static, default="0")
-uniform int _MainTexStochasticMode;
+//@property(name="_MainTexStochastic", display="Main Stochastic Sampling", mode=static, range=[0,1], toggle=true)
+uniform float _MainTexStochastic;
+//@property(name="_MainPixelMode", display="Main Pixel Mode", mode=static, range=[0,1], toggle=true)
+uniform float _MainPixelMode;
+//@property(name="_MainIgnoreTexAlpha", display="Ignore Main Alpha", mode=static, range=[0,1], toggle=true)
+uniform float _MainIgnoreTexAlpha;
+//@property(name="_BumpMapStochastic", display="Normal Stochastic Sampling", mode=static, range=[0,1], toggle=true)
+uniform float _BumpMapStochastic;
+//@property(name="_StochasticMode", display="Stochastic Sampling Mode", mode=static, enum="0:Deliot-Heitz|1:Hextile|2:None")
+uniform int _StochasticMode;
+//@property(name="_StochasticDeliotHeitzDensity", display="Deliot-Heitz Density", mode=static, range=[0.1,10], default="1.0")
+uniform float _StochasticDeliotHeitzDensity;
+//@property(name="_StochasticHexGridDensity", display="Hextile Density", mode=static, range=[0.1,10], default="1.0")
+uniform float _StochasticHexGridDensity;
+//@property(name="_StochasticHexRotationStrength", display="Hextile Rotation", mode=static, range=[0,2])
+uniform float _StochasticHexRotationStrength;
+//@property(name="_StochasticHexFallOffContrast", display="Hextile Falloff Contrast", mode=static, range=[0.01,0.99], default="0.6")
+uniform float _StochasticHexFallOffContrast;
+//@property(name="_StochasticHexFallOffPower", display="Hextile Falloff Power", mode=static, range=[0,20], default="7.0")
+uniform float _StochasticHexFallOffPower;
 //@property(name="_MainTexDistortionStrength", display="UV Distortion", mode=animated, default="0.0")
 uniform float _MainTexDistortionStrength;
 //@property(name="_MainTexDistortionSpeed", display="UV Distortion Speed", mode=animated, default="vec2(0.0)")

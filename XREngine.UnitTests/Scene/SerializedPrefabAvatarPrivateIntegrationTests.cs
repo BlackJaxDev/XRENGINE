@@ -672,7 +672,7 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
         string beforeSummary = DescribeParameters(material.Parameters);
         material.EnsureUberStateInitialized();
         string afterSummary = DescribeParameters(material.Parameters);
-        material.Parameter<ShaderInt>("_MainTexStochasticMode").ShouldNotBeNull(
+        material.Parameter<ShaderFloat>("_MainTexStochastic").ShouldNotBeNull(
             $"Material '{material.Name}' loaded {material.Parameters.Length} parameters.{Environment.NewLine}" +
             $"Before EnsureUberStateInitialized:{Environment.NewLine}{beforeSummary}{Environment.NewLine}" +
             $"After EnsureUberStateInitialized:{Environment.NewLine}{afterSummary}");

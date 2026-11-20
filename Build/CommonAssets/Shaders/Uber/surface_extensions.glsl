@@ -42,48 +42,124 @@ vec2 uberResolveUv(int uvMode, ToonMesh mesh)
     return getUV(uvMode, mesh);
 }
 
-vec4 uberSampleStochastic(sampler2D source, vec2 uv, int mode)
+#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+// Stochastic sampling hides texture repetition. Each pixel blends three samples
+// whose UV offsets come from the corners of a skewed triangle grid. Deliot-Heitz
+// blends with the barycentric weights. Hextile can also rotate each tile, and it
+// blends with weights that favor the brighter sample.
+vec2 uberStochasticHash(vec2 cell)
 {
-    if (mode == 0)
+    vec2 seed = vec2(dot(cell, vec2(127.1, 311.7)), dot(cell, vec2(269.5, 183.3)));
+    return fract(sin(mod(seed, 3.14159)) * 43758.5453);
+}
+
+// Skews UV into a triangle grid whose cell edge is about 1 / (2 * sqrt(3)) of a UV unit at density 1.
+vec2 uberStochasticSkew(vec2 uv, float density)
+{
+    vec2 scaled = uv * 3.4641 * density;
+    return vec2(scaled.x - 0.57735027 * scaled.y, 1.15470054 * scaled.y);
+}
+
+vec4 uberSampleDeliotHeitz(sampler2D source, vec2 uv, vec2 dx, vec2 dy)
+{
+    vec2 skewed = uberStochasticSkew(uv, _StochasticDeliotHeitzDensity);
+    vec2 cell = floor(skewed);
+    vec2 local = fract(skewed);
+    float remainder = 1.0 - local.x - local.y;
+
+    vec2 cell0 = cell;
+    vec2 cell1 = cell + vec2(0.0, 1.0);
+    vec2 cell2 = cell + vec2(1.0, 0.0);
+    vec3 weights = vec3(remainder, local.y, local.x);
+    if (remainder <= 0.0)
+    {
+        cell0 = cell + vec2(1.0);
+        cell1 = cell + vec2(1.0, 0.0);
+        cell2 = cell + vec2(0.0, 1.0);
+        weights = vec3(-remainder, 1.0 - local.y, 1.0 - local.x);
+    }
+
+    return textureGrad(source, uv + uberStochasticHash(cell0), dx, dy) * weights.x
+         + textureGrad(source, uv + uberStochasticHash(cell1), dx, dy) * weights.y
+         + textureGrad(source, uv + uberStochasticHash(cell2), dx, dy) * weights.z;
+}
+
+// Returns (cos, sin) of the tile rotation. The angle depends only on the tile vertex.
+vec2 uberHextileRotation(vec2 vertex)
+{
+    // The snippets undefine PI, so this function uses TWO_PI.
+    float angle = abs(vertex.x * vertex.y) + abs(vertex.x + vertex.y) + 0.5 * TWO_PI;
+    angle = mod(angle, TWO_PI);
+    if (angle > 0.5 * TWO_PI)
+        angle -= TWO_PI;
+    angle *= _StochasticHexRotationStrength;
+    return vec2(cos(angle), sin(angle));
+}
+
+// Rotates a row vector by the tile rotation.
+vec2 uberHextileRotate(vec2 value, vec2 rotation)
+{
+    return vec2(
+        value.x * rotation.x + value.y * rotation.y,
+        value.y * rotation.x - value.x * rotation.y);
+}
+
+vec4 uberSampleHextileTile(sampler2D source, vec2 uv, vec2 vertex, vec2 dx, vec2 dy)
+{
+    vec2 center = vec2(vertex.x + 0.5 * vertex.y, vertex.y / 1.15470054) * 0.288675;
+    vec2 rotation = _StochasticHexRotationStrength > 0.0 ? uberHextileRotation(vertex) : vec2(1.0, 0.0);
+    vec2 tileUv = uberHextileRotate(uv - center, rotation) + center + uberStochasticHash(vertex);
+    return textureGrad(source, tileUv, uberHextileRotate(dx, rotation), uberHextileRotate(dy, rotation));
+}
+
+vec4 uberSampleHextile(sampler2D source, vec2 uv, vec2 dx, vec2 dy)
+{
+    vec2 skewed = uberStochasticSkew(uv, _StochasticHexGridDensity);
+    vec2 cell = floor(skewed);
+    vec3 local = vec3(fract(skewed), 0.0);
+    local.z = 1.0 - local.x - local.y;
+
+    float upper = step(0.0, -local.z);
+    float sign2 = 2.0 * upper - 1.0;
+    vec3 weights = vec3(-local.z * sign2, upper - local.y * sign2, upper - local.x * sign2);
+
+    vec4 c0 = uberSampleHextileTile(source, uv, cell + vec2(upper, upper), dx, dy);
+    vec4 c1 = uberSampleHextileTile(source, uv, cell + vec2(upper, 1.0 - upper), dx, dy);
+    vec4 c2 = uberSampleHextileTile(source, uv, cell + vec2(1.0 - upper, upper), dx, dy);
+
+    const vec3 lumaWeights = vec3(0.299, 0.587, 0.114);
+    vec3 luma = vec3(dot(c0.rgb, lumaWeights), dot(c1.rgb, lumaWeights), dot(c2.rgb, lumaWeights));
+    luma = mix(vec3(1.0), luma, _StochasticHexFallOffContrast);
+    weights = luma * pow(max(weights, vec3(0.0)), vec3(_StochasticHexFallOffPower));
+    weights /= max(weights.x + weights.y + weights.z, 1e-6);
+    return c0 * weights.x + c1 * weights.y + c2 * weights.z;
+}
+
+// Pixel mode snaps UV to texel centers and keeps a one-pixel smooth edge between texels.
+vec2 uberSharpSample(vec2 uv, vec2 textureSizePixels)
+{
+    vec2 p = uv * textureSizePixels;
+    vec2 edge = max(fwidth(p), vec2(1e-6));
+    p = floor(p) + saturate(fract(p) / edge);
+    return (p - 0.5) / textureSizePixels;
+}
+#endif
+
+// Samples with the material stochastic mode when the texture enables it.
+vec4 uberSampleStochastic(sampler2D source, vec2 uv, float enabled)
+{
+#ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+    return texture(source, uv);
+#else
+    if (enabled < 0.5 || _StochasticMode == 2)
         return texture(source, uv);
 
     vec2 dx = dFdx(uv);
     vec2 dy = dFdy(uv);
-    vec2 cell = floor(uv * 64.0);
-
-    if (mode == 1)
-    {
-        // Deliot-Heitz style decorrelation: three triangular-lattice samples
-        // are reoriented per cell while retaining the original derivatives.
-        float seed = uberHash21(cell);
-        vec2 o0 = vec2(seed, fract(seed * 7.13));
-        vec2 o1 = vec2(fract(seed * 13.7), fract(seed * 3.71));
-        vec2 o2 = vec2(fract(seed * 5.31), fract(seed * 11.9));
-        vec4 a = textureGrad(source, uv + o0, dx, dy);
-        vec4 b = textureGrad(source, uv + o1, dx, dy);
-        vec4 c = textureGrad(source, uv + o2, dx, dy);
-        vec3 weights = vec3(0.5, 0.3, 0.2);
-        return a * weights.x + b * weights.y + c * weights.z;
-    }
-
-    // Hex-tile sampling uses three neighboring skewed cells. The blend is
-    // continuous across cell boundaries and textureGrad keeps mip selection
-    // stable under animated projections.
-    const mat2 skew = mat2(1.0, 0.0, 0.5, 0.8660254);
-    vec2 hex = skew * uv;
-    vec2 baseCell = floor(hex);
-    vec2 local = fract(hex);
-    vec2 cellA = baseCell;
-    vec2 cellB = baseCell + vec2(local.x > local.y ? 1.0 : 0.0, local.x > local.y ? 0.0 : 1.0);
-    vec2 cellC = baseCell + vec2(1.0);
-    vec2 offsetA = vec2(uberHash21(cellA), uberHash21(cellA + 17.0));
-    vec2 offsetB = vec2(uberHash21(cellB), uberHash21(cellB + 17.0));
-    vec2 offsetC = vec2(uberHash21(cellC), uberHash21(cellC + 17.0));
-    vec3 weights = max(vec3(1.0 - local.x, abs(local.x - local.y), local.y), vec3(0.001));
-    weights /= dot(weights, vec3(1.0));
-    return textureGrad(source, uv + offsetA, dx, dy) * weights.x
-         + textureGrad(source, uv + offsetB, dx, dy) * weights.y
-         + textureGrad(source, uv + offsetC, dx, dy) * weights.z;
+    return _StochasticMode == 0
+        ? uberSampleDeliotHeitz(source, uv, dx, dy)
+        : uberSampleHextile(source, uv, dx, dy);
+#endif
 }
 
 vec2 uberMainUv(ToonMesh mesh)
@@ -101,8 +177,13 @@ vec2 uberMainUv(ToonMesh mesh)
     vec2 distortion = texture(_MainTexDistortionMap, distortionUv).rg * 2.0 - 1.0;
     float distortionMask = texture(_MainTexDistortionMask, maskUv).r;
     uv += distortion * (_MainTexDistortionStrength * distortionMask);
-#endif
+    uv = transformUV(uv, _MainTex_ST);
+    if (_MainPixelMode > 0.5)
+        uv = uberSharpSample(uv, vec2(textureSize(_MainTex, 0)));
+    return panUV(uv, _MainTexPan, u_Time);
+#else
     return panUV(transformUV(uv, _MainTex_ST), _MainTexPan, u_Time);
+#endif
 }
 
 vec4 uberSampleMainTexture(ToonMesh mesh)
@@ -111,7 +192,9 @@ vec4 uberSampleMainTexture(ToonMesh mesh)
 #ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
     return texture(_MainTex, uv);
 #else
-    return uberSampleStochastic(_MainTex, uv, _MainTexStochasticMode);
+    vec4 color = uberSampleStochastic(_MainTex, uv, _MainTexStochastic);
+    color.a = max(color.a, _MainIgnoreTexAlpha);
+    return color;
 #endif
 }
 

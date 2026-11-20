@@ -590,6 +590,24 @@ uniform vec2 _DetailNormalMapPan;
 uniform float _DetailNormalMapScale;
 //@property(name="_DetailNormalMapFlipGreen", display="Detail Normal Green Inversion", mode=static, default="0")
 uniform int _DetailNormalMapFlipGreen;
+//@property(name="_DetailTintScale", display="Detail Tint Scale", mode=static, default="1.0")
+uniform float _DetailTintScale;
+//@property(name="_DetailTintThemeIndex", display="Detail Tint Theme", mode=static, range=[0,4])
+uniform int _DetailTintThemeIndex;
+//@property(name="_DetailTexStochastic", display="Detail Stochastic Sampling", mode=static, range=[0,1], toggle=true)
+uniform float _DetailTexStochastic;
+//@property(name="_DetailMaskStochastic", display="Detail Mask Stochastic Sampling", mode=static, range=[0,1], toggle=true)
+uniform float _DetailMaskStochastic;
+//@property(name="_DetailNormalMapStochastic", display="Detail Normal Stochastic Sampling", mode=static, range=[0,1], toggle=true)
+uniform float _DetailNormalMapStochastic;
+//@property(name="_DetailTexGlobalMask", display="Detail Global Mask", mode=static, range=[0,16])
+uniform int _DetailTexGlobalMask;
+//@property(name="_DetailTexGlobalMaskBlendType", display="Detail Global Mask Blend", mode=static, default="2")
+uniform int _DetailTexGlobalMaskBlendType;
+//@property(name="_DetailNormalGlobalMask", display="Detail Normal Global Mask", mode=static, range=[0,16])
+uniform int _DetailNormalGlobalMask;
+//@property(name="_DetailNormalGlobalMaskBlendType", display="Detail Normal Global Mask Blend", mode=static, default="2")
+uniform int _DetailNormalGlobalMaskBlendType;
 #endif
 
 // ============================================
@@ -683,8 +701,33 @@ uniform float _BackFaceBlendMode;
 uniform sampler2D _BackFaceTexture;
 //@property(name="_BackFaceEmission", display="Emission", mode=static, range=[0,8])
 uniform float _BackFaceEmission;
-//@property(name="_BackFaceAlpha", display="Backface Alpha", mode=static, range=[0,1])
+//@property(name="_BackFaceAlpha", display="Backface Alpha", mode=static, range=[0,1], default="1.0")
 uniform float _BackFaceAlpha;
+//@property(name="_BackFaceReplaceAlpha", display="Replace Alpha", mode=static, range=[0,1], toggle=true)
+uniform float _BackFaceReplaceAlpha;
+//@property(name="_BackFaceColorThemeIndex", display="Backface Color Theme", mode=static, range=[0,4])
+uniform int _BackFaceColorThemeIndex;
+//@property(name="_BackFaceMask", display="Backface Mask", slot=texture)
+uniform sampler2D _BackFaceMask;
+uniform vec4 _BackFaceMask_ST;
+uniform vec2 _BackFaceMaskPan;
+uniform int _BackFaceMaskUV;
+//@property(name="_BackFaceMaskChannel", display="Backface Mask Channel", mode=static, enum="0:R|1:G|2:B|3:A")
+uniform int _BackFaceMaskChannel;
+//@property(name="_BackFaceHueShiftEnabled", display="Backface Hue Shift", mode=static, range=[0,1], toggle=true)
+uniform float _BackFaceHueShiftEnabled;
+//@property(name="_BackFaceShiftColorSpace", display="Backface Hue Space", mode=static, enum="0:OKLab|1:HSV")
+uniform int _BackFaceShiftColorSpace;
+//@property(name="_BackFaceHueSelectOrShift", display="Backface Hue Select Or Shift", mode=static, enum="0:Select|1:Shift", default="1")
+uniform int _BackFaceHueSelectOrShift;
+//@property(name="_BackFaceHueShift", display="Backface Hue Shift Amount", mode=static, range=[0,1])
+uniform float _BackFaceHueShift;
+//@property(name="_BackFaceHueShiftSpeed", display="Backface Hue Shift Speed", mode=animated)
+uniform float _BackFaceHueShiftSpeed;
+//@property(name="_BackFaceDetailIntensity", display="Backface Detail Intensity", mode=static, range=[0,5], default="1.0")
+uniform float _BackFaceDetailIntensity;
+//@property(name="_BackFaceEmissionLimiter", display="Backface Emission Multiplier", mode=static, default="1.0")
+uniform float _BackFaceEmissionLimiter;
 #endif
 
 // ============================================

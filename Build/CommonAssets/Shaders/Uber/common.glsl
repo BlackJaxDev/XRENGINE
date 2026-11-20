@@ -290,6 +290,39 @@ vec3 hueShiftOklab(vec3 color, float shift) {
     return oklabToRgb(lab);
 }
 
+// Returns one channel of a vector. channel 0 is R and 3 is A. Branches avoid a
+// dynamic vector subscript, which some OpenGL compilers reject.
+float uberChannelAt(vec4 value, int channel)
+{
+    if (channel <= 0)
+        return value.r;
+    if (channel == 1)
+        return value.g;
+    if (channel == 2)
+        return value.b;
+    return value.a;
+}
+
+// Shifts the hue (selectOrShift = 1) or replaces it with the shift value
+// (selectOrShift = 0). The shift is in turns. colorSpace 0 is OKLab and 1 is HSV.
+vec3 uberSelectOrShiftHue(vec3 color, float shift, int colorSpace, int selectOrShift)
+{
+    if (colorSpace != 0)
+    {
+        vec3 hsv = rgbToHsv(color);
+        hsv.x = hsv.x * float(selectOrShift) + shift;
+        return hsvToRgb(hsv);
+    }
+
+    vec3 lab = rgbToOklab(color);
+    if (selectOrShift == 0)
+        lab.yz = vec2(length(lab.yz), 0.0);
+    float s = sin(shift * TWO_PI);
+    float c = cos(shift * TWO_PI);
+    lab.yz = vec2(c * lab.y - s * lab.z, s * lab.y + c * lab.z);
+    return oklabToRgb(lab);
+}
+
 // ============================================
 // Normal Mapping
 // ============================================
