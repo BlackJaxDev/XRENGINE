@@ -50,6 +50,12 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private bool EnsureProgram(XRMaterial material)
 	{
+		// The first draw of an Uber material, and the first draw after its Uber or shader state
+		// changes, starts an asynchronous variant build. Until the variant is adopted, the
+		// material draws with the canonical Uber fragment shader. The adoption changes
+		// ActiveUberVariant and the shader list, so the program state below differs and a
+		// program for the variant is built on a later draw.
+		material.RequestUberVariantPreparationForDraw();
 		GeneratedProgramState programState = CaptureGeneratedProgramState(material);
 		if (_programStateCache.TryGetValue(programState, out GeneratedProgramCacheEntry? cachedEntry))
 			return ActivateGeneratedProgramAndEvictSuperseded(cachedEntry);

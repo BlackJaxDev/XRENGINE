@@ -488,8 +488,12 @@ namespace XREngine.Rendering
         public void SetUberVariantStatus(UberMaterialVariantStatus? status)
         {
             UberMaterialVariantStatus next = status ?? UberMaterialVariantStatus.Empty;
-            if (!UberVariantStatus.Equals(next))
-                UberVariantStatus = next;
+            if (UberVariantStatus.Equals(next))
+                return;
+
+            UberVariantStatus = next;
+            if (next.Stage == EUberMaterialVariantStage.Failed)
+                ReportUberVariantFailureOnce(next);
         }
 
         public void ClearUberVariantRuntimeState()
