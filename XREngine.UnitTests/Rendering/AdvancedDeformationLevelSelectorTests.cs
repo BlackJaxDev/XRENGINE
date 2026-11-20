@@ -27,12 +27,17 @@ public sealed class AdvancedDeformationLevelSelectorTests
         RenderFrameViewSet views = CreateStereoViewSet(Vector3.Zero);
         float pixelScale = CapturePixelScale(views);
 
-        AdvancedDeformationLevelSelector.ChooseLevel(LevelMaxErrors, 0.5f, 1.0f, pixelScale, Threshold).ShouldBe(0u);
+        // Level 1 becomes allowed where the level-0 error projects to exactly the threshold.
+        float level1Distance = LevelMaxErrors[0] * pixelScale * AdvancedDeformationLevelSelector.SafetyFactor / Threshold;
+        AdvancedDeformationLevelSelector.ChooseLevel(LevelMaxErrors, level1Distance * 0.9f, 1.0f, pixelScale, Threshold)
+            .ShouldBe(0u);
+        AdvancedDeformationLevelSelector.ChooseLevel(LevelMaxErrors, level1Distance * 1.1f, 1.0f, pixelScale, Threshold)
+            .ShouldBe(1u);
         AdvancedDeformationLevelSelector.ChooseLevel(LevelMaxErrors, 10000.0f, 1.0f, pixelScale, Threshold)
             .ShouldBe((uint)LevelMaxErrors.Length - 1u);
 
         uint previous = 0u;
-        for (float distance = 0.5f; distance < 200.0f; distance *= 1.25f)
+        for (float distance = level1Distance * 0.5f; distance < 200.0f; distance *= 1.25f)
         {
             uint level = AdvancedDeformationLevelSelector.ChooseLevel(LevelMaxErrors, distance, 1.0f, pixelScale, Threshold);
             level.ShouldBeGreaterThanOrEqualTo(previous, $"distance {distance}");
