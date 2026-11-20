@@ -23,4 +23,15 @@ public readonly record struct AdvancedGpuDeformationPublication(
 
     /// <summary>Frozen copy ranges owned by the completion-protected current frame slot.</summary>
     public ReadOnlyMemory<AdvancedGpuDeformationPaletteCopy> GpuPaletteCopies { get; init; }
+
+    /// <summary>
+    /// The current frame slot's skin palette buffer (three world-space rows per bone; see
+    /// <see cref="SkinPaletteMatrix"/>). A visibility payload's <c>paletteOffset</c> indexes it.
+    /// The Advanced task stage reads it to bound the posed clusters of skinned cluster-hierarchy
+    /// draws. Null when no publication has been made.
+    /// </summary>
+    public XRDataBuffer? SkinPalettes { get; init; }
+
+    /// <summary>The palette matrices written for this publication; rows past it are stale.</summary>
+    public uint SkinPaletteCount { get; init; }
 }

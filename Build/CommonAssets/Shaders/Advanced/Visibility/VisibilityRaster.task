@@ -122,9 +122,9 @@ void main()
             // tests it against this frame's depth pyramid.
             XRAdvancedClusterCutState cut = XR_ADV_ClusterCutState(payload.geometry, producer, viewIndex, view);
 #if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
-            // A skinned draw has no posed cluster bounds: one distance, from the
-            // draw's posed bounds, serves every cluster. Its clusters still skip
-            // the frustum, cone, history and Hi-Z tests below.
+            // A skinned draw gets posed group bounds when its GPU deformation ran
+            // this frame and its geometry has skin tables; otherwise one distance,
+            // from the draw's posed bounds, serves every cluster.
             if (producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
                 XR_ADV_ClusterCutUseDrawBound(cut, payloadIndex, payload, drawState);
 #endif
@@ -137,6 +137,20 @@ void main()
                     view.viewProjectionUnjittered,
                     view.cameraPositionAndNear.xyz)
                 : XR_ADV_MESHLET_CULL_LOD;
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
+            // A posed skinned cluster gets the frustum test with the sphere around
+            // its posed box. It still skips the cone test (normals change with
+            // the pose), history and Hi-Z. The early and late variants compute
+            // the same result from the same frame's palette, so a late recheck
+            // matches what the early raster drew.
+            if (inCut && cut.posed && cullReason == XR_ADV_MESHLET_CULL_NONE)
+            {
+                vec4 posedSphere;
+                if (XR_ADV_SkinnedClusterWorldSphere(meshletIndex, meshlet.boundsSphere, cut, posedSphere) &&
+                    !XR_ADV_MeshletSphereInsideFrustum(posedSphere, view.viewProjectionUnjittered))
+                    cullReason = XR_ADV_MESHLET_CULL_FRUSTUM;
+            }
+#endif
 #else
             cullReason = XR_ADV_ClassifyVisibilityMeshlet(
                 meshlet,
