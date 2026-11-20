@@ -21,6 +21,7 @@ public static class AdvancedVirtualGeometryPolicy
     private static volatile bool _latched;
     private static bool _enabled;
     private static bool _skinnedEnabled;
+    private static bool _deformationLodEnabled;
     private static float _pixelThreshold = 1.0f;
 
     /// <summary>
@@ -50,6 +51,24 @@ public static class AdvancedVirtualGeometryPolicy
             if (!_latched)
                 Latch();
             return _latched && _enabled && _skinnedEnabled;
+        }
+    }
+
+    /// <summary>
+    /// True when far skinned draws deform only the vertices of their coarsest allowed cluster
+    /// level: <see cref="SkinnedEnabled"/> and the deformation level of detail setting are both
+    /// on. The extractor then chooses a minimum level for each skinned draw, the deformation job
+    /// deforms the prefix of the cooked deformation order for that level, and the skinned cut is
+    /// clamped to that level. Both must agree in every frame, so the value is latched with the
+    /// other settings.
+    /// </summary>
+    public static bool DeformationLodEnabled
+    {
+        get
+        {
+            if (!_latched)
+                Latch();
+            return _latched && _enabled && _skinnedEnabled && _deformationLodEnabled;
         }
     }
 
@@ -87,10 +106,11 @@ public static class AdvancedVirtualGeometryPolicy
                 return;
             _enabled = RuntimeEngine.Rendering.Settings.AdvancedVirtualGeometry;
             _skinnedEnabled = RuntimeEngine.Rendering.Settings.AdvancedSkinnedVirtualGeometry;
+            _deformationLodEnabled = RuntimeEngine.Rendering.Settings.AdvancedSkinnedDeformationLod;
             _pixelThreshold = RuntimeEngine.Rendering.Settings.AdvancedVirtualGeometryPixelThreshold;
             _latched = true;
             XREngine.Debug.Rendering(
-                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, skinned {(_enabled && _skinnedEnabled ? "on" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
+                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, skinned {(_enabled && _skinnedEnabled ? "on" : "off")}, skinned deformation level of detail {(_enabled && _skinnedEnabled && _deformationLodEnabled ? "on" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
         }
     }
 }

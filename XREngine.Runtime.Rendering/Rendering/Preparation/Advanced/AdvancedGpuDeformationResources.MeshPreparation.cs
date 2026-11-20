@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -83,6 +84,17 @@ public sealed partial class AdvancedGpuDeformationResources
         lock (ImportedMeshPayloadsSync)
             ImportedMeshPayloads.Remove(mesh);
     }
+
+    /// <summary>
+    /// Returns the cooked coarse-first deformation order of the mesh's meshlet
+    /// payload, or default when the payload has none or was cooked for another
+    /// vertex count. Mesh preparation writes this order into the influence rows.
+    /// </summary>
+    internal static ImmutableArray<uint> ResolveDeformationOrder(XRMesh mesh)
+        => mesh.MeshletPayload is { HasDeformationOrder: true } payload &&
+           payload.DeformationVertexOrder.Length == mesh.VertexCount
+            ? payload.DeformationVertexOrder
+            : default;
 
     /// <summary>Prepares one cold mesh over render frames without publishing partial static inputs.</summary>
     public AdvancedGpuDeformationMeshPreparationStatus TryPrepareMesh(
@@ -221,7 +233,8 @@ public sealed partial class AdvancedGpuDeformationResources
             !pending.InputWitness.Matches(mesh, policy) ||
             pending.VertexCount != mesh.VertexCount ||
             !AdvancedPackedVertexCodec.HasReadableAttributes(mesh) ||
-            !ReferenceEquals(pending.Names, mesh.BlendshapeNames))
+            !ReferenceEquals(pending.Names, mesh.BlendshapeNames) ||
+            pending.DeformationOrder != ResolveDeformationOrder(mesh))
             return false;
 
         if (pending.CanonicalMorphs is not null)
@@ -271,6 +284,7 @@ public sealed partial class AdvancedGpuDeformationResources
             Stage = PendingGpuDeformationMeshPreparation.Count,
             VerticesScratch = new AdvancedDeformedVertex[vertexCount],
             RangesScratch = new AdvancedBlendshapeRange[blendshapeCount],
+            DeformationOrder = ResolveDeformationOrder(mesh),
         };
         if (policy == EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs &&
             !TryInitializeCanonicalMorphs(pending) && blendshapeCount != 0 &&
@@ -330,6 +344,7 @@ public sealed partial class AdvancedGpuDeformationResources
                 RangesScratch = payload.Ranges,
                 RecordsScratch = payload.Records,
                 DeltasScratch = payload.Deltas,
+                DeformationOrder = ResolveDeformationOrder(mesh),
             };
             return true;
         }
@@ -496,8 +511,12 @@ public sealed partial class AdvancedGpuDeformationResources
                         pending.Stage = PendingGpuDeformationMeshPreparation.Commit;
                         continue;
                     }
-                    pending.InfluencesScratch[pending.VertexIndex] =
+                    AdvancedSkinInfluence influence =
                         ReadSkinInfluence(pending.SkinningState!, checked((uint)pending.VertexIndex));
+                    influence.DeformationOrderVertex = pending.DeformationOrder.IsDefault
+                        ? checked((uint)pending.VertexIndex)
+                        : pending.DeformationOrder[pending.VertexIndex];
+                    pending.InfluencesScratch[pending.VertexIndex] = influence;
                     pending.VertexIndex++;
                     break;
 
@@ -819,7 +838,7 @@ public sealed partial class AdvancedGpuDeformationResources
         _blendshapeDeltaCount = requiredDeltas;
         slice = new AdvancedGpuDeformationMeshSlice(
             sourceBase, influenceBase, rangeBase, vertexCount, rangeCount,
-            pending.TopologyGeneration);
+            pending.TopologyGeneration, HasDeformationOrder(pending));
         int entryIndex = _staticGeneration.PayloadEntries.Count;
         int priorHead = _staticGeneration.PayloadHashHeads.TryGetValue(
             payloadHash, out int head) ? head : -1;
@@ -870,8 +889,17 @@ public sealed partial class AdvancedGpuDeformationResources
                 BlendshapeCountsRevision = pending.BlendshapeCountsRevision,
                 BlendshapeIndicesRevision = pending.BlendshapeIndicesRevision,
                 BlendshapeDeltasRevision = pending.BlendshapeDeltasRevision,
+                DeformationOrder = pending.DeformationOrder,
             };
     }
+
+    /// <summary>
+    /// True when the influence rows of the pending mesh store a cooked
+    /// deformation order. A mesh without skinning has zero influence rows, so it
+    /// never stores one.
+    /// </summary>
+    private static bool HasDeformationOrder(PendingGpuDeformationMeshPreparation pending)
+        => !pending.DeformationOrder.IsDefault && pending.SkinningState is not null;
 
     private static ulong HashPendingMeshPayload(
         PendingGpuDeformationMeshPreparation pending)
@@ -937,6 +965,7 @@ public sealed partial class AdvancedGpuDeformationResources
     {
         AdvancedGpuDeformationMeshSlice slice = entry.Slice;
         if (slice.TopologyGeneration != pending.TopologyGeneration ||
+            slice.HasDeformationOrder != HasDeformationOrder(pending) ||
             slice.VertexCount != pending.VertexCount ||
             slice.BlendshapeCount != pending.ActiveBlendshapeCount ||
             entry.SpillCount != pending.SpillCount ||

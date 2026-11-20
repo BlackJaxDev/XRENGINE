@@ -805,6 +805,10 @@
           "type": "boolean",
           "description": "Enables or disables SkinnedVirtualGeometry."
         },
+        "SkinnedDeformationLod": {
+          "type": "boolean",
+          "description": "Enables or disables SkinnedDeformationLod."
+        },
         "VirtualGeometryPixelThreshold": {
           "type": "number",
           "description": "Generated from VirtualGeometryPixelThreshold on UnitTestingRenderSettings."

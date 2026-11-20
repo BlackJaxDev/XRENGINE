@@ -279,6 +279,10 @@ struct XRAdvancedClusterCutState
     // Distance from the eye to the draw bound that every group of a skinned
     // draw uses. Negative: each group uses its own sphere (static draws).
     float sharedDistance;
+    // Minimum cluster level of a skinned draw whose deformation job deformed
+    // only the vertices of this level and coarser. Groups finer than this level
+    // count as refined enough. Zero: no clamp.
+    uint clampLevel;
 };
 
 // Pixels for one world unit of error at distance 1 for one view: the larger
@@ -328,6 +332,7 @@ XRAdvancedClusterCutState XR_ADV_ClusterCutState(
     cut.pixelScale = 0.0;
     cut.nearDistance = max(view.cameraPositionAndNear.w, 1.0e-4);
     cut.sharedDistance = -1.0;
+    cut.clampLevel = 0u;
 #if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
     if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
         producer != XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
@@ -381,7 +386,9 @@ float XR_ADV_ClusterCutSphereDistance(vec4 sphere, XRAdvancedClusterCutState cut
 // 4 to 7; the candidate index is the payload index), which PatchPhysicsChainBounds
 // rewrites for GPU physics chains. The nearer distance of the usable spheres
 // wins, less the blendshape margin of candidate word 2 (mesh units, scaled by the
-// draw scale). The cut then applies only when the payload range holds every
+// draw scale). Candidate word 3 is the clamp level of the draw's deformation
+// level of detail (see XRAdvancedClusterCutState.clampLevel). The cut then
+// applies only when the payload range holds every
 // level of the geometry; otherwise the draw keeps its range (level 0). Without a
 // usable sphere or margin the distance is the near distance, so every group
 // refines and the draw shows level 0.
@@ -420,6 +427,10 @@ void XR_ADV_ClusterCutUseDrawBound(
         XR_ADV_VisibilityCandidates.records[candidateBase + 1u] == payload.draw.generation)
     {
         margin = uintBitsToFloat(XR_ADV_VisibilityCandidates.records[candidateBase + 2u]);
+        // The clamp is set before the distance checks below. A draw whose job
+        // deformed only a prefix must not draw finer clusters, even when its
+        // distance is unusable.
+        cut.clampLevel = XR_ADV_VisibilityCandidates.records[candidateBase + 3u];
         if ((XR_ADV_VisibilityCandidates.records[candidateBase + 19u] & (1u << 10u)) == 0u)
         {
             float candidateDistance = XR_ADV_ClusterCutSphereDistance(uintBitsToFloat(uvec4(
@@ -443,13 +454,17 @@ void XR_ADV_ClusterCutUseDrawBound(
 // error. A camera inside the sphere clamps to the near distance, so the
 // cluster refines. An infinite error (the last group) never passes the test.
 // A skinned draw uses its shared distance instead of the group sphere.
+// A group finer than the clamp level (group record word 5 is its level) with a
+// finite error has zero projected error: its clusters are refined enough, so the
+// cut draws their coarser clusters. The suffix of levels at or above the clamp
+// keeps the original errors, so the cut stays free of cracks.
 float XR_ADV_ClusterGroupProjectedError(
     uint group,
     XRAdvancedClusterCutState cut,
     XRAdvancedMeshletDrawCullState draw)
 {
     uint word = cut.groupWordBase + group * XR_ADV_CLUSTER_GROUP_RECORD_WORDS;
-    if (group >= 0x08000000u || word + 5u > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()))
+    if (group >= 0x08000000u || word + 6u > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()))
         return 3.402823e38;
     vec4 sphere = vec4(
         uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 0u]),
@@ -459,6 +474,9 @@ float XR_ADV_ClusterGroupProjectedError(
     float error = uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 4u]);
     if (isnan(error) || isinf(error) || error >= 3.0e38 || any(isnan(sphere)) || any(isinf(sphere)))
         return 3.402823e38;
+    if (cut.clampLevel != 0u &&
+        XR_ADV_VisibilityMeshletTriangleWords.records[word + 5u] < cut.clampLevel)
+        return 0.0;
     if (cut.sharedDistance >= 0.0)
         return error * draw.maxScale * cut.pixelScale / max(cut.sharedDistance, cut.nearDistance);
     vec3 center = (vec4(sphere.xyz, 1.0) * draw.world).xyz;

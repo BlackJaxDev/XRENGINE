@@ -399,6 +399,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         _physicsOutputMismatch = false;
         _materialBoundsContracts.Clear();
         AdvancedExtractionSubStageTimers.CountBuild();
+        CaptureDeformationLodViews(viewSet);
         for (int commandIndex = 0;
              commandIndex < _drawCount;
              commandIndex++)
@@ -883,6 +884,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             skinnedClusterCut && mesh is { HasBlendshapes: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes
                 ? mesh.GetMaxBlendshapeDisplacement()
                 : 0.0f;
+        uint deformationLevel = 0u;
         if (skinned && _gpuDeformation.UsesPackedAggregateInputs)
         {
             if (!publication.Draws.TryGet(draw, out AdvancedDrawRecord canonicalDraw) ||
@@ -894,6 +896,18 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             commandBounds.AabbMax = instance.BoundsMax;
             if (mesh is { HasBlendshapes: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
                 visibilityFlags |= EAdvancedVisibilityPreparationFlags.Uncertain | EAdvancedVisibilityPreparationFlags.ConservativeVisible;
+            if (skinnedClusterCut && mesh is not null)
+                deformationLevel = ChooseDeformationLevel(
+                    publication,
+                    in canonicalDraw,
+                    in instance,
+                    in canonicalGeometry,
+                    in command,
+                    mesh,
+                    clusterCutMargin,
+                    deformationSource.GpuBoundsSource.HasValue,
+                    coveredStateCaptured,
+                    in coveredState);
         }
         _visibilityCandidates[commandIndex] =
             new AdvancedVisibilityCandidate(
@@ -906,6 +920,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 visibilityFlags)
             {
                 ClusterCutMargin = clusterCutMargin,
+                DeformationLevel = deformationLevel,
             };
 
         bool hasCanonicalGeometry = geometry.IsValid && canonicalGeometry.IsResident;
@@ -948,6 +963,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 in coveredState,
                 coveredMorphWeights,
                 in _preparedDeformationMeshes[commandIndex],
+                deformationLevel,
                 ref timerMark,
                 out deformationSlice,
                 out AdvancedGpuDeformationMeshSlice gpuMeshSlice,
@@ -1061,6 +1077,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         in PhysicsChainGpuRendererOutputState physicsState,
         ReadOnlySpan<PhysicsChainMorphWeight> retainedMorphWeights,
         in AdvancedPreparedDeformationMesh preparedMesh,
+        uint deformationLevel,
         ref long timerMark,
         out AdvancedDeformedArenaSlice slice,
         out AdvancedGpuDeformationMeshSlice gpuMeshSlice,
@@ -1144,6 +1161,17 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             _deformationArenaPending = true;
             return false;
         }
+        // A far draw deforms only a prefix of the cooked deformation order. The previous output
+        // slot holds valid vertices only for the prefix of the previous frame, so a grown prefix
+        // has no velocity history for its new vertices.
+        uint deformedVertexCount = ResolveDeformedVertexCount(
+            mesh,
+            in gpuMeshSlice,
+            deformationLevel,
+            out bool deformationOrdered);
+        if (!_deformedArena.RecordDeformedVertexCount(outputHandle, deformedVertexCount) &&
+            slice.HasValidVelocity)
+            slice = slice with { VelocityValidity = EAdvancedVelocityValidityReason.VertexCountChanged };
         AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.HistoryAndArena);
 
         // The deformation scheduler consumes the draw record independently of
@@ -1187,6 +1215,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 EAdvancedDeformationFeatureFlags.MaximumBlendshapeAccumulation;
         if (meshletRange.HasMeshlets)
             features |= EAdvancedDeformationFeatureFlags.Meshlets;
+        if (deformationOrdered)
+            features |= EAdvancedDeformationFeatureFlags.DeformationOrder;
         if (!slice.HasValidVelocity ||
             !_gpuDeformation.PreviousOutputValid)
             features |= EAdvancedDeformationFeatureFlags.VelocityInvalid;
@@ -1211,7 +1241,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             BlendshapeShapeOffset =
                 gpuMeshSlice.BlendshapeRangeOffset,
             VertexFirst = 0u,
-            VertexCount = checked((uint)mesh.VertexCount),
+            VertexCount = deformedVertexCount,
             MeshletFirst = meshletRange.MeshletOffset,
             MeshletCount = meshletRange.MeshletCount,
             BoneCount = gpuPoseSlice.BoneCount,

@@ -2927,6 +2927,25 @@ public static partial class RuntimeEngine
                     set => SetField(ref _advancedSkinnedVirtualGeometry, value);
                 }
 
+                private bool _advancedSkinnedDeformationLod;
+
+                /// <summary>
+                /// With <see cref="AdvancedSkinnedVirtualGeometry"/> on, a far skinned draw of a model
+                /// cooked with a deformation order deforms only the vertices that its coarsest allowed
+                /// cluster level reads. The preparation extractor chooses that minimum level from the
+                /// draw's posed bounds and the views, the aggregate deformation job deforms only the
+                /// prefix of the order for that level, and the skinned cluster cut never draws a finer
+                /// level. Off (the default) deforms every vertex. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With skinned virtual geometry on, far skinned draws deform only the vertices of their coarsest allowed cluster level. Off by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedDeformationLod
+                {
+                    get => _advancedSkinnedDeformationLod;
+                    set => SetField(ref _advancedSkinnedDeformationLod, value);
+                }
+
                 private float _advancedVirtualGeometryPixelThreshold = 1.0f;
 
                 /// <summary>

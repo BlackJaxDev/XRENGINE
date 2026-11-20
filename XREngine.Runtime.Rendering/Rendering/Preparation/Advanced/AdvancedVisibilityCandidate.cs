@@ -27,4 +27,14 @@ public readonly record struct AdvancedVisibilityCandidate(
     /// passes do not read.
     /// </summary>
     [field: FieldOffset(8)] public float ClusterCutMargin { get; init; }
+
+    /// <summary>
+    /// Minimum cluster level of a skinned draw whose deformation job deforms only the prefix of
+    /// the cooked deformation order for this level. The skinned cluster cut treats the projected
+    /// error of every group finer than this level (with a finite error) as zero, so it never draws
+    /// a cluster that reads a vertex outside the prefix. Zero for other draws, which keeps the cut
+    /// as it was. It uses the second padding word after <see cref="Draw"/> (word 3), which the
+    /// physics chain bounds patch does not write.
+    /// </summary>
+    [field: FieldOffset(12)] public uint DeformationLevel { get; init; }
 }

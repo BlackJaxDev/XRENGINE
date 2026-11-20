@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using XREngine.Data;
 
 namespace XREngine.Rendering;
@@ -19,6 +20,11 @@ internal sealed class AdvancedGpuDeformationMeshAliasWitness
     public required ulong BlendshapeCountsRevision { get; init; }
     public required ulong BlendshapeIndicesRevision { get; init; }
     public required ulong BlendshapeDeltasRevision { get; init; }
+    /// <summary>
+    /// Deformation order that the slice's influence rows were filled from. A new
+    /// meshlet payload with another order makes the alias stale.
+    /// </summary>
+    public required ImmutableArray<uint> DeformationOrder { get; init; }
 
     public bool Matches(XRMesh mesh, in AdvancedGpuDeformationMeshSlice slice)
     {
@@ -28,7 +34,8 @@ internal sealed class AdvancedGpuDeformationMeshAliasWitness
             CoreWeightsRevision != (SkinningState.CoreWeights?.Revision ?? 0UL) ||
             SpillHeadersRevision != (SkinningState.SpillHeaders?.Revision ?? 0UL) ||
             SpillEntriesRevision != (SkinningState.SpillEntries?.Revision ?? 0UL) ||
-            !ReferenceEquals(BlendshapeNames, mesh.BlendshapeNames))
+            !ReferenceEquals(BlendshapeNames, mesh.BlendshapeNames) ||
+            DeformationOrder != AdvancedGpuDeformationResources.ResolveDeformationOrder(mesh))
             return false;
 
         bool hasBlendshapes = XRMeshBlendshapeActiveListReader.TryCreate(mesh,

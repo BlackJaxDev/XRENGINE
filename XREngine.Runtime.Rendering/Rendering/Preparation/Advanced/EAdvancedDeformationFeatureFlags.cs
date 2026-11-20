@@ -21,4 +21,11 @@ public enum EAdvancedDeformationFeatureFlags : uint
     /// second inverse-bind transform would corrupt the pose.
     /// </summary>
     PrecomposedPalette = 1u << 9,
+    /// <summary>
+    /// Thread i of the job deforms the vertex stored in
+    /// <see cref="AdvancedSkinInfluence.DeformationOrderVertex"/> of influence
+    /// row i, not vertex i. The job then deforms only the coarse-first prefix
+    /// of the cooked deformation order that its vertex count covers.
+    /// </summary>
+    DeformationOrder = 1u << 10,
 }

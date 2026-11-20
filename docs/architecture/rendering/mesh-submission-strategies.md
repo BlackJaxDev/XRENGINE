@@ -401,9 +401,18 @@ The payload stores every cluster as a meshlet in the normal streams, level 0
 first, and adds `ClusterLevel0Count`, one `MeshletClusterLodRecord` (group,
 refined group; 8 bytes) per meshlet and one `MeshletLodGroupRecord`
 (simplified sphere, error, depth; 32 bytes) per group. Each meshlet keeps its
-own culling sphere and normal cone. Such a payload has payload version 5
+own culling sphere and normal cone. Such a payload has payload version 7
 (`MeshletPayload.ClusterHierarchyPayloadVersion`); every payload without a
 hierarchy stays version 4, so existing caches and cooked meshes stay valid.
+Version 6 added the cluster skinning tables (`ClusterSkins`, `ClusterBones`).
+Version 7 adds, for a skinned hierarchy, the deformation order
+(`DeformationVertexOrder`: a permutation of the source vertices, the vertices
+of the coarsest levels first), `DeformationPrefixCounts` (for each level `L`,
+the number of leading order entries that every cluster of level `L` or coarser
+and every root cluster reads) and `LevelMaxErrors` (the largest finite group
+error of each level). The mesh vertices stay in source order. The cook writes
+one `[DeformationPrefix]` line for each model with the prefix share of each
+level.
 The hierarchy flag changes the meshlet settings hash only when it is set; it
 then adds `MeshletClusterHierarchyBuilder.CookVersion`, so a change of the cook
 recooks cached hierarchy payloads only.
@@ -495,6 +504,26 @@ largest projected error, in render pixels, that a drawn cluster may have.
   level, and an unusable candidate gives level 0. Skinned clusters still skip
   the frustum, cone, history and Hi-Z tests. Turn the setting off to compare
   with full-detail skinned draws while static draws keep the cut.
+- Skinned deformation level of detail (`AdvancedSkinnedDeformationLod`,
+  `Rendering.SkinnedDeformationLod`, off by default, read with the other
+  settings; it needs the skinned cut): the extractor chooses a minimum level
+  `L` for each skinned draw with `AdvancedDeformationLevelSelector`. It uses
+  the eyes of the build's view set, the largest pixel scale times a safety
+  factor of 1.25, and a distance that is never larger than the GPU shared
+  distance (the instance sphere, the committed proxy box of a GPU physics draw
+  less its half diagonal, and the blendshape margin). `L` is the largest level
+  for which every finer group projects to at most the threshold. Mesh
+  preparation writes the deformation order into
+  `AdvancedSkinInfluence.DeformationOrderVertex`, the job deforms only the
+  first `DeformationPrefixCounts[L]` order entries
+  (`EAdvancedDeformationFeatureFlags.DeformationOrder`), and the candidate
+  carries `L` in word 3 (`AdvancedVisibilityCandidate.DeformationLevel`). The
+  task stage treats every group finer than `L` with a finite error as refined
+  enough, so it never draws a cluster that reads a vertex outside the prefix.
+  A grown prefix marks the draw's velocity invalid for one frame
+  (`AdvancedDeformedVertexArena.RecordDeformedVertexCount`). Draws that another
+  path reads keep `L = 0`: shadow casters, transparent, fragment-depth, decal,
+  wireframe, editor-highlighted and non-canonical raster draws.
 
 Measured with New Sponza and the prefab avatar at 2688x2688 (RVC, true single
 pass stereo): at the atrium the early raster goes from 5.9 to 3.6 ms and the

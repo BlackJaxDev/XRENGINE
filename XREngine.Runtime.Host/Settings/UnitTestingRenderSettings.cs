@@ -29,6 +29,13 @@ public class UnitTestingRenderSettings
     public bool SkinnedVirtualGeometry { get; set; }
 
     /// <summary>
+    /// Sets the <c>AdvancedSkinnedDeformationLod</c> engine setting: with <see cref="SkinnedVirtualGeometry"/>
+    /// on, far skinned draws deform only the vertices of their coarsest allowed cluster level.
+    /// False (the default) deforms every vertex.
+    /// </summary>
+    public bool SkinnedDeformationLod { get; set; }
+
+    /// <summary>
     /// Sets the <c>AdvancedVirtualGeometryPixelThreshold</c> engine setting: the cluster cut
     /// threshold in render pixels of projected error.
     /// </summary>
