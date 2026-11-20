@@ -86,8 +86,6 @@ uniform float _BackFaceNormalStrength;
 uniform int _AlphaSource;
 //@property(name="_AlphaMaskChannel", display="Alpha Mask Channel", mode=static, default="0")
 uniform int _AlphaMaskChannel;
-//@property(name="_AlphaPremultiply", display="Premultiply Alpha", mode=static, default="0.0")
-uniform float _AlphaPremultiply;
 //@property(name="_AlphaGlobalMask", display="Alpha Global Mask", mode=static, default="0")
 uniform int _AlphaGlobalMask;
 //@property(name="_AlphaGlobalMaskBlendType", display="Alpha Global Mask Blend", mode=static, default="2")

@@ -41,7 +41,10 @@ lighting remains active.
 
 ## Presets And Fixed State
 
-The importer maps all nine serialized `_Mode` values independently. Render queue
+The importer maps each of the nine serialized `_Mode` values to an Uber render
+preset (see [Uber Material Authoring](uber-material-authoring.md#render-presets)).
+The preset gives the default blend factors, depth write, alpha cutoff, and the
+Uber `_Mode` value. Authored source values replace those defaults. Render queue
 and queue priority are preserved separately from transparency classification.
 RGB and alpha blend factors and operations, depth write/test, culling, color
 mask, polygon offset, alpha-to-coverage, fog opt-out, and common/front/back

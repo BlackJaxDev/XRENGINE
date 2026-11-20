@@ -55,12 +55,47 @@ The conditions come from the `//@property` annotations, and they use the shared
 expression evaluator, so a condition can read property values and
 `feature:<id>`. See [Uber Shader UI Annotations](uber-shader-ui-annotations.md).
 
-The engine Transparency Mode control sets the render mode.
-
 Selecting multiple materials opens the Cross-Shader Material Editor. It builds
 compatibility by semantic ID and GLSL value contract, shows mixed values and
 accepted target counts, and applies primary values through one preflighted undo
 transaction with one variant request per resulting material.
+
+## Render presets
+
+The Render Preset control at the top of the Uber inspector applies one
+`EUberRenderPreset` from the shared `UberRenderPresets` table. One preset sets the
+engine transparency mode, which selects the render pass, then the blend factors,
+depth write, alpha cutoff, the Uber `_Mode` value, and `_AlphaPremultiply`. The
+change is one undo step.
+
+| Preset | Transparency mode | Blend (source, destination) | Depth write | Cutoff | `_Mode` |
+| --- | --- | --- | --- | --- | --- |
+| Opaque | Opaque | off | on | 0 | 0 |
+| Cutout | Masked | off | on | 0.5 | 1 |
+| Transparent Cutout | Masked | SrcAlpha, OneMinusSrcAlpha | on | 0.01 | 5 |
+| Fade | AlphaBlend | SrcAlpha, OneMinusSrcAlpha | off | 0.002 | 2 |
+| Transparent | PremultipliedAlpha | One, OneMinusSrcAlpha | off | 0 | 3 |
+| Additive | Additive | One, One | off | 0 | 4 |
+| Soft Additive | AlphaBlend | OneMinusDstColor, One | off | 0 | 3 |
+| Multiply | AlphaBlend | DstColor, Zero | off | 0 | 3 |
+| Multiply 2x | AlphaBlend | DstColor, SrcColor | off | 0 | 3 |
+
+The alpha channel of each blended preset uses One, One with the Max equation.
+The Transparent preset turns on `_AlphaPremultiply`, and the other presets turn
+it off. The shader discards a fragment below `_Cutoff` when `_Mode` is cutout (1),
+fade (2), or transparent cutout (5). Opaque and cutout write an alpha of 1.
+
+The control shows the preset that matches the current state of the material. When
+the blend state, depth write, transparency mode, or `_Mode` was changed after a
+preset, the control shows "Custom". The preset is not stored separately, so the
+saved render state is the only source of truth.
+
+Material importers use the same table. The source toon importer maps each source
+render mode to a preset and then applies the authored blend, depth, and stencil
+values.
+
+The engine Transparency Mode control sets only the transparency mode. It resets
+the blend state to the default of that mode.
 
 ## Transactions and persisted payloads
 

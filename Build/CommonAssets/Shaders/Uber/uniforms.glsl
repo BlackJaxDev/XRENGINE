@@ -146,13 +146,16 @@ uniform float _AlphaMaskInvert;
 #endif
 
 //@property(name="_Cutoff", display="Alpha Cutoff", mode=static, range=[0,1])
-//@tooltip("Discards fragments below this threshold in masked modes or when Source Alpha Clip is enabled.")
+//@tooltip("Threshold below which fragments are discarded in the cutout, transparent cutout, and fade presets, or when Source Alpha Clip is enabled.")
 uniform float _Cutoff;              // Alpha cutoff threshold
 //@property(name="_SourceAlphaClip", display="Source Alpha Clip", mode=static, default="0.0")
 uniform float _SourceAlphaClip;
-uniform int _Mode;                  // Rendering mode (opaque, cutout, fade, etc.)
+uniform int _Mode;                  // Shader blend mode. The render preset sets it.
 uniform float _AlphaForceOpaque;
 uniform float _AlphaMod;
+//@property(name="_AlphaPremultiply", display="Premultiply Alpha", mode=static, range=[0,1], toggle=true, default="0.0")
+//@tooltip("Multiplies the color by alpha before blending. The Transparent preset turns it on.")
+uniform float _AlphaPremultiply;
 
 //@feature(id="source-scene-color", name="Source Scene Color", default=off, cost=high)
 #ifndef XRENGINE_UBER_DISABLE_SOURCE_SCENE_COLOR

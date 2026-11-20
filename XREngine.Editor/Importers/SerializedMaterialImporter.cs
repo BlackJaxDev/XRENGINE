@@ -1366,13 +1366,7 @@ public static partial class SerializedMaterialImporter
         material.PassSet = conversion.PassSet;
         material.AlphaCutoff = document.TryGetFloat("_Cutoff", out float authoredCutoff)
             ? Math.Clamp(authoredCutoff, 0.0f, 1.0f)
-            : conversion.Preset switch
-            {
-                SourceToonRenderPreset.Cutout => 0.5f,
-                SourceToonRenderPreset.TransClipping => 0.01f,
-                SourceToonRenderPreset.Fade => 0.002f,
-                _ => 0.0f,
-            };
+            : SourceToonRenderStateConverter.GetPresetCutoff(conversion.Preset);
         SetFloat(material, "_SourceAlphaClip", 1.0f);
 
         // Synchronize opacity uniforms/shader family before restoring the
@@ -1383,6 +1377,11 @@ public static partial class SerializedMaterialImporter
             material.RenderOptions = basePass.RenderOptions;
             material.RenderPass = basePass.RenderPass;
         }
+
+        // The transparency mode sets a generic shader blend mode. Set the mode of the preset, so that the
+        // transparent cutout and fade presets discard below the cutoff. Alpha to coverage keeps the cutout mode.
+        if (conversion.TransparencyMode != ETransparencyMode.AlphaToCoverage)
+            UberRenderPresets.SetShaderMode(material, SourceToonRenderStateConverter.ToUberPreset(conversion.Preset));
 
         material.TransparentSortPriority = conversion.PassSet.QueuePriority;
         if (SourceToonRenderStateConverter.IsHornsSoftOutlineSource(document))

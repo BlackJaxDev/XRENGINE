@@ -16,6 +16,7 @@
 #define BLEND_MODE_FADE 2
 #define BLEND_MODE_TRANSPARENT 3
 #define BLEND_MODE_ADDITIVE 4
+#define BLEND_MODE_TRANSPARENT_CUTOUT 5
 
 // Blend types for effects
 #define BLEND_REPLACE 0

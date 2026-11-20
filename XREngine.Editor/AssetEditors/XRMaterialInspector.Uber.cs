@@ -90,6 +90,7 @@ public sealed partial class XRMaterialInspector
             }
         }
 
+        DrawUberRenderPreset(material);
         DrawUberBulkActions(material, uberManifest, visibleProperties);
         bool toolbarVariantChanged = false;
         DrawUberFeatureToolbar(material, uberManifest, featureLookup, unavailableFeatureIds, ref toolbarVariantChanged);

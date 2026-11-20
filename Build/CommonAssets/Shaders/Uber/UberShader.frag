@@ -2455,7 +2455,13 @@ void main() {
     float coverageAlpha = fragData.alpha;
     if (_SourceAlphaClip > 0.5 && _AlphaForceOpaque > 0.5)
         coverageAlpha = 1.0;
-    if ((_Mode == BLEND_MODE_CUTOUT || _SourceAlphaClip > 0.5) && coverageAlpha < _Cutoff)
+    // The cutout, transparent cutout, and fade presets clip at the cutoff. Imported source
+    // materials always clip at the cutoff.
+    bool alphaClipMode = _Mode == BLEND_MODE_CUTOUT ||
+        _Mode == BLEND_MODE_TRANSPARENT_CUTOUT ||
+        _Mode == BLEND_MODE_FADE ||
+        _SourceAlphaClip > 0.5;
+    if (alphaClipMode && coverageAlpha < _Cutoff)
         discard;
 
 #if defined(XRENGINE_OUTLINE_PASS)
@@ -3024,9 +3030,7 @@ void main() {
     if (_Mode == BLEND_MODE_OPAQUE || _Mode == BLEND_MODE_CUTOUT) {
         shadedColor.a = 1.0;
     } else {
-#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
         shadedColor.rgb = mix(shadedColor.rgb, shadedColor.rgb * shadedColor.a, saturate(_AlphaPremultiply));
-#endif
     }
 
     XRENGINE_WriteForwardFragment(shadedColor);
