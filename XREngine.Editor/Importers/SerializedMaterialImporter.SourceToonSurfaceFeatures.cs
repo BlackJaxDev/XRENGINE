@@ -450,16 +450,8 @@ public static partial class SerializedMaterialImporter
             if (matcapEnabled)
             {
                 SetFloat(material, "_SourceMatcap", 1.0f);
-                if (document.TryGetPositive($"{matcapPrefix}HueShiftEnabled") &&
-                    GetInt(document, $"{matcapPrefix}HueSelectOrShift", 1) != 1)
-                    throw new SourceVisualImportException($"Source matcap hue selection is not supported on '{document.Name}'.");
-                foreach (string unsupported in new[] { "ApplyToAlphaEnabled", "AlphaOverride", "TPSDepthEnabled" })
-                {
-                    if (document.TryGetPositive($"{matcapPrefix}{unsupported}"))
-                        throw new SourceVisualImportException($"Source matcap option '{matcapPrefix}{unsupported}' is enabled on '{document.Name}'.");
-                }
-                if (document.TryGetPositive($"_Matcap{slot}CircleMaskEnabled"))
-                    throw new SourceVisualImportException($"A source matcap circle mask is enabled on '{document.Name}'.");
+                if (document.TryGetPositive($"{matcapPrefix}TPSDepthEnabled"))
+                    throw new SourceVisualImportException($"Source matcap option '{matcapPrefix}TPSDepthEnabled' is enabled on '{document.Name}'.");
                 bool audioLink = document.TryGetPositive($"_Matcap{slot}ALEnabled");
                 if (audioLink && GetFloat(document, $"_Matcap{slot}ALChronoPanSpeed") != 0.0f)
                     throw new SourceVisualImportException($"Source matcap AudioLink chrono pan is not supported on '{document.Name}'.");
@@ -527,7 +519,7 @@ public static partial class SerializedMaterialImporter
                 SetVector2(material, $"_MatcapSlotAudioIntensity{slot}",
                     GetSourceAudioRange(document, $"_Matcap{slot}ALIntensityAdd"));
                 int projection = GetInt(document, $"{matcapPrefix}UVMode", 1);
-                if (projection < 0 || projection > 2)
+                if (projection < 0 || projection > 4)
                     throw new SourceVisualImportException($"Source matcap projection '{projection}' is enabled on '{document.Name}'.");
             }
             SetVector4(
@@ -566,6 +558,7 @@ public static partial class SerializedMaterialImporter
                 GetFloat(document, $"{matcapPrefix}HueShift"),
                 GetFloat(document, $"{matcapPrefix}HueShiftSpeed"),
                 GetFloat(document, $"{matcapPrefix}HueShiftColorSpace")));
+            BindSourceToonMatcapOptions(material, document, slot, matcapPrefix);
             SetVector4(material, $"_MatcapSlotMask{slot}", new Vector4(
                 GetInt(document, $"{matcapPrefix}MaskChannel"),
                 GetFloat(document, $"{matcapPrefix}MaskInvert"),

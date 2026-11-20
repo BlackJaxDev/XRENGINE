@@ -16,6 +16,13 @@ public static class NativeUberMaterialSourceEncoder
     private static readonly string[] DecalUvs = ["_DecalUvMode0", "_DecalUvMode1", "_DecalUvMode2", "_DecalUvMode3"];
     private static readonly string[] DecalModifiers = ["_DecalSlotModifiers0", "_DecalSlotModifiers1", "_DecalSlotModifiers2", "_DecalSlotModifiers3"];
     private static readonly string[] DecalFx = ["_DecalSlotFx0", "_DecalSlotFx1", "_DecalSlotFx2", "_DecalSlotFx3"];
+    private static readonly string[] MatcapParams = ["_MatcapSlotParams0", "_MatcapSlotParams1", "_MatcapSlotParams2", "_MatcapSlotParams3"];
+    private static readonly string[] MatcapExtras = ["_MatcapSlotExtra0", "_MatcapSlotExtra1", "_MatcapSlotExtra2", "_MatcapSlotExtra3"];
+    private static readonly string[] MatcapUvControls = ["_MatcapSlotUvControl0", "_MatcapSlotUvControl1", "_MatcapSlotUvControl2", "_MatcapSlotUvControl3"];
+    private static readonly string[] MatcapHues = ["_MatcapSlotHue0", "_MatcapSlotHue1", "_MatcapSlotHue2", "_MatcapSlotHue3"];
+    private static readonly string[] MatcapShapes = ["_MatcapSlotShape0", "_MatcapSlotShape1", "_MatcapSlotShape2", "_MatcapSlotShape3"];
+    private static readonly string[] MatcapAlphas = ["_MatcapSlotAlpha0", "_MatcapSlotAlpha1", "_MatcapSlotAlpha2", "_MatcapSlotAlpha3"];
+    private static readonly string[] MatcapHueSelects = ["_MatcapSlotHueSelect0", "_MatcapSlotHueSelect1", "_MatcapSlotHueSelect2", "_MatcapSlotHueSelect3"];
 
     /// <summary>Identifies source tile discard that requires all three triangle corners.</summary>
     public static bool RequiresPrimitiveTileDiscard(XRMaterial material)
@@ -288,6 +295,40 @@ public static class NativeUberMaterialSourceEncoder
         return true;
     }
 
+    /// <summary>
+    /// Rejects active matcap slots that use options the native matcap operation does not implement.
+    /// </summary>
+    /// <remarks>
+    /// The native operation supports the first three projections and only global mask 1 with the subtract blend.
+    /// It does not implement rotation, the circle mask, alpha options, or hue selection.
+    /// </remarks>
+    private static bool ValidateMatcapSlots(XRMaterial material, out string reason)
+    {
+        for (int slot = 0; slot < 4; ++slot)
+        {
+            Vector4 parameters = material.Parameter<ShaderVector4>(MatcapParams[slot])?.Value ?? Vector4.Zero;
+            if (parameters.X <= 0f)
+                continue;
+
+            Vector4 extra = material.Parameter<ShaderVector4>(MatcapExtras[slot])?.Value ?? Vector4.Zero;
+            Vector4 uvControl = material.Parameter<ShaderVector4>(MatcapUvControls[slot])?.Value ?? Vector4.Zero;
+            Vector4 hue = material.Parameter<ShaderVector4>(MatcapHues[slot])?.Value ?? Vector4.Zero;
+            Vector4 shape = material.Parameter<ShaderVector4>(MatcapShapes[slot])?.Value ?? Vector4.Zero;
+            Vector4 alpha = material.Parameter<ShaderVector4>(MatcapAlphas[slot])?.Value ?? Vector4.Zero;
+            bool hueSelect = hue.X > 0.5f && IsNonZero(material, MatcapHueSelects[slot]);
+            bool supportedGlobalMask = uvControl.Z == 0f || (uvControl.Z == 1f && uvControl.W == 1f);
+            if (extra.Z is not (0f or 1f or 2f) || !supportedGlobalMask ||
+                shape.X != 0f || shape.Y > 0.5f || alpha.X != 0f || alpha.Y > 0f || hueSelect)
+            {
+                reason = $"Native Uber active matcap slot {slot} has an unsupported projection, global mask, rotation, " +
+                    "circle mask, alpha option, or hue selection.";
+                return false;
+            }
+        }
+        reason = string.Empty;
+        return true;
+    }
+
     private static bool Allowed(XRMaterial material, string name, ReadOnlySpan<int> values, out string reason)
     {
         ShaderVar? parameter = null;
@@ -417,6 +458,9 @@ public static class NativeUberMaterialSourceEncoder
             reason = "Native Uber active extended effect has no matching native operation.";
             return false;
         }
+        if (material.IsUberFeatureEnabled("layered-matcap-rim", false) &&
+            !ValidateMatcapSlots(material, out reason))
+            return false;
         for (int slot = 0; slot < 4; ++slot)
         {
             Vector4 decalBlend = material.Parameter<ShaderVector4>(DecalBlendParams[slot])?.Value ?? Vector4.Zero;

@@ -236,6 +236,7 @@ vec4 uberSampleGlobalMaskTexture(int textureIndex, ToonMesh mesh, float timeScal
 #ifdef XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES
     return vec4(1.0);
 #else
+    // Global mask pans use the source time unit (0.05 per second), as the native Uber path does.
     vec4 value;
     if (textureIndex == 0)
         value = texture(_GlobalMaskTexture0, panUV(transformUV(getUV(_GlobalMaskTexture0UV, mesh), _GlobalMaskTexture0_ST), _GlobalMaskTexture0Pan, u_Time * timeScale));
@@ -682,7 +683,8 @@ void uberApplyEmissionSlots(inout FragmentData fragData, ToonMesh mesh, vec3 dir
 float uberAudioBandValue(int band, float history);
 #endif
 
-vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection, vec3 projectedNormal)
+// Projection modes: 0 view normal, 1 top pinch, 2 reflection, 3 view gradient, 4 light half vector.
+vec2 uberMatcapUv(ToonMesh mesh, ToonLight light, vec4 projection, vec3 projectedNormal)
 {
     vec3 normal = projectedNormal;
     if (_SourceMatcap <= 0.5) normal = normalize(normal);
@@ -704,6 +706,26 @@ vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection, vec3 projecte
         return reflected.xy * border + 0.5;
     }
 
+    if (uvMode == 3)
+        return vec2(1.0 - abs(dot(normal, mesh.viewDir)));
+
+    if (uvMode == 4)
+    {
+        vec3 tangent = cross(normal, vec3(0.0, 1.0, 0.0));
+        // A vertical normal has no cross product with the up axis. Use the forward axis for it.
+        // The source forward axis is the engine -Z axis.
+        if (dot(tangent, tangent) < 1e-12)
+            tangent = cross(normal, vec3(0.0, 0.0, _SourceMatcap > 0.5 ? -1.0 : 1.0));
+        tangent = normalize(tangent);
+        // The source Z reflection reverses this cross-product axis.
+        if (_SourceMatcap > 0.5)
+            tangent = -tangent;
+        vec3 bitangent = normalize(cross(normal, tangent));
+        if (_SourceMatcap > 0.5)
+            bitangent = -bitangent;
+        return vec2(dot(light.halfDir, tangent), dot(light.halfDir, bitangent)) * border + 0.5;
+    }
+
     if (_SourceMatcap > 0.5)
     {
         vec3 detail = (mat3(u_ViewMatrix) * normal) * vec3(-1.0, -1.0, 1.0);
@@ -715,6 +737,11 @@ vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection, vec3 projecte
     return viewNormal.xy * border + 0.5;
 }
 
+// Applies the matcap shape, alpha, and hue options of one slot.
+// shape: x is not used (the rotation argument rotates the UV), y circle mask toggle, z circle radius, w circle blur.
+// alphaOptions: x alpha override, y intensity-to-alpha blend weight (0 or less is off),
+// z intensity source (0 grayscale, 1 max channel), w blend type (0 add, 1 multiply).
+// hueSelect: 1 replaces the hue with the shift value, 0 offsets the hue.
 vec4 uberMatcapSlot(
     sampler2D source,
     sampler2D maskTexture,
@@ -732,6 +759,9 @@ vec4 uberMatcapSlot(
     vec2 audioAlpha,
     vec2 audioEmission,
     vec2 audioIntensity,
+    vec4 shape,
+    vec4 alphaOptions,
+    int hueSelect,
     vec4 sourceSt,
     vec2 sourcePan,
     vec4 maskSt,
@@ -739,6 +769,7 @@ vec4 uberMatcapSlot(
     ToonMesh mesh,
     ToonLight light,
     vec3 baseColor,
+    inout float alpha,
     inout vec3 emission,
     inout vec3 lightAdd)
 {
@@ -751,15 +782,18 @@ vec4 uberMatcapSlot(
         projectedNormal = normalize(mesh.TBN[0] * mappedNormal.x +
             mesh.TBN[1] * mappedNormal.y + mesh.worldNormal * mappedNormal.z);
     }
-    vec2 uv = uberMatcapUv(mesh, parameters, projection, projectedNormal);
+    vec2 uv = uberMatcapUv(mesh, light, projection, projectedNormal);
     bool sourceMatcap = _SourceMatcap > 0.5;
     vec4 maskSample = vec4(1.0);
+    // The circle mask uses the projected UV before pan, rotation, and transform.
+    vec2 circleUv = uv;
     if (sourceMatcap)
     {
         vec2 maskUv = panUV(transformUV(getUV(int(maskOptions.w + 0.5), mesh), maskSt), maskPan, u_Time * 0.05);
         maskSample = texture(maskTexture, maskUv);
         if (uvBlend.x != 0.0 || uvBlend.y != 0.0)
             uv = mix(uv, getUV(int(uvControl.x + 0.5), mesh), uvBlend.xy);
+        circleUv = uv;
         uv = panUV(uv, sourcePan, u_Time * 0.05);
         float angle = rotation * 3.14159265359;
         float sine = sin(angle), cosine = cos(angle);
@@ -793,22 +827,44 @@ vec4 uberMatcapSlot(
 #endif
     float mask = sourceMatcap ? maskSample[clamp(int(maskOptions.x + 0.5), 0, 3)] : texture(maskTexture, getUV(0, mesh)).r;
     if (sourceMatcap && maskOptions.y > 0.5) mask = 1.0 - mask;
+    if (sourceMatcap && shape.y > 0.5)
+    {
+        float circleDistance = distance(vec2(0.5), circleUv);
+        float circleWidth = fwidth(circleDistance);
+        float circleMin = saturate(shape.z - shape.w * 0.5);
+        float circleMax = saturate(shape.z + shape.w * 0.5);
+        mask *= 1.0 - smoothstep(circleMin - circleWidth, circleMax + circleWidth, circleDistance);
+    }
+    sampleColor.rgb *= mix(vec3(1.0), light.color, saturate(projection.w));
+    sampleColor.rgb *= max(intensity, 0.0);
+    if (sourceMatcap)
+    {
+        sampleColor.rgb = mix(sampleColor.rgb, sampleColor.rgb * baseColor, clamp(sourceOptions.y, 0.0, 1.0));
+        if (hue.x > 0.5)
+        {
+            float shift = hue.y + hue.z * u_Time * 0.05;
+            sampleColor.rgb = uberSelectOrShiftHue(sampleColor.rgb, shift,
+                int(hue.w + 0.5), hueSelect > 0 ? 0 : 1);
+        }
+
+        // Alpha options use the slot mask before the light and global masks.
+        alpha *= mix(1.0, sampleColor.a, mask * alphaOptions.x);
+        if (alphaOptions.y > 0.0)
+        {
+            float intensity = alphaOptions.z > 0.5
+                ? max(max(sampleColor.r, sampleColor.g), sampleColor.b)
+                : dot(sampleColor.rgb, vec3(0.299, 0.587, 0.114));
+            alpha = alphaOptions.w > 0.5
+                ? alpha * mix(1.0, intensity, alphaOptions.y)
+                : saturate(alpha + intensity * alphaOptions.y);
+        }
+    }
     mask *= mix(1.0, saturate(light.lightMap), saturate(parameters.y));
 #ifndef XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES
     if (sourceMatcap && uvControl.z > 0.5)
         mask = uberBlendMask(mask, uberGlobalMask(int(uvControl.z + 0.5), mesh, 0.05),
             int(uvControl.w + 0.5));
 #endif
-    sampleColor.rgb *= mix(vec3(1.0), light.color, saturate(projection.w));
-    sampleColor.rgb *= max(intensity, 0.0);
-    if (sourceMatcap)
-        sampleColor.rgb = mix(sampleColor.rgb, sampleColor.rgb * baseColor, clamp(sourceOptions.y, 0.0, 1.0));
-    if (sourceMatcap && hue.x > 0.5)
-    {
-        float shift = hue.y + hue.z * u_Time * 0.05;
-        sampleColor.rgb = mix(hueShiftOklab(sampleColor.rgb, shift),
-            hueShift(sampleColor.rgb, shift), clamp(hue.w, 0.0, 1.0));
-    }
     mask *= sampleColor.a;
     if (sourceMatcap) lightAdd += sampleColor.rgb * sourceOptions.z * mask;
     emission += sampleColor.rgb * max(emissionStrength, 0.0) * mask;
@@ -826,7 +882,7 @@ void uberBlendMatcapSlot(inout vec3 finalColor, vec4 slot, vec4 blend, float mix
 }
 #endif
 
-void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3 lightAdd, ToonMesh mesh, ToonLight light)
+void uberApplyMatcapSlots(inout vec3 finalColor, inout float alpha, inout vec3 emission, inout vec3 lightAdd, ToonMesh mesh, ToonLight light)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
     bool audioActive = false;
@@ -842,8 +898,9 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
             _MatcapSlotParams0, _MatcapSlotExtra0, _MatcapSlotSource0, _MatcapSlotMask0,
             _MatcapSlotUvBlend0, _MatcapSlotUvControl0, _MatcapSlotRotation0, _MatcapSlotHue0,
             _MatcapSlotAudioBands0, _MatcapSlotAudioAlpha0, _MatcapSlotAudioEmission0, _MatcapSlotAudioIntensity0,
+            _MatcapSlotShape0, _MatcapSlotAlpha0, _MatcapSlotHueSelect0,
             _Matcap0Tex_ST, _Matcap0TexPan, _Matcap0Mask_ST, _Matcap0MaskPan,
-            mesh, light, finalColor, emission, lightAdd);
+            mesh, light, finalColor, alpha, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend0, _MatcapSlotExtra0.x);
     }
     if (_MatcapSlotParams1.x > 0.0 || (audioActive && _MatcapSlotAudioBands1.x > 0.5 &&
@@ -855,8 +912,9 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
             _MatcapSlotParams1, _MatcapSlotExtra1, _MatcapSlotSource1, _MatcapSlotMask1,
             _MatcapSlotUvBlend1, _MatcapSlotUvControl1, _MatcapSlotRotation1, _MatcapSlotHue1,
             _MatcapSlotAudioBands1, _MatcapSlotAudioAlpha1, _MatcapSlotAudioEmission1, _MatcapSlotAudioIntensity1,
+            _MatcapSlotShape1, _MatcapSlotAlpha1, _MatcapSlotHueSelect1,
             _Matcap1Tex_ST, _Matcap1TexPan, _Matcap1Mask_ST, _Matcap1MaskPan,
-            mesh, light, finalColor, emission, lightAdd);
+            mesh, light, finalColor, alpha, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend1, _MatcapSlotExtra1.x);
     }
     if (_MatcapSlotParams2.x > 0.0 || (audioActive && _MatcapSlotAudioBands2.x > 0.5 &&
@@ -868,8 +926,9 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
             _MatcapSlotParams2, _MatcapSlotExtra2, _MatcapSlotSource2, _MatcapSlotMask2,
             _MatcapSlotUvBlend2, _MatcapSlotUvControl2, _MatcapSlotRotation2, _MatcapSlotHue2,
             _MatcapSlotAudioBands2, _MatcapSlotAudioAlpha2, _MatcapSlotAudioEmission2, _MatcapSlotAudioIntensity2,
+            _MatcapSlotShape2, _MatcapSlotAlpha2, _MatcapSlotHueSelect2,
             _Matcap2Tex_ST, _Matcap2TexPan, _Matcap2Mask_ST, _Matcap2MaskPan,
-            mesh, light, finalColor, emission, lightAdd);
+            mesh, light, finalColor, alpha, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend2, _MatcapSlotExtra2.x);
     }
     if (_MatcapSlotParams3.x > 0.0 || (audioActive && _MatcapSlotAudioBands3.x > 0.5 &&
@@ -881,8 +940,9 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
             _MatcapSlotParams3, _MatcapSlotExtra3, _MatcapSlotSource3, _MatcapSlotMask3,
             _MatcapSlotUvBlend3, _MatcapSlotUvControl3, _MatcapSlotRotation3, _MatcapSlotHue3,
             _MatcapSlotAudioBands3, _MatcapSlotAudioAlpha3, _MatcapSlotAudioEmission3, _MatcapSlotAudioIntensity3,
+            _MatcapSlotShape3, _MatcapSlotAlpha3, _MatcapSlotHueSelect3,
             _Matcap3Tex_ST, _Matcap3TexPan, _Matcap3Mask_ST, _Matcap3MaskPan,
-            mesh, light, finalColor, emission, lightAdd);
+            mesh, light, finalColor, alpha, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend3, _MatcapSlotExtra3.x);
     }
 #endif

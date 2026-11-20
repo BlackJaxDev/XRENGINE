@@ -2624,7 +2624,7 @@ void main() {
                 clamp(_ShadowStrength * sampleLightingShadowMask(mesh), 0.0, 1.0));
         }
 #endif
-        uberApplyMatcapSlots(fragData.baseColor, fragData.emission, matcapLightAdd, mesh, matcapLight);
+        uberApplyMatcapSlots(fragData.baseColor, fragData.alpha, fragData.emission, matcapLightAdd, mesh, matcapLight);
     }
 #endif
 #ifndef XRENGINE_UBER_DISABLE_ADVANCED_PBR
@@ -2941,7 +2941,7 @@ void main() {
 #endif
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
     if (_SourceMatcap <= 0.5)
-        uberApplyMatcapSlots(fragData.finalColor, fragData.emission, matcapLightAdd, mesh, light);
+        uberApplyMatcapSlots(fragData.finalColor, fragData.alpha, fragData.emission, matcapLightAdd, mesh, light);
 #endif
     fragData.finalColor += matcapLightAdd;
     

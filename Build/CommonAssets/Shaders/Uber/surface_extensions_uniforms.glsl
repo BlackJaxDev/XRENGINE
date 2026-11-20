@@ -543,6 +543,30 @@ uniform vec4 _MatcapSlotHue0;
 uniform vec4 _MatcapSlotHue1;
 uniform vec4 _MatcapSlotHue2;
 uniform vec4 _MatcapSlotHue3;
+//@property(name="_MatcapSlotShape0", display="Matcap 0 Shape", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotShape0;
+//@property(name="_MatcapSlotShape1", display="Matcap 1 Shape", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotShape1;
+//@property(name="_MatcapSlotShape2", display="Matcap 2 Shape", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotShape2;
+//@property(name="_MatcapSlotShape3", display="Matcap 3 Shape", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotShape3;
+//@property(name="_MatcapSlotAlpha0", display="Matcap 0 Alpha", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotAlpha0;
+//@property(name="_MatcapSlotAlpha1", display="Matcap 1 Alpha", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotAlpha1;
+//@property(name="_MatcapSlotAlpha2", display="Matcap 2 Alpha", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotAlpha2;
+//@property(name="_MatcapSlotAlpha3", display="Matcap 3 Alpha", mode=static, default="vec4(0.0)")
+uniform vec4 _MatcapSlotAlpha3;
+//@property(name="_MatcapSlotHueSelect0", display="Matcap 0 Hue Select", mode=static, default="0")
+uniform int _MatcapSlotHueSelect0;
+//@property(name="_MatcapSlotHueSelect1", display="Matcap 1 Hue Select", mode=static, default="0")
+uniform int _MatcapSlotHueSelect1;
+//@property(name="_MatcapSlotHueSelect2", display="Matcap 2 Hue Select", mode=static, default="0")
+uniform int _MatcapSlotHueSelect2;
+//@property(name="_MatcapSlotHueSelect3", display="Matcap 3 Hue Select", mode=static, default="0")
+uniform int _MatcapSlotHueSelect3;
 
 //@property(name="_Rim2Color", display="Rim 2 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _Rim2Color;

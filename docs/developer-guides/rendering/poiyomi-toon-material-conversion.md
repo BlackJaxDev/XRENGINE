@@ -49,9 +49,9 @@ and pan. Its RGB multiplies the source flake color in both authored Uber and
 native Advanced shading. Source 10.0 distance LOD is not implemented; active
 glitter reports this difference with `TOON0006`.
 
-Matcap layers retain enabled hue shift, shift amount, speed, and color space.
-The supported selection mode applies the shift after source tint and lighting
-and before layer composition. Other active selection modes fail explicitly.
+Matcap layers retain enabled hue shift, shift amount, speed, color space, and
+the select-or-shift mode. The importer applies the hue after source tint and
+lighting and before layer composition. See [Matcaps](#matcaps).
 Parallax activation uses the source enable controls. A dormant depth value
 does not enable parallax when those controls are off.
 
@@ -216,6 +216,38 @@ use the back face color.
 
 Detail shadow maps are not converted yet. In the source they multiply the light
 map, but the Uber shader applies its detail shadow as a shadow strength factor.
+
+## Matcaps
+
+Each source matcap maps to one Uber matcap slot. The importer packs the slot
+options into the `_MatcapSlot*` vectors.
+
+| Source control | Uber control | Notes |
+| --- | --- | --- |
+| `UVMode` | `_MatcapSlotExtra<n>.z` | Modes 0 to 4: view normal, top pinch, reflection, view gradient, and light half vector. |
+| `Rotation` | `_MatcapSlotShape<n>.x` | Half turns. The rotation is about the UV center, after the pan and before the texture transform. |
+| `CircleMaskEnabled`, `CircleMaskBorder`, `CircleMaskBlur` | `_MatcapSlotShape<n>.yzw` | The circle uses the projected UV before the pan, rotation, and transform. The first slot reads the `_Matcap0` prefix. |
+| `MaskGlobalMask` and its blend type | `_MatcapSlotUvControl<n>.zw` | All 16 global mask channels and all 8 blend types. The blend comes after the light mask. |
+| `AlphaOverride` | `_MatcapSlotAlpha<n>.x` | Multiplies the fragment alpha toward the matcap alpha by the slot mask. |
+| `ApplyToAlphaEnabled`, `ApplyToAlphaBlending`, `ApplyToAlphaSourceBlend`, `ApplyToAlphaBlendType` | `_MatcapSlotAlpha<n>.yzw` | The blend weight is 0 when the option is off. Grayscale or max channel, add or multiply. |
+| `HueSelectOrShift` | `_MatcapSlotHueSelect<n>` | 1 replaces the hue. 0 shifts it. |
+| `UVToBlend` and the blend UV vector | `_MatcapSlotUvBlend<n>.xy`, `_MatcapSlotUvControl<n>.x` | Any slot can blend to UV channels 0 to 3. |
+
+The source applies the pan before the texture transform. The Uber and native
+paths do the same.
+
+Matcap alpha options change the blended output alpha. Cutout clipping uses the
+alpha before the matcaps, so that the depth prepass and the color pass discard
+the same fragments.
+
+Global mask textures pan in the source time unit (0.05 per second) in the Uber
+and native paths.
+
+These options are not converted, and the import fails when one is active:
+audio-reactive matcap controls, the penetration depth mask, and a custom
+normal map on a slot other than the second slot. The native path supports only
+projections 0 to 2 and global mask 1 with the subtract blend. A material that
+uses other matcap options uses the Uber path.
 
 ## Support Contract
 
