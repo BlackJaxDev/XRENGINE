@@ -46,6 +46,7 @@ public static partial class SerializedMaterialImporter
             warnings,
             diagnostics);
         BindSourceToonAlphaOptions(material, document);
+        BindSourceToonColorAdjustOptions(material, document);
         BindSourceToonGlitter(material, document, resolver, sourceVersion, diagnostics);
         BindSourceToonFlipbook(material, document);
         BindSourceToonDissolve(material, document, diagnostics);
@@ -674,6 +675,8 @@ public static partial class SerializedMaterialImporter
         (string Destination, string[] Sources)[] bindings =
         [
             ("_MainTexDistortionMap", ["_MainTexDistortionMap"]),
+            ("_MainGradationTex", ["_MainGradationTex"]),
+            ("_MainTintTexture", ["_MainTintTexture"]),
             ("_MainTexDistortionMask", ["_MainTexDistortionMask"]),
             ("_BackFaceNormalMap", ["_BackFaceNormalMap"]),
             ("_ColorMaskTexture", ["_ColorMask"]),

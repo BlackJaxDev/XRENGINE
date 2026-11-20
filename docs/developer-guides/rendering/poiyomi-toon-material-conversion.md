@@ -156,6 +156,29 @@ source option keeps its values in the material, and its Uber toggle stays off.
 Audio-reactive alpha and the forward-add transparency boost have no Uber
 equivalent.
 
+## Color Adjust
+
+The Uber color adjustments use the source operations and the source order. The
+source `_MainColorAdjustToggle` enables the `color-adjustments` feature. When the
+material does not store the toggle, the importer uses the `COLOR_GRADING_HDR`
+keyword, and then the authored adjustment evidence.
+
+| Source control | Uber control | Notes |
+| --- | --- | --- |
+| `_MainColorAdjustTexture` | Same name | R gates hue and chromatize, G gates brightness, B gates saturation, and A gates gamma. |
+| `_MainHueShiftToggle`, `_MainHueShift`, `_MainHueShiftColorSpace`, `_MainHueShiftReplace`, `_MainHueShiftSelectOrShift` | Same names | The shift is in turns. Select mode replaces the hue with the shift value. |
+| `_MainHueShiftSpeed` | Same name | The importer multiplies the speed by 0.05 because the source time value advances once every 20 seconds. |
+| `_ColorGradingToggle`, `_MainGradationTex`, `_MainGradationStrength`, `_MainGradationMaskChannel` | Same names | Each sRGB-encoded channel goes through the gradation map. |
+| `_MainGamma` | Same name | Gamma keeps the sign of the color. |
+| `_Saturation` | Same name | Saturation uses the source luminance weights. |
+| `_MainChromatize` | Same name | Chromatize scales the OKLab chroma and limits it to the most saturated color of the same hue. |
+| `_MainTintColor`, `_MainTintTexture` | Same names | The tint keeps the lightness and the chroma, and uses the tint hue. |
+| `_MainBrightness` | Same name | Brightness multiplies the color by `1 + brightness`. |
+| `_MainColorAdjustClamp` | Same name | A version without this control always clamps, so the default is on. |
+| `_MainHueGlobalMask`, `_MainSaturationGlobalMask`, `_MainBrightnessGlobalMask`, `_MainGammaGlobalMask` and their blend types | Same names | The global mask channel blends with the matching adjustment map channel. |
+
+The audio-reactive hue shift has no Uber equivalent yet.
+
 ## Support Contract
 
 Every source feature and property has one of three outcomes:

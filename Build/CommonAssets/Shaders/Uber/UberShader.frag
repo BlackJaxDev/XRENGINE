@@ -459,42 +459,144 @@ vec4 calculateBaseColor(ToonMesh mesh) {
 // ============================================
 // Color Adjustments
 // ============================================
-// HSV-style tweaks (saturation, brightness, hue shift) driven by a mask
-// texture whose channels gate each effect (R=hue, G=brightness, B=saturation).
-// Hue shift can run in classic HSV or in Oklab for a more perceptually uniform
-// result. Disabled in this variant.
+// Mask-driven color adjustments. The adjustment map channels gate each effect:
+// R = hue (and chromatize), G = brightness, B = saturation, A = gamma. Each channel
+// can also blend with a global mask. The order is hue, gradation map, gamma,
+// saturation, chromatize, tint, brightness, and then the optional clamp.
+#ifndef XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS
+// Shifts the hue (selectOrShift = 1) or replaces it with the shift value
+// (selectOrShift = 0). The shift is in turns. colorSpace 0 is OKLab and 1 is HSV.
+vec3 uberSelectOrShiftHue(vec3 color, float shift, int colorSpace, int selectOrShift)
+{
+    if (colorSpace != 0)
+    {
+        vec3 hsv = rgbToHsv(color);
+        hsv.x = hsv.x * float(selectOrShift) + shift;
+        return hsvToRgb(hsv);
+    }
+
+    vec3 lab = rgbToOklab(color);
+    if (selectOrShift == 0)
+        lab.yz = vec2(length(lab.yz), 0.0);
+    float s = sin(shift * TWO_PI);
+    float c = cos(shift * TWO_PI);
+    lab.yz = vec2(c * lab.y - s * lab.z, s * lab.y + c * lab.z);
+    return oklabToRgb(lab);
+}
+
+// Scales the OKLab chroma by (1 + chromatize). The chroma stays at or below the
+// chroma of the most saturated color with the same hue.
+vec3 uberChromatize(vec3 color, float chromatize)
+{
+    float minRgb = min(color.r, min(color.g, color.b));
+    float maxRgb = max(color.r, max(color.g, color.b));
+    float rangeRgb = maxRgb - minRgb;
+    vec3 saturatedReference = rangeRgb > 0.0001 ? (color - minRgb) / rangeRgb : vec3(1.0, 0.0, 0.0);
+    float maxChroma = length(rgbToOklab(saturatedReference).yz);
+
+    vec3 lab = rgbToOklab(color);
+    float hue = atan(lab.z, lab.y);
+    float chroma = min(length(lab.yz) * (1.0 + chromatize), maxChroma);
+    lab.yz = vec2(chroma * cos(hue), chroma * sin(hue));
+    return oklabToRgb(lab);
+}
+
+// Keeps the lightness and chroma of the color and uses the hue of the tint. A
+// low-saturation tint reduces the chroma.
+vec3 uberApplyTint(vec3 color, vec4 tint)
+{
+    vec3 tintLab = rgbToOklab(tint.rgb);
+    float tintHue = atan(tintLab.z, tintLab.y);
+    float tintMin = min(tint.r, min(tint.g, tint.b));
+    float tintMax = max(tint.r, max(tint.g, tint.b));
+    float tintSaturation = tintMax > 0.0001 ? 1.0 - tintMin / tintMax : 0.0;
+
+    vec3 lab = rgbToOklab(color);
+    float chroma = length(lab.yz) * tintSaturation;
+    vec3 tinted = saturate(oklabToRgb(vec3(lab.x, chroma * cos(tintHue), chroma * sin(tintHue))));
+    return mix(color, tinted, tint.a);
+}
+
+// Maps each sRGB-encoded channel through the gradation map. The coordinate is
+// clamped to texel centers so that the wrap mode of the map has no effect.
+vec3 uberApplyGradationMap(vec3 color)
+{
+    float width = float(max(textureSize(_MainGradationTex, 0).x, 1));
+    float halfTexel = 0.5 / width;
+    vec3 coordinate = clamp(linearToSRGB_Accurate(color), vec3(halfTexel), vec3(1.0 - halfTexel));
+    vec3 mapped = vec3(
+        texture(_MainGradationTex, vec2(coordinate.r, 0.5)).r,
+        texture(_MainGradationTex, vec2(coordinate.g, 0.5)).g,
+        texture(_MainGradationTex, vec2(coordinate.b, 0.5)).b);
+    return sRGBToLinear_Accurate(mapped);
+}
+
+float uberSelectAdjustChannel(vec4 mask, int channel)
+{
+    if (channel == 1)
+        return mask.r;
+    if (channel == 2)
+        return mask.g;
+    if (channel == 3)
+        return mask.b;
+    return mask.a;
+}
+#endif
+
 vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
 #ifdef XRENGINE_UBER_DISABLE_COLOR_ADJUSTMENTS
     return uberApplyExtendedColorAdjustments(color);
 #else
-    // Sample adjustment mask
     vec2 adjustUV = transformUV(getUV(_MainColorAdjustTextureUV, mesh), _MainColorAdjustTexture_ST);
     adjustUV = panUV(adjustUV, _MainColorAdjustTexturePan, u_Time);
     vec4 adjustMask = texture(_MainColorAdjustTexture, adjustUV);
-    
-    // Hue shift runs first, then saturation, then brightness.
-    if (_MainHueShiftToggle > 0.5) {
-        float hueShiftAmount = _MainHueShift + _MainHueShiftSpeed * u_Time;
-        hueShiftAmount *= adjustMask.r;
-        
-        vec3 shiftedColor;
-        if (_MainHueShiftColorSpace == 0) {
-            shiftedColor = hueShiftOklab(color, hueShiftAmount);
-        } else {
-            shiftedColor = hueShift(color, hueShiftAmount);
-        }
-        
-        color = mix(color, shiftedColor, _MainHueShiftReplace);
+
+    if (_MainHueGlobalMask > 0)
+        adjustMask.r = uberMaskBlend(adjustMask.r, uberGlobalMask(_MainHueGlobalMask, mesh), _MainHueGlobalMaskBlendType);
+    if (_MainSaturationGlobalMask > 0)
+        adjustMask.b = uberMaskBlend(adjustMask.b, uberGlobalMask(_MainSaturationGlobalMask, mesh), _MainSaturationGlobalMaskBlendType);
+    if (_MainBrightnessGlobalMask > 0)
+        adjustMask.g = uberMaskBlend(adjustMask.g, uberGlobalMask(_MainBrightnessGlobalMask, mesh), _MainBrightnessGlobalMaskBlendType);
+    if (_MainGammaGlobalMask > 0)
+        adjustMask.a = uberMaskBlend(adjustMask.a, uberGlobalMask(_MainGammaGlobalMask, mesh), _MainGammaGlobalMaskBlendType);
+
+    if (_MainHueShiftToggle > 0.5)
+    {
+        float shift = _MainHueShift + _MainHueShiftSpeed * u_Time;
+        // Replace mode blends toward the shifted color. The other mode offsets
+        // the shift by the inverse mask, so a zero mask gives a full turn back.
+        if (_MainHueShiftReplace > 0.5)
+            color = mix(color, uberSelectOrShiftHue(color, shift, _MainHueShiftColorSpace, _MainHueShiftSelectOrShift), adjustMask.r);
+        else
+            color = uberSelectOrShiftHue(color, fract(shift - (1.0 - adjustMask.r)), _MainHueShiftColorSpace, _MainHueShiftSelectOrShift);
     }
-    
-    // Saturation adjustment
-    float lum = luminance(color);
-    color = mix(vec3(lum), color, 1.0 + _Saturation * adjustMask.b);
-    
-    // Brightness scales the color by (1 + brightness) and clamps it to 0..1.
-    color = clamp(color * (1.0 + _MainBrightness * adjustMask.g), 0.0, 1.0);
-    
-    return color;
+
+    if (_ColorGradingToggle > 0.5 && _MainGradationStrength != 0.0)
+    {
+        float gradationMask = _MainGradationMaskChannel > 0 ? uberSelectAdjustChannel(adjustMask, _MainGradationMaskChannel) : 1.0;
+        color = mix(color, uberApplyGradationMap(color), _MainGradationStrength * gradationMask);
+    }
+
+    if (_MainGamma != 1.0)
+        color = mix(color, sign(color) * pow(abs(color), vec3(_MainGamma)), adjustMask.a);
+
+    color = mix(color, vec3(dot(color, vec3(0.3, 0.59, 0.11))), -_Saturation * adjustMask.b);
+
+    if (_MainChromatize != 0.0)
+        color = saturate(uberChromatize(color, _MainChromatize * adjustMask.r));
+
+    if (_MainTintColor.a > 0.0)
+    {
+        vec2 tintUV = transformUV(getUV(_MainTintTextureUV, mesh), _MainTintTexture_ST);
+        tintUV = panUV(tintUV, _MainTintTexturePan, u_Time);
+        color = uberApplyTint(color, _MainTintColor * texture(_MainTintTexture, tintUV));
+    }
+
+    color = mix(color, color * (_MainBrightness + 1.0), adjustMask.g);
+    if (_MainColorAdjustClamp > 0.5)
+        color = saturate(color);
+
+    return uberApplyExtendedColorAdjustments(color);
 #endif
 }
 

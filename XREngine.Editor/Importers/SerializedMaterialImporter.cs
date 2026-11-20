@@ -506,7 +506,8 @@ public static partial class SerializedMaterialImporter
         List<XRTexture?> textures = [main, bump];
 
         string? alphaSource = AddMappedTexture(document, resolver, warnings, textures, "_AlphaMask", "_AlphaMask");
-        string? colorAdjustSource = AddMappedTexture(document, resolver, warnings, textures, "_MainColorAdjustTexture", "_MainColorAdjustMask", "_MainGradationTex");
+        string? colorAdjustSource = AddMappedTexture(document, resolver, warnings, textures, "_MainColorAdjustTexture", "_MainColorAdjustMask");
+        AddMappedTexture(document, resolver, warnings, textures, "_MainGradationTex", "_MainGradationTex");
         string? shadowColorSource = AddMappedTexture(document, resolver, warnings, textures, "_ShadowColorTex", "_ShadowColorTex");
         string? aoSource = AddMappedTexture(document, resolver, warnings, textures, "_LightingAOMaps", "_ShadowStrengthMask");
         string? shadowMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_LightingShadowMasks", "_ShadowBorderMask", "_ShadowBlurMask");
@@ -999,30 +1000,41 @@ public static partial class SerializedMaterialImporter
 
     private static void ApplyLilToonColorAdjustmentProperties(XRMaterial material, SerializedMaterialDocument document)
     {
-        if (TryGetLilToonHsvgAdjustments(document, out float saturation, out float brightness))
+        // The HSVG vector multiplies saturation and value and raises the color to the gamma
+        // power. The Uber saturation and brightness controls are offsets from a factor of 1.
+        if (TryGetLilToonHsvgAdjustments(document, out float saturation, out float brightness, out float gamma))
         {
             SetFloat(material, "_Saturation", saturation);
             SetFloat(material, "_MainBrightness", brightness);
+            SetFloat(material, "_MainGamma", gamma);
         }
 
         if (document.TryGetFloat("_MainGradationStrength", out float gradationStrength) &&
             MathF.Abs(gradationStrength) > 0.0001f)
         {
-            SetFloat(material, "_MainBrightness", gradationStrength);
+            SetFloat(material, "_ColorGradingToggle", 1.0f);
+            SetFloat(material, "_MainGradationStrength", gradationStrength);
         }
     }
 
-    private static bool TryGetLilToonHsvgAdjustments(SerializedMaterialDocument document, out float saturation, out float brightness)
+    private static bool TryGetLilToonHsvgAdjustments(
+        SerializedMaterialDocument document,
+        out float saturation,
+        out float brightness,
+        out float gamma)
     {
         saturation = 0.0f;
         brightness = 0.0f;
+        gamma = 1.0f;
         if (!document.TryGetVector("_MainTexHSVG", out Vector4 hsvg))
             return false;
 
         saturation = hsvg.Y - 1.0f;
         brightness = hsvg.Z - 1.0f;
+        gamma = hsvg.W > 0.0f ? hsvg.W : 1.0f;
         return MathF.Abs(saturation) > 0.0001f ||
-               MathF.Abs(brightness) > 0.0001f;
+               MathF.Abs(brightness) > 0.0001f ||
+               MathF.Abs(gamma - 1.0f) > 0.0001f;
     }
 
     private static void ApplySourceToonFeatureState(
@@ -1090,7 +1102,9 @@ public static partial class SerializedMaterialImporter
         material.SetUberFeatureEnabled("color-adjustments",
             SourceToonFeatureStateResolver.IsEnabled(
                 document,
-                colorAdjustSource is not null || document.TryGetPositive("_MainHueShiftToggle"),
+                colorAdjustSource is not null ||
+                document.TryGetPositive("_MainHueShiftToggle") ||
+                document.TryGetPositive("_ColorGradingToggle"),
                 document.HasAnyProperty("_MainColorAdjustToggle")
                     ? ["_MainColorAdjustToggle"]
                     : ["_ColorGradingToggle"],
@@ -1269,7 +1283,7 @@ public static partial class SerializedMaterialImporter
 
         material.SetUberFeatureEnabled("color-adjustments",
             colorAdjustSource is not null ||
-            TryGetLilToonHsvgAdjustments(document, out _, out _) ||
+            TryGetLilToonHsvgAdjustments(document, out _, out _, out _) ||
             document.TryGetPositive("_MainGradationStrength"));
 
         material.SetUberFeatureEnabled("material-ao",

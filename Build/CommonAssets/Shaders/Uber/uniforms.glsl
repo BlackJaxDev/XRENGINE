@@ -190,7 +190,7 @@ uniform float _Saturation;
 //@property(name="_MainBrightness", display="Brightness", mode=static, range=[-1,2])
 uniform float _MainBrightness;
 uniform float _MainHueShiftToggle;
-//@property(name="_MainHueShift", display="Hue Shift", mode=static, range=[-180,180])
+//@property(name="_MainHueShift", display="Hue Shift", mode=static, range=[0,1])
 uniform float _MainHueShift;
 //@property(name="_MainHueShiftSpeed", display="Hue Shift Speed", mode=animated, range=[-10,10])
 uniform float _MainHueShiftSpeed;
@@ -198,6 +198,45 @@ uniform float _MainHueShiftSpeed;
 uniform int _MainHueShiftColorSpace;    // 0: OKLab, 1: HSV
 //@property(name="_MainHueShiftReplace", display="Hue Replace", mode=static, range=[0,1], toggle=true)
 uniform float _MainHueShiftReplace;
+//@property(name="_MainHueShiftSelectOrShift", display="Hue Select Or Shift", mode=static, enum="0:Select|1:Shift", default="1")
+uniform int _MainHueShiftSelectOrShift;
+//@property(name="_MainGamma", display="Gamma", mode=static, range=[0.01,5], default="1.0")
+uniform float _MainGamma;
+//@property(name="_MainChromatize", display="Chromatize", mode=static, range=[-1,10], default="0.0")
+uniform float _MainChromatize;
+//@property(name="_MainColorAdjustClamp", display="Clamp Adjusted Color", mode=static, range=[0,1], toggle=true, default="1.0")
+uniform float _MainColorAdjustClamp;
+//@property(name="_ColorGradingToggle", display="Gradation Map", mode=static, range=[0,1], toggle=true)
+uniform float _ColorGradingToggle;
+//@property(name="_MainGradationTex", display="Gradation Map", slot=texture)
+uniform sampler2D _MainGradationTex;
+//@property(name="_MainGradationStrength", display="Gradation Strength", mode=static, range=[0,1])
+uniform float _MainGradationStrength;
+//@property(name="_MainGradationMaskChannel", display="Gradation Mask Channel", mode=static, enum="0:None|1:R|2:G|3:B|4:A")
+uniform int _MainGradationMaskChannel;
+//@property(name="_MainTintColor", display="Tint Color", mode=static, default="vec4(1.0, 1.0, 1.0, 0.0)")
+uniform vec4 _MainTintColor;
+//@property(name="_MainTintTexture", display="Tint Texture", slot=texture)
+uniform sampler2D _MainTintTexture;
+uniform vec4 _MainTintTexture_ST;
+uniform vec2 _MainTintTexturePan;
+uniform int _MainTintTextureUV;
+//@property(name="_MainHueGlobalMask", display="Hue Global Mask", mode=static, range=[0,16])
+uniform int _MainHueGlobalMask;
+//@property(name="_MainHueGlobalMaskBlendType", display="Hue Global Mask Blend", mode=static, default="2")
+uniform int _MainHueGlobalMaskBlendType;
+//@property(name="_MainSaturationGlobalMask", display="Saturation Global Mask", mode=static, range=[0,16])
+uniform int _MainSaturationGlobalMask;
+//@property(name="_MainSaturationGlobalMaskBlendType", display="Saturation Global Mask Blend", mode=static, default="2")
+uniform int _MainSaturationGlobalMaskBlendType;
+//@property(name="_MainBrightnessGlobalMask", display="Brightness Global Mask", mode=static, range=[0,16])
+uniform int _MainBrightnessGlobalMask;
+//@property(name="_MainBrightnessGlobalMaskBlendType", display="Brightness Global Mask Blend", mode=static, default="2")
+uniform int _MainBrightnessGlobalMaskBlendType;
+//@property(name="_MainGammaGlobalMask", display="Gamma Global Mask", mode=static, range=[0,16])
+uniform int _MainGammaGlobalMask;
+//@property(name="_MainGammaGlobalMaskBlendType", display="Gamma Global Mask Blend", mode=static, default="2")
+uniform int _MainGammaGlobalMaskBlendType;
 #endif
 
 // ============================================
