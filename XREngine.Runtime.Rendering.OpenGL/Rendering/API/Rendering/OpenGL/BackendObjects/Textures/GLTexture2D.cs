@@ -168,9 +168,10 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         });
 
         // Immutable storage (glTextureStorage2D) cannot be re-allocated on the same
-        // GL name. If this resize arrives off the render thread, defer the destroy
-        // until the next upload entry point to avoid racing with a bind that still
-        // targets the old immutable texture object.
+        // GL name, so the name must be destroyed and generated again. The destroy runs
+        // now only on the render thread and only while no Advanced bindless lease or
+        // in-flight native work holds the current storage. Otherwise the flag stays set,
+        // and the next upload entry point applies the recreate before it uploads.
         if (requiresImmutableRecreate)
         {
             Debug.OpenGL(
@@ -178,18 +179,9 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
                 $"previousDims={previousW}x{previousH} previousLevels={previousLevels} " +
                 $"newDims={Data.Width}x{Data.Height} newMipmapCount={Mipmaps?.Length ?? 0} " +
                 $"onRenderThread={RuntimeEngine.IsRenderThread}.");
-            if (RuntimeEngine.IsRenderThread)
-            {
-                _pendingImmutableStorageRecreate = false;
-                if (GLSubmitTracer.Enabled)
-                    TracePreSubmit("Destroy.DataResized", previousLevels, previousW, previousH);
-                Destroy();
-            }
-            else
-            {
-                _pendingImmutableStorageRecreate = true;
+            _pendingImmutableStorageRecreate = true;
+            if (!TryApplyPendingImmutableStorageRecreate())
                 Invalidate();
-            }
         }
         else
         {
@@ -197,10 +189,21 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         }
     }
 
-    private void ApplyPendingImmutableStorageRecreate()
+    /// <summary>
+    /// Replaces the immutable storage when the texture data changed its size, so the next upload
+    /// fills storage with the new dimensions. Returns true when the storage matches the data (no
+    /// recreate was pending, or it ran now). Returns false while the recreate must wait: off the
+    /// render thread, while an Advanced bindless sampler-pair lease or in-flight native work
+    /// still references the current storage. The flag then stays set, and the caller must not
+    /// upload: the data no longer fits this storage (for example, small block-compressed levels
+    /// would not reach the edge of the old, smaller levels).
+    /// </summary>
+    private bool TryApplyPendingImmutableStorageRecreate()
     {
-        if (!_pendingImmutableStorageRecreate || !RuntimeEngine.IsRenderThread)
-            return;
+        if (!_pendingImmutableStorageRecreate)
+            return true;
+        if (!RuntimeEngine.IsRenderThread || HasActiveAdvancedBindlessPairLeases || HasInFlightNativeOperation)
+            return false;
 
         _pendingImmutableStorageRecreate = false;
         if (IsGenerated)
@@ -209,6 +212,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
                 TracePreSubmit("Destroy.ApplyPending", _allocatedLevels, _allocatedWidth, _allocatedHeight);
             Destroy();
         }
+        return true;
     }
 
     /// <summary>
@@ -221,7 +225,10 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
     /// </summary>
     protected override void EnsureStorageAllocatedForFBOAttach()
     {
-        ApplyPendingImmutableStorageRecreate();
+        // A recreate that must wait keeps the old storage on the GL name. Do not allocate
+        // storage again on that immutable name; the attach uses the old storage.
+        if (!TryApplyPendingImmutableStorageRecreate())
+            return;
 
         if (!Data.Resizable)
             EnsureStorageAllocated();

@@ -1,4 +1,4 @@
-using XREngine.Rendering.Shadows;
+﻿using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
@@ -29,8 +29,7 @@ internal sealed class VulkanAcceptedFramePlan
     private readonly FrameOp[] _staticOperations = new FrameOp[StaticCapacity];
     private readonly FrameOp[] _dynamicUiOperations = new FrameOp[UiCapacity];
     private readonly FrameOp[] _textureUploadOperations = new FrameOp[UploadCapacity];
-    private readonly XRTexture?[] _requiredTextures = new XRTexture?[UploadCapacity];
-    private readonly long[] _requiredTextureGenerations = new long[UploadCapacity];
+    private readonly VulkanRequiredTextureReferenceSet _requiredTextureSet = new(UploadCapacity);
     private readonly VulkanBindlessMaterialTextureReceipt[] _bindlessTextureReceipts =
         new VulkanBindlessMaterialTextureReceipt[UploadCapacity];
     private readonly GPUMaterialTextureReference[] _bindlessDescriptorReferences =
@@ -87,7 +86,7 @@ internal sealed class VulkanAcceptedFramePlan
     internal int StaticOperationCount { get; private set; }
     internal int DynamicUiOperationCount { get; private set; }
     internal int TextureUploadOperationCount { get; private set; }
-    internal int RequiredTextureCount { get; private set; }
+    internal int RequiredTextureCount => _requiredTextureSet.Count;
     internal int TerminalOperationCount { get; private set; }
     internal int MainSceneOperationCount { get; private set; }
     internal int ShadowOperationCount { get; private set; }
@@ -132,9 +131,12 @@ internal sealed class VulkanAcceptedFramePlan
     internal Span<FrameOp> AuthoredOperations
         => _authoredOperations.AsSpan(0, _authoredOperationCount);
     internal ReadOnlySpan<XRTexture?> RequiredTextures
-        => _requiredTextures.AsSpan(0, RequiredTextureCount);
+        => _requiredTextureSet.Textures;
     internal ReadOnlySpan<long> RequiredTextureGenerations
-        => _requiredTextureGenerations.AsSpan(0, RequiredTextureCount);
+        => _requiredTextureSet.Generations;
+
+    /// <summary>The required textures of this plan; the shared mesh-request capture fills it.</summary>
+    internal VulkanRequiredTextureReferenceSet RequiredTextureSet => _requiredTextureSet;
     internal ReadOnlySpan<RenderFrameViewHistoryBackendReservation> FrameViewHistory
         => _frameViewHistory.AsSpan(0, _frameViewHistoryCount);
     internal bool HasClaimedFrameViewHistory => _frameViewHistoryClaimed;
@@ -979,32 +981,14 @@ internal sealed class VulkanAcceptedFramePlan
     }
 
     /// <summary>
-    /// Freezes texture owners directly from the raw visible mesh cohort before
-    /// material-table rows or descriptor snapshots are produced. PresentNow
-    /// records the descriptor generation that is already published. Pending
-    /// residency promotions remain inter-frame work and become visible after
-    /// their atomic descriptor publication.
+    /// Throws when the plan is sealed. Required textures may be added to
+    /// <see cref="RequiredTextureSet"/> only before the plan is sealed.
     /// </summary>
-    internal void CaptureRequiredTextureReferences(
-        ReadOnlySpan<VulkanMeshRenderRequest> requests)
+    internal void ThrowIfSealed()
     {
         if (IsSealed)
             throw new InvalidOperationException(
                 "The accepted frame plan is already sealed.");
-
-        for (int index = 0; index < requests.Length; index++)
-        {
-            ref readonly VulkanMeshRenderRequest request = ref requests[index];
-            CaptureMaterialTextureReferences(
-                request.ResolvedMaterial.Material,
-                includePendingUploadGeneration: false);
-            CaptureMaterialTextureReferences(
-                request.ResolvedMaterial.ShadowUniformSourceMaterial,
-                includePendingUploadGeneration: false);
-            CaptureMaterialTextureReferences(
-                request.MaterialOverride,
-                includePendingUploadGeneration: false);
-        }
     }
 
     /// <summary>
@@ -1142,16 +1126,7 @@ internal sealed class VulkanAcceptedFramePlan
         XRMaterial? material,
         bool includePendingUploadGeneration = false)
     {
-        if (material is null)
-            return;
-
-        for (int index = 0; index < material.Textures.Count; index++)
-        {
-            AddRequiredTextureReference(
-                material.Textures[index],
-                includePendingUploadGeneration:
-                    includePendingUploadGeneration);
-        }
+        _requiredTextureSet.AddMaterialTextures(material, includePendingUploadGeneration);
     }
 
     private void CaptureSnapshotTextureReferences(
@@ -1292,50 +1267,7 @@ internal sealed class VulkanAcceptedFramePlan
         long explicitGeneration = 0L,
         bool includePendingUploadGeneration = false)
     {
-        if (texture is null)
-            return;
-        long requiredGeneration = explicitGeneration;
-        if (requiredGeneration <= 0L && texture is XRTexture2D texture2D &&
-            ImportedTextureStreamingManager.Instance.TryGetGenerationState(
-                texture2D,
-                out long publishedGeneration,
-                out long uploadGeneration,
-                out _,
-                out _))
-        {
-            // Before materialization, the accepted visible cohort owns the
-            // newest requested generation so foreground readiness can finish it
-            // before descriptor capture. Once the logical plan is sealed, only
-            // a generation that has already published may refine the snapshot.
-            // Admitting a newly pending upload at that point would mutate the
-            // accepted frame and demand descriptor publication for bindings the
-            // sealed plan does not reference.
-            requiredGeneration = includePendingUploadGeneration
-                ? Math.Max(publishedGeneration, uploadGeneration)
-                : publishedGeneration;
-        }
-        for (int index = 0; index < RequiredTextureCount; index++)
-            if (ReferenceEquals(_requiredTextures[index], texture))
-            {
-                if (requiredGeneration > 0L)
-                {
-                    _requiredTextureGenerations[index] = Math.Max(
-                        _requiredTextureGenerations[index],
-                        requiredGeneration);
-                }
-                return;
-            }
-        if (RequiredTextureCount >= _requiredTextures.Length)
-        {
-            throw new VulkanAcceptedFramePlanCapacityException(
-                EVulkanAcceptedFrameLane.Upload,
-                _requiredTextures.Length,
-                RequiredTextureCount + 1);
-        }
-
-        _requiredTextures[RequiredTextureCount] = texture;
-        _requiredTextureGenerations[RequiredTextureCount] = requiredGeneration;
-        RequiredTextureCount++;
+        _requiredTextureSet.Add(texture, explicitGeneration, includePendingUploadGeneration);
     }
 
     internal ref VulkanFrameDependencyTicket AddDependency(
@@ -1792,8 +1724,7 @@ internal sealed class VulkanAcceptedFramePlan
         _staticOperations.AsSpan(0, StaticOperationCount).Clear();
         _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
         _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();
-        _requiredTextures.AsSpan(0, RequiredTextureCount).Clear();
-        _requiredTextureGenerations.AsSpan(0, RequiredTextureCount).Clear();
+        _requiredTextureSet.Clear();
         _bindlessDescriptorReferences.AsSpan(0, _bindlessDescriptorReferenceCount).Clear();
         _bindlessDescriptorReferenceCount = 0;
         for (int index = 0; index < DependencyCount; index++)
@@ -1812,7 +1743,6 @@ internal sealed class VulkanAcceptedFramePlan
         StaticOperationCount = 0;
         DynamicUiOperationCount = 0;
         TextureUploadOperationCount = 0;
-        RequiredTextureCount = 0;
         TerminalOperationCount = 0;
         MainSceneOperationCount = 0;
         ShadowOperationCount = 0;

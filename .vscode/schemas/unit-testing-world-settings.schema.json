@@ -801,6 +801,10 @@
           "type": "boolean",
           "description": "Enables or disables VirtualGeometry."
         },
+        "SkinnedVirtualGeometry": {
+          "type": "boolean",
+          "description": "Enables or disables SkinnedVirtualGeometry."
+        },
         "VirtualGeometryPixelThreshold": {
           "type": "number",
           "description": "Generated from VirtualGeometryPixelThreshold on UnitTestingRenderSettings."

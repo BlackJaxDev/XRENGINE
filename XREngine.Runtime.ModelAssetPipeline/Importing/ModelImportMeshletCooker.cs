@@ -1,4 +1,4 @@
-using XREngine.Rendering.Meshlets;
+﻿using XREngine.Rendering.Meshlets;
 using XREngine.Rendering.Models.Caching;
 using System.Text;
 using XREngine.Components.Scene.Mesh;
@@ -63,6 +63,7 @@ public static class ModelImportMeshletCooker
             ModelCookOverrideEntry? overrideEntry = overrides?.Entries.FirstOrDefault(x => string.Equals(x.EntityKey.Value, localEntityIdentity, StringComparison.Ordinal));
             if (overrideEntry is not null)
                 subMesh.MeshOptimizer = Clone(overrideEntry.Settings, useModelImportDefaults: false);
+            ApplySkinnedClusterHierarchyPolicy(subMesh);
 
             string ownerIdentity = $"{stableModelIdentity}/{localEntityIdentity}";
             AssignStableLodKeys(subMesh, ownerIdentity, subMeshIndex);
@@ -90,6 +91,7 @@ public static class ModelImportMeshletCooker
                     entityKey.Value,
                     subMesh.MeshOptimizer.Meshlets,
                     subMesh.MeshOptimizer.Lods);
+                long cookCountBefore = MeshOptimizerIntegration.MeshletBuildInvocationCount;
                 MeshletPayload payload = mesh.GetOrCreateMeshletPayload(
                     subMesh.MeshOptimizer.Meshlets,
                     subMesh.MeshOptimizer.Lods,
@@ -99,7 +101,16 @@ public static class ModelImportMeshletCooker
                 payloadCount++;
                 meshletCount += payload.Meshlets.Length;
                 if (payload.HasClusterHierarchy)
+                {
                     hierarchyTotals.Add(payload);
+                    // The locked-vertex count exists only at cook time; a cache hit leaves it out.
+                    if (cookCountBefore != MeshOptimizerIntegration.MeshletBuildInvocationCount && payload.HasClusterSkinning)
+                    {
+                        hierarchyTotals.SkinnedVertices += MeshOptimizerIntegration.LastClusterHierarchyStats.SkinnedVertexCount;
+                        hierarchyTotals.MorphLockedVertices += MeshOptimizerIntegration.LastClusterHierarchyStats.MorphLockedVertexCount;
+                        hierarchyTotals.NonFiniteCentroids += MeshOptimizerIntegration.LastClusterHierarchyStats.NonFiniteCentroidCount;
+                    }
+                }
                 lodIndex++;
             }
         }
@@ -130,9 +141,42 @@ public static class ModelImportMeshletCooker
         public long SourceTriangles;
         public long HierarchyTriangles;
         public long Level0Triangles;
+        public int SkinnedPayloads;
+        public long SkinnedClusters;
+        public long ClusterBones;
+        public int MaxClusterBones;
+        public long MorphClusters;
+        public long SkinnedVertices;
+        public long MorphLockedVertices;
+        public long NonFiniteCentroids;
+        /// <summary>Triangles of the skinned payloads by hierarchy level (index 0 = original geometry).</summary>
+        public long[]? SkinnedLevelTriangles;
 
         public void Add(MeshletPayload payload)
         {
+            if (payload.HasClusterSkinning)
+            {
+                SkinnedPayloads++;
+                SkinnedClusters += payload.ClusterSkins.Length;
+                ClusterBones += payload.ClusterBones.Length;
+                foreach (MeshletClusterSkinRecord skin in payload.ClusterSkins)
+                {
+                    MaxClusterBones = Math.Max(MaxClusterBones, skin.BoneCount);
+                    if (skin.HasMorphVertices)
+                        MorphClusters++;
+                }
+
+                // A cluster's level is 0 for the original geometry, otherwise one more than the
+                // depth of the group it was simplified from.
+                SkinnedLevelTriangles ??= new long[32];
+                for (int i = 0; i < payload.Meshlets.Length; i++)
+                {
+                    int level = i < payload.ClusterLevel0Count
+                        ? 0
+                        : payload.LodGroups[payload.ClusterLods[i].RefinedGroup].Depth + 1;
+                    SkinnedLevelTriangles[Math.Min(level, SkinnedLevelTriangles.Length - 1)] += payload.Meshlets[i].TriangleCount;
+                }
+            }
             PayloadCount++;
             Clusters += payload.Meshlets.Length;
             Level0Clusters += payload.ClusterLevel0Count;
@@ -165,6 +209,23 @@ public static class ModelImportMeshletCooker
             $"groups={totals.Groups} maxLevels={totals.MaxLevels} sourceTriangles={totals.SourceTriangles} level0Triangles={totals.Level0Triangles} " +
             $"allLevelTriangles={totals.HierarchyTriangles} triangleRatio={(totals.Level0Triangles == 0 ? 0.0 : (double)totals.HierarchyTriangles / totals.Level0Triangles):F2} " +
             $"cookMs={cookTime.TotalMilliseconds:F0} cacheBytes={cacheBytes} cacheHits={cache?.HitCount ?? 0} cacheMisses={cache?.MissCount ?? 0}");
+        if (totals.SkinnedPayloads > 0)
+        {
+            long[] levels = totals.SkinnedLevelTriangles ?? [];
+            int lastLevel = levels.Length - 1;
+            while (lastLevel > 0 && levels[lastLevel] == 0)
+                lastLevel--;
+            string levelTriangles = string.Join(',', levels.Take(lastLevel + 1));
+            Debug.WriteAuxiliaryLog(
+                "meshlet-cache.log",
+                $"[ClusterHierarchySkinned] model={modelIdentity} payloads={totals.SkinnedPayloads} clusters={totals.SkinnedClusters} " +
+                $"bonesPerCluster={(totals.SkinnedClusters == 0 ? 0.0 : (double)totals.ClusterBones / totals.SkinnedClusters):F2} " +
+                $"maxClusterBones={totals.MaxClusterBones} morphClusters={totals.MorphClusters} " +
+                $"skinnedVertices={totals.SkinnedVertices} morphLockedVertices={totals.MorphLockedVertices} " +
+                $"lockedShare={(totals.SkinnedVertices == 0 ? 0.0 : (double)totals.MorphLockedVertices / totals.SkinnedVertices):P1} " +
+                $"nonFiniteCentroids={totals.NonFiniteCentroids} levelTriangles={levelTriangles} (vertex counts only for payloads cooked in this process)");
+        }
+
         // Crack-free checks of the hierarchies built (not read from the cache) in this process.
         MeshletClusterHierarchyBuilder.InvariantReport checks = MeshletClusterHierarchyBuilder.InvariantTotals;
         Debug.WriteAuxiliaryLog(
@@ -172,7 +233,8 @@ public static class ModelImportMeshletCooker
             $"[ClusterHierarchyChecks] cookVersion={MeshletClusterHierarchyBuilder.CookVersion} " +
             $"self={checks.SelfFailures}/{checks.SelfChecks} monotonic={checks.MonotonicFailures}/{checks.MonotonicChecks} " +
             $"containment={checks.ContainmentFailures}/{checks.ContainmentChecks} (failures/checks) " +
-            $"borderRejected={checks.BorderRejections}/{checks.BorderChecks} (rejected simplifications/checks)");
+            $"borderRejected={checks.BorderRejections}/{checks.BorderChecks} (rejected simplifications/checks) " +
+            $"ended empty={checks.EndedEmpty} noReduction={checks.EndedNoReduction} nonFiniteError={checks.EndedNonFiniteError}");
     }
 
     private static ModelImportMeshletPayloadCache? OpenPayloadCache(string stableModelIdentity)
@@ -203,6 +265,29 @@ public static class ModelImportMeshletCooker
             "meshlet-cache.log",
             $"[MeshletCache] file={Path.GetFileName(cache.FilePath)} stored={cache.StoredCount} hits={cache.HitCount} " +
             $"misses={cache.MissCount} rejected={cache.RejectedCount} written={written}{(failure is null ? string.Empty : $" writeFailure={failure}")}");
+    }
+
+    /// <summary>
+    /// Gives a skinned sub-mesh that builds meshlets a cluster hierarchy, so skinned meshes use
+    /// virtual geometry like static meshes. The sub-mesh gets its own settings copy with the flag
+    /// set, so its payload hash and freshness checks see the settings that cooked it. A sub-mesh
+    /// is skinned when any of its LOD meshes has bone influences.
+    /// </summary>
+    private static void ApplySkinnedClusterHierarchyPolicy(SubMesh subMesh)
+    {
+        MeshletGenerationSettings meshlets = subMesh.MeshOptimizer.Meshlets;
+        if (!meshlets.Enabled || meshlets.BuildClusterHierarchy)
+            return;
+
+        bool skinned = false;
+        foreach (SubMeshLOD lod in subMesh.LODs)
+            skinned |= lod.Mesh?.HasSkinning == true;
+        if (!skinned)
+            return;
+
+        MeshletGenerationSettings hierarchy = Clone(meshlets);
+        hierarchy.BuildClusterHierarchy = true;
+        subMesh.MeshOptimizer.Meshlets = hierarchy;
     }
 
     private static void ApplyModelDefaultsWhenUnspecified(SubMesh subMesh, ModelCookSettings defaults)

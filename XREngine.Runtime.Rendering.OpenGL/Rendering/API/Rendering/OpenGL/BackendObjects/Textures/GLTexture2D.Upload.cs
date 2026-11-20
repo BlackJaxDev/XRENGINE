@@ -32,13 +32,28 @@ public partial class GLTexture2D
     /// material publication pending while either progressive uploader still owns that range.
     /// </summary>
     protected override bool IsReadyForBindlessHandle()
-        => !Data.RuntimeManagedProgressiveUploadActive
-            && !Data.RuntimeManagedProgressiveFinalizePending
-            && !TextureUploadScheduler.Instance.HasPendingUpload(Data)
-            && _progressiveVisibleBaseLevel < 0
-            && !HasInFlightNativeOperation
+        => !UploadOwnsMipRange
             && (!ImportedTextureStreamingManager.Instance.TryGetGenerationState(
                 Data, out _, out _, out _, out bool hasPendingTransition) || !hasPendingTransition);
+
+    /// <summary>
+    /// A streaming transition in decode or cache read has not changed this texture yet:
+    /// <see cref="XRTexture2D.ApplyResidentData"/> and the upload that follows it start only after
+    /// the decode. So only the upload states that own the native mip range block the handle.
+    /// </summary>
+    protected override bool IsReadyForBindlessHandleDuringStreamingDecode()
+        => !UploadOwnsMipRange;
+
+    /// <summary>
+    /// True while a progressive upload, a scheduled upload, a progressive visible-range override
+    /// or in-flight sparse work owns the native mip range of this texture.
+    /// </summary>
+    private bool UploadOwnsMipRange
+        => Data.RuntimeManagedProgressiveUploadActive
+            || Data.RuntimeManagedProgressiveFinalizePending
+            || TextureUploadScheduler.Instance.HasPendingUpload(Data)
+            || _progressiveVisibleBaseLevel >= 0
+            || HasInFlightNativeOperation;
 
     private void ResetUnpackStateForTextureUpload()
         => ResetUnpackStateForTextureUpload(Api);
@@ -119,7 +134,10 @@ public partial class GLTexture2D
                 return;
             }
 
-            ApplyPendingImmutableStorageRecreate();
+            // Retry on a later bind while the old storage is still leased: the data has new
+            // dimensions and must not be uploaded into it.
+            if (!TryApplyPendingImmutableStorageRecreate())
+                return;
             Bind();
 
             GLEnum glTarget = ToGLEnum(TextureTarget);
@@ -628,7 +646,8 @@ public partial class GLTexture2D
         if (Data.RuntimeManagedProgressiveUploadActive && !EnsureBindlessParametersMutable())
             return false;
 
-        ApplyPendingImmutableStorageRecreate();
+        if (!TryApplyPendingImmutableStorageRecreate())
+            return false;
         Generate();
 
         IGLTexture? previousTexture = Renderer.BoundTexture;
@@ -1278,11 +1297,13 @@ public partial class GLTexture2D
 
     private bool TryRecreateImmutableStorageForUploadMismatch(GLEnum glTarget)
     {
-        _pendingImmutableStorageRecreate = false;
         int previousGeneration = CurrentStorageGeneration;
 
-        if (IsGenerated)
-            Destroy();
+        // The GL name cannot be destroyed while an Advanced bindless lease or in-flight
+        // native work holds it. Keep the recreate pending; a later upload applies it.
+        _pendingImmutableStorageRecreate = true;
+        if (!TryApplyPendingImmutableStorageRecreate())
+            return false;
 
         uint binding = BindingId;
         if (binding == InvalidBindingId)

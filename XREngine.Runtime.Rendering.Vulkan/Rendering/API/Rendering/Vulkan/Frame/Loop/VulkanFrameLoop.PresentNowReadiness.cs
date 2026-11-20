@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Shadows;
@@ -253,13 +253,11 @@ internal sealed partial class VulkanFrameLoop
             }
 
             attempt.PresentNowMeshRequestCount = requestCount;
-            acceptedPlan.CaptureRequiredTextureReferences(
-                _meshOperationRequestScratch.AsSpan(0, requestCount));
-            _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            acceptedPlan.ThrowIfSealed();
+            CaptureRequiredMeshTextureUploads(
+                acceptedPlan.RequiredTextureSet,
                 acceptedPlan.RequiredTextureUploads,
-                acceptedPlan.RequiredTextures,
-                acceptedPlan.RequiredTextureGenerations,
-                requireExactDescriptorPublication: false);
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
             if (!CompleteAcceptedPresentNowTextureReadiness(
                     acceptedPlan,
                     ref watchdog,
@@ -1063,6 +1061,26 @@ internal sealed partial class VulkanFrameLoop
 
     private VulkanTextureUploadSchedulingContext CreatePresentNowUploadContext()
         => CreateTextureUploadSchedulingContext();
+
+    /// <summary>
+    /// Adds the material textures of <paramref name="requests"/> to <paramref name="textures"/> and
+    /// captures the required-upload manifest for every texture in the set. The desktop PresentNow
+    /// path, explicit production, and the OpenXR eye path all use this one capture, so a visible
+    /// mesh always declares the same texture generations, and a texture that the current device
+    /// has never uploaded is found through the manifest on every path.
+    /// </summary>
+    private void CaptureRequiredMeshTextureUploads(
+        VulkanRequiredTextureReferenceSet textures,
+        VulkanTextureUploadManifest manifest,
+        ReadOnlySpan<VulkanMeshRenderRequest> requests)
+    {
+        textures.AddMeshRequestMaterialTextures(requests);
+        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            manifest,
+            textures.Textures,
+            textures.Generations,
+            requireExactDescriptorPublication: false);
+    }
 
     private bool CompleteAcceptedPresentNowTextureReadiness(
         VulkanAcceptedFramePlan acceptedPlan,

@@ -134,6 +134,7 @@ public static partial class EditorUnitTests
             s.VulkanPresentationProfile = runtimeSettings.Rendering.Vulkan.PresentationProfile;
             s.Vulkan.Startup.FallbackPolicy = runtimeSettings.Rendering.BackendFallbackPolicy;
             s.AdvancedVirtualGeometry = runtimeSettings.Rendering.VirtualGeometry;
+            s.AdvancedSkinnedVirtualGeometry = runtimeSettings.Rendering.SkinnedVirtualGeometry;
             s.AdvancedVirtualGeometryPixelThreshold = runtimeSettings.Rendering.VirtualGeometryPixelThreshold;
         }
         else if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))

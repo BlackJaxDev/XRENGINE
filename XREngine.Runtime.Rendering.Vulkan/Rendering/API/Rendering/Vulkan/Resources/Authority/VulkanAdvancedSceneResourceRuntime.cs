@@ -1350,7 +1350,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 // the row draws its fallback or the publication is rejected.
                 if (!IsStaleTextureRowAllowed(staleRowPolicy, recordedStaleRows, denseIndex))
                 {
-                    reason = $"Canonical texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication ({drift}): {DescribeTextureStateMismatch(current.TextureRecord, canonical)}";
+                    reason = $"Canonical texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication ({drift}): {AdvancedTextureResidencyDrift.DescribeTextureStateMismatch(current.TextureRecord, canonical)}";
                     return false;
                 }
                 _staleTextureRowScratch[denseIndex] = 1;
@@ -1429,7 +1429,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 mismatch = EAdvancedTextureSourceMismatch.SamplerChanged;
             if (mismatch != EAdvancedTextureSourceMismatch.None)
             {
-                reason = $"Material texture binding {bindingIndex} source '{source.Name ?? source.GetType().Name}' changed after publication ({drift}): texture=({DescribeTextureStateMismatch(current.TextureRecord, canonicalTexture)}), sampler=({DescribeSamplerStateMismatch(current.SamplerRecord, canonicalSampler)})";
+                reason = $"Material texture binding {bindingIndex} source '{source.Name ?? source.GetType().Name}' changed after publication ({drift}): texture=({AdvancedTextureResidencyDrift.DescribeTextureStateMismatch(current.TextureRecord, canonicalTexture)}), sampler=({AdvancedTextureResidencyDrift.DescribeSamplerStateMismatch(current.SamplerRecord, canonicalSampler)})";
                 return false;
             }
             if (!snapshot.Samplers.TryGetDenseIndex(
@@ -3481,11 +3481,6 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             0u,
             EAdvancedResourceReferenceFlags.Fallback);
 
-    private static string DescribeTextureStateMismatch(
-        in AdvancedTextureRecord current,
-        in AdvancedTextureRecord published)
-        => $"dimension={current.Dimension}/{published.Dimension}, flags={current.Flags}/{published.Flags}, extent={current.Width}x{current.Height}x{current.DepthOrLayers}/{published.Width}x{published.Height}x{published.DepthOrLayers}, mips={current.MipCount}/{published.MipCount}, format={current.FormatClass}/{published.FormatClass}, uv={current.UvScaleBias}/{published.UvScaleBias}";
-
     private static bool SamplerStateEquals(
         in AdvancedSamplerRecord left,
         in AdvancedSamplerRecord right)
@@ -3498,11 +3493,6 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                left.LodBiasMinMaxAnisotropy,
                right.LodBiasMinMaxAnisotropy) &&
            VectorBitsEqual(left.BorderColor, right.BorderColor);
-
-    private static string DescribeSamplerStateMismatch(
-        in AdvancedSamplerRecord current,
-        in AdvancedSamplerRecord published)
-        => $"filter={current.Filter}/{published.Filter}, flags={current.Flags}/{published.Flags}, address={current.AddressU},{current.AddressV},{current.AddressW}/{published.AddressU},{published.AddressV},{published.AddressW}, compare={current.CompareOperation}/{published.CompareOperation}, lod={current.LodBiasMinMaxAnisotropy}/{published.LodBiasMinMaxAnisotropy}, border={current.BorderColor}/{published.BorderColor}";
 
     private static bool VectorBitsEqual(Vector4 left, Vector4 right)
         => CanonicalFloatBits(left.X) == CanonicalFloatBits(right.X) &&

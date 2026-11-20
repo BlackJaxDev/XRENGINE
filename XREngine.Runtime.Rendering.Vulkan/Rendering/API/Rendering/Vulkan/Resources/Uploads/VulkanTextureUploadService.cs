@@ -333,6 +333,23 @@ internal sealed partial class VulkanTextureUploadService
         return false;
     }
 
+    /// <summary>
+    /// Matches each required texture generation of <paramref name="manifest"/> with its upload
+    /// ticket on this service, and requests the restoration of a published generation that this
+    /// service has never uploaded (for example, after a renderer restart created a new device).
+    /// Unlike <see cref="DrainRequiredTextureUploads"/>, it does not prepare or transfer anything,
+    /// so a caller that records commands under a synchronous-upload block can use it; the normal
+    /// upload pump completes the requested work. Returns true when every required generation is
+    /// ready for descriptor use.
+    /// </summary>
+    internal bool RequestRequiredTextureUploads(
+        VulkanTextureUploadSchedulingContext context,
+        VulkanTextureUploadManifest manifest)
+    {
+        RefreshRequiredUploadGenerations(context, manifest);
+        return manifest.AreAllReady;
+    }
+
     internal bool DrainRequiredTextureUploads(
         VulkanTextureUploadSchedulingContext context,
         VulkanTextureUploadManifest manifest,

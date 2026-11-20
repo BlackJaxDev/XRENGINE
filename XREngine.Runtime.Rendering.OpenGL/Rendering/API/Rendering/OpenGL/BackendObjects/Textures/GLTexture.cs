@@ -397,6 +397,13 @@ namespace XREngine.Rendering.OpenGL
             return Volatile.Read(ref _bindlessParametersFrozen) == 0;
         }
 
+        /// <summary>
+        /// True while a submitted Advanced GL slot holds a bindless sampler-pair lease on this
+        /// texture. The native storage must not be deleted until the lease ends.
+        /// </summary>
+        protected bool HasActiveAdvancedBindlessPairLeases
+            => Volatile.Read(ref _activeAdvancedBindlessPairHandleCount) != 0;
+
         /// <summary>Whether an acquired bindless handle has frozen this texture's parameters.</summary>
         protected bool HasFrozenBindlessParameters
             => Volatile.Read(ref _bindlessParametersFrozen) != 0;
@@ -406,6 +413,9 @@ namespace XREngine.Rendering.OpenGL
 
         bool IGLBindlessTexture.IsReadyForBindlessHandle()
             => IsReadyForBindlessHandle();
+
+        bool IGLBindlessTexture.IsReadyForBindlessHandleDuringStreamingDecode()
+            => IsReadyForBindlessHandleDuringStreamingDecode();
 
         void IGLBindlessTexture.MarkBindlessHandleAcquired(ulong handle)
             => MarkBindlessHandleAcquired(handle);
@@ -438,6 +448,14 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         protected virtual bool IsReadyForBindlessHandle()
             => true;
+
+        /// <summary>
+        /// Readiness that ignores a streaming transition still in decode or cache read. Base
+        /// textures have no such transition; derived types override this with the states that own
+        /// the native mip range.
+        /// </summary>
+        protected virtual bool IsReadyForBindlessHandleDuringStreamingDecode()
+            => IsReadyForBindlessHandle();
 
         /// <summary>Derived textures can retain native work after their manager request is canceled.</summary>
         protected virtual bool HasInFlightNativeOperation

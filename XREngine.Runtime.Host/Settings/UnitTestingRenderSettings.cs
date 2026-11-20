@@ -1,4 +1,4 @@
-namespace XREngine.Runtime.Bootstrap;
+﻿namespace XREngine.Runtime.Bootstrap;
 
 public class UnitTestingRenderSettings
 {
@@ -21,6 +21,12 @@ public class UnitTestingRenderSettings
     /// cluster cut of models cooked with a cluster hierarchy (<c>GenerateClusterHierarchy</c>).
     /// </summary>
     public bool VirtualGeometry { get; set; }
+
+    /// <summary>
+    /// Sets the <c>AdvancedSkinnedVirtualGeometry</c> engine setting: with <see cref="VirtualGeometry"/>
+    /// on, skinned meshlet draws also get the cluster cut. False (the default) keeps them at full detail.
+    /// </summary>
+    public bool SkinnedVirtualGeometry { get; set; }
 
     /// <summary>
     /// Sets the <c>AdvancedVirtualGeometryPixelThreshold</c> engine setting: the cluster cut

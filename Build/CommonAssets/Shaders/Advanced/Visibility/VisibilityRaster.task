@@ -121,6 +121,13 @@ void main()
             // A cluster that enters the cut has no history bit, so the late raster
             // tests it against this frame's depth pyramid.
             XRAdvancedClusterCutState cut = XR_ADV_ClusterCutState(payload.geometry, producer, viewIndex, view);
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
+            // A skinned draw has no posed cluster bounds: one distance, from the
+            // draw's posed bounds, serves every cluster. Its clusters still skip
+            // the frustum, cone, history and Hi-Z tests below.
+            if (producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
+                XR_ADV_ClusterCutUseDrawBound(cut, payloadIndex, payload, drawState);
+#endif
             bool inCut = !cut.applies || XR_ADV_ClusterInCut(meshletIndex, cut, drawState);
             cullReason = inCut
                 ? XR_ADV_ClassifyVisibilityMeshlet(

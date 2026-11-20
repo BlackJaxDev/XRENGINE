@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Rendering.Compute;
@@ -875,6 +875,14 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             AabbMin = canonicalGeometry.BoundsMin,
             AabbMax = canonicalGeometry.BoundsMax,
         };
+        // The skinned cluster cut measures one distance per draw from the posed instance bounds
+        // (and the candidate sphere), which every skinned draw has. Its candidate carries the
+        // blendshape margin.
+        bool skinnedClusterCut = skinned && AdvancedVirtualGeometryPolicy.SkinnedEnabled;
+        float clusterCutMargin =
+            skinnedClusterCut && mesh is { HasBlendshapes: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+                ? mesh.GetMaxBlendshapeDisplacement()
+                : 0.0f;
         if (skinned && _gpuDeformation.UsesPackedAggregateInputs)
         {
             if (!publication.Draws.TryGet(draw, out AdvancedDrawRecord canonicalDraw) ||
@@ -895,14 +903,17 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 commandBounds.AabbMax,
                 ViewMask: ulong.MaxValue,
                 BvhLeaf: 0u,
-                visibilityFlags);
+                visibilityFlags)
+            {
+                ClusterCutMargin = clusterCutMargin,
+            };
 
         bool hasCanonicalGeometry = geometry.IsValid && canonicalGeometry.IsResident;
         AdvancedSceneGeometryOffsets offsets = ResolveGeometryOffsets(
             hasCanonicalGeometry,
             in canonicalGeometry,
             command.SkinID,
-            clusterCut: !skinned && AdvancedVirtualGeometryPolicy.Enabled);
+            clusterCut: AdvancedVirtualGeometryPolicy.Enabled && (!skinned || skinnedClusterCut));
         if (skinned && (renderer is null || mesh is not { VertexCount: > 0 }))
             throw new InvalidOperationException(
                 $"Advanced draw {draw} requires a captured primitive mesh and renderer for deformation.");
@@ -1728,7 +1739,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     /// <summary>
     /// Reads the arena offsets and the meshlet range of a draw's geometry for its visibility
     /// payload. With <paramref name="clusterCut"/> (a static draw while Advanced virtual geometry
-    /// is on), the range holds the meshlets of every level and the task stage selects the cut;
+    /// is on, or a skinned draw with posed bounds while the skinned cut is also on), the range
+    /// holds the meshlets of every level and the task stage selects the cut;
     /// otherwise it holds only the level-0 meshlets of a cluster hierarchy geometry.
     /// </summary>
     private static AdvancedSceneGeometryOffsets ResolveGeometryOffsets(
