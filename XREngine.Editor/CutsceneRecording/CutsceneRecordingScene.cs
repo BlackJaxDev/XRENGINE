@@ -83,7 +83,12 @@ internal sealed class CutsceneRecordingScene
                 _rootNodes.Add(root);
         }
 
-        RenderPipeline capturePipeline = RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline();
+        // The recording uses the desktop Advanced pipeline, so a recorded frame looks like the editor view and keeps
+        // Advanced-only passes, for example ordered late surfaces that blend with a scene color snapshot. The window
+        // viewport already owns an Advanced pipeline with a bound window output, so the recording reuses it.
+        AdvancedRenderPipeline capturePipeline = Viewport.RenderPipeline as AdvancedRenderPipeline ?? new AdvancedRenderPipeline(false);
+        // Editor selection outlines must not appear in the recorded frames.
+        capturePipeline.EnableEditorHighlightModule = false;
         CameraComponent? firstCamera = null;
         UICanvasComponent? screenCanvas = null;
         for (int i = 0; i < _rootNodes.Count; i++)

@@ -171,6 +171,23 @@ internal static class CutsceneLockstepRecorder
     }
 
     /// <summary>
+    /// Returns the reason that the renderer gives when it has no submitted frame of the recording viewport to read back,
+    /// for the timeout message.
+    /// </summary>
+    private static string DescribeReadbackFailure(CutsceneRecordingScene scene)
+    {
+        try
+        {
+            using IDisposable? scope = scene.Viewport.EnterRenderPipelineReadbackScope();
+            return string.Empty;
+        }
+        catch (InvalidOperationException ex)
+        {
+            return " Readback: " + ex.Message;
+        }
+    }
+
+    /// <summary>
     /// Waits until the scene has been ready for <paramref name="requiredReadyFrames"/> consecutive rendered frames and a
     /// render pipeline readback scope is free.
     /// </summary>
@@ -212,7 +229,8 @@ internal static class CutsceneLockstepRecorder
             {
                 throw new TimeoutException(
                     $"Timed out after {elapsed.TotalSeconds:F1}s waiting for the recording viewport " +
-                    $"(sceneReady={sceneReady}, readbackReady={readbackReady}, {scene.DescribeReadiness()}).");
+                    $"(sceneReady={sceneReady}, readbackReady={readbackReady}, {scene.DescribeReadiness()})." +
+                    (readbackReady ? string.Empty : DescribeReadbackFailure(scene)));
             }
 
             await Task.Delay(16, cancellationToken).ConfigureAwait(false);

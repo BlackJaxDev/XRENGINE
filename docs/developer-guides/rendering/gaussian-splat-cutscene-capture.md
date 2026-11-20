@@ -131,7 +131,9 @@ The recorder changes only capture settings. It does not add content.
   `SettleSubstepsAfterDiscontinuity` (default 30) steps, so the chains hang under gravity before the frame shows.
 - It runs each physics chain on the CPU in discrete fixed steps with no sleep and no distance culling, so two recordings
   give the same chain motion.
-- It renders every camera with the offscreen capture pipeline, no anti-aliasing, no bloom, and a fixed exposure of 1.
+- It renders every camera with the desktop Advanced pipeline of the window viewport, with the editor highlight
+  module off, no anti-aliasing, no bloom, and a fixed exposure of 1. Advanced-only passes, such as ordered late
+  surfaces that blend with a scene color snapshot, appear in the video.
 - It gives the first screen-space `UICanvasComponent` of the world to the viewport and to every camera.
 - It requests every material texture at full resolution and keeps it resident for the whole recording.
 - Before the capture, it renders a frame inside each camera cut clip and waits until the world is ready, so the

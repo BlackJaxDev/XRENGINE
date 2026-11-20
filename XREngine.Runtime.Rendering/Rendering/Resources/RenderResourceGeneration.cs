@@ -10,13 +10,15 @@ namespace XREngine.Rendering.Resources;
 /// <param name="layout">The layout of the render pipeline resources.</param>
 /// <param name="ownerPipeline">The pipeline asset whose layout and callbacks own this generation.</param>
 /// <param name="pipelineRevision">The viewport-instance-local pipeline revision that created this generation.</param>
+/// <param name="commandGeneration">The command chain generation of <paramref name="ownerPipeline"/> that produced <paramref name="passMetadata"/>.</param>
 public sealed class RenderResourceGeneration(
     ResourceGenerationKey key,
     RenderPipelineResourceLayout layout,
     RenderPipeline? ownerPipeline = null,
     ulong pipelineRevision = 0,
     bool isInitialBuild = false,
-    IReadOnlyCollection<RenderPassMetadata>? passMetadata = null) : IDisposable
+    IReadOnlyCollection<RenderPassMetadata>? passMetadata = null,
+    ulong commandGeneration = 0) : IDisposable
 {
     private readonly List<string> _diagnostics = [];
     private readonly Dictionary<string, IIncrementalFrameBufferFactory> _incrementalFrameBufferFactories = new(StringComparer.Ordinal);
@@ -54,6 +56,13 @@ public sealed class RenderResourceGeneration(
     /// </summary>
     public IReadOnlyCollection<RenderPassMetadata> PassMetadata { get; } =
         passMetadata ?? Array.Empty<RenderPassMetadata>();
+    /// <summary>
+    /// Gets the command chain generation of <see cref="OwnerPipeline"/> that produced <see cref="PassMetadata"/>.
+    /// A command chain rebuild can change the passes without a change to the resource layout, for example
+    /// when the final present reads a different framebuffer. The pipeline instance compares this value
+    /// with the current command generation, so it does not keep pass metadata from an old chain.
+    /// </summary>
+    public ulong CommandGeneration { get; } = commandGeneration;
     /// <summary>
     /// The registry of render resources for this generation.
     /// </summary>

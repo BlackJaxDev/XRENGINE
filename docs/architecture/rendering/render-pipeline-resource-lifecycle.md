@@ -192,6 +192,15 @@ explicitly retires the old managed generation and uses the imported output or
 legacy resource path. This makes cross-type, same-type/different-asset, and
 managed-to-layoutless changes use one lifecycle.
 
+A command chain rebuild on the same asset, for example a change to
+`AdvancedRenderPipeline.EnableEditorHighlightModule`, keeps the pipeline
+revision and can keep the resource key and layout. The passes can still change:
+without the highlight module, the window present reads the final post-process
+framebuffer instead of the highlight output. Each generation records the
+`CommandGeneration` of its asset that produced its pass metadata. A generation
+from an older command chain does not satisfy a same-key request, so the instance
+builds a new generation with metadata for the current chain.
+
 The transition request, the applying asset, and the fully applied asset are
 distinct states protected by the instance transition lock. Output binding uses
 the applying asset while a transition callback is running and the fully applied
