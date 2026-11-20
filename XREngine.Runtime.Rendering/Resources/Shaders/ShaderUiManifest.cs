@@ -113,7 +113,9 @@ namespace XREngine.Rendering
         string? DefaultLiteral = null,
         ShaderBindingMetadata? Binding = null,
         EShaderUiPropertyMutability Mutability = EShaderUiPropertyMutability.Runtime,
-        bool HasExplicitMutability = false);
+        bool HasExplicitMutability = false,
+        string? VisibleCondition = null,
+        string? EnableCondition = null);
 
     public sealed record ShaderBindingMetadata(
         string Name,
@@ -246,7 +248,9 @@ namespace XREngine.Rendering
                     propertyAnnotation?.DefaultLiteral,
                     binding,
                     mutability,
-                    hasExplicitMutability));
+                    hasExplicitMutability,
+                    propertyAnnotation?.Visible,
+                    propertyAnnotation?.Enabled));
 
                 state.PendingProperty = null;
                 state.PendingBinding = null;
@@ -503,7 +507,9 @@ namespace XREngine.Rendering
                         namedArgs.TryGetValue("indirect", out string? indirect) ? Unquote(indirect) : null,
                         namedArgs.TryGetValue("semantic", out string? semantic) ? Unquote(semantic) : null,
                         namedArgs.TryGetValue("storage", out string? propertyStorage) ? Unquote(propertyStorage) : null,
-                        ParsePropertyMutability(namedArgs));
+                        ParsePropertyMutability(namedArgs),
+                        namedArgs.TryGetValue("visible", out string? visible) ? Unquote(visible) : null,
+                        namedArgs.TryGetValue("enabled", out string? enabledCondition) ? Unquote(enabledCondition) : null);
                     break;
 
                 case "binding":
@@ -1227,7 +1233,9 @@ namespace XREngine.Rendering
             string? Indirect,
             string? Semantic,
             string? Storage,
-            EShaderUiPropertyMutability? Mutability);
+            EShaderUiPropertyMutability? Mutability,
+            string? Visible,
+            string? Enabled);
 
         private sealed record PendingBindingAnnotation(
             string? Name,

@@ -78,6 +78,12 @@ public sealed class ShaderAuthoringNode
     public required EShaderAuthoringNodeKind Kind { get; init; }
     public required string DisplayName { get; init; }
     public string? SourcePropertyName { get; init; }
+
+    /// <summary>
+    /// The Uber feature that a group node shows. The inspector shows the feature switch in the group header and
+    /// hides the group content while the feature is off.
+    /// </summary>
+    public string? FeatureId { get; init; }
     public string? LocalizationKey { get; init; }
     public string? SourceType { get; init; }
     public string? DefaultValue { get; init; }
@@ -296,7 +302,7 @@ public sealed class ShaderAuthoringSchema
            operand.StartsWith("texture:", StringComparison.OrdinalIgnoreCase) ||
            operand.StartsWith("texture_name:", StringComparison.OrdinalIgnoreCase) ||
            operand.StartsWith("cap:", StringComparison.OrdinalIgnoreCase) ||
-           operand.StartsWith("version:", StringComparison.OrdinalIgnoreCase);
+           operand.StartsWith("feature:", StringComparison.OrdinalIgnoreCase);
 
     private static void Index(
         ShaderAuthoringNode node,

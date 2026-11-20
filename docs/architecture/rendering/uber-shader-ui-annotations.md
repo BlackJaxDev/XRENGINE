@@ -17,6 +17,14 @@ The Uber shader inspector is now driven by shader-source annotations instead of 
 - `//@depends("feature-a|feature-b")`: declares features that must be enabled first.
 - `//@conflicts("feature-a|feature-b")`: declares features that must be disabled first.
 - `//@property(name="...", display="...", mode=static|animated, slot=texture, range=[min,max], enum="...")`: declares a curated property surface.
+- `visible="expr"` on `//@property(...)`: shows the property only when the expression is true. For example, `visible="_MainHueShiftToggle > 0"` hides the hue controls while the hue toggle is off.
+- `enabled="expr"` on `//@property(...)`: shows the property, but makes it read-only when the expression is false.
+
+A condition uses the material authoring expression syntax. It can read other
+property values, `feature:<id>` (true when that feature is on), `texture:<name>`,
+`render_queue`, and the `animated:` and `static:` operands. The schema builder
+compiles each condition. It reports an invalid condition as a schema error and
+then ignores that condition.
 - `//@tooltip("...")`: attaches descriptive text to the next feature or property.
 
 ## Validation Behavior

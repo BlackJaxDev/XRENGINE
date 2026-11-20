@@ -189,16 +189,17 @@ uniform int _MainColorAdjustTextureUV;
 uniform float _Saturation;
 //@property(name="_MainBrightness", display="Brightness", mode=static, range=[-1,2])
 uniform float _MainBrightness;
+//@property(name="_MainHueShiftToggle", display="Hue Shift", mode=static, range=[0,1], toggle=true)
 uniform float _MainHueShiftToggle;
-//@property(name="_MainHueShift", display="Hue Shift", mode=static, range=[0,1])
+//@property(name="_MainHueShift", display="Hue Shift Amount", mode=static, range=[0,1], visible="_MainHueShiftToggle > 0")
 uniform float _MainHueShift;
-//@property(name="_MainHueShiftSpeed", display="Hue Shift Speed", mode=animated, range=[-10,10])
+//@property(name="_MainHueShiftSpeed", display="Hue Shift Speed", mode=animated, range=[-10,10], visible="_MainHueShiftToggle > 0")
 uniform float _MainHueShiftSpeed;
-//@property(name="_MainHueShiftColorSpace", display="Hue Space", mode=static, enum="0:OKLab|1:HSV")
+//@property(name="_MainHueShiftColorSpace", display="Hue Space", mode=static, enum="0:OKLab|1:HSV", visible="_MainHueShiftToggle > 0")
 uniform int _MainHueShiftColorSpace;    // 0: OKLab, 1: HSV
-//@property(name="_MainHueShiftReplace", display="Hue Replace", mode=static, range=[0,1], toggle=true)
+//@property(name="_MainHueShiftReplace", display="Hue Replace", mode=static, range=[0,1], toggle=true, visible="_MainHueShiftToggle > 0")
 uniform float _MainHueShiftReplace;
-//@property(name="_MainHueShiftSelectOrShift", display="Hue Select Or Shift", mode=static, enum="0:Select|1:Shift", default="1")
+//@property(name="_MainHueShiftSelectOrShift", display="Hue Select Or Shift", mode=static, enum="0:Select|1:Shift", default="1", visible="_MainHueShiftToggle > 0")
 uniform int _MainHueShiftSelectOrShift;
 //@property(name="_MainGamma", display="Gamma", mode=static, range=[0.01,5], default="1.0")
 uniform float _MainGamma;
@@ -208,11 +209,11 @@ uniform float _MainChromatize;
 uniform float _MainColorAdjustClamp;
 //@property(name="_ColorGradingToggle", display="Gradation Map", mode=static, range=[0,1], toggle=true)
 uniform float _ColorGradingToggle;
-//@property(name="_MainGradationTex", display="Gradation Map", slot=texture)
+//@property(name="_MainGradationTex", display="Gradation Map", slot=texture, visible="_ColorGradingToggle > 0")
 uniform sampler2D _MainGradationTex;
-//@property(name="_MainGradationStrength", display="Gradation Strength", mode=static, range=[0,1])
+//@property(name="_MainGradationStrength", display="Gradation Strength", mode=static, range=[0,1], visible="_ColorGradingToggle > 0")
 uniform float _MainGradationStrength;
-//@property(name="_MainGradationMaskChannel", display="Gradation Mask Channel", mode=static, enum="0:None|1:R|2:G|3:B|4:A")
+//@property(name="_MainGradationMaskChannel", display="Gradation Mask Channel", mode=static, enum="0:None|1:R|2:G|3:B|4:A", visible="_ColorGradingToggle > 0")
 uniform int _MainGradationMaskChannel;
 //@property(name="_MainTintColor", display="Tint Color", mode=static, default="vec4(1.0, 1.0, 1.0, 0.0)")
 uniform vec4 _MainTintColor;
@@ -628,13 +629,13 @@ uniform int _DetailNormalGlobalMaskBlendType;
 //@property(name="_MainVertexColoringEnabled", display="Use Vertex Colors", mode=static, range=[0,1], toggle=true)
 //@tooltip("Enables multiplication of the sampled base color by the mesh vertex colors.")
 uniform float _MainVertexColoringEnabled;
-//@property(name="_MainVertexColoringLinearSpace", display="Vertex Colors Are Linear", mode=static, range=[0,1], toggle=true)
+//@property(name="_MainVertexColoringLinearSpace", display="Vertex Colors Are Linear", mode=static, range=[0,1], toggle=true, visible="_MainVertexColoringEnabled > 0")
 //@tooltip("Treats incoming vertex colors as already converted to linear space before tinting the base color.")
 uniform float _MainVertexColoringLinearSpace;
-//@property(name="_MainVertexColoring", display="Color Blend", mode=static, range=[0,1])
+//@property(name="_MainVertexColoring", display="Color Blend", mode=static, range=[0,1], visible="_MainVertexColoringEnabled > 0")
 //@tooltip("Controls how strongly vertex RGB contributes to the final albedo tint.")
 uniform float _MainVertexColoring;
-//@property(name="_MainUseVertexColorAlpha", display="Alpha Blend", mode=static, range=[0,1])
+//@property(name="_MainUseVertexColorAlpha", display="Alpha Blend", mode=static, range=[0,1], visible="_MainVertexColoringEnabled > 0")
 //@tooltip("Controls how strongly vertex alpha modulates the final surface alpha.")
 uniform float _MainUseVertexColorAlpha;
 
@@ -726,13 +727,13 @@ uniform int _BackFaceMaskUV;
 uniform int _BackFaceMaskChannel;
 //@property(name="_BackFaceHueShiftEnabled", display="Backface Hue Shift", mode=static, range=[0,1], toggle=true)
 uniform float _BackFaceHueShiftEnabled;
-//@property(name="_BackFaceShiftColorSpace", display="Backface Hue Space", mode=static, enum="0:OKLab|1:HSV")
+//@property(name="_BackFaceShiftColorSpace", display="Backface Hue Space", mode=static, enum="0:OKLab|1:HSV", visible="_BackFaceHueShiftEnabled > 0")
 uniform int _BackFaceShiftColorSpace;
-//@property(name="_BackFaceHueSelectOrShift", display="Backface Hue Select Or Shift", mode=static, enum="0:Select|1:Shift", default="1")
+//@property(name="_BackFaceHueSelectOrShift", display="Backface Hue Select Or Shift", mode=static, enum="0:Select|1:Shift", default="1", visible="_BackFaceHueShiftEnabled > 0")
 uniform int _BackFaceHueSelectOrShift;
-//@property(name="_BackFaceHueShift", display="Backface Hue Shift Amount", mode=static, range=[0,1])
+//@property(name="_BackFaceHueShift", display="Backface Hue Shift Amount", mode=static, range=[0,1], visible="_BackFaceHueShiftEnabled > 0")
 uniform float _BackFaceHueShift;
-//@property(name="_BackFaceHueShiftSpeed", display="Backface Hue Shift Speed", mode=animated)
+//@property(name="_BackFaceHueShiftSpeed", display="Backface Hue Shift Speed", mode=animated, visible="_BackFaceHueShiftEnabled > 0")
 uniform float _BackFaceHueShiftSpeed;
 //@property(name="_BackFaceDetailIntensity", display="Backface Detail Intensity", mode=static, range=[0,5], default="1.0")
 uniform float _BackFaceDetailIntensity;

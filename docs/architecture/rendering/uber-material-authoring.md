@@ -41,8 +41,21 @@ The Properties tab detects the Uber manifest and renders:
 - animation and static modes, reset and copy context actions, and diagnostics;
 - prepare and rebuild controls backed by native Uber variants.
 
-The inspector hides the properties of a disabled feature unless the user shows
-disabled modules. The engine Transparency Mode control sets the render mode.
+Each feature subsection has a switch in its header. The switch turns the
+feature on or off through the same variant request as the toolbar. The switch is
+read-only for a required feature and for a feature that is not available. When a
+feature has dependencies or conflicts, turning it on first asks the user to
+resolve them. When a feature is off, its header stays in the tree
+and its properties are hidden. The "show disabled modules" option and an active
+search show the properties of disabled features.
+
+A property with a `visible` condition is hidden while the condition is false. A
+property with an `enabled` condition is read-only while the condition is false.
+The conditions come from the `//@property` annotations, and they use the shared
+expression evaluator, so a condition can read property values and
+`feature:<id>`. See [Uber Shader UI Annotations](uber-shader-ui-annotations.md).
+
+The engine Transparency Mode control sets the render mode.
 
 Selecting multiple materials opens the Cross-Shader Material Editor. It builds
 compatibility by semantic ID and GLSL value contract, shows mixed values and

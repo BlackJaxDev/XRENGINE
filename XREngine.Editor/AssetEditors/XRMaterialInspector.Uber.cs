@@ -117,6 +117,7 @@ public sealed partial class XRMaterialInspector
             unavailableFeatureIds,
             parameterLookup,
             samplerLookup,
+            uiState.ShowDisabledUberFeatures,
             ref toolbarVariantChanged))
             return;
         List<ShaderUiProperty> categoryProperties = uiState.CategoryUberProperties;
@@ -591,6 +592,32 @@ public sealed partial class XRMaterialInspector
         return "General";
     }
 
+    /// <summary>
+    /// Turns an Uber feature on or off. Turning a feature on can first ask the user to resolve its dependencies
+    /// and conflicts.
+    /// </summary>
+    private static void RequestUberFeatureState(
+        XRMaterial material,
+        IReadOnlyDictionary<string, ShaderUiFeature> featureLookup,
+        ShaderUiFeature feature,
+        bool enabled,
+        ref bool variantChanged)
+    {
+        PendingUberFeatureResolution? pendingResolution = enabled
+            ? BuildPendingUberFeatureResolution(material, featureLookup, feature)
+            : null;
+
+        if (pendingResolution is null)
+        {
+            ClearPendingUberFeatureResolution(material, feature.Id);
+            variantChanged |= material.SetUberFeatureEnabled(feature.Id, enabled);
+        }
+        else
+        {
+            SetPendingUberFeatureResolution(material, pendingResolution);
+        }
+    }
+
     private static void DrawUberFeatureToolbar(
         XRMaterial material,
         ShaderUiManifest manifest,
@@ -619,22 +646,7 @@ public sealed partial class XRMaterialInspector
             using (new ImGuiDisabledScope(!available))
             {
                 if (ImGui.Button(feature.DisplayName, new Vector2(-1.0f, 0.0f)) && !feature.Required)
-                {
-                    bool toggled = !enabled;
-                    PendingUberFeatureResolution? pendingResolution = toggled
-                        ? BuildPendingUberFeatureResolution(material, featureLookup, feature)
-                        : null;
-
-                    if (pendingResolution is null)
-                    {
-                        ClearPendingUberFeatureResolution(material, feature.Id);
-                        variantChanged |= material.SetUberFeatureEnabled(feature.Id, toggled);
-                    }
-                    else
-                    {
-                        SetPendingUberFeatureResolution(material, pendingResolution);
-                    }
-                }
+                    RequestUberFeatureState(material, featureLookup, feature, !enabled, ref variantChanged);
             }
 
             if (feature.Required)

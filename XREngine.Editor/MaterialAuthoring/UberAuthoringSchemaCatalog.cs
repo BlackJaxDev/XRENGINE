@@ -57,7 +57,7 @@ public static class UberAuthoringSchemaCatalog
         // Each section item is a property or the key of a subsection.
         List<(string Name, List<(ShaderUiProperty? Property, string? SubsectionKey)> Items)> sections = [];
         Dictionary<string, int> sectionIndices = new(StringComparer.Ordinal);
-        Dictionary<string, (string DisplayName, string? Tooltip, List<ShaderUiProperty> Properties)> subsections =
+        Dictionary<string, (string DisplayName, string? Tooltip, string? FeatureId, List<ShaderUiProperty> Properties)> subsections =
             new(StringComparer.Ordinal);
         foreach (ShaderUiProperty property in manifest.Properties)
         {
@@ -83,13 +83,14 @@ public static class UberAuthoringSchemaCatalog
             string key = $"{category}/{subsectionKey}";
             if (!subsections.TryGetValue(key, out var subsection))
             {
-                subsection = (subsectionName, tooltip, []);
+                subsection = (subsectionName, tooltip, feature?.Id, []);
                 subsections[key] = subsection;
                 items.Add((null, key));
             }
             subsection.Properties.Add(property);
         }
 
+        List<ShaderAuthoringIssue> issues = [];
         int order = 0;
         foreach ((string sectionName, var items) in sections)
         {
@@ -100,17 +101,17 @@ public static class UberAuthoringSchemaCatalog
             {
                 if (property is not null)
                 {
-                    AddChild(sectionNode, CreateProperty(property, order++));
+                    AddChild(sectionNode, CreateProperty(property, order++, issues));
                     continue;
                 }
 
                 var subsection = subsections[key!];
                 ShaderAuthoringNode subsectionNode = CreateGroup(
                     EShaderAuthoringNodeKind.Subsection, $"subsection/{key}", subsection.DisplayName,
-                    subsection.Tooltip, order++);
+                    subsection.Tooltip, order++, subsection.FeatureId);
                 AddChild(sectionNode, subsectionNode);
                 foreach (ShaderUiProperty subsectionProperty in subsection.Properties)
-                    AddChild(subsectionNode, CreateProperty(subsectionProperty, order++));
+                    AddChild(subsectionNode, CreateProperty(subsectionProperty, order++, issues));
             }
         }
 
@@ -121,7 +122,7 @@ public static class UberAuthoringSchemaCatalog
             sourceIdentity,
             ComputeFingerprint(sourceIdentity, manifest),
             root,
-            []);
+            issues);
     }
 
     /// <summary>
@@ -170,7 +171,10 @@ public static class UberAuthoringSchemaCatalog
         return false;
     }
 
-    private static ShaderAuthoringNode CreateProperty(ShaderUiProperty property, int order)
+    private static ShaderAuthoringNode CreateProperty(
+        ShaderUiProperty property,
+        int order,
+        List<ShaderAuthoringIssue> issues)
         => new()
         {
             SemanticId = GetPropertySemanticId(property.Name),
@@ -183,20 +187,46 @@ public static class UberAuthoringSchemaCatalog
             DeclarationOrder = order,
             ManifestProperty = property,
             Options = new ShaderAuthoringOptions { Tooltip = property.Tooltip },
+            VisibilityExpression = CompileCondition(property, property.VisibleCondition, "visible", issues),
+            EnableExpression = CompileCondition(property, property.EnableCondition, "enabled", issues),
         };
+
+    /// <summary>
+    /// Compiles a condition of a property annotation. An invalid condition is reported and ignored.
+    /// </summary>
+    private static ShaderAuthoringExpression? CompileCondition(
+        ShaderUiProperty property,
+        string? source,
+        string key,
+        List<ShaderAuthoringIssue> issues)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+            return null;
+        if (ShaderAuthoringExpression.TryCompile(source, out ShaderAuthoringExpression? expression, out string? diagnostic))
+            return expression;
+
+        issues.Add(new(
+            EShaderAuthoringIssueSeverity.Error,
+            $"Invalid '{key}' condition on '{property.Name}': {diagnostic}",
+            GetPropertySemanticId(property.Name),
+            property.SourceLine));
+        return null;
+    }
 
     private static ShaderAuthoringNode CreateGroup(
         EShaderAuthoringNodeKind kind,
         string semanticName,
         string displayName,
         string? tooltip,
-        int order)
+        int order,
+        string? featureId = null)
         => new()
         {
             SemanticId = $"{SemanticIdPrefix}{semanticName}",
             Kind = kind,
             DisplayName = displayName,
             DeclarationOrder = order,
+            FeatureId = featureId,
             Options = new ShaderAuthoringOptions { Tooltip = tooltip },
         };
 
