@@ -68,18 +68,34 @@ uniform int _AlphaSource;
 uniform int _AlphaMaskChannel;
 //@property(name="_AlphaPremultiply", display="Premultiply Alpha", mode=static, default="0.0")
 uniform float _AlphaPremultiply;
+//@property(name="_AlphaGlobalMask", display="Alpha Global Mask", mode=static, default="0")
+uniform int _AlphaGlobalMask;
+//@property(name="_AlphaGlobalMaskBlendType", display="Alpha Global Mask Blend", mode=static, default="2")
+uniform int _AlphaGlobalMaskBlendType;
 //@property(name="_AlphaDither", display="Alpha Dither", mode=static, default="0.0")
 uniform float _AlphaDither;
-//@property(name="_AlphaDitherGradient", display="Object Dither Blend", mode=static, default="0.0")
+//@property(name="_AlphaDitherGradient", display="Dither Gradient", mode=static, default="0.1")
 uniform float _AlphaDitherGradient;
-//@property(name="_AlphaDitherSpeed", display="Dither Speed", mode=animated, default="0.0")
-uniform float _AlphaDitherSpeed;
+//@property(name="_AlphaDitherBias", display="Dither Bias", mode=static, default="0.0")
+uniform float _AlphaDitherBias;
+//@property(name="_AlphaSharpenedA2C", display="Sharpened Alpha To Coverage", mode=static, default="0.0")
+uniform float _AlphaSharpenedA2C;
+//@property(name="_AlphaMipScale", display="Mip Level Alpha Scale", mode=static, default="0.25")
+uniform float _AlphaMipScale;
 //@property(name="_DistanceFade", display="Distance Fade", mode=static, default="0.0")
 uniform float _DistanceFade;
+//@property(name="_DistanceFadePosition", display="Distance Fade Position", mode=static, default="1")
+uniform int _DistanceFadePosition;
 //@property(name="_DistanceFadeMin", display="Distance Fade Start", mode=static, default="0.0")
 uniform float _DistanceFadeMin;
 //@property(name="_DistanceFadeMax", display="Distance Fade End", mode=static, default="25.0")
 uniform float _DistanceFadeMax;
+//@property(name="_DistanceFadeNearAlpha", display="Distance Fade Start Alpha", mode=static, default="1.0")
+uniform float _DistanceFadeNearAlpha;
+//@property(name="_DistanceFadeFarAlpha", display="Distance Fade End Alpha", mode=static, default="0.0")
+uniform float _DistanceFadeFarAlpha;
+//@property(name="_DistanceFadeGlobalMask", display="Distance Fade Global Mask", mode=static, default="0")
+uniform int _DistanceFadeGlobalMask;
 //@property(name="_AlphaFresnel", display="Fresnel Alpha", mode=static, default="0.0")
 uniform float _AlphaFresnel;
 //@property(name="_AlphaFresnelAlpha", display="Fresnel Alpha Intensity", mode=static, default="0.0")
@@ -90,6 +106,8 @@ uniform float _AlphaFresnelSharpness;
 uniform float _AlphaFresnelWidth;
 //@property(name="_AlphaFresnelInvert", display="Invert Fresnel", mode=static, default="0.0")
 uniform float _AlphaFresnelInvert;
+//@property(name="_AlphaFresnelGlobalMask", display="Fresnel Alpha Global Mask", mode=static, default="0")
+uniform int _AlphaFresnelGlobalMask;
 //@property(name="_AlphaAngular", display="Angular Alpha", mode=static, default="0.0")
 uniform float _AlphaAngular;
 //@property(name="_AngleForwardDirection", display="Alpha Forward", mode=static, default="vec3(0.0, 0.0, 1.0)")
@@ -113,6 +131,16 @@ uniform vec4 _SourceHighColorMask_ST;
 uniform sampler2D _SourceHighColorTex;
 //@property(name="_SourceHighColorMask", display="Source High Color Mask", slot=texture, semantic=mask)
 uniform sampler2D _SourceHighColorMask;
+//@property(name="_AngleType", display="Angle Type", mode=static, default="0")
+uniform int _AngleType;
+//@property(name="_AngleCompareTo", display="Angle Position", mode=static, default="0")
+uniform int _AngleCompareTo;
+//@property(name="_ModelAngleMin", display="Model Angle Min", mode=static, default="45.0")
+uniform float _ModelAngleMin;
+//@property(name="_ModelAngleMax", display="Model Angle Max", mode=static, default="90.0")
+uniform float _ModelAngleMax;
+//@property(name="_AlphaAngularGlobalMask", display="Angular Alpha Global Mask", mode=static, default="0")
+uniform int _AlphaAngularGlobalMask;
 #endif
 
 //@category("Advanced")

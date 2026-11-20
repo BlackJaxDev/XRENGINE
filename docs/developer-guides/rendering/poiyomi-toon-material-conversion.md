@@ -133,6 +133,29 @@ as color normalization, glitter, surface features, and the 10.0 defaults, read
 `BehaviorVersion`. `Version` keeps the exact source release for the report.
 Lines before 8.0 use different property names and are not admitted.
 
+## Alpha Options
+
+The Uber alpha options use the source operations and the source order.
+
+| Source control | Uber control | Notes |
+| --- | --- | --- |
+| `_AlphaGlobalMask`, `_AlphaGlobalMaskBlendType` | Same names | The global mask channel blends with alpha. The blend types are replace, subtract, multiply, divide, min, max, average, and add. |
+| `_AlphaDistanceFade` and its values | `_DistanceFade`, `_DistanceFadePosition`, `_DistanceFadeMin`, `_DistanceFadeMax`, `_DistanceFadeNearAlpha`, `_DistanceFadeFarAlpha`, `_DistanceFadeGlobalMask` | Alpha goes from the start alpha to the end alpha between the two distances. The position is the object origin or the pixel. |
+| `_AlphaFresnel` and its values | Same names | The view and normal term uses the shading normal. |
+| `_AlphaAngular` and its values | Same names | The camera term, the model term, or both, with the minimum alpha. |
+| `_AlphaDithering`, `_AlphaDitherGradient`, `_AlphaDitherBias` | `_AlphaDither`, `_AlphaDitherGradient`, `_AlphaDitherBias` | An 8x8 ordered dither in screen pixels. |
+| `_AlphaSharpenedA2C`, `_AlphaMipScale` | Same names | Applies only in cutout mode with alpha to coverage on. |
+| `_AlphaForceOpaque` | Same name | A material that does not store it is opaque, as in the source. |
+
+`calculateAlpha` applies the alpha mod, the alpha global mask, distance fade,
+fresnel alpha, and angular alpha. `uberApplyCoverageAlpha` then applies force
+opaque, sharpened alpha to coverage, and dithering directly before the cutout
+test. Thus the dither and the cutout test see alpha after decals, flipbooks,
+and dissolve, and force opaque cancels the other alpha options. A disabled
+source option keeps its values in the material, and its Uber toggle stays off.
+Audio-reactive alpha and the forward-add transparency boost have no Uber
+equivalent.
+
 ## Support Contract
 
 Every source feature and property has one of three outcomes:

@@ -262,51 +262,133 @@ vec3 uberApplyColorMaskNormal(vec3 normal, ToonMesh mesh)
 #endif
 }
 
-float uberInterleavedGradientNoise(vec2 pixel, float frame)
+// Combines two mask values with a blend operation.
+// Blend type: 0 replace, 1 subtract, 2 multiply, 3 divide, 4 min, 5 max, 6 average, 7 add.
+float uberMaskBlend(float baseMask, float blendMask, int blendType)
 {
-    return fract(52.9829189 * fract(dot(pixel + frame, vec2(0.06711056, 0.00583715))));
+    float result;
+    switch (blendType)
+    {
+        case 0: result = blendMask; break;
+        case 1: result = baseMask - blendMask; break;
+        case 2: result = baseMask * blendMask; break;
+        case 3: result = baseMask / max(blendMask, 0.0001); break;
+        case 4: result = min(baseMask, blendMask); break;
+        case 5: result = max(baseMask, blendMask); break;
+        case 6: result = (baseMask + blendMask) * 0.5; break;
+        default: result = baseMask + blendMask; break;
+    }
+    return saturate(result);
 }
 
+// Hermite step that accepts equal or reversed edges. Equal edges give a hard step at the edge.
+float uberEdgeStep(float edge0, float edge1, float x)
+{
+    float range = edge1 - edge0;
+    float t = abs(range) < EPSILON ? step(edge0, x) : saturate((x - edge0) / range);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// Lerps from 1 to the value by a global mask. Index 0 keeps the value.
+float uberGlobalMaskStrength(float value, int encodedIndex, ToonMesh mesh)
+{
+    return encodedIndex > 0 ? mix(1.0, value, uberGlobalMask(encodedIndex, mesh)) : value;
+}
+
+// Applies the alpha options that run before decals and dissolve: the alpha global mask,
+// distance fade, fresnel alpha, and angular alpha.
 float uberApplyExtendedAlpha(float alpha, ToonMesh mesh)
 {
 #ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
     return alpha;
 #else
-    float distanceToCamera = length(mesh.worldPos - CameraPosition);
-    float distanceFade = 1.0 - smoothstep(
-        _DistanceFadeMin,
-        max(_DistanceFadeMax, _DistanceFadeMin + EPSILON),
-        distanceToCamera);
-    alpha *= mix(1.0, distanceFade, saturate(_DistanceFade));
+    if (_AlphaGlobalMask > 0)
+        alpha = uberMaskBlend(alpha, uberGlobalMask(_AlphaGlobalMask, mesh), _AlphaGlobalMaskBlendType);
+
+    vec3 objectOrigin = (u_ModelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    if (_DistanceFade > 0.5)
+    {
+        vec3 position = _DistanceFadePosition != 0 ? mesh.worldPos : objectOrigin;
+        float fade = mix(
+            _DistanceFadeNearAlpha,
+            _DistanceFadeFarAlpha,
+            uberEdgeStep(_DistanceFadeMin, _DistanceFadeMax, distance(position, CameraPosition)));
+        alpha *= uberGlobalMaskStrength(fade, _DistanceFadeGlobalMask, mesh);
+    }
 
     if (_AlphaFresnel > 0.5)
     {
-        float viewNormalDot = abs(dot(mesh.worldNormal, mesh.viewDir));
-        float fresnel = saturate(1.0 - smoothstep(
+        float viewDotNormal = abs(dot(mesh.viewDir, mesh.worldNormal));
+        float rim = saturate(1.0 - uberEdgeStep(
             min(_AlphaFresnelSharpness, _AlphaFresnelWidth),
             _AlphaFresnelWidth,
-            viewNormalDot));
-        float alphaMultiplier = abs(mix(1.0, fresnel, _AlphaFresnelAlpha));
-        alphaMultiplier = _AlphaFresnelInvert > 0.5 ? 1.0 - alphaMultiplier : alphaMultiplier;
-        alpha *= alphaMultiplier;
+            viewDotNormal));
+        rim = abs(mix(1.0, rim, _AlphaFresnelAlpha));
+        rim = _AlphaFresnelInvert > 0.5 ? 1.0 - rim : rim;
+        alpha *= uberGlobalMaskStrength(rim, _AlphaFresnelGlobalMask, mesh);
     }
 
     if (_AlphaAngular > 0.5)
     {
-        vec3 forward = normalize(_AngleForwardDirection);
-        float angle = degrees(acos(clamp(abs(dot(forward, mesh.viewDir)), 0.0, 1.0)));
-        float angular = smoothstep(_CameraAngleMin, max(_CameraAngleMax, _CameraAngleMin + EPSILON), angle);
-        alpha *= mix(_AngleMinAlpha, 1.0, angular);
-    }
-
-    if (_AlphaDither > 0.0)
-    {
-        float screenNoise = uberInterleavedGradientNoise(gl_FragCoord.xy, floor(u_Time * _AlphaDitherSpeed));
-        float objectNoise = uberHash21(floor(mesh.localPos.xy * 64.0));
-        float threshold = mix(screenNoise, objectNoise, saturate(_AlphaDitherGradient));
-        alpha = alpha >= mix(1.0, threshold, saturate(_AlphaDither)) ? alpha : 0.0;
+        // The camera axis is the camera +Z axis in world space. It points away from the view direction.
+        vec3 cameraAxis = normalize(XRENGINE_GetForwardResolvedInverseViewMatrix()[2].xyz);
+        vec3 position = _AngleCompareTo == 0 ? objectOrigin : mesh.worldPos;
+        vec3 cameraToModel = normalize(position - CameraPosition);
+        vec3 modelForward = normalize(mat3(u_ModelMatrix) * normalize(_AngleForwardDirection));
+        float cameraFacing = saturate(
+            (0.5 * dot(cameraToModel, cameraAxis) + 0.5 - _CameraAngleMax / 180.0) /
+            ((_CameraAngleMin - _CameraAngleMax) / 180.0 + EPSILON));
+        float modelFacing = saturate(
+            (0.5 * dot(-cameraToModel, modelForward) + 0.5 - _ModelAngleMax / 180.0) /
+            ((_ModelAngleMin - _ModelAngleMax) / 180.0 + EPSILON));
+        float facing = _AngleType == 0 ? cameraFacing
+            : _AngleType == 1 ? modelFacing
+            : cameraFacing * modelFacing;
+        alpha *= uberGlobalMaskStrength(max(facing, _AngleMinAlpha), _AlphaAngularGlobalMask, mesh);
     }
     return saturate(alpha);
+#endif
+}
+
+// Returns the 8x8 ordered dither threshold of a pixel.
+float uberBayerDither(vec2 pixel)
+{
+    const float bayer[64] = float[64](
+        0.015625, 0.765625, 0.203125, 0.953125, 0.06250, 0.81250, 0.25000, 1.00000,
+        0.515625, 0.265625, 0.703125, 0.453125, 0.56250, 0.31250, 0.75000, 0.50000,
+        0.140625, 0.890625, 0.078125, 0.828125, 0.18750, 0.93750, 0.12500, 0.87500,
+        0.640625, 0.390625, 0.578125, 0.328125, 0.68750, 0.43750, 0.62500, 0.37500,
+        0.046875, 0.796875, 0.234375, 0.984375, 0.03125, 0.78125, 0.21875, 0.96875,
+        0.546875, 0.296875, 0.734375, 0.484375, 0.53125, 0.28125, 0.71875, 0.46875,
+        0.171875, 0.921875, 0.109375, 0.859375, 0.15625, 0.90625, 0.09375, 0.84375,
+        0.671875, 0.421875, 0.609375, 0.359375, 0.65625, 0.40625, 0.59375, 0.34375);
+    ivec2 cell = ivec2(mod(floor(pixel), 8.0));
+    return bayer[cell.y * 8 + cell.x];
+}
+
+// Applies the alpha options that run directly before the coverage test: sharpened alpha to
+// coverage and dithering. The caller applies force opaque.
+float uberApplyCoverageAlpha(float alpha, ToonMesh mesh)
+{
+#ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+    return alpha;
+#else
+    if (_Mode == BLEND_MODE_CUTOUT && _AlphaSharpenedA2C > 0.5)
+    {
+        vec2 texel = mesh.uv[0] * vec2(textureSize(_MainTex, 0));
+        vec2 dx = dFdx(texel);
+        vec2 dy = dFdy(texel);
+        float mipLevel = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), EPSILON));
+        alpha *= 1.0 + max(0.0, mipLevel) * _AlphaMipScale;
+        alpha = saturate((alpha - _Cutoff) / max(fwidth(alpha), 0.0001) + _Cutoff);
+    }
+
+    if (_AlphaDither > 0.5)
+    {
+        float dither = uberBayerDither(gl_FragCoord.xy) - _AlphaDitherBias;
+        alpha = saturate(alpha - dither * (1.0 - alpha) * _AlphaDitherGradient);
+    }
+    return alpha;
 #endif
 }
 

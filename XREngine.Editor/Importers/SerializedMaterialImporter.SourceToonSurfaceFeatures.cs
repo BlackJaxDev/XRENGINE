@@ -45,6 +45,7 @@ public static partial class SerializedMaterialImporter
             () => SetInt(material, "_SourceCubeMap", 0),
             warnings,
             diagnostics);
+        BindSourceToonAlphaOptions(material, document);
         BindSourceToonGlitter(material, document, resolver, sourceVersion, diagnostics);
         BindSourceToonFlipbook(material, document);
         BindSourceToonDissolve(material, document, diagnostics);

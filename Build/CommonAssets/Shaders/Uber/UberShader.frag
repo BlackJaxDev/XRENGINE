@@ -503,7 +503,7 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
 // ============================================
 // Combines the main texture's alpha with an optional alpha-mask texture
 // (replace / multiply / add / subtract), applies a global alpha bias, and
-// finally respects a hard "force opaque" override.
+// then applies the alpha global mask, distance, fresnel, and angular options.
 float calculateAlpha(vec4 baseColor, ToonMesh mesh) {
     float alpha = baseColor.a;
 #ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
@@ -2339,6 +2339,8 @@ void main() {
     }
 #endif
 
+    // Sharpened alpha to coverage and dithering run after decals and dissolve.
+    fragData.alpha = uberApplyCoverageAlpha(fragData.alpha, mesh);
     // Source ForceOpaque changes coverage after decals and dissolve.
     float coverageAlpha = fragData.alpha;
     if (_SourceAlphaClip > 0.5 && _AlphaForceOpaque > 0.5)
