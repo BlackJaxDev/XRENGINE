@@ -178,6 +178,11 @@ public static partial class MeshOptimizerIntegration
         uint[] vertexIndexArray = [.. meshletVertices];
         byte[] triangleArray = [.. meshletTriangles];
         MeshletLodGroupRecord[] groups = [.. hierarchy.Groups];
+        // A skinned mesh gets a deformation order, so a far instance can deform only the vertices
+        // that its coarsest allowed level reads (see MeshletDeformationOrderBuilder).
+        MeshletDeformationOrderBuilder.Result? deformationOrder = skin is null
+            ? null
+            : MeshletDeformationOrderBuilder.Build(descriptors, vertexIndexArray, records, groups, vertexCount);
         MeshOptimizerMeshletStats stats = new(descriptors.Length, vertexIndexArray.Length, triangleArray.Length, encodedByteCount);
         MeshletPayload payload = CreatePayload(
             mesh,
@@ -192,7 +197,8 @@ public static partial class MeshOptimizerIntegration
             records,
             groups,
             skinRecords,
-            clusterBones?.ToArray());
+            clusterBones?.ToArray(),
+            deformationOrder);
 
         LastClusterHierarchyStats = new ClusterHierarchyCookStats(
             descriptors.Length,

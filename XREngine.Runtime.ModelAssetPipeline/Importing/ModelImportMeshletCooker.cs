@@ -151,6 +151,16 @@ public static class ModelImportMeshletCooker
         public long NonFiniteCentroids;
         /// <summary>Triangles of the skinned payloads by hierarchy level (index 0 = original geometry).</summary>
         public long[]? SkinnedLevelTriangles;
+        /// <summary>Source vertices of the skinned payloads that have a deformation order.</summary>
+        public long DeformationOrderVertices;
+        /// <summary>
+        /// Sum of the deformation prefix counts of the skinned payloads by hierarchy level: the vertices
+        /// that an instance clamped at that level deforms. A payload with fewer levels adds its
+        /// coarsest prefix to the deeper levels, because a clamp past its last level stops there.
+        /// </summary>
+        public long[]? DeformationPrefixVertices;
+        /// <summary>The most hierarchy levels of one skinned payload with a deformation order.</summary>
+        public int DeformationPrefixLevels;
 
         public void Add(MeshletPayload payload)
         {
@@ -175,6 +185,16 @@ public static class ModelImportMeshletCooker
                         ? 0
                         : payload.LodGroups[payload.ClusterLods[i].RefinedGroup].Depth + 1;
                     SkinnedLevelTriangles[Math.Min(level, SkinnedLevelTriangles.Length - 1)] += payload.Meshlets[i].TriangleCount;
+                }
+
+                if (payload.HasDeformationOrder)
+                {
+                    DeformationOrderVertices += payload.DeformationVertexOrder.Length;
+                    DeformationPrefixVertices ??= new long[32];
+                    int prefixLevels = payload.DeformationPrefixCounts.Length;
+                    DeformationPrefixLevels = Math.Max(DeformationPrefixLevels, Math.Min(prefixLevels, DeformationPrefixVertices.Length));
+                    for (int level = 0; level < DeformationPrefixVertices.Length; level++)
+                        DeformationPrefixVertices[level] += payload.DeformationPrefixCounts[Math.Min(level, prefixLevels - 1)];
                 }
             }
             PayloadCount++;
@@ -224,6 +244,18 @@ public static class ModelImportMeshletCooker
                 $"skinnedVertices={totals.SkinnedVertices} morphLockedVertices={totals.MorphLockedVertices} " +
                 $"lockedShare={(totals.SkinnedVertices == 0 ? 0.0 : (double)totals.MorphLockedVertices / totals.SkinnedVertices):P1} " +
                 $"nonFiniteCentroids={totals.NonFiniteCentroids} levelTriangles={levelTriangles} (vertex counts only for payloads cooked in this process)");
+
+            // The share of the skinned source vertices that an instance clamped at each level deforms.
+            // Blendshape locks keep moved vertices in every level, so this share shows how much a far
+            // instance can save.
+            if (totals.DeformationOrderVertices > 0 && totals.DeformationPrefixVertices is { } prefix)
+            {
+                string shares = string.Join(',', prefix.Take(totals.DeformationPrefixLevels)
+                    .Select(count => ((double)count / totals.DeformationOrderVertices).ToString("F3", System.Globalization.CultureInfo.InvariantCulture)));
+                Debug.WriteAuxiliaryLog(
+                    "meshlet-cache.log",
+                    $"[DeformationPrefix] model={modelIdentity} vertices={totals.DeformationOrderVertices} levelShares={shares}");
+            }
         }
 
         // Crack-free checks of the hierarchies built (not read from the cache) in this process.

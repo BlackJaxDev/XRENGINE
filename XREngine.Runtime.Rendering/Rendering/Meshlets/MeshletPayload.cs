@@ -147,11 +147,22 @@ public sealed class MeshletPayload
     public const int FirstClusterHierarchyPayloadVersion = 5;
     /// <summary>
     /// Version 6 is version 5 plus the skinning tables of a skinned hierarchy payload
-    /// (<see cref="ClusterSkins"/> and <see cref="ClusterBones"/>, empty for an unskinned mesh). Only a
-    /// payload cooked with <see cref="MeshletGenerationSettings.BuildClusterHierarchy"/> uses it, so
-    /// every version 4 payload (caches and cooked assets) stays valid without a recook.
+    /// (<see cref="ClusterSkins"/> and <see cref="ClusterBones"/>, empty for an unskinned mesh). It is
+    /// still readable, so a version 6 payload is found stale and recooked as the current version.
     /// </summary>
-    public const int ClusterHierarchyPayloadVersion = 6;
+    public const int ClusterSkinningPayloadVersion = 6;
+    /// <summary>
+    /// Version 7 is version 6 plus the deformation order tables of a skinned hierarchy payload
+    /// (<see cref="DeformationVertexOrder"/>, <see cref="DeformationPrefixCounts"/> and
+    /// <see cref="LevelMaxErrors"/>, empty for an unskinned mesh).
+    /// </summary>
+    public const int DeformationOrderPayloadVersion = 7;
+    /// <summary>
+    /// The version of every payload cooked with
+    /// <see cref="MeshletGenerationSettings.BuildClusterHierarchy"/>. Only hierarchy payloads use it,
+    /// so every version 4 payload (caches and cooked assets) stays valid without a recook.
+    /// </summary>
+    public const int ClusterHierarchyPayloadVersion = DeformationOrderPayloadVersion;
     /// <summary>The last version that stored a per-vertex stream.</summary>
     public const int LastPayloadVersionWithVertexStream = 3;
     public const uint PortableMaxVertices = 64u;
@@ -206,6 +217,26 @@ public sealed class MeshletPayload
     /// to. A meshlet's bones are the union of the bones that influence any of its vertices.
     /// </summary>
     public ImmutableArray<ushort> ClusterBones { get; init; } = [];
+    /// <summary>
+    /// For a skinned hierarchy payload, a permutation of the source vertices with the vertices of
+    /// coarse levels first (see <see cref="MeshletDeformationOrderBuilder"/>). A deformation job that
+    /// deforms only the first <see cref="DeformationPrefixCounts"/>[L] entries deforms every vertex
+    /// that clusters of level L and coarser read. Empty for an unskinned mesh.
+    /// </summary>
+    public ImmutableArray<uint> DeformationVertexOrder { get; init; } = [];
+    /// <summary>
+    /// For a skinned hierarchy payload, one entry per hierarchy level L: the number of leading
+    /// <see cref="DeformationVertexOrder"/> entries that clusters of level L and coarser read. The
+    /// counts do not increase with L. Empty for an unskinned mesh.
+    /// </summary>
+    public ImmutableArray<uint> DeformationPrefixCounts { get; init; } = [];
+    /// <summary>
+    /// For a skinned hierarchy payload, one entry per hierarchy level: the largest finite group
+    /// error of that level in mesh units (0 when the level has none). The runtime uses it to choose
+    /// the coarsest level that the cut of a far instance never refines past. Empty for an unskinned
+    /// mesh.
+    /// </summary>
+    public ImmutableArray<float> LevelMaxErrors { get; init; } = [];
 
     public bool HasMeshlets => State == MeshletPayloadState.Present && Meshlets.Length > 0;
 
@@ -214,6 +245,9 @@ public sealed class MeshletPayload
 
     /// <summary>True when the hierarchy payload also holds the skinning tables (version 6, skinned mesh).</summary>
     public bool HasClusterSkinning => ClusterSkins.Length > 0;
+
+    /// <summary>True when the skinned hierarchy payload also holds the deformation order tables (version 7).</summary>
+    public bool HasDeformationOrder => DeformationVertexOrder.Length > 0;
 
     /// <summary>
     /// The number of meshlets that a renderer without cut selection draws: the level-0 meshlets of a
@@ -407,6 +441,8 @@ public sealed class MeshletPayload
                 throw new InvalidDataException($"Meshlet {index} has a skinning record outside the cluster bone list.");
         }
 
+        ValidateDeformationOrder();
+
         for (int index = 0; index < LodGroups.Length; index++)
         {
             MeshletLodGroupRecord group = LodGroups[index];
@@ -415,6 +451,54 @@ public sealed class MeshletPayload
                 || group.SimplifiedSphere.W < 0.0f || float.IsNaN(group.SimplifiedError) || group.SimplifiedError < 0.0f
                 || group.Depth < 0)
                 throw new InvalidDataException($"Cluster hierarchy group {index} has invalid bounds or error.");
+        }
+    }
+
+    /// <summary>
+    /// Checks the deformation order tables: they exist only with the skinning tables; the order is a
+    /// permutation of the source vertices; there is one prefix count and one level error per
+    /// hierarchy level; the prefix counts do not increase with the level; the errors are finite and
+    /// not negative.
+    /// </summary>
+    private void ValidateDeformationOrder()
+    {
+        bool hasOrder = DeformationVertexOrder.Length > 0;
+        if (!hasOrder)
+        {
+            if (DeformationPrefixCounts.Length != 0 || LevelMaxErrors.Length != 0)
+                throw new InvalidDataException("The meshlet deformation prefix tables have no vertex order.");
+            return;
+        }
+
+        if (ClusterSkins.Length == 0)
+            throw new InvalidDataException("Only a skinned cluster hierarchy can hold a deformation order.");
+        if (DeformationVertexOrder.Length != SourceVertexCount)
+            throw new InvalidDataException("The meshlet deformation order does not have one entry per source vertex.");
+
+        int levelCount = 0;
+        foreach (MeshletLodGroupRecord group in LodGroups)
+            levelCount = Math.Max(levelCount, group.Depth + 1);
+        if (DeformationPrefixCounts.Length != levelCount || LevelMaxErrors.Length != levelCount)
+            throw new InvalidDataException("The meshlet deformation prefix tables do not have one entry per hierarchy level.");
+
+        bool[] seen = new bool[DeformationVertexOrder.Length];
+        foreach (uint vertex in DeformationVertexOrder)
+        {
+            if (vertex >= (uint)seen.Length || seen[vertex])
+                throw new InvalidDataException("The meshlet deformation order is not a permutation of the source vertices.");
+            seen[vertex] = true;
+        }
+
+        uint previous = (uint)DeformationVertexOrder.Length;
+        for (int level = 0; level < levelCount; level++)
+        {
+            uint count = DeformationPrefixCounts[level];
+            float error = LevelMaxErrors[level];
+            if (count > previous)
+                throw new InvalidDataException($"The meshlet deformation prefix of level {level} is larger than the prefix of a finer level.");
+            if (!float.IsFinite(error) || error < 0.0f)
+                throw new InvalidDataException($"The meshlet deformation level error of level {level} is not finite.");
+            previous = count;
         }
     }
 

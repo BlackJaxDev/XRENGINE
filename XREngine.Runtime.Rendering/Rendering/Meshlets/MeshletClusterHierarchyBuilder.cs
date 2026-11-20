@@ -51,9 +51,10 @@ public static class MeshletClusterHierarchyBuilder
     /// Version 3 has no sloppy fallback and no placeholder triangle, rejects simplifications
     /// that change a locked border, and keeps ended branches locked. Version 4 adds, for a skinned
     /// mesh, the skinning centroid attribute, the blendshape vertex locks and the cluster skinning
-    /// tables (payload version 6). Version 5 zeroes a skinning centroid that is not finite.
+    /// tables (payload version 6). Version 5 zeroes a skinning centroid that is not finite. Version 6
+    /// adds, for a skinned mesh, the deformation order tables (payload version 7).
     /// </summary>
-    public const int CookVersion = 5;
+    public const int CookVersion = 6;
 
     private static readonly Lock InvariantSync = new();
     private static InvariantReport _invariantTotals;

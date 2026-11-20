@@ -76,9 +76,52 @@ public partial class XRMesh
         size += sizeof(int) * 4; // stats
         if (payload.PayloadVersion >= MeshletPayload.FirstClusterHierarchyPayloadVersion)
             size += CalculateClusterHierarchySize(payload);
-        if (payload.PayloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+        if (payload.PayloadVersion >= MeshletPayload.ClusterSkinningPayloadVersion)
             size += CalculateClusterSkinningSize(payload);
+        if (payload.PayloadVersion >= MeshletPayload.DeformationOrderPayloadVersion)
+            size += CalculateDeformationOrderSize(payload);
         return size;
+    }
+
+    /// <summary>The vertex order, the prefix counts and the level errors, each with a count (4 bytes per entry).</summary>
+    private static long CalculateDeformationOrderSize(MeshletPayload payload)
+        => sizeof(int) + (long)payload.DeformationVertexOrder.Length * sizeof(uint)
+           + sizeof(int) + (long)payload.DeformationPrefixCounts.Length * sizeof(uint)
+           + sizeof(int) + (long)payload.LevelMaxErrors.Length * sizeof(float);
+
+    private static void WriteDeformationOrder(RuntimeCookedBinaryWriter writer, MeshletPayload payload)
+    {
+        writer.Write(payload.DeformationVertexOrder.Length);
+        foreach (uint vertex in payload.DeformationVertexOrder)
+            writer.Write(vertex);
+        writer.Write(payload.DeformationPrefixCounts.Length);
+        foreach (uint count in payload.DeformationPrefixCounts)
+            writer.Write(count);
+        writer.Write(payload.LevelMaxErrors.Length);
+        foreach (float error in payload.LevelMaxErrors)
+            writer.Write(error);
+    }
+
+    private static (uint[] Order, uint[] PrefixCounts, float[] LevelErrors) ReadDeformationOrder(RuntimeCookedBinaryReader reader)
+    {
+        int orderCount = reader.ReadInt32();
+        ValidateArrayCount(orderCount, sizeof(uint), reader.Remaining, "deformation order entry");
+        uint[] order = new uint[orderCount];
+        for (int i = 0; i < orderCount; i++)
+            order[i] = reader.ReadUInt32();
+
+        int prefixCount = reader.ReadInt32();
+        ValidateArrayCount(prefixCount, sizeof(uint), reader.Remaining, "deformation prefix count");
+        uint[] prefixCounts = new uint[prefixCount];
+        for (int i = 0; i < prefixCount; i++)
+            prefixCounts[i] = reader.ReadUInt32();
+
+        int errorCount = reader.ReadInt32();
+        ValidateArrayCount(errorCount, sizeof(float), reader.Remaining, "deformation level error");
+        float[] levelErrors = new float[errorCount];
+        for (int i = 0; i < errorCount; i++)
+            levelErrors[i] = reader.ReadSingle();
+        return (order, prefixCounts, levelErrors);
     }
 
     /// <summary>The skin record count and records (8 bytes each), then the bone count and bones (2 bytes each).</summary>
@@ -176,8 +219,10 @@ public partial class XRMesh
         writer.Write(payload.Stats.EncodedByteCount);
         if (payload.PayloadVersion >= MeshletPayload.FirstClusterHierarchyPayloadVersion)
             WriteClusterHierarchy(writer, payload);
-        if (payload.PayloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+        if (payload.PayloadVersion >= MeshletPayload.ClusterSkinningPayloadVersion)
             WriteClusterSkinning(writer, payload);
+        if (payload.PayloadVersion >= MeshletPayload.DeformationOrderPayloadVersion)
+            WriteDeformationOrder(writer, payload);
     }
 
     private static void WriteClusterSkinning(RuntimeCookedBinaryWriter writer, MeshletPayload payload)
@@ -255,13 +300,18 @@ public partial class XRMesh
         MeshletLodGroupRecord[] lodGroups = [];
         MeshletClusterSkinRecord[] clusterSkins = [];
         ushort[] clusterBones = [];
+        uint[] deformationOrder = [];
+        uint[] deformationPrefixCounts = [];
+        float[] levelMaxErrors = [];
         if (payloadVersion >= MeshletPayload.FirstClusterHierarchyPayloadVersion)
         {
             (level0Count, clusterLods, lodGroups) = ReadClusterHierarchy(reader);
             meshletSettings = meshletSettings with { BuildClusterHierarchy = true };
         }
-        if (payloadVersion >= MeshletPayload.ClusterHierarchyPayloadVersion)
+        if (payloadVersion >= MeshletPayload.ClusterSkinningPayloadVersion)
             (clusterSkins, clusterBones) = ReadClusterSkinning(reader);
+        if (payloadVersion >= MeshletPayload.DeformationOrderPayloadVersion)
+            (deformationOrder, deformationPrefixCounts, levelMaxErrors) = ReadDeformationOrder(reader);
 
         if (payloadVersion < 2)
             runtimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSettings);
@@ -305,6 +355,9 @@ public partial class XRMesh
             LodGroups = lodGroups.ToImmutableArray(),
             ClusterSkins = clusterSkins.ToImmutableArray(),
             ClusterBones = clusterBones.ToImmutableArray(),
+            DeformationVertexOrder = deformationOrder.ToImmutableArray(),
+            DeformationPrefixCounts = deformationPrefixCounts.ToImmutableArray(),
+            LevelMaxErrors = levelMaxErrors.ToImmutableArray(),
         };
         payload.ValidatePortablePayload();
         return payload;
@@ -348,14 +401,26 @@ public partial class XRMesh
         int groupCount = reader.ReadInt32();
         if (groupCount < 0 || !TrySkipBytes(reader, (long)groupCount * LodGroupRecordBytes))
             return false;
-        if (payloadVersion < MeshletPayload.ClusterHierarchyPayloadVersion)
+        if (payloadVersion < MeshletPayload.ClusterSkinningPayloadVersion)
             return true;
 
         int skinCount = reader.ReadInt32();
         if (skinCount < 0 || !TrySkipBytes(reader, (long)skinCount * ClusterSkinRecordBytes))
             return false;
         int boneCount = reader.ReadInt32();
-        return boneCount >= 0 && TrySkipBytes(reader, (long)boneCount * sizeof(ushort));
+        if (boneCount < 0 || !TrySkipBytes(reader, (long)boneCount * sizeof(ushort)))
+            return false;
+        if (payloadVersion < MeshletPayload.DeformationOrderPayloadVersion)
+            return true;
+
+        // The vertex order, the prefix counts and the level errors: 4 bytes per entry each.
+        for (int table = 0; table < 3; table++)
+        {
+            int count = reader.ReadInt32();
+            if (count < 0 || !TrySkipBytes(reader, (long)count * sizeof(uint)))
+                return false;
+        }
+        return true;
     }
 
     private static bool TrySkipCpuMeshletDescriptors(RuntimeCookedBinaryReader reader)
