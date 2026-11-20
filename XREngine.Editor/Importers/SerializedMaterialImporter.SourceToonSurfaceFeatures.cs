@@ -61,7 +61,9 @@ public static partial class SerializedMaterialImporter
         BindOptionalSourceFeature(
             "stylized specular",
             () => BindSourceStylizedSpecular(material, document, resolver, warnings),
-            null,
+            // The source draws no other specular lobe when stylized specular is on, so the
+            // generic evaluator must not add its own highlight in place of the dropped one.
+            () => SetFloat(material, "_SpecularStrength", 0.0f),
             warnings,
             diagnostics);
         BindSourceLightingParameters(material, document, diagnostics, warnings);
