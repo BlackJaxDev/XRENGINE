@@ -83,7 +83,8 @@ internal readonly record struct VulkanVisibilityGeometryRecordClosure(
                 CanonicalGeometry.VertexCount ||
             CanonicalGeometry.IndexData.ElementOffset !=
                 CanonicalGeometry.IndexBase ||
-            CanonicalGeometry.IndexData.ElementCount !=
+            // IndexData holds the canonical indices and then the optional level covers.
+            CanonicalGeometry.IndexData.ElementCount <
                 CanonicalGeometry.IndexCount)
         {
             reason = "the canonical geometry record range changed after visibility-plan sealing";

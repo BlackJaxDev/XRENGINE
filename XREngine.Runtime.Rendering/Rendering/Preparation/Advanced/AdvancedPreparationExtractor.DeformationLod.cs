@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
+using XREngine.Rendering.Meshlets;
 
 namespace XREngine.Rendering;
 
@@ -8,12 +9,13 @@ public sealed partial class AdvancedPreparationExtractor
 {
     /// <summary>
     /// Draw flags of paths that read the deformed vertices of a skinned draw without the clamped
-    /// cluster cut: the directional shadow raster (level-0 ranges), transparency, the
-    /// depth-writing masked raster, the decal buffer pass, the editor highlight stencil draw,
-    /// wireframe, and non-canonical raster state.
+    /// cluster cut and without the level cover range of the visibility payload: transparency,
+    /// the depth-writing masked raster, the decal buffer pass, the editor highlight stencil draw,
+    /// wireframe, and non-canonical raster state. The directional shadow raster draws the
+    /// payload index range, which is the level cover of a clamped draw, so shadow casters can
+    /// use deformation level of detail.
     /// </summary>
     private const GPUIndirectRenderFlags ExcludedDeformationLodFlags =
-        GPUIndirectRenderFlags.CastShadow |
         GPUIndirectRenderFlags.Transparent |
         GPUIndirectRenderFlags.FragmentDepth |
         GPUIndirectRenderFlags.SurfaceDecal |
@@ -56,8 +58,9 @@ public sealed partial class AdvancedPreparationExtractor
     /// the skinned cut never draws a finer cluster. The draw gets level 0 unless every consumer of
     /// its deformed vertices selects clusters through the clamped cut: the meshlet task stage of
     /// an opaque or masked draw with the full hierarchy range (see
-    /// <see cref="ExcludedDeformationLodFlags"/>). Shadow casters keep level 0 until the
-    /// directional shadow raster draws a level cover range.
+    /// <see cref="ExcludedDeformationLodFlags"/>), or an indexed raster that draws the level cover
+    /// of the chosen level. A level above 0 therefore needs the published level covers of the
+    /// geometry (see <see cref="ResolveDrawIndexRange"/>).
     /// </summary>
     private uint ChooseDeformationLevel(
         AdvancedGpuScenePublicationSnapshot publication,
@@ -105,7 +108,45 @@ public sealed partial class AdvancedPreparationExtractor
             maxScale,
             _deformationLodPixelScale,
             AdvancedVirtualGeometryPolicy.PixelThreshold);
-        return level != 0u && payload.DeformationPrefixCounts[(int)level] != 0u ? level : 0u;
+        return level != 0u &&
+            payload.DeformationPrefixCounts[(int)level] != 0u &&
+            HasPublishedLevelCover(in geometry, payload, level)
+                ? level
+                : 0u;
+    }
+
+    /// <summary>
+    /// True when the geometry record holds the level covers of the payload after its canonical
+    /// indices, and the cover of <paramref name="level"/> is not empty.
+    /// </summary>
+    private static bool HasPublishedLevelCover(in AdvancedGeometryRecord geometry, MeshletPayload payload, uint level)
+        => level < (uint)payload.LevelCoverIndexCount.Length &&
+           payload.LevelCoverIndexCount[(int)level] != 0u &&
+           geometry.LevelCoverIndexCount == (uint)payload.LevelCoverIndices.Length;
+
+    /// <summary>
+    /// Returns the index range of the visibility payload of a draw. A skinned draw with
+    /// minimum level <paramref name="deformationLevel"/> above 0 draws the level cover of that
+    /// level, because its deformation job deformed only the vertices of the cover. Every
+    /// indexed raster of the draw (the directional shadow raster and the traditional raster)
+    /// reads this range. The cluster cut ignores it and selects clusters from the meshlet range.
+    /// Other draws use the canonical index list.
+    /// </summary>
+    private static void ResolveDrawIndexRange(
+        in AdvancedGeometryRecord geometry,
+        XRMesh? mesh,
+        uint deformationLevel,
+        out uint firstIndex,
+        out uint indexCount)
+    {
+        firstIndex = geometry.IndexData.ElementOffset;
+        indexCount = geometry.IndexCount;
+        if (deformationLevel == 0u ||
+            mesh?.MeshletPayload is not { } payload ||
+            !HasPublishedLevelCover(in geometry, payload, deformationLevel))
+            return;
+        firstIndex = geometry.LevelCoverIndexBase + payload.LevelCoverFirstIndex[(int)deformationLevel];
+        indexCount = payload.LevelCoverIndexCount[(int)deformationLevel];
     }
 
     /// <summary>

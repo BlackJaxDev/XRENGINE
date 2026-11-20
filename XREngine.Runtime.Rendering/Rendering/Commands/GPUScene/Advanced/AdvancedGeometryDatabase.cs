@@ -68,6 +68,7 @@ public sealed class AdvancedGeometryDatabase
     {
         handle = AdvancedGpuHandle.Invalid;
         if (!ValidateRegistration(vertices, indices, registration) ||
+            registration.LevelCoverIndexCount != 0u ||
             Records.Count >= Records.Capacity)
         {
             return false;
@@ -103,6 +104,7 @@ public sealed class AdvancedGeometryDatabase
     {
         handle = AdvancedGpuHandle.Invalid;
         if (!ValidateRegistration(currentVertices, indices, registration) ||
+            registration.LevelCoverIndexCount != 0u ||
             previousVertices.Length != currentVertices.Length ||
             Records.Count >= Records.Capacity)
         {
@@ -132,6 +134,14 @@ public sealed class AdvancedGeometryDatabase
         return Records.TryAdd(record, out handle);
     }
 
+    /// <summary>
+    /// Appends the vertices, indices, and meshlet streams of one meshlet geometry to the arenas
+    /// and adds its resident record. <paramref name="indices"/> holds the canonical index list
+    /// (<see cref="AdvancedGeometryRegistration.IndexCount"/> entries), then the level cover
+    /// indices of a skinned cluster hierarchy geometry
+    /// (<see cref="AdvancedGeometryRegistration.LevelCoverIndexCount"/> entries). One index arena
+    /// range holds both lists, so arena compaction copies the covers with the canonical indices.
+    /// </summary>
     public bool TryAddMeshletLocal(
         ReadOnlySpan<byte> vertices,
         ReadOnlySpan<uint> indices,
@@ -147,6 +157,8 @@ public sealed class AdvancedGeometryDatabase
             registration.MeshletCount != (uint)meshletDescriptors.Length ||
             !ValidateMeshletStreams(meshletDescriptors, meshletVertexIndices, meshletTriangleWords) ||
             !ValidateClusterHierarchy(registration, meshletTriangleWords.Length) ||
+            (registration.LevelCoverIndexCount != 0u &&
+             (registration.ClusterLevel0Count == 0u || registration.LevelCoverIndexCount % 3u != 0u)) ||
             Records.Count >= Records.Capacity)
         {
             return false;
@@ -654,7 +666,7 @@ public sealed class AdvancedGeometryDatabase
            registration.IndexCount != 0u &&
            registration.VertexStride != 0u &&
            (ulong)registration.VertexCount * registration.VertexStride == (uint)vertices.Length &&
-           registration.IndexCount == (uint)indices.Length;
+           (ulong)registration.IndexCount + registration.LevelCoverIndexCount == (uint)indices.Length;
 
     private static AdvancedGeometryRecord CreateResidentRecord(
         in AdvancedGeometryRegistration registration,

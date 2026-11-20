@@ -410,9 +410,14 @@ Version 7 adds, for a skinned hierarchy, the deformation order
 of the coarsest levels first), `DeformationPrefixCounts` (for each level `L`,
 the number of leading order entries that every cluster of level `L` or coarser
 and every root cluster reads) and `LevelMaxErrors` (the largest finite group
-error of each level). The mesh vertices stay in source order. The cook writes
-one `[DeformationPrefix]` line for each model with the prefix share of each
-level.
+error of each level). It also adds the level covers (`LevelCoverIndices`,
+`LevelCoverFirstIndex`, `LevelCoverIndexCount`, built by
+`MeshletLevelCoverBuilder`): for each level `L` above 0, the triangle list of
+every cluster of level `L` and every root cluster of a finer level. The cover of
+`L` is the cut that the clamped skinned cut selects at an infinite distance, so
+it covers the mesh once and reads only the deformation prefix of `L`. Level 0
+has no cover. The mesh vertices stay in source order. The cook writes one
+`[DeformationPrefix]` line for each model with the prefix share of each level.
 The hierarchy flag changes the meshlet settings hash only when it is set; it
 then adds `MeshletClusterHierarchyBuilder.CookVersion`, so a change of the cook
 recooks cached hierarchy payloads only.
@@ -521,9 +526,19 @@ largest projected error, in render pixels, that a drawn cluster may have.
   task stage treats every group finer than `L` with a finite error as refined
   enough, so it never draws a cluster that reads a vertex outside the prefix.
   A grown prefix marks the draw's velocity invalid for one frame
-  (`AdvancedDeformedVertexArena.RecordDeformedVertexCount`). Draws that another
-  path reads keep `L = 0`: shadow casters, transparent, fragment-depth, decal,
-  wireframe, editor-highlighted and non-canonical raster draws.
+  (`AdvancedDeformedVertexArena.RecordDeformedVertexCount`). The canonical
+  geometry publisher appends the level covers after the canonical indices in
+  the same index arena range (`AdvancedGeometryRegistration.LevelCoverIndexCount`;
+  `AdvancedGeometryRecord.IndexData` then holds `IndexCount` canonical indices
+  and the covers, and arena compaction copies both). For a draw with `L > 0`
+  the visibility payload index range is the cover of `L`
+  (`AdvancedGeometryRecord.LevelCoverIndexBase` plus `LevelCoverFirstIndex[L]`),
+  so the directional shadow raster and the traditional raster draw only
+  deformed vertices; the Vulkan stable bins accept such a range through
+  `AdvancedGeometryRecord.IsDrawIndexRange`. A draw gets `L > 0` only when its
+  geometry holds the covers. Draws that another path reads keep `L = 0`:
+  transparent, fragment-depth, decal, wireframe, editor-highlighted and
+  non-canonical raster draws.
 
 Measured with New Sponza and the prefab avatar at 2688x2688 (RVC, true single
 pass stereo): at the atrium the early raster goes from 5.9 to 3.6 ms and the

@@ -1004,6 +1004,10 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 deformationReason,
                 skinned && !_gpuDeformation.PreviousOutputValid);
 
+        uint payloadFirstIndex = offsets.IndexOffset;
+        uint payloadIndexCount = 0u;
+        if (hasCanonicalGeometry)
+            ResolveDrawIndexRange(in canonicalGeometry, mesh, deformationLevel, out payloadFirstIndex, out payloadIndexCount);
         _visibilityPayloads[commandIndex] =
             new AdvancedVisibilityPayload(
                 draw,
@@ -1012,10 +1016,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 offsets,
                 PrimitiveSection: command.SubmeshID,
                 InstanceCount: Math.Max(1u, command.InstanceCount),
-                FirstIndex: offsets.IndexOffset,
-                IndexCount: hasCanonicalGeometry
-                    ? canonicalGeometry.IndexCount
-                    : 0u,
+                FirstIndex: payloadFirstIndex,
+                IndexCount: payloadIndexCount,
                 VertexCount: hasCanonicalGeometry ? canonicalGeometry.VertexCount : 0u,
                 RasterStateClass: WritesFragmentDepth(command)
                     ? command.StateClassID | AdvancedVisibilityRasterStateBits.FragmentDepth
