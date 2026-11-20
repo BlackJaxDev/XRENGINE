@@ -69,6 +69,12 @@ color index from 1 to 4 on the stylized specular tint converts to the constant
 theme color when that theme has no hue, saturation, value, or hue-speed
 adjustment.
 
+Newer source shaders blend matcap global masks with their 20-entry color blend
+list. The importer reads the list from the source shader property declaration
+and maps normal, darken, multiply, lighten, linear dodge, subtract, and divide
+to the native mask blend modes. Other color blend modes still fail the
+conversion.
+
 Imported source materials apply `_AlphaForceOpaque` after decal, flipbook, and
 dissolve effects, before the final alpha cutoff. Dissolve can still discard a
 fragment. Native visibility, masked shadow, and native shading use the same

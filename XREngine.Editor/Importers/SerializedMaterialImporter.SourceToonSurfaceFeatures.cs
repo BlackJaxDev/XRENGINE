@@ -465,7 +465,10 @@ public static partial class SerializedMaterialImporter
                     GetFloat(document, "_Matcap2Normal", 1.0f) != 1.0f))
                     throw new SourceVisualImportException($"A source matcap custom normal is not supported on '{document.Name}'.");
                 int globalMask = GetInt(document, $"{matcapPrefix}MaskGlobalMask");
-                int globalBlend = GetInt(document, $"{matcapPrefix}MaskGlobalMaskBlendType", 2);
+                int globalBlend = ResolveSourceMaskBlend(
+                    resolver.Resolve(document.Shader.Guid),
+                    $"{matcapPrefix}MaskGlobalMaskBlendType",
+                    GetInt(document, $"{matcapPrefix}MaskGlobalMaskBlendType", 2));
                 bool hasGlobalMaskTexture = false;
                 if (globalMask is >= 1 and <= 16)
                 {
