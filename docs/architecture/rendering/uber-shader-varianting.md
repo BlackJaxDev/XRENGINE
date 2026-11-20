@@ -224,7 +224,7 @@ Fresnel construction. Its emission remains separate. Engine-authored materials
 retain their existing specular and rim paths.
 
 The importer reports enabled source controls that this adapter cannot represent
-with `POI0010` and retains the existing native Uber approximation for that effect.
+with `TOON0010` and retains the existing native Uber approximation for that effect.
 These include anisotropic or split-mask Mochie sampling, non-default PBR normal
 selection, PBR global masks and tint themes, other rim styles, and active rim
 shadow, alpha, mask, hue, or pan modifiers. The material retains native Uber
@@ -266,7 +266,7 @@ evaluate source Lambert, gradient, or material-shading composition per pixel.
 Both shader paths apply the source controls, directional suppression, and
 luminance limits. Engine light attenuation and light assignment remain in use.
 Unity vertex-light assignment and cookies require separate source data. The
-importer reports this boundary with `POI0010`.
+importer reports this boundary with `TOON0010`.
 
 Authored world SH is independent of reflection probe textures. The engine does
 not project captured probes into these coefficients or import Unity per-renderer

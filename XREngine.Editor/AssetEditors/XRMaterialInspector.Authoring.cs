@@ -64,7 +64,7 @@ public sealed partial class XRMaterialInspector
         float rowHeight = ImGui.GetFrameHeightWithSpacing() + 2.0f;
         float childHeight = Math.Clamp(state.Rows.Count * rowHeight, 140.0f, 620.0f);
         if (ImGui.BeginChild(
-            $"PoiyomiAuthoringTree##{schema.Fingerprint}",
+            $"SourceToonAuthoringTree##{schema.Fingerprint}",
             new Vector2(0.0f, childHeight),
             ImGuiChildFlags.Borders))
         {
@@ -124,7 +124,7 @@ public sealed partial class XRMaterialInspector
         AuthoringInspectorState state)
     {
         ImGui.SetNextItemWidth(MathF.Min(360.0f, ImGui.GetContentRegionAvail().X * 0.45f));
-        ImGui.InputTextWithHint("##PoiyomiAuthoringSearch", "Search labels, source names, IDs, tooltips...", ref state.Search, 256u);
+        ImGui.InputTextWithHint("##SourceToonAuthoringSearch", "Search labels, source names, IDs, tooltips...", ref state.Search, 256u);
         ImGui.SameLine();
         if (ImGui.SmallButton("Previous") && state.MatchRows.Count > 0)
         {
@@ -146,7 +146,7 @@ public sealed partial class XRMaterialInspector
         }
 
         ImGui.SetNextItemWidth(MathF.Min(320.0f, ImGui.GetContentRegionAvail().X * 0.40f));
-        ImGui.InputTextWithHint("##PoiyomiExactLookup", "Exact source or semantic property...", ref state.ExactLookup, 256u);
+        ImGui.InputTextWithHint("##SourceToonExactLookup", "Exact source or semantic property...", ref state.ExactLookup, 256u);
         ImGui.SameLine();
         if (ImGui.SmallButton("Reveal"))
         {

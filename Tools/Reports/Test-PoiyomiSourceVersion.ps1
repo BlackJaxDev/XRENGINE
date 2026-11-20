@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $PoiyomiRoot,
 
-    [string] $CatalogPath = "XREngine.Editor/Importers/Poiyomi/Catalogs/poiyomi-toon-9.3.64.json",
+    [string] $CatalogPath = "XREngine.Editor/Importers/SourceToon/Catalogs/source-toon-9.3.64.json",
 
     [string] $ReportPath = "Build/_AgentValidation/00000000-000000-shared/reports/poiyomi-source-version-audit.json",
 

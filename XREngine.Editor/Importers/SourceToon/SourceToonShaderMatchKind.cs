@@ -1,7 +1,7 @@
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Identifies the evidence used to recognize a Poiyomi shader.
+/// Identifies the evidence used to recognize a source toon shader.
 /// </summary>
 public enum SourceToonShaderMatchKind
 {

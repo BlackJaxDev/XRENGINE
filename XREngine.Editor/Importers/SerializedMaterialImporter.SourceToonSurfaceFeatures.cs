@@ -31,7 +31,7 @@ public static partial class SerializedMaterialImporter
         material.EnsureUberStateInitialized();
         SetFloat(material, "_SourceLayeredEmission", 1.0f);
 
-        // Poiyomi reserves _ColorMask for the render-target channel mask. It is
+        // The source toon shader reserves _ColorMask for the render-target channel mask. It is
         // normally an integer (15), not a color-mask texture. Keep the native
         // texture extension inert unless a source shader actually authored a
         // texture with that name; otherwise its white fallback replaces albedo.
@@ -748,7 +748,7 @@ public static partial class SerializedMaterialImporter
         ICollection<MaterialConversionDiagnostic> diagnostics,
         List<string> warnings)
     {
-        // Optimized Poiyomi shaders keep a default cubemap reference even when
+        // Optimized source toon shaders keep a default cubemap reference even when
         // the module is disabled. Treat the enable flag as authoritative so a
         // non-layout source used only as an inert default cannot fail the whole
         // material conversion or add a large unused native cubemap asset.
@@ -949,8 +949,8 @@ public static partial class SerializedMaterialImporter
     {
 
         if (document.TryGetPositive("_TPSPenetratorEnabled") || document.TryGetPositive("_TPSReceiverEnabled"))
-            warnings.Add("Poiyomi TPS decal hooks were preserved, but remain neutral until the TPS adapter phase is enabled.");
+            warnings.Add("Source toon TPS decal hooks were preserved, but remain neutral until the TPS adapter phase is enabled.");
         if (HasAnyPositive(document, "_Decal0VideoEnabled", "_Decal1VideoEnabled", "_Decal2VideoEnabled", "_Decal3VideoEnabled"))
-            warnings.Add("Poiyomi decal video hooks require an engine video-texture binding and were imported without an implicit static fallback.");
+            warnings.Add("Source toon decal video hooks require an engine video-texture binding and were imported without an implicit static fallback.");
     }
 }

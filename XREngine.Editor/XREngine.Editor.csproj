@@ -48,7 +48,7 @@
     <Compile Remove="ShaderCache\**" />
     <EmbeddedResource Remove="bin\**" />
     <EmbeddedResource Remove="ShaderCache\**" />
-    <EmbeddedResource Include="Importers\Poiyomi\Catalogs\poiyomi-toon-9.3.64.json" LogicalName="XREngine.Scene.Importers.Poiyomi.Catalogs.poiyomi-toon-9.3.64.json" />
+    <EmbeddedResource Include="Importers\SourceToon\Catalogs\source-toon-9.3.64.json" LogicalName="XREngine.Scene.Importers.SourceToon.Catalogs.source-toon-9.3.64.json" />
     <None Remove="bin\**" />
     <None Remove="ShaderCache\**" />
   </ItemGroup>

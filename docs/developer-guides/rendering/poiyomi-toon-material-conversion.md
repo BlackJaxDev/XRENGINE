@@ -3,8 +3,8 @@
 XRENGINE provides versioned conversion support for **Poiyomi Toon 9.2.66,
 9.2.79, 9.3.64, and verified 10.0.25 sources**. The 9.3.64 catalog comes from commit
 `c5aaeeb3a67782b7e8a26e184d5e0a1970792294`. Other releases of the 8.0 to 10.0
-release lines are admitted with `POI0016`. See [Release Lines](#release-lines).
-Versions outside these lines produce `POI0001` and preserve inspectable source
+release lines are admitted with `TOON0016`. See [Release Lines](#release-lines).
+Versions outside these lines produce `TOON0001` and preserve inspectable source
 data.
 
 `SourceToon92Catalog` records the two verified 9.2 source identities and hashes.
@@ -47,7 +47,7 @@ parameters in step with the imported blend, depth, and stencil state.
 The glitter color map retains its source color space, UV selection, transform,
 and pan. Its RGB multiplies the source flake color in both authored Uber and
 native Advanced shading. Source 10.0 distance LOD is not implemented; active
-glitter reports this difference with `POI0006`.
+glitter reports this difference with `TOON0006`.
 
 Matcap layers retain enabled hue shift, shift amount, speed, and color space.
 The supported selection mode applies the shift after source tint and lighting
@@ -73,7 +73,7 @@ values remain in a descriptor with their source version. Color transfer flags
 come from each source shader's declarations. The 9.3 property catalog remains
 the editor authoring inventory; it is not a generated 9.2 property catalog.
 Nonzero `_PoiInternalParallax`, `_AudioLinkDelay`, and `_AudioLinkCCStripY`, or
-a bound `_AnisoNoiseMap`, receive `POI0006` because these 9.2 controls have no
+a bound `_AnisoNoiseMap`, receive `TOON0006` because these 9.2 controls have no
 native mapping. Their source values remain available for inspection.
 
 ## Missing Material Textures
@@ -127,7 +127,7 @@ is not a main toon shader GUID. This keeps locked two-pass, grab-pass, and fur
 variants out.
 
 An admitted release gets `SourceToonShaderMatchKind.ReleaseLineSource` and a
-`POI0016` warning. `SourceToonShaderMatchResult.BehaviorVersion` holds the
+`TOON0016` warning. `SourceToonShaderMatchResult.BehaviorVersion` holds the
 verified version whose conversion rules apply. All version-specific rules, such
 as color normalization, glitter, surface features, and the 10.0 defaults, read
 `BehaviorVersion`. `Version` keeps the exact source release for the report.
@@ -157,7 +157,7 @@ parity.
 The matcher recognizes unlocked Pro shader evidence, optimizer-locked Pro
 signatures, source version markers, and locked Grab Pass variants. A recognized
 Pro material is normalized to properties shared with the Toon converter and
-receives conversion outcome `Downgraded` plus diagnostic `POIPRO0001`.
+receives conversion outcome `Downgraded` plus diagnostic `TOONLOSS0001`.
 Common portable state is retained, including base color/texture, normal data,
 emission, alpha/render state, culling, texture transforms, and other fields
 already understood by the Toon descriptor.
@@ -172,7 +172,7 @@ These Pro-only property groups are removed from runtime conversion:
 - Pro-only vertex effects;
 - Pro authoring and locking metadata.
 
-Each active discarded group emits `POIPRO0002` with its group and source
+Each active discarded group emits `TOONLOSS0002` with its group and source
 property. Dormant serialized values remain available through the preserved raw
 Unity material document and import diagnostics, but they do not enable shader
 features, samplers, or descriptors. The repository contains only synthetic
@@ -197,7 +197,7 @@ redistributed.
 | VRChat, Udon, and game-specific inputs | Preserved inactive unless an explicit service exists | No Unity/VRChat runtime code is executed inside the engine. |
 
 The exhaustive property, annotation, and workflow inventory is embedded as
-`Importers/Poiyomi/Catalogs/poiyomi-toon-9.3.64.json`. The generated human-
+`Importers/SourceToon/Catalogs/source-toon-9.3.64.json`. The generated human-
 readable table is [Poiyomi Toon 9.3.64 Parity](../../reference/rendering/poiyomi-toon-9.3.64-parity.md).
 
 ## Static, Animated, And Renamed Properties
@@ -237,24 +237,24 @@ over-limit material receives a deterministic failure reason before rendering.
 
 | Code | Meaning | Remediation |
 | --- | --- | --- |
-| `POI0001` | Source version or identity is unsupported. | Supply verified 9.2.66, 9.2.79, or 9.3.64 source evidence, or add reviewed support for the new version. |
-| `POI0002` | Locked shader matched only by an ambiguous signature. | Restore the original shader GUID/version metadata and reimport. |
-| `POI0003` | Runtime-visible property lacks classification. | Update the catalog and parity fixture; conversion must not ship in this state. |
-| `POI0004` | Catalog identity/hash mismatch. | Regenerate from the pinned commit and review the source audit. |
-| `POI0005` | Runtime integration is unavailable. | Register the required provider or accept preserved-inactive behavior. |
-| `POI0006` | Recognized runtime mapping is unavailable. | Inspect preserved source metadata and add a semantic mapping if runtime behavior is required. |
-| `POI0007` | Source value could not be preserved. | Correct malformed YAML/metadata; this is a conversion error. |
-| `POI0008` | Render state has an intentional native difference. | Review the pass-state section of the report and visual references. |
-| `POI0009` | Animation binding was not mapped. | Restore the source property/rename metadata or add a catalog alias. |
-| `POI0010` | Intentional native equivalent. | Review the documented semantic difference; no action is normally required. |
-| `POI0011` | Asset reference is missing. | Restore the referenced Unity asset or replace the material slot. |
-| `POI0012` | Texture asset is incompatible with its role. | Correct dimensionality/import classification and reimport. |
-| `POI0013` | Requested UV channel is absent. | Import a mesh containing that UV channel or change the material selector. |
-| `POI0014` | Enum value is outside the pinned schema. | Correct the source value or add a reviewed version-specific mapping. |
-| `POI0015` | Pass prewarm failed. | Inspect shader diagnostics; the last-known-good variant remains active. |
-| `POI0016` | Source release is admitted by its release line, not by an exact verified identity. | Compare the converted material with the source. Add a verified identity when the release needs exact rules. |
-| `POIPRO0001` | A Pro-authored material was accepted through the lossy Toon downgrade. | Review the downgrade report; use an authored Toon material when exact conversion is required. |
-| `POIPRO0002` | An active Pro-only feature group was discarded. | Replace the feature with an engine-native equivalent or accept the documented visual difference. |
+| `TOON0001` | Source version or identity is unsupported. | Supply verified 9.2.66, 9.2.79, or 9.3.64 source evidence, or add reviewed support for the new version. |
+| `TOON0002` | Locked shader matched only by an ambiguous signature. | Restore the original shader GUID/version metadata and reimport. |
+| `TOON0003` | Runtime-visible property lacks classification. | Update the catalog and parity fixture; conversion must not ship in this state. |
+| `TOON0004` | Catalog identity/hash mismatch. | Regenerate from the pinned commit and review the source audit. |
+| `TOON0005` | Runtime integration is unavailable. | Register the required provider or accept preserved-inactive behavior. |
+| `TOON0006` | Recognized runtime mapping is unavailable. | Inspect preserved source metadata and add a semantic mapping if runtime behavior is required. |
+| `TOON0007` | Source value could not be preserved. | Correct malformed YAML/metadata; this is a conversion error. |
+| `TOON0008` | Render state has an intentional native difference. | Review the pass-state section of the report and visual references. |
+| `TOON0009` | Animation binding was not mapped. | Restore the source property/rename metadata or add a catalog alias. |
+| `TOON0010` | Intentional native equivalent. | Review the documented semantic difference; no action is normally required. |
+| `TOON0011` | Asset reference is missing. | Restore the referenced Unity asset or replace the material slot. |
+| `TOON0012` | Texture asset is incompatible with its role. | Correct dimensionality/import classification and reimport. |
+| `TOON0013` | Requested UV channel is absent. | Import a mesh containing that UV channel or change the material selector. |
+| `TOON0014` | Enum value is outside the pinned schema. | Correct the source value or add a reviewed version-specific mapping. |
+| `TOON0015` | Pass prewarm failed. | Inspect shader diagnostics; the last-known-good variant remains active. |
+| `TOON0016` | Source release is admitted by its release line, not by an exact verified identity. | Compare the converted material with the source. Add a verified identity when the release needs exact rules. |
+| `TOONLOSS0001` | A Pro-authored material was accepted through the lossy Toon downgrade. | Review the downgrade report; use an authored Toon material when exact conversion is required. |
+| `TOONLOSS0002` | An active Pro-only feature group was discarded. | Replace the feature with an engine-native equivalent or accept the documented visual difference. |
 
 ## Authoring And Security
 

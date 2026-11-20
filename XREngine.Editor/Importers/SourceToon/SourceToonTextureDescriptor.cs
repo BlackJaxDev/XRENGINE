@@ -3,7 +3,7 @@ using System.Numerics;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// A normalized Poiyomi texture binding with its Unity asset and sampler semantics.
+/// A normalized source toon texture binding with its source asset and sampler semantics.
 /// </summary>
 public sealed record SourceToonTextureDescriptor
 {

@@ -7,7 +7,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Converts verified Poiyomi Toon ShaderLab pass and fixed-function state into
+/// Converts verified source toon shader pass and fixed-function state into
 /// the engine's shared-authored-state material pass architecture.
 /// </summary>
 public static class SourceToonRenderStateConverter
@@ -98,7 +98,7 @@ public static class SourceToonRenderStateConverter
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
                 MaterialConversionDiagnosticSeverity.Info,
-                "Poiyomi's disabled Add pass is preserved, so no separate additive compatibility pass is requested; ordinary Forward+ base-pass lighting remains active.",
+                "The disabled source Add pass is preserved, so no separate additive compatibility pass is requested; ordinary Forward+ base-pass lighting remains active.",
                 "Add"));
         }
         else
@@ -106,7 +106,7 @@ public static class SourceToonRenderStateConverter
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
                 MaterialConversionDiagnosticSeverity.Info,
-                "Poiyomi ForwardAdd lighting is folded into the single Forward+ base pass; its independently authored additive blend state is retained in the conversion report for diagnostics.",
+                "Source ForwardAdd lighting is folded into the single Forward+ base pass; its independently authored additive blend state is retained in the conversion report for diagnostics.",
                 "Add"));
         }
 
@@ -589,7 +589,7 @@ public static class SourceToonRenderStateConverter
         diagnostics.Add(new MaterialConversionDiagnostic(
             MaterialConversionDiagnosticCodes.EnumValueOutOfRange,
             MaterialConversionDiagnosticSeverity.Warning,
-            $"Serialized enum value {raw.ToString(CultureInfo.InvariantCulture)} is not supported by the Poiyomi Toon mapping; using '{fallback}'.",
+            $"Serialized enum value {raw.ToString(CultureInfo.InvariantCulture)} is not supported by the source toon mapping; using '{fallback}'.",
             property));
         return fallback;
     }

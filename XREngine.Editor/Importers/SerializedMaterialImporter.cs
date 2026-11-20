@@ -36,7 +36,7 @@ public static partial class SerializedMaterialImporter
     public static XRMaterial? Import(string materialPath, string? projectRoot = null)
         => ImportWithReport(materialPath, projectRoot).Material;
     /// <summary>
-    /// Validates the UV channels requested by an imported Poiyomi material against a mesh.
+    /// Validates the UV channels requested by an imported source toon material against a mesh.
     /// Missing channels fall back to UV0 in generated vertex shaders.
     /// </summary>
     public static MaterialConversionDiagnostic[] ValidateMeshCompatibility(XRMaterial material, uint availableUvChannels)
@@ -208,7 +208,7 @@ public static partial class SerializedMaterialImporter
                 ? "lilToon"
                 : isProceduralEye
                     ? "procedural eye"
-                    : isSourceToonFeatureLoss ? "Poiyomi Pro downgrade" : "Poiyomi Toon";
+                    : isSourceToonFeatureLoss ? "Pro toon downgrade" : "Source toon";
             warnings.Add($"{shaderFamily} material conversion failed for '{document.Name}'. Falling back to generic Unity material import. {ex.Message}");
             Debug.LogWarning(warnings[^1]);
             try
@@ -431,7 +431,7 @@ public static partial class SerializedMaterialImporter
             diagnostics,
             warnings);
 
-        // Most rendering properties authored by Poiyomi Pro are the same
+        // Most rendering properties authored by the Pro toon shader are the same
         // public Toon modules. The normalizer has already removed active
         // Pro-exclusive groups, so preserve every remaining common feature.
         ApplySourceToonSurfaceFeatures(material, document, resolver, diagnostics, warnings, sourceVersion);
@@ -1078,7 +1078,7 @@ public static partial class SerializedMaterialImporter
                 ["_ShadingEnabled"],
                 ["VIGNETTE_MASKED"]));
 
-        // Poiyomi commonly serializes non-zero alpha-mask controls even when
+        // The source toon shader commonly serializes non-zero alpha-mask controls even when
         // the material has no alpha-mask texture. Unity samples the shader's
         // default white texture in that case, so enabling an engine feature
         // (and a needless sampler/variant) changes no authored behavior.
@@ -2012,7 +2012,7 @@ public static partial class SerializedMaterialImporter
             "UNITYMAT0004",
             SourceImportDiagnosticSeverity.Info,
             SourceImportDiagnosticCategory.MaterialDowngrade,
-            $"Poiyomi shader family for '{Path.GetFileName(sourcePath)}' was inferred from '{context.GuidIndex.NormalizePortablePath(targetPath)}'.",
+            $"Source toon shader family for '{Path.GetFileName(sourcePath)}' was inferred from '{context.GuidIndex.NormalizePortablePath(targetPath)}'.",
             sourcePath,
             "m_Shader");
         return true;

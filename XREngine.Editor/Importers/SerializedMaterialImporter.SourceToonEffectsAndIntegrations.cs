@@ -255,7 +255,7 @@ public static partial class SerializedMaterialImporter
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.IntegrationUnavailable,
                 MaterialConversionDiagnosticSeverity.Warning,
-                "Beat Saber data was authored, but the pinned Poiyomi source exposes no engine-independent runtime provider contract. The state was retained without fabricating input.",
+                "Beat Saber data was authored, but the pinned source toon shader exposes no engine-independent runtime provider contract. The state was retained without fabricating input.",
                 "_BeatSaberEnabled"));
         }
     }

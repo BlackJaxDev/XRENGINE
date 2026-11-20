@@ -1,7 +1,7 @@
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Connects a serialized Unity property name to its original Poiyomi semantic identity.
+/// Connects a serialized source property name to its original source toon semantic identity.
 /// </summary>
 public sealed record SourceToonPropertyBinding
 {

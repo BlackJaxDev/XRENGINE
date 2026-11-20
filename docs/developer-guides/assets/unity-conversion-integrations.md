@@ -638,7 +638,7 @@ Poiyomi Pro-authored materials use a separate, explicitly lossy path. Unlocked
 and optimizer-locked Pro signatures are classified, normalized to the common
 Toon property surface, and reported as `Downgraded`. Active Pro-only Grab Pass,
 refraction, blur, touch-effect, Pro integration, Pro vertex, and Pro authoring
-groups are discarded with `POIPRO0002` warnings. This is a migration aid, not
+groups are discarded with `TOONLOSS0002` warnings. This is a migration aid, not
 Poiyomi Pro support or a parity claim. See
 [Poiyomi Toon Material Conversion](../rendering/poiyomi-toon-material-conversion.md#lossy-poiyomi-pro-downgrade).
 

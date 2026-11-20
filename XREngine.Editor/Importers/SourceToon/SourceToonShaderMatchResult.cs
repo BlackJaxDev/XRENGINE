@@ -1,7 +1,7 @@
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Result of matching source shader evidence against the pinned Poiyomi catalog.
+/// Result of matching source shader evidence against the pinned source toon catalog.
 /// </summary>
 public sealed record SourceToonShaderMatchResult
 {

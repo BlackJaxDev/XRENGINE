@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PoiyomiRoot,
 
-    [string]$OutputPath = "XREngine.Editor/Importers/Poiyomi/Catalogs/poiyomi-toon-9.3.64.json",
+    [string]$OutputPath = "XREngine.Editor/Importers/SourceToon/Catalogs/source-toon-9.3.64.json",
 
     [string[]]$ImporterPath = @(
         "XREngine.Editor/Importers/UnityMaterialImporter.cs",
@@ -707,21 +707,21 @@ $featureSymbols = @(
 )
 
 $diagnosticCodes = @(
-    [ordered]@{ code = "POI0001"; severity = "warning"; meaning = "Poiyomi shader family recognized but source version is unknown." }
-    [ordered]@{ code = "POI0002"; severity = "warning"; meaning = "Locked/generated shader matched only by property signature; original GUID or marker was unavailable." }
-    [ordered]@{ code = "POI0003"; severity = "error"; meaning = "Runtime-visible source property has no parity classification." }
-    [ordered]@{ code = "POI0004"; severity = "error"; meaning = "Pinned source identity or generated catalog hash does not match." }
-    [ordered]@{ code = "POI0005"; severity = "warning"; meaning = "Source feature is preserved but inactive because an engine integration is unavailable." }
-    [ordered]@{ code = "POI0006"; severity = "warning"; meaning = "Source property is recognized but its runtime conversion is not implemented." }
-    [ordered]@{ code = "POI0007"; severity = "error"; meaning = "Source property could not be parsed or preserved." }
-    [ordered]@{ code = "POI0008"; severity = "warning"; meaning = "Source render state has no exact XRENGINE representation." }
-    [ordered]@{ code = "POI0009"; severity = "warning"; meaning = "Source animation binding could not be mapped deterministically." }
-    [ordered]@{ code = "POI0010"; severity = "info"; meaning = "Native equivalent differs intentionally from Unity, VRChat, or ThryEditor behavior." }
-    [ordered]@{ code = "POI0011"; severity = "warning"; meaning = "A referenced source asset could not be resolved." }
-    [ordered]@{ code = "POI0012"; severity = "warning"; meaning = "A referenced texture asset cannot be represented by the requested texture role." }
-    [ordered]@{ code = "POI0013"; severity = "warning"; meaning = "The source material requests a UV channel the imported mesh does not provide." }
-    [ordered]@{ code = "POI0014"; severity = "warning"; meaning = "A source enum value is outside the pinned version's valid range." }
-    [ordered]@{ code = "POI0015"; severity = "warning"; meaning = "A required material-pass variant could not be prepared." }
+    [ordered]@{ code = "TOON0001"; severity = "warning"; meaning = "Poiyomi shader family recognized but source version is unknown." }
+    [ordered]@{ code = "TOON0002"; severity = "warning"; meaning = "Locked/generated shader matched only by property signature; original GUID or marker was unavailable." }
+    [ordered]@{ code = "TOON0003"; severity = "error"; meaning = "Runtime-visible source property has no parity classification." }
+    [ordered]@{ code = "TOON0004"; severity = "error"; meaning = "Pinned source identity or generated catalog hash does not match." }
+    [ordered]@{ code = "TOON0005"; severity = "warning"; meaning = "Source feature is preserved but inactive because an engine integration is unavailable." }
+    [ordered]@{ code = "TOON0006"; severity = "warning"; meaning = "Source property is recognized but its runtime conversion is not implemented." }
+    [ordered]@{ code = "TOON0007"; severity = "error"; meaning = "Source property could not be parsed or preserved." }
+    [ordered]@{ code = "TOON0008"; severity = "warning"; meaning = "Source render state has no exact XRENGINE representation." }
+    [ordered]@{ code = "TOON0009"; severity = "warning"; meaning = "Source animation binding could not be mapped deterministically." }
+    [ordered]@{ code = "TOON0010"; severity = "info"; meaning = "Native equivalent differs intentionally from Unity, VRChat, or ThryEditor behavior." }
+    [ordered]@{ code = "TOON0011"; severity = "warning"; meaning = "A referenced source asset could not be resolved." }
+    [ordered]@{ code = "TOON0012"; severity = "warning"; meaning = "A referenced texture asset cannot be represented by the requested texture role." }
+    [ordered]@{ code = "TOON0013"; severity = "warning"; meaning = "The source material requests a UV channel the imported mesh does not provide." }
+    [ordered]@{ code = "TOON0014"; severity = "warning"; meaning = "A source enum value is outside the pinned version's valid range." }
+    [ordered]@{ code = "TOON0015"; severity = "warning"; meaning = "A required material-pass variant could not be prepared." }
 )
 
 $catalog = [ordered]@{
@@ -752,8 +752,8 @@ $catalog = [ordered]@{
         unlockedEvidence = @("exact shader GUID", "exact version marker plus canonical shader name", "canonical 9.3/Toon path plus exact version marker")
         lockedEvidence = @("OriginalShaderGUID override tag", "Hidden/Locked shader name plus exact source marker", "required property signature plus optimizer marker")
         requiredPropertySignature = @("shader_master_label", "shader_is_using_thry_editor", "_ShaderOptimizerEnabled", "_MainTex", "_ShadingEnabled")
-        ambiguousPropertySignatureBehavior = "warn with POI0002"
-        unknownVersionBehavior = "reject Poiyomi conversion and warn with POI0001"
+        ambiguousPropertySignatureBehavior = "warn with TOON0002"
+        unknownVersionBehavior = "reject Poiyomi conversion and warn with TOON0001"
     }
     namingPolicy = [ordered]@{
         material = "{sourceAssetStem}.poiyomi-9_3_64.uber"

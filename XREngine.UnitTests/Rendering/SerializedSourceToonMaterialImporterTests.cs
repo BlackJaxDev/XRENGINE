@@ -158,9 +158,9 @@ Material:
             $"Warnings={string.Join(" | ", result.Warnings)}; " +
             $"Diagnostics={string.Join(" | ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString()))}");
         result.ShaderPath.ShouldBe(shaderPath);
-        result.Warnings.ShouldHaveSingleItem().ShouldStartWith("[POI0010]");
+        result.Warnings.ShouldHaveSingleItem().ShouldStartWith("[TOON0010]");
         result.Diagnostics.ShouldNotBeEmpty();
-        result.Diagnostics.ShouldAllBe(static diagnostic => diagnostic.Code == "POI0010");
+        result.Diagnostics.ShouldAllBe(static diagnostic => diagnostic.Code == "TOON0010");
 
         XRMaterial material = result.Material.ShouldNotBeNull();
         material.Name.ShouldBe("AvatarBody");

@@ -3,7 +3,7 @@ using System.Numerics;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Source-independent, versioned Poiyomi material semantics shared by conversion,
+/// Source-independent, versioned source toon material semantics shared by conversion,
 /// reporting, reimport, animation, and authoring workflows.
 /// </summary>
 public sealed record SourceToonMaterialDescriptor

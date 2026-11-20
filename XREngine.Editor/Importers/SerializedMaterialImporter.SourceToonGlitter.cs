@@ -169,7 +169,7 @@ public static partial class SerializedMaterialImporter
     private static void VerifySource81Glitter(SerializedMaterialDocument document)
     {
         if (HasExternalTexture(document, "_GlitterMask") || HasExternalTexture(document, "_GlitterTexture"))
-            throw new SourceVisualImportException("The verified Poiyomi 8.1.167 shader omits external glitter mask and shape texture sampling.");
+            throw new SourceVisualImportException("The verified source toon 8.1.167 shader omits external glitter mask and shape texture sampling.");
         (string Name, float Value)[] lockedValues =
         [
             ("_GlitterJitter", 1.0f), ("_GlitterFrequency", 100.0f),
@@ -188,16 +188,16 @@ public static partial class SerializedMaterialImporter
         foreach ((string name, float expected) in lockedValues)
         {
             if (document.TryGetFloat(name, out float value) && MathF.Abs(value - expected) > 0.00001f)
-                throw new SourceVisualImportException($"The verified Poiyomi 8.1.167 shader fixes {name} to {expected}; this material value is not supported.");
+                throw new SourceVisualImportException($"The verified source toon 8.1.167 shader fixes {name} to {expected}; this material value is not supported.");
         }
         if (!HasExternalTexture(document, "_GlobalMaskTexture0"))
-            throw new SourceVisualImportException("The verified Poiyomi 8.1.167 glitter requires its global mask texture.");
+            throw new SourceVisualImportException("The verified source toon 8.1.167 glitter requires its global mask texture.");
         if (document.TryGetVector("_GlobalMaskTexture0SplitTilingOffset_G", out Vector4 scaleOffset) &&
             scaleOffset != new Vector4(1.0f, 1.0f, 0.0f, 0.0f))
-            throw new SourceVisualImportException("The verified Poiyomi 8.1.167 glitter requires the original global mask green transform.");
+            throw new SourceVisualImportException("The verified source toon 8.1.167 glitter requires the original global mask green transform.");
         if (document.TryGetVector("_GlobalMaskTexture0SplitPan_G", out Vector4 splitPan) &&
             splitPan != Vector4.Zero)
-            throw new SourceVisualImportException("The verified Poiyomi 8.1.167 glitter requires the original global mask green pan.");
+            throw new SourceVisualImportException("The verified source toon 8.1.167 glitter requires the original global mask green pan.");
     }
 
     private static bool TryGetGlitterSizeRange(SerializedMaterialDocument document, out Vector4 range)

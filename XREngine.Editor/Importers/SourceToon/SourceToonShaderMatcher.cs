@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Matches unlocked and Thry optimizer-generated shaders against verified Poiyomi sources.
+/// Matches unlocked and Thry optimizer-generated shaders against verified source toon shaders.
 /// </summary>
 public static partial class SourceToonShaderMatcher
 {
@@ -106,7 +106,7 @@ public static partial class SourceToonShaderMatcher
                     new MaterialConversionDiagnostic(
                         MaterialConversionDiagnosticCodes.ProLossyDowngrade,
                         MaterialConversionDiagnosticSeverity.Warning,
-                        $"Poiyomi Pro {version} input is being converted to the native Uber shader. Common Toon-compatible modules are preserved; only active Pro-exclusive feature groups are omitted and reported separately."),
+                        $"Pro toon {version} input is being converted to the native Uber shader. Common Toon-compatible modules are preserved; only active Pro-exclusive feature groups are omitted and reported separately."),
                 ],
             };
         }
@@ -152,7 +152,7 @@ public static partial class SourceToonShaderMatcher
             MaterialConversionDiagnostic diagnostic = new(
                 MaterialConversionDiagnosticCodes.AmbiguousLockedSignature,
                 MaterialConversionDiagnosticSeverity.Warning,
-                "The generated shader matches the Poiyomi 9.3.64 property signature but has no original GUID or exact version marker. Conversion will preserve this ambiguity in its report.");
+                "The generated shader matches the source toon 9.3.64 property signature but has no original GUID or exact version marker. Conversion will preserve this ambiguity in its report.");
             return Accepted(
                 SourceToonShaderMatchKind.LockedPropertySignature,
                 SourceToon93Catalog.Version,

@@ -9,7 +9,7 @@ using XREngine.Scene.Importers.SourceToon;
 namespace XREngine.Editor.MaterialAuthoring;
 
 /// <summary>
-/// Compiles the embedded, pinned Poiyomi 9.3.64 inventory into a safe native
+/// Compiles the embedded, pinned source toon 9.3.64 inventory into a safe native
 /// authoring tree. Unity editor types are data only; no drawer or action type
 /// name from the catalog is reflected or instantiated.
 /// </summary>

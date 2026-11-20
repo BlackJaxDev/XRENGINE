@@ -5,7 +5,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Translates serialized Poiyomi enum values into XRENGINE values.
+/// Translates serialized source toon enum values into XRENGINE values.
 /// </summary>
 internal static class SourceToonEnumMapper
 {
@@ -141,7 +141,7 @@ internal static class SourceToonEnumMapper
         diagnostics.Add(new MaterialConversionDiagnostic(
             MaterialConversionDiagnosticCodes.EnumValueOutOfRange,
             MaterialConversionDiagnosticSeverity.Warning,
-            $"Serialized enum value {sourceValue} is not supported by the Poiyomi Toon mapping; using '{fallback}'.",
+            $"Serialized enum value {sourceValue} is not supported by the source toon mapping; using '{fallback}'.",
             sourceProperty));
         return fallback;
     }

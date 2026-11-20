@@ -193,8 +193,8 @@ public sealed class SourceToonParityContractTests
     {
         MaterialConversionDiagnostic[] diagnostics =
         [
-            new("POI9999", MaterialConversionDiagnosticSeverity.Warning, "Unknown value retained.", "_UnknownZ"),
-            new("POI9998", MaterialConversionDiagnosticSeverity.Warning, "Unknown value retained.", "_UnknownA"),
+            new("TOON9999", MaterialConversionDiagnosticSeverity.Warning, "Unknown value retained.", "_UnknownZ"),
+            new("TOON9998", MaterialConversionDiagnosticSeverity.Warning, "Unknown value retained.", "_UnknownA"),
         ];
         XRMaterial material = new() { Name = "Unknowns" };
         string source = Path.GetTempFileName();

@@ -137,7 +137,13 @@ public sealed class MaterialConversionReportRegistry
 public static class MaterialConversionReportBuilder
 {
     public const string ConverterId = "xrengine.poiyomi-toon";
-    public const string ConverterVersion = "1.10.0";
+
+    /// <summary>The report family name of an accepted source toon material.</summary>
+    public const string SourceToonFamilyName = "Source toon";
+
+    /// <summary>The report family name of a Pro toon material that is converted with a lossy downgrade.</summary>
+    public const string ProToonFamilyName = "Pro toon (lossy downgrade input)";
+    public const string ConverterVersion = "1.11.0";
     public const int SourceDescriptorVersion = 1;
 
     private static readonly Lazy<IReadOnlySet<string>> PreservedRuntimeProperties =
@@ -176,8 +182,8 @@ public static class MaterialConversionReportBuilder
             ["outline"] = "Rendered as an engine material pass sharing authored state.",
             ["subsurface"] = "Portable screen-independent approximation; Unity light macros are not retained.",
             ["glitter"] = "Portable deterministic noise implementation replaces Unity-specific derivatives.",
-            ["advanced-stylized-lighting"] = "Poiyomi lighting semantics are mapped onto XRENGINE forward-plus lights.",
-            ["advanced-pbr"] = "Poiyomi/Mochie controls feed XRENGINE's portable BRDF implementation.",
+            ["advanced-stylized-lighting"] = "Source toon lighting semantics are mapped onto XRENGINE forward-plus lights.",
+            ["advanced-pbr"] = "Source PBR controls feed XRENGINE's portable BRDF implementation.",
             ["layered-matcap-rim"] = "Repeated slots share engine arrays and semantic bindings.",
             ["audiolink"] = "Requires the registered runtime AudioLink adapter.",
             ["environment-lighting"] = "Requires registered environment/LTCGI/light-volume adapters.",
@@ -291,9 +297,9 @@ public static class MaterialConversionReportBuilder
             SourceContentSha256 = ComputeSha256(sourcePath),
             SourceShaderFamily = sourceMatch?.SourceFamily switch
             {
-                SourceToonShaderFamily.Pro => "Poiyomi Pro (lossy downgrade input)",
-                SourceToonShaderFamily.Toon => "Poiyomi Toon",
-                _ => descriptor is null ? "Unity Shader" : "Poiyomi Toon",
+                SourceToonShaderFamily.Pro => ProToonFamilyName,
+                SourceToonShaderFamily.Toon => SourceToonFamilyName,
+                _ => descriptor is null ? "Source shader" : SourceToonFamilyName,
             },
             SourceShaderVersion = sourceMatch?.Version?.ToString() ?? descriptor?.Version.ToString() ?? "unknown",
             SourceShaderPath = shaderPath,

@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Identifies verified Poiyomi Toon 10.0.25 source and locked shader variants.
+/// Identifies verified source toon 10.0.25 source and locked shader variants.
 /// </summary>
 public static partial class SourceToon10Catalog
 {

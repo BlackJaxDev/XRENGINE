@@ -1,7 +1,7 @@
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Pinned source identity and deterministic naming policy for Poiyomi Toon 9.3.64.
+/// Pinned source identity and deterministic naming policy for source toon 9.3.64.
 /// </summary>
 public static class SourceToon93Catalog
 {
@@ -11,7 +11,7 @@ public static class SourceToon93Catalog
     public const string ShaderBlob = "4e3a68b3551e63e6b6c57625669d19e86f70ac8c";
     public const string ShaderSha256 = "7efb9176022291a041ecf332bf999f68ba33591d6f446e60757be83e968e61d8";
     public const string ThryEditorTree = "6437aeaec7b715e7fd000bfd0bdd3d6b0840c6db";
-    public const string CatalogResourceName = "XREngine.Scene.Importers.Poiyomi.Catalogs.poiyomi-toon-9.3.64.json";
+    public const string CatalogResourceName = "XREngine.Scene.Importers.SourceToon.Catalogs.source-toon-9.3.64.json";
 
     public static readonly SourceToonShaderVersion Version = new(9, 3, 64);
 
@@ -20,7 +20,7 @@ public static class SourceToon93Catalog
     /// </summary>
     public static Stream OpenCatalog()
         => typeof(SourceToon93Catalog).Assembly.GetManifestResourceStream(CatalogResourceName)
-           ?? throw new InvalidOperationException($"Embedded Poiyomi catalog '{CatalogResourceName}' is missing.");
+           ?? throw new InvalidOperationException($"Embedded source toon catalog '{CatalogResourceName}' is missing.");
 
     public static string GetMaterialName(string sourceAssetPath, string? sourceGuid = null)
     {
