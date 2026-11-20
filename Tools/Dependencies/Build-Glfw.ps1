@@ -82,7 +82,7 @@ Invoke-RequiredTool -Name "git" -Arguments @("-C", $sourceDir, "apply", "--check
 Invoke-RequiredTool -Name "git" -Arguments @("-C", $sourceDir, "apply", $patchPath)
 Invoke-RequiredTool -Name "cmake" -Arguments @(
     "-S", $sourceDir, "-B", $cmakeDir,
-    "-G", "Visual Studio 17 2022", "-A", "x64",
+    "-A", "x64",
     "-DBUILD_SHARED_LIBS=ON",
     "-DGLFW_BUILD_EXAMPLES=OFF",
     "-DGLFW_BUILD_TESTS=OFF",
