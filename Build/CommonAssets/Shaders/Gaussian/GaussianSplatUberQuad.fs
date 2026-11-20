@@ -193,8 +193,15 @@ void main()
         }
         else
         {
-            bool isPremultiplied = isUber &&
-                (UBER_F(_AlphaPremultiply) > 0.5 || UBER_F(_SourceGrabPassBlendMode) > 0.5);
+            // The native Uber row stores these two settings only when its schema has them.
+            // Without them the splat blends straight alpha, as the native triangle path does.
+            bool isPremultiplied = false;
+#if defined(XR_UBER_WORD_AlphaPremultiply)
+            isPremultiplied = isPremultiplied || (isUber && UBER_F(_AlphaPremultiply) > 0.5);
+#endif
+#if defined(XR_UBER_WORD_SourceGrabPassBlendMode)
+            isPremultiplied = isPremultiplied || (isUber && UBER_F(_SourceGrabPassBlendMode) > 0.5);
+#endif
             float opticalDepth = coverageAlpha >= 0.99995
                 ? kMaxOpticalDepth
                 : min(-log(max(1.0 - coverageAlpha, 1.0e-6)), kMaxOpticalDepth);

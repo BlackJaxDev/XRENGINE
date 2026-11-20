@@ -369,9 +369,10 @@ void XR_ADV_ApplyDecalBuffer(uvec2 pixel, inout vec3 albedo, inout float roughne
 {
 }
 
-float XR_ADV_DiffuseOcclusion(uint flags, float ao, vec3 albedo)
+// The Advanced multi-bounce form returns a per-channel value. Splats use plain AO in each channel.
+vec3 XR_ADV_DiffuseOcclusion(uint flags, float ao, vec3 albedo)
 {
-    return clamp(ao, 0.0, 1.0);
+    return vec3(clamp(ao, 0.0, 1.0));
 }
 
 float XR_ADV_SpecularVisibility(uint flags, float NoV, float ao, float roughness)
@@ -415,11 +416,11 @@ void XR_ADV_EvaluateProbeIblWithSelection(
     float metallic,
     out vec3 diffuseIndirect,
     out vec3 specularIndirect,
-    out float weights[4],
-    out uint indices[4])
+    out vec4 weights,
+    out uvec4 indices)
 {
-    weights = float[4](1.0, 0.0, 0.0, 0.0);
-    indices = uint[4](0u, 0u, 0u, 0u);
+    weights = vec4(1.0, 0.0, 0.0, 0.0);
+    indices = uvec4(0u);
     float NoV = max(dot(N, V), 0.0);
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec3 F = XR_ADV_FresnelSchlick(NoV, F0);
@@ -436,8 +437,8 @@ vec3 XR_ADV_SampleSelectedRawPrefilter(
     vec3 N,
     vec3 V,
     float perceptualRoughness,
-    float weights[4],
-    uint indices[4])
+    vec4 weights,
+    uvec4 indices)
 {
     vec3 R = reflect(-V, N);
     return XR_SPLAT_SampleHemisphereEnv(R, clamp(perceptualRoughness, 0.0, 1.0));
@@ -446,8 +447,8 @@ vec3 XR_ADV_SampleSelectedRawPrefilter(
 vec3 XR_ADV_SampleSelectedRawPrefilterNormal(
     vec3 normal,
     float blur,
-    float weights[4],
-    uint indices[4])
+    vec4 weights,
+    uvec4 indices)
 {
     return XR_SPLAT_SampleHemisphereEnv(normal, clamp(blur, 0.0, 1.0));
 }

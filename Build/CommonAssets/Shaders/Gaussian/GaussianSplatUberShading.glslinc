@@ -164,8 +164,8 @@ void ShadeStandardSplatMaterial(
 
         if ((u_Push.flags & 8u) != 0u)
         {
-            float probeWeights[4];
-            uint probeIndices[4];
+            vec4 probeWeights;
+            uvec4 probeIndices;
             vec3 diffuseIndirect;
             vec3 specularIndirect;
             XR_ADV_EvaluateProbeIblWithSelection(
