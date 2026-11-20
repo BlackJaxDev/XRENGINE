@@ -1773,8 +1773,11 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         }
         if (IsSurfaceDecal(command))
             return EAdvancedMaterialCoverageMode.Decal;
-        if (WritesFragmentDepth(command))
+        if (WritesFragmentDepth(command) ||
+            (command.Flags & (uint)GPUIndirectRenderFlags.CoverageDiscard) != 0u)
+        {
             return EAdvancedMaterialCoverageMode.Masked;
+        }
         return command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested
             ? EAdvancedMaterialCoverageMode.Masked
             : EAdvancedMaterialCoverageMode.Opaque;

@@ -214,6 +214,11 @@ namespace XREngine.Rendering.Commands
         /// directional cascade draws it in the dynamic overlay, not in its static caster tile.
         /// </summary>
         ShadowCasterDynamic = 1u << 28,
+        /// <summary>
+        /// The opaque-pass material removes fragments or triangles in its own coverage step (UV tile discard, face
+        /// discard, or dissolve). Advanced visibility routes the draw to the masked raster, which runs that step.
+        /// </summary>
+        CoverageDiscard = 1u << 29,
     }
 
     public enum GPUSortAlgorithm
