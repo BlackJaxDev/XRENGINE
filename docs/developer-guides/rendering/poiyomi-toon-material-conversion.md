@@ -179,7 +179,7 @@ keyword, and then the authored adjustment evidence.
 
 The audio-reactive hue shift has no Uber equivalent yet.
 
-## Sampling, Detail, And Back Face
+## Sampling, Detail, Back Face, And Normal Correction
 
 The Uber surface extensions use the source stochastic sampling. Each texture
 toggle turns stochastic sampling on for that texture, and `_StochasticMode`
@@ -199,6 +199,7 @@ selects the method for the whole material.
 | `_BackFaceHueShiftEnabled` and its values | Same names | The importer converts the speed to the Uber time unit. |
 | `_BackFaceDetailIntensity` | Same name | Scales both detail mask channels on back faces. |
 | `_BackFaceEmissionLimiter` | Same name | Multiplies all emission of a back face fragment. |
+| `_NormalCorrect`, `_NormalCorrectAmount`, `_NormalCorrectOrigin` | `_NormalCorrectStrength`, `_NormalCorrectOrigin` | The normal bends away from a vertical axis through the origin before the tangent frame and the normal maps use it. The strength is 0 when the toggle is off. |
 
 The back face color now applies directly after the detail color, before the
 color mask and lighting, as in the source. The ambient and PBR terms therefore

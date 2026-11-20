@@ -2328,6 +2328,11 @@ void main() {
         ? mesh.isFrontFace : 1.0;
     float frameFacing = _SourceBackfaceNormals != 0 && _FlipBackfaceNormals != 0
         ? mesh.isFrontFace : 1.0;
+#if !defined(XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
+    // Normal correction bends the interpolated normal before the tangent frame and
+    // normal maps use it, as in the source.
+    mesh.vertexNormal = uberCorrectNormal(mesh.vertexNormal, mesh);
+#endif
     mesh.vertexNormal *= normalFacing;
     mesh.worldNormal = mesh.vertexNormal;
 
@@ -2392,7 +2397,7 @@ void main() {
     mesh.worldNormal = normalize(mesh.TBN * tangentNormal);
 #endif
 #if !defined(XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
-    mesh.worldNormal = uberApplyColorMaskNormal(uberCorrectNormal(mesh.worldNormal, mesh), mesh);
+    mesh.worldNormal = uberApplyColorMaskNormal(mesh.worldNormal, mesh);
     if (mesh.isFrontFace < 0.0 && _BackFaceNormalStrength > EPSILON) {
         vec2 backNormalUv = transformUV(getUV(_BackFaceTextureUV, mesh), _BackFaceNormalMap_ST);
         vec3 backNormal = unpackNormal(texture(_BackFaceNormalMap, backNormalUv), _BackFaceNormalStrength);

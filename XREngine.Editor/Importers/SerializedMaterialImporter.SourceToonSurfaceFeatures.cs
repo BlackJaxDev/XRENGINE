@@ -49,6 +49,7 @@ public static partial class SerializedMaterialImporter
         BindSourceToonColorAdjustOptions(material, document);
         BindSourceToonSamplingOptions(material, document);
         BindSourceToonBackFaceOptions(material, document);
+        BindSourceToonNormalCorrect(material, document);
         BindSourceToonGlitter(material, document, resolver, sourceVersion, diagnostics);
         BindSourceToonFlipbook(material, document);
         BindSourceToonDissolve(material, document, diagnostics);

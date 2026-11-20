@@ -480,10 +480,19 @@ vec3 uberCorrectNormal(vec3 normal, ToonMesh mesh)
 #ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
     return normal;
 #else
-    vec3 objectOut = normalize(mesh.worldPos - (u_ModelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz);
+    if (_NormalCorrectStrength <= 0.0)
+        return normal;
+
+    // The corrected normal points away from a vertical axis through the origin, in the
+    // horizontal plane of the object.
+    vec3 horizontal = mesh.localPos - _NormalCorrectOrigin;
+    horizontal.y = 0.0;
+    if (dot(horizontal, horizontal) <= 1e-12)
+        return normal;
+    vec3 objectOut = normalize(mat3(u_ModelMatrix) * normalize(horizontal));
     float vertexMask = _NormalCorrectVertexColor == 0
         ? 1.0
-        : mesh.vertexColor[clamp(_NormalCorrectVertexColor - 1, 0, 3)];
+        : uberChannelAt(mesh.vertexColor, _NormalCorrectVertexColor - 1);
     return normalize(mix(normal, objectOut, saturate(_NormalCorrectStrength * vertexMask)));
 #endif
 }

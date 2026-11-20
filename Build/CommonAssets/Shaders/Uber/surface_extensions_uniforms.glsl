@@ -66,6 +66,8 @@ uniform vec4 _DepthAlphaParams;
 uniform float _NormalCorrectStrength;
 //@property(name="_NormalCorrectVertexColor", display="Normal Correction Vertex Mask", mode=static, default="0")
 uniform int _NormalCorrectVertexColor;
+//@property(name="_NormalCorrectOrigin", display="Normal Correction Origin", mode=static, default="vec3(0.0, 0.4, -0.025)")
+uniform vec3 _NormalCorrectOrigin;
 
 //@property(name="_BackFaceTexture_ST", display="Backface Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
 uniform vec4 _BackFaceTexture_ST;
