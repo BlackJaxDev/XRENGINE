@@ -445,9 +445,10 @@ void main()
         return;
     }
 
-    // Post-resolve sharpening — stronger than TAA because we're upscaling from low res.
-    // Uses current frame detail to restore high-frequency edges. Skip the
-    // overlay neighborhood; its coverage is resolved below from the stencil mask.
+#ifndef XR_TSR_STABLE_OUTPUT
+    // Post-resolve sharpening on the legacy non-stable path. Skip it under
+    // XR_TSR_STABLE_OUTPUT because raw current-frame high frequency carries
+    // the active jitter phase and re-injects shimmer into stationary edges.
     if (postTemporalCoverage <= 0.0f)
     {
         vec3 neighbors =
@@ -460,14 +461,9 @@ void main()
             nativeResolution,
             historyWeight,
             reactiveMask);
-#ifdef XR_TSR_STABLE_OUTPUT
-        sharpenStrength *= TsrComputeSharpenStability(canUseHistory, historyAge,
-            geometryInstability, motionMask, reactiveMask,
-            currentLuma, historyYCoCg.x, ReactiveLumaThreshold);
-        sharpenStrength *= 1.0 - coverage.retention;
-#endif
         result += highFreq * sharpenStrength;
     }
+#endif
 
     OutColor = vec4(max(result, vec3(0.0f)), 1.0f);
 }

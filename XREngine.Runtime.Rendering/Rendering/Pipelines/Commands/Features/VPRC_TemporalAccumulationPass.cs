@@ -1388,10 +1388,10 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
 
         if (jitterEnabled)
         {
-            state.ActiveJitterHandle = instance.RenderState.RequestCameraProjectionJitter(jitter);
+            Vector2 resolution = new(Math.Max(1u, width), Math.Max(1u, height));
+            state.ActiveJitterHandle = instance.RenderState.RequestCameraProjectionJitter(jitter, resolution);
             if (rightEyeCamera is not null && !ReferenceEquals(rightEyeCamera, camera))
             {
-                Vector2 resolution = new(Math.Max(1u, width), Math.Max(1u, height));
                 state.ActiveRightEyeJitterHandle = rightEyeCamera.PushProjectionJitter(
                     ProjectionJitterRequest.TexelSpace(jitter, resolution));
             }

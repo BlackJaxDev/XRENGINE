@@ -499,9 +499,14 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     /// <summary>
-    /// The material currently highlighted for hover outline.
+    /// The scene node that currently has the hover outline.
     /// </summary>
-    private RenderableMesh? _currentHoverHighlightMesh = null;
+    private SceneNode? _currentHoverHighlightNode = null;
+
+    /// <summary>
+    /// The renderable meshes that currently have the hover outline.
+    /// </summary>
+    private readonly List<RenderableMesh> _currentHoverHighlightMeshes = [];
 
     /// <summary>
     /// The renderable meshes currently highlighted for selection outline.
@@ -2133,24 +2138,68 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     /// <summary>
-    /// Publishes the hover flag for the new mesh and clears it for the previous mesh.
+    /// Sets the hover flag on every renderable mesh of the hovered scene node and clears the previous hover meshes.
     /// </summary>
     private void UpdateHoverHighlight(RenderableMesh? newMesh)
     {
         RenderableMesh? effectiveMesh = HoverOutlineEnabled ? newMesh : null;
-        if (ReferenceEquals(_currentHoverHighlightMesh, effectiveMesh))
+        SceneNode? targetNode = effectiveMesh?.Component?.SceneNode;
+
+        if (effectiveMesh is null)
+        {
+            if (_currentHoverHighlightNode is null && _currentHoverHighlightMeshes.Count == 0)
+                return;
+        }
+        else if (targetNode is not null)
+        {
+            if (ReferenceEquals(_currentHoverHighlightNode, targetNode))
+                return;
+        }
+        else if (_currentHoverHighlightNode is null &&
+            _currentHoverHighlightMeshes.Count == 1 &&
+            ReferenceEquals(_currentHoverHighlightMeshes[0], effectiveMesh))
+        {
             return;
+        }
 
         long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
-        if (_currentHoverHighlightMesh is not null)
-            SetEditorMeshHighlight(_currentHoverHighlightMesh, false);
+        for (int i = 0; i < _currentHoverHighlightMeshes.Count; i++)
+            SetEditorMeshHighlight(_currentHoverHighlightMeshes[i], false);
+        _currentHoverHighlightMeshes.Clear();
         long probeOff = System.Diagnostics.Stopwatch.GetTimestamp();
 
-        if (effectiveMesh is not null)
+        if (targetNode is not null)
+        {
+            bool includedHitMesh = false;
+            foreach (var modelComponent in targetNode.GetComponents<ModelComponent>())
+            {
+                foreach (var mesh in modelComponent.Meshes)
+                {
+                    if (ContainsMeshReference(_currentHoverHighlightMeshes, mesh))
+                        continue;
+
+                    _currentHoverHighlightMeshes.Add(mesh);
+                    SetEditorMeshHighlight(mesh, true);
+                    if (ReferenceEquals(mesh, effectiveMesh))
+                        includedHitMesh = true;
+                }
+            }
+
+            // Keep hover working for standalone renderable components that are not ModelComponent instances.
+            if (effectiveMesh is not null && !includedHitMesh)
+            {
+                _currentHoverHighlightMeshes.Add(effectiveMesh);
+                SetEditorMeshHighlight(effectiveMesh, true);
+            }
+        }
+        else if (effectiveMesh is not null)
+        {
+            _currentHoverHighlightMeshes.Add(effectiveMesh);
             SetEditorMeshHighlight(effectiveMesh, true);
+        }
         long probeOn = System.Diagnostics.Stopwatch.GetTimestamp();
 
-        _currentHoverHighlightMesh = effectiveMesh;
+        _currentHoverHighlightNode = targetNode;
         InvalidateView();
         long probeEnd = System.Diagnostics.Stopwatch.GetTimestamp();
         _hoverProbeChanged = true;
@@ -2159,17 +2208,30 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         _hoverProbeInvalidateMs = System.Diagnostics.Stopwatch.GetElapsedTime(probeOn, probeEnd).TotalMilliseconds;
     }
 
+    private static bool ContainsMeshReference(List<RenderableMesh> meshes, RenderableMesh candidate)
+    {
+        for (int i = 0; i < meshes.Count; i++)
+        {
+            if (ReferenceEquals(meshes[i], candidate))
+                return true;
+        }
+
+        return false;
+    }
+
     /// <summary>
-    /// Clears any current hover highlight.
+    /// Clears the hover flag from all hovered meshes and refreshes the viewport.
     /// </summary>
     private void ClearHoverHighlight()
     {
-        if (_currentHoverHighlightMesh is not null)
-        {
-            SetEditorMeshHighlight(_currentHoverHighlightMesh, false);
-            _currentHoverHighlightMesh = null;
-            InvalidateView();
-        }
+        if (_currentHoverHighlightNode is null && _currentHoverHighlightMeshes.Count == 0)
+            return;
+
+        for (int i = 0; i < _currentHoverHighlightMeshes.Count; i++)
+            SetEditorMeshHighlight(_currentHoverHighlightMeshes[i], false);
+        _currentHoverHighlightMeshes.Clear();
+        _currentHoverHighlightNode = null;
+        InvalidateView();
     }
 
     private bool TryCollectModelComponentHits(List<SceneNode> currentHits)

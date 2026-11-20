@@ -458,15 +458,15 @@ public partial class AdvancedRenderPipeline
                 VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.CurrInverseViewProjection) &&
                 VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.PrevViewProjection) &&
                 VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.PrevProjection) &&
-                Matrix4x4.Invert(temporalData.CurrViewProjection, out _) &&
-                Matrix4x4.Invert(temporalData.PrevViewProjection, out _) &&
-                Matrix4x4.Invert(temporalData.PrevProjection, out previousInverseProjection) &&
-                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(previousInverseProjection);
-            if (leftMatricesReady)
-            {
-                currentToPreviousClip = temporalData.CurrInverseViewProjection * temporalData.PrevViewProjection;
-                leftMatricesReady = VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(currentToPreviousClip);
-            }
+                TemporalMatrixMath.TryInvertDouble(temporalData.PrevProjection, out previousInverseProjection) &&
+                TemporalMatrixMath.TryComputeCurrentToPreviousClip(
+                    temporalData.CurrViewProjection,
+                    temporalData.PrevViewProjection,
+                    temporalData.CurrViewProjectionUnjittered,
+                    temporalData.PrevViewProjectionUnjittered,
+                    currentJitterUv,
+                    previousJitterUv,
+                    out currentToPreviousClip);
 
             bool rightMatricesReady = !Stereo;
             if (Stereo && temporalData.RightEyeHistoryReady &&
@@ -474,13 +474,17 @@ public partial class AdvancedRenderPipeline
                 VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.RightEyeCurrInverseViewProjection) &&
                 VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.RightEyePrevViewProjection) &&
                 VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(temporalData.RightEyePrevProjection) &&
-                Matrix4x4.Invert(temporalData.RightEyeCurrViewProjection, out _) &&
-                Matrix4x4.Invert(temporalData.RightEyePrevViewProjection, out _) &&
-                Matrix4x4.Invert(temporalData.RightEyePrevProjection, out previousInverseProjectionRight) &&
-                VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(previousInverseProjectionRight))
+                TemporalMatrixMath.TryInvertDouble(temporalData.RightEyePrevProjection, out previousInverseProjectionRight) &&
+                TemporalMatrixMath.TryComputeCurrentToPreviousClip(
+                    temporalData.RightEyeCurrViewProjection,
+                    temporalData.RightEyePrevViewProjection,
+                    temporalData.RightEyeCurrViewProjectionUnjittered,
+                    temporalData.RightEyePrevViewProjectionUnjittered,
+                    currentJitterUvRight,
+                    previousJitterUvRight,
+                    out currentToPreviousClipRight))
             {
-                currentToPreviousClipRight = temporalData.RightEyeCurrInverseViewProjection * temporalData.RightEyePrevViewProjection;
-                rightMatricesReady = VPRC_TemporalAccumulationPass.IsTemporalMatrixFinite(currentToPreviousClipRight);
+                rightMatricesReady = true;
             }
 
             depthReprojectionReady = historyReady && leftMatricesReady && rightMatricesReady;

@@ -144,6 +144,60 @@ vec3 TsrPreviousDepthPlane(TsrSurfaceSample surface, vec3 previousNdc)
     return abs(normal.z) > 1e-12 ? normal / normal.z : vec3(0.0, 0.0, 1.0);
 }
 
+bool TsrDepthSampleMatchesPlane(vec2 sampleUv, float depth, bool background,
+    vec3 predictedNdc, vec3 depthPlane, float depthTolerance)
+{
+    if (background)
+        return TsrIsFarDepth(depth);
+    if (TsrIsFarDepth(depth))
+        return false;
+    vec2 sampleClipXY = XRENGINE_FramebufferTextureUVToClipXY(sampleUv);
+    float expectedClipDepth = predictedNdc.z - dot(depthPlane.xy, sampleClipXY - predictedNdc.xy);
+    if (isnan(expectedClipDepth) || isinf(expectedClipDepth)
+        || expectedClipDepth < (TSR_ZERO_TO_ONE ? 0.0 : -1.0) || expectedClipDepth > 1.0)
+        return false;
+    vec3 expectedPosition = TsrPreviousViewPosition(sampleClipXY, expectedClipDepth);
+    vec3 observedPosition = TsrPreviousViewPosition(sampleClipXY, TsrClipDepth(depth));
+    return !any(isnan(expectedPosition)) && !any(isinf(expectedPosition))
+        && !any(isnan(observedPosition)) && !any(isinf(observedPosition))
+        && abs(abs(observedPosition.z) - abs(expectedPosition.z)) <= depthTolerance;
+}
+
+bool TsrHistoryFootprintMatchesPlane(vec2 sourceUv, bool background,
+    vec3 predictedNdc, vec3 depthPlane, float depthTolerance, bool stationary)
+{
+    vec2 nearestUv = sourceUv;
+    float nearestDepth = TsrHistorySurfaceDepth(nearestUv);
+    if (TsrDepthSampleMatchesPlane(nearestUv, nearestDepth, background,
+            predictedNdc, depthPlane, depthTolerance))
+        return true;
+
+    // On stationary subpixel edges, allow any active bilinear tap in the previous
+    // depth footprint to validate the same surface without admitting moving disocclusions.
+    if (!stationary)
+        return false;
+
+    ivec2 extent = textureSize(HistoryDepth, 0).xy;
+    vec2 position = sourceUv * vec2(extent) - 0.5;
+    ivec2 basePixel = ivec2(floor(position));
+    vec2 fraction = fract(position);
+    for (int y = 0; y < 2; ++y)
+    for (int x = 0; x < 2; ++x)
+    {
+        float weight = (x == 0 ? 1.0 - fraction.x : fraction.x)
+            * (y == 0 ? 1.0 - fraction.y : fraction.y);
+        if (weight <= 1e-5)
+            continue;
+        ivec2 pixel = clamp(basePixel + ivec2(x, y), ivec2(0), extent - 1);
+        vec2 tapUv = (vec2(pixel) + 0.5) / vec2(extent);
+        float tapDepth = TsrLoadHistoryDepth(pixel);
+        if (TsrDepthSampleMatchesPlane(tapUv, tapDepth, background,
+                predictedNdc, depthPlane, depthTolerance))
+            return true;
+    }
+    return false;
+}
+
 bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
     vec2 currentJitter, vec2 previousJitter, out vec3 color, out float support, out float age,
     out float rejectionReason)
@@ -156,10 +210,12 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
         return false;
 
     bool background = TsrIsFarDepth(surface.depth);
+    bool stationary = false;
     float predictedViewDepth = 0.0;
     float depthTolerance = 0.0;
     vec3 predictedNdc = vec3(0.0);
     vec3 depthPlane = vec3(0.0, 0.0, 1.0);
+    vec2 historyDepthExtent = vec2(textureSize(HistoryDepth, 0).xy);
     if (!background)
     {
         vec4 previousClip = TSR_PREVIOUS_CLIP * vec4(
@@ -174,27 +230,34 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
         depthPlane = TsrPreviousDepthPlane(surface, previousNdc);
         float previousDepth = TSR_ZERO_TO_ONE ? previousNdc.z : previousNdc.z * 0.5 + 0.5;
         vec2 projectedUv = XRENGINE_ClipXYToFramebufferTextureUV(previousNdc.xy);
-        vec2 motionUv = surface.uv - currentJitter + previousJitter
+        vec2 staticUv = surface.uv - currentJitter + previousJitter;
+        vec2 motionUv = staticUv
             - TsrFramebufferUvDisplacement(surface.velocity * 0.5, FramebufferTextureYDirection);
         // 2D object motion supplies no previous object depth. Only trust the
         // camera depth prediction when its correspondence agrees within a texel.
-        vec2 disagreement = abs(projectedUv - motionUv) * vec2(textureSize(HistoryDepth, 0).xy);
+        vec2 disagreement = abs(projectedUv - motionUv) * historyDepthExtent;
         if (!TsrIsValidUv(projectedUv) || previousDepth < 0.0 || previousDepth > 1.0
             || any(greaterThan(disagreement, vec2(0.5))))
         {
             rejectionReason = 3.0;
             return false;
         }
+        stationary = all(lessThanEqual(abs(projectedUv - staticUv) * historyDepthExtent, vec2(0.1)))
+            && all(lessThanEqual(abs(surface.velocity * 0.5) * historyDepthExtent, vec2(0.1)));
         vec3 previousView = TsrPreviousViewPosition(previousNdc.xy, previousNdc.z);
         predictedViewDepth = abs(previousView.z);
-        vec2 depthTexel = 1.0 / vec2(textureSize(HistoryDepth, 0).xy);
+        vec2 depthTexel = 1.0 / historyDepthExtent;
         float footprint = max(
             length(TsrPreviousViewPosition(previousNdc.xy + vec2(2.0 * depthTexel.x, 0.0), previousNdc.z) - previousView),
             length(TsrPreviousViewPosition(previousNdc.xy + vec2(0.0, 2.0 * depthTexel.y), previousNdc.z) - previousView));
-        // Bound spatial tolerance by one projected pixel; retain a small
-        // reconstruction/quantization allowance without comparing raw Z values.
-        depthTolerance = min(max(DepthRejectThreshold, 0.0) * predictedViewDepth, footprint)
+        // Bound spatial tolerance by the depth threshold and a small multiple of
+        // the projected pixel footprint so grazing/curved ridges stay stable.
+        depthTolerance = min(max(DepthRejectThreshold, 0.0) * predictedViewDepth, 2.5 * footprint)
             + max(1e-5, predictedViewDepth * 2e-5);
+    }
+    else
+    {
+        stationary = all(lessThanEqual(abs(surface.velocity * 0.5) * historyDepthExtent, vec2(0.1)));
     }
 
     ivec2 historyExtent = textureSize(TsrHistoryColor, 0).xy;
@@ -216,21 +279,8 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
         vec2 depthUv = (vec2(pixel) + 0.5) / vec2(historyExtent) + previousJitter;
         if (!TsrIsValidUv(depthUv))
             continue;
-        float depth = TsrHistorySurfaceDepth(depthUv);
-        bool matching = background && TsrIsFarDepth(depth);
-        if (!background && !TsrIsFarDepth(depth))
-        {
-            vec2 sampleClipXY = XRENGINE_FramebufferTextureUVToClipXY(depthUv);
-            float expectedClipDepth = predictedNdc.z - dot(depthPlane.xy, sampleClipXY - predictedNdc.xy);
-            if (isnan(expectedClipDepth) || isinf(expectedClipDepth)
-                || expectedClipDepth < (TSR_ZERO_TO_ONE ? 0.0 : -1.0) || expectedClipDepth > 1.0)
-                continue;
-            vec3 expectedPosition = TsrPreviousViewPosition(sampleClipXY, expectedClipDepth);
-            vec3 observedPosition = TsrPreviousViewPosition(sampleClipXY, TsrClipDepth(depth));
-            matching = !any(isnan(expectedPosition)) && !any(isinf(expectedPosition))
-                && !any(isnan(observedPosition)) && !any(isinf(observedPosition))
-                && abs(abs(observedPosition.z) - abs(expectedPosition.z)) <= depthTolerance;
-        }
+        bool matching = TsrHistoryFootprintMatchesPlane(depthUv, background,
+            predictedNdc, depthPlane, depthTolerance, stationary);
         if (!matching)
             continue;
         vec4 metadata = TsrLoadHistoryMetadata(pixel);

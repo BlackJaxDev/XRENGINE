@@ -82,6 +82,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     private readonly Lazy<XRMaterial> _motionVectorsMaterial;
     private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
     private readonly Lazy<XRMaterial> _fullOverdrawCountMaterial;
+    private readonly Lazy<XRMaterial> _editorHighlightSilhouetteMaterial;
 
     private bool _forwardDepthPrePassEnabled = true;
     [RenderPipelineCameraSetting(Order = 100)]
@@ -1512,6 +1513,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string LightCombineFBOName = "LightCombineFBO";
     public const string ForwardPassFBOName = "ForwardPassFBO";
     public const string EditorHighlightMaskTextureName = "EditorHighlightMask";
+    public const string EditorHighlightSilhouetteMaskTextureName = "EditorHighlightSilhouetteMask";
+    public const string EditorHighlightSilhouetteFBOName = "EditorHighlightSilhouetteFBO";
     public const string EditorPickingIdentityTextureName = "EditorPickingIdentity";
     public const string EditorHighlightOutputTextureName = "EditorHighlightOutput";
     public const string EditorHighlightOutputFBOName = "EditorHighlightOutputFBO";
@@ -1804,6 +1807,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
+        _editorHighlightSilhouetteMaterial = new Lazy<XRMaterial>(CreateEditorHighlightSilhouetteMaterial, LazyThreadSafetyMode.PublicationOnly);
         if (subscribeToRuntimeSettings)
         {
             RuntimeEngine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
@@ -1842,6 +1846,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "TemporalSuperResolutionStereo.fs"), EShaderType.Fragment);
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "FullOverdrawCount.fs"), EShaderType.Fragment);
         ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "FullOverdrawDebug.fs"), EShaderType.Fragment);
+        if (EditorHighlightModule is not null)
+            ShaderHelper.WarmEngineShader(Path.Combine(SceneShaderPath, "EditorHighlightSilhouette.fs"), EShaderType.Fragment);
         // UI text batched shaders are first-touched the moment editor ImGui-style
         // text-batched UI hits a draw call; observed at ~487 ms on cold cache.
         ShaderHelper.WarmEngineShader(Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment);
@@ -2026,6 +2032,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
 
     public XRMaterial GetFullOverdrawCountMaterial()
         => _fullOverdrawCountMaterial.Value;
+
+    /// <summary>
+    /// Gets the override material that writes un-occluded hover and selection silhouette flags.
+    /// </summary>
+    internal XRMaterial GetEditorHighlightSilhouetteMaterial()
+        => _editorHighlightSilhouetteMaterial.Value;
 
     private static GpuBvhDebugSettings? ResolveDebugVisualizationSettings()
     {

@@ -482,6 +482,7 @@ void main()
         return;
     }
 
+#ifndef XR_TSR_STABLE_OUTPUT
     if (postTemporalCoverage <= 0.0)
     {
         vec3 neighbors =
@@ -494,14 +495,9 @@ void main()
             nativeResolution,
             historyWeight,
             reactiveMask);
-#ifdef XR_TSR_STABLE_OUTPUT
-        sharpenStrength *= TsrComputeSharpenStability(canUseHistory, historyAge,
-            geometryInstability, motionMask, reactiveMask,
-            currentLuma, historyYCoCg.x, ReactiveLumaThreshold);
-        sharpenStrength *= 1.0 - coverage.retention;
-#endif
         result += highFreq * sharpenStrength;
     }
+#endif
 
     OutColor = vec4(max(result, vec3(0.0)), 1.0);
 }

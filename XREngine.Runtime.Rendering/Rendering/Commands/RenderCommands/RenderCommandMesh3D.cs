@@ -702,6 +702,11 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
+        /// Gets the swapped editor highlight bits active on the render thread for this frame.
+        /// </summary>
+        internal uint RenderEditorHighlightBits => _renderEditorHighlightBits;
+
+        /// <summary>
         /// Optional world-space bounds supplied by the owning render info. Skinned meshes use this
         /// because their draw matrix is identity while culling is rooted at the skeleton/bounds basis.
         /// </summary>
@@ -762,6 +767,38 @@ namespace XREngine.Rendering.Commands
                         IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true }
                             ? LegacyEditorHighlightRenderingParameters.ResolveAuthoredOptions(_renderRenderOptionsOverride)
                             : _renderRenderOptionsOverride,
+                    canonicalDrawIdentitySnapshot: _renderCanonicalDrawIdentitySnapshot,
+                    sourceFlatDirection: _renderSourceFlatDirection,
+                    editorHighlightBits: _renderEditorHighlightBits);
+            }
+            finally
+            {
+                OnPostRender();
+            }
+        }
+
+        /// <summary>
+        /// Renders this mesh with the given override material and its own render options,
+        /// preserving the swapped transform, instance count, and editor highlight bits.
+        /// </summary>
+        internal void RenderWithMaterialOverride(XRMaterial material)
+        {
+            var mesh = _renderMesh;
+            if (mesh is null || _renderInstances == 0u)
+                return;
+
+            OnPreRender();
+            try
+            {
+                using var _ = RuntimeRenderingHostServices.DebugDrawing.PushTransformId(StableQueryKey);
+                Matrix4x4 modelMatrix = GetModelMatrix();
+                Matrix4x4 previousModelMatrix = GetPreviousModelMatrix(modelMatrix);
+                mesh.Render(
+                    modelMatrix,
+                    previousModelMatrix,
+                    material,
+                    _renderInstances,
+                    renderOptionsOverride: material.RenderOptions,
                     canonicalDrawIdentitySnapshot: _renderCanonicalDrawIdentitySnapshot,
                     sourceFlatDirection: _renderSourceFlatDirection,
                     editorHighlightBits: _renderEditorHighlightBits);
