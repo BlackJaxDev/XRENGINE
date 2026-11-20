@@ -421,9 +421,13 @@ largest projected error, in render pixels, that a drawn cluster may have.
   start. The two consumers below must agree in every frame; a change while they
   run could draw every level at once.
 - The preparation extractor gives a static draw of a hierarchy geometry the
-  full meshlet range (`MeshletCount`). Skinned draws and every draw while the
-  setting is off keep `DrawMeshletCount`. Other backends never enable the
-  policy, so the OpenGL and WebGPU paths keep level 0.
+  full meshlet range (`MeshletCount`). A skinned draw gets it too while
+  `AdvancedSkinnedVirtualGeometry` (`Rendering.SkinnedVirtualGeometry`, off by
+  default, read with the other two settings) is on. It is off by default because
+  layered clothing (stockings over skin) can show the layer under it when the
+  meshes simplify independently. Other skinned draws and
+  every draw while the setting is off keep `DrawMeshletCount`. Other backends never enable the policy, so the OpenGL
+  and WebGPU paths keep level 0.
 - The meshlet task stage is compiled with `XR_ADV_CLUSTER_LOD_CUT` (and the
   threshold as `XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD`) only while the setting is
   on. The off variant compiles from the same text as before, so its SPIR-V does
@@ -444,6 +448,23 @@ largest projected error, in render pixels, that a drawn cluster may have.
   against this frame's depth pyramid. Every cluster keeps its own sphere and
   cone for culling; the group sphere is used only for the error test.
 - Directional shadow casters still draw the full-detail canonical index buffer.
+- Skinned draws (`XR_ADV_CLUSTER_LOD_CUT_SKINNED`): the cooked group spheres are
+  bind pose, so every group of a skinned draw uses one distance for the whole
+  draw: from the nearer eye to the nearer of the draw's two posed bounding
+  spheres (the instance record sphere, which the publisher updates when the CPU
+  posed bounds change, and visibility candidate words 4 to 7, which
+  `PatchPhysicsChainBounds` rewrites for GPU physics chains), less the
+  blendshape margin times the draw scale, clamped to the near distance. The margin (candidate word 2,
+  `AdvancedVisibilityCandidate.ClusterCutMargin`) is
+  `XRMesh.GetMaxBlendshapeDisplacement()`: per vertex the sum of its position
+  delta lengths, then the largest sum; a mesh without a CPU copy of its
+  blendshapes gives an unbounded margin, so its draw stays at level 0. One
+  distance with errors that grow from child to parent keeps the cut crack free.
+  The bound is per draw, so the whole draw refines as its nearest part does.
+  The task stage applies the skinned cut only when the payload range holds every
+  level, and an unusable candidate gives level 0. Skinned clusters still skip
+  the frustum, cone, history and Hi-Z tests. Turn the setting off to compare
+  with full-detail skinned draws while static draws keep the cut.
 
 Measured with New Sponza and the prefab avatar at 2688x2688 (RVC, true single
 pass stereo): at the atrium the early raster goes from 5.9 to 3.6 ms and the

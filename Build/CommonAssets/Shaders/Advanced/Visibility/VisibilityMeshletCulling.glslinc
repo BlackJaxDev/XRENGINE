@@ -245,6 +245,15 @@ bool XR_ADV_MeshletSphereOccluded(vec4 sphere, XRAdvancedViewRecord view)
 // group it was made from is at or below the threshold. Errors and spheres grow
 // from child to parent, so the selected clusters cover the mesh once, and the
 // locked group borders make the cut crack free.
+//
+// Skinned draws (XR_ADV_CLUSTER_LOD_CUT_SKINNED): the cooked group spheres are
+// bind pose, so they do not bound the posed clusters. Every group of a skinned
+// draw instead uses one distance for the whole draw: the distance from the
+// nearer eye to the draw's posed bounding spheres (instance record and
+// visibility candidate), less the blendshape margin. One distance with errors that grow from
+// child to parent keeps the cut consistent, so it stays crack free. The bound is
+// per draw, not per cluster, so a large draw refines everywhere as its nearest
+// part does.
 #define XR_ADV_MESHLET_CULL_LOD 6u
 #ifndef XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD
 #define XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD 1.0
@@ -267,6 +276,9 @@ struct XRAdvancedClusterCutState
     vec3 eye1;
     float pixelScale;
     float nearDistance;
+    // Distance from the eye to the draw bound that every group of a skinned
+    // draw uses. Negative: each group uses its own sphere (static draws).
+    float sharedDistance;
 };
 
 // Pixels for one world unit of error at distance 1 for one view: the larger
@@ -294,8 +306,10 @@ uint XR_ADV_ClusterCutPartnerView(uint viewIndex, uint viewFlags)
 }
 
 // Builds the cut state of one draw. The cut is active only for a static
-// meshlet draw of a hierarchy geometry whose tables fit in the triangle-word
-// table. Without it the draw keeps every meshlet of its payload range.
+// meshlet draw (or, with XR_ADV_CLUSTER_LOD_CUT_SKINNED, a skinned meshlet
+// draw) of a hierarchy geometry whose tables fit in the triangle-word table.
+// Without it the draw keeps every meshlet of its payload range. A skinned draw
+// also needs XR_ADV_ClusterCutUseDrawBound.
 XRAdvancedClusterCutState XR_ADV_ClusterCutState(
     XRAdvancedGpuHandle geometryHandle,
     uint producer,
@@ -313,8 +327,15 @@ XRAdvancedClusterCutState XR_ADV_ClusterCutState(
     cut.eye1 = cut.eye0;
     cut.pixelScale = 0.0;
     cut.nearDistance = max(view.cameraPositionAndNear.w, 1.0e-4);
+    cut.sharedDistance = -1.0;
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
+    if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
+        producer != XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
+        return cut;
+#else
     if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET)
         return cut;
+#endif
     uint geometryDense = XR_ADV_ResolveVisibilityHandle(
         geometryHandle, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
     if (geometryDense == XR_ADV_INVALID_DENSE_INDEX)
@@ -341,11 +362,87 @@ XRAdvancedClusterCutState XR_ADV_ClusterCutState(
     return cut;
 }
 
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
+// Distance from the nearer eye to a world bounding sphere, or a negative value
+// when the sphere is not usable.
+float XR_ADV_ClusterCutSphereDistance(vec4 sphere, XRAdvancedClusterCutState cut)
+{
+    if (any(isnan(sphere)) || any(isinf(sphere)) || sphere.w < 0.0)
+        return -1.0;
+    float distanceToBound =
+        min(distance(sphere.xyz, cut.eye0), distance(sphere.xyz, cut.eye1)) - sphere.w;
+    return isnan(distanceToBound) || isinf(distanceToBound)
+        ? -1.0 : max(distanceToBound, 0.0);
+}
+
+// Sets the one distance of a skinned draw's cut. Two posed world spheres bound
+// the draw: the instance record sphere (the CPU posed bounds that the publisher
+// updates when they change) and the visibility candidate sphere (candidate words
+// 4 to 7; the candidate index is the payload index), which PatchPhysicsChainBounds
+// rewrites for GPU physics chains. The nearer distance of the usable spheres
+// wins, less the blendshape margin of candidate word 2 (mesh units, scaled by the
+// draw scale). The cut then applies only when the payload range holds every
+// level of the geometry; otherwise the draw keeps its range (level 0). Without a
+// usable sphere or margin the distance is the near distance, so every group
+// refines and the draw shows level 0.
+void XR_ADV_ClusterCutUseDrawBound(
+    inout XRAdvancedClusterCutState cut,
+    uint payloadIndex,
+    XRAdvancedVisibilityPayload payload,
+    XRAdvancedMeshletDrawCullState draw)
+{
+    if (!cut.applies)
+        return;
+    if (payload.meshletOffset != cut.geometryMeshletFirst ||
+        payload.meshletCount != cut.geometryMeshletCount)
+    {
+        cut.applies = false;
+        return;
+    }
+
+    cut.sharedDistance = cut.nearDistance;
+    float nearest = -1.0;
+    uint drawDense = XR_ADV_ResolveVisibilityHandle(
+        payload.draw, VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    if (drawDense != XR_ADV_INVALID_DENSE_INDEX)
+    {
+        XRAdvancedDrawRecord drawRecord = XR_ADV_LoadDraw(drawDense);
+        uint instanceDense = XR_ADV_ResolveVisibilityHandle(
+            drawRecord.instance, VisibilityInstanceLookupSegment, XR_ADV_DIAGNOSTIC_INSTANCE);
+        if (instanceDense != XR_ADV_INVALID_DENSE_INDEX)
+            nearest = XR_ADV_ClusterCutSphereDistance(XR_ADV_LoadInstance(instanceDense).boundsSphere, cut);
+    }
+
+    float margin = 0.0;
+    uint candidateBase = payloadIndex * 20u;
+    if (payloadIndex < uint(XR_ADV_VisibilityCandidates.records.length()) / 20u &&
+        XR_ADV_VisibilityCandidates.records[candidateBase] == payload.draw.index &&
+        XR_ADV_VisibilityCandidates.records[candidateBase + 1u] == payload.draw.generation)
+    {
+        margin = uintBitsToFloat(XR_ADV_VisibilityCandidates.records[candidateBase + 2u]);
+        if ((XR_ADV_VisibilityCandidates.records[candidateBase + 19u] & (1u << 10u)) == 0u)
+        {
+            float candidateDistance = XR_ADV_ClusterCutSphereDistance(uintBitsToFloat(uvec4(
+                XR_ADV_VisibilityCandidates.records[candidateBase + 4u],
+                XR_ADV_VisibilityCandidates.records[candidateBase + 5u],
+                XR_ADV_VisibilityCandidates.records[candidateBase + 6u],
+                XR_ADV_VisibilityCandidates.records[candidateBase + 7u])), cut);
+            if (candidateDistance >= 0.0 && (nearest < 0.0 || candidateDistance < nearest))
+                nearest = candidateDistance;
+        }
+    }
+    if (nearest < 0.0 || isnan(margin) || isinf(margin) || margin < 0.0 || margin >= 3.0e38)
+        return;
+    cut.sharedDistance = max(nearest - margin * draw.maxScale, cut.nearDistance);
+}
+#endif
+
 // Projected error in render pixels of one group's simplified bound. The bound
 // is in mesh space; the draw's world matrix moves the center, and its largest
 // axis scale scales the radius and the error. The nearer eye gives the larger
 // error. A camera inside the sphere clamps to the near distance, so the
 // cluster refines. An infinite error (the last group) never passes the test.
+// A skinned draw uses its shared distance instead of the group sphere.
 float XR_ADV_ClusterGroupProjectedError(
     uint group,
     XRAdvancedClusterCutState cut,
@@ -362,6 +459,8 @@ float XR_ADV_ClusterGroupProjectedError(
     float error = uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 4u]);
     if (isnan(error) || isinf(error) || error >= 3.0e38 || any(isnan(sphere)) || any(isinf(sphere)))
         return 3.402823e38;
+    if (cut.sharedDistance >= 0.0)
+        return error * draw.maxScale * cut.pixelScale / max(cut.sharedDistance, cut.nearDistance);
     vec3 center = (vec4(sphere.xyz, 1.0) * draw.world).xyz;
     float radius = sphere.w * draw.maxScale;
     float distanceToBound = min(distance(center, cut.eye0), distance(center, cut.eye1)) - radius;

@@ -17,4 +17,14 @@ public readonly record struct AdvancedVisibilityCandidate(
     [field: FieldOffset(48)] Vector4 BoundsMax,
     [field: FieldOffset(64)] ulong ViewMask,
     [field: FieldOffset(72)] uint BvhLeaf,
-    [field: FieldOffset(76)] EAdvancedVisibilityPreparationFlags Flags);
+    [field: FieldOffset(76)] EAdvancedVisibilityPreparationFlags Flags)
+{
+    /// <summary>
+    /// Mesh-space distance that the cluster cut of a skinned draw subtracts from the camera
+    /// distance to <see cref="BoundsSphere"/>: the largest blendshape displacement of the mesh,
+    /// because the posed bounds come from the bones and do not contain the blendshape deltas.
+    /// Zero for other draws. It uses the padding word after <see cref="Draw"/>, which the visibility
+    /// passes do not read.
+    /// </summary>
+    [field: FieldOffset(8)] public float ClusterCutMargin { get; init; }
+}

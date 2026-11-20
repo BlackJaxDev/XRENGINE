@@ -4,8 +4,9 @@ namespace XREngine.Rendering.Commands;
 
 /// <summary>
 /// Reads the Advanced virtual geometry settings once for the process. Two consumers must agree in
-/// every frame: the preparation extractor, which gives a static meshlet draw of a cluster hierarchy
-/// geometry the full meshlet range of every level, and the Vulkan visibility runtime, which compiles
+/// every frame: the preparation extractor, which gives a static meshlet draw (and, with the skinned
+/// setting, a skinned meshlet draw) of a cluster hierarchy geometry the full meshlet range of every
+/// level, and the Vulkan visibility runtime, which compiles
 /// the task stage with the cluster cut that selects meshlets from that range. A change while they
 /// run could give one frame a full range without the cut (every level drawn at once), so the first
 /// read latches both values and a later change takes effect at the next start.
@@ -19,6 +20,7 @@ public static class AdvancedVirtualGeometryPolicy
     private static readonly Lock Sync = new();
     private static volatile bool _latched;
     private static bool _enabled;
+    private static bool _skinnedEnabled;
     private static float _pixelThreshold = 1.0f;
 
     /// <summary>
@@ -32,6 +34,22 @@ public static class AdvancedVirtualGeometryPolicy
             if (!_latched)
                 Latch();
             return _latched && _enabled;
+        }
+    }
+
+    /// <summary>
+    /// True when skinned meshlet draws also get the cluster cut: <see cref="Enabled"/> and the
+    /// skinned setting are both on. The extractor then gives a skinned draw of a cluster hierarchy
+    /// geometry the full meshlet range, and the task stage compiles the skinned cut. The cut of a
+    /// skinned draw uses one distance for every cluster, from the draw's posed bounds.
+    /// </summary>
+    public static bool SkinnedEnabled
+    {
+        get
+        {
+            if (!_latched)
+                Latch();
+            return _latched && _enabled && _skinnedEnabled;
         }
     }
 
@@ -49,11 +67,13 @@ public static class AdvancedVirtualGeometryPolicy
     /// <summary>
     /// Defines that select the cut variant of the meshlet task stage, or an empty string when the
     /// cut is off. The off variant therefore compiles from the same source text as before.
+    /// <c>XR_ADV_CLUSTER_LOD_CUT_SKINNED</c> extends the cut to skinned meshlet draws.
     /// </summary>
     public static string TaskPreamble
         => Enabled
             ? "#define XR_ADV_CLUSTER_LOD_CUT 1\n#define XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD " +
-              PixelThreshold.ToString("0.0###", CultureInfo.InvariantCulture) + "\n"
+              PixelThreshold.ToString("0.0###", CultureInfo.InvariantCulture) + "\n" +
+              (SkinnedEnabled ? "#define XR_ADV_CLUSTER_LOD_CUT_SKINNED 1\n" : string.Empty)
             : string.Empty;
 
     private static void Latch()
@@ -66,10 +86,11 @@ public static class AdvancedVirtualGeometryPolicy
             if (_latched)
                 return;
             _enabled = RuntimeEngine.Rendering.Settings.AdvancedVirtualGeometry;
+            _skinnedEnabled = RuntimeEngine.Rendering.Settings.AdvancedSkinnedVirtualGeometry;
             _pixelThreshold = RuntimeEngine.Rendering.Settings.AdvancedVirtualGeometryPixelThreshold;
             _latched = true;
             XREngine.Debug.Rendering(
-                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
+                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, skinned {(_enabled && _skinnedEnabled ? "on" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
         }
     }
 }
