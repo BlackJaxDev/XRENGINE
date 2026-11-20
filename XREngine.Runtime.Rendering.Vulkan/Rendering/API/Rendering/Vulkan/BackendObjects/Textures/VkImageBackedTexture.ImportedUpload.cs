@@ -989,9 +989,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             }
             catch
             {
-                BackendContext.Resources.BackendObjects.Remove<TTexture>(
-                    bindingId);
-                BackendContext.Resources.BackendObjects.Remove(Data);
+                BackendContext.Resources.BackendObjects.Remove(
+                    bindingId,
+                    this);
+                BackendContext.Resources.BackendObjects.RemoveIdentity(Data, this);
                 _bindingId = null;
                 throw;
             }

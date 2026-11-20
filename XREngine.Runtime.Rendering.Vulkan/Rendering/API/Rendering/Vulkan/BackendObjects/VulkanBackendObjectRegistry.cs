@@ -68,11 +68,11 @@ internal sealed class VulkanBackendObjectRegistry
             _byData.TryRemove(data, out _);
     }
 
-    public void Remove<T>(uint bindingId)
+    public void Remove<T>(uint bindingId, VkObject<T> wrapper)
         where T : GenericRenderObject
     {
-        GetBucket<T>().Remove(bindingId);
-        BindingAllocator.Release<T>(bindingId);
+        if (GetBucket<T>().Remove(bindingId, wrapper))
+            BindingAllocator.Release<T>(bindingId);
     }
 
     public void Remove(GenericRenderObject data)
