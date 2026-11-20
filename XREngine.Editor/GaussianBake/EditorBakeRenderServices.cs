@@ -315,8 +315,8 @@ public sealed class EditorBakeRenderServices : IBakeRenderServices, IDisposable
                 continue;
 
             texture2D.PreferSynchronousGpuUpload = true;
-            bool hasHydratedCpuMips = texture2D.Mipmaps is { Length: > 0 } mips && mips[0]?.Data is { Length: > 4 };
-            if (hasHydratedCpuMips ||
+            // A texture asset keeps only a filler placeholder until streaming loads its source.
+            if (texture2D.HasHydratedSourceMipmaps() ||
                 (string.IsNullOrWhiteSpace(texture2D.OriginalPath) && string.IsNullOrWhiteSpace(texture2D.FilePath)) ||
                 !_requestedStreamedTextures.Add(texture2D))
             {

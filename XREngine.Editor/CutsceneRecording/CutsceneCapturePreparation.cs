@@ -184,8 +184,9 @@ internal sealed class CutsceneCapturePreparation : IDisposable
                 continue;
 
             texture2D.PreferSynchronousGpuUpload = true;
-            bool hasHydratedCpuMips = texture2D.Mipmaps is { Length: > 0 } mips && mips[0]?.Data is { Length: > 4 };
-            if (hasHydratedCpuMips ||
+            // A texture asset keeps only a filler placeholder until streaming loads its source,
+            // so the filler does not count as loaded pixels.
+            if (texture2D.HasHydratedSourceMipmaps() ||
                 (string.IsNullOrWhiteSpace(texture2D.OriginalPath) && string.IsNullOrWhiteSpace(texture2D.FilePath)))
             {
                 continue;

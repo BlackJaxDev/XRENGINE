@@ -247,9 +247,8 @@ public partial class XRTexture2D
     /// </returns>
     public bool TryRestoreImportedTextureStreamingSource()
     {
-        bool hasHydratedResidentMips = Mipmaps is { Length: > 0 } mips && mips[0]?.Data is { Length: > 4 };
         if (!AllowAutomaticImportedTextureStreaming
-            || (PreferSynchronousGpuUpload && hasHydratedResidentMips)
+            || (PreferSynchronousGpuUpload && HasHydratedSourceMipmaps())
             || !RuntimeRenderingHostServices.HasConcreteHost
             || !RuntimeTextureSourceAccess.CanAccessHostFiles
             || string.IsNullOrWhiteSpace(OriginalPath)
@@ -264,6 +263,72 @@ public partial class XRTexture2D
 
         RegisterImportedTextureStreamingPlaceholder(Path.GetFullPath(sourcePath), this);
         return true;
+    }
+
+    /// <summary>
+    /// Returns whether mip 0 holds the decoded source image (or other real pixels), and not only a
+    /// loading placeholder.
+    /// </summary>
+    /// <remarks>
+    /// The model importer gives a streamed texture a filler image as its mipmaps, and a native
+    /// texture asset saves that filler. After a load, the filler is the only CPU data of the
+    /// texture until streaming publishes the source image. Callers that keep CPU pixels and skip
+    /// streaming (for example a synchronous capture) use this value, so they do not keep the
+    /// filler as the texture content.
+    /// </remarks>
+    public bool HasHydratedSourceMipmaps()
+        => !IsAwaitingFirstResidency
+            && Mipmaps is { Length: > 0 } mips
+            && mips[0] is { Data: { Length: > 4, IsDisposed: false } } mip
+            && !IsFillerPlaceholder(mip);
+
+    private static byte[]? s_fillerPixels;
+    private static uint s_fillerWidth;
+    private static uint s_fillerHeight;
+    private static readonly Lock s_fillerPixelsSync = new();
+
+    /// <summary>
+    /// True when <paramref name="mip"/> holds exactly the importer filler image. The normal-map
+    /// filler is one texel, so the length check of <see cref="HasHydratedSourceMipmaps"/> already
+    /// excludes it.
+    /// </summary>
+    private static bool IsFillerPlaceholder(Mipmap2D mip)
+    {
+        byte[] filler = GetFillerPixels(out uint width, out uint height);
+        return mip.Width == width
+            && mip.Height == height
+            && mip.Data is { IsDisposed: false } data
+            && data.AsReadOnlySpan().SequenceEqual(filler);
+    }
+
+    /// <summary>
+    /// Reads the pixels of <see cref="FillerImage"/> once, in the same mipmap layout that the
+    /// importer writes, and keeps them for the placeholder comparison.
+    /// </summary>
+    private static byte[] GetFillerPixels(out uint width, out uint height)
+    {
+        byte[]? pixels = Volatile.Read(ref s_fillerPixels);
+        if (pixels is null)
+        {
+            lock (s_fillerPixelsSync)
+            {
+                pixels = s_fillerPixels;
+                if (pixels is null)
+                {
+                    using RuntimeImage filler = FillerImage;
+                    Mipmap2D mip = new(filler);
+                    pixels = mip.Data?.GetBytes() ?? [];
+                    s_fillerWidth = mip.Width;
+                    s_fillerHeight = mip.Height;
+                    mip.Data?.Dispose();
+                    Volatile.Write(ref s_fillerPixels, pixels);
+                }
+            }
+        }
+
+        width = s_fillerWidth;
+        height = s_fillerHeight;
+        return pixels;
     }
 
     public static EnumeratorJob ScheduleImportedTexturePreviewJob(

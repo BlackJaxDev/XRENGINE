@@ -1019,7 +1019,9 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
     /// </summary>
     private static ReadOnlySpan<byte> GetMip0Pixels(XRTexture2D texture)
     {
-        if (texture.Mipmaps is not { Length: > 0 } mips ||
+        // A loading placeholder is not the texture content. Such a texture streams its source.
+        if (!texture.HasHydratedSourceMipmaps() ||
+            texture.Mipmaps is not { Length: > 0 } mips ||
             mips[0]?.Data is not { Length: > 4 } data ||
             data.IsDisposed)
         {
