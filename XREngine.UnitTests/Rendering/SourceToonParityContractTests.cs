@@ -271,9 +271,9 @@ public sealed class SourceToonParityContractTests
     [Test]
     public void SchemaHierarchyConditionsAndWidgets_HaveStableCompleteContracts()
     {
-        ShaderAuthoringSchema first = SourceToonAuthoringSchemaCatalog.GetOrCreate(
+        ShaderAuthoringSchema first = UberAuthoringSchemaCatalog.GetOrCreate(
             ShaderHelper.UberFragForward().GetUiManifest());
-        ShaderAuthoringSchema second = SourceToonAuthoringSchemaCatalog.GetOrCreate(
+        ShaderAuthoringSchema second = UberAuthoringSchemaCatalog.GetOrCreate(
             ShaderHelper.UberFragForward().GetUiManifest());
         first.Fingerprint.ShouldBe(second.Fingerprint);
         first.Version.ShouldBeGreaterThan(0);

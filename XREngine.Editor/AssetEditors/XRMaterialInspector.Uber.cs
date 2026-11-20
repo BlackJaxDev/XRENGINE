@@ -109,7 +109,7 @@ public sealed partial class XRMaterialInspector
         foreach (ShaderUiFeature feature in uberManifest.Features)
             DrawPendingUberFeatureResolution(material, feature, ref toolbarVariantChanged);
 
-        if (DrawSourceToonAuthoringTree(
+        if (DrawUberAuthoringTree(
             material,
             uberFragmentShader,
             uberManifest,

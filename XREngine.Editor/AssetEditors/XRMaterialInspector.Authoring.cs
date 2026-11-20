@@ -16,7 +16,7 @@ public sealed partial class XRMaterialInspector
     private static readonly Vector4 AuthoringMatchColor = new(1.0f, 0.82f, 0.28f, 1.0f);
     private static readonly Vector4 AuthoringUnsupportedColor = new(0.95f, 0.48f, 0.34f, 1.0f);
 
-    private static bool DrawSourceToonAuthoringTree(
+    private static bool DrawUberAuthoringTree(
         XRMaterial material,
         XRShader fragmentShader,
         ShaderUiManifest manifest,
@@ -31,7 +31,7 @@ public sealed partial class XRMaterialInspector
             return false;
 
         Stopwatch drawTimer = Stopwatch.StartNew();
-        ShaderAuthoringSchema schema = SourceToonAuthoringSchemaCatalog.GetOrCreate(manifest);
+        ShaderAuthoringSchema schema = UberAuthoringSchemaCatalog.GetOrCreate(manifest);
         AuthoringInspectorState state = AuthoringStates.GetValue(material, static _ => new());
         state.Schema = schema;
 
@@ -64,7 +64,7 @@ public sealed partial class XRMaterialInspector
         float rowHeight = ImGui.GetFrameHeightWithSpacing() + 2.0f;
         float childHeight = Math.Clamp(state.Rows.Count * rowHeight, 140.0f, 620.0f);
         if (ImGui.BeginChild(
-            $"SourceToonAuthoringTree##{schema.Fingerprint}",
+            $"UberAuthoringTree##{schema.Fingerprint}",
             new Vector2(0.0f, childHeight),
             ImGuiChildFlags.Borders))
         {
@@ -124,7 +124,7 @@ public sealed partial class XRMaterialInspector
         AuthoringInspectorState state)
     {
         ImGui.SetNextItemWidth(MathF.Min(360.0f, ImGui.GetContentRegionAvail().X * 0.45f));
-        ImGui.InputTextWithHint("##SourceToonAuthoringSearch", "Search labels, source names, IDs, tooltips...", ref state.Search, 256u);
+        ImGui.InputTextWithHint("##UberAuthoringSearch", "Search labels, property names, IDs, tooltips...", ref state.Search, 256u);
         ImGui.SameLine();
         if (ImGui.SmallButton("Previous") && state.MatchRows.Count > 0)
         {
@@ -146,7 +146,7 @@ public sealed partial class XRMaterialInspector
         }
 
         ImGui.SetNextItemWidth(MathF.Min(320.0f, ImGui.GetContentRegionAvail().X * 0.40f));
-        ImGui.InputTextWithHint("##SourceToonExactLookup", "Exact source or semantic property...", ref state.ExactLookup, 256u);
+        ImGui.InputTextWithHint("##UberExactLookup", "Exact property name or semantic ID...", ref state.ExactLookup, 256u);
         ImGui.SameLine();
         if (ImGui.SmallButton("Reveal"))
         {
@@ -715,9 +715,9 @@ public sealed partial class XRMaterialInspector
                 parameter?.GenericValue ?? sampler?.AssignedTexture);
 
         MaterialAuthoringMetadata metadata = MaterialAuthoringMetadataStore.Instance.Get(material);
-        bool included = IsIncludedInAuthoredPreset(metadata, state.Schema!, node);
+        bool included = IsIncludedInAuthoredPreset(metadata, node);
         if (ImGui.MenuItem("Include in authored preset", null, included))
-            SetIncludedInAuthoredPreset(metadata, state.Schema!, node, !included);
+            SetIncludedInAuthoredPreset(metadata, node, !included);
 
         if (ImGui.MenuItem("Copy property + references"))
             ImGui.SetClipboardText(CaptureAuthoringNodeClipboard(material, state.Schema!, node).Serialize());
@@ -761,35 +761,17 @@ public sealed partial class XRMaterialInspector
     }
 
     /// <summary>
-    /// Reads the preset-include override of a node. The override can use the current semantic ID or a legacy ID.
+    /// Reads the preset-include override of a node. A node without an override is included.
     /// </summary>
-    private static bool IsIncludedInAuthoredPreset(
-        MaterialAuthoringMetadata metadata,
-        ShaderAuthoringSchema schema,
-        ShaderAuthoringNode node)
-    {
-        foreach (string semanticId in schema.GetStoredSemanticIds(node.SemanticId))
-        {
-            if (metadata.LocalOverrides.TryGetValue($"presetInclude:{semanticId}", out string? value))
-                return !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return true;
-    }
+    private static bool IsIncludedInAuthoredPreset(MaterialAuthoringMetadata metadata, ShaderAuthoringNode node)
+        => !metadata.LocalOverrides.TryGetValue($"presetInclude:{node.SemanticId}", out string? value) ||
+           !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Writes the preset-include override of a node with its current semantic ID and removes the legacy keys.
+    /// Writes the preset-include override of a node.
     /// </summary>
-    private static void SetIncludedInAuthoredPreset(
-        MaterialAuthoringMetadata metadata,
-        ShaderAuthoringSchema schema,
-        ShaderAuthoringNode node,
-        bool included)
-    {
-        foreach (string semanticId in schema.GetStoredSemanticIds(node.SemanticId))
-            metadata.LocalOverrides.Remove($"presetInclude:{semanticId}");
-        metadata.LocalOverrides[$"presetInclude:{node.SemanticId}"] = included.ToString();
-    }
+    private static void SetIncludedInAuthoredPreset(MaterialAuthoringMetadata metadata, ShaderAuthoringNode node, bool included)
+        => metadata.LocalOverrides[$"presetInclude:{node.SemanticId}"] = included.ToString();
 
     private static MaterialAuthoringClipboardPayload CaptureAuthoringNodeClipboard(
         XRMaterial material,

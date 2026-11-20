@@ -61,10 +61,10 @@ public sealed class SourceToonAuthoringWorkflowTests
             MaterialAuthoringPersistentLinkGroup.CurrentVersion,
             Guid.NewGuid(),
             "Eyes",
-            "source-toon/property/emission",
+            "uber/property/_EmissionStrength",
             [
-                new("Assets/a.xrm", "source-toon-9.3.64"),
-                new("Assets/b.xrm", "source-toon-9.3.64"),
+                new("Assets/a.xrm", "uber"),
+                new("Assets/b.xrm", "uber"),
             ]);
         source.AddOrReplace(group).ShouldBeNull();
 

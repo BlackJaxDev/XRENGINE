@@ -374,13 +374,12 @@ over-limit material receives a deterministic failure reason before rendering.
 
 ## Authoring And Security
 
-The ImGui material inspector compiles the pinned UI catalog into a stable-ID
-schema tree. It supports nested sections, raw/localized search, conditions,
-typed actions, specialized controls, presets, versioned clipboard data, texture
-packing/arrays, gradients/curves, decal positioning, multi-material editing,
-semantic links, notes, animation modes, and variant preparation.
+The ImGui material inspector shows converted materials with the Uber authoring
+tree, which comes from the Uber shader annotations. It does not show the source
+shader's inspector layout. See
+[Uber material authoring](../../architecture/rendering/uber-material-authoring.md).
 
-Imported labels, expressions, actions, URLs, paths, locale data, presets, and
+Locale data, presets, and
 clipboard payloads are untrusted. Parsing is bounded. Shader metadata cannot
 instantiate types, invoke reflection, execute code, fetch remote content, or
 write outside approved asset roots. URL, remote-content, editor-command, and
@@ -401,15 +400,10 @@ notes, links, recipes, generated assets, and explicit overrides. Preview state
 is transient and never persists across restart. Schema migration uses stable
 semantic IDs; missing nodes are reported instead of rebound by display label.
 
-The converter ID is `xrengine.source-toon`. The authoring schema ID is
-`source-toon-<version>`, and each semantic ID starts with `source-toon/`.
-Converted materials use the `.source-toon-9_3_64` name suffix, and preserved
-source metadata uses the `.toon-source.json` suffix. Earlier converter versions
-wrote a different semantic ID prefix. `ShaderAuthoringSchema.TryGetNode` reads
-an ID with that legacy prefix as the current ID. Presets, clipboard payloads,
-cross-material values, translations, and preset-include overrides that were
-saved with legacy IDs therefore stay valid. Translations and preset-include
-overrides are written again with the current ID.
+The converter ID is `xrengine.source-toon`. Converted materials are plain Uber
+materials. The importer stores no source shader name or version in material
+names, editor IDs, or metadata files. The material editor uses the Uber
+authoring tree. See [Uber material authoring](../../architecture/rendering/uber-material-authoring.md).
 
 ## Multilayer Lighting And Tile Coverage
 

@@ -134,11 +134,9 @@ public sealed class ShaderAuthoringSchema
         string sourceIdentity,
         string fingerprint,
         ShaderAuthoringNode root,
-        IReadOnlyList<ShaderAuthoringIssue> issues,
-        IReadOnlyList<KeyValuePair<string, string>>? legacySemanticIdPrefixes = null)
+        IReadOnlyList<ShaderAuthoringIssue> issues)
     {
         SchemaId = schemaId;
-        LegacySemanticIdPrefixes = legacySemanticIdPrefixes ?? [];
         Version = version;
         SourceIdentity = sourceIdentity;
         Fingerprint = fingerprint;
@@ -165,48 +163,15 @@ public sealed class ShaderAuthoringSchema
     public IReadOnlyList<ShaderAuthoringIssue> Issues { get; }
     public IReadOnlyDictionary<string, ShaderAuthoringNode> NodeLookup { get; }
 
-    /// <summary>
-    /// Pairs of a legacy semantic ID prefix and its current prefix. Saved presets, clipboard payloads, and local
-    /// overrides can contain IDs with a legacy prefix.
-    /// </summary>
-    public IReadOnlyList<KeyValuePair<string, string>> LegacySemanticIdPrefixes { get; }
     public IReadOnlyDictionary<string, ShaderAuthoringNode> PropertyLookup { get; }
     public IReadOnlyList<ShaderAuthoringNode> DeclarationOrder { get; }
     public IReadOnlyDictionary<string, IReadOnlyList<ShaderAuthoringNode>> DependencyIndex { get; }
 
     /// <summary>
-    /// Finds a node by its semantic ID. An ID with a legacy prefix finds the node of the current ID.
+    /// Finds a node by its semantic ID.
     /// </summary>
     public bool TryGetNode(string semanticId, [NotNullWhen(true)] out ShaderAuthoringNode? node)
-    {
-        if (NodeLookup.TryGetValue(semanticId, out node))
-            return true;
-
-        foreach ((string legacy, string current) in LegacySemanticIdPrefixes)
-        {
-            if (semanticId.StartsWith(legacy, StringComparison.Ordinal) &&
-                NodeLookup.TryGetValue(string.Concat(current, semanticId.AsSpan(legacy.Length)), out node))
-            {
-                return true;
-            }
-        }
-
-        node = null;
-        return false;
-    }
-
-    /// <summary>
-    /// Returns the semantic IDs that saved data can use for a node: the current ID first, then each legacy ID.
-    /// </summary>
-    public IEnumerable<string> GetStoredSemanticIds(string semanticId)
-    {
-        yield return semanticId;
-        foreach ((string legacy, string current) in LegacySemanticIdPrefixes)
-        {
-            if (semanticId.StartsWith(current, StringComparison.Ordinal))
-                yield return string.Concat(legacy, semanticId.AsSpan(current.Length));
-        }
-    }
+        => NodeLookup.TryGetValue(semanticId, out node);
 
     public IReadOnlyList<ShaderAuthoringNode> GetAffectedNodes(string sourcePropertyName)
         => DependencyIndex.TryGetValue(sourcePropertyName, out IReadOnlyList<ShaderAuthoringNode>? nodes)

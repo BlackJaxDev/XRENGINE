@@ -25,26 +25,31 @@ public sealed class SourceToonAuthoringSchemaTests
         => RuntimeShaderServices.Current = _previousServices;
 
     [Test]
-    public void PinnedCatalog_BuildsStableOrderedAuthoringTree()
+    public void UberManifest_BuildsStableOrderedAuthoringTree()
     {
         ShaderUiManifest manifest = ShaderHelper.UberFragForward().GetUiManifest();
 
-        ShaderAuthoringSchema first = SourceToonAuthoringSchemaCatalog.GetOrCreate(manifest);
-        ShaderAuthoringSchema second = SourceToonAuthoringSchemaCatalog.GetOrCreate(manifest);
+        ShaderAuthoringSchema first = UberAuthoringSchemaCatalog.GetOrCreate(manifest);
+        ShaderAuthoringSchema second = UberAuthoringSchemaCatalog.GetOrCreate(manifest);
 
         second.ShouldBeSameAs(first);
-        first.SchemaId.ShouldBe("source-toon-9.3.64");
-        first.SourceIdentity.ShouldContain("c5aaeeb");
+        first.SchemaId.ShouldBe(UberAuthoringSchemaCatalog.SchemaId);
         first.Fingerprint.Length.ShouldBe(24);
-        first.DeclarationOrder.Count.ShouldBeGreaterThan(3000);
+        first.DeclarationOrder.Count.ShouldBeGreaterThan(100);
+        first.Issues.ShouldBeEmpty();
         first.DeclarationOrder.Select(static node => node.DeclarationOrder)
             .ShouldBeInOrder(SortDirection.Ascending);
 
         ShaderAuthoringNode lightingMode = first.PropertyLookup["_LightingMapMode"];
         lightingMode.ManifestProperty.ShouldNotBeNull();
         lightingMode.ManifestProperty.Name.ShouldBe("_LightingMapMode");
-        lightingMode.SemanticId.ShouldContain("_LightingMapMode");
+        lightingMode.SemanticId.ShouldBe(UberAuthoringSchemaCatalog.GetPropertySemanticId("_LightingMapMode"));
         lightingMode.Ancestors().ShouldNotBeEmpty();
+        foreach (ShaderAuthoringNode node in first.NodeLookup.Values)
+        {
+            node.SemanticId.ShouldStartWith(UberAuthoringSchemaCatalog.SemanticIdPrefix);
+            node.SemanticId.ShouldNotContain(".");
+        }
     }
 
     [Test]
@@ -129,10 +134,10 @@ public sealed class SourceToonAuthoringSchemaTests
         MaterialAuthoringPreset preset = new()
         {
             Name = "Toon",
-            SchemaId = "source-toon-9.3.64",
+            SchemaId = UberAuthoringSchemaCatalog.SchemaId,
             Values =
             [
-                new("source-toon/9.3.64/property/_MainColor", "vec4", "(1,1,1,1)", null, EShaderUiPropertyMode.Animated),
+                new(UberAuthoringSchemaCatalog.GetPropertySemanticId("_MainColor"), "vec4", "(1,1,1,1)", null, EShaderUiPropertyMode.Animated),
             ],
         };
 
@@ -146,7 +151,7 @@ public sealed class SourceToonAuthoringSchemaTests
         MaterialAuthoringClipboardPayload clipboard = new()
         {
             SchemaId = preset.SchemaId,
-            ScopeSemanticId = "source-toon/9.3.64/root",
+            ScopeSemanticId = $"{UberAuthoringSchemaCatalog.SemanticIdPrefix}root",
             Values = preset.Values,
         };
         MaterialAuthoringClipboardPayload.TryDeserialize(clipboard.Serialize(), out MaterialAuthoringClipboardPayload? parsed)

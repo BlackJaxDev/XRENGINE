@@ -193,7 +193,7 @@ public sealed class SourceToonParityCorpusTests
             "Catalogs",
             "source-toon-9.3.64.json");
         string hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
-        hash.ShouldBe("278cd9327094ea980d087745de181c5d80d74b09b46780da851c629c01723a4e");
+        hash.ShouldBe("119ed2efb8f180d301eff81caac3227188d734147ca6dd81fe9ddc950e247a8f");
 
         using JsonDocument catalog = JsonDocument.Parse(File.ReadAllText(catalogPath));
         JsonElement[] properties = [.. catalog.RootElement.GetProperty("properties").EnumerateArray()];

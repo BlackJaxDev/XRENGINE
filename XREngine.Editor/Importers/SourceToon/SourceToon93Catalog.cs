@@ -1,7 +1,7 @@
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Pinned source identity and deterministic naming policy for source toon 9.3.64.
+/// Pinned identity of the source toon 9.3.64 catalog that the importer reads.
 /// </summary>
 public static class SourceToon93Catalog
 {
@@ -21,68 +21,4 @@ public static class SourceToon93Catalog
     public static Stream OpenCatalog()
         => typeof(SourceToon93Catalog).Assembly.GetManifestResourceStream(CatalogResourceName)
            ?? throw new InvalidOperationException($"Embedded source toon catalog '{CatalogResourceName}' is missing.");
-
-    public static string GetMaterialName(string sourceAssetPath, string? sourceGuid = null)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(sourceAssetPath);
-        // Source asset paths can use either separator, whatever the host OS is.
-        string stem = SanitizeSegment(Path.GetFileNameWithoutExtension(sourceAssetPath.Replace('\\', '/')));
-        string collisionSuffix = GetGuidSuffix(sourceGuid);
-        return $"{stem}.source-toon-9_3_64{collisionSuffix}.uber";
-    }
-
-    public static string GetPassVariantName(string materialName, string passRole, ulong variantHash)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(materialName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(passRole);
-        return $"{SanitizeSegment(materialName)}.{SanitizeSegment(passRole)}.{variantHash:x16}";
-    }
-
-    public static string GetPreservedMetadataName(string materialName)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(materialName);
-        return $"{SanitizeSegment(materialName)}.toon-source.json";
-    }
-
-    public static string GetAnimationBindingName(string materialName, string semanticProperty)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(materialName);
-        ArgumentException.ThrowIfNullOrWhiteSpace(semanticProperty);
-        return $"{SanitizeSegment(materialName)}/{SanitizeSegment(semanticProperty)}";
-    }
-
-    private static string GetGuidSuffix(string? sourceGuid)
-    {
-        if (string.IsNullOrWhiteSpace(sourceGuid))
-            return string.Empty;
-
-        ReadOnlySpan<char> guid = sourceGuid.AsSpan().Trim();
-        if (guid.Length < 8)
-            throw new ArgumentException("A source GUID must contain at least eight characters.", nameof(sourceGuid));
-
-        for (int index = 0; index < 8; index++)
-            if (!Uri.IsHexDigit(guid[index]))
-                throw new ArgumentException("A source GUID must begin with hexadecimal characters.", nameof(sourceGuid));
-
-        return $".{guid[..8].ToString().ToLowerInvariant()}";
-    }
-
-    private static string SanitizeSegment(string value)
-    {
-        Span<char> buffer = value.Length <= 256 ? stackalloc char[value.Length] : new char[value.Length];
-        int length = 0;
-        foreach (char character in value)
-        {
-            char normalized = char.IsLetterOrDigit(character) || character is '_' or '-' or '.'
-                ? character
-                : '-';
-            if (normalized == '-' && length > 0 && buffer[length - 1] == '-')
-                continue;
-
-            buffer[length++] = normalized;
-        }
-
-        string result = buffer[..length].ToString().Trim('-', '.');
-        return result.Length > 0 ? result : "unnamed";
-    }
 }

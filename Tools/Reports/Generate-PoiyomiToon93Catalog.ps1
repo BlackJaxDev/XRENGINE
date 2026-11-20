@@ -755,13 +755,6 @@ $catalog = [ordered]@{
         ambiguousPropertySignatureBehavior = "warn with TOON0002"
         unknownVersionBehavior = "reject Poiyomi conversion and warn with TOON0001"
     }
-    namingPolicy = [ordered]@{
-        material = "{sourceAssetStem}.source-toon-9_3_64.uber"
-        passVariant = "{materialName}.{passRole}.{variantHash:x16}"
-        preservedMetadata = "{materialName}.toon-source.json"
-        animationBinding = "{materialName}/{semanticProperty}"
-        collisionSuffix = ".{sourceGuid8}"
-    }
     diagnostics = $diagnosticCodes
     summary = [ordered]@{
         propertyCount = $properties.Count
