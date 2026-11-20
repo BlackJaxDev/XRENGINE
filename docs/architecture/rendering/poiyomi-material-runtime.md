@@ -48,7 +48,7 @@ mask, polygon offset, alpha-to-coverage, fog opt-out, and common/front/back
 stencil state are converted from their serialized Unity enum values. Outline
 blend, depth, stencil, and cull state is independent from the base pass.
 
-Verified locked source toon 9.3.63 Basic outlines use the canonical mesh
+Verified locked source toon 9.3.9 and 9.3.63 Basic outlines use the canonical mesh
 deformation before outline expansion. The source branch samples the outline
 mask at mip 0, applies its authored width and distance factor to the deformed
 normal, and clips fragments with the source width-mask threshold. It keeps the
@@ -56,9 +56,18 @@ authored outline blend, depth, stencil, and queue state. The importer requires
 the supported local-space, UV0, red-channel mask subset. An external mask must
 use a linear-repeat sampler; an absent source mask uses the white default.
 The importer also requires neutral outline theme, color adjust, and AudioLink
-width controls. It reports active options outside this subset as conversion
-failures. Required scene import keeps these failure reasons in its diagnostics.
-Other engine outline materials keep their existing expansion rules.
+width controls. Other engine outline materials keep their existing expansion
+rules.
+
+The outline, the second rim light, the stylized specular lobe, and the cubemap
+are optional features. When one of them has an active source option without an
+exact Uber conversion, the importer turns off only that feature and keeps the
+Uber conversion for the rest of the material. The conversion report records the
+refused option as a `POI0007` warning. Other unconvertible options still fail
+the Uber conversion, and the material then uses the generic fallback. A theme
+color index from 1 to 4 on the stylized specular tint converts to the constant
+theme color when that theme has no hue, saturation, value, or hue-speed
+adjustment.
 
 Imported source materials apply `_AlphaForceOpaque` after decal, flipbook, and
 dissolve effects, before the final alpha cutoff. Dissolve can still discard a

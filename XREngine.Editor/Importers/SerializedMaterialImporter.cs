@@ -139,7 +139,14 @@ public static partial class SerializedMaterialImporter
                         document, resolver, warnings, reportUnconvertedProjectShader: true);
 
             if (requiresSourceBasicOutline)
-                ApplySourceBasicOutline(material, document, sourceToonMatch);
+            {
+                BindOptionalSourceFeature(
+                    "outline",
+                    () => ApplySourceBasicOutline(material, document, sourceToonMatch),
+                    null,
+                    warnings,
+                    diagnostics);
+            }
 
             material.OriginalPath = normalizedPath;
             EMaterialConversionOutcome outcome = isSourceToonFeatureLoss

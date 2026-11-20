@@ -41,8 +41,17 @@ public static partial class SerializedMaterialImporter
             GetFloat(document, "_Tweak_HighColorMaskLevel"),
             GetFloat(document, "_StylizedSpecularIgnoreNormal"),
             GetFloat(document, "_StylizedSpecularIgnoreShadow")));
-        SetVector4(material, "_SourceStylizedSpecularTint",
-            document.TryGetVector("_HighColor", out Vector4 tint) ? tint : Vector4.One);
+        Vector4 tint = document.TryGetVector("_HighColor", out Vector4 authoredTint) ? authoredTint : Vector4.One;
+        int themeIndex = GetInt(document, "_HighColorThemeIndex");
+        if (themeIndex != 0)
+        {
+            // The source replaces the tint color with the selected theme color.
+            Vector4 themeColor = ResolveStaticSourceThemeColor(document, themeIndex)
+                ?? throw new SourceVisualImportException(
+                    $"Active source stylized specular option '_HighColorThemeIndex' on '{document.Name}' has no exact Uber conversion.");
+            tint = new Vector4(themeColor.X, themeColor.Y, themeColor.Z, tint.W);
+        }
+        SetVector4(material, "_SourceStylizedSpecularTint", tint);
 
         BindSourceStylizedSpecularTexture(material, document, resolver, warnings,
             "_HighColor_Tex", "_SourceHighColorTex");
@@ -76,7 +85,8 @@ public static partial class SerializedMaterialImporter
             return "_StylizedReflectionMode";
         if (GetInt(document, "_Is_BlendAddToHiColor", 1) != 1)
             return "_Is_BlendAddToHiColor";
-        if (GetInt(document, "_HighColorThemeIndex") != 0)
+        int themeIndex = GetInt(document, "_HighColorThemeIndex");
+        if (themeIndex != 0 && ResolveStaticSourceThemeColor(document, themeIndex) is null)
             return "_HighColorThemeIndex";
         if (document.TryGetPositive("_SSIgnoreCastedShadows"))
             return "_SSIgnoreCastedShadows";

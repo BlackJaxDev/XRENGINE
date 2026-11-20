@@ -39,7 +39,12 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_SourceCubeMap", IsCubemapEnabled(document) ? 1 : 0);
 
         BindExactSurfaceParameters(material, document);
-        BindSourceCubemapMask(material, document, resolver);
+        bool cubemapKept = BindOptionalSourceFeature(
+            "cubemap",
+            () => BindSourceCubemapMask(material, document, resolver),
+            () => SetInt(material, "_SourceCubeMap", 0),
+            warnings,
+            diagnostics);
         BindSourceToonGlitter(material, document, resolver, sourceVersion, diagnostics);
         BindSourceToonFlipbook(material, document);
         BindSourceToonDissolve(material, document, diagnostics);
@@ -47,14 +52,25 @@ public static partial class SerializedMaterialImporter
         BindCompositeSurfaceParameters(material, document, resolver, sourceVersion);
         BindSourceAnisotropy(material, document, resolver, warnings);
         BindSourceRimParameters(material, document, diagnostics, warnings);
-        BindSourceRim2Parameters(material, document, resolver);
-        BindSourceStylizedSpecular(material, document, resolver, warnings);
+        BindOptionalSourceFeature(
+            "second rim light",
+            () => BindSourceRim2Parameters(material, document, resolver),
+            null,
+            warnings,
+            diagnostics);
+        BindOptionalSourceFeature(
+            "stylized specular",
+            () => BindSourceStylizedSpecular(material, document, resolver, warnings),
+            null,
+            warnings,
+            diagnostics);
         BindSourceLightingParameters(material, document, diagnostics, warnings);
         BindSourceClearCoatParameters(material, document, diagnostics, warnings);
         BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings, sourceVersion);
         BindSourceToonNormalMetadata(material, document);
         BindSourceMultilayerTextures(material, document, resolver, diagnostics, warnings);
-        BindSurfaceCubemap(material, document, resolver, diagnostics, warnings);
+        if (cubemapKept)
+            BindSurfaceCubemap(material, document, resolver, diagnostics, warnings);
         WarnForDeferredSurfaceAdapters(document, warnings);
     }
 
