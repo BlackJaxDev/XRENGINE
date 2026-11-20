@@ -21,10 +21,6 @@ bool XR_UBER_IsMaterial(XRAdvancedMaterialRecord material)
 
 bool XR_UBER_HasFeature(uint feature)
 {
-#ifdef XR_SPLAT_ACTIVE_UBER_FEATURES
-    if ((feature & XR_SPLAT_ACTIVE_UBER_FEATURES) == 0u)
-        return false;
-#endif
     return (XR_ADV_LoadMaterialConstant(XR_UBER_Material, XR_UBER_FEATURES_WORD) & feature) != 0u;
 }
 
@@ -70,11 +66,9 @@ vec3 XR_UBER_Theme(int index, vec3 authored)
     else if (index == 3) { color = UBER_V(_GlobalThemeColor2).rgb; adjustment = UBER_V(_GlobalThemeAdjust2).xyz; }
     else if (index == 4) { color = UBER_V(_GlobalThemeColor3).rgb; adjustment = UBER_V(_GlobalThemeAdjust3).xyz; }
     else return authored;
-    float exposure = max(1.0, max(color.r, max(color.g, color.b)));
-    vec3 normalized = color / exposure;
-    vec3 hsv = XR_UBER_rgbToHsv(normalized);
+    vec3 hsv = XR_UBER_rgbToHsv(color);
     hsv.x = fract(hsv.x + adjustment.x);
     hsv.yz = clamp(hsv.yz + adjustment.yz, 0.0, 1.0);
-    return XR_UBER_hsvToRgb(hsv) * exposure;
+    return XR_UBER_hsvToRgb(hsv);
 }
 #endif

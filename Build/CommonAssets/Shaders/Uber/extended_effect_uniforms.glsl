@@ -49,14 +49,10 @@ uniform vec4 _TouchGlowColor;
 //@property(name="_InternalParallaxStrength", display="Internal Parallax", mode=animated, range=[0,1])
 uniform float _InternalParallaxStrength;
 uniform vec4 _InternalParallaxParams;
-//@property(name="_ProceduralMode", display="Procedural Mode", mode=animated, enum="0:Off|1:CRT|2:Gameboy|3:Voronoi|4:Truchet|6:LostEye")
+//@property(name="_ProceduralMode", display="Procedural Mode", mode=animated, enum="0:Off|1:CRT|2:Gameboy|3:Voronoi|4:Truchet")
 uniform int _ProceduralMode;
 uniform vec4 _ProceduralParams;
 uniform vec4 _ProceduralColor;
-uniform vec4 _LostEyeParams0;
-uniform vec4 _LostEyeParams1;
-uniform vec4 _LostEyeParams2;
-uniform vec4 _LostEyeParams3;
 //@property(name="_VideoTexture", display="Video Texture", slot=texture)
 uniform sampler2D _VideoTexture;
 uniform vec4 _VideoTexture_ST;

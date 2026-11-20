@@ -47,17 +47,10 @@ public static partial class SerializedMaterialImporter
         }
 
         RenderingParameters options = material.RenderOptions;
-        bool hasBlurGrabPass =
-            (document.TryGetPositive("_EnableGrabpass") || document.TryGetPositive("_GrabPass")) &&
-            document.TryGetPositive("_EnableBlur") &&
-            document.TryGetFloat("_GrabBlurDistance", out float grabBlurDistance) &&
-            grabBlurDistance > 0.0001f;
         bool requiresSceneColor =
-            document.TryGetPositive("_RefractionEnabled") ||
+            document.TryGetPositive("_GrabPass") ||
             document.TryGetPositive("_Refraction") ||
-            document.TryGetPositive("_Refract") ||
-            hasBlurGrabPass ||
-            document.TryGetPositive("_GrabPass");
+            document.TryGetPositive("_Refract");
         string? unsupportedReason = null;
         if (requiresSceneColor)
             unsupportedReason = "The imported Poiyomi scene-color effect has no compatible Advanced late shader.";

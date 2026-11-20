@@ -68,14 +68,6 @@ uniform int _AlphaSource;
 uniform int _AlphaMaskChannel;
 //@property(name="_AlphaPremultiply", display="Premultiply Alpha", mode=static, default="0.0")
 uniform float _AlphaPremultiply;
-//@property(name="_SourceGrabPassBlendMode", display="Source GrabPass Blend Mode", mode=static, default="0.0")
-uniform float _SourceGrabPassBlendMode;
-//@property(name="_SourceGrabPassBlendFactor", display="Source GrabPass Blend Factor", mode=animated, default="1.0")
-uniform float _SourceGrabPassBlendFactor;
-//@property(name="_SourcePostProcess", display="Source Post Process", mode=animated, default="vec4(0.0, 1.0, 1.0, 1.0)")
-uniform vec4 _SourcePostProcess;
-//@property(name="_SourcePostProcessHue", display="Source Post Process Hue", mode=animated, default="vec4(0.0)")
-uniform vec4 _SourcePostProcessHue;
 //@property(name="_AlphaDither", display="Alpha Dither", mode=static, default="0.0")
 uniform float _AlphaDither;
 //@property(name="_AlphaDitherGradient", display="Object Dither Blend", mode=static, default="0.0")
@@ -315,16 +307,6 @@ uniform vec4 _SourceAnisoToon1;
 uniform vec4 _SourceAnisoTint0;
 //@property(name="_SourceAnisoTint1", display="Source Anisotropy Tint 1", mode=animated, default="vec4(1.0, 1.0, 1.0, 0.0)")
 uniform vec4 _SourceAnisoTint1;
-//@property(name="_SourceUtsSettings", display="Source UTS Specular Settings", mode=static, default="vec4(0.0)")
-uniform vec4 _SourceUtsSettings;
-//@property(name="_SourceUtsLayer1", display="Source UTS Specular Layer 1", mode=static, default="vec4(0.0, 0.0, 1.0, 1.0)")
-uniform vec4 _SourceUtsLayer1;
-//@property(name="_SourceUtsLayer2", display="Source UTS Specular Layer 2", mode=static, default="vec4(0.0)")
-uniform vec4 _SourceUtsLayer2;
-//@property(name="_SourceUtsColor", display="Source UTS Specular Color", mode=animated, default="vec4(1.0, 1.0, 1.0, 0.0)")
-uniform vec4 _SourceUtsColor;
-//@property(name="_SourceUtsFlags", display="Source UTS Specular Flags", mode=static, default="vec4(0.0)")
-uniform vec4 _SourceUtsFlags;
 //@property(name="_ClearCoat", display="Clear Coat", mode=static, default="0.0")
 uniform float _ClearCoat;
 //@property(name="_ClearCoatSmoothness", display="Clear Coat Smoothness", mode=static, default="0.8")
@@ -514,35 +496,11 @@ uniform vec4 _MatcapSlotHue3;
 
 //@property(name="_Rim2Color", display="Rim 2 Color", mode=animated, default="vec4(1.0)")
 uniform vec4 _Rim2Color;
-//@property(name="_Rim2Enable", display="Rim 2 Enable", mode=static, default="0")
-uniform int _Rim2Enable;
-//@property(name="_Rim2ColorTexture", display="Rim 2 Color Texture", slot=texture)
-uniform sampler2D _Rim2ColorTexture;
-//@property(name="_Rim2ColorTexture_ST", display="Rim 2 Color Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
-uniform vec4 _Rim2ColorTexture_ST;
-//@property(name="_Rim2ColorTexturePan", display="Rim 2 Color Pan", mode=animated, default="vec2(0.0)")
-uniform vec2 _Rim2ColorTexturePan;
-//@property(name="_Rim2ColorTextureUV", display="Rim 2 Color UV", mode=static, default="0")
-uniform int _Rim2ColorTextureUV;
 //@property(name="_Rim2Mask", display="Rim 2 Mask", slot=texture, semantic=mask)
 uniform sampler2D _Rim2Mask;
 //@property(name="_Rim2Mask_ST", display="Rim 2 Mask Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
 uniform vec4 _Rim2Mask_ST;
-//@property(name="_Rim2MaskPan", display="Rim 2 Mask Pan", mode=animated, default="vec2(0.0)")
-uniform vec2 _Rim2MaskPan;
-//@property(name="_Rim2MaskChannel", display="Rim 2 Mask Channel", mode=static, default="0")
-uniform int _Rim2MaskChannel;
-//@property(name="_Rim2MaskUV", display="Rim 2 Mask UV", mode=static, default="0")
-uniform int _Rim2MaskUV;
-//@property(name="_Rim2LightColorThemeIndex", display="Rim 2 Theme Index", mode=static, default="0")
-uniform int _Rim2LightColorThemeIndex;
-//@property(name="_SourceRim2Settings", display="Source Rim 2 Settings", mode=static, default="vec4(0.0)")
-uniform vec4 _SourceRim2Settings;
-//@property(name="_SourceRim2ColorSettings", display="Source Rim 2 Color Settings", mode=animated, default="vec4(0.0)")
-uniform vec4 _SourceRim2ColorSettings;
-//@property(name="_SourceRim2Params", display="Source Rim 2 Params", mode=animated, default="vec4(0.0)")
-uniform vec4 _SourceRim2Params;
-//@property(name="_Rim2Params", display="Rim 2 Params", mode=static, default="vec4(0.5, 1.0, 0.0, 0.0)")
+//@property(name="_Rim2Params", display="Rim 2 Params", mode=static, default="vec4(0.5, 1.0, 0.0, 1.0)")
 uniform vec4 _Rim2Params;
 uniform vec4 _SourceRim2Settings;
 uniform vec4 _SourceRim2ColorSettings;
@@ -665,38 +623,6 @@ uniform vec4 _DecalSlotFx1;
 uniform vec4 _DecalSlotFx2;
 //@property(name="_DecalSlotFx3", display="Decal 3 Effects", mode=animated, default="vec4(0.0)")
 uniform vec4 _DecalSlotFx3;
-//@property(name="_DecalTexture_ST", display="Decal 0 Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
-uniform vec4 _DecalTexture_ST;
-//@property(name="_DecalTexture1_ST", display="Decal 1 Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
-uniform vec4 _DecalTexture1_ST;
-//@property(name="_DecalTexture2_ST", display="Decal 2 Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
-uniform vec4 _DecalTexture2_ST;
-//@property(name="_DecalTexture3_ST", display="Decal 3 Transform", mode=static, default="vec4(1.0, 1.0, 0.0, 0.0)")
-uniform vec4 _DecalTexture3_ST;
-//@property(name="_DecalSideOffset", display="Decal 0 Side Offset", mode=animated, default="vec4(0.0)")
-uniform vec4 _DecalSideOffset;
-//@property(name="_DecalSideOffset1", display="Decal 1 Side Offset", mode=animated, default="vec4(0.0)")
-uniform vec4 _DecalSideOffset1;
-//@property(name="_DecalSideOffset2", display="Decal 2 Side Offset", mode=animated, default="vec4(0.0)")
-uniform vec4 _DecalSideOffset2;
-//@property(name="_DecalSideOffset3", display="Decal 3 Side Offset", mode=animated, default="vec4(0.0)")
-uniform vec4 _DecalSideOffset3;
-//@property(name="_DecalSlotMask0", display="Decal 0 Mask Options", mode=static, default="vec4(0.0)")
-uniform vec4 _DecalSlotMask0;
-//@property(name="_DecalSlotMask1", display="Decal 1 Mask Options", mode=static, default="vec4(0.0)")
-uniform vec4 _DecalSlotMask1;
-//@property(name="_DecalSlotMask2", display="Decal 2 Mask Options", mode=static, default="vec4(0.0)")
-uniform vec4 _DecalSlotMask2;
-//@property(name="_DecalSlotMask3", display="Decal 3 Mask Options", mode=static, default="vec4(0.0)")
-uniform vec4 _DecalSlotMask3;
-//@property(name="_DecalSlotGlobalMask0", display="Decal 0 Global Mask", mode=static, default="vec4(2.0, 0.0, 0.0, 0.0)")
-uniform vec4 _DecalSlotGlobalMask0;
-//@property(name="_DecalSlotGlobalMask1", display="Decal 1 Global Mask", mode=static, default="vec4(2.0, 0.0, 0.0, 0.0)")
-uniform vec4 _DecalSlotGlobalMask1;
-//@property(name="_DecalSlotGlobalMask2", display="Decal 2 Global Mask", mode=static, default="vec4(2.0, 0.0, 0.0, 0.0)")
-uniform vec4 _DecalSlotGlobalMask2;
-//@property(name="_DecalSlotGlobalMask3", display="Decal 3 Global Mask", mode=static, default="vec4(2.0, 0.0, 0.0, 0.0)")
-uniform vec4 _DecalSlotGlobalMask3;
 #endif
 
 //@category("Advanced")
@@ -776,14 +702,6 @@ uniform vec2 _EmissionSlotPan1;
 uniform vec2 _EmissionSlotPan2;
 //@property(name="_EmissionSlotPan3", display="Emission 3 Pan", mode=animated, default="vec2(0.0)")
 uniform vec2 _EmissionSlotPan3;
-//@property(name="_Emission0MaskPan", display="Emission 0 Mask Pan", mode=animated, default="vec2(0.0)")
-uniform vec2 _Emission0MaskPan;
-//@property(name="_Emission1MaskPan", display="Emission 1 Mask Pan", mode=animated, default="vec2(0.0)")
-uniform vec2 _Emission1MaskPan;
-//@property(name="_Emission2MaskPan", display="Emission 2 Mask Pan", mode=animated, default="vec2(0.0)")
-uniform vec2 _Emission2MaskPan;
-//@property(name="_Emission3MaskPan", display="Emission 3 Mask Pan", mode=animated, default="vec2(0.0)")
-uniform vec2 _Emission3MaskPan;
 //@property(name="_EmissionSlotUv0", display="Emission 0 UV", mode=static, default="0")
 uniform int _EmissionSlotUv0;
 //@property(name="_EmissionSlotUv1", display="Emission 1 UV", mode=static, default="0")
@@ -819,14 +737,6 @@ uniform vec4 _EmissionSlotSampling1;
 uniform vec4 _EmissionSlotSampling2;
 //@property(name="_EmissionSlotSampling3", display="Emission 3 Sampling", mode=static, default="vec4(0.0)")
 uniform vec4 _EmissionSlotSampling3;
-//@property(name="_EmissionSlotExtra0", display="Emission 0 Extra", mode=animated, default="vec4(2.0, 0.0, 0.0, 0.0)")
-uniform vec4 _EmissionSlotExtra0;
-//@property(name="_EmissionSlotExtra1", display="Emission 1 Extra", mode=animated, default="vec4(2.0, 0.0, 0.0, 0.0)")
-uniform vec4 _EmissionSlotExtra1;
-//@property(name="_EmissionSlotExtra2", display="Emission 2 Extra", mode=animated, default="vec4(2.0, 0.0, 0.0, 0.0)")
-uniform vec4 _EmissionSlotExtra2;
-//@property(name="_EmissionSlotExtra3", display="Emission 3 Extra", mode=animated, default="vec4(2.0, 0.0, 0.0, 0.0)")
-uniform vec4 _EmissionSlotExtra3;
 #endif
 
 //@category("Advanced")
