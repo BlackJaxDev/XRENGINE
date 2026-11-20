@@ -294,6 +294,9 @@ internal sealed unsafe partial class VkShader(
             _ = task.Exception;
             lock (_asyncCompileLock)
                 _asyncCompileTasks.Remove(task);
+            // A stopped desktop frame retries only after compile activity changes. The next
+            // frame attempt publishes this artifact, so the completion must wake that frame.
+            BackendContext.Resources.PipelineManager.NotifyShaderCompileCompleted();
         }
 
         private VulkanShaderArtifact BuildCpuArtifact(
