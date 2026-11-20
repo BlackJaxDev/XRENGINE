@@ -141,14 +141,19 @@ dependency closure before generating the variant.
 
 ## Locked Shader Reconciliation And Cooked Textures
 
-`SourceToonLockedShaderReconciler` reconciles locked source toon materials against
-their compiled base-pass HLSL before material conversion:
+A locked source toon shader renames each animated property with the tag mode
+`2` to `name_suffix`, and it reads only the renamed property. The material file
+keeps both entries, and the original entry can hold an old value. Before
+conversion, `SerializedMaterialImporter.ApplyLockedRenamedPropertyValues`
+copies each renamed value onto its original name in a conversion copy. The
+suffix comes from the `thry_rename_suffix` tag, or else from the property names
+of the renamed entries, because the locking tool encodes some material name
+characters (for example, `.` becomes `2E`). Example: a shoe material keeps
+`_UDIMDiscardRow0_1 = 1`, but its locked shader reads
+`_UDIMDiscardRow0_1_Vans = 0`, so the shoe tile stays visible.
 
-- Matches `[ThryToggle(KEYWORD)]` and `[ThryToggle(KEYWORD, true|false)]`
-  attribute forms so locked pass defines update section toggles and keywords.
-- Strips samplers whose `PROP_*` define is absent under `OPTIMIZER_ENABLED` and
-  applies inline baked scalar and vector constants unless the property remains
-  animated.
+Cooked textures:
+
 - Preserves Unity `.meta` mipmap generation (`SmallestAllowedMipmapLevel` set
   to `1000` when mipmaps are enabled) and trilinear filter state when cooking
   hydrated prefab textures into `.pak` archives.

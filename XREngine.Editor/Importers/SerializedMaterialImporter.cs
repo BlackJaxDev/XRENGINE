@@ -94,19 +94,23 @@ public static partial class SerializedMaterialImporter
         SourceResolvedAsset shaderAsset = resolver.Resolve(document.Shader);
         SourceToonShaderMatchResult sourceToonMatch = MatchSourceToonMaterial(document, resolver, out string? shaderPath);
         diagnostics.AddRange(sourceToonMatch.Diagnostics);
-        bool requiresSourceBasicOutline = RequiresSourceBasicOutline(document, sourceToonMatch);
+        // A locked shader reads animated renamed properties, so conversion uses their values.
+        SerializedMaterialDocument effectiveDocument = sourceToonMatch.IsLocked
+            ? ApplyLockedRenamedPropertyValues(document)
+            : document;
+        bool requiresSourceBasicOutline = RequiresSourceBasicOutline(effectiveDocument, sourceToonMatch);
         SourceOrderedSurfacePlan orderedSurface = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
-            ? ClassifySourceOrderedSurface(document, shaderPath)
+            ? ClassifySourceOrderedSurface(effectiveDocument, shaderPath)
             : default;
         SerializedMaterialDocument conversionDocument;
         if (sourceToonMatch.IsDowngradeSource)
             conversionDocument = SourceToonFeatureLossNormalizer.Normalize(
-                document, diagnostics, shaderPath, sourceToonMatch.IsLocked,
+                effectiveDocument, diagnostics, shaderPath, sourceToonMatch.IsLocked,
                 preserveCertifiedGrabPass: orderedSurface.HasSceneColor);
         else if (sourceToonMatch.IsAccepted && sourceToonMatch.Version == SourceToon10Catalog.Version)
-            conversionDocument = SourceToon10Catalog.CreateConversionDocument(document, sourceToonMatch);
+            conversionDocument = SourceToon10Catalog.CreateConversionDocument(effectiveDocument, sourceToonMatch);
         else
-            conversionDocument = document;
+            conversionDocument = effectiveDocument;
         SourceToonMaterialDescriptor? sourceToonDescriptor = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
             ? SourceToonMaterialDescriptorFactory.Create(conversionDocument, resolver, sourceToonMatch, diagnostics)
             : null;
@@ -149,7 +153,7 @@ public static partial class SerializedMaterialImporter
             {
                 BindOptionalSourceFeature(
                     "outline",
-                    () => ApplySourceBasicOutline(material, document, sourceToonMatch),
+                    () => ApplySourceBasicOutline(material, effectiveDocument, sourceToonMatch),
                     null,
                     warnings,
                     diagnostics);
