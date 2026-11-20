@@ -82,6 +82,10 @@
       "$ref": "#/definitions/UnitTestingRenderSettings",
       "description": "Grouped render backend, render-pipeline selection, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. Legacy flat RenderAPI values are migrated here when settings are regenerated."
     },
+    "CrowdBenchmark": {
+      "$ref": "#/definitions/UnitTestingCrowdBenchmarkSettings",
+      "description": "Avatar crowd benchmark: copies of the first animated model import on rings at known distances (Enabled, AvatarCount, RingRadii, Center, Mode). Mode Triangles, ClusterCut, or DeformationLod replaces the virtual geometry render settings."
+    },
     "RiveUI": {
       "type": "boolean",
       "description": "Adds a Rive UI component to the scene for testing Rive animations."
@@ -959,6 +963,46 @@
         "FrameGeneration"
       ],
       "markdownDescription": "Supported values: `Stable`, `LowLatency`, `Uncapped`, `FrameGeneration`."
+    },
+    "UnitTestingCrowdBenchmarkSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "Enabled": {
+          "type": "boolean",
+          "description": "Enables or disables Enabled."
+        },
+        "AvatarCount": {
+          "type": "integer",
+          "description": "Generated from AvatarCount on UnitTestingCrowdBenchmarkSettings."
+        },
+        "RingRadii": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "Generated from RingRadii on UnitTestingCrowdBenchmarkSettings."
+        },
+        "Center": {
+          "$ref": "#/definitions/TranslationXYZ",
+          "description": "Generated from Center on UnitTestingCrowdBenchmarkSettings."
+        },
+        "Mode": {
+          "$ref": "#/definitions/UnitTestCrowdBenchmarkMode",
+          "markdownDescription": "Supported values: `UseRenderSettings`, `Triangles`, `ClusterCut`, `DeformationLod`.",
+          "description": "Selects the Mode enum value."
+        }
+      }
+    },
+    "UnitTestCrowdBenchmarkMode": {
+      "type": "string",
+      "enum": [
+        "UseRenderSettings",
+        "Triangles",
+        "ClusterCut",
+        "DeformationLod"
+      ],
+      "markdownDescription": "Supported values: `UseRenderSettings`, `Triangles`, `ClusterCut`, `DeformationLod`."
     },
     "UnitTestingVrSettings": {
       "type": "object",

@@ -75,6 +75,7 @@ You do not need to understand every property up front. These are the ones that u
 - `PhysicsBallCount`: controls the restitution-sphere count in `PhysicsTesting` and the lightweight ball count used by `AddPhysics` in the default world
 - `AddPhysics`, `PhysicsChain`: enable the lightweight default-world rigid-body fixture and character jiggle chain
 - `ModelsToImport`: imports test assets into the world at startup
+- `CrowdBenchmark`: copies the first animated import onto rings at known distances for avatar render benchmarks
 - `DynamicPointLightCount`, `DynamicSpotLightCount`, `DynamicLightSeed`: add repeatable animated local-light stress rigs
 - `ProceduralSky`, `ProceduralSkyAutoCycle`, `ProceduralSkyTimeOfDay`: enable the dynamic sky and optionally lock it to a deterministic sun position
 - `InitializeAtmosphericScattering`: spawns the default planetary atmosphere and enables the matching camera post-process stage
@@ -163,6 +164,16 @@ For glTF validation work, the checked-in corpus under `XREngine.UnitTests/TestDa
 `FbxLogVerbosity` controls optional native FBX importer/exporter trace output while the unit-testing world boots. Engine-hosted import warnings and errors remain visible with tracing off. Model import diagnostics use the Console's `Meshes` tab and `Build/Logs/.../log_meshes.log` when file logging is enabled. Unresolved model textures are added to Missing Assets after processing finishes. glTF does not currently expose a separate verbosity toggle; native glTF warnings and fallback diagnostics also flow through the normal model-import logging path.
 
 This is the fastest way to spin up repeatable import tests without hand-building the scene each time.
+
+### Run the avatar crowd benchmark
+
+Use `CrowdBenchmark` to measure avatar render paths at known distances. Set `Enabled` to `true` and add one animated entry to `ModelsToImport`. The world copies the first animated import before its humanoid setup and puts the copies on rings around `Center`:
+
+- `AvatarCount`: the number of crowd avatars (1 to 512, default 25).
+- `RingRadii`: the ring radii in meters (default 1.5, 3, 6, 12, 25, and 50). Avatar `i` goes on ring `i` modulo the ring count, so each ring gets about the same number of avatars. Every avatar faces the center.
+- `Mode`: `Triangles` (M0, skinned cluster cut off), `ClusterCut` (M1, the skinned cut on), or `DeformationLod` (M2, the cut with deformation level of detail). These modes replace `Rendering.VirtualGeometry`, `Rendering.SkinnedVirtualGeometry`, and `Rendering.SkinnedDeformationLod` for the run. `UseRenderSettings` (the default) keeps them.
+
+A Unity prefab avatar takes the first ring slot. A model file avatar that `Locomotion` binds to the player pawn stays on the pawn, and the crowd gets `AvatarCount` copies. Every crowd avatar gets the normal avatar setup: the startup animation clip, physics chains when `PhysicsChain` is on, and the other avatar toggles. The world writes one `[CrowdBenchmark]` line to the `Meshes` log with the avatar count and the time to make the copies.
 
 ### Lock procedural sky time
 

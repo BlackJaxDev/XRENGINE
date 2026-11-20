@@ -138,6 +138,17 @@ public static class BootstrapRenderSettings
             renderSettings.AllowShaderPipelines = settings.AllowShaderPipelines;
         }
 
+        // A crowd benchmark mode replaces the virtual geometry values for the run.
+        if (settings.CrowdBenchmark.TryResolveRenderMode(
+                out bool crowdVirtualGeometry,
+                out bool crowdSkinnedVirtualGeometry,
+                out bool crowdSkinnedDeformationLod))
+        {
+            renderSettings.AdvancedVirtualGeometry = crowdVirtualGeometry;
+            renderSettings.AdvancedSkinnedVirtualGeometry = crowdSkinnedVirtualGeometry;
+            renderSettings.AdvancedSkinnedDeformationLod = crowdSkinnedDeformationLod;
+        }
+
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowSkinning)))
             renderSettings.AllowSkinning = settings.AllowSkinning;
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.VR)))

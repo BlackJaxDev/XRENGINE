@@ -143,6 +143,17 @@ public static partial class EditorUnitTests
             s.AllowShaderPipelines = Toggles.AllowShaderPipelines;
         }
 
+        // A crowd benchmark mode replaces the virtual geometry values for the run.
+        if (runtimeSettings.CrowdBenchmark.TryResolveRenderMode(
+                out bool crowdVirtualGeometry,
+                out bool crowdSkinnedVirtualGeometry,
+                out bool crowdSkinnedDeformationLod))
+        {
+            s.AdvancedVirtualGeometry = crowdVirtualGeometry;
+            s.AdvancedSkinnedVirtualGeometry = crowdSkinnedVirtualGeometry;
+            s.AdvancedSkinnedDeformationLod = crowdSkinnedDeformationLod;
+        }
+
         if (!groupedRenderingSpecified)
         {
             if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowBinaryProgramCaching)))

@@ -499,9 +499,25 @@ public static partial class EditorUnitTests
                                             !string.IsNullOrWhiteSpace(model.SceneRootName),
                                     };
                                     List<ModelComponent> suspendedModels = [];
+                                    List<CrowdAvatar>? crowd = null;
+                                    List<List<ModelComponent>>? crowdSuspendedModels = null;
                                     if (model.Kind is UnitTestModelImportKind.Animated)
                                     {
-                                        suspendedModels = SuspendSerializedPrefabModelPublication(importedRoot);
+                                        // Clone the crowd before the models are suspended, so each
+                                        // clone has active models to suspend and stage.
+                                        List<SceneNode> slotRoots = [];
+                                        if (TryClaimCrowdBenchmark(model) &&
+                                            CreateCrowd(importedRoot, result.AvatarRoot, slotParent: null, templateTakesFirstSlot: true, slotRoots) is { Count: > 0 } created)
+                                        {
+                                            crowd = created;
+                                            importedScene.RootNodes.Remove(importedRoot);
+                                            importedScene.RootNodes.AddRange(slotRoots);
+                                            crowdSuspendedModels = new(crowd.Count);
+                                            foreach (CrowdAvatar avatar in crowd)
+                                                crowdSuspendedModels.Add(SuspendSerializedPrefabModelPublication(avatar.Root));
+                                        }
+                                        else
+                                            suspendedModels = SuspendSerializedPrefabModelPublication(importedRoot);
                                     }
                                     else
                                     {
@@ -526,7 +542,18 @@ public static partial class EditorUnitTests
                                         lock (importedStaticRootsLock)
                                             importedStaticRoots.AddRange(importedScene.RootNodes);
                                     }
-                                    if (model.Kind is UnitTestModelImportKind.Animated)
+                                    if (model.Kind is UnitTestModelImportKind.Animated && crowd is not null)
+                                    {
+                                        bool setUpAvatars = IsSerializedPrefabPath(resolvedPath) ||
+                                            !string.IsNullOrWhiteSpace(model.SceneRootName);
+                                        for (int crowdIndex = 0; crowdIndex < crowd.Count; crowdIndex++)
+                                        {
+                                            if (setUpAvatars)
+                                                OnFinishedImportingAvatar(crowd[crowdIndex].AvatarRoot, null, result.SourceContentSha256);
+                                            StageSerializedPrefabModelPublication(crowd[crowdIndex].Root, crowdSuspendedModels![crowdIndex]);
+                                        }
+                                    }
+                                    else if (model.Kind is UnitTestModelImportKind.Animated)
                                     {
                                         if (IsSerializedPrefabPath(resolvedPath) ||
                                             !string.IsNullOrWhiteSpace(model.SceneRootName))
@@ -595,10 +622,24 @@ public static partial class EditorUnitTests
                                     if (characterParentNode != null && importedNode != null && importedNode.Transform.Parent != characterParentNode.Transform)
                                         characterParentNode.Transform.AddChild(importedNode.Transform, false, EParentAssignmentMode.Immediate);
 
-                                    OnFinishedImportingAvatar(
-                                        importedNode,
-                                        characterParentNode,
-                                        sourceContentSha256);
+                                    // The crowd clones the avatar before its humanoid setup. A player
+                                    // avatar stays on the pawn, and the crowd gets clones only.
+                                    List<CrowdAvatar>? crowd = null;
+                                    if (importedNode is not null && TryClaimCrowdBenchmark(model))
+                                    {
+                                        bool playerAvatar = characterParentNode is not null;
+                                        List<CrowdAvatar> created = CreateCrowd(importedNode, importedNode, rootNode, templateTakesFirstSlot: !playerAvatar, slotRoots: []);
+                                        crowd = created.Count > 0 ? created : null;
+                                    }
+
+                                    if (crowd is null || characterParentNode is not null)
+                                        OnFinishedImportingAvatar(
+                                            importedNode,
+                                            characterParentNode,
+                                            sourceContentSha256);
+                                    if (crowd is not null)
+                                        foreach (CrowdAvatar avatar in crowd)
+                                            OnFinishedImportingAvatar(avatar.AvatarRoot, null, sourceContentSha256);
                                     CompleteAllModelImportSlot();
                                 }, $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
                             },
