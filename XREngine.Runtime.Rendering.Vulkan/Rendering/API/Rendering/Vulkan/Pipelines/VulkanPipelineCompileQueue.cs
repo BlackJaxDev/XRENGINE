@@ -27,6 +27,15 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal ulong CompileActivityGeneration
         => unchecked((ulong)Volatile.Read(ref _vulkanPipelineCompileActivityGeneration));
 
+    /// <summary>
+    /// Advances <see cref="CompileActivityGeneration"/> when a background shader compile finishes.
+    /// A desktop frame that stopped while it waited for pipeline compilation probes again only after
+    /// this generation changes. The compiled shader module is published by the next frame attempt,
+    /// so without this edge a frame that waits on a slow shader compile never retries.
+    /// </summary>
+    internal void NotifyShaderCompileCompleted()
+        => Interlocked.Increment(ref _vulkanPipelineCompileActivityGeneration);
+
     internal long CompileDependencyGeneration
         => Volatile.Read(ref _vulkanPipelineCompileDependencyGeneration);
 

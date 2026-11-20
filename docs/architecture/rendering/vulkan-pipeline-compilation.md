@@ -58,6 +58,15 @@ published reports `Pending`. A completed compile reports `Failed` only when
 its result is not retryable. The next preparation can use the same queued job
 or its published result.
 
+When the desktop PresentNow retry watchdog expires during pipeline
+compilation, the frame loop stops until a state change. A change of
+`VulkanPipelineManager.CompileActivityGeneration` starts a recovery probe. A
+finished graphics or compute pipeline compile advances that generation, and a
+finished background shader (SPIR-V) compile also advances it through
+`NotifyShaderCompileCompleted`. The shader module is published only by the next
+frame attempt, so without that edge a frame that waits on a shader compile that
+takes longer than the watchdog never retries.
+
 `CapturePipelineCompilationDiagnostics` reports the total tracked graphics and
 compute job counts and up to eight of the oldest jobs in each group. Each row
 uses the program name, selected pipeline key fields, shader stage, and native module handle
