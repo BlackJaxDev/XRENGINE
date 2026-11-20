@@ -70,8 +70,12 @@ public static partial class MeshOptimizerIntegration
 
         Interlocked.Increment(ref s_meshletBuildInvocationCount);
         RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletNativeBuilderEntry();
+        // Vertices with a blendshape delta and vertices on a clothing layer (set by the model cooker)
+        // stay locked, so neither the morphs nor the layer order change at coarser levels.
+        byte[]? contactLocks = mesh.GetClusterHierarchyContactLocks();
+        byte[]? vertexLocks = CombineVertexLocks(skin?.MorphLocks, contactLocks, out int contactLockedCount);
         MeshletClusterHierarchyBuilder.Result hierarchy = MeshletClusterHierarchyBuilder.Build(
-            sourceIndices, positions, vertexCount, attributes, attributeStride, weights, skin?.MorphLocks, config);
+            sourceIndices, positions, vertexCount, attributes, attributeStride, weights, vertexLocks, config);
 
         // Level-0 clusters first, each group of levels in output order after them.
         IReadOnlyList<MeshletClusterHierarchyBuilder.Cluster> clusters = hierarchy.Clusters;
@@ -207,7 +211,8 @@ public static partial class MeshOptimizerIntegration
             clusterBones?.Count ?? 0,
             maxClusterBones,
             morphClusterCount,
-            skin?.NonFiniteCentroidCount ?? 0);
+            skin?.NonFiniteCentroidCount ?? 0,
+            contactLockedCount);
         MeshletClusterHierarchyBuilder.RecordInvariants(hierarchy.Invariants);
 
         return new MeshletBuildResult
@@ -235,6 +240,7 @@ public static partial class MeshOptimizerIntegration
     /// <param name="MaxClusterBones">The most bones of one cluster.</param>
     /// <param name="MorphClusterCount">Clusters with a vertex that has a blendshape delta.</param>
     /// <param name="NonFiniteCentroidCount">Vertices whose skinning centroid was not finite and was zeroed.</param>
+    /// <param name="ContactLockedVertexCount">Vertices locked because they lie on a clothing layer over or under another skinned mesh.</param>
     public readonly record struct ClusterHierarchyCookStats(
         int ClusterCount,
         int Level0Count,
@@ -248,7 +254,29 @@ public static partial class MeshOptimizerIntegration
         int ClusterBoneCount = 0,
         int MaxClusterBones = 0,
         int MorphClusterCount = 0,
-        int NonFiniteCentroidCount = 0);
+        int NonFiniteCentroidCount = 0,
+        int ContactLockedVertexCount = 0);
+
+    /// <summary>
+    /// Merges the morph locks and the contact locks into one vertex lock buffer (1 = locked), or
+    /// returns null when neither has a lock. Counts the contact-locked vertices.
+    /// </summary>
+    private static byte[]? CombineVertexLocks(byte[]? morphLocks, byte[]? contactLocks, out int contactLockedCount)
+    {
+        contactLockedCount = 0;
+        if (contactLocks is null)
+            return morphLocks;
+
+        byte[] combined = morphLocks is null ? new byte[contactLocks.Length] : (byte[])morphLocks.Clone();
+        for (int i = 0; i < contactLocks.Length && i < combined.Length; i++)
+        {
+            if (contactLocks[i] == 0)
+                continue;
+            combined[i] = 1;
+            contactLockedCount++;
+        }
+        return combined;
+    }
 
     /// <summary>
     /// The skinning input of a skinned hierarchy cook, read once from the mesh: for each vertex its

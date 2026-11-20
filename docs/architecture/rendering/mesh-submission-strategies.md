@@ -462,7 +462,13 @@ largest projected error, in render pixels, that a drawn cluster may have.
   distance with errors that grow from child to parent keeps the cut crack free.
   The bound is per draw, so the whole draw refines as its nearest part does.
   The task stage applies the skinned cut only when the payload range holds every
-  level, and an unusable candidate gives level 0. Skinned clusters still skip
+  level, and an unusable candidate gives level 0.
+- Clothing layers: the skinned hierarchy cook locks every vertex that lies within
+  4 mm (bind space) of a triangle of another skinned mesh of the same model
+  (`SkinnedLayerContactLocks`, both sides of the layer), so a stocking and the
+  skin under it keep their full detail and the layer order does not change. On
+  the prefab avatar this locks about a third of the skinned vertices and keeps
+  4 to 19 percent of the triangle reduction from 1 to 12 m. Skinned clusters still skip
   the frustum, cone, history and Hi-Z tests. Turn the setting off to compare
   with full-detail skinned draws while static draws keep the cut.
 
