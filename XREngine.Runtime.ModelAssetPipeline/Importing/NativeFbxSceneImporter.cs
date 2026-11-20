@@ -50,8 +50,8 @@ internal static class NativeFbxSceneImporter
             if (calculateTangents && !Source.HasTangents)
                 Source.GenerateTangentsFromUv0(Indices);
             // The importer adds one vertex for each polygon corner. Merge the corners whose
-            // attributes are bit-equal, after tangent generation so that generated tangents
-            // are compared. Skinned and blendshape sources are not changed.
+            // attributes, bone influences and blendshape deltas are bit-equal, after tangent
+            // generation so that generated tangents are compared.
             Source.WeldExactDuplicates(Indices);
             XRMesh mesh = new(Source, Indices);
             _source = null;

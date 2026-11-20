@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Models.Caching;
 public static class ModelImportBackendVersions
 {
     public const uint NativeGltf = 1;
-    public const uint NativeFbx = 16;
+    public const uint NativeFbx = 17;
     public const uint Assimp = 6;
-    public const uint SerializedPrefab = 24;
+    public const uint SerializedPrefab = 25;
 }
