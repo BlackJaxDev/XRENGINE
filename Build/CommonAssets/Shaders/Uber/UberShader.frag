@@ -1978,10 +1978,10 @@ vec3 calculateSourceClearCoat(ToonMesh mesh, vec3 normal,
     return vec3(0.0);
 #else
     if (_SourceClearCoat.x <= 0.5) return vec3(0.0);
-    vec4 packed = texture(_SourceClearCoatMaps,
+    vec4 clearCoatSample = texture(_SourceClearCoatMaps,
         transformUV(mesh.uv[0], _SourceClearCoatMaps_ST));
-    float smoothness = _SourceClearCoat.y * packed.g;
-    float specularMask = _SourceClearCoat.w * packed.a;
+    float smoothness = _SourceClearCoat.y * clearCoatSample.g;
+    float specularMask = _SourceClearCoat.w * clearCoatSample.a;
     float materialAo = sampleMaterialAmbientOcclusion(mesh);
     vec3 normalDx = dFdx(normal), normalDy = dFdy(normal);
     vec3 direct = xrSourceGgxLobe(normal, mesh.viewDir, primaryLight.direction,
@@ -2090,14 +2090,14 @@ vec3 calculateSourceClearCoat(ToonMesh mesh, vec3 normal,
     vec3 rawReflection = XRENGINE_SampleForwardRawPrefilter(normal,
         mesh.worldPos, mesh.viewDir, perceptualRoughness);
     vec3 reflection = xrSourceClearCoatReflection(rawReflection,
-        primaryLight.color, smoothness, _SourceClearCoat.z * packed.b,
+        primaryLight.color, smoothness, _SourceClearCoat.z * clearCoatSample.b,
         materialAo, abs(dot(normal, mesh.viewDir)), normalDx, normalDy,
         _SourceClearCoatGsaa, _SourceClearCoatReflection);
     reflection *= SpecularOcclusionEnabled
         ? XRENGINE_GTSpecularOcclusion(abs(dot(normal, mesh.viewDir)),
             worldAo, perceptualRoughness)
         : worldAo;
-    return clamp((direct + reflection) * packed.r * _SourceClearCoatGsaa.w,
+    return clamp((direct + reflection) * clearCoatSample.r * _SourceClearCoatGsaa.w,
         vec3(0.0), vec3(1.0));
 #endif
 }
