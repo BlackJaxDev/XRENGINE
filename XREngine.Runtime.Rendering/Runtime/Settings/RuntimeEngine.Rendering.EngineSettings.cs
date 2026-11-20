@@ -2905,20 +2905,19 @@ public static partial class RuntimeEngine
                     set => SetField(ref _advancedVirtualGeometry, value);
                 }
 
-                private bool _advancedSkinnedVirtualGeometry;
+                private bool _advancedSkinnedVirtualGeometry = true;
 
                 /// <summary>
                 /// With <see cref="AdvancedVirtualGeometry"/> on, skinned meshlet draws of models cooked
                 /// with a cluster hierarchy also get the cluster cut, with the same
-                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. Until posed cluster bounds exist,
-                /// every cluster of a skinned draw uses one distance, from the draw's posed bounds. Off
-                /// (the default) keeps skinned draws at level 0 while static draws keep the cut. It is off
-                /// by default because layered clothing (for example stockings over skin) can show the
-                /// layer under it when the two meshes simplify independently. Read once with
+                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. On by default. The skinned cook
+                /// locks vertices where clothing layers touch other skinned meshes, so a layer (for
+                /// example stockings over skin) keeps its shape against the mesh under it. Off keeps
+                /// skinned draws at level 0 while static draws keep the cut. Read once with
                 /// <see cref="AdvancedVirtualGeometry"/>.
                 /// </summary>
                 [Category("Advanced")]
-                [Description("With Advanced virtual geometry on, skinned meshlet draws also get the cluster cut (one distance per draw). Off by default. Read once at the first Advanced frame.")]
+                [Description("With Advanced virtual geometry on, skinned meshlet draws also get the cluster cut. On by default. Read once at the first Advanced frame.")]
                 public bool AdvancedSkinnedVirtualGeometry
                 {
                     get => _advancedSkinnedVirtualGeometry;

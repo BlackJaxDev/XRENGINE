@@ -24,9 +24,10 @@ public class UnitTestingRenderSettings
 
     /// <summary>
     /// Sets the <c>AdvancedSkinnedVirtualGeometry</c> engine setting: with <see cref="VirtualGeometry"/>
-    /// on, skinned meshlet draws also get the cluster cut. False (the default) keeps them at full detail.
+    /// on, skinned meshlet draws also get the cluster cut. True (the default) matches the engine
+    /// default; false keeps skinned draws at full detail.
     /// </summary>
-    public bool SkinnedVirtualGeometry { get; set; }
+    public bool SkinnedVirtualGeometry { get; set; } = true;
 
     /// <summary>
     /// Sets the <c>AdvancedVirtualGeometryPixelThreshold</c> engine setting: the cluster cut

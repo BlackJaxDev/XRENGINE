@@ -422,10 +422,11 @@ largest projected error, in render pixels, that a drawn cluster may have.
   run could draw every level at once.
 - The preparation extractor gives a static draw of a hierarchy geometry the
   full meshlet range (`MeshletCount`). A skinned draw gets it too while
-  `AdvancedSkinnedVirtualGeometry` (`Rendering.SkinnedVirtualGeometry`, off by
-  default, read with the other two settings) is on. It is off by default because
-  layered clothing (stockings over skin) can show the layer under it when the
-  meshes simplify independently. Other skinned draws and
+  `AdvancedSkinnedVirtualGeometry` (`Rendering.SkinnedVirtualGeometry`, on by
+  default, read with the other two settings) is on. The skinned cook locks the
+  vertices where clothing layers touch other skinned meshes, so layered clothing
+  (stockings over skin) does not show the layer under it. A capped A/B on one
+  avatar showed no GPU cost and no visible loss. Other skinned draws and
   every draw while the setting is off keep `DrawMeshletCount`. Other backends never enable the policy, so the OpenGL
   and WebGPU paths keep level 0.
 - The meshlet task stage is compiled with `XR_ADV_CLUSTER_LOD_CUT` (and the
