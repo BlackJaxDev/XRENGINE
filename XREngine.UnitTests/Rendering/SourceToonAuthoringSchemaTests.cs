@@ -33,7 +33,7 @@ public sealed class SourceToonAuthoringSchemaTests
         ShaderAuthoringSchema second = SourceToonAuthoringSchemaCatalog.GetOrCreate(manifest);
 
         second.ShouldBeSameAs(first);
-        first.SchemaId.ShouldBe("poiyomi-toon-9.3.64");
+        first.SchemaId.ShouldBe("source-toon-9.3.64");
         first.SourceIdentity.ShouldContain("c5aaeeb");
         first.Fingerprint.Length.ShouldBe(24);
         first.DeclarationOrder.Count.ShouldBeGreaterThan(3000);
@@ -129,10 +129,10 @@ public sealed class SourceToonAuthoringSchemaTests
         MaterialAuthoringPreset preset = new()
         {
             Name = "Toon",
-            SchemaId = "poiyomi-toon-9.3.64",
+            SchemaId = "source-toon-9.3.64",
             Values =
             [
-                new("poiyomi/9.3.64/property/_MainColor", "vec4", "(1,1,1,1)", null, EShaderUiPropertyMode.Animated),
+                new("source-toon/9.3.64/property/_MainColor", "vec4", "(1,1,1,1)", null, EShaderUiPropertyMode.Animated),
             ],
         };
 
@@ -146,7 +146,7 @@ public sealed class SourceToonAuthoringSchemaTests
         MaterialAuthoringClipboardPayload clipboard = new()
         {
             SchemaId = preset.SchemaId,
-            ScopeSemanticId = "poiyomi/9.3.64/root",
+            ScopeSemanticId = "source-toon/9.3.64/root",
             Values = preset.Values,
         };
         MaterialAuthoringClipboardPayload.TryDeserialize(clipboard.Serialize(), out MaterialAuthoringClipboardPayload? parsed)

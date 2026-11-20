@@ -19,7 +19,7 @@ requires its shader GUID, original shader GUID, version, and complete source
 SHA-256. It does not admit other 8.1 shaders. Its glitter branch preserves the
 verified single-layer jitter and green global-mask multiplication. Unsupported
 changes to optimizer-fixed inputs remain diagnostic. The conversion report
-version is `1.3.0`.
+version is `1.4.0`.
 
 `SourceToon10Catalog` admits the verified 10.0.25 unlocked shader and shaders
 that the optimizer locked from it. For the unlocked shader, it checks the exact
@@ -307,6 +307,16 @@ source descriptor, report, and untouched imported values while preserving local
 notes, links, recipes, generated assets, and explicit overrides. Preview state
 is transient and never persists across restart. Schema migration uses stable
 semantic IDs; missing nodes are reported instead of rebound by display label.
+
+The converter ID is `xrengine.source-toon`. The authoring schema ID is
+`source-toon-<version>`, and each semantic ID starts with `source-toon/`.
+Converted materials use the `.source-toon-9_3_64` name suffix, and preserved
+source metadata uses the `.toon-source.json` suffix. Earlier converter versions
+wrote a different semantic ID prefix. `ShaderAuthoringSchema.TryGetNode` reads
+an ID with that legacy prefix as the current ID. Presets, clipboard payloads,
+cross-material values, translations, and preset-include overrides that were
+saved with legacy IDs therefore stay valid. Translations and preset-include
+overrides are written again with the current ID.
 
 ## Multilayer Lighting And Tile Coverage
 

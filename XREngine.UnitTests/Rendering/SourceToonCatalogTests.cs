@@ -231,11 +231,11 @@ public sealed class SourceToonCatalogTests
         SourceToon93Catalog.GetMaterialName(
                 @"Assets\Avatar Materials\Body!.mat",
                 "ABCDEF0123456789abcdef0123456789")
-            .ShouldBe("Body.poiyomi-9_3_64.abcdef01.uber");
+            .ShouldBe("Body.source-toon-9_3_64.abcdef01.uber");
         SourceToon93Catalog.GetPassVariantName("Body Material", "outline inverse hull", 0x1234UL)
             .ShouldBe("Body-Material.outline-inverse-hull.0000000000001234");
         SourceToon93Catalog.GetPreservedMetadataName("Body Material")
-            .ShouldBe("Body-Material.poiyomi-source.json");
+            .ShouldBe("Body-Material.toon-source.json");
         SourceToon93Catalog.GetAnimationBindingName("Body Material", "_Rim Width")
             .ShouldBe("Body-Material/_Rim-Width");
     }

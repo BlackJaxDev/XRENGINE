@@ -153,7 +153,7 @@ public sealed partial class XRMaterialInspector
             ShaderAuthoringNode? exact = null;
             schema.PropertyLookup.TryGetValue(state.ExactLookup, out exact);
             if (exact is null)
-                schema.NodeLookup.TryGetValue(state.ExactLookup, out exact);
+                schema.TryGetNode(state.ExactLookup, out exact);
             state.ExactSemanticId = exact?.SemanticId;
             if (exact is not null)
             {
@@ -715,12 +715,9 @@ public sealed partial class XRMaterialInspector
                 parameter?.GenericValue ?? sampler?.AssignedTexture);
 
         MaterialAuthoringMetadata metadata = MaterialAuthoringMetadataStore.Instance.Get(material);
-        bool included = !metadata.LocalOverrides.TryGetValue(
-            $"presetInclude:{node.SemanticId}",
-            out string? includedValue) ||
-            !string.Equals(includedValue, "false", StringComparison.OrdinalIgnoreCase);
+        bool included = IsIncludedInAuthoredPreset(metadata, state.Schema!, node);
         if (ImGui.MenuItem("Include in authored preset", null, included))
-            metadata.LocalOverrides[$"presetInclude:{node.SemanticId}"] = (!included).ToString();
+            SetIncludedInAuthoredPreset(metadata, state.Schema!, node, !included);
 
         if (ImGui.MenuItem("Copy property + references"))
             ImGui.SetClipboardText(CaptureAuthoringNodeClipboard(material, state.Schema!, node).Serialize());
@@ -761,6 +758,37 @@ public sealed partial class XRMaterialInspector
             state.Status = $"Reset {node.DisplayName} and {node.ReferencedProperties.Count} reference(s).";
         }
         ImGui.EndPopup();
+    }
+
+    /// <summary>
+    /// Reads the preset-include override of a node. The override can use the current semantic ID or a legacy ID.
+    /// </summary>
+    private static bool IsIncludedInAuthoredPreset(
+        MaterialAuthoringMetadata metadata,
+        ShaderAuthoringSchema schema,
+        ShaderAuthoringNode node)
+    {
+        foreach (string semanticId in schema.GetStoredSemanticIds(node.SemanticId))
+        {
+            if (metadata.LocalOverrides.TryGetValue($"presetInclude:{semanticId}", out string? value))
+                return !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Writes the preset-include override of a node with its current semantic ID and removes the legacy keys.
+    /// </summary>
+    private static void SetIncludedInAuthoredPreset(
+        MaterialAuthoringMetadata metadata,
+        ShaderAuthoringSchema schema,
+        ShaderAuthoringNode node,
+        bool included)
+    {
+        foreach (string semanticId in schema.GetStoredSemanticIds(node.SemanticId))
+            metadata.LocalOverrides.Remove($"presetInclude:{semanticId}");
+        metadata.LocalOverrides[$"presetInclude:{node.SemanticId}"] = included.ToString();
     }
 
     private static MaterialAuthoringClipboardPayload CaptureAuthoringNodeClipboard(

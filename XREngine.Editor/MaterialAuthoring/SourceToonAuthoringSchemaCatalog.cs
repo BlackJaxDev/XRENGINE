@@ -15,6 +15,22 @@ namespace XREngine.Editor.MaterialAuthoring;
 /// </summary>
 public static partial class SourceToonAuthoringSchemaCatalog
 {
+    /// <summary>
+    /// The prefix of each semantic ID in the source toon schema.
+    /// </summary>
+    public const string SemanticIdPrefix = "source-toon/";
+
+    /// <summary>
+    /// The semantic ID prefix that earlier converter versions wrote into presets, clipboard payloads, and local
+    /// overrides. The schema reads IDs with this prefix as IDs with <see cref="SemanticIdPrefix"/>.
+    /// </summary>
+    public const string LegacySemanticIdPrefix = "poiyomi/";
+
+    private static readonly KeyValuePair<string, string>[] LegacySemanticIdPrefixes =
+    [
+        new(LegacySemanticIdPrefix, SemanticIdPrefix),
+    ];
+
     private static readonly ConditionalWeakTable<ShaderUiManifest, ShaderAuthoringSchema> Cache = new();
     private static readonly HashSet<string> KnownOptionKeys = new(StringComparer.Ordinal)
     {
@@ -50,14 +66,14 @@ public static partial class SourceToonAuthoringSchemaCatalog
         JsonElement source = rootElement.GetProperty("source");
         string commit = source.GetProperty("commit").GetString() ?? SourceToon93Catalog.RepositoryCommit;
         string shaderVersion = source.GetProperty("shaderVersion").GetString() ?? SourceToon93Catalog.VersionText;
-        string sourceIdentity = $"Poiyomi Toon {shaderVersion}@{commit}";
+        string sourceIdentity = $"Source toon {shaderVersion}@{commit}";
 
         List<ShaderAuthoringIssue> issues = [];
         ShaderAuthoringNode root = new()
         {
-            SemanticId = $"poiyomi/{shaderVersion}/root",
+            SemanticId = $"{SemanticIdPrefix}{shaderVersion}/root",
             Kind = EShaderAuthoringNodeKind.Root,
-            DisplayName = $"Poiyomi Toon {shaderVersion}",
+            DisplayName = $"Source toon {shaderVersion}",
             DeclarationOrder = -1,
         };
 
@@ -84,7 +100,7 @@ public static partial class SourceToonAuthoringSchemaCatalog
                         issues.Add(new(
                             EShaderAuthoringIssueSeverity.Error,
                             $"Section end marker '{property.Name}' has no open section.",
-                            $"poiyomi/{shaderVersion}/marker/{property.Name}",
+                            $"{SemanticIdPrefix}{shaderVersion}/marker/{property.Name}",
                             property.SourceLine));
                         continue;
                     }
@@ -124,12 +140,13 @@ public static partial class SourceToonAuthoringSchemaCatalog
         ValidateReferences(root, sourceProperties, issues);
         string fingerprint = ComputeFingerprint(sourceIdentity, manifest, root);
         return new ShaderAuthoringSchema(
-            $"poiyomi-toon-{shaderVersion}",
+            $"source-toon-{shaderVersion}",
             version,
             sourceIdentity,
             fingerprint,
             root,
-            issues);
+            issues,
+            LegacySemanticIdPrefixes);
     }
 
     private static ShaderAuthoringNode CreateNode(
@@ -168,7 +185,7 @@ public static partial class SourceToonAuthoringSchemaCatalog
                 issues.Add(new(
                     EShaderAuthoringIssueSeverity.Info,
                     $"PropertyOptions field '{optionKey}' is preserved but inactive.",
-                    $"poiyomi/{SourceToon93Catalog.VersionText}/property/{semanticName}",
+                    $"{SemanticIdPrefix}{SourceToon93Catalog.VersionText}/property/{semanticName}",
                     property.SourceLine));
             }
         }
@@ -179,7 +196,7 @@ public static partial class SourceToonAuthoringSchemaCatalog
             issues.Add(new(
                 EShaderAuthoringIssueSeverity.Warning,
                 $"Tool drawer '{widget}' is active but has no allowlisted engine tool.",
-                $"poiyomi/{SourceToon93Catalog.VersionText}/property/{semanticName}",
+                $"{SemanticIdPrefix}{SourceToon93Catalog.VersionText}/property/{semanticName}",
                 property.SourceLine));
         }
 
@@ -190,7 +207,7 @@ public static partial class SourceToonAuthoringSchemaCatalog
 
         return new ShaderAuthoringNode
         {
-            SemanticId = $"poiyomi/{SourceToon93Catalog.VersionText}/{resolvedKind.ToString().ToLowerInvariant()}/{semanticName}",
+            SemanticId = $"{SemanticIdPrefix}{SourceToon93Catalog.VersionText}/{resolvedKind.ToString().ToLowerInvariant()}/{semanticName}",
             Kind = resolvedKind,
             DisplayName = displayName,
             SourcePropertyName = property.Name,
@@ -222,7 +239,7 @@ public static partial class SourceToonAuthoringSchemaCatalog
         issues.Add(new(
             EShaderAuthoringIssueSeverity.Error,
             $"Invalid {purpose} expression: {diagnostic}",
-            $"poiyomi/{SourceToon93Catalog.VersionText}/property/{property.Name}",
+            $"{SemanticIdPrefix}{SourceToon93Catalog.VersionText}/property/{property.Name}",
             property.SourceLine));
         return null;
     }

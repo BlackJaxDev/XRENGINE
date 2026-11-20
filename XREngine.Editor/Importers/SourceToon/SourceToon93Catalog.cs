@@ -28,7 +28,7 @@ public static class SourceToon93Catalog
         // Source asset paths can use either separator, whatever the host OS is.
         string stem = SanitizeSegment(Path.GetFileNameWithoutExtension(sourceAssetPath.Replace('\\', '/')));
         string collisionSuffix = GetGuidSuffix(sourceGuid);
-        return $"{stem}.poiyomi-9_3_64{collisionSuffix}.uber";
+        return $"{stem}.source-toon-9_3_64{collisionSuffix}.uber";
     }
 
     public static string GetPassVariantName(string materialName, string passRole, ulong variantHash)
@@ -41,7 +41,7 @@ public static class SourceToon93Catalog
     public static string GetPreservedMetadataName(string materialName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(materialName);
-        return $"{SanitizeSegment(materialName)}.poiyomi-source.json";
+        return $"{SanitizeSegment(materialName)}.toon-source.json";
     }
 
     public static string GetAnimationBindingName(string materialName, string semanticProperty)

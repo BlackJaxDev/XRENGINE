@@ -136,14 +136,14 @@ public sealed class MaterialConversionReportRegistry
 
 public static class MaterialConversionReportBuilder
 {
-    public const string ConverterId = "xrengine.poiyomi-toon";
+    public const string ConverterId = "xrengine.source-toon";
 
     /// <summary>The report family name of an accepted source toon material.</summary>
     public const string SourceToonFamilyName = "Source toon";
 
     /// <summary>The report family name of a Pro toon material that is converted with a lossy downgrade.</summary>
     public const string ProToonFamilyName = "Pro toon (lossy downgrade input)";
-    public const string ConverterVersion = "1.11.0";
+    public const string ConverterVersion = "1.12.0";
     public const int SourceDescriptorVersion = 1;
 
     private static readonly Lazy<IReadOnlySet<string>> PreservedRuntimeProperties =

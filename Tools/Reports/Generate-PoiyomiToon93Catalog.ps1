@@ -756,9 +756,9 @@ $catalog = [ordered]@{
         unknownVersionBehavior = "reject Poiyomi conversion and warn with TOON0001"
     }
     namingPolicy = [ordered]@{
-        material = "{sourceAssetStem}.poiyomi-9_3_64.uber"
+        material = "{sourceAssetStem}.source-toon-9_3_64.uber"
         passVariant = "{materialName}.{passRole}.{variantHash:x16}"
-        preservedMetadata = "{materialName}.poiyomi-source.json"
+        preservedMetadata = "{materialName}.toon-source.json"
         animationBinding = "{materialName}/{semanticProperty}"
         collisionSuffix = ".{sourceGuid8}"
     }
