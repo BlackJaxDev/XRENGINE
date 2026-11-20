@@ -52,6 +52,10 @@ public static partial class SerializedMaterialImporter
             tint = new Vector4(themeColor.X, themeColor.Y, themeColor.Z, tint.W);
         }
         SetVector4(material, "_SourceStylizedSpecularTint", tint);
+        // 0 replaces the base color with the highlight, 1 adds the highlight to the lit color,
+        // 2 screens and 3 multiplies the base color. A material without the property predates
+        // the blend option and adds the highlight.
+        SetInt(material, "_StylizedSpecularBlend", GetInt(document, "_Is_BlendAddToHiColor", 1));
 
         BindSourceStylizedSpecularTexture(material, document, resolver, warnings,
             "_HighColor_Tex", "_SourceHighColorTex");
@@ -83,7 +87,7 @@ public static partial class SerializedMaterialImporter
     {
         if (GetInt(document, "_StylizedReflectionMode") != 0)
             return "_StylizedReflectionMode";
-        if (GetInt(document, "_Is_BlendAddToHiColor", 1) != 1)
+        if (GetInt(document, "_Is_BlendAddToHiColor", 1) is < 0 or > 3)
             return "_Is_BlendAddToHiColor";
         int themeIndex = GetInt(document, "_HighColorThemeIndex");
         if (themeIndex != 0 && ResolveStaticSourceThemeColor(document, themeIndex) is null)

@@ -105,6 +105,8 @@ uniform vec4 _SourceStylizedSpecularLayers;
 uniform vec4 _SourceStylizedSpecularMask;
 uniform vec4 _SourceStylizedSpecularOcclusion;
 uniform vec4 _SourceStylizedSpecularTint;
+//@property(name="_StylizedSpecularBlend", display="Stylized Specular Blend", mode=static, enum="0:Replace|1:Add|2:Screen|3:Multiply")
+uniform int _StylizedSpecularBlend;
 uniform vec4 _SourceHighColorTex_ST;
 uniform vec4 _SourceHighColorMask_ST;
 //@property(name="_SourceHighColorTex", display="Source High Color", slot=texture)

@@ -681,12 +681,15 @@ vec3 xrSourceMultilayerDiffuse(vec3 base, vec3 direct, vec3 indirect,
     shade = mix(direct, shade, strength);
     return base * mix(shade, direct, bands.x);
 }
-vec3 xrSourceStylizedSpecular(vec3 vertexNormal, vec3 mappedNormal,
+// Computes the stylized specular response of one light. The return value is the final
+// specular mask, and highlight receives the tinted highlight color (with the light color
+// when settings.w is 1). The blend mode decides how the two change the surface color.
+float xrSourceStylizedSpecularTerms(vec3 vertexNormal, vec3 mappedNormal,
     vec3 viewDirection, vec3 lightDirection, vec3 directColor,
     float rampedLightMap, float attenuation, float shadowVisibility,
     float occlusion, float specularMask, float specularFootprint,
     vec3 highColorMap, vec4 tint, vec4 settings, vec4 layers,
-    vec4 maskSettings, vec4 occlusionSettings)
+    vec4 maskSettings, vec4 occlusionSettings, out vec3 highlight)
 {
     vec3 normal = normalize(mix(vertexNormal, mappedNormal, settings.z));
     vec3 halfDirection = normalize(lightDirection + viewDirection);
@@ -719,7 +722,40 @@ vec3 xrSourceStylizedSpecular(vec3 vertexNormal, vec3 mappedNormal,
     float lightAttenuation = attenuation * shadowVisibility;
     float finalMask = min(min(response, occlusion),
         min(normalAttenuation, lightAttenuation)) * maskSettings.z;
-    return max(highColorMap * tint.rgb *
-        mix(vec3(1.0), directColor, settings.w) * finalMask, vec3(0.0));
+    highlight = highColorMap * tint.rgb * mix(vec3(1.0), directColor, settings.w);
+    return finalMask;
+}
+
+// Returns the additive stylized specular term of one light (blend mode 1, add to light).
+vec3 xrSourceStylizedSpecular(vec3 vertexNormal, vec3 mappedNormal,
+    vec3 viewDirection, vec3 lightDirection, vec3 directColor,
+    float rampedLightMap, float attenuation, float shadowVisibility,
+    float occlusion, float specularMask, float specularFootprint,
+    vec3 highColorMap, vec4 tint, vec4 settings, vec4 layers,
+    vec4 maskSettings, vec4 occlusionSettings)
+{
+    vec3 highlight;
+    float finalMask = xrSourceStylizedSpecularTerms(vertexNormal, mappedNormal,
+        viewDirection, lightDirection, directColor, rampedLightMap, attenuation,
+        shadowVisibility, occlusion, specularMask, specularFootprint, highColorMap,
+        tint, settings, layers, maskSettings, occlusionSettings, highlight);
+    return max(highlight * finalMask, vec3(0.0));
+}
+
+// Applies a stylized specular highlight to the surface color before lighting, for the
+// blend modes that change the base color: 0 replaces it with the highlight, 2 screens
+// the highlight over it, and 3 multiplies it by the highlight. Mode 1 (add to light)
+// leaves the base color unchanged, because its term is added after lighting.
+vec3 xrSourceStylizedSpecularBase(vec3 baseColor, vec3 highlight, float finalMask,
+    int blendMode)
+{
+    if (blendMode == 0)
+        return mix(baseColor, highlight, finalMask);
+    if (blendMode == 2)
+        return mix(baseColor, vec3(1.0) - (vec3(1.0) - baseColor) * (vec3(1.0) - highlight),
+            finalMask);
+    if (blendMode == 3)
+        return mix(baseColor, baseColor * highlight, finalMask);
+    return baseColor;
 }
 #endif
