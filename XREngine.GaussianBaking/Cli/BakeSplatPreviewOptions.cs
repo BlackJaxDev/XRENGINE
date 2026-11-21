@@ -30,6 +30,9 @@ public sealed class BakeSplatPreviewOptions
     /// <summary>The separator between the archive path and the asset path in <c>--stage</c>.</summary>
     public const string StageSeparator = "::";
 
+    /// <summary>The largest splat count allowed when <c>--allow-over-budget</c> is given.</summary>
+    public const int MaxOverBudgetSplats = 4_000_000;
+
     private const string InputFlag = "--input";
     private const string AssetFlag = "--asset";
     private const string KindFlag = "--kind";
@@ -41,6 +44,7 @@ public sealed class BakeSplatPreviewOptions
     private const string H264EncoderFlag = "--h264-encoder";
     private const string SplatsFlag = "--splats";
     private const string DumpViewsOnlyFlag = "--dump-views-only";
+    private const string AllowOverBudgetFlag = "--allow-over-budget";
 
     private static readonly string[] ValueFlags =
     [
@@ -99,6 +103,9 @@ public sealed class BakeSplatPreviewOptions
     /// <summary>Gets a value that tells the bake to write the capture views as PNG files and stop.</summary>
     public bool DumpViewsOnly { get; private init; }
 
+    /// <summary>Gets a value that allows splat, driver, and cache byte counts above the default kind budget.</summary>
+    public bool AllowOverBudget { get; private init; }
+
     /// <summary>
     /// Reads the bake options from command line arguments. The <see cref="CommandFlag"/> argument is accepted and ignored.
     /// </summary>
@@ -113,6 +120,7 @@ public sealed class BakeSplatPreviewOptions
 
         Dictionary<string, string> values = new(StringComparer.OrdinalIgnoreCase);
         bool dumpViewsOnly = false;
+        bool allowOverBudget = false;
         bool commandFlagSeen = false;
         for (int i = 0; i < args.Count; i++)
         {
@@ -130,6 +138,14 @@ public sealed class BakeSplatPreviewOptions
                 if (dumpViewsOnly)
                     return Fail($"The {DumpViewsOnlyFlag} option is given more than one time.", out error);
                 dumpViewsOnly = true;
+                continue;
+            }
+
+            if (string.Equals(argument, AllowOverBudgetFlag, StringComparison.OrdinalIgnoreCase))
+            {
+                if (allowOverBudget)
+                    return Fail($"The {AllowOverBudgetFlag} option is given more than one time.", out error);
+                allowOverBudget = true;
                 continue;
             }
 
@@ -181,7 +197,7 @@ public sealed class BakeSplatPreviewOptions
         int? splatCount = null;
         if (splats is not null)
         {
-            int maxSplats = GaussianBakeBudget.For(kind).MaxSplats;
+            int maxSplats = allowOverBudget ? MaxOverBudgetSplats : GaussianBakeBudget.For(kind).MaxSplats;
             if (!int.TryParse(splats, NumberStyles.None, CultureInfo.InvariantCulture, out int count) || count < 1 || count > maxSplats)
             {
                 return Fail(
@@ -207,6 +223,7 @@ public sealed class BakeSplatPreviewOptions
             H264Encoder = h264Encoder.ToLowerInvariant(),
             SplatCount = splatCount,
             DumpViewsOnly = dumpViewsOnly,
+            AllowOverBudget = allowOverBudget,
         };
         error = null;
         return true;

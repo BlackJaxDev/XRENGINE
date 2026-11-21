@@ -8674,8 +8674,8 @@ Atlas: &o287
   ID: d5fa3bfa-a164-49d1-af6d-5e694e54bf1d
   Name: 
 EmbeddedAssets: []
-OriginalPath: D:\Documents\XRENGINE\Build\CommonAssets\Fonts\Roboto\Roboto-Regular.ttf
-FilePath: D:\Documents\XRENGINE\Build\CommonAssets\Fonts\Roboto\Roboto-Regular.asset
+OriginalPath: engine://Fonts/Roboto/Roboto-Regular.ttf
+FilePath: 
 SourceAsset: *o288
 ID: 50ffe7b5-6711-4d49-817f-10233838826b
 Name: Roboto-Regular

@@ -36,6 +36,7 @@ public partial class DefaultRenderPipeline
         ViewportRenderCommandContainer c = new(this);
         c.Add<VPRC_PrecomputeBRDF>();
         var ifElse = c.Add<VPRC_IfElse>();
+        ifElse.Label = "Viewport or FBO target";
         ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;
         ifElse.TrueCommands = CreateViewportTargetCommands();
         ifElse.FalseCommands = CreateFBOTargetCommands();
@@ -149,6 +150,7 @@ public partial class DefaultRenderPipeline
 
         var sceneWorkload = c.Add<VPRC_IfElse>();
         sceneWorkload.Label = "FullSceneMeshWorkload";
+        sceneWorkload.AnchorId = "default.sceneWorkload";
         sceneWorkload.ConditionEvaluator = ShouldRunFullScenePipeline;
 
         var fullSceneCommands = new ViewportRenderCommandContainer(this);
@@ -171,7 +173,7 @@ public partial class DefaultRenderPipeline
             AppendMotionBlurAndDoF(fullSceneCommands);
             AppendBloomPass(fullSceneCommands);
             AppendPostBloomForwardPass(fullSceneCommands);
-            AppendTemporalAccumulation(fullSceneCommands);
+            AppendTemporalAccumulation(fullSceneCommands, "post.temporal");
             // Build the GPU BVH so debug overlays (and any zero-readback consumers)
             // have an up-to-date acceleration structure published into pipeline
             // variables before the on-top forward passes run.
@@ -200,7 +202,7 @@ public partial class DefaultRenderPipeline
         AppendFinalOutput(c, bypassVendorUpscale);
 
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
-        c.Add<VPRC_RenderScreenSpaceUI>();
+        c.Add<VPRC_RenderScreenSpaceUI>().WithAnchor("default.screenSpaceUI");
         return c;
     }
 
@@ -323,10 +325,12 @@ public partial class DefaultRenderPipeline
     {
         var aoChoice = c.Add<VPRC_IfElse>();
         aoChoice.Label = "AmbientOcclusionProducerActive";
+        aoChoice.AnchorId = "default.ambientOcclusion";
         aoChoice.ConditionEvaluator = ShouldUseAmbientOcclusion;
 
         var aoCommands = new ViewportRenderCommandContainer(this);
         var aoSwitch = aoCommands.Add<VPRC_Switch>();
+        aoSwitch.Label = "AO";
         aoSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
         aoSwitch.Cases = enableComputePasses
             ? new()
@@ -395,6 +399,7 @@ public partial class DefaultRenderPipeline
     {
         var surfaceChoice = c.Add<VPRC_IfElse>();
         surfaceChoice.Label = "ForwardSceneSurfaceActive";
+        surfaceChoice.AnchorId = "default.forwardSurface";
         surfaceChoice.ConditionEvaluator = ShouldPrepareForwardSceneSurface;
         {
             var surfaceCommands = new ViewportRenderCommandContainer(this);
@@ -422,10 +427,12 @@ public partial class DefaultRenderPipeline
     {
         var aoChoice = c.Add<VPRC_IfElse>();
         aoChoice.Label = "AmbientOcclusionResolveActive";
+        aoChoice.AnchorId = "default.ambientOcclusionResolve";
         aoChoice.ConditionEvaluator = ShouldUseAmbientOcclusion;
 
         var aoCommands = new ViewportRenderCommandContainer(this);
         var aoResolveSwitch = aoCommands.Add<VPRC_Switch>();
+        aoResolveSwitch.Label = "AO resolve";
         aoResolveSwitch.SwitchEvaluator = EvaluateAmbientOcclusionMode;
         aoResolveSwitch.Cases = new()
         {
@@ -444,6 +451,7 @@ public partial class DefaultRenderPipeline
     {
         var probeSync = c.Add<VPRC_IfElse>();
         probeSync.Label = "LightProbeSyncActive";
+        probeSync.AnchorId = "default.lightProbeSync";
         probeSync.ConditionEvaluator = () => GlobalIlluminationPlan.RequiresNativeProbeIblBindings;
         var probeCommands = new ViewportRenderCommandContainer(this);
         probeCommands.Add<VPRC_SyncLightProbeResources>();
@@ -608,6 +616,7 @@ public partial class DefaultRenderPipeline
     {
         var transparencyChoice = c.Add<VPRC_IfElse>();
         transparencyChoice.Label = "TransparencyActive";
+        transparencyChoice.AnchorId = "default.transparency";
         transparencyChoice.ConditionEvaluator = ShouldRunTransparencyPasses;
         {
             var transparencyCommands = new ViewportRenderCommandContainer(this);
@@ -637,6 +646,7 @@ public partial class DefaultRenderPipeline
     {
         var velocityChoice = c.Add<VPRC_IfElse>();
         velocityChoice.Label = "Velocity Buffer";
+        velocityChoice.AnchorId = "default.velocity";
         velocityChoice.ConditionEvaluator = ShouldGenerateVelocityBuffer;
 
         ViewportRenderCommandContainer velocityCommands = new(this);
@@ -717,6 +727,8 @@ public partial class DefaultRenderPipeline
                 RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport?.RendersToExternalSwapchainTarget.ToString() ?? "<null>");
         }
         var bloomChoice = c.Add<VPRC_IfElse>();
+        bloomChoice.Label = "Bloom";
+        bloomChoice.AnchorId = "post.bloom";
         bloomChoice.ConditionEvaluator = ShouldUseBloom;
         {
             var bloomCommands = new ViewportRenderCommandContainer(this);
@@ -739,12 +751,16 @@ public partial class DefaultRenderPipeline
     private void AppendMotionBlurAndDoF(ViewportRenderCommandContainer c)
     {
         var motionBlurChoice = c.Add<VPRC_IfElse>();
+        motionBlurChoice.Label = "Motion blur";
+        motionBlurChoice.AnchorId = "post.motionBlur";
         motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
         motionBlurChoice.TrueCommands = CreateMotionBlurPassCommands();
 
         AppendPostMotionBlurForwardPass(c);
 
         var dofChoice = c.Add<VPRC_IfElse>();
+        dofChoice.Label = "DOF";
+        dofChoice.AnchorId = "post.dof";
         dofChoice.ConditionEvaluator = ShouldUseDepthOfField;
         dofChoice.TrueCommands = CreateDepthOfFieldPassCommands();
 
@@ -755,16 +771,19 @@ public partial class DefaultRenderPipeline
     {
         var temporalBegin = c.Add<VPRC_IfElse>();
         temporalBegin.Label = "TemporalBeginActive";
+        temporalBegin.AnchorId = "post.temporalBegin";
         temporalBegin.ConditionEvaluator = ShouldUseTemporalAccumulationResources;
         var temporalBeginCommands = new ViewportRenderCommandContainer(this);
         temporalBeginCommands.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Begin;
         temporalBegin.TrueCommands = temporalBeginCommands;
     }
 
-    private void AppendTemporalAccumulation(ViewportRenderCommandContainer c)
+    /// <param name="anchorId">The anchor id of the branch. Only one call in a chain can set it, because anchor ids are unique.</param>
+    private void AppendTemporalAccumulation(ViewportRenderCommandContainer c, string? anchorId = null)
     {
         var temporalChoice = c.Add<VPRC_IfElse>();
         temporalChoice.Label = "TemporalAccumulationActive";
+        temporalChoice.AnchorId = anchorId;
         temporalChoice.ConditionEvaluator = ShouldUseTemporalAccumulationResources;
 
         var temporalCommands = new ViewportRenderCommandContainer(this);
@@ -870,6 +889,7 @@ public partial class DefaultRenderPipeline
     private void AppendFullOverdrawCountingPass(ViewportRenderCommandContainer c)
     {
         var fullOverdraw = c.Add<VPRC_IfElse>();
+        fullOverdraw.Label = "Full overdraw";
         fullOverdraw.ConditionEvaluator = () => EnableFullOverdrawVisualization;
         {
             var countCommands = new ViewportRenderCommandContainer(this);
@@ -893,11 +913,14 @@ public partial class DefaultRenderPipeline
     private void AppendFxaaTsrUpscaleChain(ViewportRenderCommandContainer c)
     {
         var upscaleChoice = c.Add<VPRC_IfElse>();
+        upscaleChoice.Label = "Upscale";
+        upscaleChoice.AnchorId = "post.upscale";
         upscaleChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableDeclaredSmaa || RuntimeNeedsTsrUpscale;
         {
             var upscaleCmds = new ViewportRenderCommandContainer(this);
 
             var tsrOrPostAa = upscaleCmds.Add<VPRC_IfElse>();
+            tsrOrPostAa.Label = "TSR or post AA";
             tsrOrPostAa.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
             {
                 var tsrUpscale = new ViewportRenderCommandContainer(this);
@@ -935,6 +958,7 @@ public partial class DefaultRenderPipeline
             {
                 var fxaaOrSmaa = new ViewportRenderCommandContainer(this);
                 var postAaChoice = fxaaOrSmaa.Add<VPRC_IfElse>();
+                postAaChoice.Label = "Post AA";
                 postAaChoice.ConditionEvaluator = () => RuntimeEnableFxaa;
                 {
                     var fxaaUpscale = new ViewportRenderCommandContainer(this);
@@ -963,11 +987,12 @@ public partial class DefaultRenderPipeline
     private void AppendExposureUpdate(ViewportRenderCommandContainer c)
     {
         string exposureSource = HDRSceneTextureName;
-        c.Add<VPRC_ExposureUpdate>().SetOptions(exposureSource, true);
+        c.Add<VPRC_ExposureUpdate>().WithAnchor("post.exposure").SetOptions(exposureSource, true);
 
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
             c.Add<VPRC_RenderQuadToFBO>()
+                .WithAnchor("post.composite")
                 .SetTargets(PostProcessFBOName, PostProcessOutputFBOName, matchDestinationRenderArea: true)
                 .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.PostProcess());
         }
@@ -1031,6 +1056,7 @@ public partial class DefaultRenderPipeline
         using (c.AddUsing<VPRC_PushViewportRenderArea>(t => t.UseInternalResolution = true))
         {
             c.Add<VPRC_RenderQuadToFBO>()
+                .WithAnchor("post.final")
                 .SetTargets(FinalPostProcessFBOName, FinalPostProcessOutputFBOName, matchDestinationRenderArea: true)
                 .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.FinalPostProcess());
         }
@@ -1050,6 +1076,7 @@ public partial class DefaultRenderPipeline
     {
         var atmosphereChoice = c.Add<VPRC_IfElse>();
         atmosphereChoice.Label = "AtmosphereActive";
+        atmosphereChoice.AnchorId = "post.atmosphere";
         atmosphereChoice.ConditionEvaluator = ShouldRunAtmosphericScattering;
         atmosphereChoice.TrueCommands = CreateAtmosphericScatteringCommands();
     }
@@ -1105,6 +1132,7 @@ public partial class DefaultRenderPipeline
     {
         var fogChoice = c.Add<VPRC_IfElse>();
         fogChoice.Label = "VolumetricFogActive";
+        fogChoice.AnchorId = "post.volumetricFog";
         fogChoice.ConditionEvaluator = ShouldRunVolumetricFog;
         fogChoice.TrueCommands = CreateVolumetricFogCommands();
     }
@@ -1167,6 +1195,7 @@ public partial class DefaultRenderPipeline
     private void AppendFinalOutput(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
     {
         var outputChoice = c.Add<VPRC_IfElse>();
+        outputChoice.Label = "Offscreen capture output";
         outputChoice.ConditionEvaluator = IsOffscreenSceneCaptureOutput;
         outputChoice.TrueCommands = CreateOffscreenCaptureFinalOutputCommands();
         outputChoice.FalseCommands = CreateViewportFinalOutputCommands(bypassVendorUpscale);
@@ -1216,6 +1245,7 @@ public partial class DefaultRenderPipeline
     private void AppendFullOverdrawOrStandardFinalOutput(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
     {
         var fullOverdraw = c.Add<VPRC_IfElse>();
+        fullOverdraw.Label = "Full overdraw";
         fullOverdraw.ConditionEvaluator = () => EnableFullOverdrawVisualization;
         fullOverdraw.TrueCommands = CreateFullOverdrawFinalOutputCommands();
         fullOverdraw.FalseCommands = CreateLegacyDebugOrStandardFinalOutputCommands(bypassVendorUpscale);
@@ -1263,6 +1293,7 @@ public partial class DefaultRenderPipeline
         if (overrideSource is not null)
         {
             var overrideChoice = c.Add<VPRC_IfElse>();
+            overrideChoice.Label = "Output source override";
             overrideChoice.ConditionEvaluator = () => IsValidFinalOutputSourceFboOverride(overrideSource);
             overrideChoice.TrueCommands = CreateOutputSourceOverrideCommands(overrideSource, bypassVendorUpscale);
             overrideChoice.FalseCommands = CreateStandardViewportFinalOutputCommands(bypassVendorUpscale);
@@ -1282,15 +1313,18 @@ public partial class DefaultRenderPipeline
     private void AppendStandardViewportFinalOutputCommands(ViewportRenderCommandContainer c, bool bypassVendorUpscale)
     {
         var upscaleOutputChoice = c.Add<VPRC_IfElse>();
+        upscaleOutputChoice.Label = "Upscale output";
         upscaleOutputChoice.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableDeclaredSmaa || RuntimeNeedsTsrUpscale;
         {
             var upscaleOutput = new ViewportRenderCommandContainer(this);
             var tsrOrPostAaFinal = upscaleOutput.Add<VPRC_IfElse>();
+            tsrOrPostAaFinal.Label = "TSR or post AA final";
             tsrOrPostAaFinal.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
             tsrOrPostAaFinal.TrueCommands = CreateFinalBlitCommands(TsrUpscaleFBOName, bypassVendorUpscale);
             {
                 var postAaOutput = new ViewportRenderCommandContainer(this);
                 var fxaaOrSmaaFinal = postAaOutput.Add<VPRC_IfElse>();
+                fxaaOrSmaaFinal.Label = "FXAA or SMAA final";
                 fxaaOrSmaaFinal.ConditionEvaluator = () => RuntimeEnableFxaa;
                 fxaaOrSmaaFinal.TrueCommands = CreateFinalBlitCommands(FxaaFBOName, bypassVendorUpscale);
                 fxaaOrSmaaFinal.FalseCommands = CreateFinalBlitCommands(SmaaFBOName, bypassVendorUpscale);

@@ -15,10 +15,14 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// using temporal hysteresis and warm-start logic.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIUpdateIrradiancePass : VPRC_DDGIComputePass
     {
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string RayRadianceBufferName { get; set; } = DDGIResourceNames.RayRadianceBuffer;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string IrradianceAtlasTextureName { get; set; } = DDGIResourceNames.IrradianceAtlas;
 
         private XRRenderProgram? _updateProgram;

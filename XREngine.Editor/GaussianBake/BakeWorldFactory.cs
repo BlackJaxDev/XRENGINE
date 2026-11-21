@@ -5,6 +5,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
+using XREngine.Rendering.Models.Gaussian.Baking.Motion;
 using XREngine.Scene;
 
 namespace XREngine.Editor.GaussianBake;
@@ -82,6 +83,12 @@ public static class BakeWorldFactory
             root.Transform.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: true);
             root.IterateComponents<RenderableComponent>(component =>
             {
+                if (!BakeMotionSelector.IsEnabled(component, root))
+                    return;
+
+                if (component is ModelComponent { Meshes.Count: 0 } modelComponent)
+                    modelComponent.RebuildRuntimeMeshes();
+
                 foreach (RenderableMesh mesh in component.Meshes)
                 {
                     if (!mesh.TryGetWorldBounds(out AABB meshBounds) || !meshBounds.IsValid)

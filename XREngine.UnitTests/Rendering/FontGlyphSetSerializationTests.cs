@@ -89,6 +89,49 @@ public sealed class FontGlyphSetSerializationTests
     }
 
     [Test]
+    public void GetQuads_WhenLayoutIsMissing_RecoversFromAPortableGameFontPath()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "FontGlyphSetSerializationTests", Guid.NewGuid().ToString("N"), "Assets");
+        string fontName = $"Recover{Guid.NewGuid():N}.ttf";
+        string fontPath = Path.Combine(root, "Fonts", fontName);
+        Directory.CreateDirectory(Path.GetDirectoryName(fontPath)!);
+        File.WriteAllBytes(fontPath, [0x00, 0x01, 0x00, 0x00]);
+
+        // A cooked font keeps only the portable source path. Its glyph table is missing, so layout starts a recovery import.
+        FontGlyphSet font = new() { Name = "CookedFont", OriginalPath = $"game://Fonts/{fontName}" };
+        RecordingFontCharacterEnumerator enumerator = new();
+        IFontCharacterEnumerator? previousEnumerator = FontCharacterEnumeratorRegistry.Current;
+        try
+        {
+            FontCharacterEnumeratorRegistry.Current = enumerator;
+            using IDisposable services = AssetSerializationServices.Install(new XREngine.UnitTests.Cutscenes.FakeAssetRootServices(root));
+
+            List<(Vector4 transform, Vector4 uvs)> quads = [];
+            Should.NotThrow(() => font.GetQuads("A", quads, 8.0f, float.MaxValue, float.MaxValue));
+
+            enumerator.RequestedPaths.ShouldBe([Path.GetFullPath(fontPath)]);
+            quads.ShouldBeEmpty();
+        }
+        finally
+        {
+            FontCharacterEnumeratorRegistry.Current = previousEnumerator;
+            Directory.Delete(Path.GetDirectoryName(root)!, recursive: true);
+        }
+    }
+
+    /// <summary>Records the font paths that an import asks for, then stops the import.</summary>
+    private sealed class RecordingFontCharacterEnumerator : IFontCharacterEnumerator
+    {
+        public List<string> RequestedPaths { get; } = [];
+
+        public HashSet<uint> GetSupportedCharacters(string fontPath)
+        {
+            RequestedPaths.Add(fontPath);
+            throw new InvalidOperationException("The test stops the import after the font path is known.");
+        }
+    }
+
+    [Test]
     public void GetQuads_WhenStringContainsSurrogatePairGlyph_ProducesOneQuad()
     {
         const string eyeGlyph = "\U0001F441";

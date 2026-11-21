@@ -233,7 +233,7 @@ internal unsafe partial class VkRenderProgram
                 Unsafe.WriteUnaligned(ref start, value.Vector2);
                 return true;
             case EShaderVarType._vec3:
-                Unsafe.WriteUnaligned(ref start, new Vector4(value.Vector3, 0f));
+                Unsafe.WriteUnaligned(ref start, value.Vector3);
                 return true;
             case EShaderVarType._vec4:
                 Unsafe.WriteUnaligned(ref start, value.Vector4);
@@ -507,22 +507,22 @@ internal unsafe partial class VkRenderProgram
             case EShaderVarType._vec3:
                 if (value is Vector3 v3)
                 {
-                    Unsafe.WriteUnaligned(ref start, new Vector4(v3, 0f));
+                    Unsafe.WriteUnaligned(ref start, v3);
                     return true;
                 }
                 if (value is Vector4 v3From4)
                 {
-                    Unsafe.WriteUnaligned(ref start, v3From4);
+                    Unsafe.WriteUnaligned(ref start, new Vector3(v3From4.X, v3From4.Y, v3From4.Z));
                     return true;
                 }
                 if (value is ColorF3 c3)
                 {
-                    Unsafe.WriteUnaligned(ref start, new Vector4(c3.R, c3.G, c3.B, 0f));
+                    Unsafe.WriteUnaligned(ref start, new Vector3(c3.R, c3.G, c3.B));
                     return true;
                 }
                 if (value is ColorF4 c3From4)
                 {
-                    Unsafe.WriteUnaligned(ref start, new Vector4(c3From4.R, c3From4.G, c3From4.B, 0f));
+                    Unsafe.WriteUnaligned(ref start, new Vector3(c3From4.R, c3From4.G, c3From4.B));
                     return true;
                 }
                 break;

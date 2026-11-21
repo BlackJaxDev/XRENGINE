@@ -211,9 +211,9 @@ public static class GaussianCachePoseReference
         return true;
     }
 
-    /// <summary>Returns the number of pixels that one unit covers at a distance of one unit: the Y scale of the projection times half the viewport height.</summary>
+    /// <summary>Returns the number of pixels that one unit covers at a distance of one unit: the magnitude of the Y scale of the projection times half the viewport height.</summary>
     public static float FocalPixels(in Matrix4x4 projection, float viewportHeight)
-        => projection.M22 * viewportHeight * 0.5f;
+        => MathF.Abs(projection.M22) * viewportHeight * 0.5f;
 
     /// <summary>Returns the largest axis scale of a model-view transform. The LOD test scales the splat sigma by it.</summary>
     public static float SigmaScale(in Matrix4x4 view)

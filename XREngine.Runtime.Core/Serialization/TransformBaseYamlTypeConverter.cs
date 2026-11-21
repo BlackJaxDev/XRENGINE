@@ -26,7 +26,8 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
     private static bool _skip;
 
     public bool Accepts(Type type)
-        => !_skip && typeof(TransformBase).IsAssignableFrom(type);
+        => type == typeof(YamlTransformReferenceValue)
+            || (!_skip && typeof(TransformBase).IsAssignableFrom(type));
 
     public object? ReadYaml(IParser parser, Type type, ObjectDeserializer rootDeserializer)
     {
@@ -128,6 +129,12 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
         if (value is null)
         {
             emitter.Emit(new Scalar(null, null, "null", ScalarStyle.Plain, true, false));
+            return;
+        }
+
+        if (value is YamlTransformReferenceValue referenceValue)
+        {
+            EmitReferenceTransformId(emitter, referenceValue.Id);
             return;
         }
 
@@ -408,10 +415,13 @@ internal sealed class TransformBaseYamlTypeConverter : IYamlTypeConverter
     }
 
     private static void EmitReferenceTransform(IEmitter emitter, TransformBase transform)
+        => EmitReferenceTransformId(emitter, transform.EffectiveSerializedReferenceId);
+
+    private static void EmitReferenceTransformId(IEmitter emitter, Guid serializedReferenceId)
     {
         emitter.Emit(new MappingStart(null, null, false, MappingStyle.Block));
         emitter.Emit(new Scalar("ID"));
-        emitter.Emit(new Scalar(transform.EffectiveSerializedReferenceId.ToString()));
+        emitter.Emit(new Scalar(serializedReferenceId.ToString()));
         emitter.Emit(new MappingEnd());
     }
 

@@ -63,7 +63,10 @@ internal unsafe partial class VkMeshRenderer
 
 		GeneratedProgramState programState = CaptureGeneratedProgramState(material, editorHighlightOutput);
 		if (_programStateCache.TryGetValue(programState, out GeneratedProgramCacheEntry? cachedEntry))
+		{
+			_programFailureMaterial = null;
 			return ActivateGeneratedProgramAndEvictSuperseded(cachedEntry, editorHighlightOutput);
+		}
 
 		var sourceShaders = new List<XRShader>(material.Shaders.Count);
 		string? generatedVertexIdentity = null;
@@ -99,6 +102,7 @@ internal unsafe partial class VkMeshRenderer
 					material?.Name ?? "<unnamed material>",
 					Mesh?.Name ?? "<unnamed mesh>",
 					Data.VersionKindLabel);
+				_programFailureMaterial = material;
 				return false;
 			}
 

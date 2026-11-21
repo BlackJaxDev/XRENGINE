@@ -67,17 +67,15 @@ public static partial class SerializedMaterialImporter
         }
         foreach (string name in new[]
         {
-            "_Rim2BiasIntensity", "_Rim2ShadowToggle", "_Rim2HueShiftEnabled",
+            "_Rim2BiasIntensity", "_Rim2ShadowToggle",
             "_Rim2ApplyAlpha", "_Rim2ApplyGlobalMaskIndex", "_Rim2MaskInvert"
         })
             if (document.TryGetPositive(name))
                 return name;
-        foreach (string name in new[] { "_Rim2TexUV", "_Rim2MaskUV", "_Rim2MaskChannel" })
-            if (GetInt(document, name) != 0)
-                return name;
-        foreach (string name in new[] { "_Rim2TexPan", "_Rim2MaskPan" })
-            if (document.TryGetVector(name, out Vector4 pan) && pan != Vector4.Zero)
-                return name;
+        // The checks above allow only the white default for both textures, so their UV set,
+        // channel, and pan do not change the sampled value.
+        if (document.TryGetPositive("_Rim2HueShiftEnabled") && !IsIdentitySourceHueShift(document, "_Rim2"))
+            return "_Rim2HueShiftEnabled";
         if (document.TryGetPositive("_EnableAudioLink"))
         {
             foreach (string name in new[]
@@ -103,4 +101,13 @@ public static partial class SerializedMaterialImporter
             return "_RimPoi2BlendMode";
         return null;
     }
+
+    /// <summary>
+    /// True when an enabled source hue shift with the given prefix leaves the color unchanged:
+    /// shift mode (<c>{prefix}HueSelectOrShift</c> = 1) with a zero shift and a zero speed.
+    /// </summary>
+    private static bool IsIdentitySourceHueShift(SerializedMaterialDocument document, string prefix)
+        => GetInt(document, prefix + "HueSelectOrShift", 1) == 1 &&
+           GetFloat(document, prefix + "HueShift") == 0.0f &&
+           GetFloat(document, prefix + "HueShiftSpeed") == 0.0f;
 }

@@ -157,6 +157,9 @@ namespace XREngine.Rendering.Vulkan
                 hasValidFrameContent: true);
             if (presentAccepted)
             {
+                // A presented scene frame ends a PresentNow recording retry streak.
+                if (attempt.ScenePrimaryRecordedThisFrame)
+                    _presentNowRecordingRetryStreakStartTicks = 0L;
                 CaptureResizeReleaseHandoffFromSuccessfulHeldPresent(
                     ref attempt);
                 TryCompleteResizeReleaseHandoffAfterSuccessorPresent(

@@ -898,7 +898,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             commandBounds.BoundingSphere = instance.BoundsSphere;
             commandBounds.AabbMin = instance.BoundsMin;
             commandBounds.AabbMax = instance.BoundsMax;
-            if (mesh is { HasBlendshapes: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+            if (mesh is { HasBlendshapeDeformation: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
                 visibilityFlags |= EAdvancedVisibilityPreparationFlags.Uncertain | EAdvancedVisibilityPreparationFlags.ConservativeVisible;
         }
         else if (skinnedClusterCut)
@@ -1832,8 +1832,11 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         }
         if (IsSurfaceDecal(command))
             return EAdvancedMaterialCoverageMode.Decal;
-        if (WritesFragmentDepth(command))
+        if (WritesFragmentDepth(command) ||
+            (command.Flags & (uint)GPUIndirectRenderFlags.CoverageDiscard) != 0u)
+        {
             return EAdvancedMaterialCoverageMode.Masked;
+        }
         return command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested
             ? EAdvancedMaterialCoverageMode.Masked
             : EAdvancedMaterialCoverageMode.Opaque;

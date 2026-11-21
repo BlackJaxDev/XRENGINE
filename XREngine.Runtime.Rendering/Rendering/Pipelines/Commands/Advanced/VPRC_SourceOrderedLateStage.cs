@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Holds one published command package while the source pass draws its prefix,
 /// copies HDR color, and draws its suffix.
 /// </summary>
+[RenderCommandInfo(ERenderCommandCategory.Advanced, DoesGpuWork = true)]
 [RenderPipelineScriptCommand]
 public sealed class VPRC_SourceOrderedLateStage : ViewportRenderCommand
 {

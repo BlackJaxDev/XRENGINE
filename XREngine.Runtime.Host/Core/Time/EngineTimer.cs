@@ -379,14 +379,15 @@ namespace XREngine.Timers
 
         private void WaitUntilNextRenderDispatch()
         {
-            if (_targetRenderPeriodTicks <= 0L)
+            long renderPeriodTicks = ResolveRenderPeriodTicks();
+            if (renderPeriodTicks <= 0L)
             {
                 ServiceAsynchronousRenderWork();
                 Thread.Yield();
                 return;
             }
 
-            long target = Render.LastTimestampTicks + _targetRenderPeriodTicks;
+            long target = Render.LastTimestampTicks + renderPeriodTicks;
             RuntimeAsynchronousRenderWorkService? service = RuntimeAsynchronousRenderWorkService.Installed;
             if (service is null || !service.HasUnresolvedWork)
             {
@@ -976,7 +977,7 @@ namespace XREngine.Timers
                 timestampTicks - Render.LastTimestampTicks,
                 0L,
                 Stopwatch.Frequency);
-            return elapsedTicks > 0L && elapsedTicks >= _targetRenderPeriodTicks;
+            return elapsedTicks > 0L && elapsedTicks >= ResolveRenderPeriodTicks();
         }
 
         public bool DispatchRender()
@@ -991,7 +992,7 @@ namespace XREngine.Timers
             {
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - Render.LastTimestampTicks, 0L, Stopwatch.Frequency);
-                bool dispatch = elapsedTicks > 0L && elapsedTicks >= _targetRenderPeriodTicks;
+                bool dispatch = elapsedTicks > 0L && elapsedTicks >= ResolveRenderPeriodTicks();
                 if (dispatch)
                 {
                     bool modalResizeDispatch =
@@ -1010,7 +1011,9 @@ namespace XREngine.Timers
                     // The first collect release of this frame reads and clears this start.
                     Volatile.Write(ref _renderUntilCollectReleaseStartTicks, renderPhaseStartTicks);
                     DispatchRenderFrame(timestampTicks, elapsedTicks, processMainThreadTasks);
-                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderPhase(Stopwatch.GetTimestamp() - renderPhaseStartTicks);
+                    long renderPhaseTicks = Stopwatch.GetTimestamp() - renderPhaseStartTicks;
+                    Volatile.Write(ref _lastRenderPhaseTicks, renderPhaseTicks);
+                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderPhase(renderPhaseTicks);
                     deferredReason = XREngine.Rendering.EInteractiveResizeDispatchReason.None;
                     // Backend/window early-release hooks remain disabled for modal
                     // frames. Release this epoch only after every callback has finished
@@ -1197,6 +1200,41 @@ namespace XREngine.Timers
         }
 
         private long _targetRenderPeriodTicks;
+        private long _lastRenderPhaseTicks;
+        private float _maxRenderBusyFraction = 1.0f;
+
+        /// <summary>
+        /// Gets or sets the highest fraction of wall time that the render loop may spend in render dispatches.
+        /// 1 (the default) removes this limit.
+        /// </summary>
+        /// <remarks>
+        /// <para>A frame-rate limit does not limit the GPU load when one frame takes longer than the limit period:
+        /// the GPU then stays busy all the time. This limit waits after each render dispatch for
+        /// <c>renderTime * (1 / fraction - 1)</c>, so the GPU is idle for part of each period. The render dispatch time
+        /// includes the waits for the frame fences of the backend, so it follows the GPU time of a GPU-bound frame.</para>
+        /// <para>Values are clamped to the range 0.05 to 1. The wait is never longer than one second.</para>
+        /// </remarks>
+        public float MaxRenderBusyFraction
+        {
+            get => _maxRenderBusyFraction;
+            set => SetField(ref _maxRenderBusyFraction, float.IsFinite(value) ? Math.Clamp(value, 0.05f, 1.0f) : 1.0f);
+        }
+
+        /// <summary>
+        /// Returns the time between two render dispatch starts: the longer of the target render period and the period
+        /// that <see cref="MaxRenderBusyFraction"/> requires for the duration of the last render dispatch.
+        /// 0 means no limit.
+        /// </summary>
+        private long ResolveRenderPeriodTicks()
+        {
+            long periodTicks = _targetRenderPeriodTicks;
+            float busyFraction = _maxRenderBusyFraction;
+            if (busyFraction >= 1.0f)
+                return periodTicks;
+
+            long busyPeriodTicks = (long)(Volatile.Read(ref _lastRenderPhaseTicks) / (double)busyFraction);
+            return Math.Max(periodTicks, Math.Min(busyPeriodTicks, Stopwatch.Frequency));
+        }
         /// <summary>
         /// Gets or sets a float representing the target render frequency, in hertz.
         /// </summary>

@@ -287,17 +287,11 @@ public partial class XRMesh : XRAsset
     /// <summary>Whether named blendshapes have no deformation storage.</summary>
     internal bool HasNamedEmptyBlendshapes
         => HasBlendshapes &&
-            BlendshapeShaderVariant == BlendshapeShaderVariant.None &&
-            BlendshapeDeltaEncoding == BlendshapeDeltaEncoding.Float32 &&
+            !HasBlendshapeBasisCompressionPayload &&
             BlendshapeAffectedVertexCount == 0 &&
             BlendshapeSparseRecordCount == 0 &&
-            BlendshapeCounts is null &&
-            BlendshapeIndices is null &&
-            BlendshapeDeltas is null &&
-            BlendshapeSparseShapeRanges is null &&
             BlendshapeSparseRecords is null &&
-            BlendshapeQuantizedDeltas is null &&
-            BlendshapeQuantizationMetadata is null;
+            (BlendshapeIndices is null || BlendshapeIndices.ElementCount == 0);
 
     /// <summary>Whether named blendshapes require GPU deformation storage.</summary>
     internal bool HasBlendshapeDeformation => HasBlendshapes && !HasNamedEmptyBlendshapes;

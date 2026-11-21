@@ -32,6 +32,9 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
     protected override void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
     {
         base.DataPropertyChanged(sender, e);
+        if (e.PropertyName is not (nameof(XRTexture.SourceAsset) or nameof(XRTexture.Name) or nameof(XRTexture.SamplerName)))
+            InvalidateSamplingEquivalenceCache();
+
         switch (e.PropertyName)
         {
             case nameof(XRTexture2D.Mipmaps):
@@ -47,6 +50,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
 
     private void UpdateMipmaps()
     {
+        InvalidateSamplingEquivalenceCache();
         Mipmap2D[] sourceMipmaps = Data.Mipmaps.Where(static mip => mip is not null).ToArray();
 
         // If immutable storage was already allocated at different dimensions or with
@@ -153,6 +157,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         _allocatedWidth = 0;
         _allocatedHeight = 0;
         _allocatedInternalFormat = default;
+        InvalidateSamplingEquivalenceCache();
         AdvanceStorageGeneration();
         _sparseStorageAllocated = false;
         _sparseLogicalWidth = 0;
@@ -250,6 +255,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         _allocatedWidth = 0;
         _allocatedHeight = 0;
         _allocatedInternalFormat = default;
+        InvalidateSamplingEquivalenceCache();
         AdvanceStorageGeneration();
         _sparseStorageAllocated = false;
         _sparseLogicalWidth = 0;
@@ -280,6 +286,7 @@ public partial class GLTexture2D(OpenGLRenderer renderer, XRTexture2D data) : GL
         _allocatedWidth = 0;
         _allocatedHeight = 0;
         _allocatedInternalFormat = default;
+        InvalidateSamplingEquivalenceCache();
         AdvanceStorageGeneration();
         _sparseStorageAllocated = false;
         _sparseLogicalWidth = 0;

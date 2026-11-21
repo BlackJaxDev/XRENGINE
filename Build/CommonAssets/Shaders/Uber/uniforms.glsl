@@ -185,9 +185,9 @@ uniform sampler2D _MainColorAdjustTexture;
 uniform vec4 _MainColorAdjustTexture_ST;
 uniform vec2 _MainColorAdjustTexturePan;
 uniform int _MainColorAdjustTextureUV;
-//@property(name="_Saturation", display="Saturation", mode=static, range=[0,2])
+//@property(name="_Saturation", display="Saturation", mode=static, range=[-1,10])
 uniform float _Saturation;
-//@property(name="_MainBrightness", display="Brightness", mode=static, range=[0,4])
+//@property(name="_MainBrightness", display="Brightness", mode=static, range=[-1,2])
 uniform float _MainBrightness;
 uniform float _MainHueShiftToggle;
 //@property(name="_MainHueShift", display="Hue Shift", mode=static, range=[-180,180])

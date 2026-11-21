@@ -122,7 +122,7 @@ namespace XREngine.Rendering.Commands
 
             if (mesh.HasSkinning)
                 flags |= GPUIndirectRenderFlags.Skinned;
-            if (mesh.HasBlendshapes)
+            if (mesh.HasBlendshapeDeformation)
                 flags |= GPUIndirectRenderFlags.BlendShapes;
             if (snapshot.Instances > 1u)
                 flags |= GPUIndirectRenderFlags.Instanced;

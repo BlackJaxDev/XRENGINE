@@ -571,6 +571,13 @@ namespace XREngine
                 return false;
             }
 
+            // A Unity scene imports as a prefab of one root object when the options name that object.
+            if (string.Equals(normalizedExtension, "unity", StringComparison.OrdinalIgnoreCase) &&
+                suppliedImportOptions is XREngine.Rendering.Models.ModelImportOptions { SourceSceneRootName.Length: > 0 })
+            {
+                assetType = typeof(XRPrefabSource);
+            }
+
             string generatedAssetPath;
             if (!string.IsNullOrWhiteSpace(generatedAssetPathOverride))
             {

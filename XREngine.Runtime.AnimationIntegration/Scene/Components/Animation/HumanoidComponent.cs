@@ -28,7 +28,7 @@ namespace XREngine.Components.Animation
         private readonly Dictionary<EHumanoidValue, float> _muscleValues = [];
         private readonly Dictionary<EHumanoidValue, float> _rawHumanoidValues = [];
         private readonly object _muscleValuesLock = new();
-        private const int MuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
+        internal const int MuscleValueCount = (int)EHumanoidValue.RightHandThumb3Stretched + 1;
         private readonly float[] _muscleValueSnapshot = new float[MuscleValueCount];
         private readonly float[] _projectionMuscleValueSnapshot = new float[MuscleValueCount];
         private readonly float[] _canonicalProjectionMuscleValueSnapshot = new float[MuscleValueCount];
@@ -328,6 +328,17 @@ namespace XREngine.Components.Animation
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+
+            // A prefab instance in a saved world creates its child nodes from the prefab asset after its own components
+            // deserialize, so the post-deserialize pass can find no bones for the persisted bone paths. The children
+            // exist when the component activates, so bind the persisted definition again when the hips are unbound.
+            if (HasPersistedAvatarDefinition()
+                && Hips.Node is null
+                && !SceneNode.IsTransformNull
+                && SceneNode.Transform.Children.Count > 0)
+            {
+                ReinitializeSceneNodeBindings();
+            }
 
             // Apply muscle-driven pose after animation evaluation.
             RegisterTick(ETickGroup.Normal, ETickOrder.Scene, TickMusclePose);
@@ -2130,10 +2141,50 @@ namespace XREngine.Components.Animation
         {
             base.AddedToSceneNode(sceneNode);
 
-            if (ShouldDeferSceneNodeInitialization())
+            // Cooked and YAML deserializers attach components to a SceneNode before they
+            // populate its child transforms. Defer initialization until the post-deserialize
+            // pass so a persisted avatar definition does not validate against an empty tree.
+            if (ShouldDeferSceneNodeInitialization()
+                || XRBase.ArePropertyNotificationsSuppressed
+                || sceneNode.IsTransformNull
+                || (HasPersistedAvatarDefinition() && sceneNode.Transform.Children.Count == 0))
+            {
                 return;
+            }
 
             InitializeSceneNodeBindings();
+        }
+
+        /// <summary>
+        /// Rebuilds the subtree world and bind matrices and rebinds persisted semantic bones
+        /// after a cooked or YAML hierarchy finishes deserializing its child transforms.
+        /// </summary>
+        protected override void OwningSceneNodePostDeserialize()
+        {
+            base.OwningSceneNodePostDeserialize();
+
+            if (SceneNode.IsDestroyed || SceneNode.IsTransformNull)
+                return;
+
+            SceneNode.Transform
+                .RecalculateMatrixHierarchy(
+                    forceWorldRecalc: true,
+                    setRenderMatrixNow: true,
+                    childRecalcType: ELoopType.Sequential)
+                .GetAwaiter()
+                .GetResult();
+            SaveSubtreeBindStateRecursive(SceneNode);
+            ReinitializeSceneNodeBindings();
+        }
+
+        private static void SaveSubtreeBindStateRecursive(SceneNode node)
+        {
+            node.Transform.SaveBindState();
+            foreach (TransformBase child in node.Transform.Children)
+            {
+                if (child.SceneNode is SceneNode childNode)
+                    SaveSubtreeBindStateRecursive(childNode);
+            }
         }
 
         public HumanoidComponent() 
@@ -2506,7 +2557,17 @@ namespace XREngine.Components.Animation
             node.Transform.ResetPose();
         }
 
-        private void ClearRuntimeMuscleState()
+        /// <summary>Writes a raw value and its converted value that an earlier read gave.</summary>
+        internal void RestoreRuntimeMuscleValue(EHumanoidValue value, float raw, float converted)
+        {
+            lock (_muscleValuesLock)
+            {
+                _rawHumanoidValues[value] = raw;
+                _muscleValues[value] = converted;
+            }
+        }
+
+        internal void ClearRuntimeMuscleState()
         {
             lock (_muscleValuesLock)
             {

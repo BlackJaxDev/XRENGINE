@@ -39,7 +39,12 @@ public static partial class SerializedMaterialImporter
         SetInt(material, "_SourceCubeMap", IsCubemapEnabled(document) ? 1 : 0);
 
         BindExactSurfaceParameters(material, document);
-        BindSourceCubemapMask(material, document, resolver);
+        bool cubemapKept = BindOptionalSourceFeature(
+            "cubemap",
+            () => BindSourceCubemapMask(material, document, resolver),
+            () => SetInt(material, "_SourceCubeMap", 0),
+            warnings,
+            diagnostics);
         BindSourceToonGlitter(material, document, resolver, sourceVersion, diagnostics);
         BindSourceToonFlipbook(material, document);
         BindSourceToonDissolve(material, document, diagnostics);
@@ -47,14 +52,27 @@ public static partial class SerializedMaterialImporter
         BindCompositeSurfaceParameters(material, document, resolver, sourceVersion);
         BindSourceAnisotropy(material, document, resolver, warnings);
         BindSourceRimParameters(material, document, diagnostics, warnings);
-        BindSourceRim2Parameters(material, document, resolver);
-        BindSourceStylizedSpecular(material, document, resolver, warnings);
+        BindOptionalSourceFeature(
+            "second rim light",
+            () => BindSourceRim2Parameters(material, document, resolver),
+            null,
+            warnings,
+            diagnostics);
+        BindOptionalSourceFeature(
+            "stylized specular",
+            () => BindSourceStylizedSpecular(material, document, resolver, warnings),
+            // The source draws no other specular lobe when stylized specular is on, so the
+            // generic evaluator must not add its own highlight in place of the dropped one.
+            () => SetFloat(material, "_SpecularStrength", 0.0f),
+            warnings,
+            diagnostics);
         BindSourceLightingParameters(material, document, diagnostics, warnings);
         BindSourceClearCoatParameters(material, document, diagnostics, warnings);
         BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings, sourceVersion);
         BindSourceToonNormalMetadata(material, document);
         BindSourceMultilayerTextures(material, document, resolver, diagnostics, warnings);
-        BindSurfaceCubemap(material, document, resolver, diagnostics, warnings);
+        if (cubemapKept)
+            BindSurfaceCubemap(material, document, resolver, diagnostics, warnings);
         WarnForDeferredSurfaceAdapters(document, warnings);
     }
 
@@ -449,7 +467,10 @@ public static partial class SerializedMaterialImporter
                     GetFloat(document, "_Matcap2Normal", 1.0f) != 1.0f))
                     throw new SourceVisualImportException($"A source matcap custom normal is not supported on '{document.Name}'.");
                 int globalMask = GetInt(document, $"{matcapPrefix}MaskGlobalMask");
-                int globalBlend = GetInt(document, $"{matcapPrefix}MaskGlobalMaskBlendType", 2);
+                int globalBlend = ResolveSourceMaskBlend(
+                    resolver.Resolve(document.Shader.Guid),
+                    $"{matcapPrefix}MaskGlobalMaskBlendType",
+                    GetInt(document, $"{matcapPrefix}MaskGlobalMaskBlendType", 2));
                 bool hasGlobalMaskTexture = false;
                 if (globalMask is >= 1 and <= 16)
                 {

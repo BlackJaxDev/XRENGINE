@@ -105,6 +105,8 @@ uniform vec4 _SourceStylizedSpecularLayers;
 uniform vec4 _SourceStylizedSpecularMask;
 uniform vec4 _SourceStylizedSpecularOcclusion;
 uniform vec4 _SourceStylizedSpecularTint;
+//@property(name="_StylizedSpecularBlend", display="Stylized Specular Blend", mode=static, enum="0:Replace|1:Add|2:Screen|3:Multiply")
+uniform int _StylizedSpecularBlend;
 uniform vec4 _SourceHighColorTex_ST;
 uniform vec4 _SourceHighColorMask_ST;
 //@property(name="_SourceHighColorTex", display="Source High Color", slot=texture)
@@ -559,6 +561,14 @@ uniform vec2 _DecalScale1;
 uniform vec2 _DecalScale2;
 //@property(name="_DecalScale3", display="Decal 3 Scale", mode=animated, default="vec2(1.0)")
 uniform vec2 _DecalScale3;
+//@property(name="_DecalSideOffset", display="Decal 0 Side Offset", mode=animated, default="vec4(0.0)")
+uniform vec4 _DecalSideOffset;
+//@property(name="_DecalSideOffset1", display="Decal 1 Side Offset", mode=animated, default="vec4(0.0)")
+uniform vec4 _DecalSideOffset1;
+//@property(name="_DecalSideOffset2", display="Decal 2 Side Offset", mode=animated, default="vec4(0.0)")
+uniform vec4 _DecalSideOffset2;
+//@property(name="_DecalSideOffset3", display="Decal 3 Side Offset", mode=animated, default="vec4(0.0)")
+uniform vec4 _DecalSideOffset3;
 //@property(name="_DecalTexturePan", display="Decal 0 Pan", mode=animated, default="vec2(0.0)")
 uniform vec2 _DecalTexturePan;
 //@property(name="_DecalTexturePan1", display="Decal 1 Pan", mode=animated, default="vec2(0.0)")

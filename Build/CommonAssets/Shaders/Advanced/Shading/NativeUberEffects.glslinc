@@ -135,6 +135,7 @@ void XR_UBER_ApplyDecalSlot(
     vec4 color,
     vec2 position,
     vec2 scale,
+    vec4 sideOffset,
     vec2 pan,
     float angle,
     float angleSpeed,
@@ -162,6 +163,11 @@ void XR_UBER_ApplyDecalSlot(
         dx.x = -dx.x;
         dy.x = -dy.x;
     }
+    // A side offset moves each edge of the decal rectangle: x and y move the left and right
+    // edges, z and w move the bottom and top edges. It shifts the center and changes the span.
+    vec4 sideAdjust = vec4(-sideOffset.x, sideOffset.y, -sideOffset.z, sideOffset.w);
+    position += 0.5 * vec2(sideAdjust.x + sideAdjust.y, sideAdjust.z + sideAdjust.w);
+    scale += vec2(sideAdjust.y - sideAdjust.x, sideAdjust.w - sideAdjust.z);
     uv += pan * coordinates.time;
     vec2 divisor = max(abs(scale), vec2(1.0e-6));
     uv = (uv - position) / divisor + vec2(0.5);
@@ -251,28 +257,32 @@ void XR_UBER_ApplyDecals(
 
     XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture),
         UBER_V(_DecalColor), UBER_V(_DecalPosition).xy,
-        UBER_V(_DecalScale).xy, UBER_V(_DecalTexturePan).xy,
+        UBER_V(_DecalScale).xy, UBER_V(_DecalSideOffset),
+        UBER_V(_DecalTexturePan).xy,
         UBER_F(_DecalRotation), UBER_F(_DecalRotationSpeed),
         UBER_I(_DecalUvMode0), 0, UBER_V(_DecalSlotModifiers0),
         UBER_V(_DecalSlotFx0), UBER_V(_DecalBlendParams0),
         UBER_V(_SourceDecalAlphaParams0), baseColor, emission);
     XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture1),
         UBER_V(_DecalColor1), UBER_V(_DecalPosition1).xy,
-        UBER_V(_DecalScale1).xy, UBER_V(_DecalTexturePan1).xy,
+        UBER_V(_DecalScale1).xy, UBER_V(_DecalSideOffset1),
+        UBER_V(_DecalTexturePan1).xy,
         UBER_F(_DecalRotation1), UBER_F(_DecalRotationSpeed1),
         UBER_I(_DecalUvMode1), 1, UBER_V(_DecalSlotModifiers1),
         UBER_V(_DecalSlotFx1), UBER_V(_DecalBlendParams1),
         UBER_V(_SourceDecalAlphaParams1), baseColor, emission);
     XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture2),
         UBER_V(_DecalColor2), UBER_V(_DecalPosition2).xy,
-        UBER_V(_DecalScale2).xy, UBER_V(_DecalTexturePan2).xy,
+        UBER_V(_DecalScale2).xy, UBER_V(_DecalSideOffset2),
+        UBER_V(_DecalTexturePan2).xy,
         UBER_F(_DecalRotation2), UBER_F(_DecalRotationSpeed2),
         UBER_I(_DecalUvMode2), 2, UBER_V(_DecalSlotModifiers2),
         UBER_V(_DecalSlotFx2), UBER_V(_DecalBlendParams2),
         UBER_V(_SourceDecalAlphaParams2), baseColor, emission);
     XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture3),
         UBER_V(_DecalColor3), UBER_V(_DecalPosition3).xy,
-        UBER_V(_DecalScale3).xy, UBER_V(_DecalTexturePan3).xy,
+        UBER_V(_DecalScale3).xy, UBER_V(_DecalSideOffset3),
+        UBER_V(_DecalTexturePan3).xy,
         UBER_F(_DecalRotation3), UBER_F(_DecalRotationSpeed3),
         UBER_I(_DecalUvMode3), 3, UBER_V(_DecalSlotModifiers3),
         UBER_V(_DecalSlotFx3), UBER_V(_DecalBlendParams3),

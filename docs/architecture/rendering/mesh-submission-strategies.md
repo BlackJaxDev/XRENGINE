@@ -379,6 +379,98 @@ renderer does not.
 
 Broad model and prefab binary-cache hydration is open work.
 
+## Mesh LOD Residency Contract
+
+A cooked sub-mesh keeps its lowest LOD inline. Its other LODs can load later
+through the mesh residency backend (see the cooked asset documentation for the
+payload split). The GPU routes follow these rules:
+
+- `RenderableMesh.CollectLodMeshes` gives the registration levels in LOD table
+  order. A LOD whose CPU mesh is not resident gives a null level. The GPU scene
+  registers a null level with mesh ID 0, so `GPURenderLODSelect.comp` clamps to
+  the nearest resident level. The shader needs no change. When the table has
+  more LODs than `GPUScene.MaxLogicalMeshLodCount`, the last level is the last
+  LOD of the table, so the lowest LOD is always a level.
+  `CollectLodRenderers` gives the renderers at the same levels. Its authored
+  LOD count is the table position of the last resident level plus one (or the
+  table length when the table is longer than the capacity). It is not the count
+  of resident LODs, so a WebGPU authored submission of a multi-LOD model that
+  registers one level gives `LodPublicationChanged` from its first frame.
+- The mandatory resident level is the lowest non-null level, not LOD0. With
+  `StreamMeshLodsOnDemand`, the lowest LOD and the command's own mesh always
+  stay in the atlas. `ReleaseLOD` refuses the lowest resident level.
+- A publication of a LOD advances `RenderableMesh.LodRegistrationVersion`. The
+  next registration misses the retained state and uploads the new level from CPU
+  memory. The render side does no disk IO and no hash work, and a payload is
+  complete before the backend publishes it. The mesh residency backend limits
+  publications per frame (`MeshResidencyBackend.MaxPublicationsPerFrame`,
+  default 2). The atlas has no separate per-frame byte budget.
+- The registration runs on the collect swap (`RenderCommandMesh3D.SwapBuffers`
+  -> `GPUScene.TryUpdateMeshCommand`), and the render thread waits for that swap.
+  Each registration that appends a level rebuilds the dirty atlas tier, and the
+  rebuild copies the whole face list of the tier. The cost of one publication
+  therefore grows with the atlas size, not with the LOD size. This is why the
+  limit counts publications and not bytes.
+- An eviction sets the source mesh of the LOD to null. The next registration
+  writes mesh ID 0 for that level at once. The atlas reference of the old level
+  goes to a pending list. At the next frame boundary (`SwapCommandBuffers`), the
+  scene inserts a GPU fence. The atlas range is released at a later boundary,
+  after that fence signals. Without a renderer fence, the release is at the
+  second boundary. A level that another mesh replaces keeps the immediate
+  release.
+- `ServiceLodStreamingRequests` maps the request buffer, so it is a CPU
+  readback. It runs only with `StreamMeshLodsOnDemand`. It uploads only levels
+  whose CPU mesh is resident. It never loads a LOD payload, and it spends no
+  load budget on a level with no CPU mesh. A cutscene does not depend on it: the
+  cutscene manifest gives the mesh residency backend its targets. The drain is
+  not stopped while a cutscene is open, so with `StreamMeshLodsOnDemand` on, a
+  zero-readback route still reads back the request buffer. The setting is off
+  by default.
+- A late LOD gets a new renderer. Deferred publication creates no backend
+  wrappers, so the first use of the new level must resolve cold wrappers through
+  the renderer facade (see the default render pipeline notes).
+- A late LOD is not selectable, and its GPU registration level stays null,
+  until its renderer is ready on the active backend. A render-thread coroutine
+  calls `XRMeshRenderer.TryPrewarmForLodSelection` (the backend
+  `IRenderPreparationState.TryPrewarmForSelection`, by default the program and
+  buffer preparation) once per frame. When it succeeds, the LOD becomes
+  selectable and the registration version advances. Until then the lower
+  resident LOD draws. With no active backend, the check runs at once.
+  On Vulkan, the first draw of the new renderer is still a cold mesh admission
+  in the frame loop, so PresentNow can still reject frames for it.
+- `XRMeshRenderer.QueryDrawReadiness(material, renderOptionsOverride, view)`
+  (the backend `IRenderPreparationState.QueryDrawReadiness` with a
+  `RenderDrawReadinessQuery`) gives `ERenderDrawReadiness` for one renderer and
+  material in the passes of one view: `NotStarted`, `Compiling`, `Ready`,
+  `Failed`, or `NotSupported`, the default for a backend that does not
+  implement it. It runs on the render thread and never waits for a link or a
+  compile. With a headset or emulated VR output it also checks the stereo
+  version. OpenGL reports the non-blocking program preparation (also for a
+  material override) and treats a temporary fallback program as compiling.
+  Vulkan reports the program and buffers, and then the last frame result of
+  `VulkanDrawReadinessRegistry`: while a query is active, the pre-recording
+  pipeline admission prewarms the pipelines of the renderer and material for
+  each non-shadow pass context of the view that draws the pass of the material
+  (a CPU mesh draw of that pass is the template; the draw state is the T0
+  render options, or the render options override, over the pass state of the
+  pass context of the template, which the draw enqueue stores one time for each
+  pipeline instance, pass, and target while a request is active, with the rules
+  of `VulkanMeshDrawFixedState`; nothing comes from the template material),
+  checks the indirect batch of the material on GPU-driven routes, and checks
+  the mesh-task requirement on meshlet routes. The pre-recording admission and
+  the PresentNow readiness gate both run it. It is ready only when every
+  required context is ready, and only for the program, link generation, shared
+  pipeline retirement generation, and target signature that it measured. A
+  request ends at the end of the open (`EndDrawReadinessQueries`),
+  when its wrapper is deleted or unlinked, or 2 s after the last query. A frame
+  admission and each draw enqueue with no active query pay one volatile read. The cutscene
+  open uses it for `ReadyForInstantSeek`.
+
+The render-command path takes the LOD levels from the render info owner. A model
+component owns the render info of its renderable meshes, so those commands
+register the command mesh as one level. The CPU LOD selection, which clamps to
+resident LODs, then chooses that mesh.
+
 ### Cluster hierarchy payloads
 
 `MeshletGenerationSettings.BuildClusterHierarchy` (off by default; the

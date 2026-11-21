@@ -1,5 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <Import Project="..\Build\Shared\LocalAgentBroker.props" />
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows7.0</TargetFramework>
@@ -82,8 +84,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
-    <ProjectReference Include="..\XREngine.AgentRuntimes\XREngine.AgentRuntimes.csproj" />
     <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.Audio.SteamAudio\XREngine.Audio.SteamAudio.csproj" />
@@ -101,6 +101,7 @@
     <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.CutsceneIntegration\XREngine.Runtime.CutsceneIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Physics.Authoring\XREngine.Runtime.Physics.Authoring.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />

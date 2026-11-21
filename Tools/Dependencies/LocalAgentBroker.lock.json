@@ -1,0 +1,9 @@
+{
+  "version": "0.2.0",
+  "repository": "https://github.com/BlackJaxDev/local-agent-broker",
+  "package": "LocalAgentBroker.Orchestration.0.2.0.nupkg",
+  "packageSha256": "362dec1f80d339665118e309930777b0ee684501126aeb9bb432fbf231dacd93",
+  "librarySha256": "e41e2cdaca737d604c0d1bdb3110adc6e878374d04c5bc651dd30087308985f9",
+  "archive": "local-agent-broker-0.2.0-win-x64.zip",
+  "archiveSha256": "22ff356d01064007929e4bd44fd5d5d29342de0ef7c554f355ea5708594c13f4"
+}

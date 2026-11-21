@@ -185,8 +185,16 @@ public sealed class TransformYamlTypeInspector(ITypeInspector inner, bool applyR
             }
 
             IObjectDescriptor descriptor = _inner.Read(target);
-            if (!_applyReferenceOnRead && _referenceAttribute is not null && descriptor.Value is not null)
-                YamlTransformReferenceContext.EnqueueWrite();
+            if (!_applyReferenceOnRead
+                && _referenceAttribute is not null
+                && descriptor.Value is XREngine.Scene.Transforms.TransformBase referencedTransform)
+            {
+                return new ObjectDescriptor(
+                    new YamlTransformReferenceValue(referencedTransform.EffectiveSerializedReferenceId),
+                    typeof(YamlTransformReferenceValue),
+                    typeof(YamlTransformReferenceValue),
+                    ScalarStyle.Any);
+            }
 
             return descriptor;
         }

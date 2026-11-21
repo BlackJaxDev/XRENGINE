@@ -23,6 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// how many instances to draw.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.GpuBvhDebug })]
 public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
 {
     /// <summary>
@@ -162,14 +163,11 @@ public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
 
     private int ResolveRenderGraphPassIndex()
     {
-        if (!string.IsNullOrWhiteSpace(RenderGraphPassName) &&
-            ParentPipeline?.PassMetadata is { } metadata)
+        if (!string.IsNullOrWhiteSpace(RenderGraphPassName))
         {
-            foreach (RenderPassMetadata pass in metadata)
-            {
-                if (string.Equals(pass.Name, RenderGraphPassName, StringComparison.OrdinalIgnoreCase))
-                    return pass.PassIndex;
-            }
+            int passIndex = ResolveActiveRenderGraphPassIndex(RenderGraphPassName!);
+            if (passIndex != int.MinValue)
+                return passIndex;
         }
 
         return (int)EDefaultRenderPass.OnTopForward;

@@ -541,6 +541,7 @@ namespace XREngine.Rendering.UI
             {
                 case nameof(Translation):
                 case nameof(DepthTranslation):
+                case nameof(RotationRadians):
                 case nameof(Scale):
                     InvalidateLayout();
                     // These properties directly affect CreateLocalMatrix,

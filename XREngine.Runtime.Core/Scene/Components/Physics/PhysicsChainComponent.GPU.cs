@@ -107,7 +107,12 @@ public partial class PhysicsChainComponent
 
     private void MarkGpuBuffersDirty() { }
 
-    private void ExecuteGpuLateUpdate()
+    /// <summary>Prepares and dispatches the GPU simulation of this frame.</summary>
+    /// <param name="resetFrame">
+    /// True for the frame of a pose reset. The dispatch then runs one step with a zero time scale, so the GPU state and the
+    /// bone palette take the reset pose with no motion.
+    /// </param>
+    private void ExecuteGpuLateUpdate(bool resetFrame = false)
     {
         bool observe = RuntimeWorldTickTelemetry.Enabled;
         long prepareStart = observe ? Stopwatch.GetTimestamp() : 0L;
@@ -129,7 +134,15 @@ public partial class PhysicsChainComponent
             return;
         }
 
-        ResolveSimulationLoopAndTimeScale(_deltaTime, out int loopCount, out float timeVar);
+        int loopCount;
+        float timeVar;
+        if (resetFrame)
+        {
+            loopCount = 1;
+            timeVar = 0.0f;
+        }
+        else
+            ResolveSimulationLoopAndTimeScale(_deltaTime, out loopCount, out timeVar);
         _lastSimulationProducedResults = loopCount > 0;
         if (observe)
             PhysicsChainWorld.RecordGpuComponentPreparation(Stopwatch.GetTimestamp() - prepareStart);

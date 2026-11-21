@@ -221,6 +221,38 @@ public partial class XRMaterial
             runtimePropertyNames);
     }
 
+    /// <summary>
+    /// Sets authorable non-sampler Uber properties to static mode so offline capture compiles
+    /// constant-folded material variants from the current parameter values.
+    /// </summary>
+    public bool FreezeUberPropertiesForStaticCapture()
+    {
+        if (!TryGetUberMaterialState(out XRShader? fragmentShader, out ShaderUiManifest manifest) || fragmentShader is null)
+            return false;
+
+        EnsureUberStateInitialized(fragmentShader, manifest);
+
+        List<string> staticPropertyNames = [];
+        foreach (ShaderUiProperty property in manifest.Properties)
+        {
+            if (property.IsSampler ||
+                !IsAuthorableUberProperty(property) ||
+                property.HasExplicitMutability &&
+                property.Mutability == EShaderUiPropertyMutability.Runtime)
+            {
+                continue;
+            }
+
+            staticPropertyNames.Add(property.Name);
+        }
+
+        return UpdateUberAuthoredState(
+            static (state, propertyNames) => state.SetPropertyModes(
+                propertyNames,
+                EShaderUiPropertyMode.Static),
+            staticPropertyNames);
+    }
+
     internal void EnsureUberStateInitialized(XRShader fragmentShader, ShaderUiManifest manifest)
     {
         UberMaterialAuthoredState current = UberAuthoredState ?? UberMaterialAuthoredState.Empty;

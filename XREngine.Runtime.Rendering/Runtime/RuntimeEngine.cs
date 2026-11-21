@@ -508,7 +508,8 @@ public static partial class RuntimeEngine
                         OpenXrEyeRenderPipelineFactory.Create(
                             request.Stereo,
                             Settings.VrRenderPipeline,
-                            Settings.RvcPipelineMode),
+                            Settings.RvcPipelineMode,
+                            Settings.VrRenderPipelineScript),
                     ERenderPipelinePurpose.DesktopScene =>
                         new AdvancedRenderPipeline(request.Stereo),
                     ERenderPipelinePurpose.OffscreenCapture =>

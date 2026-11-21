@@ -39,10 +39,11 @@ namespace XREngine
 
         private static bool TryLoadPublishedAssetFromArchive<T>(
             string filePath,
-            [NotNullWhen(true)] out T? asset) where T : XRAsset, new()
+            [NotNullWhen(true)] out T? asset,
+            out bool searchedWithoutEntry) where T : XRAsset, new()
         {
             asset = default;
-            if (TryLoadPublishedAssetFromArchive(filePath, typeof(T), out XRAsset? loaded) && loaded is T typed)
+            if (TryLoadPublishedAssetFromArchive(filePath, typeof(T), out XRAsset? loaded, out searchedWithoutEntry) && loaded is T typed)
             {
                 asset = typed;
                 return true;
@@ -53,17 +54,36 @@ namespace XREngine
 
         /// <summary>
         /// Loads a cooked asset from the published archives through the long-lived archive handles.
-        /// The payload is leased, never copied into a transient array, and deserialized through the
-        /// published reader, which performs no reflection.
+        /// The payload is leased, never copied into a transient array. A published build deserializes it through the
+        /// published reader, which performs no reflection. A development build that reads the archives uses the
+        /// authoring reader, which also reads the reflective formats of a non-AOT cook.
         /// </summary>
-        private static bool TryLoadPublishedAssetFromArchive(
+        /// <remarks>
+        /// A published build logs a failed read as a warning and returns false. A development build that reads the archives
+        /// must not use a loose file in place of an archive entry, because that hides cooked content that does not load. So
+        /// when at least one archive root is configured for the request, an entry that exists but does not read, has a stale
+        /// contract, or deserializes to null throws an error that names the asset and the archive. A missing entry is not an
+        /// error of the entry: the method records one missing-asset diagnostic, sets <paramref name="searchedWithoutEntry"/>,
+        /// and returns false. The caller then returns null and does not read the loose file.
+        /// </remarks>
+        /// <param name="filePath">The requested asset path.</param>
+        /// <param name="expectedType">The type that the caller expects.</param>
+        /// <param name="asset">Receives the loaded asset.</param>
+        /// <param name="searchedWithoutEntry">
+        /// True when a development archive build searched at least one configured archive and found no entry. The caller
+        /// must not use the loose file.
+        /// </param>
+        /// <exception cref="InvalidDataException">A development archive build cannot read an existing archive entry.</exception>
+        internal static bool TryLoadPublishedAssetFromArchive(
             string filePath,
             Type expectedType,
-            [NotNullWhen(true)] out XRAsset? asset)
+            [NotNullWhen(true)] out XRAsset? asset,
+            out bool searchedWithoutEntry)
         {
             asset = null;
+            searchedWithoutEntry = false;
 
-            if (!XRRuntimeEnvironment.IsPublishedBuild)
+            if (!XRRuntimeEnvironment.ReadsPublishedArchives)
                 return false;
 
             if (!string.Equals(Path.GetExtension(filePath), $".{AssetExtension}", StringComparison.OrdinalIgnoreCase))
@@ -76,11 +96,16 @@ namespace XREngine
 
             using AotParityPlayerPathScope parityScope = AotParityDiagnostics.EnterPlayerPath(EAotParityPlayerPathKind.PublishedContentLoad);
 
+            bool failLoudly = !XRRuntimeEnvironment.IsPublishedBuild;
+            List<string>? searchedArchives = null;
             List<string> assetPathCandidates = CollectArchiveAssetPathCandidates(filePath);
             for (int rootIndex = 0; rootIndex < rootCount; rootIndex++)
             {
                 if (!PublishedArchiveRegistry.TryGetRoot(rootOrder[rootIndex], out PublishedArchiveHandle handle))
                     continue;
+
+                if (failLoudly)
+                    (searchedArchives ??= new List<string>(rootCount)).Add(handle.FilePath);
 
                 for (int candidateIndex = 0; candidateIndex < assetPathCandidates.Count; candidateIndex++)
                 {
@@ -93,7 +118,7 @@ namespace XREngine
                         CookedPayloadLease lease = handle.ReadEntry(entryIndex);
                         try
                         {
-                            asset = PublishedCookedAssetReader.LoadAsset(lease.Span, expectedType) as XRAsset;
+                            asset = ReadArchiveAsset(lease.Span, expectedType);
                         }
                         finally
                         {
@@ -103,15 +128,56 @@ namespace XREngine
                         if (asset is not null)
                             return true;
                     }
+                    catch (Exception ex) when (failLoudly)
+                    {
+                        throw new InvalidDataException(
+                            $"Development archive build: asset '{candidateAssetPath}' in archive '{handle.FilePath}' did not load: {ex.Message} The loose file is not used in place of the archive entry. Re-cook the content.",
+                            ex);
+                    }
                     catch (Exception ex)
                     {
                         Debug.LogWarning($"Failed to load published asset '{candidateAssetPath}' from '{handle.FilePath}': {ex.Message}");
                     }
+
+                    if (failLoudly)
+                    {
+                        throw new InvalidDataException(
+                            $"Development archive build: asset '{candidateAssetPath}' in archive '{handle.FilePath}' did not deserialize as '{expectedType}'. The loose file is not used in place of the archive entry.");
+                    }
                 }
+            }
+
+            if (failLoudly && searchedArchives is not null)
+            {
+                AssetDiagnostics.RecordMissingAsset(
+                    filePath,
+                    expectedType.Name,
+                    $"Development archive build: no entry in the configured archives ({string.Join(", ", searchedArchives)}). The loose file is not used in place of the archive entry.");
+                searchedWithoutEntry = true;
             }
 
             return false;
         }
+
+        /// <summary>
+        /// Deserializes one archive payload. A published build always uses the published reader. A development build
+        /// that reads the archives uses the authoring reader. A published engine build compiles that branch out.
+        /// </summary>
+        private static XRAsset? ReadArchiveAsset(ReadOnlySpan<byte> payload, Type expectedType)
+        {
+#if !XRE_PUBLISHED
+            if (!XRRuntimeEnvironment.IsPublishedBuild)
+                return ReadDevelopmentArchiveAsset(payload, expectedType);
+#endif
+            return PublishedCookedAssetReader.LoadAsset(payload, expectedType) as XRAsset;
+        }
+
+#if !XRE_PUBLISHED
+        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Only a non-AOT development build that reads the archives runs this reader. A published engine build compiles it out.")]
+        [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Only a non-AOT development build that reads the archives runs this reader. A published engine build compiles it out.")]
+        private static XRAsset? ReadDevelopmentArchiveAsset(ReadOnlySpan<byte> payload, Type expectedType)
+            => CookedAssetReader.LoadAsset(payload, expectedType) as XRAsset;
+#endif
 
         /// <summary>Orders the three roots by how the request path classifies, writing into <paramref name="order"/>.</summary>
         private static int ResolvePublishedRootOrder(string filePath, Span<EPublishedContentRoot> order)

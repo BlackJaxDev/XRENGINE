@@ -91,6 +91,12 @@ namespace XREngine.Data
             set => SetField(ref _channelCount, value);
         }
 
+        /// <summary>
+        /// Decodes a WAV, Ogg Vorbis, or MP3 file into this asset.
+        /// FLAC has no decoder, so a FLAC file returns false, as does any other extension.
+        /// </summary>
+        /// <param name="filePath">The path of the file to decode.</param>
+        /// <returns>True if the file was decoded.</returns>
         public override bool Load3rdParty(string filePath)
         {
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
@@ -100,18 +106,16 @@ namespace XREngine.Data
             {
                 case "wav":
                     LoadWav(filePath);
-                    break;
+                    return true;
                 case "ogg":
                     LoadOgg(filePath);
-                    break;
+                    return true;
                 case "mp3":
                     LoadMp3(filePath);
-                    break;
-                case "flac":
-                    LoadFlac(filePath);
-                    break;
+                    return true;
+                default:
+                    return false;
             }
-            return true;
         }
 
         private void LoadOgg(string filePath)
@@ -123,15 +127,6 @@ namespace XREngine.Data
             _type = EPCMType.Float;
             _frequency = reader.SampleRate;
             _channelCount = reader.Channels;
-        }
-
-        public void LoadFlac(string filePath)
-        {
-            //using FlacReader reader = new(filePath);
-            //_data = new byte[reader.Length];
-            //reader.Read(_data, 0, _data.Length);
-            //_frequency = reader.WaveFormat.SampleRate;
-            //_channelCount = reader.WaveFormat.Channels;
         }
 
         public unsafe void LoadMp3(string filePath)

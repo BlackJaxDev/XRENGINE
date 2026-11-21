@@ -707,10 +707,13 @@ namespace XREngine.Rendering
                 try
                 {
                     string? sourcePath = !string.IsNullOrWhiteSpace(OriginalPath) ? OriginalPath : FilePath;
-                    if (!string.IsNullOrWhiteSpace(sourcePath) && File.Exists(sourcePath))
+                    // A cook can write OriginalPath as a portable reference. Resolve it before any file system call.
+                    if (!string.IsNullOrWhiteSpace(sourcePath)
+                        && AssetReferencePath.TryResolveFileSystemPath(sourcePath, out string? resolvedSourcePath)
+                        && File.Exists(resolvedSourcePath))
                     {
-                        XRFontImportOptions options = ResolveImportOptions(sourcePath);
-                        ImportFont(sourcePath, options, auxiliaryFileName => ResolveFallbackAuxiliaryPath(sourcePath, auxiliaryFileName));
+                        XRFontImportOptions options = ResolveImportOptions(resolvedSourcePath);
+                        ImportFont(resolvedSourcePath, options, auxiliaryFileName => ResolveFallbackAuxiliaryPath(resolvedSourcePath, auxiliaryFileName));
                     }
                 }
                 catch (Exception ex)

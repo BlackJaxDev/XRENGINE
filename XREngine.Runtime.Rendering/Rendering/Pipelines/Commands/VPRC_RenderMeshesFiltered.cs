@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// on a specific layer, with a specific tag, or matching a material type.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
     public class VPRC_RenderMeshesFiltered : ViewportRenderCommand
     {
         /// <summary>

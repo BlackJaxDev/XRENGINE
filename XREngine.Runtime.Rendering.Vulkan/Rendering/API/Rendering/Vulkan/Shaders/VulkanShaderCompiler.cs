@@ -314,7 +314,7 @@ internal static partial class VulkanShaderCompiler
         builder.Append("ShaderConfigVersion=").Append(shaderConfigVersion.ToString(CultureInfo.InvariantCulture)).Append('\n');
         builder.Append("useVulkanClipDepthRemap=").Append(useVulkanClipDepthRemap ? '1' : '0').Append('\n');
         builder.Append("Optimizer=").Append(ResolvedShaderSourceOptimizer.BuildIdentitySegment()).Append('\n');
-        builder.AppendLine("Rewrite=VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine:v1");
+        builder.AppendLine("Rewrite=VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine:v2");
 
         if (shader.TryGetResolvedShaderSource(out ResolvedShaderSource resolved, annotateIncludes: false, logFailures: false))
         {

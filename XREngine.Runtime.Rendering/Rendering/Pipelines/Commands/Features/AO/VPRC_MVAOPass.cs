@@ -17,6 +17,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Configures the GBuffer and ambient occlusion frame buffers for the multi-view ambient occlusion pass.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.AmbientOcclusion })]
     public class VPRC_MVAOPass : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         private const int MaxKernelSize = 128;
@@ -36,18 +37,30 @@ namespace XREngine.Rendering.Pipelines.Commands
         private string MVAOBlurShaderName() =>
             "MVAOBlur.fs";
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NoiseTextureName { get; set; } = "AmbientOcclusionNoiseTexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RawTextureName { get; set; } = "AmbientOcclusionRawTexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string IntensityTextureName { get; set; } = "AmbientOcclusionTexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string GenerationFBOName { get; set; } = "AmbientOcclusionFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string BlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string OutputFBOName { get; set; } = "GBufferFBO";
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = "Normal";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthViewTextureName { get; set; } = "DepthView";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AlbedoTextureName { get; set; } = "AlbedoOpacity";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RMSETextureName { get; set; } = "RMSE";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string TransformIdTextureName { get; set; } = "TransformId";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
         public string[] DependentFboNames { get; set; } = Array.Empty<string>();
 

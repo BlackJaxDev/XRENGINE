@@ -4,6 +4,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Acquires one shared world-preparation publication before an output-local
 /// desktop or eye command chain consumes geometry.
 /// </summary>
+[RenderCommandInfo(ERenderCommandCategory.Advanced)]
 public sealed class VPRC_AcquireAdvancedPreparation : ViewportRenderCommand
 {
     public override string GpuProfilingName => "Advanced preparation acquire";

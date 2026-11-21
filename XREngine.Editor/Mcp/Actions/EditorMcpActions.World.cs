@@ -65,6 +65,26 @@ namespace XREngine.Editor.Mcp
         }
 
         /// <summary>
+        /// Creates a new world with one empty scene and makes it the active world of the editor.
+        /// </summary>
+        [XRMcp(Name = "create_world", Permission = McpPermissionLevel.Destructive, PermissionReason = "Replaces the active world, discarding unsaved changes.")]
+        [Description("Create a new world with one empty visible scene and make it the active world. save_world writes it to disk.")]
+        public static Task<McpToolResponse> CreateWorldAsync(
+            McpToolContext context,
+            [McpName("name"), Description("World name. The first save uses it as the file name.")] string name,
+            [McpName("scene_name"), Description("Name of the first scene. The default is the world name.")] string? sceneName = null)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return Task.FromResult(new McpToolResponse("name is required.", isError: true));
+
+            XRScene scene = new(string.IsNullOrWhiteSpace(sceneName) ? name : sceneName) { IsVisible = true };
+            XRWorld world = new(name, scene);
+            RetargetWorld(context.World, world);
+            Selection.Clear();
+            return Task.FromResult(new McpToolResponse($"Created world '{name}'.", new { id = world.ID, sceneId = scene.ID, settingsId = world.Settings.ID }));
+        }
+
+        /// <summary>
         /// Creates a new scene in the active world.
         /// </summary>
         [XRMcp(Name = "create_scene")]
@@ -233,6 +253,9 @@ namespace XREngine.Editor.Mcp
 
             if (string.IsNullOrWhiteSpace(outputDir))
                 return Task.FromResult(new McpToolResponse("Output directory must be provided.", isError: true));
+
+            if (assets.GetSaveRejection(scene) is { } rejection)
+                return Task.FromResult(new McpToolResponse(rejection, isError: true));
 
             Directory.CreateDirectory(outputDir);
             assets.SaveTo(scene, outputDir);

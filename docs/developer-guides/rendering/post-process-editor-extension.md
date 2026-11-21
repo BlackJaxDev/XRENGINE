@@ -86,6 +86,31 @@ Both context records carry the camera, the optional `CameraComponent`, the stage
 
 Use `Register(stageKey, drawer)` for editor-only drawers, because the runtime schema cannot reference editor types.
 
+## Authored Stages
+
+A `CustomRenderPipeline` describes its stages as data in `AuthoredStages`, so a script can save them. `AuthoredPostProcessSchema.Describe(...)` turns the list into schema builder calls in `Order` order.
+
+- A library stage (`IsLibraryStage = true`) reuses a stage from `CommonPostProcessStages`. `AuthoredPostProcessSchema.LibraryStageKeys` lists the keys. A library stage keeps its own parameters and defaults.
+- An authored stage has a `Key`, a `DisplayName`, a `Category`, an `EditorSection`, and a list of `AuthoredPostProcessParameter` objects (name, kind, default, range, step, and color flag).
+- An authored stage has no settings class. Its backing object is a `PostProcessPropertyBag`, which stores each parameter value by name. Shaders and commands read the values by parameter name.
+
+In a script, the `schema` block holds the stages:
+
+```
+schema {
+    library tonemapping;
+    stage "my.glow"(DisplayName="Glow", Category="effects") {
+        param Strength(Kind=Float, Min=0, Max=4);
+    }
+}
+```
+
+A branch can test a stage with the data condition `stage "my.glow" enabled`. A derived script changes the schema of its base with `hide`, `default`, `category`, and stage declarations. See [Derived Render Pipelines](render-pipelines/derived-render-pipelines.md).
+
+## Workbench Settings View
+
+The Render Pipeline Workbench Settings view shows the pipeline settings and the schema tree of the selected pipeline: categories, stages, parameters, and the details of the selected stage. For an authored pipeline in Edit mode, the view adds custom stages and library stages, removes stages, and edits the stage fields and parameters in the draft. The validator reports stages that no command reads (`stage.no-consumer`) and commands that read stages that the schema does not have (`stage.unknown`).
+
 ## Preview Targets
 
 The camera preview asks the selected pipeline for its preferred targets. Override these properties to list targets in priority order:

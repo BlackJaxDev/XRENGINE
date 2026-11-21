@@ -4,7 +4,7 @@ Read this policy before using the local agent broker or a hierarchical swarm. It
 
 ## Local Agent Broker
 
-The optional `local-agent-broker` MCP server is a supported, checkout-local
+The optional [local-agent-broker](https://github.com/BlackJaxDev/local-agent-broker) MCP server is installed from a pinned release. It is a supported, checkout-local
 evidence-worker surface. Each worker is a separate, independently billed public
 OpenAI Responses or Anthropic Messages API request. It does not change the model
 running the current Codex task and must never be described as an in-place switch
@@ -73,7 +73,7 @@ Explicit positive token and elapsed-time limits remain hard caps. Raise any
 other individual limit only when the objective
 requires it and the expected validation benefit justifies the additional cost.
 Global broker concurrency remains bounded by
-`XRE_LOCAL_AGENT_BROKER_MAX_CONCURRENCY`.
+`LOCAL_AGENT_BROKER_MAX_CONCURRENCY` (the engine launcher also accepts its legacy `XRE_` prefix).
 
 ### Opt-In Hierarchical Code Swarms
 

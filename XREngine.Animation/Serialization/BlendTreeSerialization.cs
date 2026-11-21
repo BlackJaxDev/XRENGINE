@@ -168,7 +168,7 @@ internal static class BlendTreeSerialization
         return new BlendTree1DSerializedModel
         {
             Name = blendTree.Name,
-            OriginalPath = blendTree.OriginalPath,
+            OriginalPath = CookedSourcePathProjection.ProjectOriginalPath(blendTree, blendTree.OriginalPath),
             OriginalLastWriteTimeUtc = blendTree.OriginalLastWriteTimeUtc,
             ParameterName = blendTree.ParameterName,
             Children = children
@@ -201,7 +201,7 @@ internal static class BlendTreeSerialization
         return new BlendTree2DSerializedModel
         {
             Name = blendTree.Name,
-            OriginalPath = blendTree.OriginalPath,
+            OriginalPath = CookedSourcePathProjection.ProjectOriginalPath(blendTree, blendTree.OriginalPath),
             OriginalLastWriteTimeUtc = blendTree.OriginalLastWriteTimeUtc,
             XParameterName = blendTree.XParameterName,
             YParameterName = blendTree.YParameterName,
@@ -235,7 +235,7 @@ internal static class BlendTreeSerialization
         return new BlendTreeDirectSerializedModel
         {
             Name = blendTree.Name,
-            OriginalPath = blendTree.OriginalPath,
+            OriginalPath = CookedSourcePathProjection.ProjectOriginalPath(blendTree, blendTree.OriginalPath),
             OriginalLastWriteTimeUtc = blendTree.OriginalLastWriteTimeUtc,
             NormalizeBlendValues = blendTree.NormalizeBlendValues,
             Children = children

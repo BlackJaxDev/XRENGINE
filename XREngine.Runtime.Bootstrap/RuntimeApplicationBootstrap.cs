@@ -95,6 +95,10 @@ public static class RuntimeApplicationBootstrap
                 // windowed hosts even though a headless process installs no renderer.
                 leases.Add(DesktopEngineStartupPolicy.Install());
                 leases.Add(RuntimeAssetBootstrap.InstallEngineAssetServices());
+                leases.Add(XREngine.Cutscenes.CutsceneSerializationRegistration.Install());
+
+                // A headless host streams no textures, so a cutscene director opens without residency and without a warning.
+                leases.Add(XREngine.Cutscenes.CutsceneResidencyRegistration.InstallUnavailable());
                 leases.Add(EngineRuntimeShaderServices.Install());
                 leases.Add(RuntimeAdapterBootstrap.InstallEngineHostServices(
                     profile.AdapterProfile,

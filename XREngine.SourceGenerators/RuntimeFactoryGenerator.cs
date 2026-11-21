@@ -12,7 +12,7 @@ namespace XREngine.SourceGenerators;
 public sealed class RuntimeFactoryGenerator : IIncrementalGenerator
 {
     private const string PortableAssemblies = ";XREngine.Extensions;XREngine.Data;XREngine.Animation;XREngine.Audio;XREngine.Input;XREngine.Runtime.Core;XREngine.Runtime.Rendering;XREngine.Runtime.AnimationIntegration;XREngine.Runtime.AudioIntegration;XREngine.Runtime.InputIntegration;XREngine.Runtime.Host;";
-    private const string DesktopAssemblies = ";XREngine.Runtime.Bootstrap;XREngine.Runtime.ModelAssetPipeline;XREngine.Runtime.ModelingIntegration;XREngine.Runtime.UI.Skia;XREngine.Runtime.UI.Rive;XREngine.Audio.Audio2Face;XREngine.Audio.SteamAudio;XREngine.Runtime.Physics.PhysX;XREngine.Runtime.Net.Osc;XREngine.Runtime.Net.Sockets;";
+    private const string DesktopAssemblies = ";XREngine.Runtime.Bootstrap;XREngine.Runtime.CutsceneIntegration;XREngine.Runtime.ModelAssetPipeline;XREngine.Runtime.ModelingIntegration;XREngine.Runtime.UI.Skia;XREngine.Runtime.UI.Rive;XREngine.Audio.Audio2Face;XREngine.Audio.SteamAudio;XREngine.Runtime.Physics.PhysX;XREngine.Runtime.Net.Osc;XREngine.Runtime.Net.Sockets;";
 
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {

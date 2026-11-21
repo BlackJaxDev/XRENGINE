@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Requires the editor mask and picking identity writes before a frame can use them.
 /// A pending shader cannot leave a previous frame's editor identity visible.
 /// </summary>
+[RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
 public sealed class VPRC_SeedEditorHighlightMask : VPRC_DispatchCompute
 {
     private const string SeedPassName = "Advanced.EditorHighlightSeed";

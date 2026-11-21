@@ -10,6 +10,10 @@ namespace XREngine.Native
         [DllImport("gdi32.dll")]
         public static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
 
+        [DllImport("kernel32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetProcessAffinityMask(IntPtr hProcess, out nuint lpProcessAffinityMask, out nuint lpSystemAffinityMask);
+
         [DllImport("user32.dll")]
         public static extern IntPtr GetWindow(IntPtr hWnd, int uCmd);
         [DllImport("user32.dll")]

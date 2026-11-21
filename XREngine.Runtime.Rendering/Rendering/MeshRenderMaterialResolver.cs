@@ -92,7 +92,11 @@ public static class MeshRenderMaterialResolver
                 return new(depthNormalSource!.GetNativeVertexPassMaterial(Shaders.Generation.EngineNativeVertexAuxiliaryPass.DepthNormal),
                     null, false, true, "CookedNativeVertexDepthNormal");
             XRMaterial? depthNormalVariant = depthNormalSource?.DepthNormalPrePassVariant;
-            if (depthNormalVariant is not null)
+            // A variant made during a deferred publication batch has no backend wrapper until the batch publishes.
+            // Drawing it now trips the render circuit breaker, so the pipeline depth-normal material draws for that
+            // frame instead.
+            if (depthNormalVariant is not null &&
+                (depthNormalVariant.IsApiWrapperPublicationReady || pipelineOverrideMaterial is null))
                 return new(depthNormalVariant, null, false, true, "DepthNormalVariant");
 
             if (pipelineOverrideMaterial is not null)

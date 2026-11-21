@@ -6,6 +6,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands;
 
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
 public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
 {
     private const string PassNamePrefix = "FullOverdraw";
@@ -114,14 +115,11 @@ public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
     private int ResolveRenderGraphPassIndex(int renderPass)
     {
         string passName = BuildRenderGraphPassName(renderPass);
-        if (ParentPipeline?.PassMetadata is not { Count: > 0 } metadata)
+        int passIndex = ResolveActiveRenderGraphPassIndex(passName, out bool hasRenderGraphMetadata);
+        if (!hasRenderGraphMetadata)
             return renderPass;
-
-        foreach (RenderPassMetadata pass in metadata)
-        {
-            if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                return pass.PassIndex;
-        }
+        if (passIndex != int.MinValue)
+            return passIndex;
 
         Debug.RenderingWarningEvery(
             $"FullOverdraw.MissingRenderGraphPass.{passName}",

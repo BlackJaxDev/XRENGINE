@@ -95,7 +95,7 @@ namespace XREngine.Rendering.OpenGL
 
             private readonly record struct UniformInfo(GLEnum Type, int Size);
             private readonly record struct SamplerUniformInfo(string Name, GLEnum Type);
-            private readonly record struct SamplerUnitBinding(uint TextureId, ETextureTarget Target);
+            private readonly record struct SamplerUnitBinding(uint TextureId, ETextureTarget Target, IGLTexture Texture);
             internal readonly record struct UniformMetadataEntry(string Name, GLEnum Type, int Size);
 
             private string ComputeDispatchNotLinkedLogKey

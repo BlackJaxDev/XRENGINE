@@ -441,7 +441,10 @@ internal static partial class UberShaderVariantBuilder
         [NotNullWhen(true)] out UberShaderVariantProvenance? proof)
         => ProvenanceByVariant.TryGetValue(variant, out proof);
 
-    internal static bool IsCompatibleInternalReplacement(XRShader previous, XRShader next)
+    internal static bool IsCompatibleInternalReplacement(
+        XRShader previous,
+        XRShader next,
+        EngineMaterialSemanticIdentity semantic = default)
     {
         XRShader previousCanonical = previous;
         if (IsGeneratedVariant(previous))
@@ -450,10 +453,49 @@ internal static partial class UberShaderVariantBuilder
                 return false;
             previousCanonical = canonical;
         }
+        else if (!ReferenceEquals(previous, next) &&
+            IsCookedCanonicalUberCopy(previous, next, semantic == EngineMaterialSemanticIdentity.NativeUberV1))
+        {
+            return true;
+        }
         if (IsGeneratedVariant(next))
             return HasCurrentProvenance(next) && TryGetCanonicalShader(next, out XRShader? canonical) &&
                 ReferenceEquals(previousCanonical, canonical);
         return !ReferenceEquals(previous, previousCanonical) && ReferenceEquals(previousCanonical, next);
+    }
+
+    /// <summary>
+    /// Checks whether <paramref name="previous"/> is a cooked binary copy of the canonical Uber fragment shader
+    /// whose host <c>FilePath</c> was not serialized, and whether <paramref name="next"/> is the host canonical
+    /// <c>UberShader.frag</c>. When <paramref name="allowNativeUberUpgrade"/> is true, a cooked
+    /// <see cref="EngineMaterialSemanticIdentity.NativeUberV1"/> shader can adopt updated host canonical text.
+    /// </summary>
+    private static bool IsCookedCanonicalUberCopy(XRShader previous, XRShader next, bool allowNativeUberUpgrade)
+    {
+        if (IsGeneratedVariant(previous) || IsGeneratedVariant(next))
+            return false;
+        if (previous.Type != next.Type || previous.SourceLanguage != next.SourceLanguage ||
+            previous.GeneratedUberVariantHash != 0 || next.GeneratedUberVariantHash != 0 ||
+            !string.Equals(previous.EntryPoint, "main", StringComparison.Ordinal) ||
+            !string.Equals(next.EntryPoint, "main", StringComparison.Ordinal))
+            return false;
+        if (!string.IsNullOrWhiteSpace(previous.Source?.FilePath) || !string.IsNullOrWhiteSpace(previous.FilePath))
+            return false;
+
+        ReadOnlySpan<char> previousName = Path.GetFileName((previous.Source?.Name ?? previous.Name).AsSpan());
+        if (!previousName.Equals("UberShader.frag", StringComparison.OrdinalIgnoreCase) &&
+            !previousName.Equals("UberShader", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string? nextPath = next.Source?.FilePath ?? next.FilePath;
+        if (!Path.GetFileName(nextPath.AsSpan()).Equals("UberShader.frag", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string? previousText = previous.Source?.Text;
+        string? nextText = next.Source?.Text;
+        return !string.IsNullOrEmpty(previousText) &&
+               !string.IsNullOrEmpty(nextText) &&
+               (allowNativeUberUpgrade || string.Equals(previousText, nextText, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1059,7 +1101,10 @@ internal static partial class UberShaderVariantBuilder
             if (!isFieldName && staticLiterals.TryGetValue(identifier, out string? literal))
             {
                 bool hasSuffixAccess = i < line.Length && line[i] == '.';
-                builder.Append(hasSuffixAccess ? $"({literal})" : literal);
+                // A negative literal directly after a minus sign would make the decrement token
+                // "--" (for example, "-_Saturation" becomes "--0.25"), which fails to compile.
+                bool followsMinus = literal.StartsWith('-') && builder.Length > 0 && builder[^1] == '-';
+                builder.Append(hasSuffixAccess || followsMinus ? $"({literal})" : literal);
                 continue;
             }
 

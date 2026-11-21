@@ -5,7 +5,8 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
-    public class VPRC_Switch : ViewportStateRenderCommand<VPRC_PopRenderArea>
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
+    public class VPRC_Switch : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
         {
@@ -19,6 +20,22 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string? Label { get; set; }
 
         public Func<int>? SwitchEvaluator { get; set; }
+
+        private RenderBranchCondition? _condition;
+
+        /// <summary>
+        /// Gets or sets a data condition whose source value selects the case. When it is set, it takes priority over
+        /// <see cref="SwitchEvaluator"/>. The operator is not used; a missing source selects the default case.
+        /// </summary>
+        public RenderBranchCondition? Condition
+        {
+            get => _condition;
+            set
+            {
+                if (SetField(ref _condition, value))
+                    _condition?.Bind(ParentPipeline);
+            }
+        }
 
         public override string GpuProfilingName
             => string.IsNullOrWhiteSpace(Label) ? base.GpuProfilingName : $"{base.GpuProfilingName}[{Label}]";
@@ -57,19 +74,49 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         //private int _lastSwitch = 0;
 
+        /// <inheritdoc />
+        /// <remarks>Cases are added in ascending key order, then the default case.</remarks>
+        public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+        {
+            if (Cases is { Count: > 0 } cases)
+            {
+                int start = results.Count;
+                foreach (KeyValuePair<int, ViewportRenderCommandContainer> pair in cases)
+                {
+                    if (pair.Value is not null)
+                        results.Add(new RenderCommandChildContainer(string.Concat("Case ", pair.Key.ToString(System.Globalization.CultureInfo.InvariantCulture)), pair.Value, pair.Key));
+                }
+
+                results.Sort(start, results.Count - start, CaseKeyComparer.Instance);
+            }
+
+            if (DefaultCase is not null)
+                results.Add(new RenderCommandChildContainer("Default", DefaultCase));
+        }
+
+        private sealed class CaseKeyComparer : IComparer<RenderCommandChildContainer>
+        {
+            public static CaseKeyComparer Instance { get; } = new();
+
+            public int Compare(RenderCommandChildContainer x, RenderCommandChildContainer y)
+                => (x.CaseKey ?? int.MaxValue).CompareTo(y.CaseKey ?? int.MaxValue);
+        }
+
         protected override void Execute()
         {
             XRRenderPipelineInstance? instance = ActivePipelineInstance;
             if (instance is null)
                 return;
 
-            int sw = SwitchEvaluator?.Invoke() ?? -1;
+            int sw = _condition is { } condition ? condition.EvaluateInt() : SwitchEvaluator?.Invoke() ?? -1;
             ViewportRenderCommandContainer? next;
 
             if (Cases?.TryGetValue(sw, out var commands) ?? false)
                 next = commands;
             else
                 next = DefaultCase;
+
+            instance.BranchTrace.Record(this, next);
 
             var state = _switchStates.GetValue(instance, _ => new SwitchState());
             if (!ReferenceEquals(state.ActiveContainer, next))
@@ -97,6 +144,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         internal override void OnParentPipelineAssigned()
         {
             base.OnParentPipelineAssigned();
+            _condition?.Bind(ParentPipeline);
             if (_cases is not null)
             {
                 foreach (var container in _cases.Values)

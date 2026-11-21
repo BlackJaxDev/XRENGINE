@@ -93,8 +93,39 @@ public partial class XRCamera
     public void InvalidateTemporalHistory()
         => InvalidateTemporalHistory(publishNotifications: true);
 
-    /// <summary>Allows repeatedly slow frames to discard history without allocating property events.</summary>
-    internal void InvalidateTemporalHistory(bool publishNotifications)
+    private long _autoExposureResetCount;
+
+    /// <summary>
+    /// Resets the automatic exposure adaptation of this camera in every pipeline state that it has, so the next exposure
+    /// update uses the metered value with no blend from the old exposure. Call it after an instantaneous cut or a jump in time,
+    /// after <see cref="InvalidateTemporalHistory()"/>. The reset applies only to frames captured with the current
+    /// <see cref="TemporalHistoryEpoch"/> or a later one, so a frame from before the invalidation that still renders does not
+    /// use it. <see cref="InvalidateTemporalHistory()"/> does not reset exposure, because smooth exposure adaptation is not
+    /// view history. A camera with no color grading state yet keeps the reset waiting, and the state that the next render
+    /// creates or binds gets it, so the first cut to a camera also resets its exposure. It creates no state and no render
+    /// pipeline, and it does not allocate.
+    /// </summary>
+    public void ResetAutoExposureHistory()
+    {
+        Interlocked.Increment(ref _autoExposureResetCount);
+        PostProcessStates.ResetAutoExposureHistory(TemporalHistoryEpoch);
+    }
+
+    /// <summary>
+    /// Removes the exposure resets of this camera that no frame has used yet, also a waiting one. It does not allocate.
+    /// </summary>
+    internal void ClearAutoExposureReset()
+        => PostProcessStates.ClearAutoExposureReset();
+
+    /// <summary>The number of <see cref="ResetAutoExposureHistory"/> calls on this camera.</summary>
+    internal long AutoExposureResetCount => Interlocked.Read(ref _autoExposureResetCount);
+
+    /// <summary>
+    /// Invalidates prior camera transforms, like <see cref="InvalidateTemporalHistory()"/>. With
+    /// <paramref name="publishNotifications"/> false, no property change event runs, so a caller on another thread or a caller
+    /// in each slow frame does not run listeners or allocate event arguments.
+    /// </summary>
+    public void InvalidateTemporalHistory(bool publishNotifications)
     {
         lock (_temporalHistorySync)
         {

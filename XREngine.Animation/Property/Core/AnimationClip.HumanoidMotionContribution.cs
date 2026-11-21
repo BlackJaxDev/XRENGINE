@@ -31,6 +31,26 @@ public partial class AnimationClip
         _importedHumanoidSourceWrapped = false;
     }
 
+    /// <summary>
+    /// Creates the Body and root contribution of this clip at a normalized time, for an evaluator outside
+    /// a state machine. The call reads no playback clock.
+    /// </summary>
+    /// <param name="normalizedTime">The occurrence time, where one is the clip length.</param>
+    /// <param name="weight">The blend weight.</param>
+    /// <param name="occurrenceId">The identity of this use of the clip.</param>
+    /// <param name="lifecycleGeneration">The generation of this use of the clip.</param>
+    /// <param name="inheritedMirror">True to invert the mirror setting of the clip.</param>
+    /// <param name="contribution">The result.</param>
+    /// <returns>False if the clip has no valid imported root motion.</returns>
+    public bool TryCreateHumanoidMotionContribution(
+        double normalizedTime,
+        float weight,
+        ulong occurrenceId,
+        ulong lifecycleGeneration,
+        bool inheritedMirror,
+        out HumanoidMotionContribution contribution)
+        => TryCreateImportedHumanoidMotionContribution(normalizedTime, weight, occurrenceId, lifecycleGeneration, inheritedMirror, out contribution);
+
     internal bool TryCreateImportedHumanoidMotionContribution(
         double normalizedTime,
         float weight,

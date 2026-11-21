@@ -98,6 +98,8 @@ internal static class AnimationPropertySerialization
                 Keyframe keyframe = (Keyframe?)CookedBinarySerializer.ExecuteWithMemoryPackSuppressed(
                     () => CookedBinarySerializer.Deserialize(keyframeType, keyframeModel.Payload))
                     ?? throw new InvalidOperationException($"Failed to deserialize keyframe type '{keyframeType.FullName}'.");
+                if (keyframe is QuaternionKeyframe quaternionKeyframe)
+                    quaternionKeyframe.NormalizeRestoredInterpolation();
                 keyframes.Add(keyframe);
             }
         }

@@ -500,6 +500,90 @@ namespace XREngine.Animation
         }
 
         /// <summary>
+        /// Writes the live value of the bound target to the store at this member's <see cref="Slot"/>.
+        /// A method has no value to read, so a method member writes its default argument. Reflection can
+        /// box the value, so use this method when a target is first captured and not each frame.
+        /// </summary>
+        /// <param name="store">The store that receives the value.</param>
+        /// <returns>False if the member has no slot, no bound target, or no value.</returns>
+        public bool TryWriteTargetValueToStore(AnimationValueStore store)
+        {
+            if (!Slot.IsValid || MemberNotFound || _parentObject is null)
+                return false;
+
+            object? value = MemberType switch
+            {
+                EAnimationMemberType.Property => ReadTargetProperty(),
+                EAnimationMemberType.Field => _fieldCache?.GetValue(_parentObject),
+                EAnimationMemberType.Method => DefaultValue,
+                _ => null,
+            };
+            if (value is null)
+                return false;
+
+            store.SetValue(in Slot, value);
+            return true;
+        }
+
+        /// <summary>The object that this member reads and writes, after it is bound.</summary>
+        public object? BoundTarget => _parentObject;
+
+        /// <summary>Writes a value that the caller read from the target to the float slot of this member.</summary>
+        /// <param name="store">The store that receives the value.</param>
+        /// <param name="value">The value.</param>
+        /// <returns>False if this member has no float slot.</returns>
+        public bool TryWriteFloatToStore(AnimationValueStore store, float value)
+        {
+            if (!Slot.IsValid || Slot.Type != EAnimValueType.Float)
+                return false;
+
+            store.SetFloat(Slot.TypeIndex, value);
+            return true;
+        }
+
+        private object? ReadTargetProperty()
+            => AnimationMemberBindingRegistry.TryGetGetter(_parentObject!.GetType(), _memberName, out Func<object, object?>? getter)
+                ? getter!(_parentObject)
+                : _propertyCache?.GetValue(_parentObject);
+
+        /// <summary>Checks if a store has a value for this member's <see cref="Slot"/>.</summary>
+        /// <param name="store">The store to read.</param>
+        public bool HasValueIn(AnimationValueStore store)
+            => Slot.IsValid && store.GetCoverage(in Slot) > float.Epsilon;
+
+        /// <summary>
+        /// True when clip sampling cannot give a value for this member, because its track
+        /// calls code at the sample time. The member type does not make a member unsupported:
+        /// a method member runs its method only at apply time, not when a sample is taken.
+        /// </summary>
+        internal bool IsUnsupportedForSampling
+            => Animation is { SupportsHistoryFreeSampling: false };
+
+        /// <summary>
+        /// True when clip sampling writes a value for this member. A method leaf with no
+        /// animation writes its argument, as normal playback does. A method member with
+        /// children and no animation only finds an object for its children, so it has no value.
+        /// </summary>
+        internal bool HasSampledValue
+            => !IsUnsupportedForSampling
+            && (Animation is not null || (MemberType == EAnimationMemberType.Method && Children.Count == 0));
+
+        /// <summary>
+        /// Writes the animation value for the given second into the store at this member's
+        /// <see cref="Slot"/>, and changes no playback state.
+        /// </summary>
+        internal void WriteSampleToStore(float second, AnimationValueStore store)
+        {
+            if (!Slot.IsValid)
+                return;
+
+            if (Animation is null)
+                WriteCurrentValueToStore(store);
+            else
+                Animation.WriteSampleToStore(second, store, in Slot);
+        }
+
+        /// <summary>
         /// Writes the default value into the given store at this member's <see cref="Slot"/>.
         /// </summary>
         public void WriteDefaultToStore(AnimationValueStore store)
@@ -588,9 +672,15 @@ namespace XREngine.Animation
                 PropAnimVector4 => EAnimValueType.Vector4,
                 PropAnimQuaternion => EAnimValueType.Quaternion,
                 PropAnimBool => EAnimValueType.Bool,
-                _ => DetermineValueTypeFromMemberInfo(),
+                _ => _bindingVariantValueType ?? DetermineValueTypeFromMemberInfo(),
             };
         }
+
+        /// <summary>
+        /// The value type of the member that a binding variant copies. A variant has no animation
+        /// and can have no target yet, but it must use a slot of the same type as its source.
+        /// </summary>
+        private EAnimValueType? _bindingVariantValueType;
 
         private EAnimValueType DetermineValueTypeFromMemberInfo()
         {
@@ -703,6 +793,7 @@ namespace XREngine.Animation
             {
                 MethodArguments = arguments,
                 AnimatedMethodArgumentIndex = AnimatedMethodArgumentIndex,
+                _bindingVariantValueType = DetermineValueType(),
             };
             variant.InitializeMethod(_parentObject);
             return variant;

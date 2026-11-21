@@ -106,21 +106,21 @@ internal static partial class SerializedSceneImporter
             GetNode(fields, "rootTransform"),
             hierarchy,
             fallback: null);
-        collider._center = ConvertPosition(GetVector3(fields, "position", Vector3.Zero));
+        collider.Center = ConvertPosition(GetVector3(fields, "position", Vector3.Zero));
         collider.LocalRotationOffset = ConvertRotation(GetQuaternion(fields, "rotation", Quaternion.Identity));
-        collider._bound = (GetScalarInt(fields, "insideBounds") ?? 0) != 0
+        collider.Bound = (GetScalarInt(fields, "insideBounds") ?? 0) != 0
             ? PhysicsChainColliderBase.EBound.Inside
             : PhysicsChainColliderBase.EBound.Outside;
-        collider._direction = PhysicsChainColliderBase.Direction.Y;
+        collider.Axis = PhysicsChainColliderBase.Direction.Y;
         collider.ParticleContactOnly = (GetScalarInt(fields, "bonesAsSpheres") ?? 0) != 0;
 
         if (collider is PhysicsChainCollider volumeCollider)
         {
-            volumeCollider._radius = MathF.Max(GetScalarFloat(fields, "radius") ?? 0.0f, 0.0f);
-            volumeCollider._height = shapeType == 0
+            volumeCollider.Radius = MathF.Max(GetScalarFloat(fields, "radius") ?? 0.0f, 0.0f);
+            volumeCollider.Height = shapeType == 0
                 ? 0.0f
                 : MathF.Max(GetScalarFloat(fields, "height") ?? 0.0f, 0.0f);
-            volumeCollider._radius2 = 0.0f;
+            volumeCollider.Radius2 = 0.0f;
         }
 
         hierarchy.ComponentsByFileId[behaviour.FileId] = collider;

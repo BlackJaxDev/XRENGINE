@@ -37,6 +37,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.EditorHighlight.Contracts;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Caching;
+using XREngine.Rendering.Resources;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Runtime.Physics.Authoring;
@@ -141,6 +142,12 @@ internal partial class Program
         if (XREngine.Editor.GaussianBake.BakeSplatPreviewCommand.TryRun(args))
             return;
 
+        if (XREngine.Editor.GaussianBake.CookUnityPrefabCommand.TryRun(args))
+            return;
+
+        if (XREngine.Editor.CutsceneRecording.RecordCutsceneCommand.TryRun(args))
+            return;
+
         if (TryRunProjectBuildCommand(args))
             return;
 
@@ -175,6 +182,9 @@ internal partial class Program
 
         // Start undo/redo system
         Undo.Initialize();
+
+        // Give cutscene directors a default binding resolver and connect the preview to play mode changes
+        XREngine.Editor.Cutscenes.CutscenePreviewSession.Initialize();
 
         // Start file drop handler to support drag-and-drop importing of assets and scenes into the editor
         EditorFileDropHandler.Initialize();
@@ -1470,6 +1480,7 @@ internal partial class Program
                 out string? launcherNameArg,
                 out bool? publishNativeAot,
                 out bool? validateAotCompatibility,
+                out bool? developmentArchives,
                 out string? defineConstantsArg,
                 out string? error))
         {
@@ -1499,6 +1510,7 @@ internal partial class Program
                 launcherNameArg,
                 publishNativeAot,
                 validateAotCompatibility,
+                developmentArchives,
                 defineConstantsArg);
 
             Environment.ExitCode = 0;
@@ -1688,6 +1700,7 @@ internal partial class Program
         out string? launcherNameArg,
         out bool? publishNativeAot,
         out bool? validateAotCompatibility,
+        out bool? developmentArchives,
         out string? defineConstantsArg,
         out string? error)
     {
@@ -1699,6 +1712,7 @@ internal partial class Program
         launcherNameArg = null;
         publishNativeAot = null;
         validateAotCompatibility = null;
+        developmentArchives = null;
         defineConstantsArg = null;
         error = null;
 
@@ -1793,6 +1807,22 @@ internal partial class Program
                     validateAotCompatibility = validateValue;
                     break;
 
+                case "--development-archives":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --development-archives (expected true/false).";
+                        return false;
+                    }
+
+                    if (!TryParseBooleanArgument(args[++i], out bool developmentArchivesValue))
+                    {
+                        error = "--development-archives must be true/false, yes/no, or 1/0.";
+                        return false;
+                    }
+
+                    developmentArchives = developmentArchivesValue;
+                    break;
+
                 case "--define-constants":
                 case "--launcher-define-constants":
                     if (i + 1 >= args.Length)
@@ -1826,6 +1856,7 @@ internal partial class Program
         string? launcherNameArg,
         bool? publishNativeAot,
         bool? validateAotCompatibility,
+        bool? developmentArchives,
         string? defineConstantsArg)
     {
         ConfigureMsBuildEnvironmentForHeadlessBuild();
@@ -1886,6 +1917,9 @@ internal partial class Program
 
         if (validateAotCompatibility.HasValue)
             settings.ValidateLauncherAotCompatibility = validateAotCompatibility.Value;
+
+        if (developmentArchives.HasValue)
+            settings.DevelopmentLauncherReadsArchives = developmentArchives.Value;
 
         // NativeAOT publish produces a self-contained output. Copying the managed
         // game and engine build directories first only bloats the final package;
@@ -2215,7 +2249,7 @@ internal partial class Program
         string outputPath = ResolvePathAgainstRepoRoot(
             outputPathArg,
             repoRoot,
-            Path.Combine("docs", "features", stereo ? "default-render-pipeline-stereo.xrs" : "default-render-pipeline.xrs"));
+            Path.Combine("docs", "developer-guides", "rendering", "render-pipelines", stereo ? "default-render-pipeline-stereo.xrs" : "default-render-pipeline.xrs"));
 
         if (!outputPath.EndsWith(".xrs", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Output path must end with .xrs.", nameof(outputPathArg));
@@ -2225,11 +2259,24 @@ internal partial class Program
             Directory.CreateDirectory(outputDirectory);
 
         DefaultRenderPipeline pipeline = new(stereo);
-        string script = RenderPipelineScript.Export(pipeline.CommandChain);
+        List<string> unconverted = [];
+        string script = RenderPipelineScriptWriter.WriteExpanded(pipeline, CreateScriptExportProfile(stereo), unconverted);
         File.WriteAllText(outputPath, script, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-        Console.WriteLine($"Exported default render pipeline script ({(stereo ? "stereo" : "mono")}) -> {outputPath}");
+        Console.WriteLine($"Exported default render pipeline script ({(stereo ? "stereo" : "mono")}, {unconverted.Count} unconverted items) -> {outputPath}");
     }
+
+    /// <summary>The resource profile that the expanded script export writes: 1920x1080, with two views for stereo.</summary>
+    private static RenderPipelineResourceProfile CreateScriptExportProfile(bool stereo)
+        => RenderPipelineResourceProfile.Empty with
+        {
+            InternalWidth = 1920u,
+            InternalHeight = 1080u,
+            DisplayWidth = 1920u,
+            DisplayHeight = 1080u,
+            Stereo = stereo,
+            ViewCount = stereo ? 2u : 1u,
+        };
 
     private static bool TryParseCookCommonAssetsArgs(
         string[] args,

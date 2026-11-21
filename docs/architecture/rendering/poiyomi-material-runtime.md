@@ -48,7 +48,7 @@ mask, polygon offset, alpha-to-coverage, fog opt-out, and common/front/back
 stencil state are converted from their serialized Unity enum values. Outline
 blend, depth, stencil, and cull state is independent from the base pass.
 
-Verified locked source toon 9.3.63 Basic outlines use the canonical mesh
+Verified locked source toon 9.3.9 and 9.3.63 Basic outlines use the canonical mesh
 deformation before outline expansion. The source branch samples the outline
 mask at mip 0, applies its authored width and distance factor to the deformed
 normal, and clips fragments with the source width-mask threshold. It keeps the
@@ -56,9 +56,30 @@ authored outline blend, depth, stencil, and queue state. The importer requires
 the supported local-space, UV0, red-channel mask subset. An external mask must
 use a linear-repeat sampler; an absent source mask uses the white default.
 The importer also requires neutral outline theme, color adjust, and AudioLink
-width controls. It reports active options outside this subset as conversion
-failures. Required scene import keeps these failure reasons in its diagnostics.
-Other engine outline materials keep their existing expansion rules.
+width controls. Other engine outline materials keep their existing expansion
+rules.
+
+The outline, the second rim light, the stylized specular lobe, and the cubemap
+are optional features. When one of them has an active source option without an
+exact Uber conversion, the importer turns off only that feature and keeps the
+Uber conversion for the rest of the material. The conversion report records the
+refused option as a `POI0007` warning. Other unconvertible options still fail
+the Uber conversion, and the material then uses the generic fallback. A theme
+color index from 1 to 4 on the stylized specular tint converts to the constant
+theme color when that theme has no hue, saturation, value, or hue-speed
+adjustment.
+
+Newer source shaders blend matcap global masks with their 20-entry color blend
+list. The importer reads the list from the source shader property declaration
+and maps normal, darken, multiply, lighten, linear dodge, subtract, and divide
+to the native mask blend modes. Other color blend modes still fail the
+conversion.
+
+A material that uses the source procedural eye shader converts to a native Uber
+material with procedural mode 6 (`_ProceduralEyeParams0` to
+`_ProceduralEyeParams3`). The forward Uber, native Uber, and splat paths draw
+the same unlit layered parallax iris, smoke rings, glare, and dithered vignette.
+A nonzero vignette transparency makes the material masked.
 
 Imported source materials apply `_AlphaForceOpaque` after decal, flipbook, and
 dissolve effects, before the final alpha cutoff. Dissolve can still discard a
@@ -108,21 +129,49 @@ validation.
 - Reusable reference implementations whose live behavior remains inline:
   `backface.glsl`, `details.glsl`, `emission.glsl`, `matcap.glsl`, `pbr.glsl`,
   `specular.glsl`, and `subsurface.glsl`.
-- Dormant for its later parity phase: `decals.glsl`.
+- Inline surface-extension contracts own four-slot decals alongside
+  `decals.glsl` reference helpers.
 - Reusable legacy references: `outline.vert` and `outline.frag`.
 - Obsolete and superseded by the canonical pass branch: `outlines.glsl`.
 
 A helper file is not evidence that a feature is supported. Support requires a
 reachable canonical render-pass path. The variant builder prunes disabled
-feature guards and sampler declarations and now computes transitive feature
+feature guards and sampler declarations and computes transitive feature
 dependency closure before generating the variant.
 
-## Repeated Slots
+## Color Adjustments
 
-`UberMaterialSlotSchemas` owns the reusable contracts for four decals, four
-matcaps, four emissions, and two rims. Each schema defines its feature owner,
-field suffixes, sampler roles, and maximum specialized slot count. Counts remain
-compile-time axes; inactive families do not retain unrelated samplers.
+The `color-adjustments` feature follows the source section toggle
+`_MainColorAdjustToggle` (keyword `COLOR_GRADING_HDR`). `_ColorGradingToggle`
+only enables the gradation subsection, so the importer reads it only when the
+section toggle is absent. The forward and native Uber shaders apply the source
+order: hue shift, then saturation, then brightness. Brightness scales the color
+by `1 + _MainBrightness` and clamps it to 0 through 1. The adjustment texture
+masks each step (R hue, G brightness, B saturation).
+
+## Locked Shader Reconciliation And Cooked Textures
+
+A locked source toon shader renames each animated property with the tag mode
+`2` to `name_suffix`, and it reads only the renamed property. The material file
+keeps both entries, and the original entry can hold an old value. Before
+conversion, `SerializedMaterialImporter.ApplyLockedRenamedPropertyValues`
+copies each renamed value onto its original name in a conversion copy. The
+suffix comes from the `thry_rename_suffix` tag, or else from the property names
+of the renamed entries, because the locking tool encodes some material name
+characters (for example, `.` becomes `2E`). Example: a shoe material keeps
+`_UDIMDiscardRow0_1 = 1`, but its locked shader reads
+`_UDIMDiscardRow0_1_Vans = 0`, so the shoe tile stays visible.
+
+Cooked textures:
+
+- Preserves Unity `.meta` mipmap generation (`SmallestAllowedMipmapLevel` set
+  to `1000` when mipmaps are enabled) and trilinear filter state when cooking
+  hydrated prefab textures into `.pak` archives.
+- Rebinds pathless cooked `NativeUberV1` fragment shader copies to the canonical
+  host `UberShader.frag` during `XRMaterial.EnsureUberStateInitialized` and
+  `UberShaderVariantBuilder` compilation when host shader files are accessible,
+  so cooked `.pak` materials use current engine shader sources without
+  re-cooking.
 
 ## Resource Limits And Binding Ladder
 
@@ -141,6 +190,12 @@ uniform storage for both OpenGL 4.6 and Vulkan 1.0; Vulkan also records the
 The planner never silently drops a texture. `UberSamplerFallbacks` supplies
 role-aware color, normal, white/black mask, zero-data, neutral-height, and black
 emission defaults.
+
+`GaussianAvatarSplatMaterialTable` packs `NativeUber` material records for live
+Gaussian avatar surface splats within a 128-slot 2D texture table. It skips
+sampler roles whose owning Uber feature bit is disabled and reuses existing
+1-based slot indices when multiple materials or roles reference the same
+`XRTexture2D` or source file path.
 
 ## Validation
 

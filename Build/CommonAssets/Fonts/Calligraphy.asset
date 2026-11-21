@@ -1760,8 +1760,8 @@ Atlas: &o49
   ID: 882f3a15-69b4-4bea-aeda-c7780b3808ab
   Name: 
 EmbeddedAssets: []
-OriginalPath: D:\Documents\XRENGINE\Build\CommonAssets\Fonts\Calligraphy.ttf
-FilePath: D:\Documents\XRENGINE\Build\CommonAssets\Fonts\Calligraphy.asset
+OriginalPath: engine://Fonts/Calligraphy.ttf
+FilePath: 
 SourceAsset: *o50
 ID: b7df1cba-3a71-4bf6-80ec-6a88de6ce218
 Name: Calligraphy

@@ -12,7 +12,7 @@ internal sealed class ViewportSequenceCaptureOptions
     public const int MaximumFrameStride = 600;
     public const double MaximumCaptureFramesPerSecond = 240.0;
     public const int MaximumInFlightReadbacks = 8;
-    public const long MaximumTotalOutputPixels = 250_000_000L;
+    public const long MaximumTotalOutputPixels = 650_000_000L;
     public const long MaximumInFlightReadbackBytes = 256L * 1024L * 1024L;
     public const int MaximumContactSheetPixels = 64 * 1024 * 1024;
     public const int MaximumRetainedSessions = 128;

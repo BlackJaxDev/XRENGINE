@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Dispatches the ReSTIR compute passes and composites the result into the forward lighting target.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_ReSTIRPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;
@@ -50,10 +51,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             set => SetField(ref _allowComputeFallback, value);
         }
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RestirOutputTextureName { get; set; } = "RestirGITexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string CompositeQuadFBOName { get; set; } = "RestirCompositeFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         protected override bool ShouldExecuteThisFrame()

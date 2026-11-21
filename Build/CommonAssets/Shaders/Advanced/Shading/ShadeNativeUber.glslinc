@@ -2,15 +2,16 @@
 #define XR_SHADE_NATIVE_UBER_GLSLINC
 #include "Advanced/Shading/NativeUberLighting.glslinc"
 
-vec3 XR_UBER_SourceStylizedSpecular(XRUberCoordinates c,
+float XR_UBER_SourceStylizedSpecularTerms(XRUberCoordinates c,
     vec3 vertexNormal, vec3 mappedNormal, vec3 mappedNormalDx,
     vec3 mappedNormalDy, vec3 viewDirection, vec3 viewDx, vec3 viewDy,
     vec3 lightDirection, vec3 directColor, float lightMap,
-    float attenuation, float visibility, float occlusion)
+    float attenuation, float visibility, float occlusion, out vec3 highlight)
 {
+    highlight = vec3(0.0);
     vec4 settings = UBER_V(_SourceStylizedSpecularSettings);
     if (settings.x <= 0.5)
-        return vec3(0.0);
+        return 0.0;
 
     vec4 highSt = UBER_V(_SourceHighColorTex_ST);
     vec4 maskSt = UBER_V(_SourceHighColorMask_ST);
@@ -35,12 +36,33 @@ vec3 XR_UBER_SourceStylizedSpecular(XRUberCoordinates c,
     float areaY = 0.5 * dot(normalY,
         normalize(lightDirection + viewDirection + viewDy)) + 0.5;
     float footprint = abs(areaX - area) + abs(areaY - area);
-    return xrSourceStylizedSpecular(vertexNormal, mappedNormal,
+    return xrSourceStylizedSpecularTerms(vertexNormal, mappedNormal,
         viewDirection, lightDirection, directColor, lightMap, attenuation,
         visibility, occlusion, mask, footprint, highColor,
         UBER_V(_SourceStylizedSpecularTint), settings,
         UBER_V(_SourceStylizedSpecularLayers), maskSettings,
-        UBER_V(_SourceStylizedSpecularOcclusion));
+        UBER_V(_SourceStylizedSpecularOcclusion), highlight);
+}
+
+// Applies the stylized specular of one light. In add mode (1) it returns the term to add
+// after lighting. In the other modes it changes baseColor, which the caller then lights
+// with the same light, and it returns zero.
+vec3 XR_UBER_ApplySourceStylizedSpecular(XRUberCoordinates c,
+    vec3 vertexNormal, vec3 mappedNormal, vec3 mappedNormalDx,
+    vec3 mappedNormalDy, vec3 viewDirection, vec3 viewDx, vec3 viewDy,
+    vec3 lightDirection, vec3 directColor, float lightMap,
+    float attenuation, float visibility, float occlusion, inout vec3 baseColor)
+{
+    vec3 highlight;
+    float mask = XR_UBER_SourceStylizedSpecularTerms(c, vertexNormal, mappedNormal,
+        mappedNormalDx, mappedNormalDy, viewDirection, viewDx, viewDy,
+        lightDirection, directColor, lightMap, attenuation, visibility, occlusion,
+        highlight);
+    int blendMode = UBER_I(_StylizedSpecularBlend);
+    if (blendMode == 1)
+        return max(highlight * mask, vec3(0.0));
+    baseColor = xrSourceStylizedSpecularBase(baseColor, highlight, mask, blendMode);
+    return vec3(0.0);
 }
 
 void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord view,
@@ -121,6 +143,39 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         normalize(cross(geometricY, tangentY)) * surface.tangentHandedness) - N;
     vec3 toCamera = view.cameraPositionAndNear.xyz - surface.worldPosition;
     vec3 V = normalize(toCamera);
+    if (XR_UBER_HasFeature(XR_UBER_FEATURE_EXTENDED_EFFECTS) && UBER_I(_ProceduralMode) == 6)
+    {
+        // The procedural eye is unlit. It replaces the lit result with its own color.
+        mat3 eyeTbn = mat3(surface.tangent * frameFacing, surface.bitangent * frameFacing, geometric);
+        vec3 tangentView = transpose(eyeTbn) * V;
+        float viewLength = length(tangentView);
+        vec3 tangentViewNorm = viewLength > 1.0e-5 ? tangentView / viewLength : vec3(0.0, 0.0, 1.0);
+        // The engine bitangent points along +V, and the eye math uses the source V direction.
+        tangentViewNorm.y = -tangentViewNorm.y;
+        vec3 eyeColor = max(xrEvaluateProceduralEye(
+            c.uv0,
+            UBER_V(_MainTex_ST),
+            tangentViewNorm,
+            UBER_V(_ProceduralColor).rgb,
+            UBER_V(_ProceduralEyeParams0),
+            UBER_V(_ProceduralEyeParams1),
+            UBER_V(_ProceduralEyeParams2),
+            UBER_V(_ProceduralEyeParams3),
+            c.time), vec3(0.0));
+        result.radiance = eyeColor;
+        result.opacity = base.a;
+        result.velocity = surface.motionNdc;
+        result.reactive = (surface.flags & (XR_ADV_SURFACE_REACTIVE | XR_ADV_SURFACE_MASKED_EDGE)) != 0u ? 1.0 : 0.0;
+        result.diagnostics = 0u;
+        result.emittedRadiance = eyeColor;
+        result.albedoOpacity = vec4(eyeColor, base.a);
+        result.normal = N;
+        result.rmse = vec4(1.0, 0.0, 0.0, 0.0);
+        result.roughness = 1.0;
+        result.metallic = 0.0;
+        result.hasMaterialSurface = 1u;
+        return;
+    }
     vec3 Vx = normalize(toCamera - surface.worldPositionDx) - V;
     vec3 Vy = normalize(toCamera - surface.worldPositionDy) - V;
     bool stylized = XR_UBER_HasFeature(XR_UBER_FEATURE_STYLIZED_SHADING) && UBER_I(_LightingMode) != 6;
@@ -403,7 +458,22 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
                 UBER_V(_SourceMochieSettings)));
     }
     ambient += probeSpecular;
-    vec3 color = stylized ? XR_UBER_Toon(c, sourceDiffuseBase, N, Nx, Ny, V, primaryL,
+    float lightMap = UBER_I(_SourceLightMode) != 0
+        ? xrSourceLightMap(dot(N, primaryL), UBER_I(_LightingMapMode),
+            UBER_V(_SourceLightSettings).y, primaryVisibility)
+        : XR_UBER_LightMap(dot(N, primaryL));
+    if (UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMapMode) == 0)
+        lightMap = xrSourceShLightMap(sourceSh, N, sourceRawDirect,
+            dot(N, primaryL), primaryVisibility, UBER_V(_SourceLightSettings).y);
+    // The primary light's stylized specular can change the base color of the primary
+    // response only. Additional lights apply their own highlight to their own response.
+    vec3 primaryDiffuseBase = sourceDiffuseBase;
+    vec3 primaryStylizedSpecular = vec3(0.0);
+    if (stylized && XR_UBER_HasFeature(XR_UBER_FEATURE_SURFACE_EXTENSIONS))
+        primaryStylizedSpecular = XR_UBER_ApplySourceStylizedSpecular(c, geometric,
+            N, Nx, Ny, V, Vx, Vy, primaryL, primaryColor, lightMap,
+            1.0, primaryVisibility, materialAo, primaryDiffuseBase);
+    vec3 color = stylized ? XR_UBER_Toon(c, primaryDiffuseBase, N, Nx, Ny, V, primaryL,
         primaryColor, UBER_I(_SourceLightMode) != 0 ? sourceIndirect : ambient,
         primaryVisibility, shadowMask, true, rawPrimaryColor, sourceRawDirect,
         sourceSh, XR_ADV_DiffuseOcclusion(u_Push.flags, worldAo,
@@ -466,7 +536,15 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
                     xrSourceAdditiveColors(light.colorAndIntensity.rgb * light.colorAndIntensity.w,
                         attenuation, UBER_V(_SourceAdditiveSettings),
                         UBER_V(_SourceAdditiveColor), false, toonRadiance, toonIndirect);
-                color += XR_UBER_Toon(c, sourceDiffuseBase, N, Nx, Ny, V, L, toonRadiance,
+                vec3 lightBaseColor = sourceDiffuseBase;
+                if (XR_UBER_HasFeature(XR_UBER_FEATURE_SURFACE_EXTENSIONS))
+                    color += XR_UBER_ApplySourceStylizedSpecular(c, geometric, N, Nx, Ny,
+                        V, Vx, Vy, L,
+                        light.colorAndIntensity.rgb * light.colorAndIntensity.w,
+                        xrSourceLightMap(dot(N, L), UBER_I(_LightingMapMode),
+                            UBER_V(_SourceLightSettings).y, visibility),
+                        attenuation, visibility, materialAo, lightBaseColor);
+                color += XR_UBER_Toon(c, lightBaseColor, N, Nx, Ny, V, L, toonRadiance,
                     toonIndirect, visibility, shadowMask, false, vec3(0.0),
                     vec3(0.0), sourceSh, vec3(1.0));
             }
@@ -481,14 +559,6 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
                 ? vec3(0.0) : specular * max(directStrength, 0.0));
             directDiffuse += diffuse; directSpecular += specular;
         }
-        if (index != primary && stylized &&
-            XR_UBER_HasFeature(XR_UBER_FEATURE_SURFACE_EXTENSIONS))
-            color += XR_UBER_SourceStylizedSpecular(c, geometric, N, Nx, Ny,
-                V, Vx, Vy, L,
-                light.colorAndIntensity.rgb * light.colorAndIntensity.w,
-                xrSourceLightMap(dot(N, L), UBER_I(_LightingMapMode),
-                    UBER_V(_SourceLightSettings).y, visibility),
-                attenuation, visibility, materialAo);
         if (XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR) &&
             UBER_V(_SourceMochieSecond).w > 0.5 &&
             (UBER_I(_SourceLightMode) == 0 || index != primary))
@@ -543,17 +613,7 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
         UBER_V(_SourceStylizedSpecularSettings).x <= 0.5)
         color += XR_UBER_Specular(N, V, primaryL, surface.tangent * frameFacing,
             primaryColor, specularTint, specularMask);
-    float lightMap = UBER_I(_SourceLightMode) != 0
-        ? xrSourceLightMap(dot(N, primaryL), UBER_I(_LightingMapMode),
-            UBER_V(_SourceLightSettings).y, primaryVisibility)
-        : XR_UBER_LightMap(dot(N, primaryL));
-    if (UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMapMode) == 0)
-        lightMap = xrSourceShLightMap(sourceSh, N, sourceRawDirect,
-            dot(N, primaryL), primaryVisibility, UBER_V(_SourceLightSettings).y);
-    if (stylized && XR_UBER_HasFeature(XR_UBER_FEATURE_SURFACE_EXTENSIONS))
-        color += XR_UBER_SourceStylizedSpecular(c, geometric, N, Nx, Ny,
-            V, Vx, Vy, primaryL, primaryColor, lightMap,
-            1.0, primaryVisibility, materialAo);
+    color += primaryStylizedSpecular;
     color = XR_UBER_AdvancedPbr(c, N, V, view.cameraPositionAndNear.xyz,
         primaryL, surface.tangent * frameFacing,
         surface.bitangent * frameFacing,

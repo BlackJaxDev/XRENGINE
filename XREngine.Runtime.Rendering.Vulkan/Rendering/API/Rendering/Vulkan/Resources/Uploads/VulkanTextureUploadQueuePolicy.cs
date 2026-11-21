@@ -288,7 +288,7 @@ internal sealed partial class VulkanTextureUploadService
         double prepBudgetMilliseconds,
         bool foregroundRequired = false)
     {
-        if (!foregroundRequired && preparedThisDrain >= MaxPreparedUploadsPerDrain)
+        if (!foregroundRequired && preparedThisDrain >= ResolveMaxPreparedUploadsPerDrain())
             return false;
 
         double estimate = EstimatePrepMilliseconds(job);
@@ -308,12 +308,20 @@ internal sealed partial class VulkanTextureUploadService
         double prepBudgetMilliseconds,
         bool foregroundRequired = false)
     {
-        if (!foregroundRequired && preparedThisDrain >= MaxPreparedUploadsPerDrain)
+        if (!foregroundRequired && preparedThisDrain >= ResolveMaxPreparedUploadsPerDrain())
             return true;
 
         return !foregroundRequired && prepBudgetMilliseconds > 0.0
             && TextureRuntimeDiagnostics.ElapsedMilliseconds(drainStart) >= prepBudgetMilliseconds;
     }
+
+    /// <summary>
+    /// The number of completed worker preparations that one drain hands to the transfer queue. A hand-off is a short
+    /// render-thread step, and the preparation worker count bounds the completed results, so a drain takes all of them.
+    /// The frame cost of the uploads is limited later, at transfer completion and publication (the completion lane).
+    /// </summary>
+    private static int ResolveMaxPreparedUploadsPerDrain()
+        => ResolveMaxInFlightPreparationWorkers();
 
     private static double ResolvePrepBudgetMilliseconds()
     {

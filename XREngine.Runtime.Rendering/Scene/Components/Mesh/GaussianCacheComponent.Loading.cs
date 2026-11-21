@@ -48,11 +48,23 @@ public partial class GaussianCacheComponent
     }
 
     /// <summary>
-    /// Loads an asset through the engine asset manager on a worker task. The rendering runtime gets only the
-    /// synchronous load of the asset manager, so the worker task keeps the caller free.
+    /// Loads an asset through the published cooked asset reader when the file is a cooked envelope on disk, or through
+    /// the engine asset manager on a worker task.
     /// </summary>
     private static Task<T?> LoadAssetAsync<T>(string path, CancellationToken cancellationToken) where T : XRAsset, new()
-        => Task.Run(() => RuntimeEngine.Assets.Load<T>(path), cancellationToken);
+        => Task.Run(
+            () =>
+            {
+                if (File.Exists(path))
+                {
+                    byte[] bytes = File.ReadAllBytes(path);
+                    if (CookedAssetEnvelope.IsEnvelope(bytes))
+                        return PublishedCookedAssetReader.LoadAsset<T>(bytes);
+                }
+
+                return RuntimeEngine.Assets.Load<T>(path);
+            },
+            cancellationToken);
 
     /// <summary>Starts the uploads of a new cache. The first upload holds all data that the cache has decoded.</summary>
     private void QueueCacheUpload(GaussianCache? cache)

@@ -12,9 +12,29 @@ namespace XREngine
 {
     public partial class AssetManager
     {
+        /// <summary>
+        /// Lets the application refuse a save. The delegate returns the reason, or null to allow the save.
+        /// All save paths meet this check, on the thread that does the save.
+        /// The property has one owner: a new value replaces the old guard. The editor cutscene preview sets it.
+        /// </summary>
+        public Func<XRAsset, string?>? SaveGuard { get; set; }
+
+        /// <summary>Gets the reason why a save of an asset is refused now.</summary>
+        /// <param name="asset">The asset to save.</param>
+        /// <returns>The reason, or null if the save is allowed.</returns>
+        public string? GetSaveRejection(XRAsset asset)
+            => SaveGuard?.Invoke(asset);
+
+        private void RejectGuardedSave(XRAsset asset)
+        {
+            if (GetSaveRejection(asset) is { } reason)
+                throw new InvalidOperationException(reason);
+        }
+
         private void SaveExistingAssetCore(XRAsset asset)
         {
             RejectRuntimeCatalogWrite();
+            RejectGuardedSave(asset);
             if (asset.FilePath is null)
             {
                 Debug.LogWarning("Cannot save an asset without a file path.");
@@ -39,6 +59,7 @@ namespace XREngine
         private void SaveToDirectoryCore(XRAsset asset, string directory)
         {
             RejectRuntimeCatalogWrite();
+            RejectGuardedSave(asset);
 #if !DEBUG
             try
             {
@@ -108,18 +129,46 @@ namespace XREngine
         public void SaveToImmediate(XRAsset asset, string directory)
             => RunOnJobThreadBlocking(() => { SaveToDirectoryCore(asset, directory); return true; }, JobPriority.Normal, bypassJobThread: true);
 
+        /// <summary>
+        /// Saves the dirty assets. An asset that <see cref="SaveGuard"/> refuses is not saved and stays in
+        /// <see cref="DirtyAssets"/>, and the reason goes to the log.
+        /// </summary>
         public void SaveAll()
         {
-            foreach (var kvp in DirtyAssets)
-                Save(kvp.Value);
-            DirtyAssets.Clear();
+            List<XRAsset> assets = CollectUnguardedDirtyAssets();
+            foreach (XRAsset asset in assets)
+                Save(asset);
+            RemoveFromDirtyAssets(assets);
         }
 
+        /// <summary>
+        /// Saves the dirty assets. An asset that <see cref="SaveGuard"/> refuses is not saved and stays in
+        /// <see cref="DirtyAssets"/>, and the reason goes to the log.
+        /// </summary>
         public async Task SaveAllAsync()
         {
-            var tasks = DirtyAssets.Values.Select(x => SaveAsync(x));
-            await Task.WhenAll(tasks);
-            DirtyAssets.Clear();
+            List<XRAsset> assets = CollectUnguardedDirtyAssets();
+            await Task.WhenAll(assets.Select(x => SaveAsync(x)));
+            RemoveFromDirtyAssets(assets);
+        }
+
+        private List<XRAsset> CollectUnguardedDirtyAssets()
+        {
+            List<XRAsset> assets = [];
+            foreach (var kvp in DirtyAssets)
+            {
+                if (GetSaveRejection(kvp.Value) is { } reason)
+                    Debug.LogWarning($"Save all skipped an asset: {reason}");
+                else
+                    assets.Add(kvp.Value);
+            }
+            return assets;
+        }
+
+        private void RemoveFromDirtyAssets(List<XRAsset> assets)
+        {
+            foreach (XRAsset asset in assets)
+                DirtyAssets.TryRemove(asset.ID, out _);
         }
     }
 }

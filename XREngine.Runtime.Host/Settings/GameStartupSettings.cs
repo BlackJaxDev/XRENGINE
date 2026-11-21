@@ -7,6 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Networking;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
+using YamlDotNet.Serialization;
 
 namespace XREngine
 {
@@ -167,6 +168,7 @@ namespace XREngine
 
         [Category("Networking")]
         [Description("Optional opaque realtime session token supplied by an external control plane.")]
+        [Secret]
         public string? MultiplayerSessionToken
         {
             get => _multiplayerSessionToken;
@@ -175,6 +177,7 @@ namespace XREngine
 
         [Category("Networking")]
         [Description("Stable authenticated account identity supplied by a player-scoped realtime handoff.")]
+        [Secret]
         public string? MultiplayerAccountId
         {
             get => _multiplayerAccountId;
@@ -183,14 +186,22 @@ namespace XREngine
 
         [Category("Networking")]
         [Description("Control-plane reservation carried by a player-scoped realtime handoff.")]
+        [Secret]
         public string? MultiplayerReservationId
         {
             get => _multiplayerReservationId;
             set => SetField(ref _multiplayerReservationId, value);
         }
 
+        /// <summary>
+        /// Opaque player-scoped admission grant. It stays in memory only: the YAML save does not write it, and a publish
+        /// clears it. A launched game gets it from the realtime join handoff (<c>XRE_REALTIME_JOIN_PAYLOAD</c> in the process
+        /// environment) or from a managed client launch configuration. Never log it.
+        /// </summary>
         [Category("Networking")]
-        [Description("Opaque player-scoped admission grant. This must not be persisted or logged.")]
+        [Description("Opaque player-scoped admission grant. It stays in memory only and must not be logged. A launched game gets it from the realtime join handoff.")]
+        [Secret]
+        [YamlIgnore]
         public string? MultiplayerAdmissionSecret
         {
             get => _multiplayerAdmissionSecret;
@@ -198,6 +209,7 @@ namespace XREngine
         }
 
         [Category("Networking")]
+        [Secret]
         public string? MultiplayerClientId
         {
             get => _multiplayerClientId;

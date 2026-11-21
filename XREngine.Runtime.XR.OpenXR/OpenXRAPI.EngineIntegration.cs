@@ -133,7 +133,8 @@ public unsafe partial class OpenXRAPI
                 if (vp is null)
                     continue;
 
-                if (!ReferenceEquals(vp.CameraComponent, worldCameraComponent))
+                // A cutscene claim keeps its camera. The fallback must not replace it.
+                if (!vp.HasCameraClaim && !ReferenceEquals(vp.CameraComponent, worldCameraComponent))
                 {
                     vp.CameraComponent = worldCameraComponent;
                     vp.EnsureViewportBoundToCamera();
@@ -200,7 +201,8 @@ public unsafe partial class OpenXRAPI
         if (sourceCamera is null || sourceWorld is null)
             return false;
 
-        if (sourceViewport is not null && !ReferenceEquals(sourceViewport.CameraComponent, cameraComponent))
+        // A cutscene claim keeps its camera. The fallback must not replace it.
+        if (sourceViewport is not null && !sourceViewport.HasCameraClaim && !ReferenceEquals(sourceViewport.CameraComponent, cameraComponent))
         {
             sourceViewport.CameraComponent = cameraComponent;
             sourceViewport.EnsureViewportBoundToCamera();

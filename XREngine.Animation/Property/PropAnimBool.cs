@@ -32,6 +32,23 @@ namespace XREngine.Animation
             => _getValue?.Invoke(second) ?? false;
         public override object GetValueGeneric(float second)
             => _getValue?.Invoke(second) ?? false;
+
+        /// <inheritdoc />
+        public override void WriteSampleToStore(float second, AnimationValueStore store, in AnimSlot slot)
+            => store.SetBool(slot.TypeIndex, GetValueWithSampleKeyHint(ResolveSampleSecond(second)));
+
+        /// <summary>
+        /// Gets the same value as <see cref="GetValue"/>, and uses the key hint to start the search.
+        /// </summary>
+        internal bool GetValueWithSampleKeyHint(float second)
+        {
+            if (IsBaked)
+                return GetValueBaked(second);
+
+            BoolKeyframe? key = FindSampleKey(second);
+            return key != null ? key.Value : DefaultValue;
+        }
+
         public bool GetValueBaked(float second)
             => GetValueBaked(GetBakedFrameIndex(second));
         public bool GetValueBaked(int frameIndex)

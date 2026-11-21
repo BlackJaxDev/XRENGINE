@@ -20,6 +20,16 @@ internal static class SerializedModelImportProducerAdapter
         ModelImportBackendCapabilities.StableSourceEntityIds
             | ModelImportBackendCapabilities.StructuralDependencyDiscovery);
 
+    // A report also describes a prefab that the importer took from one root object of a .unity scene. Only the local
+    // registry of the report accepts that extension; the shared registry keeps routing scene files to the scene importer.
+    private static readonly ModelImportBackendDescriptor ReportDescriptor = new(
+        StableBackendId,
+        ImplementationVersion,
+        supportedExtensions: [".prefab", ".unity"],
+        priority: 300,
+        ModelImportBackendCapabilities.StableSourceEntityIds
+            | ModelImportBackendCapabilities.StructuralDependencyDiscovery);
+
     public static ModelImportProducerReport CreateReport(
         string sourceFilePath,
         ModelImportOptions importOptions,
@@ -29,7 +39,7 @@ internal static class SerializedModelImportProducerAdapter
         ArgumentNullException.ThrowIfNull(importOptions);
 
         ModelImportBackendRegistry registry = new();
-        using IDisposable registration = registry.Install(Descriptor);
+        using IDisposable registration = registry.Install(ReportDescriptor);
         ModelImportBackendResolution resolution = ModelImportBackendResolver.Resolve(
             sourceFilePath,
             importOptions,

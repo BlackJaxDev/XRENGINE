@@ -122,6 +122,8 @@ internal sealed partial class VulkanTextureUploadService
 
         if (Interlocked.Increment(ref _activePreparationDrainCount) == 1)
             _preparationDrainsIdle.Reset();
+        // A nested drain on the render thread uses the part of the scratch after this index.
+        int inFlightScratchStart = _drainWorkerInFlightScratch.Count;
         try
         {
             if (Volatile.Read(ref _preparationRetirementStarted) != 0)
@@ -149,6 +151,7 @@ internal sealed partial class VulkanTextureUploadService
                         job.Ticket,
                         "Vulkan upload preparation admission closed for renderer retirement.");
                     RequeueUploadPreparation(job);
+                    RequeueDrainWorkerInFlightJobs(inFlightScratchStart);
                     Interlocked.Exchange(ref _prepDrainScheduled, 0);
                     return true;
                 }
@@ -176,6 +179,7 @@ internal sealed partial class VulkanTextureUploadService
                 if (!CanPrepareJobThisFrame(job, preparedThisDrain, drainStart, prepBudgetMilliseconds, foregroundRequired))
                 {
                     RequeueUploadPreparation(job);
+                    RequeueDrainWorkerInFlightJobs(inFlightScratchStart);
                     RecordState(
                         job.Request,
                         VulkanTextureUploadGenerationState.PrepDeferred,
@@ -190,6 +194,7 @@ internal sealed partial class VulkanTextureUploadService
                         out backgroundSlice))
                 {
                     RequeueUploadPreparation(job);
+                    RequeueDrainWorkerInFlightJobs(inFlightScratchStart);
                     return false;
                 }
 
@@ -210,9 +215,18 @@ internal sealed partial class VulkanTextureUploadService
                 {
                     backgroundSlice.Dispose();
                 }
+                if (prepResult == VulkanImportedTextureUploadPrepResult.WorkerInFlight)
+                {
+                    // The worker owns the job until a later drain observes its result. Park the job, so this
+                    // drain can start or harvest other workers, and requeue it when the drain ends.
+                    _drainWorkerInFlightScratch.Add(job);
+                    continue;
+                }
+
                 if (prepResult == VulkanImportedTextureUploadPrepResult.Deferred)
                 {
                     RequeueUploadPreparation(job);
+                    RequeueDrainWorkerInFlightJobs(inFlightScratchStart);
                     RecordState(
                         job.Request,
                         VulkanTextureUploadGenerationState.PrepDeferred,
@@ -224,16 +238,36 @@ internal sealed partial class VulkanTextureUploadService
                     preparedThisDrain++;
 
                 if (ShouldYieldAfterPreparation(preparedThisDrain, drainStart, prepBudgetMilliseconds, foregroundRequired))
+                {
+                    RequeueDrainWorkerInFlightJobs(inFlightScratchStart);
                     return HasQueuedPrepWorkOrCompleteDrain(requiredManifest);
+                }
             }
 
+            // Requeue parked jobs before the completion check, so a drain never completes while their workers run.
+            RequeueDrainWorkerInFlightJobs(inFlightScratchStart);
             return HasQueuedPrepWorkOrCompleteDrain(requiredManifest);
         }
         finally
         {
+            RequeueDrainWorkerInFlightJobs(inFlightScratchStart);
             if (Interlocked.Decrement(ref _activePreparationDrainCount) == 0)
                 _preparationDrainsIdle.Set();
         }
+    }
+
+    /// <summary>
+    /// Returns the jobs that this drain parked while their workers run to the preparation queue. It allocates nothing.
+    /// </summary>
+    private void RequeueDrainWorkerInFlightJobs(int scratchStart)
+    {
+        List<VulkanImportedTextureUploadJob> scratch = _drainWorkerInFlightScratch;
+        if (scratch.Count <= scratchStart)
+            return;
+
+        for (int index = scratchStart; index < scratch.Count; index++)
+            RequeueUploadPreparation(scratch[index]);
+        scratch.RemoveRange(scratchStart, scratch.Count - scratchStart);
     }
 
     private VulkanImportedTextureUploadPrepResult TryPrepareAndEnqueueImportedTextureUpload(
@@ -423,7 +457,7 @@ internal sealed partial class VulkanTextureUploadService
         VulkanTextureUploadManifest? requiredManifest)
     {
         if (!TryObserveCompletedPreparationWorker(job) && job.WorkerPrepTask is not null)
-            return VulkanImportedTextureUploadPrepResult.Deferred;
+            return VulkanImportedTextureUploadPrepResult.WorkerInFlight;
 
         if (job.WorkerPrepResult is null)
         {
@@ -442,7 +476,7 @@ internal sealed partial class VulkanTextureUploadService
 
             if (!TryStartPreparationWorker(context, job, preparation))
                 return VulkanImportedTextureUploadPrepResult.Deferred;
-            return VulkanImportedTextureUploadPrepResult.Deferred;
+            return VulkanImportedTextureUploadPrepResult.WorkerInFlight;
         }
 
         VulkanImportedTextureUploadWorkerResult workerResult = job.WorkerPrepResult;
@@ -548,7 +582,7 @@ internal sealed partial class VulkanTextureUploadService
     {
         VulkanImportedTexturePendingUpload upload = job.PendingUpload!;
         if (!TryObserveCompletedPreparationWorker(job) && job.WorkerPrepTask is not null)
-            return VulkanImportedTextureUploadPrepResult.Deferred;
+            return VulkanImportedTextureUploadPrepResult.WorkerInFlight;
 
         if (job.WorkerPrepResult is null)
         {
@@ -562,7 +596,7 @@ internal sealed partial class VulkanTextureUploadService
 
             if (!TryStartPendingChunkWorker(context, job, upload))
                 return VulkanImportedTextureUploadPrepResult.Deferred;
-            return VulkanImportedTextureUploadPrepResult.Deferred;
+            return VulkanImportedTextureUploadPrepResult.WorkerInFlight;
         }
 
         VulkanImportedTextureUploadWorkerResult result = job.WorkerPrepResult;
@@ -600,23 +634,34 @@ internal sealed partial class VulkanTextureUploadService
 
     private void ObserveCompletedPreparationWorkers()
     {
-        VulkanImportedTextureUploadJob? first = null;
-        VulkanImportedTextureUploadJob? second = null;
+        // Copy the in-flight jobs under the lock, then observe them without it. The scratch has one entry for each
+        // staging buffer, which bounds the worker count; a job past it is observed by the next drain.
+        VulkanImportedTextureUploadJob?[] scratch = _observeWorkerScratch;
+        int count;
         using (VulkanFrameLockScope.Enter(
                    _prepQueueSync,
                    EVulkanFrameWaitReason.UploadLock))
         {
-            if (_inFlightPreparationWorkers.Count > 0)
-                first = _inFlightPreparationWorkers[0];
-            if (_inFlightPreparationWorkers.Count > 1)
-                second = _inFlightPreparationWorkers[1];
+            count = Math.Min(_inFlightPreparationWorkers.Count, scratch.Length);
+            for (int index = 0; index < count; index++)
+                scratch[index] = _inFlightPreparationWorkers[index];
         }
 
-        if (first is not null)
-            _ = TryObserveCompletedPreparationWorker(first);
-        if (second is not null)
-            _ = TryObserveCompletedPreparationWorker(second);
+        for (int index = 0; index < count; index++)
+        {
+            VulkanImportedTextureUploadJob? job = scratch[index];
+            scratch[index] = null;
+            if (job is not null)
+                _ = TryObserveCompletedPreparationWorker(job);
+        }
     }
+
+    /// <summary>
+    /// The number of preparation workers that can run at the same time. It follows the CPU capacity of the machine and
+    /// is not more than the background staging buffers, because each worker holds one buffer until its chunk completes.
+    /// </summary>
+    private static int ResolveMaxInFlightPreparationWorkers()
+        => TextureStreamingCapacity.ResolveUploadPreparationWorkers(VulkanStagingManager.ImportedBackgroundBufferCapacity);
 
     private bool TryObserveCompletedPreparationWorker(VulkanImportedTextureUploadJob job)
     {
@@ -680,7 +725,7 @@ internal sealed partial class VulkanTextureUploadService
                    EVulkanFrameWaitReason.UploadLock))
         {
             if (Volatile.Read(ref _preparationRetirementStarted) != 0 ||
-                _inFlightPreparationWorkers.Count >= MaxInFlightPreparationWorkers)
+                _inFlightPreparationWorkers.Count >= ResolveMaxInFlightPreparationWorkers())
             {
                 return false;
             }
@@ -739,7 +784,7 @@ internal sealed partial class VulkanTextureUploadService
                    EVulkanFrameWaitReason.UploadLock))
         {
             if (Volatile.Read(ref _preparationRetirementStarted) != 0 ||
-                _inFlightPreparationWorkers.Count >= MaxInFlightPreparationWorkers)
+                _inFlightPreparationWorkers.Count >= ResolveMaxInFlightPreparationWorkers())
             {
                 return false;
             }

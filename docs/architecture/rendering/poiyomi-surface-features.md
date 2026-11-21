@@ -59,12 +59,17 @@ specialized feature paths. Supported source style 0 second rim changes the base
 color before lighting and adds its emission once. Other active source second
 rim styles require a reported conversion failure.
 
-The source UnityChan stylized specular path uses two high-color lobes. The
+The source two-lobe stylized specular path uses two high-color lobes. The
 importer keeps each lobe size and strength, normal-map blend, tint, color map,
 mask channel, mask level, and shadow controls. The forward and native paths
-use the source lobe curve and add the result to the lit color. A source
-material with another reflection mode, high-color blend mode, themed tint,
-non-UV0 high-color map, or map pan fails conversion. Engine-authored specular
+use the source lobe curve. `_StylizedSpecularBlend` keeps the source color
+blend mode. Mode 1 adds the highlight to the lit color. Modes 0 (replace), 2
+(screen), and 3 (multiply) change the base color before lighting, for each light
+separately: the primary light changes the base color of the primary response,
+and each additional light changes the base color of its own response. A source
+material with another reflection mode, non-UV0 high-color map, or map pan fails
+conversion. Then the importer also sets `_SpecularStrength` to 0, so the generic
+specular does not replace the dropped highlight. Engine-authored specular
 materials continue to use the engine specular path.
 
 Source cubemap masks blend the selected global-mask channel with the local mask
@@ -93,6 +98,12 @@ decal contract. The native material layout is `NativeUberOpaqueV2` or
 source materials for reimport. Source decal alpha intensity affects a separate
 per-layer global-mask output after the alpha override in Unity. That output is
 not implemented here; alpha intensity does not change the source alpha override.
+
+Each decal slot also has a side offset (`_DecalSideOffset`, `_DecalSideOffset1`
+to `_DecalSideOffset3`). Its x and y values move the left and right edges of the
+decal rectangle, and its z and w values move the bottom and top edges. The
+forward Uber, native Uber, and splat paths move the decal center and change its
+span by these values before they sample the decal.
 
 Texture arrays remain native `sampler2DArray` / `XRTexture2DArray` resources.
 Unity array metadata preserves layer order and sampling settings. When the

@@ -249,6 +249,25 @@ namespace XREngine.Audio
         public int GetSampleOffset(AudioSourceHandle source)
             => source.IsValid ? _mixer.GetSampleOffset(source.Id) : 0;
 
+        /// <inheritdoc />
+        /// <remarks>
+        /// The latency is the desired latency of the <see cref="WaveOutEvent"/> output. It is an estimate,
+        /// because the mixer cannot see the device position. With no open output, the latency is zero.
+        /// </remarks>
+        public bool TryGetPlaybackClock(AudioSourceHandle source, out long sampleFrame, out long latencyNanoseconds)
+        {
+            latencyNanoseconds = 0;
+            if (!source.IsValid || !_mixer.TryGetPlaybackFrame(source.Id, out sampleFrame))
+            {
+                sampleFrame = 0;
+                return false;
+            }
+
+            if (_output is WaveOutEvent waveOut)
+                latencyNanoseconds = waveOut.DesiredLatency * 1_000_000L;
+            return true;
+        }
+
         // --- IAudioTransport: Capture ---
 
         /// <inheritdoc />

@@ -3,6 +3,7 @@ using XREngine.Data.Geometry;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_PushRenderArea : ViewportStateRenderCommand<VPRC_PopRenderArea>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

@@ -54,6 +54,9 @@ public static class ShadowCasterVariantFactory
             TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
             ShadowBindingSourceMaterial = sourceMaterial,
+            // An Uber shadow variant rebuilds its fragment shader from the canonical Uber source with its own
+            // feature state, so it needs the feature state of its source (for example alpha masks and UDIM discard).
+            UberAuthoredState = sourceMaterial.UberAuthoredState,
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
         };
         return variant;
@@ -125,6 +128,8 @@ public static class ShadowCasterVariantFactory
             TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
             ShadowBindingSourceMaterial = sourceMaterial,
+            // Keep the Uber feature state when the variant uses the Uber fragment shader of its source.
+            UberAuthoredState = sourceMaterial.UberAuthoredState,
             PointShadowMaterialKind = kind,
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
         };

@@ -506,6 +506,46 @@ identities, and advanced visibility-family reservations live on each
 `XRRenderPipelineInstance`. This keeps one shared source asset valid across
 multiple physical outputs.
 
+Each camera with no authored source creates its own default asset. Without a
+camera claim, a viewport that changes between two such cameras replaces its
+pipeline, its resources, and its temporal state. This is intended.
+
+While `XRViewport.ClaimCamera` holds a claim, a claimed camera with no authored
+source uses the current pipeline of the viewport if its own asset has the same
+type. A camera cut then keeps the pipeline revision and the resource generation.
+These rules apply:
+
+- The camera keeps its own default asset. A claim does not assign, destroy, or
+  change a pipeline of any camera. The own asset can exist unused.
+- An authored source always wins. A cut to a camera with a different authored
+  asset replaces the pipeline. Share one asset to keep the cut cheap.
+- When the last claim ends, the viewport synchronizes with the camera that
+  returns. If that camera owns the kept pipeline, no rebuild occurs. If not, for
+  example if a shot camera supplied an authored asset or a write during the claim
+  stored another camera, one normal pipeline transition occurs.
+- The viewport records the kept pipeline on the claimed camera. The camera uses
+  its default post-process values for that exact asset if it has no explicit
+  entry for it, so the kept pipeline ID does not enter the saved state. The record
+  stays after a cut for the last frame of the outgoing camera. The viewport clears
+  it when its last claim ends, and an authored source clears it. Without a claim,
+  the record is null and a pipeline other than the camera default uses its
+  explicit per-pipeline entry, also when it has the same type.
+- While the record is set, a post-process query with no pipeline from outside
+  the render (for example on the update thread) also uses the kept pipeline, so
+  the default state does not change its binding in each frame. When the default
+  state binds to another pipeline of the same type, each stage keeps its backing
+  object, so runtime state such as the automatic exposure history and a pending
+  exposure reset stays. This rule checks the backing type only, so it also
+  applies to an unclaimed camera whose default state binds to another pipeline
+  with the same backing type, and to a schema rebuild.
+- An exposure reset of a camera with no color grading state waits and is applied
+  to the first state that the camera creates or binds.
+- When the last claim ends, the viewport removes the exposure resets that no
+  frame used from the claimed cameras, and resets the exposure of the returning
+  camera. The release is a cut back to gameplay.
+- Settings on the default asset of the claimed camera do not apply during the
+  claim, because that asset does not render. Use an authored source for them.
+
 The application registers the default-source policy with the central runtime
 pipeline factory. Every request carries an explicit output purpose:
 

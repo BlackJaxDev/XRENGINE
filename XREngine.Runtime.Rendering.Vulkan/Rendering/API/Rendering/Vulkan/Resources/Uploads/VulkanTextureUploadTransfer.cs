@@ -40,9 +40,11 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         long drainStart = Stopwatch.GetTimestamp();
+        // The completion lane sees each frame of the drain, also the frames in which no batch completes.
+        TextureStreamingCapacity.VulkanCompletion.Touch();
         DrainTerminalFailedTransferRetirement(context);
 
-        // Retire every finished batch first, within the per-frame completion budget.
+        // Retire every finished batch first, while the completion lane admits it in this frame.
         // Completion releases staging leases and queues the next chunk of each texture,
         // so the submission below can send those chunks in the same step. Submitting
         // first and completing one batch per later step left the transfer queue idle
@@ -67,34 +69,52 @@ internal sealed partial class VulkanTextureUploadService
                 break;
 
             Volatile.Write(ref s_lastTransferWaitMilliseconds, TextureRuntimeDiagnostics.ElapsedMilliseconds(submitted.SubmitTimestamp));
-            long completeStart = Stopwatch.GetTimestamp();
-            bool batchCompleted;
-            string? completeFailure;
-            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.CompleteBatch"))
-                batchCompleted = context.Commands.CompleteSubmittedImportedTextureUploadBatch(submitted, out completeFailure);
-            if (!batchCompleted)
+            TextureStreamingWorkTimer completionTimer = TextureStreamingWorkTimer.Start();
+            bool removed;
+            try
             {
-                string reason = completeFailure ??
-                    "Required texture transfer upload completion failed.";
-                if (submitted.TryMarkTerminalFailure(reason))
+                long completeStart = Stopwatch.GetTimestamp();
+                bool batchCompleted;
+                string? completeFailure;
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.CompleteBatch"))
+                    batchCompleted = context.Commands.CompleteSubmittedImportedTextureUploadBatch(submitted, out completeFailure);
+                if (!batchCompleted)
                 {
-                    for (int child = 0; child < submitted.Uploads.Length; child++)
-                        ReportSubmittedUploadTerminalFailure(
-                            submitted.Uploads[child], reason, requiredManifest);
+                    string reason = completeFailure ??
+                        "Required texture transfer upload completion failed.";
+                    if (submitted.TryMarkTerminalFailure(reason))
+                    {
+                        for (int child = 0; child < submitted.Uploads.Length; child++)
+                            ReportSubmittedUploadTerminalFailure(
+                                submitted.Uploads[child], reason, requiredManifest);
+                    }
+                    continue;
                 }
-                continue;
+                removed = RemoveSubmittedTransfer(submitted);
+                if (removed)
+                {
+                    long childrenStart = Stopwatch.GetTimestamp();
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.CompleteChildren"))
+                    {
+                        for (int child = 0; child < submitted.Uploads.Length; child++)
+                            CompleteSubmittedBatchChild(context, submitted.Uploads[child], requiredManifest);
+                    }
+                    LogSlowTransferDrain(drainStart, drainStart, completeStart, childrenStart, submitted.Uploads.Length);
+                }
             }
-            if (!RemoveSubmittedTransfer(submitted))
-                break;
-            long childrenStart = Stopwatch.GetTimestamp();
-            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Transfer.CompleteChildren"))
+            finally
             {
-                for (int child = 0; child < submitted.Uploads.Length; child++)
-                    CompleteSubmittedBatchChild(context, submitted.Uploads[child], requiredManifest);
+                // The completion lane uses this render-thread cost to set the chunk count of later frames. A foreground
+                // barrier completes outside the lane limit, so its cost is not a background streaming sample.
+                if (requiredManifest is null)
+                    TextureStreamingCapacity.VulkanCompletion.RecordWork(completionTimer);
             }
-            LogSlowTransferDrain(drainStart, drainStart, completeStart, childrenStart, submitted.Uploads.Length);
+
+            if (!removed)
+                break;
         }
 
+        // A gather deferral queued a continuation that owns the next tick, so this coroutine ends.
         long submitStart = Stopwatch.GetTimestamp();
         bool submittedReadyBatch;
         bool gatherDeferred;
@@ -482,7 +502,8 @@ internal sealed partial class VulkanTextureUploadService
                 manifest.RequiresExactDescriptorPublication, out string? failure,
                 out EVulkanPresentNowFailureDisposition failureDisposition);
         double publishMilliseconds = Stopwatch.GetElapsedTime(publishStart).TotalMilliseconds;
-        if (publishMilliseconds >= SlowTransferDrainLogMilliseconds || upload.ResidentData.GenerateMipChainOnGpu)
+        // Log only a slow publication, so the fast path builds no string.
+        if (publishMilliseconds >= SlowTransferDrainLogMilliseconds)
         {
             Debug.WriteAuxiliaryLog(TextureUploadTimingLogFile,
                 $"[VkTextureUpload.Publish] texture='{upload.Request.TextureName}' publish={publishMilliseconds:F2} ms " +

@@ -85,9 +85,11 @@ namespace XREngine.Rendering
                     return true;
 
                 string? fallbackSourcePath = originalSourcePath ?? OriginalPath;
-                if (!string.IsNullOrWhiteSpace(fallbackSourcePath))
+                // A cook can write OriginalPath as a portable reference. Resolve it before any file system call.
+                if (!string.IsNullOrWhiteSpace(fallbackSourcePath)
+                    && AssetReferencePath.TryResolveFileSystemPath(fallbackSourcePath, out string? resolvedFallbackPath))
                 {
-                    fallbackSourcePath = Path.GetFullPath(fallbackSourcePath);
+                    fallbackSourcePath = Path.GetFullPath(resolvedFallbackPath);
                     if (!string.Equals(fallbackSourcePath, FilePath, StringComparison.OrdinalIgnoreCase) &&
                         File.Exists(fallbackSourcePath))
                     {

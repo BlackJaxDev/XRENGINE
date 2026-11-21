@@ -1625,8 +1625,15 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     /// <summary>
     /// Adds the material-derived Advanced routing bits to the draw flags of one submission:
-    /// parallax fragment depth, and the surface decal lane when the backend supports it.
+    /// parallax fragment depth, native Uber coverage discard, and the surface decal lane when the
+    /// backend supports it.
     /// </summary>
+    /// <remarks>
+    /// A native Uber material in an opaque pass can still remove triangles or fragments, for example
+    /// with vertex-mode UV tile discard. Its material row uses the masked layout, so the draw must also
+    /// use the masked visibility raster. The opaque raster does not run the coverage step, and the
+    /// discarded geometry would stay visible.
+    /// </remarks>
     private static uint ResolveSubmissionDrawFlags(in DrawMetadata command, XRMaterial? material)
     {
         uint flags = command.Flags;
@@ -1634,6 +1641,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             return flags | (uint)GPUIndirectRenderFlags.SurfaceDecal;
         if (RequiresFragmentDepth(material))
             flags |= (uint)GPUIndirectRenderFlags.FragmentDepth;
+        if (material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
+            command.StateClassID != (uint)EGpuMaterialStateClass.AlphaTested &&
+            NativeUberMaterialSourceEncoder.RequiresCoverageDiscard(material))
+        {
+            flags |= (uint)GPUIndirectRenderFlags.CoverageDiscard;
+        }
         return flags;
     }
 

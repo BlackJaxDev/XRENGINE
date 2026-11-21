@@ -6,6 +6,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
     public sealed class VPRC_UpsampleChain : ViewportRenderCommand
     {
         private const string UpsampleShaderCode = """
@@ -46,6 +47,7 @@ void main()
         private int _cachedLowestMip = -1;
         private bool _cachedAdditiveBlend;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string TextureName { get; set; } = string.Empty;
         public int HighestOutputMipLevel { get; set; } = 0;
         public int LowestSourceMipLevel { get; set; } = -1;

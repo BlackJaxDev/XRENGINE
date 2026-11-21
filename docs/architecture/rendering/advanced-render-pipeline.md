@@ -1470,6 +1470,13 @@ directional-shadow fragments use the same rejection predicate. No geometry
 shader or non-finite clip position is required. Pixel-mode discard continues to
 use interpolated UVs.
 
+Only the masked visibility raster runs this coverage step. A native Uber
+material in an opaque pass that needs coverage discard (UV tile discard, face
+discard, or dissolve) gets the masked material row, and its submission gets
+`GPUIndirectRenderFlags.CoverageDiscard`. `AdvancedPreparationExtractor` then
+gives the draw masked coverage, so it is rasterized by the masked program. Without
+the flag, the opaque raster draws the triangles that the material discards.
+
 `AdvancedPackedVertexCodec` classifies UV0 through UV3 before half precision
 packing. `AdvancedDeformedVertex.Reserved2` stores four five-bit tile IDs and a
 validity bit at bit 31. `Reserved3` stores the same classification after applying

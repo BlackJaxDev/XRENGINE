@@ -94,19 +94,23 @@ public static partial class SerializedMaterialImporter
         SourceResolvedAsset shaderAsset = resolver.Resolve(document.Shader);
         SourceToonShaderMatchResult sourceToonMatch = MatchSourceToonMaterial(document, resolver, out string? shaderPath);
         diagnostics.AddRange(sourceToonMatch.Diagnostics);
-        bool requiresSourceBasicOutline = RequiresSourceBasicOutline(document, sourceToonMatch);
+        // A locked shader reads animated renamed properties, so conversion uses their values.
+        SerializedMaterialDocument effectiveDocument = sourceToonMatch.IsLocked
+            ? ApplyLockedRenamedPropertyValues(document)
+            : document;
+        bool requiresSourceBasicOutline = RequiresSourceBasicOutline(effectiveDocument, sourceToonMatch);
         SourceOrderedSurfacePlan orderedSurface = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
-            ? ClassifySourceOrderedSurface(document, shaderPath)
+            ? ClassifySourceOrderedSurface(effectiveDocument, shaderPath)
             : default;
         SerializedMaterialDocument conversionDocument;
         if (sourceToonMatch.IsDowngradeSource)
             conversionDocument = SourceToonFeatureLossNormalizer.Normalize(
-                document, diagnostics, shaderPath, sourceToonMatch.IsLocked,
+                effectiveDocument, diagnostics, shaderPath, sourceToonMatch.IsLocked,
                 preserveCertifiedGrabPass: orderedSurface.HasSceneColor);
         else if (sourceToonMatch.IsAccepted && sourceToonMatch.Version == SourceToon10Catalog.Version)
-            conversionDocument = SourceToon10Catalog.CreateConversionDocument(document, sourceToonMatch);
+            conversionDocument = SourceToon10Catalog.CreateConversionDocument(effectiveDocument, sourceToonMatch);
         else
-            conversionDocument = document;
+            conversionDocument = effectiveDocument;
         SourceToonMaterialDescriptor? sourceToonDescriptor = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
             ? SourceToonMaterialDescriptorFactory.Create(conversionDocument, resolver, sourceToonMatch, diagnostics)
             : null;
@@ -118,8 +122,13 @@ public static partial class SerializedMaterialImporter
         bool isSourceToon = sourceToonMatch.IsAccepted;
         bool isSourceToonFeatureLoss = sourceToonMatch.IsDowngradeSource;
         bool isLilToon = false;
+        bool isProceduralEye = false;
         if (!isSourceToonConversion && !sourceToonMatch.IsSourceToonFamily)
+        {
             isLilToon = IsLilToonMaterial(document, resolver, out shaderPath);
+            if (!isLilToon)
+                isProceduralEye = IsProceduralEyeMaterial(document, resolver, out shaderPath);
+        }
 
         try
         {
@@ -135,11 +144,20 @@ public static partial class SerializedMaterialImporter
                     orderedSurface)
                 : isLilToon
                     ? ConvertLilToonToUberMaterial(document, resolver, warnings, shaderPath)
-                    : ConvertGenericSerializedMaterial(
-                        document, resolver, warnings, reportUnconvertedProjectShader: true);
+                    : isProceduralEye
+                        ? ConvertProceduralEyeToUberMaterial(document, resolver, warnings)
+                        : ConvertGenericSerializedMaterial(
+                            document, resolver, warnings, reportUnconvertedProjectShader: true);
 
             if (requiresSourceBasicOutline)
-                ApplySourceBasicOutline(material, document, sourceToonMatch);
+            {
+                BindOptionalSourceFeature(
+                    "outline",
+                    () => ApplySourceBasicOutline(material, effectiveDocument, sourceToonMatch),
+                    null,
+                    warnings,
+                    diagnostics);
+            }
 
             material.OriginalPath = normalizedPath;
             EMaterialConversionOutcome outcome = isSourceToonFeatureLoss
@@ -180,14 +198,16 @@ public static partial class SerializedMaterialImporter
                 ConversionReport = conversionReport,
             };
         }
-        catch (Exception ex) when ((isSourceToonConversion || isLilToon || requiresSourceBasicOutline) &&
+        catch (Exception ex) when ((isSourceToonConversion || isLilToon || isProceduralEye || requiresSourceBasicOutline) &&
             ex is not OperationCanceledException)
         {
             // A failed shader-specific conversion must not remove the material from the import.
             // The generic importer keeps the main texture and color, and the report records the failure.
             string shaderFamily = isLilToon
                 ? "lilToon"
-                : isSourceToonFeatureLoss ? "Poiyomi Pro downgrade" : "Poiyomi Toon";
+                : isProceduralEye
+                    ? "procedural eye"
+                    : isSourceToonFeatureLoss ? "Poiyomi Pro downgrade" : "Poiyomi Toon";
             warnings.Add($"{shaderFamily} material conversion failed for '{document.Name}'. Falling back to generic Unity material import. {ex.Message}");
             Debug.LogWarning(warnings[^1]);
             try
@@ -1063,11 +1083,16 @@ public static partial class SerializedMaterialImporter
         // (and a needless sampler/variant) changes no authored behavior.
         material.SetUberFeatureEnabled("alpha-masks", alphaSource is not null);
 
+        // "_MainColorAdjustToggle" is the color adjust section toggle (keyword COLOR_GRADING_HDR), which
+        // controls hue, saturation, and brightness. "_ColorGradingToggle" only enables the grading
+        // subsection, so a material can keep it at 0 while its saturation and brightness apply.
         material.SetUberFeatureEnabled("color-adjustments",
             SourceToonFeatureStateResolver.IsEnabled(
                 document,
                 colorAdjustSource is not null || document.TryGetPositive("_MainHueShiftToggle"),
-                ["_ColorGradingToggle"],
+                document.HasAnyProperty("_MainColorAdjustToggle")
+                    ? ["_MainColorAdjustToggle"]
+                    : ["_ColorGradingToggle"],
                 ["COLOR_GRADING_HDR"]));
 
         material.SetUberFeatureEnabled("material-ao",

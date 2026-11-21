@@ -74,10 +74,12 @@ public static class NativeUberMaterialSchema
         names.Add("_SourceRim2Tint");
         names.AddRange(new[] { "_SourceStylizedSpecularSettings", "_SourceStylizedSpecularLayers",
             "_SourceStylizedSpecularMask", "_SourceStylizedSpecularOcclusion",
-            "_SourceStylizedSpecularTint", "_SourceHighColorTex_ST",
+            "_SourceStylizedSpecularTint", "_StylizedSpecularBlend", "_SourceHighColorTex_ST",
             "_SourceHighColorMask_ST" });
         names.Add("_SourceUdimFlipV");
         names.Add("_SourceAlphaClip");
+        names.AddRange(new[] { "_ProceduralEyeParams0", "_ProceduralEyeParams1",
+            "_ProceduralEyeParams2", "_ProceduralEyeParams3" });
         names.Add("_SourceLayeredEmission");
         names.Add("_SourceGlitterVersion");
         names.Add("_GlitterDistanceLOD");
@@ -178,6 +180,7 @@ public static class NativeUberMaterialSchema
             Add("_DecalColor" + suffix);
             Add("_DecalPosition" + suffix);
             Add("_DecalScale" + suffix);
+            Add("_DecalSideOffset" + suffix);
             Add("_DecalTexturePan" + suffix);
             Add("_DecalRotation" + suffix);
             Add("_DecalRotationSpeed" + suffix);

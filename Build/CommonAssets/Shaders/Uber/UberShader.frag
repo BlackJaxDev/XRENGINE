@@ -472,14 +472,7 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
     adjustUV = panUV(adjustUV, _MainColorAdjustTexturePan, u_Time);
     vec4 adjustMask = texture(_MainColorAdjustTexture, adjustUV);
     
-    // Saturation adjustment
-    float lum = luminance(color);
-    color = mix(vec3(lum), color, 1.0 + _Saturation * adjustMask.b);
-    
-    // Brightness adjustment
-    color += _MainBrightness * adjustMask.g;
-    
-    // Hue shift
+    // Hue shift runs first, then saturation, then brightness.
     if (_MainHueShiftToggle > 0.5) {
         float hueShiftAmount = _MainHueShift + _MainHueShiftSpeed * u_Time;
         hueShiftAmount *= adjustMask.r;
@@ -493,6 +486,13 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
         
         color = mix(color, shiftedColor, _MainHueShiftReplace);
     }
+    
+    // Saturation adjustment
+    float lum = luminance(color);
+    color = mix(vec3(lum), color, 1.0 + _Saturation * adjustMask.b);
+    
+    // Brightness scales the color by (1 + brightness) and clamps it to 0..1.
+    color = clamp(color * (1.0 + _MainBrightness * adjustMask.g), 0.0, 1.0);
     
     return color;
 #endif
@@ -1478,12 +1478,13 @@ vec3 calculateSourceLocalDiffuse(ToonMesh mesh, vec3 baseColor, vec3 normal,
 
 // Both responses use the same receiver and light order. Keep one shadow tree.
 #ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
-vec3 calculateSourceStylizedSpecular(ToonMesh mesh, vec3 lightDirection,
+float calculateSourceStylizedSpecularTerms(ToonMesh mesh, vec3 lightDirection,
     vec3 directColor, float lightMap, float attenuation,
-    float shadowVisibility, float occlusion)
+    float shadowVisibility, float occlusion, out vec3 highlight)
 {
+    highlight = vec3(0.0);
     if (_SourceStylizedSpecularSettings.x <= 0.5)
-        return vec3(0.0);
+        return 0.0;
     vec2 highColorUv = mesh.uv[0] * _SourceHighColorTex_ST.xy +
         _SourceHighColorTex_ST.zw;
     vec2 highMaskUv = mesh.uv[0] * _SourceHighColorMask_ST.xy +
@@ -1492,7 +1493,7 @@ vec3 calculateSourceStylizedSpecular(ToonMesh mesh, vec3 lightDirection,
     vec3 specularNormal = normalize(mix(mesh.vertexNormal, mesh.worldNormal,
         _SourceStylizedSpecularSettings.z));
     float specularArea = 0.5 * dot(specularNormal, halfDirection) + 0.5;
-    return xrSourceStylizedSpecular(mesh.vertexNormal, mesh.worldNormal,
+    return xrSourceStylizedSpecularTerms(mesh.vertexNormal, mesh.worldNormal,
         mesh.viewDir, lightDirection, directColor, lightMap, attenuation,
         shadowVisibility, occlusion,
         texture(_SourceHighColorMask, highMaskUv)[clamp(
@@ -1500,7 +1501,24 @@ vec3 calculateSourceStylizedSpecular(ToonMesh mesh, vec3 lightDirection,
         fwidth(specularArea), texture(_SourceHighColorTex, highColorUv).rgb,
         _SourceStylizedSpecularTint, _SourceStylizedSpecularSettings,
         _SourceStylizedSpecularLayers, _SourceStylizedSpecularMask,
-        _SourceStylizedSpecularOcclusion);
+        _SourceStylizedSpecularOcclusion, highlight);
+}
+
+// Applies the stylized specular of one light. In add mode (1) it returns the term to add
+// after lighting. In the other modes it changes baseColor, which the caller then lights
+// with the same light, and it returns zero.
+vec3 applySourceStylizedSpecular(ToonMesh mesh, vec3 lightDirection,
+    vec3 directColor, float lightMap, float attenuation,
+    float shadowVisibility, float occlusion, inout vec3 baseColor)
+{
+    vec3 highlight;
+    float mask = calculateSourceStylizedSpecularTerms(mesh, lightDirection,
+        directColor, lightMap, attenuation, shadowVisibility, occlusion, highlight);
+    int blendMode = _StylizedSpecularBlend;
+    if (blendMode == 1)
+        return max(highlight * mask, vec3(0.0));
+    baseColor = xrSourceStylizedSpecularBase(baseColor, highlight, mask, blendMode);
+    return vec3(0.0);
 }
 #endif
 
@@ -1576,20 +1594,21 @@ vec3 calculateUberLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor,
                 float attenuation = light.isPoint ? pointAttenuation
                     : spotEffect * spotAttn * distanceAttenuation * light.brightness;
                 vec3 rawRadiance = light.color * light.diffuseIntensity;
+                vec3 lightBaseColor = baseColor;
+#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+                totalLight += applySourceStylizedSpecular(mesh, direction,
+                    rawRadiance, xrSourceLightMap(dot(normal, direction),
+                        _LightingMapMode, _SourceLightSettings.y, shadow),
+                    attenuation, shadow, sampleMaterialAmbientOcclusion(mesh), lightBaseColor);
+#endif
                 if (_SourceLightMode != 0) {
-                    totalLight += calculateSourceLocalDiffuse(mesh, baseColor, normal,
+                    totalLight += calculateSourceLocalDiffuse(mesh, lightBaseColor, normal,
                         direction, rawRadiance, attenuation, shadow);
                 } else {
                     ToonLight toonLight = createToonLight(mesh, normal, direction,
                         rawRadiance, attenuation, vec3(0.0));
-                    totalLight += applyShadingWithShadow(baseColor, toonLight, mesh, normal, shadow);
+                    totalLight += applyShadingWithShadow(lightBaseColor, toonLight, mesh, normal, shadow);
                 }
-#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
-                totalLight += calculateSourceStylizedSpecular(mesh, direction,
-                    rawRadiance, xrSourceLightMap(dot(normal, direction),
-                        _LightingMapMode, _SourceLightSettings.y, shadow),
-                    attenuation, shadow, sampleMaterialAmbientOcclusion(mesh));
-#endif
             }
 #endif
         }
@@ -1606,17 +1625,18 @@ vec3 calculateStylizedAdditionalDirectionalLighting(ToonMesh mesh, vec3 baseColo
             if (_SourceLightMode != 0 && _SourceAdditiveSettings.y > 0.5) break;
             if (_SourceLightMode != 0) {
                 vec3 direction = normalize(-DirectionalLights[i].Direction);
-                totalLight += calculateSourceLocalDiffuse(mesh, baseColor, normal,
-                    direction, DirectionalLights[i].Base.Color *
-                        DirectionalLights[i].Base.DiffuseIntensity, 1.0, 1.0);
+                vec3 lightBaseColor = baseColor;
 #ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
-                totalLight += calculateSourceStylizedSpecular(mesh, direction,
+                totalLight += applySourceStylizedSpecular(mesh, direction,
                     DirectionalLights[i].Base.Color *
                         DirectionalLights[i].Base.DiffuseIntensity,
                     xrSourceLightMap(dot(normal, direction), _LightingMapMode,
                         _SourceLightSettings.y, 1.0), 1.0, 1.0,
-                    sampleMaterialAmbientOcclusion(mesh));
+                    sampleMaterialAmbientOcclusion(mesh), lightBaseColor);
 #endif
+                totalLight += calculateSourceLocalDiffuse(mesh, lightBaseColor, normal,
+                    direction, DirectionalLights[i].Base.Color *
+                        DirectionalLights[i].Base.DiffuseIntensity, 1.0, 1.0);
             } else {
                 ToonLight light = createToonLight(
                     mesh,
@@ -1625,14 +1645,15 @@ vec3 calculateStylizedAdditionalDirectionalLighting(ToonMesh mesh, vec3 baseColo
                     DirectionalLights[i].Base.Color * DirectionalLights[i].Base.DiffuseIntensity,
                     1.0,
                     vec3(0.0));
-                totalLight += applyShadingWithShadow(baseColor, light, mesh, normal, 1.0);
+                vec3 lightBaseColor = baseColor;
 #ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
-                totalLight += calculateSourceStylizedSpecular(mesh, light.direction,
+                totalLight += applySourceStylizedSpecular(mesh, light.direction,
                     DirectionalLights[i].Base.Color *
                         DirectionalLights[i].Base.DiffuseIntensity,
                     light.lightMap, 1.0, 1.0,
-                    sampleMaterialAmbientOcclusion(mesh));
+                    sampleMaterialAmbientOcclusion(mesh), lightBaseColor);
 #endif
+                totalLight += applyShadingWithShadow(lightBaseColor, light, mesh, normal, 1.0);
             }
         }
         return totalLight;
@@ -2691,6 +2712,16 @@ void main() {
 #else
     vec3 primaryStylizedLighting = vec3(0.0);
     vec3 directionalLighting;
+    // The primary light's stylized specular can change the base color of the primary
+    // response only. Additional lights apply their own highlight to their own response.
+    vec3 primaryDiffuseBase = sourceDiffuseBase;
+    vec3 primaryStylizedSpecular = vec3(0.0);
+#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+    primaryStylizedSpecular = applySourceStylizedSpecular(mesh,
+        light.direction, light.color / max(light.attenuation, 0.0001),
+        light.lightMap, light.attenuation, 1.0,
+        materialAmbientOcclusion, primaryDiffuseBase);
+#endif
     vec3 localBaseColor = fragData.baseColor;
 #ifndef XRENGINE_UBER_DISABLE_STYLIZED_SHADING
     if (_LightingMode != 6) {
@@ -2707,13 +2738,13 @@ void main() {
     if (_LightingMode != 6) {
         if (_SourceLightMode != 0 &&
             (_LightingMode == 0 || _LightingMode == 2 || _LightingMode == 5)) {
-            primaryStylizedLighting = applySourcePrimaryShading(sourceDiffuseBase, light, mesh,
+            primaryStylizedLighting = applySourcePrimaryShading(primaryDiffuseBase, light, mesh,
                 mesh.worldNormal, sampleMaterialAmbientOcclusion(mesh),
                 AmbientOcclusionMultiBounce
                     ? XRENGINE_MultiBounceAO(sourceWorldAo, fragData.baseColor)
                     : vec3(sourceWorldAo));
         } else {
-            primaryStylizedLighting = applyShading(sourceDiffuseBase, light, mesh, mesh.worldNormal);
+            primaryStylizedLighting = applyShading(primaryDiffuseBase, light, mesh, mesh.worldNormal);
         }
         directionalLighting = calculateStylizedAdditionalDirectionalLighting(mesh,
             sourceDiffuseBase, mesh.worldNormal);
@@ -2742,10 +2773,7 @@ void main() {
     fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr, fragData.baseColor);
 #endif
 #if !defined(XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS) && !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING)
-    fragData.finalColor += calculateSourceStylizedSpecular(mesh,
-        light.direction, light.color / max(light.attenuation, 0.0001),
-        light.lightMap, light.attenuation, 1.0,
-        materialAmbientOcclusion);
+    fragData.finalColor += primaryStylizedSpecular;
 #endif
     fragData.finalColor = uberApplyAdvancedPbr(mesh, light, surfacePbr, fragData.finalColor, fragData.emission);
 #if !defined(XRENGINE_UBER_DISABLE_ADVANCED_PBR) && !defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING)

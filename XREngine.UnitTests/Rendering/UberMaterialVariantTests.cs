@@ -1290,6 +1290,25 @@ public sealed class UberMaterialVariantTests
     }
 
     [Test]
+    public void RequestUberVariantRebuild_ParenthesizesNegativeStaticLiteralAfterUnaryMinus()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@property(name="_Saturation", display="Saturation", mode=static)
+            uniform float _Saturation;
+            float ResolveValue(float mask) { return -_Saturation * mask + 1.0 - _Saturation; }
+            """,
+            new ShaderFloat(-0.25f, "_Saturation"));
+
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        string generatedSource = GetFragmentSource(material);
+        generatedSource.ShouldContain("return -(-0.25) * mask + 1.0 - -0.25;");
+    }
+
+    [Test]
     public void RequestUberVariantRebuild_CollapsesBlankLinesAfterDefineAndStaticUniformStripping()
     {
         XRMaterial material = CreateUberMaterial(

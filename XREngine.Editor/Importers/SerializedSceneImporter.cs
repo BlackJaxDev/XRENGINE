@@ -191,7 +191,11 @@ internal static partial class SerializedSceneImporter
         };
     }
 
-    /// <summary>Selects one composed scene root before meshlet cooking.</summary>
+    /// <summary>
+    /// Selects one composed scene root before meshlet cooking. The selected node keeps the position of its Unity scene
+    /// layout, for example an avatar placed beside other variants, so the method moves its translation to the origin.
+    /// The result then matches a prefab asset of the same object.
+    /// </summary>
     private static SceneNode SelectSerializedSceneRoot(SceneNode root, string? name)
     {
         if (string.IsNullOrWhiteSpace(name) || string.Equals(root.Name, name, StringComparison.Ordinal))
@@ -215,6 +219,8 @@ internal static partial class SerializedSceneImporter
 
         selected.Parent = null;
         root.Destroy();
+        if (selected.Transform is Transform selectedTransform)
+            selectedTransform.Translation = Vector3.Zero;
         return selected;
     }
 

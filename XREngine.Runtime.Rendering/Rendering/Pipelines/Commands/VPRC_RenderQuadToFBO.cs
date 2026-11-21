@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using XREngine.Core.Attributes;
 using XREngine.Data.Rendering;
@@ -15,7 +16,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <param name="destination"></param>
     [XRTypeRedirect("XREngine.Rendering.Pipelines.Commands.VPRC_RenderQuadFBO")]
     [RenderPipelineScriptCommand]
-    public partial class VPRC_RenderQuadToFBO : ViewportRenderCommand
+    [RenderCommandInfo(ERenderCommandCategory.Fullscreen, DoesGpuWork = true)]
+    public partial class VPRC_RenderQuadToFBO : ViewportRenderCommand, IRenderCommandStageConsumer
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
             => requirements.RequireOperation("fullscreen-quad");
@@ -25,23 +27,29 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// The name of the source FBO that contains the quad to render.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? SourceQuadFBOName { get; set; }
         /// <summary>
         /// The name of the destination FBO to render into. 
         /// If null, the current render target will be used.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? DestinationFBOName { get; set; } = null;
         /// <summary>
-        /// The name of the source FBO that contains the quad to render.
+        /// Alias of <see cref="SourceQuadFBOName"/>. Hidden from editors and script export to keep one authored value.
         /// </summary>
+        [Browsable(false)]
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? FrameBufferName
         {
             get => SourceQuadFBOName;
             set => SourceQuadFBOName = value;
         }
         /// <summary>
-        /// The name of the destination FBO to render into.
+        /// Alias of <see cref="DestinationFBOName"/>. Hidden from editors and script export to keep one authored value.
         /// </summary>
+        [Browsable(false)]
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? TargetFrameBufferName
         {
             get => DestinationFBOName;
@@ -59,6 +67,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>Fails closed when a mandatory output pass loses its declared source or graph identity.</summary>
         public bool RequiredForOutput { get; set; }
         /// <summary>Omits an optional pass from generation metadata when its owning target is absent.</summary>
+        [RenderResourceName(ERenderResourceNameKind.Any)]
         public string? RequiredDeclaredResourceName { get; set; }
         /// <summary>
         /// Treats this draw as an intentional one-layer mono control rendered while
@@ -74,6 +83,23 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// The resources used by the render graph pass.
         /// </summary>
         public RenderGraphResourceDescriptor? RenderGraphResources { get; set; }
+
+        /// <summary>
+        /// The post-process schema stage keys whose values the material of this quad reads.
+        /// Tools use this list to link the command to its settings. Runtime execution does not read it.
+        /// </summary>
+        public string[]? ConsumedStageKeys { get; set; }
+
+        /// <inheritdoc />
+        public void CollectConsumedStages(List<string> stageKeys)
+        {
+            if (ConsumedStageKeys is not { Length: > 0 } keys)
+                return;
+
+            for (int i = 0; i < keys.Length; i++)
+                if (!string.IsNullOrWhiteSpace(keys[i]))
+                    stageKeys.Add(keys[i]);
+        }
 
         /// <summary>
         /// The GPU profiling name for this command, which includes the source and destination FBO names and the shader label if available.

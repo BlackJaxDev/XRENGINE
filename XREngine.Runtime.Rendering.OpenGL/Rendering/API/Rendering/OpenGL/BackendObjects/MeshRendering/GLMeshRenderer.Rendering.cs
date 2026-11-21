@@ -681,6 +681,16 @@ namespace XREngine.Rendering.OpenGL
                 vtx!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
                 mat!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
                 mat!.Uniform(EditorHighlightFragmentSourceAdapter.FlagsUniformName, editorHighlightBits);
+                MeshRenderer.EnterResourcePublicationLease();
+                try
+                {
+                    if (!MeshRenderer.TryPrepareUdimTriangleCoverage(Mesh, bindingMaterial.Data, publishInactive: false, out failureReason))
+                        return false;
+                }
+                finally
+                {
+                    MeshRenderer.ExitResourcePublicationLease();
+                }
                 PublishTypedBindingPublishers(
                     bindingMaterial.Data.BindingPublishers,
                     vtx!.Data,

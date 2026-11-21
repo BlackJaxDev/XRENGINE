@@ -4,8 +4,10 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Resolves ray-dispatch dimensions from a named pipeline buffer and then performs a native ray dispatch.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
 public sealed class VPRC_TraceRaysIndirect : VPRC_DispatchRays
 {
+    [RenderResourceName(ERenderResourceNameKind.Buffer)]
     public string IndirectArgsBufferName { get; set; } = string.Empty;
     public uint IndirectArgsByteOffset { get; set; }
 

@@ -1209,6 +1209,10 @@ void main()
 
     #region Gaussian Splatting Shaders
 
+    /// <summary>Loads the compute shader that clears the visible and overflow counters of gaussian splats.</summary>
+    public static XRShader GaussianSplatResetCountersCompute()
+        => LoadEngineShader(GaussianSplatRenderer.ResetCountersShaderPath, EShaderType.Compute);
+
     /// <summary>Loads the compute shader that writes the depth sort keys of gaussian splats.</summary>
     public static XRShader GaussianSplatKeysCompute()
         => LoadEngineShader(GaussianSplatRenderer.KeysShaderPath, EShaderType.Compute);
