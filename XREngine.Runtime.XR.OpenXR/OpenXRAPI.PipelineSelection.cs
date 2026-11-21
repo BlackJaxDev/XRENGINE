@@ -52,7 +52,7 @@ public unsafe partial class OpenXRAPI
         }
 
         RenderPipeline? pipeline = instance.GetFullyAppliedPipeline();
-        if (!OpenXrEyeRenderPipelineFactory.Matches(pipeline, stereo, family, rvcMode))
+        if (!OpenXrEyeRenderPipelineFactory.Matches(pipeline, stereo, family, rvcMode, RuntimeEngine.Rendering.Settings.VrRenderPipelineScript))
         {
             RenderPipelineRequest request = viewport.PipelineRequest;
             diagnostic =

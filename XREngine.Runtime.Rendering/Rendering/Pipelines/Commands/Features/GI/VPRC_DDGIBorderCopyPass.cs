@@ -16,9 +16,12 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Also advances the frame lifecycle on DDGIVolumeRuntimeState once updates complete.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_DDGIBorderCopyPass : VPRC_DDGIComputePass
     {
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string IrradianceAtlasTextureName { get; set; } = DDGIResourceNames.IrradianceAtlas;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string VisibilityAtlasTextureName { get; set; } = DDGIResourceNames.VisibilityAtlas;
 
         private XRRenderProgram? _irradianceBorderProgram;

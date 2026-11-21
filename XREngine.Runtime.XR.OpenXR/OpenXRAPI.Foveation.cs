@@ -83,7 +83,14 @@ public unsafe partial class OpenXRAPI
             EVrFoveationMode.Fixed => EVrFoveationGazeSource.FixedCenter,
             _ => EVrFoveationGazeSource.None,
         };
-        ulong backendResourceKey = BuildOpenXrFoveationResourceKey(viewIndex, resolution, renderTargetCenter);
+
+        // A gaze-driven center moves every frame. It only changes shader data, so it stays out of
+        // the resource key to keep per-view resources and recorded commands stable.
+        bool gazeDrivenCenter = gazeSource == EVrFoveationGazeSource.EyeTracked;
+        if (gazeDrivenCenter && TryResolveEyeGazeRenderTargetUv(viewIndex, out Vector2 gazeCenter))
+            renderTargetCenter = gazeCenter;
+
+        ulong backendResourceKey = BuildOpenXrFoveationResourceKey(viewIndex, resolution, renderTargetCenter, gazeDrivenCenter);
 
         return ViewFoveationContext.FromResolution(
             resolution,
@@ -97,7 +104,8 @@ public unsafe partial class OpenXRAPI
     private static ulong BuildOpenXrFoveationResourceKey(
         uint viewIndex,
         in VrFoveationResolution resolution,
-        Vector2 renderTargetCenter)
+        Vector2 renderTargetCenter,
+        bool gazeDrivenCenter)
     {
         if (resolution.EffectiveMode == EVrFoveationMode.Off ||
             resolution.CapabilityPath == EVrFoveationCapabilityPath.None)
@@ -111,8 +119,15 @@ public unsafe partial class OpenXRAPI
         AddHash(ref hash, (uint)resolution.EffectiveMode);
         AddHash(ref hash, (uint)resolution.QualityPreset);
         AddHash(ref hash, (uint)resolution.CapabilityPath);
-        AddHash(ref hash, BitConverter.SingleToUInt32Bits(renderTargetCenter.X));
-        AddHash(ref hash, BitConverter.SingleToUInt32Bits(renderTargetCenter.Y));
+        if (gazeDrivenCenter)
+        {
+            AddHash(ref hash, 0x47415A45u);
+        }
+        else
+        {
+            AddHash(ref hash, BitConverter.SingleToUInt32Bits(renderTargetCenter.X));
+            AddHash(ref hash, BitConverter.SingleToUInt32Bits(renderTargetCenter.Y));
+        }
         return hash;
     }
 
@@ -132,6 +147,7 @@ public unsafe partial class OpenXRAPI
             IsInstanceExtensionEnabled(MetaFoveationEyeTrackedExtensionName);
 
         bool openXrQuadViews = IsInstanceExtensionEnabled(VarjoQuadViewsExtensionName);
+        bool openXrEyeGaze = IsOpenXrEyeGazeAvailable;
 
         if (backend == ERenderLibrary.Vulkan &&
             Window?.Renderer is AbstractRenderer renderer &&
@@ -143,7 +159,10 @@ public unsafe partial class OpenXRAPI
                 OpenXrRuntimeFoveation: openXrRuntimeFoveation,
                 OpenXrQuadViews: openXrQuadViews,
                 OpenGlFixedFoveationExtension: false,
-                OpenGlMultiResolution: false);
+                OpenGlMultiResolution: false)
+            {
+                OpenXrEyeGaze = openXrEyeGaze,
+            };
         }
 
         return new VrFoveationBackendCapabilities(
@@ -152,6 +171,9 @@ public unsafe partial class OpenXRAPI
             OpenXrRuntimeFoveation: openXrRuntimeFoveation,
             OpenXrQuadViews: openXrQuadViews,
             OpenGlFixedFoveationExtension: false,
-            OpenGlMultiResolution: false);
+            OpenGlMultiResolution: false)
+        {
+            OpenXrEyeGaze = openXrEyeGaze,
+        };
     }
 }

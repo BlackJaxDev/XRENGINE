@@ -7,6 +7,7 @@ using XREngine.Rendering.Resources;
 using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
+[RenderPipelineScriptBase("Test")]
 public class TestRenderPipeline : RenderPipeline
 {
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();

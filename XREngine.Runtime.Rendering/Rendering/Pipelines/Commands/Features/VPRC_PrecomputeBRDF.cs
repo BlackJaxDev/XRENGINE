@@ -4,6 +4,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 
 /// <summary>Initializes this pipeline's GPU BRDF lookup before PBR consumers run.</summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
 public sealed class VPRC_PrecomputeBRDF : ViewportRenderCommand
 {
     protected override void Execute()

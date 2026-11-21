@@ -51,6 +51,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Modeling XRMesh Editing](architecture/modeling/xrmesh-editing.md)
 - [Play Mode Architecture](architecture/editor/play-mode-architecture.md)
 - [Editor Undo System](architecture/editor/undo-system.md)
+- [Render Pipeline Workbench](architecture/editor/render-pipeline-workbench.md)
 - [Editor Background Preparation](architecture/editor/background-preparation.md)
 
 ## Developer Guides
@@ -62,8 +63,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [Windows CI Test Coverage](developer-guides/testing/windows-ci.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
-- [Assistant](developer-guides/ai/mcp-assistant.md)
-- [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
+- [MCP Assistant](developer-guides/ai/mcp-assistant.md)
+- [Local Agent Broker Integration](developer-guides/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
 - [Cutscenes](developer-guides/animation/cutscenes.md)
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.

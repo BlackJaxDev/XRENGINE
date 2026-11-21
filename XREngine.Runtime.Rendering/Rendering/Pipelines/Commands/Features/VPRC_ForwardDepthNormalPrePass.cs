@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// own normal evaluation path, with a generic override material left as fallback.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
     public class VPRC_ForwardDepthNormalPrePass : ViewportRenderCommand
     {
         private IReadOnlyList<int> _renderPasses = [];

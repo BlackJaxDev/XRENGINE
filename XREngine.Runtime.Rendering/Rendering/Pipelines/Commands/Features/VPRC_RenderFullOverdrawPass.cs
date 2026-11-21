@@ -6,6 +6,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands;
 
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
 public sealed class VPRC_RenderFullOverdrawPass : ViewportRenderCommand
 {
     private const string PassNamePrefix = "FullOverdraw";

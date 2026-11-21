@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// The concrete shader kernels bind to these resources through the backend render graph.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Advanced, DoesGpuWork = true)]
 public class VPRC_RvcPass : ViewportRenderCommand
 {
     private ERvcGpuPassStage _stage = ERvcGpuPassStage.VisibilityTargets;

@@ -1,6 +1,7 @@
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Synchronization)]
     public class VPRC_MemoryBarrier : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

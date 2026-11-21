@@ -157,7 +157,10 @@ public sealed class RenderPipelineResourceLayout
                 yield return bufferSpec.ToDescriptor();
     }
 
-    private static bool AreSpecsStructurallyEquivalent(RenderPipelineResourceSpec left, RenderPipelineResourceSpec right)
+    /// <summary>
+    /// Returns true when two declarations describe the same resource. The comparison ignores factory and predicate delegates.
+    /// </summary>
+    public static bool AreSpecsStructurallyEquivalent(RenderPipelineResourceSpec left, RenderPipelineResourceSpec right)
     {
         if (!AreBaseSpecFieldsEquivalent(left, right))
             return false;

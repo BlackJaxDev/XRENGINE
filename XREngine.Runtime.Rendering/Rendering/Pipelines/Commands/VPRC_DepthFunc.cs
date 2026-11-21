@@ -3,6 +3,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_DepthFunc : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

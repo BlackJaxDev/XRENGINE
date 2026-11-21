@@ -331,6 +331,8 @@ internal sealed class RenderPipelineGpuProfiler
     private readonly Queue<XRRenderQuery> _queryPool = new();
     private readonly Dictionary<ulong, FrameCapture> _frames = [];
     private readonly Dictionary<string, PipelineTimingHistory> _pipelineTimingHistories = new(StringComparer.Ordinal);
+    private int _timingHistoryVersion;
+    private RenderPipelineTimingSnapshot _timingSnapshot = RenderPipelineTimingSnapshot.Empty;
     private readonly List<PendingScope> _pendingScopes = [];
     private readonly List<OrphanedQuery> _orphanedQueries = [];
     private readonly List<ulong> _frameRemovalScratch = [];
@@ -388,6 +390,57 @@ internal sealed class RenderPipelineGpuProfiler
         {
             lock (_lock)
                 return _latestSnapshot;
+        }
+    }
+
+    /// <summary>
+    /// Returns an immutable copy of the timing history of every pipeline. The copy is rebuilt only when the profiler
+    /// recorded a new frame since the last call, so tools can poll it a few times each second.
+    /// </summary>
+    public RenderPipelineTimingSnapshot GetTimingSnapshot()
+    {
+        lock (_lock)
+        {
+            RenderStatsGpuPipelineSnapshot latest = _latestSnapshot;
+            RenderPipelineTimingSnapshot cached = _timingSnapshot;
+            if (cached.Version == _timingHistoryVersion &&
+                cached.Enabled == latest.Enabled &&
+                string.Equals(cached.StatusMessage, latest.StatusMessage, StringComparison.Ordinal))
+            {
+                return cached;
+            }
+
+            Dictionary<string, Dictionary<string, RenderPipelineTimingEntry>> byPipeline = new(_pipelineTimingHistories.Count, StringComparer.Ordinal);
+            foreach (PipelineTimingHistory history in _pipelineTimingHistories.Values)
+            {
+                Dictionary<string, RenderPipelineTimingEntry> paths = new(history.NodesByPath.Count, StringComparer.Ordinal);
+                string rootPrefix = string.Concat(history.PipelineName, " > ");
+                foreach (PipelineNodeTimingStats stats in history.NodesByPath.Values)
+                {
+                    string path = string.Equals(stats.Path, history.PipelineName, StringComparison.Ordinal)
+                        ? string.Empty
+                        : stats.Path.StartsWith(rootPrefix, StringComparison.Ordinal)
+                            ? stats.Path[rootPrefix.Length..].Replace(" > ", "/", StringComparison.Ordinal)
+                            : stats.Path.Replace(" > ", "/", StringComparison.Ordinal);
+                    paths[path] = new RenderPipelineTimingEntry(
+                        stats.LastMilliseconds,
+                        stats.AverageFrameMilliseconds,
+                        stats.ObservedFrameCount > 0 ? stats.MinMilliseconds : 0.0,
+                        stats.MaxMilliseconds,
+                        stats.ObservedFrameCount);
+                }
+
+                byPipeline[history.PipelineName] = paths;
+            }
+
+            _timingSnapshot = new RenderPipelineTimingSnapshot(
+                _timingHistoryVersion,
+                latest.Enabled,
+                latest.Supported,
+                latest.BackendName,
+                latest.StatusMessage,
+                byPipeline);
+            return _timingSnapshot;
         }
     }
 
@@ -1272,6 +1325,8 @@ internal sealed class RenderPipelineGpuProfiler
     {
         if (frame.Roots.Count == 0)
             return;
+
+        _timingHistoryVersion++;
 
         DateTimeOffset timestamp = DateTimeOffset.Now;
         for (int i = 0; i < frame.Roots.Count; i++)

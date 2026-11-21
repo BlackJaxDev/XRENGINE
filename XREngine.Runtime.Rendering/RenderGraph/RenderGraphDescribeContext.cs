@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.RenderGraph;
@@ -16,6 +17,16 @@ public sealed class RenderGraphDescribeContext(
     private int _nextSyntheticPassIndex = 100000;
 
     public RenderPassMetadataCollection Metadata { get; } = metadata;
+
+    /// <summary>
+    /// Gets the command that is describing passes now. Each pass that opens while this value is set
+    /// records the command as a contributor, so tools can map commands to passes.
+    /// </summary>
+    public ViewportRenderCommand? CurrentCommand
+    {
+        get => Metadata.CurrentCommand;
+        internal set => Metadata.CurrentCommand = value;
+    }
 
     /// <summary>
     /// The immutable resource layout the pass description must match. This is null only

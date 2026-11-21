@@ -23,6 +23,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// how many instances to draw.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.GpuBvhDebug })]
 public sealed class VPRC_RenderDebugGpuBvh : ViewportRenderCommand
 {
     /// <summary>

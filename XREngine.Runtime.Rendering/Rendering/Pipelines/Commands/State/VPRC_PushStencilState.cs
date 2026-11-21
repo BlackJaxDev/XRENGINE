@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <see cref="VPRC_PopStencilState"/> when used with the <c>using</c> pattern.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_PushStencilState : ViewportStateRenderCommand<VPRC_PopStencilState>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

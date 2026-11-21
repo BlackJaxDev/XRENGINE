@@ -11,12 +11,16 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// The captured pixels can be written to a pipeline data buffer and optionally exported to disk.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
 public sealed class VPRC_CaptureFrame : ViewportRenderCommand
 {
     private static readonly Func<RenderedOutputCaptureMetrics, string, string, DateTimeOffset, string> s_serializeMetrics = SerializeCaptureMetrics;
 
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string? SourceTextureName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? SourceFBOName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.Buffer)]
     public string? DestinationBufferName { get; set; }
     public string? OutputFilePath { get; set; }
     public int SourceMipLevel { get; set; }

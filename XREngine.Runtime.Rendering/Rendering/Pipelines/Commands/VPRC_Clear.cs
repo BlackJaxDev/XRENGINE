@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Targets, DoesGpuWork = true)]
     public class VPRC_Clear : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

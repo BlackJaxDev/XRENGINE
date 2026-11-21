@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Disables alpha blending.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_PopBlendState : ViewportPopStateRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// graphics render-graph scope before compute hit shading samples it.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
 public sealed class VPRC_DDGIEnvironmentPass : ViewportRenderCommand
 {
     private const string AllocationScopeName = "DDGI.VPRC_DDGIEnvironmentPass";

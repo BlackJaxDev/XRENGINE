@@ -996,7 +996,7 @@ public unsafe partial class OpenXRAPI
         AddOptionalExtension(extensions, availableExtensions, KhrWin32ConvertPerformanceCounterTime.ExtensionName);
         AddOptionalExtension(extensions, availableExtensions, OxrExtDebugUtils.ExtensionName);
         // This instance becomes the session instance, so it needs the same optional extensions
-        // as the non-bootstrap path (visibility mask, hand tracking, foveation, quad views).
+        // as the non-bootstrap path (visibility mask, hand tracking, eye gaze, foveation, quad views).
         foreach (string extensionName in GetOptionalInstanceExtensions())
             AddOptionalExtension(extensions, availableExtensions, extensionName);
 

@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Handles all temporal accumulation stages (begin, accumulate, commit) without relying on manual commands.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.TemporalAntiAliasing })]
 public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 {
     private const float TaaJitterScaleInTexels = 0.35f;
@@ -418,14 +419,22 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
 
     public EPhase Phase { get; set; } = EPhase.Accumulate;
 
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string TemporalInputFBOName { get; set; } = DefaultRenderPipeline.TemporalInputFBOName;
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string TemporalAccumulationFBOName { get; set; } = DefaultRenderPipeline.TemporalAccumulationFBOName;
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string HistoryColorFBOName { get; set; } = DefaultRenderPipeline.HistoryCaptureFBOName;
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string HistoryExposureFBOName { get; set; } = DefaultRenderPipeline.HistoryExposureFBOName;
     /// <summary>The sampled depth view associated with the configured history destination.</summary>
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string HistoryDepthViewTextureName { get; set; } = DefaultRenderPipeline.HistoryDepthViewTextureName;
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string TsrSourceFBOName { get; set; } = DefaultRenderPipeline.TsrUpscaleFBOName;
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string TsrHistoryColorFBOName { get; set; } = DefaultRenderPipeline.TsrHistoryColorFBOName;
     /// <summary>The FBO used by the TSR resolve quad that produces the copied color.</summary>
     public string? TsrResolveQuadFBOName { get; private set; }
@@ -433,9 +442,12 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
     public string? TsrLeftHistoryReaderQuadFBOName { get; private set; }
     /// <summary>The optional right-eye quad that reads prior TSR history before the copy.</summary>
     public string? TsrRightHistoryReaderQuadFBOName { get; private set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? TsrHistoryMetadataOutputFBOName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? TsrHistoryMetadataFBOName { get; set; }
     /// <summary>Optional explicit reactive-mask input for a pipeline-specific resolve variant.</summary>
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string? ReactiveMaskTextureName { get; set; }
 
     public override string GpuProfilingName

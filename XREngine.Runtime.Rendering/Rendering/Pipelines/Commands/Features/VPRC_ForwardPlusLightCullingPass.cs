@@ -18,6 +18,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// OpenGL-first; skipped for stereo and shadow passes.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_ForwardPlusLightCullingPass : ViewportRenderCommand
     {
         private const string MonoShaderPath = "ForwardPlus/LightCulling.comp";
@@ -38,6 +39,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         // Per-tile light count buffer used by debug visualization.
         public const uint TileLightCountsBinding = 29;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthViewTexture { get; set; } = "DepthView";
 
         private XRRenderProgram? _computeProgram;

@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Dispatches the native visibility and opaque compute stages through the backend's
 /// immutable frame family. Late/post commands follow their contract markers.
 /// </summary>
+[RenderCommandInfo(ERenderCommandCategory.Advanced)]
 public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 {
     /// <summary>Frozen registry-resolved GI selection for this native stage family.</summary>

@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// without external area/search textures so it can remain fully self-contained in the command layer.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true)]
 public sealed class VPRC_SMAA : ViewportRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -292,9 +293,13 @@ void main()
     private string _neighborhoodPassName = string.Empty;
     private string _profilingName = nameof(VPRC_SMAA);
 
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string? SourceTextureName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? SourceFBOName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string OutputTextureName { get; set; } = "SmaaOutputTexture";
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? OutputFBOName { get; set; }
     public float EdgeThreshold { get; set; } = 0.08f;
     public int MaxSearchSteps { get; set; } = 16;

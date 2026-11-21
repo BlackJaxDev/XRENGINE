@@ -13,6 +13,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     /// <param name="pipeline"></param>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.AmbientOcclusion })]
     public class VPRC_SSAOPass : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         //private static void Log(string message)
@@ -34,11 +35,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             Stereo ? "SSAOGenStereo.fs" : 
             "SSAOGen.fs";
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string SSAONoiseTextureName { get; set; } = "AmbientOcclusionNoiseTexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string SSAORawTextureName { get; set; } = "AmbientOcclusionRawTexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string SSAOIntensityTextureName { get; set; } = "AmbientOcclusionTexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string SSAOFBOName { get; set; } = "AmbientOcclusionFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string SSAOBlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string GBufferFBOFBOName { get; set; } = "GBufferFBO";
 
         public const int DefaultSamples = 128;
@@ -102,11 +109,17 @@ namespace XREngine.Rendering.Pipelines.Commands
                 Noise[i] = Vector2.Normalize(new Vector2((float)r.NextDouble(), (float)r.NextDouble()));
         }
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = "Normal";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthViewTextureName { get; set; } = "DepthView";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AlbedoTextureName { get; set; } = "AlbedoOpacity";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RMSETextureName { get; set; } = "RMSE";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string TransformIdTextureName { get; set; } = "TransformId";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
         public string[] DependentFboNames { get; set; } = Array.Empty<string>();
 

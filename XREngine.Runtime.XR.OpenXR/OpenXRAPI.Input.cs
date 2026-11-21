@@ -315,6 +315,7 @@ public unsafe partial class OpenXRAPI
         }
 
         CreateRuntimeNeutralInputActions();
+        CreateEyeGazeAction();
     }
 
     private void CreateActionSpaces()
@@ -370,6 +371,7 @@ public unsafe partial class OpenXRAPI
         }
 
         CreateRuntimeNeutralActionSpaces();
+        CreateEyeGazeActionSpace();
     }
 
     private void AttachActionSets()
@@ -403,6 +405,7 @@ public unsafe partial class OpenXRAPI
         try
         {
             SuggestRuntimeNeutralBindings();
+            SuggestEyeGazeBinding();
 
             if (_trackerPoseAction.Handle != 0 && _trackerSubactionPaths.Count > 0)
             {
@@ -609,11 +612,15 @@ public unsafe partial class OpenXRAPI
             }
             for (int i = 0; i < _runtimeInputActionList.Count; i++)
                 _runtimeInputActionList[i].Active = false;
+            ClearEyeGazePoseCache();
             return;
         }
 
         if (timing == OpenXrPoseTiming.Predicted)
+        {
             UpdateCurrentInteractionProfiles();
+            UpdateEyeGazePoseCache(displayTime, frameNo);
+        }
 
         bool leftActive = synchronized && TryGetActivePoseState(_handGripPoseAction, _leftHandPath, out bool leftActionActive) && leftActionActive;
         bool rightActive = synchronized && TryGetActivePoseState(_handGripPoseAction, _rightHandPath, out bool rightActionActive) && rightActionActive;
@@ -703,6 +710,7 @@ public unsafe partial class OpenXRAPI
         try
         {
             DestroyRuntimeNeutralInput();
+            DestroyEyeGaze();
 
             foreach (var s in _trackerSpaces.Values)
                 if (s.Handle != 0)
@@ -732,6 +740,8 @@ public unsafe partial class OpenXRAPI
             _rightHandGripSpace = default;
             _handGripPoseAction = default;
             _trackerPoseAction = default;
+            _eyeGazeSpace = default;
+            _eyeGazePoseAction = default;
             _inputActionSet = default;
             _trackerSubactionPaths.Clear();
             lock (_openXrPoseLock)

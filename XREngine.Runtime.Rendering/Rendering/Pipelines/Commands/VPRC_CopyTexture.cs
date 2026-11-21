@@ -4,12 +4,15 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
     public class VPRC_CopyTexture : ViewportRenderCommand
     {
         private readonly XRFrameBuffer _sourceFbo = new();
         private readonly XRFrameBuffer _destinationFbo = new();
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? SourceTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DestinationTextureName { get; set; }
         public int SourceMipLevel { get; set; }
         public int SourceLayerIndex { get; set; }

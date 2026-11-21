@@ -522,7 +522,7 @@ internal sealed partial class VulkanFramePlanner
         hash.Add(ComputePassMetadataSignature(passMetadata));
 
         hash.Add(compiledGraph.Batches.Count);
-        foreach (VulkanCompiledPassBatch batch in compiledGraph.Batches)
+        foreach (RenderGraphPassBatch batch in compiledGraph.Batches)
         {
             hash.Add(batch.BatchIndex);
             hash.Add((int)batch.Stage);
@@ -609,7 +609,7 @@ internal sealed partial class VulkanFramePlanner
     {
         HashCode hash = new();
         hash.Add(compiledGraph.Batches.Count);
-        foreach (VulkanCompiledPassBatch batch in compiledGraph.Batches)
+        foreach (RenderGraphPassBatch batch in compiledGraph.Batches)
         {
             hash.Add(batch.BatchIndex);
             hash.Add((int)batch.Stage);
