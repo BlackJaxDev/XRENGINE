@@ -14,6 +14,7 @@
   <Project Path="XREngine.ControlPlane/XREngine.ControlPlane.csproj" />
   <Project Path="XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj" />
   <Project Path="XREngine.Animation/XREngine.Animation.csproj" />
+  <Project Path="XREngine.AgentRuntimes/XREngine.AgentRuntimes.csproj" />
   <Project Path="XREngine.Audio/XREngine.Audio.csproj" />
   <Project Path="XREngine.Data/XREngine.Data.csproj" />
   <Project Path="XREngine.Editor/XREngine.Editor.csproj" />

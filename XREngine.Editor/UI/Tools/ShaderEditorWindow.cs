@@ -2382,19 +2382,50 @@ public sealed class ShaderEditorWindow
         return ShaderEditorServices.ExtractOpenAiResponseText(body);
     }
 
-    /// <summary>
-    /// Subscription completion needs the local agent runtimes, which this build does not include.
-    /// The shader editor disables the request button for subscription access, so this path only
-    /// reports the missing runtime if a caller reaches it.
-    /// </summary>
-    private static Task<string> RequestSubscriptionCompletionAsync(
+    private static async Task<string> RequestSubscriptionCompletionAsync(
         SubscriptionAssistantBrand brand,
         string model,
         string source,
         string instruction,
         string diagnostics,
         CancellationToken cancellationToken)
-        => Task.FromException<string>(new InvalidOperationException(SubscriptionEditorConnection.UnavailableMessage));
+    {
+        var request = new AgentRunRequest
+        {
+            ExecutionMode = SubscriptionEditorConnection.ExecutionMode(brand),
+            RequireActualModelEvidence = brand != SubscriptionAssistantBrand.Gemini,
+            Objective = $"{instruction}\n\nDiagnostics:\n{diagnostics}\n\nShader source:\n{source}",
+            RequestedModel = model,
+            UseCompactHandoffPrompt = false,
+            SystemInstructions = "Complete GLSL shader code. Return only GLSL code. Do not use tools or markdown fences.",
+            Budget = new AgentRunBudget
+            {
+                MaxTurns = 0,
+                MaxToolCalls = 0,
+                MaxOutputTokens = 0,
+                MaxElapsedSeconds = 300,
+                MaxRetries = 0,
+            },
+        };
+        AgentRunResult result = await SubscriptionEditorConnection.CreateExecutor(brand).RunAsync(
+            Guid.NewGuid().ToString("N"),
+            request,
+            EmptyAgentToolProvider.Instance,
+            cancellationToken: cancellationToken);
+        if (result.Status == AgentRunStatus.Cancelled)
+            throw new OperationCanceledException(cancellationToken);
+
+        if (result.Status != AgentRunStatus.Completed)
+        {
+            if (result.Failure?.Category == AgentFailureCategory.Authentication)
+                SubscriptionEditorConnection.ResetAccountContext(brand);
+            throw new InvalidOperationException(result.Failure?.Summary ?? $"Assistant run {result.Status}.");
+        }
+
+        SubscriptionEditorConnection.RecordAccountFingerprint(brand, result.RuntimeInfo?.AccountFingerprint);
+
+        return result.FinalText;
+    }
 
     private void InvalidateAiCompletion()
     {
