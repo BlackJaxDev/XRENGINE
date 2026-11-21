@@ -14,6 +14,15 @@ public sealed partial class BackendReadyFramePackage
     public uint FirstMissingPrimaryNativeStableQueryKey { get; private set; }
     public string? FirstMissingPrimaryNativeReason { get; private set; }
 
+    /// <summary>
+    /// Gets the publication sequence of the canonical draw identity that the first
+    /// missing primary draw carries, or 0 when the draw has no identity for that
+    /// primitive. A value that differs from <see cref="CanonicalScenePublication"/>
+    /// shows that the command identity and the package publication are from different
+    /// publications.
+    /// </summary>
+    public ulong FirstMissingPrimaryNativeIdentitySequence { get; private set; }
+
     private void ClearPrimaryNativeCompleteness()
     {
         _primaryNativeSubmissions.Clear();
@@ -22,6 +31,7 @@ public sealed partial class BackendReadyFramePackage
         FirstMissingPrimaryNativePass = -1;
         FirstMissingPrimaryNativeStableQueryKey = 0u;
         FirstMissingPrimaryNativeReason = null;
+        FirstMissingPrimaryNativeIdentitySequence = 0UL;
     }
 
     /// <summary>
@@ -112,6 +122,10 @@ public sealed partial class BackendReadyFramePackage
                     FirstMissingPrimaryNativePass = pass.PassIndex;
                     FirstMissingPrimaryNativeStableQueryKey = command.StableQueryKey;
                     FirstMissingPrimaryNativeReason = reason;
+                    FirstMissingPrimaryNativeIdentitySequence =
+                        identities.TryGetPrimitive(primitiveIndex, out AdvancedGpuSceneDrawIdentity firstIdentity)
+                            ? firstIdentity.Publication.Sequence
+                            : 0UL;
                 }
             }
         }
