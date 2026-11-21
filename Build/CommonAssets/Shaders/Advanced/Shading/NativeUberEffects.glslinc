@@ -104,6 +104,34 @@ vec3 XR_UBER_EffectHsvToRgb(vec3 hsv)
     return hsv.z * mix(basis.xxx, clamp(ramp - basis.xxx, 0.0, 1.0), hsv.y);
 }
 
+// Adjusts the lit color before emission is added, in the same order as uberApplyPostProcess in the
+// forward Uber shader: hue shift, saturation, HDR curve, contrast, brightness, and lightness.
+vec3 XR_UBER_ApplyPostProcess(vec3 color)
+{
+    vec4 settings = UBER_V(_PostProcessSettings);
+    if (settings.x <= 0.5)
+        return color;
+
+    vec4 hue = UBER_V(_PostProcessHue);
+    vec3 col = color;
+    if (hue.x != 0.0)
+        col = hue.w < 0.5 ? XR_UBER_hueShiftOklab(col, hue.x) : XR_UBER_hueShift(col, hue.x);
+    col = mix(vec3(dot(col, vec3(0.3, 0.59, 0.11))), col, settings.w);
+    if (hue.z != 0.0)
+    {
+        vec3 c = max(col, vec3(0.0));
+        vec3 hdr = vec3(
+            c.r <= 0.04045 ? c.r / 12.92 : pow((c.r + 0.055) / 1.055, 2.4),
+            c.g <= 0.04045 ? c.g / 12.92 : pow((c.g + 0.055) / 1.055, 2.4),
+            c.b <= 0.04045 ? c.b / 12.92 : pow((c.b + 0.055) / 1.055, 2.4));
+        col = mix(col, hdr, hue.z);
+    }
+    col = mix(vec3(0.5), col, settings.z);
+    col *= settings.y;
+    col += vec3(hue.y);
+    return col;
+}
+
 vec3 XR_UBER_Glitter(
     XRUberCoordinates coordinates,
     vec3 worldNormal,

@@ -210,6 +210,39 @@ vec3 uberApplyExtendedColorAdjustments(vec3 color)
 #endif
 }
 
+// Adjusts the lit color before emission is added: hue shift, saturation, sRGB-to-linear HDR curve,
+// contrast around mid gray, brightness multiply, and lightness add. The order matches the source
+// post-processing section. _PostProcessSettings.x turns the stage on.
+vec3 uberApplyPostProcess(vec3 color)
+{
+#ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+    return color;
+#else
+    if (_PostProcessSettings.x <= 0.5)
+        return color;
+
+    vec3 col = color;
+    if (_PostProcessHue.x != 0.0)
+        col = _PostProcessHue.w < 0.5
+            ? hueShiftOklab(col, _PostProcessHue.x)
+            : hueShift(col, _PostProcessHue.x);
+    col = mix(vec3(dot(col, vec3(0.3, 0.59, 0.11))), col, _PostProcessSettings.w);
+    if (_PostProcessHue.z != 0.0)
+    {
+        vec3 c = max(col, vec3(0.0));
+        vec3 hdr = vec3(
+            c.r <= 0.04045 ? c.r / 12.92 : pow((c.r + 0.055) / 1.055, 2.4),
+            c.g <= 0.04045 ? c.g / 12.92 : pow((c.g + 0.055) / 1.055, 2.4),
+            c.b <= 0.04045 ? c.b / 12.92 : pow((c.b + 0.055) / 1.055, 2.4));
+        col = mix(col, hdr, _PostProcessHue.z);
+    }
+    col = mix(vec3(0.5), col, _PostProcessSettings.z);
+    col *= _PostProcessSettings.y;
+    col += vec3(_PostProcessHue.y);
+    return col;
+#endif
+}
+
 vec3 uberResolveThemeColor(int themeIndex, vec3 authoredColor)
 {
 #ifdef XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES

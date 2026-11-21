@@ -74,7 +74,7 @@ public static class NativeUberMaterialSchema
         names.Add("_Rim2Tint");
         names.AddRange(new[] { "_StylizedSpecularSettings", "_StylizedSpecularLayers",
             "_StylizedSpecularMask", "_StylizedSpecularOcclusion",
-            "_StylizedSpecularTint", "_StylizedSpecularBlend", "_HighColorTex_ST",
+            "_StylizedSpecularTint", "_StylizedSpecularBlend", "_PostProcessSettings", "_PostProcessHue", "_HighColorTex_ST",
             "_HighColorMask_ST" });
         names.Add("_UdimFlipV");
         names.Add("_AlphaClipAllModes");

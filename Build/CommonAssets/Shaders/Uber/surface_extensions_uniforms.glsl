@@ -137,6 +137,10 @@ uniform vec4 _StylizedSpecularOcclusion;
 uniform vec4 _StylizedSpecularTint;
 //@property(name="_StylizedSpecularBlend", display="Stylized Specular Blend", mode=static, enum="0:Replace|1:Add|2:Screen|3:Multiply")
 uniform int _StylizedSpecularBlend;
+//@property(name="_PostProcessSettings", display="Post Process", mode=animated, components="Enabled:toggle|Brightness|Contrast|Saturation", default="vec4(0.0, 1.0, 1.0, 1.0)")
+uniform vec4 _PostProcessSettings;
+//@property(name="_PostProcessHue", display="Post Process Hue", mode=animated, components="Hue|Lightness|HDR|Hue Space (0 OKLab, 1 HSV)", default="vec4(0.0)")
+uniform vec4 _PostProcessHue;
 uniform vec4 _HighColorTex_ST;
 uniform vec4 _HighColorMask_ST;
 //@property(name="_HighColorTex", display="High Color", slot=texture)
