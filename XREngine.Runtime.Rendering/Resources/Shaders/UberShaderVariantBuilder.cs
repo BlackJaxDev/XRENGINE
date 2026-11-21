@@ -1101,7 +1101,10 @@ internal static partial class UberShaderVariantBuilder
             if (!isFieldName && staticLiterals.TryGetValue(identifier, out string? literal))
             {
                 bool hasSuffixAccess = i < line.Length && line[i] == '.';
-                builder.Append(hasSuffixAccess ? $"({literal})" : literal);
+                // A negative literal directly after a minus sign would make the decrement token
+                // "--" (for example, "-_Saturation" becomes "--0.25"), which fails to compile.
+                bool followsMinus = literal.StartsWith('-') && builder.Length > 0 && builder[^1] == '-';
+                builder.Append(hasSuffixAccess || followsMinus ? $"({literal})" : literal);
                 continue;
             }
 
