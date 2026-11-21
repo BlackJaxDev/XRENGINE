@@ -22,7 +22,6 @@ public sealed class VPRC_GlobalIlluminationCompositePass : ViewportRenderCommand
     public string ProducerPassName { get; set; } = string.Empty;
     public bool ForceMonoWhenPipelineIsMono { get; set; } = true;
 
-    private int _passIndex = int.MinValue;
     private string? _passName;
 
     private string PassName
@@ -44,14 +43,14 @@ public sealed class VPRC_GlobalIlluminationCompositePass : ViewportRenderCommand
         if (source is null || destination is null)
             return;
 
-        if (!TryResolvePassIndex())
+        if (!TryResolvePassIndex(out int passIndex))
             return;
 
         if (source.Material?.RenderOptions.BlendModeAllDrawBuffers is { } blend)
             blend.RgbDstFactor = replaceDestination ? EBlendingFactor.Zero : EBlendingFactor.One;
 
         bool stereo = ActivePipelineInstance.Pipeline is ISceneRenderPipelineFeatureProvider { Stereo: true };
-        using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_passIndex))
+        using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex))
             source.Render(destination, forceNoStereo: ForceMonoWhenPipelineIsMono && !stereo);
         GlobalIlluminationCompositionState.MarkComposited(ActivePipelineInstance);
     }
@@ -71,17 +70,11 @@ public sealed class VPRC_GlobalIlluminationCompositePass : ViewportRenderCommand
             ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
     }
 
-    private bool TryResolvePassIndex()
+    private bool TryResolvePassIndex(out int passIndex)
     {
-        if (_passIndex != int.MinValue)
+        passIndex = ResolveActiveRenderGraphPassIndex(PassName);
+        if (passIndex != int.MinValue)
             return true;
-        if (ParentPipeline?.PassMetadata is { } metadata)
-            foreach (RenderPassMetadata pass in metadata)
-                if (pass.Name == PassName)
-                {
-                    _passIndex = pass.PassIndex;
-                    return true;
-                }
 
         Debug.RenderingWarningEvery("GI.Composite.MissingPassMetadata", TimeSpan.FromSeconds(2),
             "GI composition is waiting for render-graph pass metadata.");

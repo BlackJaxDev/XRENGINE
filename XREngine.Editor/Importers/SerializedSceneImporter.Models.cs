@@ -171,6 +171,12 @@ internal static partial class SerializedSceneImporter
             FbxBackend = fbxBackend,
             ScaleConversion = metadata.GlobalScale,
             ImportBlendShapeNormals = metadata.BlendShapeNormalImportMode != 2,
+            TangentImportPolicy = metadata.TangentImportMode switch
+            {
+                0 => ModelTangentImportPolicy.Import,
+                3 => ModelTangentImportPolicy.CalculateMikkCompatible,
+                _ => ModelTangentImportPolicy.Default,
+            },
             ZUp = false,
             // Assimp applies its Z reflection first. The Unity composition boundary
             // then converts the complete producer chart, including geometry and binds.

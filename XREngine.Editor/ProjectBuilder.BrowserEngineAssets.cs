@@ -207,13 +207,13 @@ internal static partial class ProjectBuilder
     }
 
     /// <summary>
-    /// Clears the realtime credentials and the handoff state of the startup settings copy that a browser build ships. The
-    /// secrets go through the shared publish step (<see cref="PublishedSecrets.Strip"/>). The other members are browser
-    /// handoff state that a browser build must not start with.
+    /// Clears the realtime credentials and the handoff state of the startup settings that a browser build ships. The
+    /// secrets go through the shared publish step (<see cref="Publishing.PublishedSecrets.Strip"/>); the other members are
+    /// browser handoff state that a browser build must not start with.
     /// </summary>
     internal static void ClearBrowserRealtimeCredentials(GameStartupSettings settings)
     {
-        PublishedSecrets.Strip(settings);
+        Publishing.PublishedSecrets.Strip(settings);
         settings.MultiplayerSessionId = null;
         settings.MultiplayerWorkerGeneration = null;
         settings.MultiplayerResumeRequested = false;

@@ -7,6 +7,7 @@ using XREngine.Components.Scene.Mesh;
 using XREngine.Data;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
+using XREngine.UnityScriptHost.Contracts;
 using YamlDotNet.RepresentationModel;
 
 namespace XREngine.Scene.Importers;
@@ -80,6 +81,10 @@ internal static partial class SerializedSceneImporter
 
         if (collider is null)
         {
+            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.dynamics.collider.shape",
+                UnityConversionFeatureStatus.Unknown, "Collider shape conversion",
+                $"The collider shape value '{shapeType}' has no selected native mapping.",
+                lostFunctionality: "The collider was retained as metadata and was not attached.");
             AddAvatarDiagnostic(
                 state,
                 behaviour,
@@ -96,28 +101,38 @@ internal static partial class SerializedSceneImporter
             GetNode(fields, "rootTransform"),
             hierarchy,
             fallback: null);
-        collider._center = ConvertPosition(GetVector3(fields, "position", Vector3.Zero));
+        collider.Center = ConvertPosition(GetVector3(fields, "position", Vector3.Zero));
         collider.LocalRotationOffset = ConvertRotation(GetQuaternion(fields, "rotation", Quaternion.Identity));
-        collider._bound = (GetScalarInt(fields, "insideBounds") ?? 0) != 0
+        collider.Bound = (GetScalarInt(fields, "insideBounds") ?? 0) != 0
             ? PhysicsChainColliderBase.EBound.Inside
             : PhysicsChainColliderBase.EBound.Outside;
-        collider._direction = PhysicsChainColliderBase.Direction.Y;
+        collider.Axis = PhysicsChainColliderBase.Direction.Y;
         collider.ParticleContactOnly = (GetScalarInt(fields, "bonesAsSpheres") ?? 0) != 0;
 
         if (collider is PhysicsChainCollider volumeCollider)
         {
-            volumeCollider._radius = MathF.Max(GetScalarFloat(fields, "radius") ?? 0.0f, 0.0f);
-            volumeCollider._height = shapeType == 0
+            volumeCollider.Radius = MathF.Max(GetScalarFloat(fields, "radius") ?? 0.0f, 0.0f);
+            volumeCollider.Height = shapeType == 0
                 ? 0.0f
                 : MathF.Max(GetScalarFloat(fields, "height") ?? 0.0f, 0.0f);
-            volumeCollider._radius2 = 0.0f;
+            volumeCollider.Radius2 = 0.0f;
         }
 
         hierarchy.ComponentsByFileId[behaviour.FileId] = collider;
         MarkAdaptedScriptDependency(behaviour, state);
+        RecordAvatarFeature(state, behaviour, hierarchy, "avatar.dynamics.collider",
+            UnityConversionFeatureStatus.Converted, "Physics chain collision",
+            "The importer attached a native physics chain collider and mapped its supported fields.",
+            nativeTarget: collider.GetType().FullName);
 
         if ((GetScalarInt(fields, "globalCollisionFlags") ?? 0) != 0)
         {
+            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.dynamics.collider.global-collision-filter",
+                UnityConversionFeatureStatus.MissingNativeCapability, "Global collision filtering",
+                "The source enables global collision filtering, but the native collider has no matching control.",
+                member: "globalCollisionFlags",
+                lostFunctionality: "Global collision filtering was not applied.",
+                requiredNativeCapability: "Global collision filtering for physics chain colliders");
             AddAvatarDiagnostic(
                 state,
                 behaviour,
@@ -138,7 +153,12 @@ internal static partial class SerializedSceneImporter
 
         PhysicsChainComponent? component = node.AddComponent<PhysicsChainComponent>();
         if (component is null)
+        {
+            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.dynamics.chain",
+                UnityConversionFeatureStatus.Unknown, "Physics chain simulation",
+                "The native component could not be attached; conversion did not complete.");
             return;
+        }
 
         YamlMappingNode fields = behaviour.SerializedFields;
         Transform? root = ResolveTransformReference(GetNode(fields, "rootTransform"), hierarchy, node.Transform) as Transform;
@@ -188,9 +208,8 @@ internal static partial class SerializedSceneImporter
         component.MaxSquish = GetScalarFloat(fields, "maxSquish") ?? 0.0f;
         component.StretchMotion = GetScalarFloat(fields, "stretchMotion") ?? 0.0f;
         component.Exclusions = ResolveTransformSequence(GetNode(fields, "ignoreTransforms"), hierarchy);
-        component.Colliders = (GetScalarInt(fields, "allowCollision") ?? 1) == 0
-            ? []
-            : ResolveColliderSequence(GetNode(fields, "colliders"), hierarchy);
+        // Source allowCollision controls unlisted colliders, not this explicit list.
+        component.Colliders = ResolveColliderSequence(GetNode(fields, "colliders"), hierarchy);
         component.ElasticityDistrib = ParseSourceCurve(fields, "pullCurve");
         component.DampingDistrib = ParseSourceCurve(fields, "springCurve", value => 1.0f - spring * value, tangentScale: -spring);
         component.StiffnessDistrib = ParseSourceCurve(fields, "stiffnessCurve");
@@ -202,6 +221,10 @@ internal static partial class SerializedSceneImporter
 
         hierarchy.ComponentsByFileId[behaviour.FileId] = component;
         MarkAdaptedScriptDependency(behaviour, state);
+        RecordAvatarFeature(state, behaviour, hierarchy, "avatar.dynamics.chain",
+            UnityConversionFeatureStatus.Converted, "Physics chain simulation",
+            "The importer attached a native physics chain and mapped its supported fields.",
+            nativeTarget: typeof(PhysicsChainComponent).FullName);
 
         var approximated = new List<string>(8);
         if (HasCurveKeys(fields, "gravityFalloffCurve") || HasCurveKeys(fields, "gravityCurve"))
@@ -251,6 +274,11 @@ internal static partial class SerializedSceneImporter
         string approximationSummary = approximated.Count == 0
             ? " No active parameters required an unsupported approximation."
             : $" Unsupported active semantics: {string.Join(", ", approximated)}.";
+        if (approximated.Count != 0)
+            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.dynamics.chain.source-semantics",
+                UnityConversionFeatureStatus.Unknown, "Physics chain source semantics",
+                $"The importer detected active source semantics that it did not map: {string.Join(", ", approximated)}.",
+                lostFunctionality: string.Join(", ", approximated));
         AddAvatarDiagnostic(
             state,
             behaviour,
@@ -271,7 +299,12 @@ internal static partial class SerializedSceneImporter
         YamlMappingNode fields = behaviour.SerializedFields;
         WeightedTransformConstraintComponent? component = node.AddComponent<WeightedTransformConstraintComponent>();
         if (component is null)
+        {
+            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.constraint",
+                UnityConversionFeatureStatus.Unknown, "Weighted transform constraint",
+                "The native component could not be attached; conversion did not complete.");
             return;
+        }
 
         component.TargetTransform = ResolveTransformReference(GetNode(fields, "TargetTransform"), hierarchy, node.Transform);
         component.Sources = ParseConstraintSources(fields, hierarchy);
@@ -279,21 +312,30 @@ internal static partial class SerializedSceneImporter
         component.SolveInLocalSpace = (GetScalarInt(fields, "SolveInLocalSpace") ?? 0) != 0;
         component.Locked = (GetScalarInt(fields, "Locked") ?? 0) != 0;
         component.Channels = ParseConstraintChannels(fields);
+        ApplyConstraintOffsetsAndRestPose(component, fields);
+        component.FreezeToWorld = (GetScalarInt(fields, "FreezeToWorld") ?? 0) != 0;
         component.IsActive = behaviour.Enabled && (GetScalarInt(fields, "IsActive") ?? 1) != 0;
 
         hierarchy.ComponentsByFileId[behaviour.FileId] = component;
         MarkAdaptedScriptDependency(behaviour, state);
+        RecordAvatarFeature(state, behaviour, hierarchy, "avatar.constraint",
+            UnityConversionFeatureStatus.Converted, "Weighted transform constraint",
+            "The importer attached a native weighted transform constraint and mapped its supported fields.",
+            nativeTarget: typeof(WeightedTransformConstraintComponent).FullName);
 
-        if ((GetScalarInt(fields, "FreezeToWorld") ?? 0) != 0 ||
-            (GetScalarInt(fields, "RebakeOffsetsWhenUnfrozen") ?? 0) != 0)
+        if ((GetScalarInt(fields, "RebakeOffsetsWhenUnfrozen") ?? 0) != 0)
         {
+            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.constraint.freeze-rebake",
+                UnityConversionFeatureStatus.Unknown, "Constraint freeze and offset rebake",
+                "The source enables freeze or rebake editor semantics that the importer did not reproduce.",
+                lostFunctionality: "Freeze and rebake editor semantics were not reproduced.");
             AddAvatarDiagnostic(
                 state,
                 behaviour,
                 hierarchy,
                 "UNITYVRC0004",
                 SourceImportDiagnosticSeverity.Warning,
-                "VRChat constraint freeze/rebake editor semantics were not reproduced; weighted runtime source offsets remain active.");
+                "VRChat constraint offset rebake on unfreeze was not reproduced; the authored offsets stay fixed.");
         }
     }
 
@@ -308,7 +350,12 @@ internal static partial class SerializedSceneImporter
         YamlMappingNode fields = behaviour.SerializedFields;
         AvatarPresentationComponent? component = node.AddComponent<AvatarPresentationComponent>();
         if (component is null)
+        {
+            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.presentation",
+                UnityConversionFeatureStatus.Unknown, "Avatar presentation",
+                "The native component could not be attached; conversion did not complete.");
             return;
+        }
 
         component.IsActive = behaviour.Enabled;
         component.AvatarRoot = ResolveTransformReference(
@@ -330,6 +377,10 @@ internal static partial class SerializedSceneImporter
 
         hierarchy.ComponentsByFileId[behaviour.FileId] = component;
         MarkAdaptedScriptDependency(behaviour, state);
+        RecordAvatarFeature(state, behaviour, hierarchy, "avatar.presentation",
+            UnityConversionFeatureStatus.Converted, "Avatar presentation",
+            "The importer attached a native avatar presentation component and mapped its supported fields.",
+            nativeTarget: typeof(AvatarPresentationComponent).FullName);
 
         var animationGraph = new SerializedAvatarAnimationGraphRecord
         {
@@ -369,6 +420,12 @@ internal static partial class SerializedSceneImporter
 
         bool hasExecutableLayerEvidence = animationGraph.AnimationPreset is not null ||
             animationGraph.Layers.Any(static layer => layer.Enabled && layer.Controller is not null);
+        if (hasExecutableLayerEvidence)
+            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.animation-layers",
+                UnityConversionFeatureStatus.MissingConverter, "Avatar animation layers",
+                "The importer retained layer references but did not merge controllers into the native animation state machine.",
+                nativeTarget: "XREngine.Components.AnimStateMachineComponent",
+                lostFunctionality: "Avatar animation layers were not attached for playback.");
         AddAvatarDiagnostic(
             state,
             behaviour,
@@ -384,6 +441,10 @@ internal static partial class SerializedSceneImporter
             animationGraph.ExpressionMenu is not null ||
             animationGraph.ExpressionParameters is not null)
         {
+            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.expressions",
+                UnityConversionFeatureStatus.Unknown, "Avatar expressions",
+                "The importer retained expression references, but no native expression mapping was selected.",
+                lostFunctionality: "Expression menus and parameters were not executable after import.");
             AddAvatarDiagnostic(
                 state,
                 behaviour,
@@ -415,6 +476,9 @@ internal static partial class SerializedSceneImporter
         ImportedHierarchy hierarchy,
         ImportState state)
     {
+        RecordAvatarFeature(state, behaviour, hierarchy, "unity.behaviour.unknown",
+            UnityConversionFeatureStatus.Unknown, "Source MonoBehaviour",
+            "No selected native converter recognized the source script identity.");
         hierarchy.NodesByGameObjectId.TryGetValue(behaviour.GameObjectFileId, out SceneNode? node);
         List<string> serializedFieldNames = CreateBoundedSerializedFieldNames(
             behaviour.SerializedFields,
@@ -581,6 +645,24 @@ internal static partial class SerializedSceneImporter
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Reads the constraint-level offsets and the rest pose of a VRChat constraint. The offsets are
+    /// added to the weighted source pose (PositionOffset in the target's parent space, RotationOffset as Euler
+    /// degrees after the source rotation). The rest pose (PositionAtRest and RotationAtRest, the
+    /// target's local pose) is where the constraint blends from by its weight and what it holds when
+    /// the total source weight is zero. Unity coordinates convert to engine coordinates.
+    /// </summary>
+    private static void ApplyConstraintOffsetsAndRestPose(WeightedTransformConstraintComponent component, YamlMappingNode fields)
+    {
+        component.PositionOffset = ConvertPosition(GetVector3(fields, "PositionOffset", Vector3.Zero));
+        component.RotationOffset = ConvertEulerDegrees(GetVector3(fields, "RotationOffset", Vector3.Zero));
+        bool hasPositionAtRest = GetNode(fields, "PositionAtRest") is not null;
+        bool hasRotationAtRest = GetNode(fields, "RotationAtRest") is not null;
+        component.HasRestPose = hasPositionAtRest || hasRotationAtRest;
+        component.PositionAtRest = ConvertPosition(GetVector3(fields, "PositionAtRest", Vector3.Zero));
+        component.RotationAtRest = ConvertEulerDegrees(GetVector3(fields, "RotationAtRest", Vector3.Zero));
     }
 
     private static List<TransformConstraintSource> ParseConstraintSources(

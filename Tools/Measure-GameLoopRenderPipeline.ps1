@@ -85,6 +85,9 @@ param(
     [switch]$DisableMcpDiagnostics,
     [ValidateSet('Configured', 'Desktop', 'Emulated', 'MonadoOpenXR', 'OpenVR', 'OpenXR')]
     [string]$UnitTestVrMode = 'Configured',
+    # Benchmarks pin the first-person desktop view so desktop output stays comparable across runs.
+    [ValidateSet('Configured', 'FirstPerson', 'Spectator', 'EditorCamera', 'TextureOutput')]
+    [string]$UnitTestVrDesktopView = 'FirstPerson',
     [ValidateSet('Configured', 'DynamicRendering', 'LegacyRenderPass')]
     [string]$VulkanRenderTargetMode = 'Configured',
     [ValidateSet('Configured', 'Enabled', 'Disabled')]
@@ -1862,6 +1865,7 @@ function Measure-Variant {
         'XRE_UNIT_TEST_WORLD_SETTINGS_PATH',
         'XRE_UNIT_TEST_RENDER_API',
         'XRE_UNIT_TEST_VR_MODE',
+        'XRE_UNIT_TEST_VR_DESKTOP_VIEW',
         'XRE_VK_RENDER_TARGET_MODE',
         'XRE_VULKAN_PRIMARY_COMMAND_BUFFER_REUSE',
         'XRE_VULKAN_COMMAND_CHAINS',
@@ -1990,6 +1994,11 @@ function Measure-Variant {
             Clear-EnvValue 'XRE_UNIT_TEST_VR_MODE'
         } else {
             Set-BenchmarkEnvValue 'XRE_UNIT_TEST_VR_MODE' $UnitTestVrMode -AllowedValues @('Desktop', 'Emulated', 'MonadoOpenXR', 'OpenVR', 'OpenXR')
+        }
+        if ($UnitTestVrDesktopView -eq 'Configured') {
+            Clear-EnvValue 'XRE_UNIT_TEST_VR_DESKTOP_VIEW'
+        } else {
+            Set-BenchmarkEnvValue 'XRE_UNIT_TEST_VR_DESKTOP_VIEW' $UnitTestVrDesktopView -AllowedValues @('FirstPerson', 'Spectator', 'EditorCamera', 'TextureOutput')
         }
         if ($VulkanRenderTargetMode -eq 'Configured') {
             Clear-EnvValue 'XRE_VK_RENDER_TARGET_MODE'
@@ -3029,6 +3038,7 @@ function Measure-Variant {
         CodeProfiler = $CodeProfiler
         CacheMode = $CacheMode
         UnitTestVrMode = $UnitTestVrMode
+        UnitTestVrDesktopView = $UnitTestVrDesktopView
         VulkanRenderTargetMode = $VulkanRenderTargetMode
         VulkanPrimaryReuse = $VulkanPrimaryReuse
         VulkanCommandChains = $VulkanCommandChains

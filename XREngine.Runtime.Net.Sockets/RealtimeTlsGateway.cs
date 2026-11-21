@@ -122,7 +122,8 @@ public sealed class RealtimeTlsGateway : IDisposable
             }
             catch (Exception exception) when (exception is IOException or SocketException or AuthenticationException or OperationCanceledException or ObjectDisposedException)
             {
-                LastFailure = exception.GetType().Name + ": " + exception.Message + " (" + (exception.InnerException?.HResult ?? exception.HResult).ToString("X8") + ")";
+                int hResult = exception.InnerException?.HResult ?? exception.HResult;
+                LastFailure = $"{exception.GetType().Name}: {exception.Message} ({hResult:X8})";
                 Interlocked.Increment(ref _rejectedConnections);
             }
             finally

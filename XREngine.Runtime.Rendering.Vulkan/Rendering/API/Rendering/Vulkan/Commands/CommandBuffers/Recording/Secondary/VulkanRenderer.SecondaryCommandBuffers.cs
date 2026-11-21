@@ -121,10 +121,19 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer parentCommandBuffer = default;
             if (!includeDepthAttachment)
             {
-                CommandBuffer[]? overlays = CommandBuffers.DynamicUiOverlays;
-                if (overlays is null || imageIndex >= overlays.Length)
-                    return false;
-                parentCommandBuffer = overlays[imageIndex];
+                // A desktop worker primary is selected by frame slot and has no
+                // image-indexed overlay parent to release. Its late overlay primary
+                // is recorded on the render thread for the acquired image. The frame
+                // slot's completion proves that no submitted overlay still executes
+                // this secondary, and the render thread records a new overlay
+                // primary before it submits one again.
+                if (imageIndex < DesktopWorkerArtifactIndexBase)
+                {
+                    CommandBuffer[]? overlays = CommandBuffers.DynamicUiOverlays;
+                    if (overlays is null || imageIndex >= overlays.Length)
+                        return false;
+                    parentCommandBuffer = overlays[imageIndex];
+                }
             }
             else if (releaseInlinePrimaryBeforeSecondaryMutation)
             {

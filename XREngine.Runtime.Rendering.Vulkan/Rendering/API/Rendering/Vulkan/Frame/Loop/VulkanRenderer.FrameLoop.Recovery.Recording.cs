@@ -413,11 +413,15 @@ namespace XREngine.Rendering.Vulkan
                 1,
                 &toTransfer);
 
-            // Use a visibly distinct recovery background. A black clear is
-            // indistinguishable from a dead renderer when no prior swapchain
-            // content survived a resize.
+            // The diagnostic toggle uses a visibly distinct dark purple, because a
+            // black clear is indistinguishable from a dead renderer. Without the
+            // toggle, the clear uses the startup presentation color, so that a frame
+            // with no completed content to replay does not flash.
+            ColorF4 recoveryColor = RenderDiagnosticsFlags.DebugRetryRecoveryClear
+                ? new ColorF4(0.06f, 0.015f, 0.08f, 1.0f)
+                : RuntimeEngine.StartupPresentationClearColor;
             ClearColorValue clearColor =
-                new(0.06f, 0.015f, 0.08f, 1.0f);
+                new(recoveryColor.R, recoveryColor.G, recoveryColor.B, recoveryColor.A);
             CreateRecoveryCommandEncoder().ClearColorImage(
                 commandBuffer,
                 swapchainImage,

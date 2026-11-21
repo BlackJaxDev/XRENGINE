@@ -21,4 +21,5 @@ internal sealed record RetiredSwapchainGeneration(
     bool StreamlineProxy,
     uint Width,
     uint Height,
-    long EnqueuedTimestamp);
+    long EnqueuedTimestamp,
+    VulkanDxgiImageRing? DxgiRing = null);

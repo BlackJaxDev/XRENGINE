@@ -123,7 +123,7 @@ long app-thread job runs (for example a benchmark spawn). Call the static
 and the longest deferral.
 
 Set `XRE_MCP_REQUEST_TRACE=1` before editor startup to trace single-request
-`invoke_method` calls. The trace records the JSON-RPC ID, tool and target
+`invoke_method` calls, or `XRE_MCP_REQUEST_TRACE=all` to trace every tool call. The trace records the JSON-RPC ID, tool and target
 type/method names, request milestones, elapsed time, and managed thread ID. It
 does not record method arguments, object data, headers, or credentials. The
 server keeps the latest 512 milestones and writes each milestone to the MCP
@@ -252,8 +252,8 @@ chat-style interface for interacting with AI providers while the editor is runni
 | **Auto Camera focus pitch controls** | Editor Preferences expose **Focus Preferred Down Pitch** and **Focus Max Down Pitch** to tune auto-focus end pitch. Defaults are 20° preferred and 45° max downward tilt (never upward, never near straight-down). |
 | **Schema-first mutation guidance** | System instructions bias the model to discover writable members with `get_component_schema`/`get_component_snapshot` before mutation, instead of guessing property names. |
 | **Mutation read-back verification** | System instructions require read-back verification (`get_component_property`/`get_component_snapshot`) and screenshot verification for visual edits before reporting success. |
-| **Edit menu** | Copy last response, copy full history, clear history. |
-| **Auto-scroll** | Toggleable via **Settings** menu; keeps the chat log scrolled to the latest content during streaming. |
+| **Conversation controls** | New chat clears the current conversation. History copies the last reply or the conversation. Context shows the selected inputs. |
+| **Auto-scroll** | Follows new output while the reader stays at the bottom. Scrolling up stops following; Jump to latest resumes it. |
 
 #### Environment variables
 
@@ -294,7 +294,7 @@ Authorization: Bearer <McpServerAuthToken>
 
 - Browser-origin requests are checked against `McpServerCorsAllowlist`.
 - Payloads larger than `McpServerMaxRequestBytes` are rejected.
-- Requests that exceed `McpServerRequestTimeoutMs` are canceled.
+- Requests that exceed `McpServerRequestTimeoutMs` are canceled. A synchronous tool, for example `import_third_party_asset`, does not observe the timeout and can finish after it. The server then still sends the result, and the request log line shows `after_timeout_ms`.
 - If `McpServerReadOnly` is enabled, mutating tools are blocked.
 - `McpServerAllowedTools` and `McpServerDeniedTools` can be used to enforce per-tool policy.
 - If `McpServerRateLimitEnabled` is enabled, per-client requests above quota return `429` with `Retry-After`.
@@ -517,6 +517,20 @@ callbacks on cancellation, and times out after 20 seconds. GPU cleanup already
 in flight can finish after cancellation; a completed readback is still required
 before any successful response.
 
+### Directional Shadow Cascade Export
+
+`export_directional_shadow_cascades` writes the directional shadow cascades that the
+Advanced shading samples. Set `source` to `hmd` or `desktop`. Set `cascade_index` to one
+cascade, or to `-1` for all cascades of the set. For each cascade, the tool writes the atlas
+page layer that holds the tile and a crop of the tile UV rectangle as grayscale depth PNGs.
+The PNGs are normalized to the minimum and maximum of each image, so use the JSON values to
+compare depth. The JSON file records the rendered and current world-to-light matrix, the split,
+the UV rectangle, the page and layer, residency, the active fallback, the last render frame and
+the current atlas frame. `crop_depth` gives the raw minimum, maximum and mean depth of the tile,
+and the share of texels at the minimum and at the maximum. A share of 1.0 at the clear value
+shows an empty tile. The tool reads all cascades of one call on the render thread after the
+viewports render, so they come from the same frame. Pass `output_dir` under the task run.
+
 ### Viewport Sequence Capture Sessions
 
 Image analysis resamples each captured frame to exact analysis dimensions. The
@@ -689,6 +703,14 @@ The edits enter Undo and do not save assets.
 | `create_primitive_shape` | Create a visible primitive shape node with a default material in the active scene. |
 | `create_scene` | Create a new scene in the active world. |
 | `create_scene_node` | Create a scene node in the active world/scene. |
+| `create_world` | Create a new world with one empty visible scene and make it the active world. save_world writes it to disk. |
+| `cutscene_add_track` | Add a track to the cutscene asset of a director. track_type is transform, camera_cut, camera_property, property, animation_clip, or simulation_control. target_node_id is the node that the track acts on. Each clip has start and duration in seconds, and optional clip_offset, speed, and extrapolation (None, Hold). Curves have times in clip seconds, values (1 number per key for float curves, 3 for position and scale, 4 for rotation as x,y,z,w), and interpolation (Linear or Step). A transform clip uses position, rotation, and scale. A camera_cut clip uses camera_node_id (default: target_node_id). A camera_property clip uses field_of_view. A property clip uses float_curve, vector3_curve, or quaternion_curve with component_type and member_path on the track. An animation_clip clip uses animation_clip_path. A simulation_control track has no clips and uses simulation_policy, warm_up_seconds, and seed. |
+| `cutscene_create_asset` | Create an empty cutscene asset with a duration and assign it to the CutsceneDirectorComponent of a node. The tool adds the director when the node has none. The asset replaces the current asset of the director and is not saved until cutscene_save_asset. |
+| `cutscene_open` | Open a cutscene. In edit mode this starts a preview that restores the scene when it closes. In play mode this opens a director. Uses asset_path (edit mode only), node_id of a node with a CutsceneDirectorComponent, the selected node, or the only director in the world. Set close to true to end the open cutscene. |
+| `cutscene_play` | Play or pause the open cutscene. A negative rate plays backward. At the end of the range the state becomes Paused. |
+| `cutscene_save_asset` | Save the cutscene asset of a director. A new asset goes to asset_folder (default Cutscenes) of the game assets. An asset that has a file is saved to that file. |
+| `cutscene_seek` | Move the open cutscene to a time in seconds. The tool evaluates the tracks before it returns, and the result is limited to the cutscene range. The transforms flush later in the same frame, so a capture after this call shows the new time. |
+| `cutscene_status` | Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), diagnostics, the open readiness (readyForInstantSeek, pending T0 loads, the T0 draw program states on the active backend (pending, not started, compiling, ready, failed, and not supported), the proxy draw and material counts, and whether the open sequence finished), and the audio clock (clock mode, fallback, mute, last heard-minus-clock difference in ms, read count, hard resync count, and output latency in ms). |
 | `delete_game_asset` | Delete a file or directory from the game project's assets directory. |
 | `delete_game_script` | Delete a .cs script file from the game project's assets directory. |
 | `delete_scene` | Delete a scene from the active world. |
@@ -702,6 +724,7 @@ The edits enter Undo and do not save assets.
 | `evaluate_expression` | Evaluate a dot-separated property chain expression on an XRBase object (e.g. 'Transform.WorldMatrix.Translation.X'). |
 | `evaluate_gpu_hiz_crossover` | Evaluate caller-supplied, parity-proven matched GPU Hi-Z timings into an offline calibration artifact. This does not alter engine policy or forced modes. |
 | `exit_play_mode` | Exit play mode. |
+| `export_directional_shadow_cascades` | Export the directional shadow cascades that the Advanced shading samples: for each cascade, the atlas page layer that holds it and a crop of its UV rectangle as normalized grayscale depth PNGs, plus a JSON file with the rendered and current matrix, split, UV rectangle, page, layer, residency, fallback and last render frame. Choose the Hmd or Desktop cascade set and one cascade or all. |
 | `export_scene` | Export a scene asset to a directory. |
 | `find_asset` | Find a project asset by ID, path, or name. |
 | `find_nodes_by_name` | Find scene nodes by name (exact or contains). |
@@ -737,6 +760,7 @@ The edits enter Undo and do not save assets.
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
 | `get_model_material_bindings` | Read model source slots, assigned materials, legacy and surface texture bindings, source paths, and sampling metadata. Native Uber preflight does not prove GPU execution. Does not decode textures or read GPU pixels. |
 | `get_network_runtime_measurements` | Read high-rate send, receive, pose application, and relay scope counters plus admission and rejection status. |
+| `get_node_bounds` | Return the world-space bounding box of the renderable meshes on a node and its descendants, in the current pose. Scripts use it to place cameras relative to an object. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
 | `get_openxr_runtime_diagnostics` | Read the current OpenXR session summary, exact submission ownership ledger and deferred swapchain retirement counters. Does not wait for GPU completion. |
@@ -805,7 +829,7 @@ The edits enter Undo and do not save assets.
 | `list_transform_types` | List available transform types. |
 | `list_ui_viewport_diagnostics` | List hidden/editor UI viewport components and their offscreen render command state. |
 | `list_viewport_sequence_captures` | List active and recently completed viewport sequence captures without per-frame payloads. |
-| `list_vulkan_image_allocation_diagnostics` | List live Vulkan image allocation sizes by debug name for VRAM pressure diagnostics. |
+| `list_vulkan_image_allocation_diagnostics` | List live Vulkan image allocation sizes by debug name, and live buffer allocation bytes grouped by registering owner and memory type (bufferOwners), for VRAM pressure and memory placement diagnostics. |
 | `list_worlds` | List active world instances and their scenes. |
 | `load_game_project` | Load a local .xrproj authoring project in edit mode. Compile its scripts separately before loading worlds that use game types. |
 | `load_world` | Load a world asset and set it as active on the current world instance. |
@@ -815,7 +839,9 @@ The edits enter Undo and do not save assets.
 | `probe_editor_depth_hit` | Probe the editor camera pawn depth-hit state at a normalized viewport coordinate. |
 | `probe_render_pipeline_depth` | Read depth from a named render-pipeline FBO at a normalized viewport coordinate. |
 | `query_advanced_pick` | Asynchronously resolve canonical Advanced visibility identities at one normalized viewport coordinate without a synchronous GPU readback. |
+| `query_editor_pick` | Resolve the exact editor mesh owner at one normalized Advanced viewport coordinate with an asynchronous GPU readback. |
 | `query_references` | Query references for assets, scene nodes, and components by GUID. |
+| `read_engine_help` | Read numbered lines from one engine source or guide file returned by search_engine_help. |
 | `read_game_asset` | Read the raw text contents of a file from the game project's assets directory (.asset, .json, .xml, .yaml, .cs, etc.). |
 | `read_game_config` | Read the contents of a config file from the project's Config/ directory. |
 | `read_game_script` | Read the contents of a .cs script file from the game project's assets directory. |
@@ -839,6 +865,7 @@ The edits enter Undo and do not save assets.
 | `save_world` | Save the active world asset to disk. |
 | `scaffold_component` | Generate a new XRComponent subclass from a template. Creates a .cs file with backing fields, SetField pattern, lifecycle hooks, and Description attribute. |
 | `scaffold_game_mode` | Generate a new game mode class from template. Creates a .cs file extending GameMode<T> with standard lifecycle methods. |
+| `search_engine_help` | Search engine C# source and Markdown guides for literal text. Results are text matches, not semantic symbol references. |
 | `search_types` | Search across all loaded types by name pattern (contains, regex, or exact match). |
 | `select_node` | Select one or more scene nodes in the editor. |
 | `select_node_by_name` | Select scene nodes by display name. |
@@ -852,7 +879,7 @@ The edits enter Undo and do not save assets.
 | `set_editor_camera_depth_mode` | Set normal or reversed-Z depth on the active editor camera and invalidate its viewport. |
 | `set_editor_camera_render_on_demand` | Set render-on-demand for the active editor camera pawn and optionally invalidate the viewport. |
 | `set_editor_camera_render_pipeline_asset` | Assign a loaded render-pipeline asset to the active editor camera by ID, path, or name. |
-| `set_editor_camera_view` | Set the editor camera view with interpolation using position plus look-at or Euler rotation. |
+| `set_editor_camera_view` | Set the editor camera view with interpolation using position plus look-at or Euler rotation, and optionally its vertical field of view. |
 | `set_editor_openxr_enabled` | Set the editor OpenXR toggle to enabled or disabled. Runtime startup and teardown are asynchronous; inspect toggle status afterward. |
 | `set_editor_preference` | Set an editor preference by property name or dotted path, either persistently or for this editor session only. |
 | `set_game_setting` | Set a game startup setting by property name or dotted path, persistently or for the active process only. |

@@ -145,6 +145,7 @@ public unsafe partial class OpenXRAPI
         _smokePendingFrameTiming.BeginStartQpc = beginStart;
         Result nativeResult = (Result)binding.BeginFrame(GraphicsBindingHost);
         _smokePendingFrameTiming.BeginEndQpc = Stopwatch.GetTimestamp();
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrBeginFrameEnd);
         Result result = CheckResult(nativeResult, "xrBeginFrame");
         if (result != Result.Success)
         {
@@ -174,8 +175,10 @@ public unsafe partial class OpenXRAPI
         frameState = new FrameState { Type = StructureType.FrameState };
         long waitStart = Stopwatch.GetTimestamp();
         _smokePendingFrameTiming.WaitStartQpc = waitStart;
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrWaitFrameStart);
         Result nativeResult = Api.WaitFrame(_session, in frameWaitInfo, ref frameState);
         long waitEnd = Stopwatch.GetTimestamp();
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrWaitFrameEnd);
         _smokePendingFrameTiming.WaitEndQpc = waitEnd;
         Volatile.Write(ref _lastFrameWakeTicks, waitEnd);
         Volatile.Write(ref _frameWorkOpen, 1);
@@ -195,6 +198,7 @@ public unsafe partial class OpenXRAPI
 
         _frameState = frameState;
         Volatile.Write(ref _lastFramePeriodNanoseconds, frameState.PredictedDisplayPeriod);
+        RuntimeEngine.Rendering.Stats.VrHeadroom.RecordDisplayPeriod(frameState.PredictedDisplayPeriod);
         _smokePendingFrameTiming.PredictedDisplayTimeXr = frameState.PredictedDisplayTime;
         _smokePendingFrameTiming.PredictedDisplayPeriodXr = frameState.PredictedDisplayPeriod;
         _smokePendingFrameTiming.ShouldRender = frameState.ShouldRender;
@@ -374,16 +378,28 @@ public unsafe partial class OpenXRAPI
         long start;
         long end;
         Result result;
+        // XR collect pacing: the frame is submitted now, so the collect for the next frame starts
+        // and overlaps this call and the next xrWaitFrame (either one can block).
+        ReleasePacedCollectAtSubmit();
         using (var endFrameSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.XrEndFrame"))
         {
             endFrameAttempted = true;
             start = Stopwatch.GetTimestamp();
             _smokePendingFrameTiming.EndStartQpc = start;
+            global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrEndFrameStart);
             result = (Result)binding.EndFrame(GraphicsBindingHost, frameEndInfo.LayerCount != 0);
             end = Stopwatch.GetTimestamp();
+            global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrEndFrameEnd);
         }
-        Volatile.Write(ref _lastFrameWorkTicks, end - Volatile.Read(ref _lastFrameWakeTicks));
-        Volatile.Write(ref _frameWorkOpen, 0);
+        long frameWorkTicks = end - Volatile.Read(ref _lastFrameWakeTicks);
+        Volatile.Write(ref _lastFrameWorkTicks, frameWorkTicks);
+        // Record headroom only for a frame that a completed xrWaitFrame opened. The
+        // runtime does not pace this time, so it shows the rate the engine could reach.
+        if (Interlocked.Exchange(ref _frameWorkOpen, 0) != 0)
+        {
+            RuntimeEngine.Rendering.Stats.VrHeadroom.RecordCpuFrameWork(frameWorkTicks);
+            RecordSlackAfterEndFrame(end, frameWorkTicks);
+        }
         result = CheckResult(result, "xrEndFrame");
         _smokePendingFrameTiming.EndEndQpc = end;
         _smokePendingFrameTiming.EndStartXrAvailable = TryConvertPerformanceCounterToXrTime(start, out long endStartXr);
@@ -731,6 +747,10 @@ public unsafe partial class OpenXRAPI
                         var stateChanged = (EventDataSessionStateChanged*)eventDataPtr;
                         _sessionState = stateChanged->State;
                         RecordSmokeSessionState(_sessionState);
+                        // Collect pacing needs a focused session; any change wakes a paced
+                        // collect so that it checks the new state at once.
+                        if (_sessionState != SessionState.Focused)
+                            StopCollectPacing();
                         Debug.Out($"Session state changed to: {_sessionState}");
                         if (_sessionState == SessionState.Ready &&
                             _runtimeMonitoringEnabled &&
@@ -829,7 +849,7 @@ public unsafe partial class OpenXRAPI
         if (ReferenceEquals(RuntimeEngine.VRState.RightEyeViewport, _openXrRightViewport))
             RuntimeEngine.VRState.RightEyeViewport = null;
 
-        UpdateOpenXrEyeSettingsSubscriptions(null, null);
+        DetachOpenXrEyeSettings();
 
         _openXrLeftViewport?.Camera = null;
         _openXrRightViewport?.Camera = null;

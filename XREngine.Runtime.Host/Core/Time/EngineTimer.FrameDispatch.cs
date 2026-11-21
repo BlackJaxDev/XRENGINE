@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using XREngine.Data.Profiling;
 using XREngine.Data.Runtime.Memory;
+using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Timers;
 
@@ -24,7 +25,18 @@ public partial class EngineTimer
         return true;
     }
 
-    private bool TryPublishCollectVisibleGeneration(long generation)
+    /// <summary>
+    /// Runs the swap jobs and the buffer swap, then publishes <paramref name="generation"/>.
+    /// With XR collect pacing, the publication first waits (bounded) for <c>xrWaitFrame</c> of the
+    /// next XR frame, so that the generation carries that frame and its eye commands.
+    /// </summary>
+    /// <param name="generation">The collected generation to publish.</param>
+    /// <param name="collectStartTimestamp">Stopwatch timestamp of the collect start, for the publication age.</param>
+    /// <param name="xrPacing">The XR collect pacing gate, or null outside the threaded loop and outside OpenXR.</param>
+    private bool TryPublishCollectVisibleGeneration(
+        long generation,
+        long collectStartTimestamp = 0L,
+        IOpenXrCollectPacing? xrPacing = null)
     {
         if (!IsRunning || FirstTerminalFault is not null)
             return false;
@@ -43,6 +55,25 @@ public partial class EngineTimer
         if (!IsRunning || FirstTerminalFault is not null)
             return false;
 
+        long xrFrameWaitStart = 0L;
+        long xrFrameWaitEnd = 0L;
+        if (xrPacing is not null)
+        {
+            Volatile.Write(ref _collectVisiblePhase, "CompleteXrFramePublication");
+            long start = Stopwatch.GetTimestamp();
+            EOpenXrCollectPacingWait frameWait = xrPacing.CompletePacedFramePublication();
+            if (frameWait is not (EOpenXrCollectPacingWait.NotPaced or EOpenXrCollectPacingWait.Ready))
+            {
+                xrFrameWaitStart = start;
+                xrFrameWaitEnd = Stopwatch.GetTimestamp();
+            }
+            if (!IsRunning || FirstTerminalFault is not null)
+                return false;
+        }
+
+        Volatile.Write(ref _publishedXrFrameWaitStartTimestamp, xrFrameWaitStart);
+        Volatile.Write(ref _publishedXrFrameWaitEndTimestamp, xrFrameWaitEnd);
+        Volatile.Write(ref _publishedCollectStartTimestamp, collectStartTimestamp != 0L ? collectStartTimestamp : Stopwatch.GetTimestamp());
         Volatile.Write(ref _collectVisiblePhase, "GatePublish");
         _visibilityGenerationGate.Publish(generation);
         return true;

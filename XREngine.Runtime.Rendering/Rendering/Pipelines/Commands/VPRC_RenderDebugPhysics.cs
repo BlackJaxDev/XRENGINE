@@ -24,7 +24,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(ResolveRenderGraphPassIndex()))
             using (ActivePipelineInstance.RenderState.PushRenderingCamera(ActivePipelineInstance.RenderState.SceneCamera))
             {
-                IRuntimeRenderWorld? world = ActivePipelineInstance.RenderState.WindowViewport?.World;
+                // XR eye views have no window viewport. Use the world that is rendering now,
+                // as the debug-shape command does, so physics debug draws in every eye view.
+                IRuntimeRenderWorld? world = ActivePipelineInstance.RenderState.WindowViewport?.World
+                    ?? RuntimeEngine.Rendering.State.RenderingWorld;
                 if (RenderWorldPhysics)
                     world?.DebugRenderPhysics(DepthMode);
                 if (DepthMode == PhysicsDebugDepthMode.DepthTested && world is not null)
@@ -34,10 +37,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private int ResolveRenderGraphPassIndex()
         {
-            if (!string.IsNullOrWhiteSpace(RenderGraphPassName) &&
-                ParentPipeline?.TryGetRenderPassIndex(RenderGraphPassName, out int passIndex) == true)
+            if (!string.IsNullOrWhiteSpace(RenderGraphPassName))
             {
-                return passIndex;
+                int passIndex = ResolveActiveRenderGraphPassIndex(RenderGraphPassName!);
+                if (passIndex != int.MinValue)
+                    return passIndex;
             }
 
             return DepthMode == PhysicsDebugDepthMode.DepthTested

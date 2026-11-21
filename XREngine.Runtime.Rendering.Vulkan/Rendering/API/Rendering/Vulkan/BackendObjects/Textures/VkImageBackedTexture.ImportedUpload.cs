@@ -157,6 +157,13 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
+        if (VkFormatConversions.IsBlockCompressed(format) && !BackendContext.Supports(EVulkanDeviceCapability.TextureCompressionBc))
+        {
+            failureReason = $"the cooked texture uses {format}, but the device does not support textureCompressionBC; " +
+                "set CookedTextureCompression to None (or XRE_TEXTURE_COOK_COMPRESSION=None) and cook again";
+            return false;
+        }
+
         ImageAspectFlags aspectMask = NormalizeAspectMaskForFormat(format, AspectFlags);
         ImageUsageFlags usage = ResolveImportedUploadUsage(
             format, publicationPlan.AuthoredSettings.RequiresStorageUsage);
@@ -164,7 +171,18 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         Extent3D extent = new(
             Math.Max(residentData.Mipmaps[0].Width, 1u),
             Math.Max(residentData.Mipmaps[0].Height, 1u), 1u);
-        uint mipLevels = includeMipChain ? (uint)residentData.Mipmaps.Length : 1u;
+        if (residentData.GenerateMipChainOnGpu
+            && (residentData.Mipmaps.Length != 1 || !SupportsImportedUploadMipBlit(format)))
+        {
+            failureReason = residentData.Mipmaps.Length != 1
+                ? "GPU mip generation requires a resident payload with only the base mip"
+                : $"format {format} does not support linear blits for GPU mip generation";
+            return false;
+        }
+
+        uint mipLevels = residentData.GenerateMipChainOnGpu
+            ? (uint)residentData.ResidentMipLevelCount
+            : includeMipChain ? (uint)residentData.Mipmaps.Length : 1u;
         uint arrayLayers = 1u;
         bool createSampler = CreateSampler;
         SamplerCreateInfo samplerInfo = createSampler
@@ -363,7 +381,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                     return EVulkanImportedTextureChunkPreparation.Failed;
                 }
 
-                uint rowCount = Math.Max(mipExtent.Height, 1u);
+                // Block-compressed data is copied in rows of 4x4 blocks; other data in pixel rows.
+                bool blockCompressed = VkFormatConversions.IsBlockCompressed(upload.Format);
+                uint rowCount = GetImportedUploadRowCount(mip, upload.Format);
                 if ((ulong)uploadData.Length % rowCount != 0)
                 {
                     failureReason = $"normalized mip {level} byte count {uploadData.Length:N0} cannot be divided into {rowCount} rows for bounded staging";
@@ -413,8 +433,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                         BaseArrayLayer = 0,
                         LayerCount = 1,
                     },
-                    ImageOffset = new Offset3D(0, (int)firstRow, 0),
-                    ImageExtent = new Extent3D(mipExtent.Width, chunkRows, 1u),
+                    ImageOffset = new Offset3D(0, (int)(blockCompressed ? firstRow * 4u : firstRow), 0),
+                    // A block region may end at the image edge with a height that is not a multiple of 4.
+                    ImageExtent = new Extent3D(
+                        mipExtent.Width,
+                        blockCompressed ? Math.Min(chunkRows * 4u, mipExtent.Height - firstRow * 4u) : chunkRows,
+                        1u),
                 };
 
                 uint nextRow = firstRow + chunkRows;
@@ -451,6 +475,16 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         return EVulkanImportedTextureChunkPreparation.Failed;
     }
 
+    /// <summary>
+    /// Number of copy rows in a mip: pixel rows, or rows of 4x4 blocks for a
+    /// block-compressed format.
+    /// </summary>
+    private static uint GetImportedUploadRowCount(Mipmap2D mip, Format format)
+    {
+        uint height = Math.Max(mip.Height, 1u);
+        return VkFormatConversions.IsBlockCompressed(format) ? (height + 3u) / 4u : height;
+    }
+
     private static bool HasRemainingImportedUploadRows(
         VulkanImportedTexturePendingUpload upload,
         int nextMipLevel,
@@ -462,7 +496,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             Mipmap2D? mip = upload.ResidentData.Mipmaps[index];
             if (mip is null)
                 continue;
-            uint rows = Math.Max(mip.Height, 1u);
+            uint rows = GetImportedUploadRowCount(mip, upload.Format);
             if (index != nextMipLevel || nextMipRow < rows)
                 return true;
         }
@@ -607,9 +641,30 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         return true;
     }
 
+    /// <summary>
+    /// Returns true when the device can blit between levels of an optimally
+    /// tiled image in <paramref name="format"/> with linear filtering. GPU mip
+    /// generation in the upload batch depends on this.
+    /// </summary>
+    private bool SupportsImportedUploadMipBlit(Format format)
+    {
+        Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, format, out FormatProperties properties);
+        const FormatFeatureFlags required =
+            FormatFeatureFlags.BlitSrcBit |
+            FormatFeatureFlags.BlitDstBit |
+            FormatFeatureFlags.SampledImageFilterLinearBit;
+        return (properties.OptimalTilingFeatures & required) == required;
+    }
+
     private ImageUsageFlags ResolveImportedUploadUsage(Format format, bool requiresStorageUsage)
     {
         ImageUsageFlags usage = DefaultUsage;
+        if (VkFormatConversions.IsBlockCompressed(format))
+        {
+            // Block-compressed images are sampled and copied only: they cannot be
+            // color attachments or storage images.
+            return usage & ~(ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.StorageBit);
+        }
         if (requiresStorageUsage)
             usage |= ImageUsageFlags.StorageBit;
         if (VkFormatConversions.IsDepthStencilFormat(format))
@@ -658,11 +713,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             Image = image,
             ViewType = NormalizeImageViewTypeForLayerCount(DefaultViewType, arrayLayers),
             Format = format,
-            Components = new ComponentMapping(
-                ComponentSwizzle.Identity,
-                ComponentSwizzle.Identity,
-                ComponentSwizzle.Identity,
-                ComponentSwizzle.Identity),
+            Components = VkFormatConversions.GetSampledComponentMapping(format),
             SubresourceRange = new ImageSubresourceRange
             {
                 AspectMask = aspectMask,
@@ -821,6 +872,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         RetiredImageResources previousResources;
         VulkanBindlessMaterialTextureSlotTransfer retainedResourceTransfer;
         EVulkanTextureDescriptorPublicationDisposition disposition;
+        long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        long probeLockedStart;
+        long probeLockedEnd;
         lock (texture.ImportedSourceMetadataWriteSync)
         {
             lock (_imageStateLock)
@@ -840,6 +894,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                     return EVulkanTextureDescriptorPublicationDisposition.StaleBeforePublication;
                 }
 
+                probeLockedStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 texture.BeginImportedResidentPublication();
                 try
                 {
@@ -860,6 +915,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 {
                     texture.CompleteImportedResidentPublication();
                 }
+                probeLockedEnd = System.Diagnostics.Stopwatch.GetTimestamp();
             }
         }
 
@@ -867,6 +923,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             && (!requireExactDescriptorPublication
                 || disposition == EVulkanTextureDescriptorPublicationDisposition.ExactPublished))
             RetireImportedUploadPreviousResources(in previousResources, in retainedResourceTransfer);
+        long probeEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+        VulkanTextureUploadTimingProbe.DescriptorLockAndCheckMs = VulkanTextureUploadTimingProbe.Ms(probeStart, probeLockedStart);
+        VulkanTextureUploadTimingProbe.DescriptorRetireMs = VulkanTextureUploadTimingProbe.Ms(probeLockedEnd, probeEnd);
+        VulkanTextureUploadTimingProbe.DescriptorDetailValid = true;
         return disposition;
     }
 
@@ -917,6 +977,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             pendingUpload.Extent,
             Math.Max(pendingUpload.ArrayLayers, 1u),
             Math.Max(pendingUpload.MipLevels, 1u));
+        long probeActivateStart = System.Diagnostics.Stopwatch.GetTimestamp();
         if (!IsActive)
         {
             PreGenerated();
@@ -936,6 +997,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             }
         }
 
+        long probeCommitStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        VulkanTextureUploadTimingProbe.DescriptorActivateMs = VulkanTextureUploadTimingProbe.Ms(probeActivateStart, probeCommitStart);
         ulong publishedWrapperDescriptorGeneration =
             unchecked(DescriptorGeneration + 1UL);
         EVulkanTextureDescriptorPublicationDisposition descriptorPublication =
@@ -948,6 +1011,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 publishedWrapperDescriptorGeneration,
                 out retainedResourceTransfer,
                 out failureDetail);
+        long probeCommitEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+        VulkanTextureUploadTimingProbe.DescriptorCommitMs = VulkanTextureUploadTimingProbe.Ms(probeCommitStart, probeCommitEnd);
+        VulkanTextureUploadTimingProbe.DescriptorWrapperSwapMs = 0.0;
         if (descriptorPublication ==
                 EVulkanTextureDescriptorPublicationDisposition.Failed ||
             requireExactDescriptorPublication && descriptorPublication !=
@@ -958,7 +1024,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         _image = pendingUpload.Image;
         _memory = pendingUpload.Memory;
-        _view = new VulkanOwnedImageView(pendingUpload.ImageView, pendingUpload.ImageViewGeneration);
+        SetCurrentViewForUploadPublication(new VulkanOwnedImageView(pendingUpload.ImageView, pendingUpload.ImageViewGeneration));
         _sampler = pendingUpload.Sampler;
         _ownsImageMemory = true;
         _physicalGroup = null;
@@ -985,6 +1051,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
         // From this point cleanup cannot release the newly published handles.
         pendingUpload.DetachPublishedImageHandles();
+        VulkanTextureUploadTimingProbe.DescriptorWrapperSwapMs = VulkanTextureUploadTimingProbe.Ms(probeCommitEnd, System.Diagnostics.Stopwatch.GetTimestamp());
 
         // Compatible content publication preserves binding identity.
         return descriptorPublication;

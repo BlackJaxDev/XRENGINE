@@ -68,9 +68,11 @@ internal static partial class ProjectBuilder
                         UWrap: ETexWrapMode.ClampToEdge, VWrap: ETexWrapMode.ClampToEdge })
                     throw new NotSupportedException($"BrowserCook.FontProfileUnsupported: '{nodePath}' requires a bitmap R8 font atlas with a 1–512-pixel layout em.");
                 string? declaredPath = loadedFont.OriginalPath ?? loadedFont.FilePath;
-                if (string.IsNullOrWhiteSpace(declaredPath))
+                // A source path can be a portable game:// or engine:// reference.
+                if (string.IsNullOrWhiteSpace(declaredPath) ||
+                    !AssetReferencePath.TryResolveFileSystemPath(declaredPath, out string? resolvedPath))
                     throw new NotSupportedException($"BrowserCook.FontSourceMissing: '{nodePath}' has no source .ttf or .otf identity.");
-                string sourcePath = Path.GetFullPath(declaredPath);
+                string sourcePath = Path.GetFullPath(resolvedPath);
                 if (string.Equals(sourcePath, canonicalDefault, comparison))
                 {
                     if (!string.Equals(configuredDefault, canonicalDefault, comparison) || loadedFont.LayoutEmSize != 128.0f)
@@ -254,7 +256,7 @@ internal static partial class ProjectBuilder
             }
             cancellationToken.ThrowIfCancellationRequested();
             using IDisposable fontCodec = RenderingPublishedCookedAssetRegistration.InstallBrowserBitmapFontCodec();
-            WriteCookedAsset(font, payloadPath);
+            WriteGuardedCookedAsset(font, payloadPath, Path.GetFileName(payloadPath));
             if (new FileInfo(payloadPath).Length > 4 * 1024 * 1024)
                 throw new InvalidDataException("BrowserCook.UiFontPayloadBudgetExceeded: cooked font exceeds the browser read limit.");
             return payloadPath;

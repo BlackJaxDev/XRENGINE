@@ -24,6 +24,30 @@ internal sealed unsafe class VulkanDesktopWsiTargetDriver : IVulkanRendererTarge
     public bool IsInteractiveResizeInProgress => _window.IsInteractiveResizeInProgress;
     public bool PreferHdrOutput => _window.PreferHDROutput;
 
+    /// <summary>
+    /// The present path requested for this window. The environment variable
+    /// <c>XRE_DESKTOP_PRESENT_PATH</c> overrides the window and engine settings.
+    /// </summary>
+    public EDesktopPresentPath RequestedPresentPath
+    {
+        get
+        {
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DesktopPresentPath);
+            if (!string.IsNullOrWhiteSpace(raw) &&
+                Enum.TryParse(raw.Trim(), ignoreCase: true, out EDesktopPresentPath parsed) &&
+                Enum.IsDefined(parsed))
+            {
+                return parsed;
+            }
+
+            return _window.DesktopPresentPath;
+        }
+    }
+
+    /// <summary>The Win32 window handle of the desktop window, or zero when the platform has none.</summary>
+    public nint OperatingSystemWindowHandle
+        => _window.DesktopWindowBackend?.OperatingSystemWindowHandle ?? 0;
+
     public string[] GetRequiredInstanceExtensions()
     {
         IRuntimeWindowVulkanSurface surface = _window.DesktopVulkanSurface

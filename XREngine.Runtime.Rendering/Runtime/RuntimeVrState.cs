@@ -29,10 +29,50 @@ public sealed class RuntimeVrState
 
     public IRuntimeVrLifecycleServices LifecycleServices { get; set; } = NullRuntimeVrLifecycleServices.Instance;
 
+    /// <summary>
+    /// Publishes a teleport of the local player to the VR pose discontinuity consumers. The application host installs it.
+    /// It is null when no host installed it.
+    /// </summary>
+    public IRuntimeVrTeleportPublisher? TeleportPublisher { get; set; }
+
+    /// <summary>Calls <see cref="TeleportPublisher"/>.</summary>
+    /// <returns>False if no publisher is installed.</returns>
+    public bool TryPublishLocalPlayerTeleport()
+    {
+        IRuntimeVrTeleportPublisher? publisher = TeleportPublisher;
+        if (publisher is null)
+            return false;
+
+        publisher.PublishLocalPlayerTeleport();
+        return true;
+    }
+
     public VRRuntime ActiveRuntime { get; set; }
     public bool IsOpenVRActive => ActiveRuntime == VRRuntime.OpenVR;
     public bool IsOpenXRActive => ActiveRuntime == VRRuntime.OpenXR;
-    public bool IsInVR { get; set; }
+    private int _isInVR;
+
+    /// <summary>
+    /// Gets or sets whether a VR runtime currently owns headset presentation.
+    /// A change raises <see cref="IsInVRChanged"/>, so frame pacing can switch between the desktop and VR limits.
+    /// </summary>
+    public bool IsInVR
+    {
+        get => Volatile.Read(ref _isInVR) != 0;
+        set
+        {
+            int next = value ? 1 : 0;
+            if (Interlocked.Exchange(ref _isInVR, next) == next)
+                return;
+
+            IsInVRChanged?.Invoke(value);
+        }
+    }
+
+    /// <summary>
+    /// Occurs when <see cref="IsInVR"/> changes. The event can occur on any thread.
+    /// </summary>
+    public event Action<bool>? IsInVRChanged;
 
     public IOpenXrRuntime? OpenXRApi { get; set; }
     public object? CalibrationSettings { get; set; }

@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
-    internal unsafe bool TryQueueAdvancedPickingReadback(
+    internal bool TryQueueAdvancedPickingReadback(
         XRTexture identity,
         XRTexture metadata,
         XRTexture selection,
@@ -14,6 +14,34 @@ internal sealed partial class VulkanFrameLoop
         out string? failure)
     {
         ArgumentNullException.ThrowIfNull(callback);
+        return TryQueuePickingReadback(identity, metadata, selection, query, callback, null, 0UL, out failure);
+    }
+
+    internal bool TryQueueEditorPickingReadback(
+        XRTexture identity,
+        in AdvancedPickingQuery query,
+        ulong requestToken,
+        Action<ulong, EditorPickingEncodedPixel> callback,
+        out string? failure)
+    {
+        ArgumentNullException.ThrowIfNull(callback);
+        return TryQueuePickingReadback(identity, null, null, query, null, callback, requestToken, out failure);
+    }
+
+    private unsafe bool TryQueuePickingReadback(
+        XRTexture identity,
+        XRTexture? metadata,
+        XRTexture? selection,
+        in AdvancedPickingQuery query,
+        Action<AdvancedVisibilityEncodedSurface>? advancedCallback,
+        Action<ulong, EditorPickingEncodedPixel>? editorCallback,
+        ulong requestToken,
+        out string? failure)
+    {
+        bool editorPicking = editorCallback is not null;
+        uint width = editorPicking ? 1u : 2u;
+        uint byteCount = editorPicking ? 8u : AdvancedPickingContract.ReadbackByteCount;
+        Format format = editorPicking ? Format.R16G16B16A16Unorm : Format.R32G32Uint;
         failure = null;
         if (_deviceLost || !_deviceContext.IsOperational)
         {
@@ -22,32 +50,28 @@ internal sealed partial class VulkanFrameLoop
         }
         if (!RuntimeEngine.IsRenderThread)
         {
-            failure = "Vulkan Advanced picking readback must be queued on the render thread.";
+            failure = "Vulkan picking readback must be queued on the render thread.";
             return false;
         }
 
         PollScreenshotReadbacks();
-        if (!TryResolveAdvancedPickingSource(
+        BlitImageInfo metadataSource = default;
+        BlitImageInfo selectionSource = default;
+        if (!TryResolvePickingSource(
                 identity,
                 query,
-                Format.R32G32Uint,
+                format,
                 out BlitImageInfo identitySource) ||
-            !TryResolveAdvancedPickingSource(
-                metadata,
-                query,
-                Format.R32Uint,
-                out BlitImageInfo metadataSource) ||
-            !TryResolveAdvancedPickingSource(
-                selection,
-                query,
-                Format.R32Uint,
-                out BlitImageInfo selectionSource))
+            (!editorPicking &&
+                (metadata is null || selection is null ||
+                 !TryResolvePickingSource(metadata, query, Format.R32Uint, out metadataSource) ||
+                 !TryResolvePickingSource(selection, query, Format.R32Uint, out selectionSource))))
         {
-            failure = "Vulkan could not resolve the complete transfer-readable Advanced visibility texture set for the requested pixel.";
+            failure = "Vulkan could not resolve the transfer-readable picking attachments for the requested pixel.";
             return false;
         }
 
-        if (!TryReserveScreenshotReadbackBytes(AdvancedPickingContract.ReadbackByteCount))
+        if (!TryReserveScreenshotReadbackBytes(byteCount))
         {
             failure = "The bounded Vulkan asynchronous readback budget is exhausted.";
             return false;
@@ -55,14 +79,14 @@ internal sealed partial class VulkanFrameLoop
 
         bool reservationOwned = true;
         VulkanScreenshotReadbackSlot? slot = AcquireScreenshotReadbackSlot(
-            Format.R32G32Uint,
-            2u,
+            format,
+            width,
             1u,
             needsResolve: false,
             out int slotIndex);
         if (slot is null)
         {
-            ReleaseScreenshotReadbackReservation(AdvancedPickingContract.ReadbackByteCount);
+            ReleaseScreenshotReadbackReservation(byteCount);
             failure = "All bounded Vulkan asynchronous readback slots are busy.";
             return false;
         }
@@ -71,18 +95,20 @@ internal sealed partial class VulkanFrameLoop
         bool submitted = false;
         try
         {
-            PrepareAdvancedPickingReadbackRequest(
+            PreparePickingReadbackRequest(
                 slot,
                 identity,
                 metadata,
                 selection,
-                callback);
+                advancedCallback,
+                editorCallback,
+                requestToken);
             reservationOwned = false;
             if (!EnsureScreenshotReadbackResources(
                     slot,
                     slotIndex,
-                    Format.R32G32Uint,
-                    2u,
+                    format,
+                    width,
                     1u,
                     8u,
                     needsResolve: false,
@@ -100,7 +126,7 @@ internal sealed partial class VulkanFrameLoop
             if (resetFenceResult != Result.Success ||
                 resetCommandResult != Result.Success)
             {
-                failure = $"Failed to reset Vulkan Advanced picking resources (fence={resetFenceResult}, command={resetCommandResult}).";
+                failure = $"Failed to reset Vulkan picking resources (fence={resetFenceResult}, command={resetCommandResult}).";
                 return false;
             }
 
@@ -110,28 +136,26 @@ internal sealed partial class VulkanFrameLoop
                 Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
             };
             _deviceContext.ThrowIfVulkanDeviceOperationNotAdmitted(
-                "vkBeginCommandBuffer.AdvancedPickingReadback");
+                "vkBeginCommandBuffer.PickingReadback");
             Result beginResult = _commandRuntime.BeginTrackedCommandBuffer(
                 slot.CommandBuffer,
                 ref beginInfo,
-                "AdvancedPickingReadback");
+                "PickingReadback");
             if (beginResult != Result.Success)
             {
-                failure = $"vkBeginCommandBuffer failed for Advanced picking ({beginResult}).";
+                failure = $"vkBeginCommandBuffer failed for picking ({beginResult}).";
                 return false;
             }
 
-            RecordAdvancedPickingReadback(
-                slot,
-                identitySource,
-                metadataSource,
-                selectionSource,
-                query);
+            if (editorPicking)
+                RecordPickingSourceCopy(slot, identitySource, query, 0u);
+            else
+                RecordPickingReadback(slot, identitySource, metadataSource, selectionSource, query);
             Result endResult =
                 _commandRuntime.EndCommandBufferTracked(slot.CommandBuffer);
             if (endResult != Result.Success)
             {
-                failure = $"vkEndCommandBuffer failed for Advanced picking ({endResult}).";
+                failure = $"vkEndCommandBuffer failed for picking ({endResult}).";
                 return false;
             }
 
@@ -151,7 +175,7 @@ internal sealed partial class VulkanFrameLoop
             };
             VulkanSubmissionDiagnosticContext diagnosticContext = new()
             {
-                SubmissionKind = "AdvancedPickingReadback",
+                SubmissionKind = "PickingReadback",
                 FrameSlot = slot.StagingSlice.FrameSlot,
                 CommandBufferCount = 1,
                 FirstCommandBufferHandle = unchecked((ulong)commandBuffer.Handle),
@@ -166,10 +190,10 @@ internal sealed partial class VulkanFrameLoop
                     in diagnosticContext,
                     out _,
                     out _,
-                    "VulkanAdvancedPickingReadback");
+                    "VulkanPickingReadback");
             if (!receipt.SubmissionAccepted)
             {
-                failure = $"Vulkan Advanced picking submission failed ({receipt.Result}).";
+                failure = $"Vulkan picking submission failed ({receipt.Result}).";
                 return false;
             }
 
@@ -183,24 +207,27 @@ internal sealed partial class VulkanFrameLoop
             VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(
                 identitySource,
                 VulkanReadbackLayoutPolicy.ResolvePostTransfer(identitySource));
-            VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(
-                metadataSource,
-                VulkanReadbackLayoutPolicy.ResolvePostTransfer(metadataSource));
-            VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(
-                selectionSource,
-                VulkanReadbackLayoutPolicy.ResolvePostTransfer(selectionSource));
+            if (!editorPicking)
+            {
+                VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(
+                    metadataSource,
+                    VulkanReadbackLayoutPolicy.ResolvePostTransfer(metadataSource));
+                VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(
+                    selectionSource,
+                    VulkanReadbackLayoutPolicy.ResolvePostTransfer(selectionSource));
+            }
             return true;
         }
         catch (Exception ex)
         {
-            failure = $"Failed to queue Vulkan Advanced picking readback: {ex.Message}";
+            failure = $"Failed to queue Vulkan picking readback: {ex.Message}";
             return false;
         }
         finally
         {
             if (reservationOwned)
                 ReleaseScreenshotReadbackReservation(
-                    AdvancedPickingContract.ReadbackByteCount);
+                    byteCount);
             if (stagingPrepared && !submitted)
                 ReadbackOutputResources.CancelStagingSliceSubmission(slot.StagingSlice);
             if (!submitted)
@@ -208,7 +235,7 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
-    private bool TryResolveAdvancedPickingSource(
+    private bool TryResolvePickingSource(
         XRTexture texture,
         in AdvancedPickingQuery query,
         Format expectedFormat,
@@ -238,23 +265,28 @@ internal sealed partial class VulkanFrameLoop
         return true;
     }
 
-    private static void PrepareAdvancedPickingReadbackRequest(
+    private static void PreparePickingReadbackRequest(
         VulkanScreenshotReadbackSlot slot,
         XRTexture identity,
-        XRTexture metadata,
-        XRTexture selection,
-        Action<AdvancedVisibilityEncodedSurface> callback)
+        XRTexture? metadata,
+        XRTexture? selection,
+        Action<AdvancedVisibilityEncodedSurface>? callback,
+        Action<ulong, EditorPickingEncodedPixel>? editorCallback,
+        ulong requestToken)
     {
         slot.Callback = null;
         slot.AdvancedPickingCallback = callback;
-        slot.IsAdvancedPicking = true;
-        slot.AdvancedPickingIdentitySource = identity;
+        slot.EditorPickingCallback = editorCallback;
+        slot.EditorPickingToken = requestToken;
+        slot.IsEditorPicking = editorCallback is not null;
+        slot.IsAdvancedPicking = !slot.IsEditorPicking;
+        slot.PickingIdentitySource = identity;
         slot.AdvancedPickingMetadataSource = metadata;
         slot.AdvancedPickingSelectionSource = selection;
-        slot.SourceFormat = Format.R32G32Uint;
-        slot.Width = 2;
+        slot.SourceFormat = slot.IsEditorPicking ? Format.R16G16B16A16Unorm : Format.R32G32Uint;
+        slot.Width = slot.IsEditorPicking ? 1 : 2;
         slot.Height = 1;
-        slot.RawByteCount = AdvancedPickingContract.ReadbackByteCount;
+        slot.RawByteCount = slot.IsEditorPicking ? 8u : AdvancedPickingContract.ReadbackByteCount;
         slot.WithTransparency = false;
         slot.UsedMultisampleResolve = false;
         slot.SubmittedTimestamp = 0;
@@ -265,19 +297,19 @@ internal sealed partial class VulkanFrameLoop
         Volatile.Write(ref slot.WatchdogWarningLogged, 0);
     }
 
-    private unsafe void RecordAdvancedPickingReadback(
+    private unsafe void RecordPickingReadback(
         VulkanScreenshotReadbackSlot slot,
         in BlitImageInfo identity,
         in BlitImageInfo metadata,
         in BlitImageInfo selection,
         in AdvancedPickingQuery query)
     {
-        RecordAdvancedPickingSourceCopy(slot, identity, query, 0u);
-        RecordAdvancedPickingSourceCopy(slot, metadata, query, 2u * sizeof(uint));
-        RecordAdvancedPickingSourceCopy(slot, selection, query, 3u * sizeof(uint));
+        RecordPickingSourceCopy(slot, identity, query, 0u);
+        RecordPickingSourceCopy(slot, metadata, query, 2u * sizeof(uint));
+        RecordPickingSourceCopy(slot, selection, query, 3u * sizeof(uint));
     }
 
-    private unsafe void RecordAdvancedPickingSourceCopy(
+    private unsafe void RecordPickingSourceCopy(
         VulkanScreenshotReadbackSlot slot,
         in BlitImageInfo source,
         in AdvancedPickingQuery query,
@@ -338,12 +370,26 @@ internal sealed partial class VulkanFrameLoop
             source.StageMask);
     }
 
-    private void ProcessAdvancedPickingReadback(
+    private void ProcessPickingReadback(
         VulkanScreenshotReadbackSlot slot,
         VulkanPooledReadbackBytes rawBytes)
     {
         try
         {
+            if (slot.IsEditorPicking)
+            {
+                EditorPickingEncodedPixel pixel = default;
+                ReadOnlySpan<byte> editorBytes = rawBytes.Bytes;
+                if (editorBytes.Length >= 8)
+                    pixel = new EditorPickingEncodedPixel(
+                        System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(editorBytes),
+                        System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(editorBytes[2..]),
+                        System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(editorBytes[4..]),
+                        System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(editorBytes[6..]));
+                if (Interlocked.Exchange(ref slot.CallbackDelivered, 1) == 0)
+                    Interlocked.Exchange(ref slot.EditorPickingCallback, null)?.Invoke(slot.EditorPickingToken, pixel);
+                return;
+            }
             AdvancedVisibilityEncodedSurface encoded =
                 AdvancedVisibilityEncodedSurface.Invalid;
             ReadOnlySpan<byte> bytes = rawBytes.Bytes;
@@ -369,7 +415,7 @@ internal sealed partial class VulkanFrameLoop
         catch (Exception ex)
         {
             Debug.VulkanWarning(
-                "[Vulkan] Failed to deliver Advanced picking readback: {0}",
+                "[Vulkan] Failed to deliver picking readback: {0}",
                 ex.Message);
         }
         finally

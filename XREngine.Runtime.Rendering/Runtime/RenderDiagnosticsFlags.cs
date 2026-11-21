@@ -43,6 +43,12 @@ public static partial class RenderDiagnosticsFlags
     /// <summary>Clear the default framebuffer to magenta to confirm present-path binding. Seed: <c>XRE_DEBUG_PRESENT_CLEAR=1</c>.</summary>
     public static volatile bool DebugPresentClear;
 
+    /// <summary>
+    /// Shows the dark purple recovery clear when a desktop frame must retry, instead of the last completed frame.
+    /// Use it to see each retried frame. Seed: <c>XRE_DEBUG_RETRY_RECOVERY_CLEAR=1</c>.
+    /// </summary>
+    public static volatile bool DebugRetryRecoveryClear;
+
     /// <summary>Per-buffer PushSubData 1Hz aggregate dump to log_rendering.txt. Seed: <c>XRE_PUSHSUBDATA_BREAKDOWN=1</c>.</summary>
     public static volatile bool PushSubDataBreakdown;
 
@@ -249,6 +255,7 @@ public static partial class RenderDiagnosticsFlags
         DiagPostProcess = false;
         DiagDeferredLighting = false;
         DebugPresentClear = false;
+        DebugRetryRecoveryClear = false;
         PushSubDataBreakdown = false;
         PushSubDataTrace = false;
         DispatchTrace = false;
@@ -291,6 +298,7 @@ public static partial class RenderDiagnosticsFlags
         DiagPostProcess = ReadBool(XREngineEnvironmentVariables.DiagPostProcess);
         DiagDeferredLighting = ReadBool(XREngineEnvironmentVariables.DiagDeferredLighting);
         DebugPresentClear = ReadBool(XREngineEnvironmentVariables.DebugPresentClear);
+        DebugRetryRecoveryClear = ReadBool(XREngineEnvironmentVariables.DebugRetryRecoveryClear);
         PushSubDataBreakdown = ReadBool(XREngineEnvironmentVariables.PushSubDataBreakdown);
         PushSubDataTrace = ReadBool(XREngineEnvironmentVariables.PushSubDataTrace);
         DispatchTrace = ReadBool(XREngineEnvironmentVariables.DispatchTrace);
@@ -434,6 +442,7 @@ public static partial class RenderDiagnosticsFlags
     public static void SetDiagPostProcess(bool value) => DiagPostProcess = value;
     public static void SetDiagDeferredLighting(bool value) => DiagDeferredLighting = value;
     public static void SetDebugPresentClear(bool value) => DebugPresentClear = value;
+    public static void SetDebugRetryRecoveryClear(bool value) => DebugRetryRecoveryClear = value;
     public static void SetPushSubDataBreakdown(bool value) => PushSubDataBreakdown = value;
     public static void SetPushSubDataTrace(bool value) => PushSubDataTrace = value;
     public static void SetDispatchTrace(bool value) => DispatchTrace = value;
@@ -498,6 +507,7 @@ public static partial class RenderDiagnosticsFlags
         ApplyIfConfigured(XREngineEnvironmentVariables.DiagPostProcess);
         ApplyIfConfigured(XREngineEnvironmentVariables.DiagDeferredLighting);
         ApplyIfConfigured(XREngineEnvironmentVariables.DebugPresentClear);
+        ApplyIfConfigured(XREngineEnvironmentVariables.DebugRetryRecoveryClear);
         ApplyIfConfigured(XREngineEnvironmentVariables.PushSubDataBreakdown);
         ApplyIfConfigured(XREngineEnvironmentVariables.PushSubDataTrace);
         ApplyIfConfigured(XREngineEnvironmentVariables.DispatchTrace);
@@ -582,6 +592,9 @@ public static partial class RenderDiagnosticsFlags
                 break;
             case XREngineEnvironmentVariables.DebugPresentClear:
                 DebugPresentClear = ReadBool(name);
+                break;
+            case XREngineEnvironmentVariables.DebugRetryRecoveryClear:
+                DebugRetryRecoveryClear = ReadBool(name);
                 break;
             case XREngineEnvironmentVariables.PushSubDataBreakdown:
                 PushSubDataBreakdown = ReadBool(name);

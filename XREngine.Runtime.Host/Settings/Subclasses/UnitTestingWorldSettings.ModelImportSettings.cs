@@ -39,6 +39,16 @@ public partial class UnitTestingWorldSettings
         /// </summary>
         public string Path { get; set; } = string.Empty;
         /// <summary>
+        /// Selects one scene or prefab by its Assets-relative path inside a Unity package.
+        /// An empty value imports all scene and prefab entries from the main package.
+        /// </summary>
+        public string? PackageEntryPath { get; set; }
+        /// <summary>
+        /// Publishes only the uniquely named top-level node and its children from an imported scene.
+        /// Animated imports attach the selected startup clip to this node.
+        /// </summary>
+        public string? SceneRootName { get; set; }
+        /// <summary>
         /// Optional Unity project root (or its Assets directory) for loose scenes and prefabs.
         /// When omitted, the importer locates the owning project from the source path.
         /// Relative paths are resolved from the process working directory.
@@ -77,6 +87,14 @@ public partial class UnitTestingWorldSettings
         /// Additional LOD levels requested when <see cref="GenerateMeshletLods"/> is enabled.
         /// </summary>
         public int MeshletAdditionalLodCount { get; set; } = 2;
+
+        /// <summary>
+        /// Cooks a cluster level-of-detail hierarchy for the meshlets of this model (level-0
+        /// meshlets plus coarser cluster levels with crack-free group borders). Off by default; the
+        /// cook takes longer and the meshlet data is about twice the size. Renderers without cut
+        /// selection draw only the level-0 meshlets.
+        /// </summary>
+        public bool GenerateClusterHierarchy { get; set; }
 
         /// <summary>
         /// Additional post-import actions to apply after the source model has been loaded.

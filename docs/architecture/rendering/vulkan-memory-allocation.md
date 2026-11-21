@@ -53,6 +53,58 @@ Allocator creation passes the instance, physical device, logical device, API ver
 - `Free` unmaps any map scopes that the caller leaked and logs a warning.
 - A failed map logs a rate-limited warning with the result, allocation, offset, length, and memory properties.
 
+## Buffer Placement
+
+`VkDataBuffer` selects the memory of an `XRDataBuffer` in `ShouldUseDeviceLocal` and
+`ResolveMemoryProperties`. A buffer without host-visible intent (no map request and no map storage
+or range flags) gets device-local memory when:
+
+- `GpuProduced` is true, at any size and usage. Compute or raster passes write its contents, and the
+  CPU never writes or maps it. CPU readers copy it on the GPU into a readback buffer first (for
+  example the GpuStats readback arena or `TryReadBufferBytes`). This covers the Advanced
+  classification, clustered-lighting, visibility and PPLL buffers. In host-visible memory, every
+  GPU read and write of these buffers crossed PCIe: on New Sponza in VR, moving them cut the
+  Advanced GPU time per frame by about 5.7 ms (classification 6.4 to 2.5 ms, clustered lighting
+  1.4 to 0.1 ms).
+- or it is a `StaticDraw` or `StaticCopy` buffer of 64 KiB or more. Its uploads go through a
+  staging copy.
+
+Every other buffer gets host-visible memory, with host-cached memory for `*Read` usages. A
+`*Copy` usage does not mean GPU-only here: many per-frame CPU-uploaded buffers use `DynamicCopy`,
+and a device-local upload is a synchronous submit with a fence wait.
+
+CPU-written buffers that the GPU reads every frame prefer device-local host-visible memory
+(`DEVICE_LOCAL | HOST_VISIBLE | HOST_COHERENT`, resizable BAR) when the device exposes it:
+
+- the `AdvancedSceneStorage` lane of the canonical frame-data arena (the resident scene records).
+  The arena constructor flag `preferDeviceLocalSceneStorage` selects this, so the synchronous,
+  readback and GPU-statistics arenas keep system memory;
+- the `MappedFrameArena` uniform chunks;
+- the Advanced geometry resident cache (vertex and index data). Its buffers come from
+  `CreateDedicatedRaw`; when that throws `VulkanOutOfMemoryException`, the cache logs a warning and
+  allocates in system memory.
+
+The CPU only writes these buffers, sequentially. CPU reads from this memory are uncached and very
+slow: the env-gated uniform diagnostics that read it are marked as unsuitable for timing runs, and
+`VulkanMappedFrameArena.TryWriteIfChanged` must not get a per-frame caller. A mapped chunk that
+preferred device-local memory but got another memory type logs a rate-limited warning. On New Sponza
+in VR, the geometry cache placement cut the Advanced visibility pass from 5.3 to 1.8 ms at the sun
+view; the two arenas gave about 0.4 ms. The synchronous arena keeps its upload staging (about 1.3 GB
+in the `FrameDataArena.Storage` lane on that scene) in system memory.
+
+When a device-local request ends in host-visible memory (the allocator retry below), `VkDataBuffer`
+logs a rate-limited warning with the buffer name, its size and the actual memory flags. The
+`bufferOwners` section of `list_vulkan_image_allocation_diagnostics` lists the live buffer bytes by
+registering owner and memory type.
+
+`VulkanMappedFrameArena` has one host-writer gate for each frame slot (`TryBeginWrite` and
+`EndWrite`). A slice writes only its own slot chunk, and each chunk keeps its own dirty range, so two
+threads can write two slots at the same time; the two eyes of parallel OpenXR recording do this. A
+second write to the same slot fails until the first one ends, and `TryPrepareFrameSlotForSubmission`
+fails while its own slot has an open write. Capacity growth and `Destroy` require that no slot has an
+open write. `MaximumFrameSlotCount` (10) bounds the slots: the desktop slots plus two slots for each
+OpenXR eye.
+
 ## Failure And Fallback Policy
 
 - A missing, wrong-architecture, or incompatible bridge DLL (`DllNotFoundException`, `EntryPointNotFoundException`, `BadImageFormatException`) becomes a `NotSupportedException` that names the DLL and tells the user to build the bridge or select `Managed`.
@@ -69,8 +121,8 @@ Allocator creation passes the instance, physical device, logical device, API ver
 
 ## Known Limits
 
-- Allocations have no debug name or owner metadata in VMA.
-- Allocator diagnostics do not yet map VMA heap and memory-type statistics, or report placement for each allocation.
+- Allocations have no debug name or owner metadata in VMA. The buffer owner grouping above joins the
+  lifetime tracker owners with the buffer allocations instead.
 - VMA memory-budget, external-memory (Win32), and memory-priority allocator flags are not enabled.
 - External-memory allocations for Vulkan/OpenGL interop do not go through VMA.
 - The device-local to host-visible retry is counted but is not refused for callers that explicitly request an accelerated path.

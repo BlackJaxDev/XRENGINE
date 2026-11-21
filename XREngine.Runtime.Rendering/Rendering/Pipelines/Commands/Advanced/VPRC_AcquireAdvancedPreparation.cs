@@ -20,7 +20,7 @@ public sealed class VPRC_AcquireAdvancedPreparation : ViewportRenderCommand
             return;
 
         EAdvancedPreparationConsumer consumers = ActivePipelineInstance.Pipeline is
-            IAdvancedRenderStageFamilyHost familyHost
+            IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } familyHost
                 ? familyHost.AdvancedStageFamilyDefinition.RequiredPreparationConsumers
                 : EAdvancedPreparationConsumer.Visibility |
                   EAdvancedPreparationConsumer.Depth |
@@ -36,6 +36,7 @@ public sealed class VPRC_AcquireAdvancedPreparation : ViewportRenderCommand
             world,
             state.FrameViewSet,
             consumers,
+            ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage,
             ActivePipelineInstance.ActiveMeshRenderCommands
                 .RenderingBackendReadyPackage.SubmissionResolution.Resolved);
     }

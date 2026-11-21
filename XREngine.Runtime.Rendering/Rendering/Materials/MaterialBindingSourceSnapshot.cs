@@ -15,8 +15,19 @@ public readonly struct MaterialBindingSourceSnapshot(
     float emissionStrength,
     Vector4 emissionTextureMetadata,
     Vector4 emissionUvScaleOffset,
-    float emissionUvRotation)
+    float emissionUvRotation,
+    XRTexture? opacity = null,
+    XRTexture? occlusion = null)
 {
+    /// <summary>
+    /// The ambient occlusion texture, or null. <see cref="GPUMaterialEntry.OcclusionStrength"/> and <see cref="GPUMaterialEntry.OcclusionControls"/>
+    /// hold its strength, channel, and texture-coordinate set.
+    /// </summary>
+    public XRTexture? Occlusion { get; } = occlusion;
+
+    /// <summary>The separate opacity texture. Masked coverage multiplies its red channel.</summary>
+    public XRTexture? Opacity { get; } = opacity;
+
     public GPUMaterialEntry Entry { get; } = entry;
     public XRTexture? Albedo { get; } = albedo;
     public XRTexture? Normal { get; } = normal;

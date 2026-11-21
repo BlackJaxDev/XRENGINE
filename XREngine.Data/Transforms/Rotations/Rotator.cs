@@ -510,7 +510,10 @@ namespace XREngine.Data.Transforms.Rotations
         }
 
         public override readonly string ToString()
-            => string.Format("({0}{3} {1}{3} {2}{3} {4})", Pitch, Yaw, Roll, CultureInfo.CurrentCulture.TextInfo.ListSeparator, _rotationOrder);
+        {
+            string separator = CultureInfo.CurrentCulture.TextInfo.ListSeparator;
+            return $"({Pitch}{separator} {Yaw}{separator} {Roll}{separator} {_rotationOrder})";
+        }
 
         public override readonly int GetHashCode()
             => HashCode.Combine(Yaw, Pitch, Roll);

@@ -1204,6 +1204,22 @@ foreach ($s in $submodules) {
 
 # Nested submodules / vendored-source / fetched-from-upstream dependencies referenced by build scripts or native bridges.
 $nested = New-Object System.Collections.Generic.List[object]
+$glfwPinPath = Join-Path $root 'Tools/Dependencies/Glfw.lock.json'
+if (Test-Path -LiteralPath $glfwPinPath) {
+    $glfwPin = Get-Content -LiteralPath $glfwPinPath -Raw | ConvertFrom-Json
+    $glfwNotice = Join-Path $root 'Tools/Dependencies/Glfw/LICENSE.md'
+    if (-not (Test-Path -LiteralPath $glfwNotice)) {
+        throw 'The patched GLFW license notice is missing.'
+    }
+    $nested.Add([pscustomobject]@{
+        Name = "GLFW $($glfwPin.version) (Windows active-window fix)"
+        UsedBy = 'Windows x64 desktop hosts; Tools/Dependencies/Build-Glfw.ps1'
+        Owner = 'Marcus Geelnard, Camilla Lowy, and GLFW contributors'
+        Url = "https://github.com/glfw/glfw/tree/$($glfwPin.version)"
+        License = $glfwPin.license
+        LicenseSourcePath = $glfwNotice
+    })
+}
 $slangNotice = Join-Path $licensesDir 'Slang-2026.8.txt'
 if (Test-Path -LiteralPath $slangNotice) {
     $nested.Add([pscustomobject]@{
@@ -1305,11 +1321,25 @@ try {
         $meshoptLicensePath = Join-Path $root 'Build\Dependencies\Meshoptimizer\source\LICENSE.md'
         $nested.Add([pscustomobject]@{
             Name = "meshoptimizer $($meshoptLock.tag)"
-            UsedBy = 'XREngine.Runtime.MeshProcessing.Meshoptimizer'
+            UsedBy = 'XREngine.Runtime.MeshProcessing.Meshoptimizer; XREngine.Runtime.Rendering (MeshletClusterHierarchyBuilder is ported from demo/clusterlod.h)'
             Owner = 'Arseny Kapoulkine'
             Url = "$($meshoptLock.repository)/tree/$($meshoptLock.tag)"
             License = $meshoptLock.license
             LicenseSourcePath = if (Test-Path -LiteralPath $meshoptLicensePath) { $meshoptLicensePath } else { $null }
+        })
+    }
+
+    $bc7EncLockPath = Join-Path $root 'Tools\Dependencies\Bc7Enc.lock.json'
+    if (Test-Path -LiteralPath $bc7EncLockPath) {
+        $bc7EncLock = Get-Content -Raw -LiteralPath $bc7EncLockPath | ConvertFrom-Json
+        $bc7EncLicensePath = Join-Path $root 'Build\Dependencies\Bc7Enc\source\LICENSE'
+        $nested.Add([pscustomobject]@{
+            Name = "bc7enc_rdo $(([string]$bc7EncLock.commit).Substring(0, 7)) (bc7enc.cpp and rgbcx.cpp only)"
+            UsedBy = 'XREngine.Runtime.Imaging.Bc7Enc'
+            Owner = 'Richard Geldreich, Jr.'
+            Url = "$($bc7EncLock.repository)/tree/$($bc7EncLock.commit)"
+            License = $bc7EncLock.license
+            LicenseSourcePath = if (Test-Path -LiteralPath $bc7EncLicensePath) { $bc7EncLicensePath } else { $null }
         })
     }
 

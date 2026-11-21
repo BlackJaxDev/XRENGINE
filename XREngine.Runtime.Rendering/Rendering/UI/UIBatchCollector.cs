@@ -44,9 +44,27 @@ public sealed class UIBatchCollector : IDisposable
     private static int s_materialRenderDiagCount;
     private static long s_textPrepareTotalCalls;
     private static long s_textPrepareFailureCount;
+    private static long s_textGroupCalls;
+    private static long s_textEmptyGroupCalls;
+    private static ulong s_textLastAttemptFrame;
+    private static ulong s_textLastPreparedFrame;
+    private static int s_textLastGlyphCount;
+    private static string s_textLastPrepareReason = string.Empty;
     private static long s_textPrepareSummaryLastTicks;
     private static readonly Dictionary<string, int> s_textPrepareReasonCounts = new();
     private static readonly object s_textPrepareSummaryLock = new();
+
+    /// <summary>Reads text preparation counters without a GPU readback.</summary>
+    public static UITextPreparationDiagnostics GetTextPreparationDiagnostics()
+        => new(
+            Interlocked.Read(ref s_textGroupCalls),
+            Interlocked.Read(ref s_textEmptyGroupCalls),
+            Interlocked.Read(ref s_textPrepareTotalCalls),
+            Interlocked.Read(ref s_textPrepareFailureCount),
+            Volatile.Read(ref s_textLastAttemptFrame),
+            Volatile.Read(ref s_textLastPreparedFrame),
+            Volatile.Read(ref s_textLastGlyphCount),
+            Volatile.Read(ref s_textLastPrepareReason));
 
     #region Batch Entry Types
 
@@ -1156,12 +1174,14 @@ public sealed class UIBatchCollector : IDisposable
 
     private void RenderTextGroup(int renderPass, int groupIndex)
     {
+        Interlocked.Increment(ref s_textGroupCalls);
         if (!_renderTextGroups.TryGetValue(renderPass, out var groups) ||
             !groups.TryGet(groupIndex, out var batchData) ||
             batchData.Atlas is null ||
             batchData.Entries.Count == 0 ||
             batchData.TotalGlyphs == 0)
         {
+            Interlocked.Increment(ref s_textEmptyGroupCalls);
             return;
         }
 
@@ -1254,7 +1274,9 @@ public sealed class UIBatchCollector : IDisposable
         }
 
         var version = GetImmediateRenderVersion(gpu.Mesh!);
-        s_textPrepareTotalCalls++;
+        Interlocked.Increment(ref s_textPrepareTotalCalls);
+        s_textLastAttemptFrame = RuntimeEngine.Rendering.State.RenderFrameId;
+        s_textLastGlyphCount = batchData.TotalGlyphs;
         bool prepared;
         string prepareReason;
         if (profileGpu)
@@ -1273,7 +1295,8 @@ public sealed class UIBatchCollector : IDisposable
 
         if (!prepared)
         {
-            s_textPrepareFailureCount++;
+            Interlocked.Increment(ref s_textPrepareFailureCount);
+            s_textLastPrepareReason = prepareReason;
             if (!s_textPrepareReasonCounts.TryGetValue(prepareReason, out int reasonCount))
                 reasonCount = 0;
             s_textPrepareReasonCounts[prepareReason] = reasonCount + 1;
@@ -1300,6 +1323,7 @@ public sealed class UIBatchCollector : IDisposable
             return;
         }
 
+        s_textLastPreparedFrame = RuntimeEngine.Rendering.State.RenderFrameId;
         MaybeLogTextPrepareSummary();
 
         ApplyBatchCropping(batchData.CropRegion);

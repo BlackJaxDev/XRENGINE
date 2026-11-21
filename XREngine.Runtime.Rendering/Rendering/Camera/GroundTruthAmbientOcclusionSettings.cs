@@ -28,6 +28,7 @@ namespace XREngine.Rendering
         public const float DefaultThicknessHeuristic = 1.0f;
         public const bool DefaultMultiBounceEnabled = true;
         public const bool DefaultSpecularOcclusionEnabled = true;
+        public const bool DefaultUseMaterialNormals = false;
         public const EResolution DefaultResolution = EResolution.Half;
         public const bool DefaultUseNormalWeightedBlur = true;
         public const bool DefaultUseVisibilityBitmask = true;
@@ -43,6 +44,7 @@ namespace XREngine.Rendering
         private float _thicknessHeuristic = DefaultThicknessHeuristic;
         private bool _multiBounceEnabled = DefaultMultiBounceEnabled;
         private bool _specularOcclusionEnabled = DefaultSpecularOcclusionEnabled;
+        private bool _useMaterialNormals = DefaultUseMaterialNormals;
         private EResolution _resolution = DefaultResolution;
         private bool _useNormalWeightedBlur = DefaultUseNormalWeightedBlur;
         private bool _useVisibilityBitmask = DefaultUseVisibilityBitmask;
@@ -106,6 +108,19 @@ namespace XREngine.Rendering
         {
             get => _specularOcclusionEnabled;
             set => SetValue(ref _specularOcclusionEnabled, value, nameof(AmbientOcclusionSettings.GTAOSpecularOcclusionEnabled));
+        }
+
+        /// <summary>
+        /// Adds normal-map micro-occlusion to GTAO in the Advanced pipeline native shading. GTAO
+        /// reads only depth, so it cannot see the small creases of a normal map. When true, the
+        /// shading kernel compares the normal-mapped normal with the interpolated surface normal and
+        /// scales the GTAO value down where they differ. The scale never removes more than a fixed
+        /// fraction of the light. No extra pass runs. Default false.
+        /// </summary>
+        public bool UseMaterialNormals
+        {
+            get => _useMaterialNormals;
+            set => SetValue(ref _useMaterialNormals, value, nameof(AmbientOcclusionSettings.GTAOUseMaterialNormals));
         }
 
         /// <summary>

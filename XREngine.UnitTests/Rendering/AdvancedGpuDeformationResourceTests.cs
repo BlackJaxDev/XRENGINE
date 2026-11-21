@@ -57,6 +57,97 @@ public sealed class AdvancedGpuDeformationResourceTests
     }
 
     [Test]
+    public void OutputSlotSelection_SkipsTheBusyOldestSlotAndKeepsTheLastFrameAsPrevious()
+    {
+        using AdvancedGpuDeformationResources resources =
+            new(CreateOptions(initialVertexCapacity: 16u));
+        OpenAndCloseFrame(resources, frameId: 7UL, currentFrameSlot: 2u, previousFrameSlot: 1u);
+        SetSlotProducer(resources, slot: 0u, producerFrameId: 5UL, EGpuFenceStatus.Pending);
+        SetSlotProducer(resources, slot: 1u, producerFrameId: 6UL, EGpuFenceStatus.Signaled);
+
+        resources.TrySelectOutputSlot(out uint current, out uint previous).ShouldBeTrue();
+
+        // Slot 2 holds the last frame's history, slot 0 is older but still pending.
+        current.ShouldBe(1u);
+        previous.ShouldBe(2u);
+    }
+
+    [Test]
+    public void OutputSlotSelection_PrefersTheOldestFreeSlot()
+    {
+        using AdvancedGpuDeformationResources resources =
+            new(CreateOptions(initialVertexCapacity: 16u));
+        OpenAndCloseFrame(resources, frameId: 10UL, currentFrameSlot: 2u, previousFrameSlot: 1u);
+        SetSlotProducer(resources, slot: 0u, producerFrameId: 9UL, EGpuFenceStatus.Signaled);
+        SetSlotProducer(resources, slot: 1u, producerFrameId: 4UL, EGpuFenceStatus.Signaled);
+
+        resources.TrySelectOutputSlot(out uint current, out uint previous).ShouldBeTrue();
+
+        current.ShouldBe(1u);
+        previous.ShouldBe(2u);
+    }
+
+    [Test]
+    public void OutputSlotSelection_DefersWhenEveryCandidateIsBusy()
+    {
+        using AdvancedGpuDeformationResources resources =
+            new(CreateOptions(initialVertexCapacity: 16u));
+        OpenAndCloseFrame(resources, frameId: 12UL, currentFrameSlot: 2u, previousFrameSlot: 1u);
+        SetSlotProducer(resources, slot: 0u, producerFrameId: 10UL, EGpuFenceStatus.Pending);
+        SetSlotProducer(resources, slot: 1u, producerFrameId: 11UL, EGpuFenceStatus.Pending);
+
+        resources.TrySelectOutputSlot(out _, out _).ShouldBeFalse();
+
+        resources.LastBeginFrameDeferral.ShouldBe(EAdvancedDeformationSlotDeferral.PendingCompletion);
+        resources.LastOutputReuseSlot.ShouldBe(0u);
+        resources.GetBeginFrameDeferralCount(EAdvancedDeformationSlotDeferral.PendingCompletion).ShouldBe(1L);
+    }
+
+    [Test]
+    public void OutputSlotSelection_UsesUnusedSlotsBeforeTheFirstFrame()
+    {
+        using AdvancedGpuDeformationResources resources =
+            new(CreateOptions(initialVertexCapacity: 16u));
+
+        resources.TrySelectOutputSlot(out uint current, out uint previous).ShouldBeTrue();
+
+        current.ShouldBe(0u);
+        previous.ShouldNotBe(current);
+    }
+
+    [Test]
+    public void PoisonedSlot_IsReleasedByALaterSignaledProducerFence()
+    {
+        using AdvancedGpuDeformationResources resources =
+            new(CreateOptions(initialVertexCapacity: 16u));
+        OpenAndCloseFrame(resources, frameId: 8UL, currentFrameSlot: 2u, previousFrameSlot: 1u);
+        PoisonSlot(resources, slot: 0u, poisonFrameId: 5UL);
+        SetSlotProducer(resources, slot: 1u, producerFrameId: 6UL, EGpuFenceStatus.Signaled);
+
+        resources.TrySelectOutputSlot(out uint current, out _).ShouldBeTrue();
+
+        current.ShouldBe(0u);
+        resources.SlotPoisonRecoveryCount.ShouldBe(1L);
+        resources.PoisonedSlotMask.ShouldBe(0u);
+    }
+
+    [Test]
+    public void PoisonedSlot_StaysPoisonedWithoutALaterCompletedFence()
+    {
+        using AdvancedGpuDeformationResources resources =
+            new(CreateOptions(initialVertexCapacity: 16u));
+        OpenAndCloseFrame(resources, frameId: 8UL, currentFrameSlot: 2u, previousFrameSlot: 1u);
+        PoisonSlot(resources, slot: 0u, poisonFrameId: 5UL);
+        SetSlotProducer(resources, slot: 1u, producerFrameId: 6UL, EGpuFenceStatus.Pending);
+
+        resources.TrySelectOutputSlot(out _, out _).ShouldBeFalse();
+
+        resources.LastBeginFrameDeferral.ShouldBe(EAdvancedDeformationSlotDeferral.SlotPoisoned);
+        resources.SlotPoisonRecoveryCount.ShouldBe(0L);
+        resources.PoisonedSlotMask.ShouldBe(1u);
+    }
+
+    [Test]
     public void OutputGrowthIsBoundaryOwnedAndInvalidatesVelocity()
     {
         using AdvancedGpuDeformationResources resources =
@@ -152,6 +243,52 @@ public sealed class AdvancedGpuDeformationResourceTests
             .ShouldBeFalse();
         (prepared with { Slice = slice with { VertexCount = slice.VertexCount + 1u } })
             .IsReusable(3UL, mesh, 7u).ShouldBeFalse();
+    }
+
+    private static void OpenAndCloseFrame(
+        AdvancedGpuDeformationResources resources,
+        ulong frameId,
+        uint currentFrameSlot,
+        uint previousFrameSlot)
+    {
+        resources.TryBeginFrame(
+                frameId,
+                completedValue: 0UL,
+                currentFrameSlot,
+                previousFrameSlot,
+                requiredOutputVertexCapacity: 16u)
+            .ShouldBeTrue();
+        resources.EndFrame(frameId);
+    }
+
+    private static void PoisonSlot(AdvancedGpuDeformationResources resources, uint slot, ulong poisonFrameId)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Type type = typeof(AdvancedGpuDeformationResources);
+        ((bool[])type.GetField("_slotReusePoisoned", flags)!.GetValue(resources)!)[slot] = true;
+        ((ulong[])type.GetField("_slotPoisonFrameIds", flags)!.GetValue(resources)!)[slot] = poisonFrameId;
+    }
+
+    /// <summary>
+    /// Gives <paramref name="slot"/> a submitted producer fence in <paramref name="status"/> and
+    /// the frame id of the preparation that produced it, as a dispatch would.
+    /// </summary>
+    private static void SetSlotProducer(
+        AdvancedGpuDeformationResources resources,
+        uint slot,
+        ulong producerFrameId,
+        EGpuFenceStatus status)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        Type type = typeof(AdvancedGpuDeformationResources);
+        XRGpuFence?[] fences = (XRGpuFence?[])type.GetField("_slotProducerFences", flags)!.GetValue(resources)!;
+        ulong[] producerFrames = (ulong[])type.GetField("_slotProducerFrameIds", flags)!.GetValue(resources)!;
+        fences[slot] = new SpectatorTestFence
+        {
+            Status = status,
+            Submission = EGpuFenceSubmissionStatus.Submitted,
+        };
+        producerFrames[slot] = producerFrameId;
     }
 
     /// <summary>

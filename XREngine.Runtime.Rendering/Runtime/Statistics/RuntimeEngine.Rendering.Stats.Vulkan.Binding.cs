@@ -31,6 +31,13 @@ public static partial class RuntimeEngine
                 private static long _vulkanProgramBindingArtifactBuilds;
                 private static long _vulkanProgramBindingArtifactReuses;
                 private static long _vulkanProgramBindingArtifactFallbacks;
+                // Running totals since process start. The per-frame values above reset at
+                // each frame start, so a single sample often reads a frame with no draws.
+                private static long _totalVulkanProgramBindingArtifactBuilds;
+                private static long _totalVulkanProgramBindingArtifactReuses;
+                private static long _totalVulkanProgramBindingArtifactFallbacks;
+                private static readonly long[] _totalVulkanProgramBindingArtifactFallbackReasonCounts =
+                    new long[(int)EVulkanProgramBindingArtifactFallbackReason.Count];
                 private static long _vulkanBindingSnapshotsCaptured;
                 private static long _vulkanBindingSnapshotEntries;
                 private static long _vulkanFastPathBindingSnapshots;
@@ -203,6 +210,14 @@ public static partial class RuntimeEngine
                 public static long VulkanProgramBindingArtifactBuilds => _lastFrameVulkanProgramBindingArtifactBuilds;
                 public static long VulkanProgramBindingArtifactReuses => _lastFrameVulkanProgramBindingArtifactReuses;
                 public static long VulkanProgramBindingArtifactFallbacks => _lastFrameVulkanProgramBindingArtifactFallbacks;
+                public static long VulkanProgramBindingArtifactBuildsTotal => Interlocked.Read(ref _totalVulkanProgramBindingArtifactBuilds);
+                public static long VulkanProgramBindingArtifactReusesTotal => Interlocked.Read(ref _totalVulkanProgramBindingArtifactReuses);
+                public static long VulkanProgramBindingArtifactFallbacksTotal => Interlocked.Read(ref _totalVulkanProgramBindingArtifactFallbacks);
+                public static long GetVulkanProgramBindingArtifactFallbackReasonTotal(
+                    EVulkanProgramBindingArtifactFallbackReason reason)
+                    => (uint)reason < (uint)EVulkanProgramBindingArtifactFallbackReason.Count
+                        ? Interlocked.Read(ref _totalVulkanProgramBindingArtifactFallbackReasonCounts[(int)reason])
+                        : 0;
                 public static long GetVulkanProgramBindingAllocationBytes(
                     EVulkanProgramBindingAllocationSegment segment)
                 {
@@ -409,6 +424,7 @@ public static partial class RuntimeEngine
                         return;
 
                     Interlocked.Increment(ref _vulkanProgramBindingArtifactBuilds);
+                    Interlocked.Increment(ref _totalVulkanProgramBindingArtifactBuilds);
                 }
 
                 public static void RecordVulkanProgramBindingArtifactReuse()
@@ -417,6 +433,7 @@ public static partial class RuntimeEngine
                         return;
 
                     Interlocked.Increment(ref _vulkanProgramBindingArtifactReuses);
+                    Interlocked.Increment(ref _totalVulkanProgramBindingArtifactReuses);
                 }
 
                 public static void RecordVulkanProgramBindingAllocationBreakdown(
@@ -478,12 +495,16 @@ public static partial class RuntimeEngine
                         return;
 
                     Interlocked.Increment(ref _vulkanProgramBindingArtifactFallbacks);
+                    Interlocked.Increment(ref _totalVulkanProgramBindingArtifactFallbacks);
                     if (reason is >
                             EVulkanProgramBindingArtifactFallbackReason.None and <
                             EVulkanProgramBindingArtifactFallbackReason.Count)
                     {
                         Interlocked.Increment(
                             ref _vulkanProgramBindingArtifactFallbackReasonCounts[
+                                (int)reason]);
+                        Interlocked.Increment(
+                            ref _totalVulkanProgramBindingArtifactFallbackReasonCounts[
                                 (int)reason]);
                     }
 
@@ -882,20 +903,25 @@ public static partial class RuntimeEngine
                             ref _vulkanProgramBindingArtifactFallbackSampleCount,
                             0),
                         VulkanProgramBindingArtifactFallbackSampleCapacity);
-                    for (int sampleIndex = 0;
-                         sampleIndex < fallbackSampleCount;
-                         sampleIndex++)
+                    // Keep the samples of the last frame that had fallbacks. Frames without
+                    // recorded draws would otherwise clear them before anyone reads them.
+                    if (fallbackSampleCount > 0)
                     {
-                        _lastFrameVulkanProgramBindingArtifactFallbackSamples[
-                            sampleIndex] =
-                                _vulkanProgramBindingArtifactFallbackSamples[
-                                    sampleIndex];
-                        _vulkanProgramBindingArtifactFallbackSamples[
-                            sampleIndex] = default;
+                        for (int sampleIndex = 0;
+                             sampleIndex < fallbackSampleCount;
+                             sampleIndex++)
+                        {
+                            _lastFrameVulkanProgramBindingArtifactFallbackSamples[
+                                sampleIndex] =
+                                    _vulkanProgramBindingArtifactFallbackSamples[
+                                        sampleIndex];
+                            _vulkanProgramBindingArtifactFallbackSamples[
+                                sampleIndex] = default;
+                        }
+                        Volatile.Write(
+                            ref _lastFrameVulkanProgramBindingArtifactFallbackSampleCount,
+                            fallbackSampleCount);
                     }
-                    Volatile.Write(
-                        ref _lastFrameVulkanProgramBindingArtifactFallbackSampleCount,
-                        fallbackSampleCount);
                     _lastFrameVulkanBindingSnapshotsCaptured = Interlocked.Exchange(ref _vulkanBindingSnapshotsCaptured, 0);
                     _lastFrameVulkanBindingSnapshotEntries = Interlocked.Exchange(ref _vulkanBindingSnapshotEntries, 0);
                     _lastFrameVulkanFastPathBindingSnapshots = Interlocked.Exchange(ref _vulkanFastPathBindingSnapshots, 0);

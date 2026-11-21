@@ -287,8 +287,10 @@ internal unsafe partial class VkRenderProgram
 
         if (foregroundRequired)
         {
-            if (!manager.TryCompleteComputePipelineForForeground(key, out completed, out reason))
-                return VulkanComputePipelineReadiness.Failed;
+            if (!manager.TryCompleteComputePipelineForForeground(key, out completed, out reason, out bool retryable))
+                return retryable
+                    ? VulkanComputePipelineReadiness.Pending
+                    : VulkanComputePipelineReadiness.Failed;
             if (TryAdoptCompletedComputePipeline(
                     completed,
                     key,
@@ -481,6 +483,25 @@ internal unsafe partial class VkRenderProgram
         {
             ExitComputeDescriptorScratchTransaction();
         }
+    }
+
+    private static long s_lastReusableComputeRefreshFailureTicks;
+
+    /// <summary>
+    /// Writes a reusable compute descriptor refresh failure to the auxiliary log at
+    /// most twice per second, because a Release build compiles out the general log.
+    /// </summary>
+    private void ReportReusableComputeRefreshFailure(string stage, uint imageIndex, bool allowSynchronousResourceUploads)
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now - Interlocked.Read(ref s_lastReusableComputeRefreshFailureTicks) < System.Diagnostics.Stopwatch.Frequency / 2)
+            return;
+
+        Interlocked.Exchange(ref s_lastReusableComputeRefreshFailureTicks, now);
+        Debug.WriteAuxiliaryLog(
+            "vulkan-compute-descriptor-refresh.log",
+            $"program={Data.Name ?? "UnnamedProgram"} index={imageIndex} stage={stage} allowSync={allowSynchronousResourceUploads} " +
+            $"thread={Environment.CurrentManagedThreadId}");
     }
 
     private void EnterComputeDescriptorScratchTransaction()
@@ -919,8 +940,52 @@ internal unsafe partial class VkRenderProgram
         if (!unresolved)
             return scratch.WriteCount != 0;
         if (reportFailures)
+            ReportUnresolvedComputeBindings(snapshot, imageIndex, bindingKey, descriptorSetLimit, allowSynchronousResourceUploads);
+        if (reportFailures)
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(Data.Name, "descriptor-set", "<compute-required-binding>", 0, 0, false, true, "compute descriptor build had unresolved required bindings");
         return false;
+    }
+
+    /// <summary>
+    /// Names the bindings that a failed compute descriptor scratch build could not
+    /// resolve. Cold path: it resolves each binding again only after a failure, and
+    /// the auxiliary log is written at most twice per second.
+    /// </summary>
+    private void ReportUnresolvedComputeBindings(
+        ComputeDispatchSnapshot snapshot,
+        uint imageIndex,
+        ulong bindingKey,
+        uint descriptorSetLimit,
+        bool allowSynchronousResourceUploads)
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now - Interlocked.Read(ref s_lastReusableComputeRefreshFailureTicks) < System.Diagnostics.Stopwatch.Frequency / 2)
+            return;
+
+        System.Text.StringBuilder names = new();
+        for (int index = 0; index < _programDescriptorBindings.Count; index++)
+        {
+            DescriptorBindingInfo binding = _programDescriptorBindings[index];
+            if (binding.Set >= descriptorSetLimit)
+                continue;
+            bool resolved = binding.DescriptorType switch
+            {
+                DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic or
+                DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic
+                    => TryResolveComputeBuffer(binding, imageIndex, snapshot, bindingKey, allowSynchronousResourceUploads, out _),
+                DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or
+                DescriptorType.Sampler or DescriptorType.StorageImage
+                    => TryResolveComputeImage(binding, snapshot, allowSynchronousResourceUploads, out _),
+                DescriptorType.UniformTexelBuffer or DescriptorType.StorageTexelBuffer
+                    => TryResolveComputeTexelBuffer(binding, snapshot, allowSynchronousResourceUploads, out _),
+                _ => true,
+            };
+            if (!resolved)
+                names.Append(binding.Name).Append('(').Append(binding.DescriptorType).Append(" set=").Append(binding.Set).Append(" binding=").Append(binding.Binding).Append(") ");
+        }
+        Debug.WriteAuxiliaryLog(
+            "vulkan-compute-descriptor-refresh.log",
+            $"program={Data.Name ?? "UnnamedProgram"} index={imageIndex} unresolved={names}thread={Environment.CurrentManagedThreadId}");
     }
 
     private PushConstantRange CreateCommonPushConstantRange()
@@ -970,31 +1035,49 @@ internal unsafe partial class VkRenderProgram
         return true;
     }
 
+    /// <summary>
+    /// Hash of the program's descriptor bindings below one set limit. The bindings change only
+    /// when the program interface is rebuilt, so the hash is cached per limit; computing it
+    /// sorted a copy of every binding on each compute dispatch.
+    /// </summary>
+    /// <remarks>Recording threads read the cache, so one immutable entry is swapped as a whole.</remarks>
+    private sealed record ComputeSchemaBindingHash(uint Limit, ulong Hash);
+    private ComputeSchemaBindingHash? _computeSchemaBindingHash;
+
+    private void InvalidateComputeSchemaBindingHash()
+        => Volatile.Write(ref _computeSchemaBindingHash, null);
+
+    private static void MixSchema(ref ulong value, ulong part)
+    {
+        value ^= part;
+        value *= 1099511628211UL;
+    }
+
     private ulong ComputeComputeDescriptorSchemaFingerprint(
         IReadOnlyList<DescriptorSetLayout> descriptorLayouts,
         uint descriptorSetLimit)
     {
-        ulong hash = 1469598103934665603UL;
-
-        static void Mix(ref ulong value, ulong part)
+        ComputeSchemaBindingHash? cached = Volatile.Read(ref _computeSchemaBindingHash);
+        if (cached is null || cached.Limit != descriptorSetLimit)
         {
-            value ^= part;
-            value *= 1099511628211UL;
+            ulong bindingHash = 1469598103934665603UL;
+            foreach (DescriptorBindingInfo binding in _programDescriptorBindings.OrderBy(b => b.Set).ThenBy(b => b.Binding))
+            {
+                if (binding.Set >= descriptorSetLimit)
+                    continue;
+                MixSchema(ref bindingHash, binding.Set);
+                MixSchema(ref bindingHash, binding.Binding);
+                MixSchema(ref bindingHash, (ulong)binding.DescriptorType);
+                MixSchema(ref bindingHash, binding.Count);
+                MixSchema(ref bindingHash, (ulong)binding.StageFlags);
+            }
+            cached = new ComputeSchemaBindingHash(descriptorSetLimit, bindingHash);
+            Volatile.Write(ref _computeSchemaBindingHash, cached);
         }
 
-        foreach (DescriptorBindingInfo binding in _programDescriptorBindings.OrderBy(b => b.Set).ThenBy(b => b.Binding))
-        {
-            if (binding.Set >= descriptorSetLimit)
-                continue;
-            Mix(ref hash, binding.Set);
-            Mix(ref hash, binding.Binding);
-            Mix(ref hash, (ulong)binding.DescriptorType);
-            Mix(ref hash, binding.Count);
-            Mix(ref hash, (ulong)binding.StageFlags);
-        }
-
-        foreach (DescriptorSetLayout layout in descriptorLayouts)
-            Mix(ref hash, layout.Handle);
+        ulong hash = cached.Hash;
+        for (int index = 0; index < descriptorLayouts.Count; index++)
+            MixSchema(ref hash, descriptorLayouts[index].Handle);
 
         return hash;
     }
@@ -1593,7 +1676,10 @@ internal unsafe partial class VkRenderProgram
                 reportFailures: true,
                 allowSynchronousResourceUploads:
                     allowSynchronousResourceUploads))
+        {
+            ReportReusableComputeRefreshFailure("descriptor scratch build failed", imageIndex, allowSynchronousResourceUploads);
             return false;
+        }
 
         VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
         bool descriptorSetsReady = allowSynchronousResourceUploads
@@ -1614,11 +1700,15 @@ internal unsafe partial class VkRenderProgram
                 out descriptorSets);
         if (!descriptorSetsReady)
         {
+            ReportReusableComputeRefreshFailure("descriptor sets are not prepared", imageIndex, allowSynchronousResourceUploads);
             return false;
         }
 
-        if (!TryUpdateComputeDescriptorSets(descriptorSets, scratch, out _))
+        if (!TryUpdateComputeDescriptorSets(descriptorSets, scratch, out string? updateFailure))
+        {
+            ReportReusableComputeRefreshFailure($"descriptor update failed: {updateFailure}", imageIndex, allowSynchronousResourceUploads);
             return false;
+        }
         if (snapshot.HasPublishedBindingLayoutSignatures)
             _reusableComputeDescriptorResourceSignatures[refreshKey] =
                 resourceSignature;

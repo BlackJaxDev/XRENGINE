@@ -30,6 +30,8 @@ public partial class XRMaterial
     [YamlIgnore]
     private XRShader? _uberCanonicalFragmentShader;
     [YamlIgnore]
+    private UberSourceIdentityProof? _verifiedUberSourceIdentity;
+    [YamlIgnore]
     private long _uberVariantRequestSerial;
     [YamlIgnore]
     private Task? _uberVariantBuildTask;
@@ -64,8 +66,46 @@ public partial class XRMaterial
             return false;
 
         fragmentShader = canonicalShader;
+        UberShaderSourceStamp sourceStamp = UberShaderSourceStamp.Capture(canonicalShader);
+        ShaderSourceProviderOwner sourceOwner = ShaderSourceResolver.CaptureOwner();
+        long snippetVersion = ShaderSourceResolver.RegisteredSnippetVersion;
         manifest = canonicalShader.GetUiManifest();
-        return manifest.Properties.Count > 0;
+        if (manifest.Properties.Count == 0)
+            return false;
+
+        if (sourceStamp.IsCurrent && ShaderSourceResolver.IsOwnerCurrent(sourceOwner) &&
+            snippetVersion == ShaderSourceResolver.RegisteredSnippetVersion)
+        {
+            UberSourceIdentityProof? current = Volatile.Read(ref _verifiedUberSourceIdentity);
+            if (current is null || !ReferenceEquals(current.Canonical.Shader, canonicalShader) ||
+                !current.Canonical.IsCurrent || !current.Owner.Equals(sourceOwner) ||
+                current.SnippetVersion != snippetVersion)
+                Volatile.Write(ref _verifiedUberSourceIdentity,
+                    new UberSourceIdentityProof(sourceStamp, sourceOwner, snippetVersion));
+        }
+        return true;
+    }
+
+    /// <summary>Checks a previously parsed Uber source without reading shader files during draw collection.</summary>
+    internal bool HasCurrentVerifiedUberSourceIdentity()
+    {
+        if (EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 ||
+            Volatile.Read(ref _verifiedUberSourceIdentity) is not { } proof ||
+            !proof.Canonical.IsCurrent ||
+            !ShaderSourceResolver.IsOwnerCurrent(proof.Owner) ||
+            proof.SnippetVersion != ShaderSourceResolver.RegisteredSnippetVersion ||
+            GetShader(EShaderType.Fragment) is not { } active)
+            return false;
+
+        bool matches = ReferenceEquals(active, proof.Canonical.Shader) ||
+            UberShaderVariantBuilder.TryGetCanonicalShader(active, out XRShader? canonical) &&
+            ReferenceEquals(canonical, proof.Canonical.Shader) &&
+            UberShaderVariantBuilder.TryGetVariantProvenance(active, out UberShaderVariantProvenance? variant) &&
+            variant.Canonical.IsCurrent && variant.Variant.IsCurrent &&
+            variant.Owner.Equals(proof.Owner) &&
+            variant.SnippetVersion == proof.SnippetVersion;
+        return matches && EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
+            ReferenceEquals(GetShader(EShaderType.Fragment), active);
     }
 
     public void EnsureUberStateInitialized()
@@ -179,6 +219,38 @@ public partial class XRMaterial
                 propertyNames,
                 EShaderUiPropertyMode.Animated),
             runtimePropertyNames);
+    }
+
+    /// <summary>
+    /// Sets authorable non-sampler Uber properties to static mode so offline capture compiles
+    /// constant-folded material variants from the current parameter values.
+    /// </summary>
+    public bool FreezeUberPropertiesForStaticCapture()
+    {
+        if (!TryGetUberMaterialState(out XRShader? fragmentShader, out ShaderUiManifest manifest) || fragmentShader is null)
+            return false;
+
+        EnsureUberStateInitialized(fragmentShader, manifest);
+
+        List<string> staticPropertyNames = [];
+        foreach (ShaderUiProperty property in manifest.Properties)
+        {
+            if (property.IsSampler ||
+                !IsAuthorableUberProperty(property) ||
+                property.HasExplicitMutability &&
+                property.Mutability == EShaderUiPropertyMutability.Runtime)
+            {
+                continue;
+            }
+
+            staticPropertyNames.Add(property.Name);
+        }
+
+        return UpdateUberAuthoredState(
+            static (state, propertyNames) => state.SetPropertyModes(
+                propertyNames,
+                EShaderUiPropertyMode.Static),
+            staticPropertyNames);
     }
 
     internal void EnsureUberStateInitialized(XRShader fragmentShader, ShaderUiManifest manifest)
@@ -1145,6 +1217,17 @@ public partial class XRMaterial
         // A failed request is terminal until another request is made; do not
         // keep the queue blocked waiting for work that cannot progress.
         return UberVariantStatus.Stage is EUberMaterialVariantStage.Failed;
+    }
+
+    /// <summary>Checks whether an authored Uber raster draw has its generated shader source.</summary>
+    internal bool IsUberRasterSourceReady()
+    {
+        XRShader? activeFragmentShader = GetShader(EShaderType.Fragment);
+        if (UberShaderVariantBuilder.IsGeneratedVariant(activeFragmentShader) &&
+            HasRenderableUberVariantState(activeFragmentShader))
+            return true;
+
+        return !TryGetUberMaterialState(out _, out _);
     }
 
     /// <summary>

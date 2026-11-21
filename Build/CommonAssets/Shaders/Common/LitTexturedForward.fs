@@ -58,6 +58,9 @@ void XRENGINE_WriteForwardFragment(vec4 shadedColor)
 
 uniform float MatSpecularIntensity;
 uniform float MatShininess;
+// Material-level transparency of imported glass: alpha is multiplied by (1 - MaterialTransparency).
+// An unset uniform reads 0, so other users of this shader stay opaque.
+uniform float MaterialTransparency;
 
 uniform vec3 CameraPosition;
 
@@ -86,6 +89,6 @@ void main()
 
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, MatSpecularIntensity, AmbientOcclusion);
 
-    XRENGINE_WriteForwardFragment(vec4(totalLight, texColor.a));
+    XRENGINE_WriteForwardFragment(vec4(totalLight, texColor.a * (1.0 - clamp(MaterialTransparency, 0.0, 1.0))));
 #endif
 }

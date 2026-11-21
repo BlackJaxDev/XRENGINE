@@ -128,6 +128,13 @@ public sealed class RenderPipelineResourceManager
         {
             string failure = DescribeMaterializationFailure(generation, ex);
             generation.MarkFailed(failure);
+            // A failed materialization leaves the output without resources, so report it in
+            // the auxiliary log that Release sessions also write.
+            RenderReadinessFailureLog.Report(
+                "ResourceGeneration",
+                instance.ProfilerKey,
+                generation.Key.ToString(),
+                failure);
             Debug.RenderingWarning(
                 "[RenderResources] Pending generation failed. Pipeline={0} Target={1} Progress={2}/{3} Reason={4}. Active generation remains {5}.",
                 instance.ProfilerKey,

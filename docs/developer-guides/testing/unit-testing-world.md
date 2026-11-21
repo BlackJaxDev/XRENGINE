@@ -232,6 +232,18 @@ Desktop creates only the desktop rig at launch. Runtime selection occurs when
 enabling the checkbox. Cancel preserves desktop control; runtime discovery failures
 remain visible and never silently substitute a different runtime.
 
+`VR.DesktopView` selects the desktop view when an OpenXR session starts with
+`VR.AllowDesktopEditing=true`. The toolbar **Desktop view** list changes it at runtime.
+
+| Value | Desktop shows | Mouse and keyboard input |
+|---|---|---|
+| `EditorCamera` (default) | The editor camera and its post-processing settings. | The editor camera. VR action input, such as thumbstick locomotion, does not reach the VR pawn. Headset and controller tracking continue. |
+| `FirstPerson` | The smoothed camera that follows the headset. | The VR pawn. |
+| `Spectator` | The spectator camera. | The VR pawn. |
+| `TextureOutput` | The first-person camera. The spectator renders to a texture. | The VR pawn. |
+
+Benchmark and OpenXR smoke scripts set `FirstPerson`, so their desktop output stays comparable across runs.
+
 There are two no-headset VR lanes:
 
 Lane 1 is scene-only VR. It builds the VR-shaped pawn, transforms, and stereo preview without entering the OpenXR API:
@@ -247,7 +259,7 @@ Lane 1 is scene-only VR. It builds the VR-shaped pawn, transforms, and stereo pr
 }
 ```
 
-Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runtime selected per process with `XR_RUNTIME_JSON`. You can leave `OpenXrRuntimeJson` as `null` to auto-detect common Monado install/build locations, or set it explicitly:
+Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runtime selected per process with `XR_RUNTIME_JSON`. `XR_RUNTIME_JSON` only selects the runtime; `VR.Mode` requests OpenXR, so a `Desktop` session with `XR_RUNTIME_JSON` set starts without OpenXR. You can leave `OpenXrRuntimeJson` as `null` to auto-detect common Monado install/build locations, or set it explicitly:
 
 ```jsonc
 {
@@ -260,7 +272,7 @@ Lane 2 is Monado-backed OpenXR. It uses the real OpenXR loader and a Monado runt
 }
 ```
 
-`VR.Mode=Emulated` is scene-only. It does not emulate OpenXR API calls, runtime state, swapchains, poses, or frame submission. `VR.Mode=MonadoOpenXR` uses the real OpenXR loader/API with Monado as the selected runtime. Existing `XR_RUNTIME_JSON` environment values win over `VR.OpenXrRuntimeJson`; when both are empty, startup searches `MONADO_RUNTIME_JSON`, `MONADO_INSTALL_DIR`, common Monado install paths, and repo-local Monado build/dependency paths. In Monado mode, startup also prepends the detected `openxr_loader.dll`, Monado runtime, and Monado service directories to the current process `PATH`, then starts `monado-service.exe` when it is not already running.
+`VR.Mode=Emulated` is scene-only. It does not emulate OpenXR API calls, runtime state, swapchains, poses, or frame submission. Emulated eyes have no HMD cascade source by default: Default-pipeline eyes read the primary directional shadow map, and Advanced eyes (SequentialViews) read the desktop cascades. Set `XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1` (engine setting `EmulatedVrEyesUseHmdDirectionalCascades`) to fit the HMD cascade source to the emulated eyes; Default-pipeline eyes then read it, and Advanced eyes still read the desktop cascades. `VR.Mode=MonadoOpenXR` uses the real OpenXR loader/API with Monado as the selected runtime. Existing `XR_RUNTIME_JSON` environment values win over `VR.OpenXrRuntimeJson`; when both are empty, startup searches `MONADO_RUNTIME_JSON`, `MONADO_INSTALL_DIR`, common Monado install paths, and repo-local Monado build/dependency paths. In Monado mode, startup also prepends the detected `openxr_loader.dll`, Monado runtime, and Monado service directories to the current process `PATH`, then starts `monado-service.exe` when it is not already running.
 
 On Windows, `VR.Mode=MonadoOpenXR` honors the requested `Rendering.RenderBackend`. The Vulkan path queries the selected OpenXR runtime before renderer creation and enables the Vulkan instance/device extensions required by the runtime, then renders each eye into the acquired OpenXR Vulkan swapchain image.
 
@@ -276,7 +288,7 @@ mode, pipeline or command chain instead.
 | `VR.ViewRenderMode` | `Default` | `Advanced` | `Rvc` |
 |---|---|---|---|
 | `SequentialViews` | Supported | Supported | Rejected |
-| `SinglePassStereo` | Supported | Rejected (not implemented yet) | Supported |
+| `SinglePassStereo` | Supported | Supported (Vulkan, one layered stereo pipeline) | Supported |
 | `ParallelCommandBufferRecording` (Vulkan only) | Supported | Supported | Supported |
 
 `Default` is a plain `DefaultRenderPipeline`. `Advanced` binds its eye output as
@@ -346,12 +358,15 @@ For script-driven launches, these process-scoped overrides select the lane witho
 - `XRE_UNIT_TEST_VR_MODE=Desktop|Emulated|MonadoOpenXR|OpenVR|OpenXR`
 - `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=1`
 - `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`
+- `XRE_UNIT_TEST_VR_DESKTOP_VIEW=EditorCamera|FirstPerson|Spectator|TextureOutput` sets `VR.DesktopView`.
 - `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0`
 - `XRE_UNIT_TEST_VR_MIRROR_MODE=BlitSubmittedEye|CyclopeanReconstruct|LowRatePreview|FullIndependentRender` selects the desktop view for a VR pawn. Desktop editing and stereo preview still use `FullIndependentRender`.
+- `XRE_UNIT_TEST_VR_DESKTOP_FRAME_EXECUTION_MODE=Inline|WorkerRecord|SeparateDomain` sets `VrDesktopFrameExecutionMode` for a recording desktop view. `WorkerRecord` needs at least two background render workers; when the render worker count is 0 or automatic, startup uses two, and an explicit count of 1 fails every desktop frame with a logged reason; `SeparateDomain` holds the window until it is implemented.
 - `XRE_UNIT_TEST_OPENXR_RUNTIME_JSON=C:\path\to\openxr_monado.json`
 - `XRE_UNIT_TEST_VR_VIEW_RENDER_MODE=SequentialViews|SinglePassStereo|ParallelCommandBufferRecording`
 - `XRE_UNIT_TEST_VR_RENDER_PIPELINE=Default|Advanced|Rvc`
 - `XRE_UNIT_TEST_VR_RVC_PIPELINE_MODE=Off|ForwardPlusOracle|VisibilityOnlyDebug|MaterialCache|SharedLighting|Full`
+- `XRE_UNIT_TEST_VR_RVC_QUAD_VIEW=true|false` sets `VR.RvcQuadView`, which requests the OpenXR quad-view configuration (wide and inset view per eye) for RVC. The runtime must expose `XR_VARJO_quad_views`.
 - `XRE_UNIT_TEST_RENDER_API=OpenGL|Vulkan` maps into `Rendering.RenderBackend`
 - `XRE_UNIT_TEST_RENDER_PIPELINE=AdvancedRenderPipeline` selects the Advanced pipeline for this process without changing the saved world settings. Pair it with `XRE_ADVANCED_RENDER_PIPELINE_MODE=Required` for validation that must fail visibly when an Advanced capability is unavailable.
 

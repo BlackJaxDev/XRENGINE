@@ -70,6 +70,64 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     internal VulkanAdvancedNativeShadingRootBinding ShadingAddressRoot { get; init; }
     internal VulkanAdvancedDdgiSurfaceClosure DdgiSurface { get; init; }
 
+    /// <summary>
+    /// True when the frame does not declare the shading diagnostics image. The diagnostics
+    /// group, resource and descriptor then refer to the dedicated 1x1 placeholder image
+    /// (<c>AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder</c>), and the shading push
+    /// constants carry the diagnostics-disabled flag, so no shader stores to it.
+    /// </summary>
+    internal bool ShadingDiagnosticsPlaceholder { get; init; }
+
+    /// <summary>
+    /// RVC shadelet telemetry counters. Absent (default) when the family does not
+    /// declare them; only an RVC-hosted family does.
+    /// </summary>
+    internal VulkanFrozenBufferBarrier RvcTelemetryCounters { get; init; }
+
+    /// <summary>Whole-array identity view that the RVC telemetry kernel reads for every view.</summary>
+    internal VulkanAdvancedNativeImageClosure RvcIdentityArrayResource { get; init; }
+
+    /// <summary>Whole-array depth view that the RVC telemetry kernel reads for every view.</summary>
+    internal VulkanAdvancedNativeImageClosure RvcDepthArrayResource { get; init; }
+
+    internal DescriptorImageInfo RvcIdentityArrayDescriptor { get; init; }
+
+    internal DescriptorImageInfo RvcDepthArrayDescriptor { get; init; }
+
+    /// <summary>Mesh surface decal buffer albedo image group. Null without the decal buffer.</summary>
+    internal VulkanPhysicalImageGroup? DecalBufferAlbedo { get; init; }
+
+    /// <summary>Mesh surface decal buffer roughness/metallic image group. Null without the decal buffer.</summary>
+    internal VulkanPhysicalImageGroup? DecalBufferSurface { get; init; }
+
+    /// <summary>Per-view layer of the mesh surface decal buffer albedo target. Absent without the decal buffer.</summary>
+    internal VulkanAdvancedNativeImageClosure DecalBufferAlbedoResource { get; init; }
+
+    /// <summary>Per-view layer of the mesh surface decal buffer roughness/metallic target. Absent without the decal buffer.</summary>
+    internal VulkanAdvancedNativeImageClosure DecalBufferSurfaceResource { get; init; }
+
+    internal DescriptorImageInfo DecalBufferAlbedoDescriptor { get; init; }
+
+    internal DescriptorImageInfo DecalBufferSurfaceDescriptor { get; init; }
+
+    /// <summary>True when the closure carries both decal buffer targets for its view.</summary>
+    internal bool HasDecalBuffer
+        => DecalBufferAlbedo is { IsAllocated: true } && DecalBufferSurface is { IsAllocated: true } &&
+           DecalBufferAlbedoResource.IsValid && DecalBufferSurfaceResource.IsValid &&
+           DecalBufferAlbedoDescriptor.ImageView.Handle != 0 &&
+           DecalBufferSurfaceDescriptor.ImageView.Handle != 0 &&
+           DecalBufferAlbedoDescriptor.Sampler.Handle != 0 &&
+           DecalBufferSurfaceDescriptor.Sampler.Handle != 0;
+
+    /// <summary>True when the closure carries the complete RVC telemetry inputs and counters.</summary>
+    internal bool HasRvcTelemetry
+        => HasFrozenRange(RvcTelemetryCounters) &&
+           RvcIdentityArrayResource.IsValid && RvcDepthArrayResource.IsValid &&
+           RvcIdentityArrayDescriptor.ImageView.Handle != 0 &&
+           RvcDepthArrayDescriptor.ImageView.Handle != 0 &&
+           RvcIdentityArrayDescriptor.Sampler.Handle != 0 &&
+           RvcDepthArrayDescriptor.Sampler.Handle != 0;
+
     internal bool IsValid
         => GraphRevision != 0u && DdgiSurface.IsValid &&
            Identity is { IsAllocated: true } &&

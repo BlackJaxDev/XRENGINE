@@ -64,21 +64,19 @@ namespace XREngine.Rendering.Vulkan
                         .ReuseCompletedContent);
             }
 
-            // A retryable PresentNow rejection may submit a newly recorded
-            // clear/overlay recovery frame. That is fresh output rather than
-            // stale scene replay, and it also carries texture uploads whose
-            // completion can satisfy the next exact scene attempt.
+            // A retryable PresentNow rejection submits a recovery frame that also
+            // carries texture uploads whose completion can satisfy the next exact
+            // scene attempt. By default its base replays the last completed scene,
+            // so a retry holds the previous image for one frame instead of
+            // flashing. The replay falls back to the recovery clear when no valid
+            // completed source exists. The diagnostic toggle keeps the clear so
+            // that each retried frame stays visible.
             if (allowPresentNowRetryInitializationClear &&
                 policy.IsExplicitFailure &&
                 acquireAvailable &&
                 !_deviceLost)
-            {
-                return new RejectedDesktopFramePolicyDecision(
-                    ERejectedDesktopFrameDisposition
-                        .PresentInitializationClear,
-                    ERejectedDesktopFramePolicyReason
-                        .PresentNowRetryInitializationClear);
-            }
+                return ResolveRetryRecoveryBase(
+                    ERejectedDesktopFramePolicyReason.PresentNowRetryInitializationClear);
 
             if (policy.ShouldPresent ||
                 policy.IsExplicitFailure ||
@@ -92,12 +90,27 @@ namespace XREngine.Rendering.Vulkan
                 return policy;
             }
 
-            return new RejectedDesktopFramePolicyDecision(
-                ERejectedDesktopFrameDisposition
-                    .PresentInitializationClear,
-                ERejectedDesktopFramePolicyReason
-                    .DeferredInitializationClear);
+            return ResolveRetryRecoveryBase(
+                ERejectedDesktopFramePolicyReason.DeferredInitializationClear);
         }
+
+        /// <summary>
+        /// Selects the base image of a recovery frame for a retried desktop frame.
+        /// </summary>
+        /// <param name="clearReason">The policy reason to report when the diagnostic recovery clear is on.</param>
+        /// <returns>
+        /// A replay of the last completed scene, or the recovery clear when
+        /// <see cref="RenderDiagnosticsFlags.DebugRetryRecoveryClear"/> is on.
+        /// </returns>
+        private static RejectedDesktopFramePolicyDecision ResolveRetryRecoveryBase(
+            ERejectedDesktopFramePolicyReason clearReason)
+            => RenderDiagnosticsFlags.DebugRetryRecoveryClear
+                ? new RejectedDesktopFramePolicyDecision(
+                    ERejectedDesktopFrameDisposition.PresentInitializationClear,
+                    clearReason)
+                : new RejectedDesktopFramePolicyDecision(
+                    ERejectedDesktopFrameDisposition.PresentLastCompletedContent,
+                    ERejectedDesktopFramePolicyReason.RetryReplaysCompletedContent);
 
         private void RecordRejectedDesktopSkip(
             ref VulkanFrameAttempt attempt,

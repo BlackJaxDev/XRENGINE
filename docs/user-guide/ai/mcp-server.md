@@ -144,9 +144,38 @@ screenshot or CPU-rendered replacement is used.
 
 ## In-Editor Assistant
 
-The ImGui editor includes **Tools > MCP Assistant**. It can use provider keys from editor preferences or environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `GITHUB_TOKEN`.
+Open **Tools > Assistant** in the ImGui editor. Select Codex, Claude, Copilot, or Gemini from the **Assistant** menu. Then select an available model from the **Model** menu and a setting from **Effort**. Effort choices are saved for each provider, access mode, and model. **Default** lets the provider choose. Other choices appear only when the selected runtime reports them for that model. If the saved effort is no longer available, select a listed level or **Default** before sending. A saved model that is no longer available must also be selected again.
 
-For scene or material edits, prefer prompts that ask the assistant to inspect the current world, make a bounded change, and verify with read-back or a viewport screenshot.
+Select **Connect / Manage** to set up the connection. Subscription access runs the installed Codex, Claude Code, Antigravity (for Gemini), or Copilot CLI. Each client owns its sign-in and usage limits. Select an available account model after connecting. Missing clients, missing sign-in, and unavailable models keep **Send** disabled. The editor does not fall back to API billing.
+
+Gemini uses Antigravity because Google retired personal Gemini CLI access. Each Gemini request starts a new chat. Antigravity does not expose account identity, so Assistant does not send earlier messages with a new request. The selected model comes from the native model list; the client does not report the model that generated the reply.
+
+Account controls appear only in Manage. A connected account offers **Switch account**, or **Reconnect** when the client cannot request an account switch. **Advanced** contains the executable picker and technical settings, not a second sign-in form.
+
+Codex, Claude, and Gemini also retain explicit API-key access. API usage is billed separately from a subscription. Paste a key from the clipboard, or use `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY` from the process environment. Existing API selections are preserved. The retired GitHub Models connection is separate from Copilot and cannot send requests.
+
+Select a request mode above the chat box:
+
+- **Auto** selects a mode from the request. Clear questions use Explain. Clear change requests use Edit. Other requests use Diagnose.
+- **Explain (read only)** answers questions without changing the editor.
+- **Diagnose (read only)** inspects a problem and reports findings without applying a fix.
+- **Edit** permits requested changes under the editor tool permissions.
+
+Type a request in the chat box. Use **+ Add context** to include a viewport screenshot or allow editor tools. Explain and Diagnose can call only the available read-only inspection tools. Remove a context item from its chip when you no longer need it. Select **Send** to start a request, or **Cancel** to stop one in progress. The mode, available tools, and Effort choice are fixed for that request. Use **Advanced** for response settings, camera behavior, model refresh, and request logging.
+
+Effort support depends on the connection. Codex, Claude Code, and Copilot subscription models can show runtime-advertised levels. API model catalogs do not report effort capabilities, so API mode uses **Default**. Gemini ACP and Antigravity use **Default** until their runtimes report a verified effort control. The editor does not substitute API billing for a subscription connection.
+
+Use **Explain this** on a supported inspector entry, property, or shader error to prepare a question. Review the draft before you send it. After an explanation, select **How it works** or **Show source** to prepare a follow-up question. **Show in editor** selects the captured object when it is still available. These actions do not send a request by themselves.
+
+The Assistant can search engine source and guides for literal text and read numbered source lines. A source search is not a semantic code index. A source checkout can differ from the running editor. A packaged help bundle can match the editor assembly manifest, but that match does not prove each source file matches the binary. If the reply has a **Sources** section, select **Inspect source** to read the excerpt again. The popup shows the build match status and warns if the file changed since the answer.
+
+Realtime access has no source search or source reader. In Explain and Diagnose, it also has no realtime capture tool. Select standard chat when you need an answer with source evidence.
+
+Expand a tool activity group to see what target the Assistant used, what action it took, and what the tool reported. **Details** shows the technical tool name, input, and result. A completed call does not by itself verify a visible scene result. The Assistant retains bounded source references, tool outcomes, failures, and open questions when it shortens conversation context.
+
+Use **Advanced > Personal instructions** to set how the Assistant speaks. The editor saves up to 8192 characters on this computer and adds them to each new request. For example, ask for short answers or plain language. These instructions do not change editor tool permissions or evidence rules.
+
+For scene or material edits, ask the assistant to inspect the current world, make a bounded change, and verify the result with read-back or a viewport screenshot.
 
 ## Editor Camera Pipeline Assets
 
@@ -168,6 +197,10 @@ parameter values, ranges and enum options. Select a desktop viewport with
 with `vr_eye` (`left`, `right`, or `stereo`).
 `set_camera_post_process_parameter` changes one declared `stage_key` and
 `parameter_name` through the existing backing settings, then returns its value.
+The VR eyes have one shared set of post-process settings, separate from the
+desktop camera: `vr_eye` `left`, `right` and `stereo` all read and edit the same
+eye settings, so the two eyes cannot differ. A desktop selector does not change
+the eyes.
 It requires mutation permission. Numeric ranges and enum values are validated;
 vectors use finite numeric `x`/`y`/`z`/`w` object members as appropriate.
 For reproducible captures, for example, set `colorGrading.AutoExposure` to
@@ -199,6 +232,13 @@ skinning, morphs, billboarding or per-draw render-option overrides.
 reason. Edit the existing `MatColor` uniform to preserve shared coverage;
 replacing its parameter object or changing the source shader requires recreating
 the matching temporal variants.
+
+`set_material_uniform` and `set_material_uniforms` preserve each Uber property's
+static or animated mode. An edit to a static property updates its compiled
+literal and requests a debounced shader rebuild. A batch requests one rebuild
+after its successful edits. Wait for `UberVariantStatus` to report matching
+requested and active hashes before comparing images. A successful setter
+response confirms the value change, not completed shader compilation.
 
 For authored sky materials, `advancedBackground` reports mono/stereo admission
 and rejection reasons, including missing environment textures, stale shader
@@ -285,6 +325,8 @@ and accept `mip_level`; out-of-range faces fail explicitly.
 `AdvancedShading.ShadingDiagnostics` preserves reconstruction rejection in bit16
 and its `EAdvancedReconstructionInvalidReason` value in bits20–27. Capture it as
 a companion to HDR/identity when native shading produces the error color.
+OpenXR eye outputs allocate it only while a shading debug view or debug overlays
+are on; capture it from the desktop output, or set a shading debug view first.
 For a nonfinite rejection, bits28–30 identify the first affected attribute:
 1=world position, 2=normal, 3=tangent, 4=bitangent, 5=UV, 6=UV dx, 7=UV dy.
 After completion, `CompletedOutputTextureId` provides the GUID for an exported
@@ -382,8 +424,12 @@ error/warning totals, bounded message samples, overflow counts, and the effectiv
 standard/synchronization validation and debug-messenger flags. These totals
 survive frames with no messages and reset when the Vulkan device is recreated.
 The sibling `message_count` and `error_count` fields describe only the last
-frame. Check the enabled flags before interpreting zero errors as validation
-evidence; Release builds can omit ordinary debug-log calls.
+frame. Synchronization validation reports a hazard only a few times before its
+duplicate limit, so these per-frame fields are usually 0 even when a hazard
+occurred. `lifetime_error_count` counts every validation error since the process
+started; device recreation does not reset it. Check the enabled flags before
+interpreting zero errors as validation evidence; Release builds can omit
+ordinary debug-log calls.
 
 `get_render_profiler_stats.vulkan.descriptor_heap` exposes cumulative native
 sampler/resource heap binds, heap pushes, successful sampler/resource descriptor
@@ -513,4 +559,4 @@ commands and the diagnostic recipe choices are in the
 ## Deeper Docs
 
 - [MCP Server Implementation](../../developer-guides/ai/mcp-server.md)
-- [MCP Assistant Developer Guide](../../developer-guides/ai/mcp-assistant.md)
+- [Assistant Developer Guide](../../developer-guides/ai/mcp-assistant.md)

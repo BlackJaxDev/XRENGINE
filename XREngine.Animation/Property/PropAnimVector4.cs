@@ -15,6 +15,10 @@ namespace XREngine.Animation
         public PropAnimVector4(int frameCount, float FPS, bool looped, bool useKeyframes)
             : base(frameCount, FPS, looped, useKeyframes) { }
 
+        /// <inheritdoc />
+        public override void WriteSampleToStore(float second, AnimationValueStore store, in AnimSlot slot)
+            => store.SetVector4(slot.TypeIndex, GetSampleValue(second));
+
         protected override Vector4 LerpValues(Vector4 t1, Vector4 t2, float time) => Vector4.Lerp(t1, t2, time);
         protected override float[] GetComponents(Vector4 value) => [value.X, value.Y, value.Z, value.W];
         protected override Vector4 ScaleValue(Vector4 value, float scale) => value * scale;
@@ -109,7 +113,7 @@ namespace XREngine.Animation
 
         public override string WriteToString()
         {
-            return string.Format("{0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10} {11} {12} {13} {14} {15} {16} {17}", Second, InValue.X, InValue.Y, InValue.Z, InValue.W, OutValue.X, OutValue.Y, OutValue.Z, OutValue.W, InTangent.X, InTangent.Y, InTangent.Z, InTangent.W, OutTangent.X, OutTangent.Y, OutTangent.Z, OutTangent.W, InterpolationTypeOut);
+            return $"{Second} {InValue.X} {InValue.Y} {InValue.Z} {InValue.W} {OutValue.X} {OutValue.Y} {OutValue.Z} {OutValue.W} {InTangent.X} {InTangent.Y} {InTangent.Z} {InTangent.W} {OutTangent.X} {OutTangent.Y} {OutTangent.Z} {OutTangent.W} {InterpolationTypeOut}";
             //return string.Format("{0} {1} {2} {3} {4} {5}", Second, InValue.WriteToString(), OutValue.WriteToString(), InTangent.WriteToString(), OutTangent.WriteToString(), InterpolationType);
         }
         public override void ReadFromString(string str)

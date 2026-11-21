@@ -20,6 +20,7 @@ namespace XREngine.Rendering.UI
         public UIBoundableTransform BoundableTransform => TransformAs<UIBoundableTransform>(true)!;
         public UIRenderableComponent()
         {
+            _boundsPublisher = new UIBoundsBindingPublisher(this);
             RenderInfo3D = RenderInfo3D.New(this, RenderCommand3D);
             RenderInfo2D = RenderInfo2D.New(this, RenderCommand2D);
             RenderedObjects = [RenderInfo3D, RenderInfo2D];
@@ -257,6 +258,12 @@ namespace XREngine.Rendering.UI
             get => RenderCommand3D.Mesh;
             set
             {
+                XRMeshRenderer? previous = RenderCommand3D.Mesh;
+                if (!ReferenceEquals(previous, value))
+                {
+                    previous?.BindingPublishers.Remove(_boundsPublisher);
+                    value?.BindingPublishers.Add(_boundsPublisher);
+                }
                 RenderCommand3D.Mesh = value;
                 RenderCommand2D.Mesh = value;
 
@@ -273,7 +280,8 @@ namespace XREngine.Rendering.UI
                 switch (propName)
                 {
                     case nameof(Material):
-                        _material?.SettingUniforms -= OnMaterialSettingUniforms;
+                        if (UsesMaterialSettingUniformsCallback)
+                            _material?.SettingUniforms -= OnMaterialSettingUniforms;
                         break;
                 }
             }
@@ -287,35 +295,59 @@ namespace XREngine.Rendering.UI
                 case nameof(Material):
                     var m = Mesh;
                     m?.Material = _material;
-                    _material?.SettingUniforms += OnMaterialSettingUniforms;
+                    if (UsesMaterialSettingUniformsCallback)
+                        _material?.SettingUniforms += OnMaterialSettingUniforms;
                     break;
             }
         }
 
-        private Vector4 _lastBounds = Vector4.Zero;
+        /// <summary>
+        /// True when a subclass needs the material's uniform callback, for work that
+        /// must run on the render thread while the material is bound. The UI bounds
+        /// themselves come from a typed publisher on this component's mesh renderer.
+        /// </summary>
+        protected virtual bool UsesMaterialSettingUniformsCallback => false;
+
+        /// <summary>
+        /// Runs from the material's uniform callback when
+        /// <see cref="UsesMaterialSettingUniformsCallback"/> is true.
+        /// </summary>
         protected virtual void OnMaterialSettingUniforms(XRMaterialBase material, XRRenderProgram program)
         {
+        }
+
+        private Vector4 CaptureUIBounds()
+        {
             var tfm = BoundableTransform;
-            var w = tfm.ActualWidth;
-            var h = tfm.ActualHeight;
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
-            var x = bottomLeft.X;
-            var y = bottomLeft.Y;
+            return new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
+        }
 
-            if (x == _lastBounds.X && 
-                y == _lastBounds.Y && 
-                w == _lastBounds.Z && 
-                h == _lastBounds.W)
-                return; //No change, no need to update uniforms
+        private readonly UIBoundsBindingPublisher _boundsPublisher;
 
-            var bounds = new Vector4(x, y, w, h);
+        /// <summary>
+        /// Publishes this component's UI bounds through a typed publisher on its mesh
+        /// renderer. Each component owns its renderer, so the bounds stay per component
+        /// even when components share a material, and the backend keeps the captured
+        /// binding snapshot while the bounds stay the same.
+        /// </summary>
+        private sealed class UIBoundsBindingPublisher(UIRenderableComponent owner) : IRenderBindingPublisher
+        {
+            private readonly RenderBindingGenerationTracker<Vector4> _generation = new();
 
-            _lastBounds = bounds;
-            program.Uniform(EEngineUniform.UIWidth.ToStringFast(), w);
-            program.Uniform(EEngineUniform.UIHeight.ToStringFast(), h);
-            program.Uniform(EEngineUniform.UIX.ToStringFast(), x);
-            program.Uniform(EEngineUniform.UIY.ToStringFast(), y);
-            program.Uniform(EEngineUniform.UIXYWH.ToStringFast(), bounds);
+            public ERenderBindingFrequency Frequency => ERenderBindingFrequency.Object;
+
+            public ulong Generation => _generation.Advance(owner.CaptureUIBounds());
+
+            public void PublishUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+            {
+                Vector4 bounds = owner.CaptureUIBounds();
+                materialProgram.Uniform(EEngineUniform.UIWidth.ToStringFast(), bounds.Z);
+                materialProgram.Uniform(EEngineUniform.UIHeight.ToStringFast(), bounds.W);
+                materialProgram.Uniform(EEngineUniform.UIX.ToStringFast(), bounds.X);
+                materialProgram.Uniform(EEngineUniform.UIY.ToStringFast(), bounds.Y);
+                materialProgram.Uniform(EEngineUniform.UIXYWH.ToStringFast(), bounds);
+            }
         }
 
         protected override void UITransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)

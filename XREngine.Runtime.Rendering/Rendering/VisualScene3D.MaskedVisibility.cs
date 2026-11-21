@@ -170,6 +170,12 @@ public partial class VisualScene3D
 
         if (freeIndex < 0)
             freeIndex = 0;
+        // Reuse an evicted entry with its grown buffers; a family change must not allocate.
+        if (_mainVisibilityFamilies[freeIndex] is MainVisibilityCacheEntry evicted)
+        {
+            evicted.Recycle();
+            return evicted;
+        }
         return _mainVisibilityFamilies[freeIndex] = new(InitialMainVisibilityCandidateCapacity);
     }
 
@@ -528,5 +534,30 @@ public partial class VisualScene3D
         public bool Attempted;
         public bool Built;
         public bool Valid;
+
+        /// <summary>
+        /// Prepares an evicted entry for a new family. The candidate generations are cleared,
+        /// so a reader of an older frame cannot receive the previous family's candidates.
+        /// </summary>
+        public void Recycle()
+        {
+            Results.BeginFrame();
+            ReferenceResults.Begin();
+            Array.Clear(CandidateCounts);
+            Array.Clear(CandidateGenerations);
+            Array.Clear(CandidateSlotOverflowed);
+            FrameId = 0;
+            FamilyKey = 0;
+            ViewCount = 0;
+            ReferenceComparisons = 0;
+            ReferenceFalsePositives = 0;
+            ReferenceFalseNegatives = 0;
+            Similarity = default;
+            SplitDecision = default;
+            ContentPolicy = ViewBatchContentPolicy.Exact;
+            Attempted = false;
+            Built = false;
+            Valid = false;
+        }
     }
 }

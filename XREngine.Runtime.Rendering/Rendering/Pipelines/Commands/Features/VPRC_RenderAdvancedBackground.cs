@@ -48,7 +48,9 @@ public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
             return;
         }
 
-        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_passIndex);
+        int activePassIndex = ResolveActiveRenderGraphPassIndex("AdvancedAuthoredBackground");
+        int resolvedPassIndex = activePassIndex != int.MinValue ? activePassIndex : _passIndex;
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(resolvedPassIndex);
         bool previous = state.AdvancedMultisampleBackground;
         _admittedMaterial = null;
         state.AdvancedMultisampleBackground = RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa &&

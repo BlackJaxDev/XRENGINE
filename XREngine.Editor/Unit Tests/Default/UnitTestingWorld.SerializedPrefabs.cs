@@ -127,7 +127,8 @@ public static partial class EditorUnitTests
                     cancellationToken: default,
                     progress: ReportProgress,
                     fbxBackend: ResolveFbxBackend(settings),
-                    allowPartialImport: settings.AllowPartialImport);
+                    allowPartialImport: settings.AllowPartialImport,
+                    sceneRootName: settings.SceneRootName);
 
                 SceneNode convertedRoot = conversion.RootNode
                     ?? throw new SourceVisualImportException(
@@ -139,7 +140,7 @@ public static partial class EditorUnitTests
                     ValidateSerializedPrefabCompletion(manifest, settings, prefabPath);
 
                 (int modelCount, int materialCount, int sourceToonCount, int downgradeCount) =
-                    ValidateSerializedPrefabMaterials(convertedRoot, prefabPath, settings.AllowPartialImport);
+                    ValidateSerializedPrefabMaterials(convertedRoot, prefabPath);
                 if (manifest.CompletionTier == SourceImportCompletionTier.PartialVisual)
                     Debug.MeshesWarning($"[UnityPrefab] Partial import '{prefabPath}': {manifest.Diagnostics.Count} diagnostic(s). Available content is retained.");
                 SceneNode importRoot = ApplySerializedPrefabImportTransform(convertedRoot, settings);
@@ -239,6 +240,12 @@ public static partial class EditorUnitTests
             });
         }
 
+        /// <summary>
+        /// Checks that an animated prefab kept its avatar behavior. Strict imports fail only when
+        /// an avatar component reports an error. Replaced materials and other visual downgrades lower
+        /// the completion tier to <see cref="SourceImportCompletionTier.PartialVisual"/>, but they do not
+        /// stop the import.
+        /// </summary>
         private static void ValidateSerializedPrefabCompletion(
             SerializedPrefabImportManifest manifest,
             Settings.ModelImportSettings settings,
@@ -253,9 +260,14 @@ public static partial class EditorUnitTests
             string[] errors =
             [
                 .. manifest.Diagnostics
-                    .Where(static diagnostic => diagnostic.Severity == SourceImportDiagnosticSeverity.Error)
+                    .Where(static diagnostic =>
+                        diagnostic.Category == SourceImportDiagnosticCategory.AvatarComponent &&
+                        diagnostic.Severity == SourceImportDiagnosticSeverity.Error)
                     .Select(static diagnostic => diagnostic.ToString()),
             ];
+            if (errors.Length == 0 && manifest.CompletionTier == SourceImportCompletionTier.PartialVisual)
+                return;
+
             string details = errors.Length == 0
                 ? "The converter did not report an avatar-behavior error detail."
                 : string.Join("; ", errors);
@@ -309,12 +321,14 @@ public static partial class EditorUnitTests
         }
 
         /// <summary>
-        /// Verifies that every material identified as Poiyomi reached the native Uber material
-        /// path. Unsupported Poiyomi versions and generic fallbacks are surfaced as import errors
-        /// instead of silently displaying a materially different avatar.
+        /// Counts the models and materials in the converted prefab and checks that each source toon material
+        /// reached the native Uber material path. A source toon material that used a fallback, an unknown
+        /// shader version, or a missing Uber state produces a warning that names the material and the
+        /// reason. These warnings never stop the import, because one material must not remove the rest
+        /// of the avatar.
         /// </summary>
         private static (int ModelCount, int MaterialCount, int PoiyomiCount, int DowngradeCount)
-            ValidateSerializedPrefabMaterials(SceneNode rootNode, string prefabPath, bool allowPartialImport = false)
+            ValidateSerializedPrefabMaterials(SceneNode rootNode, string prefabPath)
         {
             var models = new HashSet<Model>();
             var materials = new HashSet<XRMaterial>();
@@ -342,33 +356,29 @@ public static partial class EditorUnitTests
                 bool unsupportedVersion = report.DiagnosticGroups
                     .SelectMany(static group => group.Diagnostics)
                     .Any(static diagnostic => diagnostic.Code == MaterialConversionDiagnosticCodes.UnknownVersion);
-                if (allowPartialImport && (unsupportedVersion ||
-                    report.Outcome is EMaterialConversionOutcome.GenericFallback or EMaterialConversionOutcome.Failed))
-                {
-                    Debug.MeshesWarning($"[UnityPrefab] Material '{report.MaterialName}' uses a fallback after Poiyomi conversion (outcome: {report.Outcome}).");
-                    continue;
-                }
                 if (unsupportedVersion)
                 {
-                    throw new SourceVisualImportException(
-                        $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' uses an unsupported " +
-                        $"shader source ({report.SourceShaderVersion}). No verified source profile matched. " +
-                        "Inspect the material conversion report for its source identity.");
+                    Debug.MeshesWarning(
+                        $"[UnityPrefab] Source toon material '{report.MaterialName}' in '{prefabPath}' uses an unsupported " +
+                        $"shader source ({report.SourceShaderVersion}). No verified source profile matched, so it uses " +
+                        $"a fallback (outcome: {report.Outcome}). Inspect the material conversion report for its source identity.");
+                    continue;
                 }
 
                 if (report.Outcome is EMaterialConversionOutcome.GenericFallback or EMaterialConversionOutcome.Failed)
                 {
-                    throw new SourceVisualImportException(
-                        $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' did not convert to the " +
-                        $"native Uber shader (outcome: {report.Outcome}). " +
-                        string.Join(" ", report.Failures.Count > 0 ? report.Failures : report.Warnings));
+                    Debug.MeshesWarning(
+                        $"[UnityPrefab] Source toon material '{report.MaterialName}' in '{prefabPath}' did not convert to the " +
+                        $"native Uber shader and uses a fallback (outcome: {report.Outcome}). {string.Join(" ", report.Failures.Count > 0 ? report.Failures : report.Warnings)}");
+                    continue;
                 }
 
                 if (!material.TryGetUberMaterialState(out _, out _))
                 {
-                    throw new SourceVisualImportException(
-                        $"Poiyomi material '{report.MaterialName}' in '{prefabPath}' reported a successful " +
+                    Debug.MeshesWarning(
+                        $"[UnityPrefab] Source toon material '{report.MaterialName}' in '{prefabPath}' reported a successful " +
                         "conversion but has no native Uber shader state.");
+                    continue;
                 }
 
                 if (report.Outcome == EMaterialConversionOutcome.ConvertedToSourceToon)

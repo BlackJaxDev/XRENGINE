@@ -115,6 +115,12 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
             return;
 
         source.UpdateReadbackCoordinator();
+        // The chain's own flag is the debug choice. A choice made while the chain was not yet
+        // registered with the dispatcher, or while a GPU mode change was pending, did not reach the
+        // dispatcher. Apply it here; this compares two flags and takes the lock only on a mismatch.
+        bool debugDrawChains = chain.DebugDrawChains;
+        if (debugDrawChains != source.DebugDrawChains || !source.DebugSelectionApplied)
+            source.SetDebugDrawChains(debugDrawChains);
         if (source.DebugDrawChains)
             GPUPhysicsChainDispatcher.Instance.RefreshDebugDrawChainsWorld(source);
         GPUPhysicsChainDispatcher.Instance.SubmitData(source, snapshot,
@@ -170,6 +176,7 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         private bool _paletteRetryAttempted;
         private int _particleStateVersion;
         private volatile bool _debugDrawChains = chain.DebugDrawChains;
+        private volatile bool _debugSelectionApplied;
         private bool _effectiveGpuMode;
         private PhysicsChainReadbackCoordinatorAdapter? _readbackCoordinator;
         private IRuntimeWorldContext? _readbackRuntimeWorld;
@@ -252,10 +259,13 @@ public sealed class RuntimePhysicsChainRenderingBridge : IRuntimePhysicsChainRen
         }
         public bool DebugDrawChains => _debugDrawChains;
 
+        /// <summary>Gets whether the dispatcher holds the current debug choice of this source.</summary>
+        public bool DebugSelectionApplied => _debugSelectionApplied;
+
         public void SetDebugDrawChains(bool selected)
         {
             _debugDrawChains = selected;
-            GPUPhysicsChainDispatcher.Instance.SetDebugDrawChainsSelection(this, selected);
+            _debugSelectionApplied = GPUPhysicsChainDispatcher.Instance.SetDebugDrawChainsSelection(this, selected);
         }
         public int GpuDebugInterpolationMode => (int)_chain.InterpolationMode;
         public float GetGpuDebugInterpolationAlpha() => 0.0f;

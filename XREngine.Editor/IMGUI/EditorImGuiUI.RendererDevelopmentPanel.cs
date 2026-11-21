@@ -262,7 +262,7 @@ public static partial class EditorImGuiUI
             $"ALC: {service.ActiveLoadContextName ?? "Default/static"}{Environment.NewLine}" +
             $"Build manifest: {build?.ManifestPath ?? "<none>"}{Environment.NewLine}" +
             $"Error: {error}{Environment.NewLine}{Environment.NewLine}" +
-            (build?.Output ?? string.Empty);
+            $"{build?.Output ?? string.Empty}";
     }
 
     private static TimeSpan FirstFrameTimeout(EditorPreferences preferences)

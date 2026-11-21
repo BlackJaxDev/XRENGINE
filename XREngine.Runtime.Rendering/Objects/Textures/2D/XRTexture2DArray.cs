@@ -316,7 +316,7 @@ namespace XREngine.Rendering
             using RuntimeAssetReadLease read = RuntimeAssetReadServices.Capture();
             read.EnsureHostFileAccess("Texture array import");
             byte[] bytes = read.ReadAllBytes(filePath);
-            IReadOnlyList<RuntimeImage> frames = RuntimeImageCodecs.Require().DecodeFrames(bytes);
+            IReadOnlyList<RuntimeImage> frames = RuntimeImageCodecs.Require().DecodeFrames(bytes, filePath);
             XRTexture2D[]? textures = null;
             try
             {

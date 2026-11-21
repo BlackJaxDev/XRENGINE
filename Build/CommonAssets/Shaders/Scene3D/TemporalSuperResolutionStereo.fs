@@ -6,9 +6,11 @@
 #pragma snippet "TemporalSuperResolutionCore"
 
 layout(location = 0) out vec4 OutColor;
-#ifdef XR_TSR_STABLE_OUTPUT
+#if defined(XR_TSR_STABLE_OUTPUT) && !defined(XR_TSR_EDGE_MASK_PASS)
 layout(location = 1) out vec4 OutHistoryMetadata;
 layout(location = 2) out vec4 OutAccumulation;
+#endif
+#ifdef XR_TSR_STABLE_OUTPUT
 uniform sampler2DArray TsrHistoryMetadata;
 #endif
 layout(location = 0) in vec3 FragPos;
@@ -18,7 +20,12 @@ uniform sampler2DArray Velocity;
 uniform sampler2DArray DepthView;
 uniform sampler2DArray HistoryDepth;
 uniform sampler2DArray TsrHistoryColor;
+// Editor gizmos have no valid temporal history. Scene stencil is independent.
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+uniform sampler2DArray EditorHighlightMask;
+#elif !defined(XR_SCENE_STENCIL_AUTHORED)
 uniform usampler2DArray StencilView;
+#endif
 
 #ifdef XR_ADVANCED_REACTIVE_MASK
 // Canonical opaque/late reactivity is independent of final output alpha.
@@ -128,8 +135,14 @@ vec3 SampleCurrentReconstruction(sampler2DArray tex, vec2 uv, vec2 texelSize)
 
 float SamplePostTemporalForwardMask(vec2 uv)
 {
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+    return step(0.5, texture(EditorHighlightMask, EyeUv(clamp(uv, vec2(0.0), vec2(1.0)))).b);
+#elif !defined(XR_SCENE_STENCIL_AUTHORED)
     uint stencilBits = texture(StencilView, EyeUv(clamp(uv, vec2(0.0), vec2(1.0)))).r;
     return ((stencilBits & 0x80u) != 0u) ? 1.0 : 0.0;
+#else
+    return 0.0;
+#endif
 }
 
 vec2 FindClosestVelocity(vec2 uv)
@@ -216,14 +229,66 @@ vec4 TsrLoadHistoryMetadata(ivec2 pixel) { return texelFetch(TsrHistoryMetadata,
 vec3 TsrLoadCurrentColor(ivec2 pixel) { return texelFetch(PostProcessOutputTexture, ivec3(pixel, int(gl_ViewID_OVR)), 0).rgb; }
 float TsrLoadCurrentReactivity(ivec2 pixel) { return texelFetch(AdvancedReactiveMask, ivec3(pixel, int(gl_ViewID_OVR)), 0).r; }
 #endif
+#ifdef XR_TSR_EDGE_MASK
+// Edge mask of this frame, written at internal resolution by the edge-mask pass.
+uniform sampler2DArray TsrEdgeMask;
+// True when the internal pixel that TsrBuildCoveragePair uses as its 3x3 center for sourceUv
+// passed the current-frame center classification. Out-of-range centers fail that classification too.
+bool TsrCurrentEdgeMaskSet(vec2 sourceUv)
+{
+    ivec2 extent = textureSize(DepthView, 0).xy;
+    ivec2 center = ivec2(sourceUv * vec2(extent));
+    if (any(lessThan(center, ivec2(0))) || any(greaterThanEqual(center, extent)))
+        return false;
+    return texelFetch(TsrEdgeMask, ivec3(center, int(gl_ViewID_OVR)), 0).r > 0.5;
+}
+#endif
 #pragma snippet "TemporalSuperResolutionSurface"
 #pragma snippet "TemporalSuperResolutionCoverage"
 
+#ifdef XR_TSR_EDGE_MASK_PASS
+// Edge-mask pass at internal resolution. Each fragment is one internal pixel. It runs the
+// current-frame coverage classification with that pixel as the 3x3 center. With the pixel-center
+// UV the footprint loop of TsrBuildCoveragePair holds one sample (the center), so the result is
+// exactly the center-dependent part of the classification: depth clusters, counts, connectivity,
+// reactivity and color contrast. The classify pass marks the output pixels whose 3x3 center has
+// the mask set; only those pixels run the full resolve, where TsrBuildCoveragePair can succeed.
 void main()
 {
+    ivec2 extent = textureSize(DepthView, 0).xy;
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    if (any(greaterThanEqual(pixel, extent)))
+        discard;
+    TsrCoveragePair pair;
+    bool edge = TsrBuildCoveragePair((vec2(pixel) + 0.5) / vec2(extent), false, pair);
+    OutColor = vec4(edge ? 1.0 : 0.0, 0.0, 0.0, 1.0);
+}
+#elif defined(XR_TSR_EDGE_CLASSIFY)
+// Edge stencil classify pass at output resolution. It maps the output pixel to the TSR source UV
+// exactly as the resolve does and keeps the fragment only when the edge mask is set for that UV's
+// 3x3 center. The material writes the edge stencil bit for kept fragments and no color.
+void main()
+{
+    vec2 outputUv = XRENGINE_FramebufferUV(
+        gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight));
+    vec2 currentJitter = TsrFramebufferUvDisplacement(CurrentJitterUv, FramebufferTextureYDirection);
+    if (gl_ViewID_OVR != 0u)
+        currentJitter = TsrFramebufferUvDisplacement(CurrentJitterUvRight, FramebufferTextureYDirection);
+    vec2 uv = ClampSourceUv(outputUv + currentJitter);
+    if (!TsrCurrentEdgeMaskSet(uv))
+        discard;
+    OutColor = vec4(0.0);
+}
+#else
+void main()
+{
+#ifndef XR_TSR_STENCIL_SPLIT
+    // The split resolves keep early stencil rejection, so they do not discard. Fragments outside
+    // the viewport are never generated for them.
     vec2 clipXY = FragPos.xy;
     if (clipXY.x < -1.0 || clipXY.x > 1.0 || clipXY.y < -1.0 || clipXY.y > 1.0)
         discard;
+#endif
 
     vec2 outputUv = XRENGINE_FramebufferUV(
         gl_FragCoord.xy, ScreenOrigin, vec2(ScreenWidth, ScreenHeight));
@@ -440,3 +505,4 @@ void main()
 
     OutColor = vec4(max(result, vec3(0.0)), 1.0);
 }
+#endif

@@ -81,9 +81,12 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestSceneOnlyVrPawn = "XRE_UNIT_TEST_SCENE_ONLY_VR_PAWN";
     public const string UnitTestPreviewVrStereoViews = "XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS";
     public const string UnitTestAllowDesktopEditingInVr = "XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR";
+    public const string UnitTestVrDesktopView = "XRE_UNIT_TEST_VR_DESKTOP_VIEW";
     public const string UnitTestVrViewRenderMode = "XRE_UNIT_TEST_VR_VIEW_RENDER_MODE";
     public const string UnitTestVrRenderPipeline = "XRE_UNIT_TEST_VR_RENDER_PIPELINE";
     public const string UnitTestVrRvcPipelineMode = "XRE_UNIT_TEST_VR_RVC_PIPELINE_MODE";
+    /// <summary>Overrides the unit-test VR RvcQuadView setting (true or false).</summary>
+    public const string UnitTestVrRvcQuadView = "XRE_UNIT_TEST_VR_RVC_QUAD_VIEW";
     public const string UnitTestVrFoveationMode = "XRE_UNIT_TEST_VR_FOVEATION_MODE";
     public const string UnitTestVrFoveationQualityPreset = "XRE_UNIT_TEST_VR_FOVEATION_QUALITY_PRESET";
     public const string UnitTestVrFoveationRequireRequested = "XRE_UNIT_TEST_VR_FOVEATION_REQUIRE_REQUESTED";
@@ -93,9 +96,60 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestOpenXrEyeResolutionHeight = "XRE_UNIT_TEST_OPENXR_EYE_RESOLUTION_HEIGHT";
     public const string UnitTestRenderWindowsWhileInVr = "XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR";
     public const string UnitTestVrMirrorMode = "XRE_UNIT_TEST_VR_MIRROR_MODE";
+    /// <summary>Selects the VR desktop frame execution mode for the unit-testing world (Inline, WorkerRecord or SeparateDomain).</summary>
+    public const string UnitTestVrDesktopFrameExecutionMode = "XRE_UNIT_TEST_VR_DESKTOP_FRAME_EXECUTION_MODE";
 
     /// <summary>Set to 0 to stop collecting single-pass stereo commands for the next OpenXR frame while the current frame renders. On by default.</summary>
     public const string OpenXrSpeculativeCollect = "XRE_OPENXR_SPECULATIVE_COLLECT";
+    /// <summary>Set to 0 to make the OpenXR quad-view inset pair run its own visibility instead of the wide pair's, for an A/B run. On by default; the RvcQuadViewSharedVisibilityEnabled setting must also be on.</summary>
+    public const string OpenXrQuadSharedVisibility = "XRE_OPENXR_QUAD_SHARED_VISIBILITY";
+    /// <summary>
+    /// Overrides the <c>OpenXrCollectPacing</c> engine setting: <c>1</c> paces the collect loop to
+    /// OpenXR frames, <c>0</c> uses render pacing. Unset keeps the setting.
+    /// </summary>
+    public const string OpenXrCollectPacing = "XRE_OPENXR_COLLECT_PACING";
+    /// <summary>
+    /// Set to <c>0</c> to keep two-pass OpenXR eyes (sequential views and parallel command buffer
+    /// recording) on render pacing. On by default: a two-pass collect waits for the next located
+    /// XR frame. The <c>OpenXrCollectPacing</c> setting does not affect two-pass pacing.
+    /// </summary>
+    public const string OpenXrTwoPassCollectPacing = "XRE_OPENXR_TWO_PASS_COLLECT_PACING";
+    /// <summary>
+    /// Set to a positive frame interval <c>N</c> to write one line for each eye every <c>N</c> XR frames
+    /// to <c>openxr-eye-view-diagnostics.log</c> (Vulkan per-eye and single-pass stereo): viewport
+    /// display and internal size, TSR state, camera FOV angles, the late eye pose translation and the
+    /// published view-set position. Off when unset or 0.
+    /// </summary>
+    public const string OpenXrEyeViewDiagnostics = "XRE_OPENXR_EYE_VIEW_DIAGNOSTICS";
+    /// <summary>
+    /// Sets the Advanced native shading debug view of every Advanced stage family (desktop, VR eyes,
+    /// stereo and RVC) for the whole process: an <c>EAdvancedShadingDebugView</c> name or number,
+    /// for example <c>ShadowFallbackReason</c> (9) or <c>AmbientOcclusion</c> (10). Unset keeps each
+    /// pipeline's own setting.
+    /// </summary>
+    public const string AdvancedShadingDebugView = "XRE_ADVANCED_SHADING_DEBUG_VIEW";
+    /// <summary>
+    /// Set to <c>1</c> to write one line per render frame to <c>advanced-directional-shadow-owner.log</c>:
+    /// which viewport owns the Advanced directional shadow lane in that frame (OpenXR stereo, an eye
+    /// viewport or a window viewport), whether VR eyes render, the owner's authority and strategy,
+    /// whether headset views sample before the owner, and whether a declined cascade group may take
+    /// the generic path. Off by default.
+    /// </summary>
+    public const string AdvancedDirectionalShadowOwnerDiagnostics = "XRE_ADVANCED_DIRECTIONAL_SHADOW_OWNER_DIAGNOSTICS";
+    /// <summary>
+    /// Set to <c>1</c> to write one line to <c>advanced-deformation-slot.log</c> each time the shared
+    /// Advanced preparation defers because the GPU deformation frame cannot open: the failed check
+    /// (output slot fence, native buffer consumers, static generation), the slot's producer frame and
+    /// age, the fence's timeline target and completed value, the active viewport and process totals.
+    /// Off by default.
+    /// </summary>
+    public const string AdvancedDeformationSlotDiagnostics = "XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS";
+    /// <summary>
+    /// OpenXR eye mesh-operation reuse across frames (Vulkan). On by default. <c>0</c> materializes
+    /// every eye mesh request each frame. <c>witness</c> materializes each reused request again,
+    /// enqueues the fresh operation, and logs structural differences to <c>openxr-mesh-cohort-witness.log</c>.
+    /// </summary>
+    public const string OpenXrMeshCohort = "XRE_OPENXR_MESH_COHORT";
     public const string UnitTestOpenXrRuntimeJson = "XRE_UNIT_TEST_OPENXR_RUNTIME_JSON";
     public const string UnitTestRenderApi = "XRE_UNIT_TEST_RENDER_API";
     public const string UnitTestRenderPipeline = "XRE_UNIT_TEST_RENDER_PIPELINE";
@@ -139,6 +193,8 @@ public static class XREngineEnvironmentVariables
     public const string ProfileMode = "XRE_PROFILE_MODE";
     public const string TargetRefreshHz = "XRE_TARGET_REFRESH_HZ";
     public const string VulkanPresentationProfile = "XRE_VULKAN_PRESENTATION_PROFILE";
+    public const string DesktopPresentPath = "XRE_DESKTOP_PRESENT_PATH";
+    public const string OutputHdr = "XRE_OUTPUT_HDR";
     public const string UpdateFps = "XRE_UPDATE_FPS";
     public const string ProfileScene = "XRE_PROFILE_SCENE";
     public const string ProfileCamera = "XRE_PROFILE_CAMERA";
@@ -152,6 +208,7 @@ public static class XREngineEnvironmentVariables
     public const string ShaderCacheMode = "XRE_SHADER_CACHE_MODE";
     public const string TextureCacheMode = "XRE_TEXTURE_CACHE_MODE";
     public const string TextureStreamingCacheWarmupEnabled = "XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED";
+    public const string TextureCookCompression = "XRE_TEXTURE_COOK_COMPRESSION";
     public const string ProfileCacheMode = "XRE_PROFILE_CACHE_MODE";
     public const string GpuClockPolicy = "XRE_GPU_CLOCK_POLICY";
     public const string ProfilePhase = "XRE_PROFILE_PHASE";
@@ -189,12 +246,47 @@ public static class XREngineEnvironmentVariables
     public const string AdvancedRenderPipelineMode = "XRE_ADVANCED_RENDER_PIPELINE_MODE";
     /// <summary>Set to 1 to time the parts of Advanced preparation extraction for each row.</summary>
     public const string AdvancedExtractionSubStageTimers = "XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS";
+    /// <summary>Set to 1 to run the full committed-binding check also when the material source witness is unchanged, and to log each mismatch.</summary>
+    public const string AdvancedPublisherWitnessValidate = "XRE_ADVANCED_PUBLISHER_WITNESS_VALIDATE";
+    /// <summary>
+    /// Compiles the Vulkan Advanced native Uber shading kernel in the background after the standard
+    /// kernel is ready, also in a scene without Uber materials. An Uber model that loads later then
+    /// shades at once instead of with the standard-kernel fallback. Default: on. Set to 0 to compile
+    /// the Uber kernel only when the scene has Uber materials.
+    /// </summary>
+    public const string AdvancedUberKernelPrewarm = "XRE_ADVANCED_UBER_KERNEL_PREWARM";
+    /// <summary>
+    /// Set to 0 to draw imported surface decal materials as masked materials. This turns off
+    /// the Advanced decal buffer lane for a before/after check. Default: on where the backend
+    /// supports the lane.
+    /// </summary>
+    public const string AdvancedSurfaceDecals = "XRE_ADVANCED_SURFACE_DECALS";
+    /// <summary>Set to 1 to record frame pacing marks for <c>FramePacingTimeline.Dump</c>.</summary>
+    public const string FramePacingTimeline = "XRE_FRAME_PACING_TIMELINE";
+    /// <summary>
+    /// Vulkan texture binding signatures across frames. <c>0</c> (default) keeps a signature for
+    /// one render frame only. <c>1</c> keeps it while the descriptor generation and the
+    /// readiness epoch stay the same. <c>witness</c> keeps it across frames, also computes each
+    /// signature again, uses the new value, and logs each mismatch to <c>descriptor-signature-witness.log</c>.
+    /// </summary>
+    public const string VulkanDescriptorSignatureEpoch = "XRE_VK_DESCRIPTOR_SIGNATURE_EPOCH";
+    /// <summary>
+    /// Set to 0 to publish the Advanced pipeline's AO finalize, post-process and final post-process values
+    /// with uniform callbacks instead of typed binding publishers. Used for A/B checks.
+    /// </summary>
+    public const string AdvancedTypedPostProcessPublishers = "XRE_ADVANCED_TYPED_POSTPROCESS_PUBLISHERS";
+    /// <summary>
+    /// Set to 1 to name the material and renderer uniform callbacks in Vulkan binding-artifact
+    /// fallback samples. The names allocate, so use it for diagnosis only.
+    /// </summary>
+    public const string VulkanBindingFallbackCallbackNames = "XRE_VK_BINDING_FALLBACK_CALLBACK_NAMES";
     public const string HizCullTrace = "XRE_HIZ_CULL_TRACE";
     public const string DiagVendorUpscale = "XRE_DIAG_VENDOR_UPSCALE";
     public const string DiagQuadBlit = "XRE_DIAG_QUAD_BLIT";
     public const string DiagPostProcess = "XRE_DIAG_POSTPROCESS";
     public const string DiagDeferredLighting = "XRE_DIAG_DEFERRED_LIGHTING";
     public const string DebugPresentClear = "XRE_DEBUG_PRESENT_CLEAR";
+    public const string DebugRetryRecoveryClear = "XRE_DEBUG_RETRY_RECOVERY_CLEAR";
     public const string PushSubDataBreakdown = "XRE_PUSHSUBDATA_BREAKDOWN";
     public const string PushSubDataTrace = "XRE_PUSHSUBDATA_TRACE";
     public const string DispatchTrace = "XRE_DISPATCH_TRACE";
@@ -283,12 +375,18 @@ public static class XREngineEnvironmentVariables
         "XRE_VULKAN_PRESENT_NOW_READINESS_WATCHDOG_MS";
     public const string VulkanMeshSchedulingCapacity =
         "XRE_VULKAN_MESH_SCHEDULING_CAPACITY";
+    /// <summary>Set to <c>0</c> to keep Vulkan skinning and blendshapes on the vertex-shader path.</summary>
+    public const string VulkanComputeDeformation = "XRE_VULKAN_COMPUTE_DEFORMATION";
     public const string VulkanFrameOpSignatureDiffLimit = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF_LIMIT";
     public const string VulkanFrameOpSignatureDiff = "XRE_VULKAN_FRAMEOP_SIGNATURE_DIFF";
     public const string VulkanFrameDataReuseDiag = "XRE_VULKAN_FRAME_DATA_REUSE_DIAG";
     public const string VulkanAutoUniformParity =
         "XRE_VULKAN_AUTO_UNIFORM_PARITY";
     public const string VulkanDescriptorFingerprintDiag = "XRE_VULKAN_DESCRIPTOR_FINGERPRINT_DIAG";
+    /// <summary>Set to <c>0</c> to turn off mesh descriptor proof stamps (default on).</summary>
+    public const string VulkanDescriptorProofStamp = "XRE_VULKAN_DESCRIPTOR_PROOF_STAMP";
+    /// <summary>Set to <c>1</c> to run the full descriptor proof on every stamp hit and count mismatches.</summary>
+    public const string VulkanDescriptorProofStampVerify = "XRE_VULKAN_DESCRIPTOR_PROOF_STAMP_VERIFY";
     public const string VulkanMaterialBindingDiag = "XRE_VULKAN_MATERIAL_BINDING_DIAG";
     public const string VulkanRecordingDiag = "XRE_VULKAN_RECORDING_DIAG";
 
@@ -304,6 +402,17 @@ public static class XREngineEnvironmentVariables
     /// per-renderer path instead of the Advanced directional shadow raster lane.
     /// </summary>
     public const string AdvancedDirectionalShadowLane = "XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE";
+    /// <summary>
+    /// Set to <c>0</c> to turn off the static caster tiles of directional cascades in the
+    /// Advanced directional shadow lane: every cascade refresh draws all casters.
+    /// </summary>
+    public const string DirectionalShadowStaticCache = "XRE_DIRECTIONAL_SHADOW_STATIC_CACHE";
+    /// <summary>
+    /// Set to <c>1</c> to make emulated VR eye viewports use the cascaded HMD directional shadow
+    /// source, as headset eyes do. It turns on the
+    /// <c>EmulatedVrEyesUseHmdDirectionalCascades</c> engine setting for the process.
+    /// </summary>
+    public const string EmulatedVrHmdDirectionalCascades = "XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES";
     public const string VulkanCommandBufferLabels = "XRE_VULKAN_COMMAND_BUFFER_LABELS";
     public const string VulkanCommandChains = "XRE_VULKAN_COMMAND_CHAINS";
     public const string VulkanCommandChainsSingleThread = "XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD";
@@ -329,6 +438,20 @@ public static class XREngineEnvironmentVariables
     public const string VulkanDiagnosticPreset = "XRE_VULKAN_DIAGNOSTIC_PRESET";
     public const string VulkanDiagnosticFlags = "XRE_VULKAN_DIAGNOSTIC_FLAGS";
     public const string VulkanSynchronizationValidation = "XRE_VULKAN_SYNC_VALIDATION";
+    /// <summary>
+    /// Set to 0 to stop synchronization validation from checking the buffers and images that
+    /// shaders access through descriptors. By default the engine turns this check on whenever it
+    /// enables synchronization validation.
+    /// </summary>
+    public const string VulkanSynchronizationShaderAccesses = "XRE_VULKAN_SYNC_SHADER_ACCESSES";
+    /// <summary>
+    /// Test hook for runtimes without XR_KHR_visibility_mask: replaces the hidden-area mask of the
+    /// OpenXR eyes with a synthetic circle. The value is the hidden fraction of the eye image
+    /// (0 to 0.5), optionally followed by a center offset as a fraction of the field of view:
+    /// "0.15" or "0.15,0.0,0.1" (x right, y up). The engine writes a warning to
+    /// advanced-hidden-area.log in each session that uses it. Do not ship with it set.
+    /// </summary>
+    public const string TestHiddenAreaMask = "XRE_TEST_HIDDEN_AREA_MASK";
     public const string VulkanGpuAssistedValidation = "XRE_VULKAN_GPU_ASSISTED_VALIDATION";
     public const string VulkanBestPracticesValidation = "XRE_VULKAN_BEST_PRACTICES";
     public const string VulkanCrashBreadcrumbs = "XRE_VULKAN_CRASH_BREADCRUMBS";
@@ -404,6 +527,18 @@ public static class XREngineEnvironmentVariables
     public const string RenderWorkerThreadCap = "XRE_RENDER_WORKER_THREAD_CAP";
     public const string ReservedForegroundThreads = "XRE_RESERVED_FOREGROUND_THREADS";
     public const string AllowCpuOversubscription = "XRE_ALLOW_CPU_OVERSUBSCRIPTION";
+    /// <summary>
+    /// Set to 1 to render the desktop uncapped when VSync is off and no frame-rate target is set.
+    /// By default the engine then limits the desktop to the primary display refresh rate.
+    /// </summary>
+    public const string DesktopRenderUncapped = "XRE_DESKTOP_RENDER_UNCAPPED";
+    /// <summary>
+    /// Set to 1 to keep the editor at the Normal Windows GPU scheduling class.
+    /// By default the editor uses BelowNormal, so other apps and the desktop get the GPU first.
+    /// </summary>
+    public const string EditorNormalGpuPriority = "XRE_EDITOR_NORMAL_GPU_PRIORITY";
+    /// <summary>Set to 0 to keep the full process affinity on CPUs whose L3 caches have different sizes; overrides <c>PreferLargestCacheCores</c>.</summary>
+    public const string PreferLargestCacheCores = "XRE_PREFER_LARGEST_CACHE_CORES";
     public const string RenderWorkerQos = "XRE_RENDER_WORKER_QOS";
     public const string JobWorkers = "XR_JOB_WORKERS";
     public const string JobWorkerCap = "XR_JOB_WORKER_CAP";

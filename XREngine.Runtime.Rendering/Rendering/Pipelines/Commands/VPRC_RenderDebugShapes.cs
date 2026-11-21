@@ -40,7 +40,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                             BvhDebugOverlayLayer.Base);
                         RenderEnabledSpatialTreeDebug(instance, camera);
                     }
-                    RuntimeEngine.Rendering.Debug.RenderShapes(DepthTested);
+                    bool renderPointLines = RuntimeEngine.Rendering.Debug.PrepareShapeResources(DepthTested);
+                    RuntimeEngine.Rendering.Debug.RenderShapes(DepthTested, renderPointLines);
                     if (!DepthTested)
                     {
                         GpuBvhDebugLineRenderer.RenderQueued(
@@ -91,10 +92,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private int ResolveRenderGraphPassIndex()
         {
-            if (!string.IsNullOrWhiteSpace(RenderGraphPassName) &&
-                ParentPipeline?.TryGetRenderPassIndex(RenderGraphPassName, out int passIndex) == true)
+            if (!string.IsNullOrWhiteSpace(RenderGraphPassName))
             {
-                return passIndex;
+                int passIndex = ResolveActiveRenderGraphPassIndex(RenderGraphPassName!);
+                if (passIndex != int.MinValue)
+                    return passIndex;
             }
 
             return DepthTested

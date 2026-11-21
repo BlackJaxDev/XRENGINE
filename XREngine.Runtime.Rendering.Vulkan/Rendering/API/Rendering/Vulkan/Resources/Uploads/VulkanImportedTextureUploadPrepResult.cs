@@ -16,6 +16,8 @@ internal enum VulkanImportedTextureUploadPrepResult
 {
     Completed,
     Deferred,
+    /// <summary>A preparation worker owns the job now. The drain can go on with other jobs.</summary>
+    WorkerInFlight,
     Canceled,
     Failed,
 }

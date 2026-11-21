@@ -15,13 +15,23 @@ public sealed class EngineExecutionTopology
     public const int DefaultRenderWorkerCap = 8;
     public const int DefaultForegroundReservation = 4;
 
+    /// <summary>
+    /// Smallest automatic general worker pool when processors remain after the foreground
+    /// reservation. Dedicated background lanes (recording, pipeline compile, OpenXR) are
+    /// mostly idle, so they must not take the last processors from Any-affinity jobs such
+    /// as imports and texture cooks.
+    /// </summary>
+    public const int MinimumAutomaticGeneralWorkerCount = 2;
+
     private EngineExecutionTopology(
         EngineExecutionTopologyRequest request,
         int reservedForegroundThreadCount,
         int generalWorkerThreadCount,
+        int generalWorkerThreadCountWithoutXrSession,
         int renderWorkerThreadCount)
     {
         Request = request;
+        GeneralWorkerThreadCountWithoutXrSession = generalWorkerThreadCountWithoutXrSession;
         EffectiveProcessorCount = request.EffectiveProcessorCount;
         ReservedForegroundThreadCount = reservedForegroundThreadCount;
         GeneralWorkerThreadCount = generalWorkerThreadCount;
@@ -39,13 +49,27 @@ public sealed class EngineExecutionTopology
     public EngineExecutionTopologyRequest Request { get; }
     public int EffectiveProcessorCount { get; }
     public int ReservedForegroundThreadCount { get; }
+    /// <summary>Gets the general workers while an XR session is active and its dedicated lanes run.</summary>
     public int GeneralWorkerThreadCount { get; }
+
+    /// <summary>
+    /// Gets the general workers while no XR session is active. The XR session lanes are idle then,
+    /// so their processors are given to general work. It is never below <see cref="GeneralWorkerThreadCount"/>.
+    /// </summary>
+    public int GeneralWorkerThreadCountWithoutXrSession { get; }
     public int RenderWorkerThreadCount { get; }
     public int DedicatedBackgroundThreadCount { get; }
     public int TotalReservedThreadCount { get; }
     public bool AllowCpuOversubscription { get; }
     public ERenderWorkerQos RenderWorkerQos { get; }
     public bool IsOversubscribed => TotalReservedThreadCount > EffectiveProcessorCount;
+
+    /// <summary>
+    /// True when the reserved threads exceed the machine budget: the larger of
+    /// <see cref="EffectiveProcessorCount"/> and <see cref="EngineExecutionTopologyRequest.SystemProcessorCount"/>.
+    /// </summary>
+    public bool ExceedsProcessorBudget
+        => TotalReservedThreadCount > Math.Max(EffectiveProcessorCount, Request.SystemProcessorCount);
     public bool GeneralWorkerCountIsAutomatic => Request.GeneralWorkerThreadCount == AutomaticWorkerCount;
     public bool RenderWorkerCountIsAutomatic => Request.RenderWorkerThreadCount == AutomaticWorkerCount;
     public bool ForegroundReservationIsAutomatic => Request.ReservedForegroundThreadCount == AutomaticWorkerCount;
@@ -72,6 +96,13 @@ public sealed class EngineExecutionTopology
                 $"{nameof(request.DedicatedBackgroundThreadCount)} must be between 0 and {MaximumWorkerCount}.");
         }
 
+        if (request.XrSessionDedicatedThreadCount < 0 ||
+            request.XrSessionDedicatedThreadCount > request.DedicatedBackgroundThreadCount)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(request.XrSessionDedicatedThreadCount)} must be between 0 and {nameof(request.DedicatedBackgroundThreadCount)}.");
+        }
+
         if (!Enum.IsDefined(request.RenderWorkerQos))
             throw new InvalidOperationException($"Unknown render worker QoS value '{request.RenderWorkerQos}'.");
 
@@ -90,21 +121,36 @@ public sealed class EngineExecutionTopology
             : request.RenderWorkerThreadCount;
 
         int remainingGeneralBudget = Math.Max(0, availableWorkerBudget - renderWorkerCount);
-        int generalWorkerCount = request.GeneralWorkerThreadCount == AutomaticWorkerCount
-            ? Math.Min(request.GeneralWorkerThreadCap, remainingGeneralBudget)
+        // The floor oversubscribes only the dedicated background lanes, never the
+        // foreground reservation. With no processor left after the foreground threads,
+        // the floor is zero and jobs keep the cooperative inline mode.
+        int automaticGeneralFloor = Math.Min(
+            MinimumAutomaticGeneralWorkerCount,
+            Math.Max(0, request.EffectiveProcessorCount - foregroundCount));
+        bool automaticGeneral = request.GeneralWorkerThreadCount == AutomaticWorkerCount;
+        int generalWorkerCount = automaticGeneral
+            ? Math.Min(request.GeneralWorkerThreadCap, Math.Max(automaticGeneralFloor, remainingGeneralBudget))
             : request.GeneralWorkerThreadCount;
+        // Without an XR session its dedicated lanes are idle. The render worker count stays the
+        // one resolved with the lanes, so only the general pool changes between the two states.
+        int generalWorkerCountWithoutXrSession = automaticGeneral
+            ? Math.Min(
+                request.GeneralWorkerThreadCap,
+                Math.Max(generalWorkerCount, remainingGeneralBudget + request.XrSessionDedicatedThreadCount))
+            : generalWorkerCount;
 
         var topology = new EngineExecutionTopology(
             request,
             foregroundCount,
             generalWorkerCount,
+            generalWorkerCountWithoutXrSession,
             renderWorkerCount);
 
         bool hasExplicitReservation =
             request.GeneralWorkerThreadCount != AutomaticWorkerCount ||
             request.RenderWorkerThreadCount != AutomaticWorkerCount ||
             request.ReservedForegroundThreadCount != AutomaticWorkerCount;
-        if (topology.IsOversubscribed &&
+        if (topology.ExceedsProcessorBudget &&
             !topology.AllowCpuOversubscription &&
             hasExplicitReservation)
         {
@@ -130,10 +176,14 @@ public sealed class EngineExecutionTopology
         var builder = new StringBuilder(384);
         builder.Append("[ExecutionTopology] processors=")
             .Append(EffectiveProcessorCount)
+            .Append(" systemProcessors=")
+            .Append(Request.SystemProcessorCount)
             .Append(" foreground=")
             .Append(ReservedForegroundThreadCount)
             .Append(" general=")
             .Append(GeneralWorkerThreadCount)
+            .Append(" generalWithoutXrSession=")
+            .Append(GeneralWorkerThreadCountWithoutXrSession)
             .Append(" render=")
             .Append(RenderWorkerThreadCount)
             .Append(" dedicated=")
@@ -158,6 +208,8 @@ public sealed class EngineExecutionTopology
             .Append(Request.RenderWorkerThreadCap)
             .Append(",dedicated:")
             .Append(Request.DedicatedBackgroundThreadCount)
+            .Append(",xrSessionDedicated:")
+            .Append(Request.XrSessionDedicatedThreadCount)
             .Append('}')
             .Append(" sources={general:")
             .Append(Request.GeneralWorkerThreadCountSource)

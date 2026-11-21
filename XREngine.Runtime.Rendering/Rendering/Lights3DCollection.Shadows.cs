@@ -11,11 +11,12 @@ using XREngine.Data;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.OutputDomains;
 using XREngine.Rendering.Shadows;
 
 namespace XREngine.Scene
 {
-    public partial class Lights3DCollection
+    public partial class Lights3DCollection : XREngine.Scene.IShadowCasterDemotionGate
     {
         #region Shadow Collection & Culling
 
@@ -23,6 +24,48 @@ namespace XREngine.Scene
 
         // Identity and layer-mask signature of the main cameras at the previous directional atlas planning.
         private ulong _shadowOnlyCasterCameraSignature;
+
+        // True while the collect in progress retains the desktop shadow source (no desktop
+        // viewport of this world renders its scene in the frame of this collect).
+        private bool _desktopShadowSourceRetainedForCollect;
+
+        // Collect frame id whose collect retained the desktop shadow source, or 0. The desktop
+        // render compares its frame id with this value (DesktopSceneRenderedWhileRetained).
+        private ulong _desktopShadowSourceRetainedCollectFrameId;
+
+        /// <summary>
+        /// True when the collect of <paramref name="collectFrameId"/> retained the desktop shadow
+        /// source. A desktop scene render of that frame reads stale desktop cascades.
+        /// </summary>
+        public bool WasDesktopShadowSourceRetained(ulong collectFrameId)
+            => collectFrameId != 0UL &&
+               Volatile.Read(ref _desktopShadowSourceRetainedCollectFrameId) == collectFrameId;
+
+        /// <summary>
+        /// Decides, at the start of a collect, whether the collect retains the desktop shadow
+        /// source. It retains the source only in a VR session with an independent desktop window
+        /// (IsIndependentDesktopRetentionInScope), and only when every desktop cascade viewport of
+        /// this world has a stored held decision for this collect frame
+        /// (<see cref="HasDueOrUndecidedDesktopCascadeViewport"/>). A viewport without a stored
+        /// decision counts as due. Outside that scope the desktop source is planned as before.
+        /// </summary>
+        private void DecideDesktopShadowSourceRetention()
+        {
+            if (!RuntimeRenderingHostServices.Presentation.IsIndependentDesktopRetentionInScope)
+            {
+                _desktopShadowSourceRetainedForCollect = false;
+                Volatile.Write(ref _desktopShadowSourceRetainedCollectFrameId, 0UL);
+                return;
+            }
+
+            ulong collectFrameId = RuntimeRenderingHostServices.FrameTiming.CollectFrameId;
+            bool retained = !HasDueOrUndecidedDesktopCascadeViewport(collectFrameId);
+            _desktopShadowSourceRetainedForCollect = retained;
+            Volatile.Write(ref _desktopShadowSourceRetainedCollectFrameId, retained ? collectFrameId : 0UL);
+            DesktopOutputScheduleTelemetry.Count(retained
+                ? EDesktopOutputScheduleCounter.DesktopSourceRetainedCollects
+                : EDesktopOutputScheduleCounter.DesktopSceneDueCollects);
+        }
 
         public void CollectVisibleItems()
         {
@@ -34,6 +77,7 @@ namespace XREngine.Scene
             //CollectingVisibleShadowMaps = true;
 
             SynchronizeDirectionalShadowAtlasMode();
+            DecideDesktopShadowSourceRetention();
 
             // Cascaded shadow slices must be finalized before directional-light shadow
             // viewports collect and swap their render-command buffers for this frame.
@@ -304,7 +348,12 @@ namespace XREngine.Scene
             SynchronizeDirectionalShadowAtlasMode();
 
             if (collectVisibleNow)
+            {
+                // A render-time collect plans the frame that it renders now. It never retains
+                // the desktop source.
+                _desktopShadowSourceRetainedForCollect = false;
                 PrepareDirectionalShadowMaps();
+            }
 
             RenderingShadowMaps = true;
             try
@@ -490,9 +539,20 @@ namespace XREngine.Scene
 
         #region Shadow Atlas Requests
 
+        // Shadow caster changes drained for the current plan pass, and the read index of this
+        // collection in the scene's change ring.
+        private readonly AABB[] _shadowCasterChanges = new AABB[4096];
+        // Per drained change: true when it comes from a caster that stays dynamic.
+        private readonly bool[] _shadowCasterChangeDynamic = new bool[4096];
+        private int _shadowCasterChangeCount;
+        private bool _shadowCasterChangesOverflowed;
+        private long _shadowCasterChangeReadIndex;
+
         private void PlanShadowAtlasRequests(ShadowScratch scratch)
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.UpdateShadowAtlasRequests");
+            _shadowCasterChangeCount = World.VisualScene.DrainShadowCasterChanges(
+                _shadowCasterChanges, _shadowCasterChangeDynamic, ref _shadowCasterChangeReadIndex, out _shadowCasterChangesOverflowed);
 
             SynchronizeDirectionalShadowAtlasMode();
             PopulateShadowAtlasActiveCameras(scratch);
@@ -504,6 +564,28 @@ namespace XREngine.Scene
             SubmitPointShadowAtlasRequests(scratch);
 
             ShadowAtlas.SolveAllocations();
+            World.VisualScene.ProcessShadowCasterDemotions(this);
+        }
+
+        /// <summary>
+        /// Allows a demotion only when every dynamic directional light draws the static tiles
+        /// that the caster box meets in this plan pass, for the desktop and the HMD source (see
+        /// DirectionalLightComponent.DirectionalStaticTilesRedrawFor).
+        /// </summary>
+        bool XREngine.Scene.IShadowCasterDemotionGate.CanDemote(in AABB worldBounds)
+        {
+            ulong planFrame = ShadowAtlas.CurrentFrameId;
+            int count = DynamicDirectionalLights.Count;
+            for (int i = 0; i < count; i++)
+            {
+                DirectionalLightComponent light = DynamicDirectionalLights[i];
+                if (!light.DirectionalStaticTilesRedrawFor(ShadowRequestSource.Desktop, in worldBounds, planFrame) ||
+                    !light.DirectionalStaticTilesRedrawFor(ShadowRequestSource.Hmd, in worldBounds, planFrame))
+                {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private void SynchronizeDirectionalShadowAtlasMode()
@@ -687,8 +769,7 @@ namespace XREngine.Scene
 
                 ShadowMapFormatSelection shadowFormat = light.ResolveShadowMapFormat(preferredStorageFormat: null);
                 EShadowMapEncoding encoding = shadowFormat.Encoding;
-                SubmitDirectionalCascadeShadowAtlasRequests(light, ShadowRequestSource.Desktop, encoding);
-                SubmitDirectionalCascadeShadowAtlasRequests(light, ShadowRequestSource.Hmd, encoding);
+                SubmitDirectionalCascadeShadowAtlasRequests(light, encoding);
 
                 bool hasAnyDirectionalCascades =
                     light.HasPublishedCascades(ShadowRequestSource.Desktop) ||
@@ -844,18 +925,61 @@ namespace XREngine.Scene
             return hash;
         }
 
+        /// <summary>
+        /// Plans the cascade requests of one light for the desktop and the HMD source. Both
+        /// sources first start their request frame and mark their caster changes; then one
+        /// refresh budget is granted across both sources (GrantDirectionalCascadeRefreshes),
+        /// and then each source submits its cascade requests.
+        /// </summary>
         private void SubmitDirectionalCascadeShadowAtlasRequests(
             DirectionalLightComponent light,
-            ShadowRequestSource source,
             EShadowMapEncoding encoding)
+        {
+            // Both sources mark their caster changes in every collect, so the static desktop
+            // tiles stay valid across a frame that retains the desktop source.
+            int desktopCount = BeginDirectionalCascadeSourceRequests(light, ShadowRequestSource.Desktop);
+            int hmdCount = BeginDirectionalCascadeSourceRequests(light, ShadowRequestSource.Hmd);
+            if (desktopCount == 0 && hmdCount == 0)
+                return;
+
+            // A collect in which no desktop viewport renders its scene retains the desktop source:
+            // its requests keep their resident tiles without a render (the tile stays dirty until
+            // a collect renders a desktop scene again), and its refresh grants go to the HMD source.
+            bool desktopRetained = desktopCount > 0 && _desktopShadowSourceRetainedForCollect;
+            GrantDirectionalCascadeRefreshes(light, encoding, desktopRetained ? 0 : desktopCount, hmdCount, desktopRetained);
+            SubmitDirectionalCascadeSourceRequests(light, ShadowRequestSource.Desktop, encoding, desktopCount, desktopRetained);
+            SubmitDirectionalCascadeSourceRequests(light, ShadowRequestSource.Hmd, encoding, hmdCount, retainOnly: false);
+        }
+
+        /// <summary>
+        /// Starts the request frame of one source and marks its caster changes. Returns the
+        /// number of active cascades of the source, or 0 when the source does not use the
+        /// cascade atlas.
+        /// </summary>
+        private int BeginDirectionalCascadeSourceRequests(DirectionalLightComponent light, ShadowRequestSource source)
         {
             int activeCascadeCount = light.GetActiveCascadeCount(source);
             bool useCascadeAtlas = light.EnableCascadedShadows &&
                 light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(activeCascadeCount);
-            if (!useCascadeAtlas)
-                return;
+            if (!useCascadeAtlas || activeCascadeCount <= 0)
+                return 0;
 
             light.BeginDirectionalCascadeAtlasRequestFrame(source, activeCascadeCount);
+            light.MarkDirectionalCascadeCasterChanges(
+                source,
+                _shadowCasterChanges.AsSpan(0, _shadowCasterChangeCount),
+                _shadowCasterChangeDynamic.AsSpan(0, _shadowCasterChangeCount),
+                _shadowCasterChangesOverflowed);
+            return activeCascadeCount;
+        }
+
+        private void SubmitDirectionalCascadeSourceRequests(
+            DirectionalLightComponent light,
+            ShadowRequestSource source,
+            EShadowMapEncoding encoding,
+            int activeCascadeCount,
+            bool retainOnly)
+        {
             for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; cascadeIndex++)
             {
                 XRCamera? cascadeCamera = light.GetCascadeCamera(source, cascadeIndex);
@@ -870,8 +994,130 @@ namespace XREngine.Scene
                     priority: 10000.0f - cascadeIndex * 100.0f + (source == ShadowRequestSource.Hmd ? 25.0f : 0.0f),
                     fallback: ShadowFallbackMode.StaleTile,
                     encoding: encoding,
+                    forcedSkipReason: retainOnly ? SkipReason.StaleTileReused : SkipReason.None,
                     source: source,
                     directionalCascadeCount: activeCascadeCount);
+                if (retainOnly)
+                    DesktopOutputScheduleTelemetry.Count(EDesktopOutputScheduleCounter.DesktopCascadeRequestsRetained);
+            }
+        }
+
+        /// <summary>
+        /// Selects the cascades of one light that may refresh in this frame although only the
+        /// camera moved, across the desktop and the HMD source together. A camera move changes
+        /// the fit of every cascade, and a refresh that changes the fit draws all static casters
+        /// of the cascade (also its static tile), so <c>MaxDirectionalCascadeRefreshesPerFrame</c>
+        /// limits these refreshes of one light in one frame for both sources together. The
+        /// candidates have a rendered tile, a changed depth content hash, and the same caster
+        /// state as their last render. The candidates with the oldest rendered frame get the
+        /// slots; on a tie the nearest cascade wins, then the desktop source. Then a moving
+        /// camera or head refreshes the cascades in turn. Caster changes (also the copy and
+        /// overlay refreshes of dynamic casters), cascades without a rendered tile and large fit
+        /// jumps are not candidates: they refresh at once.
+        /// </summary>
+        private void GrantDirectionalCascadeRefreshes(
+            DirectionalLightComponent light,
+            EShadowMapEncoding encoding,
+            int desktopCascadeCount,
+            int hmdCascadeCount,
+            bool desktopRetained)
+        {
+            const int MaxPerSource = 8;
+            int desktopCount = Math.Clamp(desktopCascadeCount, 0, MaxPerSource);
+            int hmdCount = Math.Clamp(hmdCascadeCount, 0, MaxPerSource);
+            int total = desktopCount + hmdCount;
+            // The limit is per budget period: one collect with XR collect pacing stands for the
+            // display periods since the last collect, so the refresh rate stays the same in time.
+            int limit = CollectBudgetPeriods.Scale(RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeRefreshesPerFrame);
+            if (total == 0)
+                return;
+
+            // Rendered frame of each candidate (desktop slots first, then HMD slots); 0 marks a
+            // cascade that is not a candidate.
+            Span<ulong> lastRenderedFrames = stackalloc ulong[MaxPerSource * 2];
+            uint desiredResolution = GetDesiredShadowAtlasResolution(light);
+            for (int slot = 0; slot < total; slot++)
+            {
+                ShadowRequestSource source = slot < desktopCount ? ShadowRequestSource.Desktop : ShadowRequestSource.Hmd;
+                int i = slot < desktopCount ? slot : slot - desktopCount;
+                lastRenderedFrames[slot] = 0u;
+                XRCamera? camera = light.GetCascadeCamera(source, i);
+                if (camera is null)
+                    continue;
+
+                ShadowRequestKey key = light.CreateShadowRequestKey(
+                    EShadowProjectionType.DirectionalCascade, i, encoding, source: source);
+                if (!ShadowAtlas.TryGetPlanningAllocation(key, out ShadowAtlasAllocation previous) ||
+                    !previous.IsResident ||
+                    previous.LastRenderedFrame == 0u)
+                {
+                    continue;
+                }
+
+                ulong casterStateHash = BuildShadowCasterStateHash(
+                    light, EShadowProjectionType.DirectionalCascade, i, source, camera.CullingLayerMask);
+                if (light.HasDirectionalCascadeCasterStateChanged(source, i, casterStateHash))
+                    continue;
+
+                float near = MathF.Max(0.0f, camera.NearZ);
+                ulong contentHash = BuildShadowDepthContentHash(
+                    light,
+                    EShadowProjectionType.DirectionalCascade,
+                    i,
+                    source,
+                    encoding,
+                    camera.Transform.InverseRenderMatrix,
+                    camera.ProjectionMatrix,
+                    near,
+                    MathF.Max(camera.FarZ, camera.NearZ + 0.001f),
+                    desiredResolution,
+                    camera.CullingLayerMask);
+                // A refresh that is still drawing counts as rendered in the frame that
+                // requested it, so the same cascade does not take the next slot again.
+                ulong inFlightFrame = light.GetDirectionalCascadeRefreshInFlightFrame(
+                    source, i, previous.LastRenderedFrame, ShadowAtlas.CurrentFrameId);
+                if (contentHash != previous.ContentVersion)
+                {
+                    lastRenderedFrames[slot] = Math.Max(previous.LastRenderedFrame, inFlightFrame);
+                    DirectionalCascadeRefreshLatencyTelemetry.NoteStale(source, i);
+                }
+            }
+
+            int grants = limit <= 0 ? total : Math.Min(limit, total);
+            for (int g = 0; g < grants; g++)
+            {
+                int oldest = -1;
+                for (int slot = 0; slot < total; slot++)
+                {
+                    if (lastRenderedFrames[slot] == 0u)
+                        continue;
+                    if (oldest < 0 || lastRenderedFrames[slot] < lastRenderedFrames[oldest])
+                    {
+                        oldest = slot;
+                        continue;
+                    }
+                    // Tie: the nearer cascade wins, then the desktop source (lower slot).
+                    if (lastRenderedFrames[slot] == lastRenderedFrames[oldest])
+                    {
+                        int slotCascade = slot < desktopCount ? slot : slot - desktopCount;
+                        int oldestCascade = oldest < desktopCount ? oldest : oldest - desktopCount;
+                        if (slotCascade < oldestCascade)
+                            oldest = slot;
+                    }
+                }
+
+                if (oldest < 0)
+                    return;
+
+                ShadowRequestSource grantedSource = oldest < desktopCount ? ShadowRequestSource.Desktop : ShadowRequestSource.Hmd;
+                int grantedCascade = oldest < desktopCount ? oldest : oldest - desktopCount;
+                light.GrantDirectionalCascadeRefresh(grantedSource, grantedCascade);
+                DesktopOutputScheduleTelemetry.Count(grantedSource == ShadowRequestSource.Desktop
+                    ? EDesktopOutputScheduleCounter.CascadeGrantsDesktop
+                    : desktopRetained
+                        ? EDesktopOutputScheduleCounter.CascadeGrantsHmdDesktopRetained
+                        : EDesktopOutputScheduleCounter.CascadeGrantsHmdDesktopDue);
+                lastRenderedFrames[oldest] = 0u;
             }
         }
 
@@ -992,6 +1238,16 @@ namespace XREngine.Scene
                 previous);
             if (HasExceededDirtyShadowStaleAge(projectionType, hasPrevious, previous, contentHash))
                 dirtyReason |= ShadowDirtyReason.StaleContentAgeLimitReached;
+            // A cascade whose refresh from the previous plan is still drawing is not stale:
+            // its tile completes after this plan. A stale flag would render it again.
+            if ((dirtyReason & ShadowDirtyReason.StaleContentAgeLimitReached) != 0 &&
+                projectionType == EShadowProjectionType.DirectionalCascade &&
+                light is DirectionalLightComponent inFlightLight &&
+                inFlightLight.GetDirectionalCascadeRefreshInFlightFrame(
+                    source, faceOrCascadeIndex, previous.LastRenderedFrame, ShadowAtlas.CurrentFrameId) != 0u)
+            {
+                dirtyReason &= ~ShadowDirtyReason.StaleContentAgeLimitReached;
+            }
             bool isDirty = dirtyReason != ShadowDirtyReason.None;
             float refreshPriority = priority + EstimateRefreshPriorityBonus(hasPrevious, previous);
             SkipReason effectiveForcedSkipReason = forcedSkipReason;
@@ -1005,6 +1261,12 @@ namespace XREngine.Scene
                     contentHash,
                     renderedFrame: 0u,
                     out directionalCascadeSample);
+                ulong casterStateHash = BuildShadowCasterStateHash(
+                    light,
+                    projectionType,
+                    faceOrCascadeIndex,
+                    source,
+                    camera.CullingLayerMask);
 
                 bool forcedFreshByCadence = false;
                 if (effectiveForcedSkipReason == SkipReason.None &&
@@ -1016,6 +1278,9 @@ namespace XREngine.Scene
                         hasPrevious,
                         previous,
                         dirtyReason,
+                        in directionalCascadeSample,
+                        desiredResolution,
+                        casterStateHash,
                         out forcedFreshByCadence))
                 {
                     effectiveForcedSkipReason = SkipReason.StaleTileReused;
@@ -1033,7 +1298,9 @@ namespace XREngine.Scene
                     source,
                     faceOrCascadeIndex,
                     contentHash,
-                    renderRequested);
+                    renderRequested,
+                    casterStateHash,
+                    ShadowAtlas.CurrentFrameId);
             }
 
             ShadowMapRequest request = new(
@@ -1077,6 +1344,9 @@ namespace XREngine.Scene
             bool hasPrevious,
             in ShadowAtlasAllocation previous,
             ShadowDirtyReason dirtyReason,
+            in DirectionalCascadeSampleState currentSample,
+            uint desiredResolution,
+            ulong casterStateHash,
             out bool forcedFresh)
         {
             forcedFresh = false;
@@ -1090,6 +1360,8 @@ namespace XREngine.Scene
                 return false;
             }
 
+            // A held cascade at the stale-age limit would publish the unavailable fallback,
+            // so it always renders. The oldest-first refresh selection keeps this rare.
             if ((dirtyReason & ShadowDirtyReason.StaleContentAgeLimitReached) != 0)
             {
                 forcedFresh = true;
@@ -1103,9 +1375,40 @@ namespace XREngine.Scene
             bool hasRenderedSample = light.TryGetRenderedDirectionalCascadeSampleState(
                 source,
                 cascadeIndex,
-                out _);
+                out DirectionalCascadeSampleState renderedSample);
             if (!hasRenderedSample)
             {
+                forcedFresh = true;
+                return false;
+            }
+
+            // A light rotation or a camera cut moves the cascade far from its rendered
+            // fit. A stale tile then shows the wrong light direction or covers the
+            // wrong area, so the cascade renders now, past the per-frame limit.
+            if (IsLargeDirectionalCascadeMatrixJump(currentSample, renderedSample, desiredResolution))
+            {
+                forcedFresh = true;
+                return false;
+            }
+
+            // A moved, added or removed caster, or a light change: the stale tile shows old
+            // casters, so the cascade renders now, past the per-frame limit.
+            if (light.HasDirectionalCascadeCasterStateChanged(source, cascadeIndex, casterStateHash))
+            {
+                forcedFresh = true;
+                return false;
+            }
+
+            // The moving-camera hold is opt-in. Without it, only the camera fit of this
+            // cascade changed, and the cascade refreshes when the per-frame limit selected
+            // it (GrantDirectionalCascadeRefreshes). A cascade that was not selected keeps
+            // its stale tile. For static casters that tile is correct: shading reprojects it
+            // with its own rendered matrix, and a point outside the tile uses the next
+            // cascade.
+            if (!RuntimeEngine.Rendering.Settings.HoldDirectionalCascadesWhileCameraMoves)
+            {
+                if (!light.IsDirectionalCascadeRefreshGranted(source, cascadeIndex))
+                    return true;
                 forcedFresh = true;
                 return false;
             }
@@ -1933,7 +2236,8 @@ namespace XREngine.Scene
             Add(ref hash, World.VisualScene.ShadowCasterMembershipRevision);
             Add(ref hash, light.GetShadowCasterCommandSetSignature(
                 projectionType, source, faceOrCascadeIndex));
-            if (World.VisualScene.TryGetCoveredShadowCasterOutputRevision(
+            if (projectionType != EShadowProjectionType.DirectionalCascade &&
+                World.VisualScene.TryGetCoveredShadowCasterOutputRevision(
                     cameraLayerMask, out ulong outputRevision))
                 Add(ref hash, outputRevision);
             if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary)
@@ -1945,6 +2249,34 @@ namespace XREngine.Scene
             }
             AddFloat(ref hash, projectionNear);
             AddFloat(ref hash, projectionFar);
+            return hash;
+        }
+
+        /// <summary>
+        /// Hashes the parts of the depth content hash that do not depend on the cascade
+        /// fit: the light movement version and resolution, the scene caster membership, the
+        /// caster command set signature (command membership and world matrices), and the
+        /// covered caster output revision. A change means that the casters or the light
+        /// changed, not only the camera.
+        /// </summary>
+        private ulong BuildShadowCasterStateHash(
+            LightComponent light,
+            EShadowProjectionType projectionType,
+            int faceOrCascadeIndex,
+            ShadowRequestSource source,
+            uint cameraLayerMask)
+        {
+            ulong hash = 14695981039346656037UL;
+            Add(ref hash, light.MovementVersion);
+            Add(ref hash, light.ShadowMapResolutionWidth);
+            Add(ref hash, light.ShadowMapResolutionHeight);
+            Add(ref hash, World.VisualScene.ShadowCasterMembershipRevision);
+            Add(ref hash, light.GetShadowCasterCommandSetSignature(
+                projectionType, source, faceOrCascadeIndex));
+            if (projectionType != EShadowProjectionType.DirectionalCascade &&
+                World.VisualScene.TryGetCoveredShadowCasterOutputRevision(
+                    cameraLayerMask, out ulong outputRevision))
+                Add(ref hash, outputRevision);
             return hash;
         }
 

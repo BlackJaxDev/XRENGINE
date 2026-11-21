@@ -50,6 +50,64 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// <summary>Render time frozen with the authored stage family.</summary>
     public float RenderTimeSeconds { get; init; }
 
+    /// <summary>
+    /// True when the native opaque shading stage also records the RVC shadelet
+    /// telemetry kernel after its last view. It is not part of the family identity.
+    /// </summary>
+    public bool RecordRvcShadeletTelemetry { get; init; }
+
+    /// <summary>
+    /// True when native opaque shading also draws the occlusion-culled bounds
+    /// overlay. It is a per-frame diagnostic and is not part of the family identity.
+    /// </summary>
+    public bool ShowOcclusionCulledBounds { get; init; }
+
+    /// <summary>
+    /// True when native opaque shading shades one pixel per peripheral 2x2 or 4x4
+    /// block of the same primitive and fills the rest. Only RVC eyes without MSAA set it.
+    /// </summary>
+    public bool RvcFoveatedQuadShading { get; init; }
+
+    /// <summary>
+    /// True when native opaque shading of an Advanced eye output shades one pixel per
+    /// 2x2 block of the same primitive outside <see cref="AdvancedEdgeHalfRateRadius"/>
+    /// and fills the rest. Only Advanced OpenXR eyes without MSAA set it; the desktop
+    /// output never does. It is a per-frame setting and is not part of the family identity.
+    /// </summary>
+    public bool AdvancedEdgeHalfRateShading { get; init; }
+
+    /// <summary>
+    /// Radius of the full-rate region around the lens center, as a fraction of the half
+    /// extent of the eye image on each axis. Used only with <see cref="AdvancedEdgeHalfRateShading"/>.
+    /// </summary>
+    public float AdvancedEdgeHalfRateRadius { get; init; }
+
+    /// <summary>
+    /// Diagnostic: tints the blocks that <see cref="AdvancedEdgeHalfRateShading"/> shades at half rate.
+    /// </summary>
+    public bool AdvancedEdgeHalfRateDebugTint { get; init; }
+
+    /// <summary>
+    /// Conservative visible ellipses of the OpenXR eye views from <see cref="AdvancedHiddenAreaTiles"/>.
+    /// Classification skips the tiles fully outside the ellipse of their view, and the background
+    /// pass fills them with black. A view without an ellipse keeps every tile.
+    /// </summary>
+    public AdvancedHiddenAreaEllipses HiddenAreaEllipses { get; init; }
+
+    /// <summary>
+    /// True when this family records the mesh surface decal buffer phase. Native opaque
+    /// shading then blends the decal buffer before lighting. Every stage of one family
+    /// carries the same value.
+    /// </summary>
+    public bool DecalBufferEnabled { get; init; }
+
+    /// <summary>
+    /// True when the native AO stage skips its neutral fill (AO = 1) because the camera's AO passes
+    /// write the whole native AO image later in the same frame, before shading reads it. The stage
+    /// operation still runs, with its layout transitions. It is not part of the family identity.
+    /// </summary>
+    public bool SkipNeutralAmbientOcclusionFill { get; init; }
+
     public bool IsValid => GetInvalidReason() is null;
 
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
@@ -94,9 +152,11 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
                 return "The directional shadow stage target is not the cascade group's atlas page.";
             return null;
         }
+        // An empty selection name means a single-sample visibility target without the
+        // selection image (OpenXR eyes on Vulkan); multisample targets always carry it.
         if (string.IsNullOrWhiteSpace(IdentityTargetName) ||
             string.IsNullOrWhiteSpace(MetadataTargetName) ||
-            string.IsNullOrWhiteSpace(SelectionTargetName) ||
+            (MsaaSampleCount > 1u && string.IsNullOrWhiteSpace(SelectionTargetName)) ||
             string.IsNullOrWhiteSpace(DepthTargetName) ||
             string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName) ||
             (!IsMinimalVisibilityOutput &&
@@ -115,7 +175,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
             EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
                 Phase is EAdvancedVisibilityStageBackendPhase.LateCompute or
                     EAdvancedVisibilityStageBackendPhase.LateRaster or
-                    EAdvancedVisibilityStageBackendPhase.MultisampleResolve,
+                    EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
+                    EAdvancedVisibilityStageBackendPhase.DecalBuffer,
             // These stages are compute-only.  Their Vulkan implementation
             // seals a per-stage descriptor closure from the frozen graph
             // generation before recording; they do not participate in the

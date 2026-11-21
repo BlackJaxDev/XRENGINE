@@ -37,6 +37,13 @@ namespace XREngine
                             ESizedInternalFormat.Rg8ui => 2,
                             ESizedInternalFormat.DepthComponent16 => 2,
 
+                            // Block-compressed formats: BC7 and BC5 use 1 byte per pixel; BC4 uses
+                            // half a byte, which this whole-byte estimate rounds up.
+                            ESizedInternalFormat.Bc7Unorm => 1,
+                            ESizedInternalFormat.Bc7Srgb => 1,
+                            ESizedInternalFormat.Bc5Unorm => 1,
+                            ESizedInternalFormat.Bc4Unorm => 1,
+
                             // 3-byte formats
                             ESizedInternalFormat.Rgb8 => 3,
                             ESizedInternalFormat.Rgb8Snorm => 3,

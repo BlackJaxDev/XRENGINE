@@ -45,6 +45,19 @@ public partial class AdvancedRenderPipeline
             .DebugLabel("Advanced scene color snapshot")
             .Add();
 
+        builder.TextureView(
+                AdvancedSceneColorContract.SourceOrderedSnapshotResourceName,
+                SourceOrderedSceneCopyTextureName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .SizedFormat(ESizedInternalFormat.Rgba16f)
+            .LayerRange(0u, layers)
+            .Target(array: true, multisample: false)
+            .Factory(CreateSourceOrderedSceneColorSnapshotView)
+            .DebugLabel("Source-ordered scene color snapshot")
+            .Add();
+
         builder.FrameBuffer(VelocityFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Transient)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
             .DependsOn(VelocityTextureName, AdvancedVisibilityResourceNames.DepthStencil)
@@ -72,7 +85,7 @@ public partial class AdvancedRenderPipeline
                 ESizedInternalFormat.Rgba16f)
             .Layers(layers)
             .StereoCompatible(layers > 1u)
-            .When(static profile => ((profile.FeatureMask >> 48) & 1u) != 0)
+            .When(static profile => (profile.FeatureMask & LatePassDebugOutputFeatureBit) != 0UL)
             .DependsOn(
                 AdvancedVisibilityResourceNames.Identity,
                 AdvancedVisibilityResourceNames.Metadata)
@@ -114,6 +127,23 @@ public partial class AdvancedRenderPipeline
             ESizedInternalFormat.Rgba16f,
             false,
             false)
+        {
+            Name = name,
+            SamplerName = name,
+        };
+    }
+
+    private XRTexture CreateSourceOrderedSceneColorSnapshotView()
+    {
+        const string name = AdvancedSceneColorContract.SourceOrderedSnapshotResourceName;
+        XRTexture source = GetTexture<XRTexture>(SourceOrderedSceneCopyTextureName)
+            ?? throw new InvalidOperationException(
+                "The source-ordered scene color texture is unavailable.");
+        if (source is not XRTexture2DArray array)
+            throw new InvalidOperationException(
+                "The source-ordered scene color texture is not a layered texture.");
+        return new XRTexture2DArrayView(array, 0u, 1u, 0u, array.Depth,
+            ESizedInternalFormat.Rgba16f, true, false)
         {
             Name = name,
             SamplerName = name,

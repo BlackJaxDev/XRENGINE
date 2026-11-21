@@ -20,10 +20,21 @@ preserves the command exit code. A shared mutex allows one wrapped command
 at a time across checkouts in the same Windows session. Each command uses
 at most two MSBuild workers with low priority, no worker reuse, and no shared
 C# compiler server. The node-reuse environment setting applies only during
-the command. Editor and RenderBench session builds use this wrapper.
+the command. The wrapper also limits the command to the upper half of the
+logical CPUs. Child processes (MSBuild nodes, `csc`, and test hosts) inherit
+this limit, so a build cannot fill every core. Set
+`XRE_AGENT_BUILD_AFFINITY_MASK` to a hex mask to use other CPUs, or to `0` to
+keep the full affinity. Editor and RenderBench session builds use this wrapper.
 
 Raw `dotnet` commands and other build tools do not acquire this lock. Agents
 must use the wrapper for builds and run applications with `--no-build`.
+
+Keep PowerShell settings edits that contain URLs separate from session launch
+commands. Some command-policy versions classify a compound script with a URL
+and a `Start` argument as a URL launch, even when `Start` belongs to the local
+session script. Use separate, explicit settings and launch commands. Do not
+change security settings to resolve this parser false positive.
+
 Existing agent chats must read the updated instructions before their next
 build. After all builds stop, `dotnet build-server shutdown` releases retained
 MSBuild and compiler servers. Do not use it during another task's build.
@@ -113,14 +124,27 @@ The loop:
    pwsh Tools/Manage-McpEditorSession.ps1 Start -Name <unique-agent-session>
    ```
 
-   The command builds into the session's own .NET artifacts root, selects an unused MCP port, starts the editor asynchronously, and waits for MCP readiness. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
+   The command builds into the session's own .NET artifacts root (with hard links in place of copy-local copies where the volume allows them), selects an unused MCP port, starts the editor asynchronously, and waits for MCP readiness. Confirm the relevant scene content is configured in `Assets/UnitTestingWorldSettings.jsonc` (for example `RenderAPI`, lights, and the model to import) before launching.
 2. Position the view with MCP: `set_editor_camera_view` (or `focus_node_in_view` after locating the subject with `find_nodes_by_name`/`select_node_by_name`). Use `duration: 0` for an immediate cut.
 3. Capture the result with MCP `capture_viewport_screenshot` and actually view the saved PNG. Pass `output_dir` under the current run root, for example `Build/_AgentValidation/<run>/mcp-captures/`; do not rely on the default `McpCaptures/` location. Re-capture from more than one camera position — an artifact that does not change with the camera is sampling stale/uninitialized data rather than rendering the scene.
 
-   Vulkan viewport PNG capture applies the SDR sRGB display transfer only when
-   its floating-point color image matches the retained submitted desktop
-   presentation source and the desktop uses an sRGB swapchain. MCP reports the
-   applied conversion in `readback.output_transfer`.
+   A fixed physics pose does not freeze animated materials. For a controlled
+   source comparison, invoke the static method
+   `XREngine.Rendering.RenderFrameViewSetCapture.SetDiagnosticElapsedTime`
+   with one time value in seconds, such as `0.0`. This process-local diagnostic
+   overrides shared shader time in native and authored draws. It also holds
+   render-side timers, including the CPU exposure update cadence. Disable
+   auto-exposure for this comparison. It does not change the physics clock or
+   save a setting. A scoped capture time takes
+   priority. Pass one `null` argument to restore normal shader time after the
+   comparison. Record the selected time with the capture evidence.
+
+   Vulkan viewport PNG capture applies the SDR sRGB display transfer when it
+   reads a single-layer floating-point color image and the desktop uses an sRGB
+   swapchain. That image holds linear display values, and the swapchain applies
+   the same transfer when it presents them. MCP reports the applied conversion
+   in `readback.output_transfer`. If it reports `Unchanged` for a float source,
+   the PNG is darker and more saturated than the window.
    SDR composited window capture reads the encoded swapchain bytes. Raw texture
    and diagnostic readbacks keep their source values. This conversion does not
    provide an HDR screenshot display transform.
@@ -136,6 +160,8 @@ The loop:
 
 Notes:
 - Record durable findings (symptoms, ruled-out causes, render-pass order, next isolation step) so later iterations build on earlier ones instead of repeating them.
+- Use Vulkan validation off (do not set `XRE_VULKAN_VALIDATION`) for performance, timing, and visual verification runs. The validation layer checks each large shader module when the pipeline is made. For the Advanced native shading kernels (about 3.4 MB of SPIR-V each), this check can delay the first rendered frame by many minutes. If a run needs validation, you can skip only the shader-module check through the layer settings (`VK_EXT_layer_settings` or `vk_layer_settings.txt`). Do a separate validation-on run only when the task needs a correctness check, and use it to confirm that the validation error count is 0.
+- `Stop` first asks the editor windows to close. This lets the engine shut down cleanly and the Vulkan layers save their caches. If the process does not exit in a short time, `Stop` ends it.
 
 ### RenderDoc GPU Captures
 
@@ -144,18 +170,45 @@ diagnostic runs on the caller thread and can report `terminalFault` after the
 engine update loop stops. A responsive native window does not prove that the
 engine loop is running.
 
+For missing native text, query
+`XREngine.Rendering.UI.UIBatchCollector.GetTextPreparationDiagnostics` through
+`invoke_method`. The counters distinguish absent or empty batches from failed
+preparation. They do not prove that the GPU drew the text. Compare a window
+recording with `get_render_profiler_stats.vulkan.frame_lifecycle.terminal_result`.
+Recording deferrals retain their reason in `detail`, including in Release.
+
+`get_render_state` reads fully applied pipeline state. An unassigned pipeline,
+RVC stage family, or postprocess state can be absent during startup. The query
+does not create those objects or request a pipeline transition.
+
 For Vulkan or OpenGL rendering issues, use RenderDoc when MCP screenshots and logs do not identify the failing pass/resource. Prefer it for shadow maps, post-process inputs, motion vectors, G-buffer contents, descriptor binding mistakes, layout hazards, and "the frame looks wrong but logs are inconclusive" cases.
 
 For an editor frame with presentation, use
 `RenderDocCaptureBridge.TryTriggerCapture` through MCP. Pass a capture path
 template under the current run's `renderdoc/` folder. It captures the next
-presented frame. Direct `TryStartCapture` and `TryEndCapture` calls through
+presented frame. If it returns false, call `RenderDocCaptureBridge.GetCaptureStatus`
+through `invoke_method`. This distinguishes an unavailable module or API from
+an active capture. A loaded Vulkan capture layer alone does not prove that the
+bridge accepted the capture request. Direct `TryStartCapture` and `TryEndCapture` calls through
 `invoke_method` do not reserve a render-frame boundary. `MainThread` mode runs
 on the app/update thread, so those calls can change capture state during native
 command recording. Use explicit start/end only when the capture owner controls
 the recording boundary. A Vulkan chain-scale run reproduced a native
 `renderdoc.dll` fault with explicit start/end; presented-frame trigger captures
 passed.
+
+Monado builds with `XRT_FEATURE_RENDERDOC` can start and end a capture for every
+OpenXR frame when a RenderDoc module is loaded. In this case, an active capture
+does not prove that an editor trigger succeeded. Capture overhead can prevent
+normal import and preparation progress. Do not use these runs for frame-rate
+acceptance. Warm the desktop scene before enabling OpenXR when practical.
+
+Check the loaded capture module and replay module versions before a long run.
+An older replay module can reject captures from a newer layer. A process-local
+`VK_IMPLICIT_LAYER_PATH` can select an installed layer without a registry change;
+see the [Vulkan loader environment variables](https://github.com/KhronosGroup/Vulkan-Loader/blob/main/docs/LoaderInterfaceArchitecture.md#table-of-debug-environment-variables).
+Verify the module actually loaded. A desktop launch with an explicit OpenXR
+runtime can still need the OpenXR loader on its process search path.
 
 1. Verify capture tooling first:
 
@@ -192,6 +245,20 @@ passed.
 
 4. Always export suspicious render targets/textures to PNG and visually inspect them. For this engine, useful first checks are directional shadow atlas/cascade depth, Velocity, AmbientOcclusionTexture, LightingAccumTexture, BloomBlurTexture mips, TsrOutputTexture, and the final post-process output.
 5. Keep capture output under the current run root's `renderdoc/` folder, close RenderDoc/`rdc` sessions when done, and record durable findings alongside the MCP/log observations.
+
+### Window Videos
+
+Use `Tools/Record-WindowVideo.ps1` when the user asks for a video of a window. The [record-window-video skill](../../../.agents/skills/record-window-video/SKILL.md) has the full procedure. The script uses the ffmpeg `gfxcapture` filter (Windows Graphics Capture), which records one window at its real presentation rate, also when another window covers it. `gdigrab` cannot see Vulkan swapchain output, and the MCP viewport sequence capture is limited to about 8 frames per second by its readback.
+
+The script needs ffmpeg 8.0 or later. If no ffmpeg on the machine has `gfxcapture`, ask the user, then run `Tools/Dependencies/Get-PortableFfmpeg.ps1`. It extracts a portable build to `Build/_AgentValidation/00000000-000000-shared/tools/ffmpeg` and installs nothing.
+
+```powershell
+# Editor window of an isolated MCP session, and the Monado preview window, at the same time.
+Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File','Tools/Record-WindowVideo.ps1','-Window','Monado','-Seconds','20','-Fps','60'
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools/Record-WindowVideo.ps1 -Window Editor -SessionName <name> -Seconds 20 -Fps 60
+```
+
+For a VR recording, start the session with the Monado OpenXR environment of the benchmark (`XRE_UNIT_TEST_VR_MODE=MonadoOpenXR` and `XR_RUNTIME_JSON` that points to `Build/Deps/Monado/openxr_monado.json`), wait until the scene shows, then record. The script prints the frame count and the number of changed frames. A changed-frame count near 1 means a frozen or black capture.
 
 ## Windowless RenderBench Profiling
 

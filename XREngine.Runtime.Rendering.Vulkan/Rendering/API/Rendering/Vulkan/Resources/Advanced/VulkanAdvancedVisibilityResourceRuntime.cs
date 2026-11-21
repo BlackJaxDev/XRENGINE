@@ -21,17 +21,30 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
     // Sixteen counter words followed by eleven exact packed handle-lookup
     // segments. Keeping these in set 1 removes any mutable set-0 uniform
     // dependency from the preparation/raster family.
-    private const uint CounterByteLength = 152u;
-    private const uint IndexedIndirectArgumentByteLength = 20u;
+    private const uint CounterByteLength = 160u;
+    private const uint IndexedIndirectArgumentByteLength =
+        VulkanAdvancedVisibilityResourceState.IndexedIndirectArgumentByteLength;
     private const uint MeshIndirectArgumentByteLength = 12u;
     private const uint PersistentStateRecordByteLength = 32u;
     private const ulong PersistentStateCapacityBytes = 16UL * 1024UL * 1024UL;
     private readonly string PersistentStateOwner;
+    // Meshlet occlusion history. Layout (32-bit words): an 8-word header that
+    // holds one parity bit for each view, then two bit sets for each view
+    // (previous and current), one bit for each global meshlet index. The
+    // shaders use the same constants (XR_ADV_MESHLET_HISTORY_*).
+    private const uint MeshletHistoryHeaderWords = 8u;
+    private const uint MeshletHistoryMaxViews = 8u;
+    private const uint MeshletHistoryMeshletCapacity = 2u * 1024u * 1024u;
+    private const uint MeshletHistorySetWords = MeshletHistoryMeshletCapacity / 32u;
+    private const ulong MeshletHistoryByteLength =
+        (MeshletHistoryHeaderWords + MeshletHistoryMaxViews * 2UL * MeshletHistorySetWords) * sizeof(uint);
+    private readonly string MeshletHistoryOwner;
     private readonly ulong _outputBankId;
     private AdvancedVisibilityFamilyReservation _assignedReservation;
     // The bounded Phase 5.2 pyramid is one tile-local level. Do not update a
     // descriptor set already captured by a recorded command buffer.
-    private const uint LateDescriptorSetsPerView = 2u;
+    // Roles: 0 = pyramid build, 1 = late compute test, 2 = late meshlet raster.
+    private const uint LateDescriptorSetsPerView = 3u;
     private const uint MaxLateVisibilityViews = RenderFrameViewSet.MaxViewCount;
     // A frame plan has a bounded number of independently sealed late passes.
     // Each pass owns its descriptor table family for the entire frame
@@ -66,6 +79,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
     private DeviceMemory _persistentStateMemory;
     private ulong _persistentStateTopologyGeneration;
     private ulong _persistentStateContentGeneration;
+    private VkBufferHandle _meshletHistoryBuffer;
+    private DeviceMemory _meshletHistoryMemory;
     private bool _ready;
     private string _availabilityReason =
         "The Vulkan advanced-visibility resource runtime has not been initialized.";
@@ -79,6 +94,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
         _gate = resources.AdvancedVisibilityStorageGate;
         _outputBankId = outputBankId;
         PersistentStateOwner = $"AdvancedVisibility.OutputBank{outputBankId}.PersistentState";
+        MeshletHistoryOwner = $"AdvancedVisibility.OutputBank{outputBankId}.MeshletHistory";
         if (frameSlotCount <= 0)
             throw new ArgumentOutOfRangeException(nameof(frameSlotCount));
 
@@ -161,6 +177,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
 
             _device = device;
             if (!TryCreatePersistentStateStorage(out reason) ||
+                !TryCreateMeshletHistoryStorage(out reason) ||
                 !TryCreateDescriptorStorage(device, out reason))
             {
                 RetireNativeStorageNoLock();
@@ -271,6 +288,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             uint totalIndexBytes;
             uint totalRangeBytes;
             uint totalIndirectBytes;
+            uint earlyIndirectBytes;
             uint totalMeshArgumentBytes;
             uint totalCounterBytes;
             uint indexedGroupBytes;
@@ -295,6 +313,10 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 totalIndexBytes = checked(perViewIndexBytes * viewCount);
                 totalRangeBytes = checked(perViewRangeBytes * viewCount);
                 totalIndirectBytes = checked(perViewIndirectBytes * viewCount);
+                // The early argument stream also holds one late-test dispatch
+                // record per view after the indexed arguments of all views.
+                earlyIndirectBytes = checked(totalIndirectBytes +
+                    VulkanAdvancedVisibilityResourceState.LateDispatchArgumentByteLength * viewCount);
                 totalMeshArgumentBytes = checked(perViewMeshArgumentBytes * viewCount);
                 totalCounterBytes = checked(CounterByteLength * viewCount);
                 indexedGroupBytes = checked(Math.Max(1u, (uint)input.IndexedInstanceGroups.Length) *
@@ -332,7 +354,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 AlignedStorageBytes(totalIndexBytes) * 5UL +
                 AlignedStorageBytes(totalRangeBytes) * 2UL +
                 AlignedStorageBytes(totalCounterBytes) +
-                AlignedStorageBytes(totalIndirectBytes) * 2UL +
+                AlignedStorageBytes(earlyIndirectBytes) +
+                AlignedStorageBytes(totalIndirectBytes) +
                 AlignedStorageBytes(totalMeshArgumentBytes) * 2UL;
             if (requiredBytes > StorageCapacityPerFrameSlot)
             {
@@ -364,7 +387,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 !arena.TryAllocate(
                     frameSlot,
                     EVulkanFrameDataLane.AdvancedVisibilityStorage,
-                    totalIndirectBytes,
+                    earlyIndirectBytes,
                     StorageAlignment,
                     out VulkanFrameDataSlice arguments))
             {
@@ -521,6 +544,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 PersistentStateByteLength: PersistentStateCapacityBytes,
                 PersistentStateTopologyGeneration: _persistentStateTopologyGeneration,
                 PersistentStateContentGeneration: ++_persistentStateContentGeneration,
+                MeshletHistoryBuffer: _meshletHistoryBuffer,
+                MeshletHistoryByteLength: MeshletHistoryByteLength,
                 DeferredIndices: deferredIndices, VisibleIndices: visibleIndices,
                 Producers: producers, RangeIndices: rangeIndices, RangeOffsets: rangeOffsets,
                 RangeCounts: rangeCounts, Counters: counters,
@@ -703,6 +728,45 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
         }
     }
 
+    /// <summary>
+    /// Creates the meshlet occlusion history buffer in device-local memory. The
+    /// early task stage reads it and the late task stage sets bits in it with
+    /// atomics in every frame, so it must not live in host memory. The buffer has
+    /// one copy for each output bank, shared by all frame slots, so the GPU reads
+    /// and writes it in submission order.
+    /// Its first contents are undefined, and no initialization is needed: a clear
+    /// bit only moves a meshlet to the late raster, which tests it against this
+    /// frame's depth; a set bit only draws a meshlet in the early raster; and a
+    /// view without valid temporal history ignores the bits.
+    /// </summary>
+    private bool TryCreateMeshletHistoryStorage(out string reason)
+    {
+        VulkanBackendObjectContext? context = _resources.BackendObjectContext;
+        if (context is null || !context.IsDeviceOperational)
+        {
+            reason = "The Vulkan backend context is unavailable for meshlet history allocation.";
+            return false;
+        }
+
+        try
+        {
+            (_meshletHistoryBuffer, _meshletHistoryMemory) = _resources.Buffers.CreateDedicatedRaw(
+                context,
+                MeshletHistoryByteLength,
+                BufferUsageFlags.StorageBufferBit,
+                MemoryPropertyFlags.DeviceLocalBit,
+                owner: MeshletHistoryOwner);
+        }
+        catch (Exception exception)
+        {
+            reason = $"The meshlet history buffer could not be created: {exception.Message}";
+            return false;
+        }
+
+        reason = "Ready";
+        return true;
+    }
+
     private static bool TryWritePayloads<T>(
         VulkanFrameDataArena arena,
         in VulkanFrameDataSlice destination,
@@ -803,7 +867,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsMetadataBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityIndexedInstanceGroupsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding];
         ReadOnlySpan<uint> nativeStorageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeActiveTilesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeKernelTilesBinding,
@@ -814,7 +879,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeLightIndicesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeLightingCountersBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeFroxelDecalGridBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeDecalIndicesBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeDecalIndicesBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcTelemetryCountersBinding];
         uint requiredStorageBuffers = checked((uint)(
             storageBindingNumbers.Length + nativeStorageBindingNumbers.Length));
         if (device.PhysicalDeviceCapabilities is not { } capabilities ||
@@ -832,7 +898,11 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeMetadataMultisampleBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDepthMultisampleBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeSelectionMultisampleBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeSamplePositionMultisampleBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeSamplePositionMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcIdentityArrayBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcDepthArrayBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDecalBufferAlbedoBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDecalBufferSurfaceBinding];
         ReadOnlySpan<uint> nativeStorageImageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeHdrBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeVelocityBinding,
@@ -856,7 +926,10 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 DescriptorCount = 1u,
                 StageFlags = ShaderStageFlags.ComputeBit | ShaderStageFlags.VertexBit |
                     ShaderStageFlags.FragmentBit |
-                    (device.SupportsMeshTaskIndirectCount ? ShaderStageFlags.MeshBitExt : 0),
+                    // The meshlet task stage reads payloads, views and meshlets.
+                    (device.SupportsMeshTaskIndirectCount
+                        ? ShaderStageFlags.TaskBitExt | ShaderStageFlags.MeshBitExt
+                        : 0),
             };
         bindings[storageBindingNumbers.Length] = new DescriptorSetLayoutBinding
         {
@@ -864,7 +937,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 .VisibilityDepthPyramidSampledBinding,
             DescriptorType = DescriptorType.CombinedImageSampler,
             DescriptorCount = 1u,
-            StageFlags = ShaderStageFlags.ComputeBit,
+            // The late meshlet task variant reads the pyramid for its Hi-Z test.
+            StageFlags = ShaderStageFlags.ComputeBit |
+                (device.SupportsMeshTaskIndirectCount ? ShaderStageFlags.TaskBitExt : 0),
         };
         bindings[storageBindingNumbers.Length + 1] = new DescriptorSetLayoutBinding
         {
@@ -1191,7 +1266,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             state.Geometry.Indices, state.Counters,
             state.BoundsRoutes, state.BoundsRoutes, state.BoundsRoutes,
             state.IndexedInstanceGroups, state.EarlyIndexedGroupCounts,
-            state.LateIndexedGroupCounts
+            state.LateIndexedGroupCounts, default
         };
         ReadOnlySpan<uint> storageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.VisibilityCandidatesBinding,
@@ -1226,7 +1301,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityPhysicsBoundsMetadataBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityIndexedInstanceGroupsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding];
         if (slices.Length != storageBindingNumbers.Length)
         {
             reason = "The advanced-visibility storage binding map is incomplete.";
@@ -1271,6 +1347,14 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                     Offset = state.BoundsMetadata.Offset,
                     Range = state.BoundsMetadata.Length,
                 },
+                _ when storageBindingNumbers[index] ==
+                    VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding =>
+                    new DescriptorBufferInfo
+                    {
+                        Buffer = state.MeshletHistoryBuffer,
+                        Offset = 0u,
+                        Range = state.MeshletHistoryByteLength,
+                    },
                 _ => new DescriptorBufferInfo
                 {
                     Buffer = slices[index].Buffer,
@@ -1668,9 +1752,102 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         {
             return false;
         }
+        if (closure.HasRvcTelemetry && !TryUpdateRvcTelemetryDescriptors(descriptorSet, in closure, out reason))
+            return false;
+        if (!TryUpdateDecalBufferDescriptors(descriptorSet, in closure, out reason))
+            return false;
         _resources.RecordDescriptorTableGeneration();
         reason = "Ready";
         return true;
+    }
+
+    /// <summary>
+    /// Writes the RVC telemetry bindings: whole-array identity and depth views and
+    /// the counter buffer. Families without RVC telemetry leave them unwritten;
+    /// no other native kernel uses these bindings.
+    /// </summary>
+    private unsafe bool TryUpdateRvcTelemetryDescriptors(
+        DescriptorSet descriptorSet,
+        in VulkanAdvancedNativeComputeClosure closure,
+        out string reason)
+    {
+        DescriptorImageInfo* images = stackalloc DescriptorImageInfo[2]
+        {
+            closure.RvcIdentityArrayDescriptor,
+            closure.RvcDepthArrayDescriptor,
+        };
+        DescriptorBufferInfo counters = new()
+        {
+            Buffer = closure.RvcTelemetryCounters.NativeBuffer,
+            Offset = closure.RvcTelemetryCounters.NativeOffset,
+            Range = closure.RvcTelemetryCounters.NativeSize,
+        };
+        WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[3]
+        {
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcIdentityArrayBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.CombinedImageSampler,
+                PImageInfo = images,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcDepthArrayBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.CombinedImageSampler,
+                PImageInfo = images + 1,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcTelemetryCountersBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.StorageBuffer,
+                PBufferInfo = &counters,
+            },
+        };
+        return _resources.DescriptorLifetime.TryUpdateDescriptorSets(3u, writes, out reason);
+    }
+
+    /// <summary>
+    /// Writes the mesh surface decal buffer bindings. Every shading kernel declares them, so
+    /// they are always written: a family without the decal buffer binds the AO texture in their
+    /// place, and its shading push flags never read them.
+    /// </summary>
+    private unsafe bool TryUpdateDecalBufferDescriptors(
+        DescriptorSet descriptorSet,
+        in VulkanAdvancedNativeComputeClosure closure,
+        out string reason)
+    {
+        DescriptorImageInfo* images = stackalloc DescriptorImageInfo[2]
+        {
+            closure.HasDecalBuffer ? closure.DecalBufferAlbedoDescriptor : closure.AmbientOcclusionSampledDescriptor,
+            closure.HasDecalBuffer ? closure.DecalBufferSurfaceDescriptor : closure.AmbientOcclusionSampledDescriptor,
+        };
+        if (images[0].ImageView.Handle == 0 || images[0].Sampler.Handle == 0 ||
+            images[1].ImageView.Handle == 0 || images[1].Sampler.Handle == 0)
+        {
+            reason = "A frozen native-compute decal buffer descriptor is unavailable.";
+            return false;
+        }
+        WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[2]
+        {
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeDecalBufferAlbedoBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.CombinedImageSampler,
+                PImageInfo = images,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeDecalBufferSurfaceBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.CombinedImageSampler,
+                PImageInfo = images + 1,
+            },
+        };
+        return _resources.DescriptorLifetime.TryUpdateDescriptorSets(2u, writes, out reason);
     }
 
     private readonly record struct VulkanNativeComputeDescriptorSignature(
@@ -1847,6 +2024,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         uint msaaSampleCount,
         string ambientOcclusionTargetName,
         bool requireMaterialSurfaceExports,
+        bool requireDecalBuffer,
         VulkanAdvancedNativeComputeClosureStorage storage,
         out VulkanAdvancedNativeComputeClosure closure,
         out string reason)
@@ -1891,6 +2069,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 out VulkanPhysicalImageGroup? depthMultisample,
                 out VulkanPhysicalImageGroup? selectionMultisample,
                 out VulkanPhysicalImageGroup? samplePositionMultisample,
+                out bool shadingDiagnosticsPlaceholder,
+                out string? missingImage,
                 msaaSampleCount,
                 ambientOcclusionTargetName) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, activeTiles, out VulkanFrozenBufferBarrier active) ||
@@ -1904,7 +2084,10 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, decalFroxels, out VulkanFrozenBufferBarrier decalFroxelGrid) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, decalIndices, out VulkanFrozenBufferBarrier decalIndexList))
         {
-            reason = "The frozen graph is missing one or more required advanced native compute images or buffers.";
+            reason = missingImage is not null
+                ? $"The frozen graph has no allocation for the required advanced native compute image '{missingImage}'."
+                : "The frozen graph is missing one or more required advanced native compute buffers " +
+                  $"({DescribeMissingFrozenBuffers(graphPlan.Barriers.BufferBarriers, activeTiles, kernelTiles, counters, dispatchArgs, kernelCounts, froxels, lightIndices, lightingCounters, decalFroxels, decalIndices)}).";
             return false;
         }
 
@@ -1937,6 +2120,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         if (!TryValidateNativeComputeResources(
                 in generation.State,
                 identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics,
+                shadingDiagnosticsPlaceholder,
                 ambientOcclusion,
                 frameSlot,
                 activeTiles, kernelTiles, counters, dispatchArgs, kernelCounts, froxels,
@@ -2010,6 +2194,59 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 return false;
             }
 
+            // RVC-hosted families declare telemetry counters. The kernel reads
+            // every view layer, so it binds whole-array views beside the
+            // per-view canonical tuple.
+            VulkanFrozenBufferBarrier rvcTelemetry = default;
+            VulkanAdvancedNativeImageClosure rvcIdentityArrayResource = default;
+            VulkanAdvancedNativeImageClosure rvcDepthArrayResource = default;
+            ImageView rvcIdentityArrayView = default;
+            ImageView rvcDepthArrayView = default;
+            string rvcTelemetryName = RvcShadeletTelemetryResourceNames.Counters(frameSlot);
+            if (TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, rvcTelemetryName, out rvcTelemetry))
+            {
+                if (!Check(in generation.State, rvcTelemetryName, ref rvcTelemetry,
+                        RvcShadeletTelemetryCounters.GpuByteCount, XREngine.Data.Rendering.EBufferTarget.ShaderStorageBuffer,
+                        indirect: false, transferDst: true, out reason))
+                {
+                    return false;
+                }
+                if (!TryAcquireNativeComputeArrayView(context, storage, identity, ImageAspectFlags.ColorBit, out rvcIdentityArrayView) ||
+                    !TryAcquireNativeComputeArrayView(context, storage, depth, ImageAspectFlags.DepthBit, out rvcDepthArrayView) ||
+                    !TryCaptureNativeComputeImageClosure(identity, rvcIdentityArrayView, out rvcIdentityArrayResource) ||
+                    !TryCaptureNativeComputeImageClosure(depth, rvcDepthArrayView, out rvcDepthArrayResource))
+                {
+                    reason = "The RVC telemetry whole-array image views could not be acquired.";
+                    return false;
+                }
+            }
+
+            // The mesh surface decal buffer is read per view layer before lighting.
+            VulkanAdvancedNativeImageClosure decalAlbedoResource = default;
+            VulkanAdvancedNativeImageClosure decalSurfaceResource = default;
+            ImageView decalAlbedoView = default;
+            ImageView decalSurfaceView = default;
+            VulkanPhysicalImageGroup? decalAlbedo = null;
+            VulkanPhysicalImageGroup? decalSurface = null;
+            if (requireDecalBuffer)
+            {
+                if (!generation.State.ResourceAllocator.TryGetPhysicalGroupForResource(
+                        AdvancedDecalBufferResourceNames.Albedo, out decalAlbedo) ||
+                    !generation.State.ResourceAllocator.TryGetPhysicalGroupForResource(
+                        AdvancedDecalBufferResourceNames.Surface, out decalSurface) ||
+                    decalAlbedo is not { IsAllocated: true } || decalSurface is not { IsAllocated: true } ||
+                    viewIndex >= Math.Max(1u, decalAlbedo.Template.Layers) ||
+                    viewIndex >= Math.Max(1u, decalSurface.Template.Layers) ||
+                    !TryAcquireNativeComputeView(context, storage, decalAlbedo, ImageAspectFlags.ColorBit, viewIndex, out decalAlbedoView) ||
+                    !TryAcquireNativeComputeView(context, storage, decalSurface, ImageAspectFlags.ColorBit, viewIndex, out decalSurfaceView) ||
+                    !TryCaptureNativeComputeImageClosure(decalAlbedo, decalAlbedoView, out decalAlbedoResource) ||
+                    !TryCaptureNativeComputeImageClosure(decalSurface, decalSurfaceView, out decalSurfaceResource))
+                {
+                    reason = "The frozen graph is missing the mesh surface decal buffer images or their view layer.";
+                    return false;
+                }
+            }
+
             closure = new VulkanAdvancedNativeComputeClosure(
                 graphPlan.Revision, identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics, ambientOcclusion,
                 identityMultisample, metadataMultisample, depthMultisample, selectionMultisample, samplePositionMultisample,
@@ -2041,8 +2278,30 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 viewIndex)
             {
                 DdgiSurface = ddgiSurface,
+                ShadingDiagnosticsPlaceholder = shadingDiagnosticsPlaceholder,
+                RvcTelemetryCounters = rvcTelemetry,
+                RvcIdentityArrayResource = rvcIdentityArrayResource,
+                RvcDepthArrayResource = rvcDepthArrayResource,
+                RvcIdentityArrayDescriptor = rvcIdentityArrayView.Handle == 0
+                    ? default
+                    : new DescriptorImageInfo { Sampler = sampler, ImageView = rvcIdentityArrayView, ImageLayout = ImageLayout.General },
+                RvcDepthArrayDescriptor = rvcDepthArrayView.Handle == 0
+                    ? default
+                    : new DescriptorImageInfo { Sampler = sampler, ImageView = rvcDepthArrayView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
+                DecalBufferAlbedo = decalAlbedo,
+                DecalBufferSurface = decalSurface,
+                DecalBufferAlbedoResource = decalAlbedoResource,
+                DecalBufferSurfaceResource = decalSurfaceResource,
+                DecalBufferAlbedoDescriptor = decalAlbedoView.Handle == 0
+                    ? default
+                    : new DescriptorImageInfo { Sampler = sampler, ImageView = decalAlbedoView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
+                DecalBufferSurfaceDescriptor = decalSurfaceView.Handle == 0
+                    ? default
+                    : new DescriptorImageInfo { Sampler = sampler, ImageView = decalSurfaceView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
             };
-            captured = closure.IsValid;
+            captured = closure.IsValid &&
+                (rvcTelemetry.NativeBuffer.Handle == 0 || closure.HasRvcTelemetry) &&
+                (!requireDecalBuffer || closure.HasDecalBuffer);
             reason = captured ? "Ready" : "The advanced native compute closure is incomplete.";
             return captured;
         }
@@ -2091,17 +2350,27 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         out VulkanPhysicalImageGroup? depthMultisample,
         out VulkanPhysicalImageGroup? selectionMultisample,
         out VulkanPhysicalImageGroup? samplePositionMultisample,
+        out bool shadingDiagnosticsPlaceholder,
+        out string? missingImage,
         uint msaaSampleCount,
         string ambientOcclusionTargetName)
     {
-        bool found = allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.Identity, out identity);
-        found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.Metadata, out metadata);
-        found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.DepthStencil, out depth);
-        found &= allocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.HDRSceneTextureName, out hdr);
-        found &= allocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.VelocityTextureName, out velocity);
-        found &= allocator.TryGetPhysicalGroupForResource(AdvancedShadingResourceNames.ReactiveMask, out reactive);
-        found &= allocator.TryGetPhysicalGroupForResource(AdvancedShadingResourceNames.ShadingDiagnostics, out shadingDiagnostics);
-        found &= allocator.TryGetPhysicalGroupForResource(ambientOcclusionTargetName, out ambientOcclusion);
+        missingImage = null;
+        bool found = Find(allocator, AdvancedVisibilityResourceNames.Identity, out identity, ref missingImage);
+        found &= Find(allocator, AdvancedVisibilityResourceNames.Metadata, out metadata, ref missingImage);
+        found &= Find(allocator, AdvancedVisibilityResourceNames.DepthStencil, out depth, ref missingImage);
+        found &= Find(allocator, DefaultRenderPipeline.HDRSceneTextureName, out hdr, ref missingImage);
+        found &= Find(allocator, DefaultRenderPipeline.VelocityTextureName, out velocity, ref missingImage);
+        found &= Find(allocator, AdvancedShadingResourceNames.ReactiveMask, out reactive, ref missingImage);
+        // OpenXR eye outputs without a shading debug view do not declare the diagnostics image.
+        // Binding 18 then holds the dedicated 1x1 placeholder image, and the shading push flag
+        // ShadingDiagnosticsDisabledFlag stops every store to it. The placeholder is not bound
+        // anywhere else, so the shading dispatches have no read/write hazard on it.
+        shadingDiagnosticsPlaceholder = !allocator.TryGetPhysicalGroupForResource(
+            AdvancedShadingResourceNames.ShadingDiagnostics, out shadingDiagnostics);
+        if (shadingDiagnosticsPlaceholder)
+            found &= Find(allocator, AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder, out shadingDiagnostics, ref missingImage);
+        found &= Find(allocator, ambientOcclusionTargetName, out ambientOcclusion, ref missingImage);
         identityMultisample = null;
         metadataMultisample = null;
         depthMultisample = null;
@@ -2109,13 +2378,44 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         samplePositionMultisample = null;
         if (msaaSampleCount > 1u)
         {
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.IdentityMultisample, out identityMultisample);
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.MetadataMultisample, out metadataMultisample);
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.DepthStencilMultisample, out depthMultisample);
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.SelectionMultisample, out selectionMultisample);
-            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.SamplePositionMultisample, out samplePositionMultisample);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.IdentityMultisample, out identityMultisample, ref missingImage);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.MetadataMultisample, out metadataMultisample, ref missingImage);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.DepthStencilMultisample, out depthMultisample, ref missingImage);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.SelectionMultisample, out selectionMultisample, ref missingImage);
+            found &= Find(allocator, AdvancedVisibilityResourceNames.SamplePositionMultisample, out samplePositionMultisample, ref missingImage);
         }
         return found;
+
+        // Looks up one image and keeps the name of the first image that has no allocation, so
+        // the readiness failure names it.
+        static bool Find(
+            VulkanResourceAllocator allocator,
+            string name,
+            out VulkanPhysicalImageGroup? group,
+            ref string? missing)
+        {
+            if (allocator.TryGetPhysicalGroupForResource(name, out group))
+                return true;
+            missing ??= name;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Lists the native compute buffers that the frozen graph does not hold. Only the failure
+    /// path calls it.
+    /// </summary>
+    private static string DescribeMissingFrozenBuffers(
+        ReadOnlySpan<VulkanFrozenBufferBarrier> barriers,
+        params string[] names)
+    {
+        var missing = new System.Collections.Generic.List<string>();
+        foreach (string name in names)
+        {
+            if (!TryFindFrozenBuffer(barriers, name, out _))
+                missing.Add(name);
+        }
+        return missing.Count == 0 ? "none" : string.Join(", ", missing);
     }
 
     private static bool TryFindFrozenBuffer(
@@ -2154,6 +2454,31 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         return false;
     }
 
+    /// <summary>
+    /// Acquires one view of every array layer of <paramref name="group"/> for a
+    /// kernel that reads all views of a family in one dispatch.
+    /// </summary>
+    private static bool TryAcquireNativeComputeArrayView(
+        VulkanBackendObjectContext context,
+        VulkanAdvancedNativeComputeClosureStorage storage,
+        VulkanPhysicalImageGroup group,
+        ImageAspectFlags aspect,
+        out ImageView view)
+    {
+        uint layers = Math.Max(1u, group.Template.Layers);
+        if (!TryAcquireView(context, group, Format.Undefined, aspect, 0u, 1u, 0u, out VulkanInternedImageViewReference reference, layers))
+        {
+            view = default;
+            return false;
+        }
+        view = reference.View;
+        if (storage.TryTrack(context.Resources.Images, reference))
+            return true;
+        context.Resources.Images.ReleaseInternedView(reference);
+        view = default;
+        return false;
+    }
+
     private static bool TryAcquireView(
         VulkanBackendObjectContext context,
         VulkanPhysicalImageGroup group,
@@ -2162,20 +2487,23 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         uint baseMipLevel,
         uint levelCount,
         uint arrayLayer,
-        out VulkanInternedImageViewReference reference)
+        out VulkanInternedImageViewReference reference,
+        uint arrayLayerCount = 0u)
     {
+        // A zero layer count selects one 2D layer; any other count selects a
+        // 2D-array view of that many layers starting at arrayLayer.
         ImageViewCreateInfo createInfo = new()
         {
             SType = StructureType.ImageViewCreateInfo,
             Image = group.Image,
-            ViewType = ImageViewType.Type2D,
+            ViewType = arrayLayerCount == 0u ? ImageViewType.Type2D : ImageViewType.Type2DArray,
             Format = format == Format.Undefined ? group.Format : format,
             SubresourceRange = new ImageSubresourceRange(
                 aspect,
                 baseMipLevel,
                 levelCount,
                 arrayLayer,
-                1u),
+                Math.Max(1u, arrayLayerCount)),
         };
         return context.Resources.Images.TryAcquireInternedView(
             context,
@@ -2313,6 +2641,16 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             _persistentStateMemory = default;
             _persistentStateTopologyGeneration = 0u;
             _persistentStateContentGeneration = 0u;
+        }
+        if (_meshletHistoryBuffer.Handle != 0 && _resources.BackendObjectContext is { } historyContext)
+        {
+            _resources.Buffers.Destroy(
+                historyContext,
+                _meshletHistoryBuffer,
+                _meshletHistoryMemory,
+                MeshletHistoryOwner);
+            _meshletHistoryBuffer = default;
+            _meshletHistoryMemory = default;
         }
         _states.AsSpan().Clear();
         _familySeals.AsSpan().Clear();

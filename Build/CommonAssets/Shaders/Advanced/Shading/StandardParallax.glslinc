@@ -1,0 +1,133 @@
+#ifndef XR_ADVANCED_STANDARD_PARALLAX_GLSLINC
+#define XR_ADVANCED_STANDARD_PARALLAX_GLSLINC
+#include "Advanced/Shading/StandardMaterial.glslinc"
+
+// Parallax occlusion mapping for standard materials with a height map in texture slot 1
+// (XR_ADV_STANDARD_PARALLAX_FLAG). The visibility raster marches the height field, discards
+// silhouette fragments and writes the hit depth. Shading recovers the hit point from that depth,
+// so it needs no march: the parallax UV is uv0 - viewUvPerWorld * hitDistance.
+//
+// Both passes build the same frame from triangle derivatives of world position and UV0, so the
+// raster and shading select the same texel. Height convention: red channel, 1 is the surface
+// top. XR_ADV_STANDARD_PARALLAX_SCALE_WORD holds the full depth in UV units.
+
+struct XRAdvancedParallaxFrame
+{
+    vec2 viewUvPerWorld; // UV change per world unit traveled along the view ray (tangential part).
+    float depthWorld;    // World depth of the full height range.
+    float cosView;       // Cosine between the view vector and the surface normal.
+    bool valid;
+};
+
+XRAdvancedParallaxFrame XR_ADV_StandardParallaxFrame(XRAdvancedMaterialRecord material,
+    vec3 positionDx, vec3 positionDy, vec2 uvDx, vec2 uvDy, vec3 normal, vec3 view)
+{
+    XRAdvancedParallaxFrame frame;
+    frame.viewUvPerWorld = vec2(0.0);
+    frame.depthWorld = 0.0;
+    frame.cosView = 0.0;
+    frame.valid = false;
+
+    float parallaxScale = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material,
+        XR_ADV_STANDARD_PARALLAX_SCALE_WORD));
+    vec3 N = normalize(normal);
+    float cosView = dot(N, view);
+    if (!(parallaxScale > 0.0) || cosView <= 1.0e-3)
+        return frame;
+
+    float determinant = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
+    if (abs(determinant) < 1.0e-12)
+        return frame;
+    vec3 dPdu = (positionDx * uvDy.y - positionDy * uvDx.y) / determinant;
+    vec3 dPdv = (positionDy * uvDx.x - positionDx * uvDy.x) / determinant;
+    dPdu -= N * dot(N, dPdu);
+    dPdv -= N * dot(N, dPdv);
+
+    float guu = dot(dPdu, dPdu);
+    float guv = dot(dPdu, dPdv);
+    float gvv = dot(dPdv, dPdv);
+    float gram = guu * gvv - guv * guv;
+    if (!(gram > 1.0e-20))
+        return frame;
+    vec3 tangential = view - N * cosView;
+    vec2 rhs = vec2(dot(tangential, dPdu), dot(tangential, dPdv));
+    float worldPerUv = sqrt(sqrt(gram));
+    if (!(worldPerUv > 0.0) || isinf(worldPerUv))
+        return frame;
+
+    frame.viewUvPerWorld = vec2(gvv * rhs.x - guv * rhs.y, guu * rhs.y - guv * rhs.x) / gram;
+    frame.depthWorld = parallaxScale * worldPerUv;
+    frame.cosView = cosView;
+    frame.valid = true;
+    return frame;
+}
+
+float XR_ADV_StandardParallaxHeight(XRAdvancedMaterialRecord material, vec2 uv, vec2 uvDx, vec2 uvDy)
+{
+    return XR_ADV_StandardTexture(material, 1u, uv, uvDx, uvDy, vec4(1.0)).r;
+}
+
+// Marches the height field. Returns the hit UV, the world distance from the surface point to the
+// hit along the view ray, and whether the hit left UV [0, 1] (the silhouette test).
+vec2 XR_ADV_StandardParallaxMarch(XRAdvancedMaterialRecord material, uint flags,
+    vec2 uv, vec2 uvDx, vec2 uvDy, XRAdvancedParallaxFrame frame,
+    out float hitDistance, out bool outsideUnitSquare)
+{
+    hitDistance = 0.0;
+    outsideUnitSquare = false;
+    if (!frame.valid)
+        return uv;
+
+    uint maxSteps = max((flags >> XR_ADV_STANDARD_PARALLAX_MAX_STEPS_SHIFT) & 0xFFu, 1u);
+    uint minSteps = max((flags >> XR_ADV_STANDARD_PARALLAX_MIN_STEPS_SHIFT) & 0xFFu, 1u);
+    uint refineSteps = (flags >> XR_ADV_STANDARD_PARALLAX_REFINE_STEPS_SHIFT) & 0xFu;
+    uint stepCount = uint(mix(float(maxSteps), float(minSteps), clamp(frame.cosView, 0.0, 1.0)));
+    stepCount = clamp(stepCount, 1u, 255u);
+
+    float layerStep = 1.0 / float(stepCount);
+    vec2 uvStep = frame.viewUvPerWorld * (frame.depthWorld / frame.cosView) * layerStep;
+    vec2 currentUv = uv;
+    float currentLayer = 0.0;
+    float surfaceDepth = 1.0 - XR_ADV_StandardParallaxHeight(material, currentUv, uvDx, uvDy);
+    for (uint i = 0u; i < stepCount && currentLayer < surfaceDepth; ++i)
+    {
+        currentUv -= uvStep;
+        currentLayer += layerStep;
+        surfaceDepth = 1.0 - XR_ADV_StandardParallaxHeight(material, currentUv, uvDx, uvDy);
+    }
+
+    vec2 aboveUv = currentUv + uvStep;
+    float aboveLayer = max(currentLayer - layerStep, 0.0);
+    vec2 belowUv = currentUv;
+    float belowLayer = currentLayer;
+    if (currentLayer > 0.0)
+    {
+        for (uint r = 0u; r < refineSteps; ++r)
+        {
+            vec2 midUv = 0.5 * (aboveUv + belowUv);
+            float midLayer = 0.5 * (aboveLayer + belowLayer);
+            if (midLayer < 1.0 - XR_ADV_StandardParallaxHeight(material, midUv, uvDx, uvDy))
+            {
+                aboveUv = midUv;
+                aboveLayer = midLayer;
+            }
+            else
+            {
+                belowUv = midUv;
+                belowLayer = midLayer;
+            }
+        }
+    }
+
+    hitDistance = belowLayer * frame.depthWorld / frame.cosView;
+    outsideUnitSquare = (flags & XR_ADV_STANDARD_PARALLAX_SILHOUETTE_FLAG) != 0u &&
+        (any(lessThan(belowUv, vec2(0.0))) || any(greaterThan(belowUv, vec2(1.0))));
+    return belowUv;
+}
+
+// Shading: the parallax UV for a hit point at hitDistance along the view ray.
+vec2 XR_ADV_StandardParallaxUv(vec2 uv, XRAdvancedParallaxFrame frame, float hitDistance)
+{
+    return frame.valid ? uv - frame.viewUvPerWorld * hitDistance : uv;
+}
+#endif

@@ -71,10 +71,16 @@ void main()
     else
     {
         uint flags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
+        // Opaque parallax materials publish the masked row; they cast flat, unclipped shadows.
+        if ((flags & XR_ADV_STANDARD_PARALLAX_FLAG) != 0u && (flags & 8u) == 0u)
+            return;
         float alpha = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD).a;
         if ((flags & 1u) != 0u)
             alpha *= XR_ADV_StandardTexture(material, 0u, ShadowCoverageUv,
                 dFdx(ShadowCoverageUv), dFdy(ShadowCoverageUv), vec4(1.0)).a;
+        if ((flags & XR_ADV_STANDARD_OPACITY_TEXTURE_FLAG) != 0u)
+            alpha *= XR_ADV_StandardTexture(material, XR_ADV_STANDARD_OPACITY_TEXTURE_SLOT, ShadowCoverageUv,
+                dFdx(ShadowCoverageUv), dFdy(ShadowCoverageUv), vec4(1.0)).r;
         float alphaCutoff = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_ALPHA_CUTOFF_WORD));
         if (alpha < alphaCutoff) discard;
     }

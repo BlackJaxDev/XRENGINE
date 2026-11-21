@@ -40,7 +40,7 @@ internal static class VulkanVisibleMeshDrawCohortCounter
                     continue;
 
                 visibleDrawCount++;
-                PendingMeshDraw draw = ops.GetMeshDraw(i).Draw;
+                ref readonly PendingMeshDraw draw = ref ops.GetMeshDraw(i).Draw;
                 XRMaterial? material =
                     draw.MaterialOverride ?? draw.Renderer.MeshRenderer.Material;
                 if (material is not null)

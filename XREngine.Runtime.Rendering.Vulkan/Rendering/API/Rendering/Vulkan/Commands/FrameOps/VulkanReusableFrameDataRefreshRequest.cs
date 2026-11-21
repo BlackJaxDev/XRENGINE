@@ -24,6 +24,11 @@ internal readonly record struct VulkanReusableFrameDataRefreshRequest(
     uint ComputeGroupsZ,
     VulkanReusableFrameOwnerKey OwnerKey)
 {
+    // The large members are fields so that readers of an in or ref readonly
+    // request access them in place. Positional properties return copies.
+    public readonly FrameOpContext Context = Context;
+    public readonly PendingMeshDraw Draw = Draw;
+
     internal static VulkanReusableFrameDataRefreshRequest CreateMesh(
         EVulkanReusableFrameDataRefreshKind kind,
         int sourceOpIndex,

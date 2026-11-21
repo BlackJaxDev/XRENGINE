@@ -10,6 +10,7 @@ public readonly struct AdvancedPreparedGateTelemetrySnapshot
     private readonly long[]? _refusals;
     private readonly long[]? _misses;
     private readonly long[]? _verifyDisagreements;
+    private readonly long[]? _swapGateFailures;
 
     internal AdvancedPreparedGateTelemetrySnapshot(
         bool prepareEnabled,
@@ -21,6 +22,7 @@ public readonly struct AdvancedPreparedGateTelemetrySnapshot
         long[] refusals,
         long[] misses,
         long[] verifyDisagreements,
+        long[] swapGateFailures,
         string? lastExceptionType,
         string? lastExceptionMessage,
         int lastExceptionHResult)
@@ -34,9 +36,11 @@ public readonly struct AdvancedPreparedGateTelemetrySnapshot
         _refusals = refusals;
         _misses = misses;
         _verifyDisagreements = verifyDisagreements;
+        _swapGateFailures = swapGateFailures;
         RefusalTotal = Sum(refusals);
         MissTotal = Sum(misses);
         VerifyDisagreementTotal = Sum(verifyDisagreements);
+        SwapGateFailureTotal = Sum(swapGateFailures);
         LastExceptionType = lastExceptionType;
         LastExceptionMessage = lastExceptionMessage;
         LastExceptionHResult = lastExceptionHResult;
@@ -72,6 +76,12 @@ public readonly struct AdvancedPreparedGateTelemetrySnapshot
     /// <summary>Gets the accepted verdicts that the swap-time gate rejected, for all reasons.</summary>
     public long VerifyDisagreementTotal { get; }
 
+    /// <summary>
+    /// Gets the world-swap publications whose swap-time unchanged-row gate failed,
+    /// for all reasons. Each of them planned and committed the whole scene.
+    /// </summary>
+    public long SwapGateFailureTotal { get; }
+
     /// <summary>Gets the type name of the last prepare exception, or null when no prepare threw.</summary>
     public string? LastExceptionType { get; }
 
@@ -95,6 +105,9 @@ public readonly struct AdvancedPreparedGateTelemetrySnapshot
 
     /// <summary>Gets the accepted verdicts that the swap-time gate rejected for <paramref name="reason"/>.</summary>
     public long GetVerifyDisagreements(EAdvancedPreparedGateOutcome reason) => Read(_verifyDisagreements, reason);
+
+    /// <summary>Gets the world-swap publications whose swap-time gate failed for <paramref name="reason"/>.</summary>
+    public long GetSwapGateFailures(EAdvancedPreparedGateOutcome reason) => Read(_swapGateFailures, reason);
 
     private static long Read(long[]? counts, EAdvancedPreparedGateOutcome reason)
         => counts is not null && (uint)reason < (uint)counts.Length ? counts[(int)reason] : 0L;

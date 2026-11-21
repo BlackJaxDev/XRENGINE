@@ -27,7 +27,7 @@ internal sealed class VulkanWrapperLookupPort(VulkanBackendObjectContext context
             buffer.EnsureOwnerFirstConstructionCompleted();
         if (!renderObject.IsApiWrapperPublicationReady)
             throw new InvalidOperationException(
-                $"Render object '{renderObject.GetType().Name}' cannot be resolved before CPU construction is published.");
+                $"Render object '{renderObject.GetType().Name}' ('{renderObject.Name ?? "<unnamed>"}') cannot be resolved before CPU construction is published.");
         AbstractRenderAPIObject? wrapper = context.Resources.BackendObjects.Get(renderObject);
         if (wrapper is not null && generateNow && !wrapper.IsGenerated)
             wrapper.Generate();

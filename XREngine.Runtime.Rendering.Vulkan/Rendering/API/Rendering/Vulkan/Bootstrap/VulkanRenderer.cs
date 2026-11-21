@@ -41,6 +41,7 @@ public sealed partial class VulkanRenderer :
     IPhysicsChainComputeBackendFactoryCapability,
     IAdvancedVisibilityStageBackendCapability,
     IGpuBufferContentReuseCapability,
+    IDebugPrimitivePreparationBackendCapability,
     IVulkanAllocatorStreamingBackendCapability{
     internal override bool AdvancedPickingSourceRequiresSubmissionAcceptance => true;
 
@@ -59,6 +60,12 @@ public sealed partial class VulkanRenderer :
     private readonly VulkanResourceRuntime _resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime = new();
     internal VulkanCommandRuntime CommandRuntime => _commandRuntime;
+    bool IDebugPrimitivePreparationBackendCapability.CanPrepareDebugPrimitives
+        => _frameLoop.CanPrepareDebugPrimitives;
+
+    EDebugPrimitivePreparationStatus IDebugPrimitivePreparationBackendCapability.TryPrepareDebugPrimitives(
+        Action emitDraws, int expectedRequestCount, bool idle, out string reason)
+        => _frameLoop.TryPrepareDebugPrimitives(emitDraws, expectedRequestCount, idle, out reason);
     private readonly VulkanFrameTelemetry _frameTelemetry = new();
     private int _explicitProductionPreparationCompleted;
 
@@ -179,6 +186,9 @@ public sealed partial class VulkanRenderer :
         : base(hostContext)
     {
         VulkanNativeOwnershipQuarantine.ThrowIfOccupied();
+        // The Advanced visibility family records the mesh surface decal buffer phase.
+        // Enable the lane before any scene publication routes decal draws.
+        AdvancedSurfaceDecalLane.EnableBackendSupport();
         IVulkanRendererTargetDriver targetDriver = VulkanRendererTargetDriverFactory.Create(hostContext);
         int frameSlotCount = targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget
             ? checked((int)explicitTarget.OutputProperties.FrameSlotCount)
@@ -219,6 +229,8 @@ public sealed partial class VulkanRenderer :
             _frameLoop.TryRecordAdvancedVisibilityDiagnosticCopy;
         _commandRuntime.AdvancedCounterDiagnosticCopy =
             _frameLoop.TryRecordAdvancedCounterDiagnosticCopy;
+        _commandRuntime.PrimaryDiagnosticSubmissionSettled =
+            _frameLoop.SettlePrimaryDiagnosticSubmission;
         _commandRuntime.ProvisionAdvancedVisibilityWorkspace =
             _framePlanner.FramePlanBuilder.ProvisionAdvancedVisibilityFamily;
         _framePlanner.FramePlanBuilder.AcquireAdvancedVisibilityPlanLease =
@@ -261,6 +273,9 @@ public sealed partial class VulkanRenderer :
 
     public override void PrepareRenderFramePacing()
         => _frameLoop.PrepareDesktopFramePacing();
+
+    public override void DiscardSkippedDesktopFrameWork()
+        => _frameLoop.DiscardSkippedDesktopFrameWork();
 
     internal override void RequestFrameAdmissionRecovery(string reason)
         => _frameLoop.RequestPresentNowRecovery(reason);
@@ -385,6 +400,21 @@ public sealed partial class VulkanRenderer :
             settings,
             deltaTime,
             generateMipmapsNow);
+
+    public override bool PublishAutoExposureGpu(XRTexture2D exposureTex, XRDataBuffer channelBuffer)
+        => _frameLoop.PublishAutoExposureGpu(exposureTex, channelBuffer);
+
+    public override bool ConsumeAutoExposureGpu(XRDataBuffer channelBuffer, XRTexture2D exposureTex,
+        float minExposure, float maxExposure, float fallbackExposure)
+        => _frameLoop.ConsumeAutoExposureGpu(channelBuffer, exposureTex, minExposure, maxExposure, fallbackExposure);
+
+    public override bool SupportsHeadsetSharedAutoExposure => _frameLoop.SupportsGpuAutoExposure;
+
+    public override bool PublishHeadsetAutoExposureGpu(XRTexture2D exposureTex)
+        => _frameLoop.PublishHeadsetAutoExposureGpu(exposureTex);
+
+    public override bool FollowHeadsetAutoExposureGpu(XRTexture2D exposureTex, ColorGradingSettings settings)
+        => _frameLoop.FollowHeadsetAutoExposureGpu(exposureTex, settings);
 
     bool IPhysicsChainComputeBackendFactoryCapability.TryCreatePhysicsChainComputeBackend(
         out IPhysicsChainComputeBackend? backend)
@@ -569,6 +599,16 @@ public sealed partial class VulkanRenderer :
     public override void MultiDrawElementsIndirectWithOffset(uint drawCount, uint stride, nuint byteOffset) => _frameLoop.EnqueueIndirectDraw("MultiDrawElementsIndirectWithOffset", drawCount, stride, byteOffset);
     public override void MultiDrawElementsIndirectCount(uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset) => _frameLoop.EnqueueIndirectCountDraw(maxDrawCount, stride, byteOffset, countByteOffset);
     public override bool SupportsIndirectCountDraw() => _commandRuntime.SupportsIndirectCountDraw();
+
+    /// <summary>Reads the optimal-tiling features of the format from the physical device.</summary>
+    public override bool SupportsDepthStencilAttachmentFormat(ESizedInternalFormat format)
+    {
+        Format vkFormat = VkFormatConversions.FromSizedFormat(format);
+        if (vkFormat == Format.Undefined)
+            return false;
+        Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, vkFormat, out FormatProperties properties);
+        return (properties.OptimalTilingFeatures & FormatFeatureFlags.DepthStencilAttachmentBit) != 0;
+    }
     public override void ConfigureVAOAttributesForProgram(XRRenderProgram program, XRMeshRenderer.BaseVersion? version) => _commandRuntime.ConfigureIndirectVertexInput(program, version);
     bool IIndirectDrawStateBackendCapability.TryBeginIndirectDrawState(XRRenderProgram program, XRMaterial? material, in Matrix4x4 modelMatrix, out IndirectDrawStateToken token) => _commandRuntime.TryBeginIndirectDrawState(program, material, modelMatrix, out token);
     void IIndirectDrawStateBackendCapability.EndIndirectDrawState(in IndirectDrawStateToken token) => _commandRuntime.EndIndirectDrawState(token);
@@ -577,6 +617,7 @@ public sealed partial class VulkanRenderer :
     bool ISceneDatabaseDeviceAddressBackendCapability.TryBindSceneDatabaseDeviceAddressUniforms(XRRenderProgram program, XRDataBuffer drawMetadataBuffer, XRDataBuffer? instanceTransformBuffer, bool useInstanceTransformBuffer, string consumer) => _resourceRuntime.TryBindSceneDatabaseDeviceAddressUniforms(program, drawMetadataBuffer, instanceTransformBuffer, useInstanceTransformBuffer, consumer);
     bool IAdvancedVisibilityStageBackendCapability.SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage)
         => _frameLoop.SupportsAdvancedVisibilityStage(stage);
+    bool IAdvancedVisibilityStageBackendCapability.SupportsAdvancedSurfaceDecalBuffer => true;
     bool IAdvancedVisibilityStageBackendCapability.TryEnqueueAdvancedVisibilityStage(
         in AdvancedVisibilityStageBackendRequest request,
         out string failureReason)
@@ -738,8 +779,32 @@ public sealed partial class VulkanRenderer :
             ["trackedDescriptorSetCount"] = diagnostic.TrackedDescriptorSetCount,
             ["pendingRetirementCount"] = diagnostic.PendingRetirementCount,
             ["oldestPendingRetirementAgeMilliseconds"] = diagnostic.OldestPendingRetirementAgeMilliseconds,
+            ["supersededResourceGenerationsDrained"] = diagnostic.SupersededResourceGenerationsDrained,
+            ["supersededDescriptorOwnersReleased"] = diagnostic.SupersededDescriptorOwnersReleased,
+            ["supersededDescriptorOwnerDrainDeferrals"] = diagnostic.SupersededDescriptorOwnerDrainDeferrals,
+            ["pendingSupersededResourceGenerations"] = diagnostic.PendingSupersededResourceGenerations,
         };
     }
+    object? IRenderBackendDiagnosticsCapability.GetDiagnosticReadbackDiagnostics()
+    {
+        if (_frameLoop.CaptureDiagnosticReadbackSidecar() is not { } diagnostic)
+            return null;
+
+        return new JsonObject
+        {
+            ["capacity"] = diagnostic.Capacity,
+            ["idle"] = diagnostic.Idle,
+            ["reserved"] = diagnostic.Reserved,
+            ["reservedPrimaryAttached"] = diagnostic.ReservedPrimaryAttached,
+            ["submitted"] = diagnostic.Submitted,
+            ["decoding"] = diagnostic.Decoding,
+            ["oldestReservedFrameIdentity"] = diagnostic.OldestReservedFrameIdentity,
+            ["currentRenderFrameId"] = RuntimeEngine.Rendering.State.RenderFrameId,
+            ["droppedReservations"] = diagnostic.DroppedReservations,
+            ["completedReservations"] = diagnostic.CompletedReservations,
+        };
+    }
+
     object IRenderBackendDiagnosticsCapability.GetValidationDiagnostics()
     {
         VulkanValidationDiagnosticSnapshot diagnostic = CaptureValidationDiagnostics();
@@ -893,7 +958,14 @@ public sealed partial class VulkanRenderer :
     /// <summary>No Vulkan image allocation is deferred by throwing, so no exception is an expected deferral.</summary>
     public bool IsExpectedImageAllocationDeferral(Exception exception) => false;
     public EGpuBufferContentReuseStatus QueryBufferContentReuse(XRDataBuffer buffer)
-        => _resourceRuntime.QueryBufferContentReuse(buffer);    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
+        => _resourceRuntime.QueryBufferContentReuse(buffer);
+    public string? DescribeBufferContentReuse(XRDataBuffer buffer)
+        => _resourceRuntime.DescribeBufferContentReuse(buffer);
+    public bool TryCaptureBufferAllocationIdentity(
+        XRDataBuffer buffer,
+        out GpuBufferAllocationIdentity identity)
+        => _resourceRuntime.TryCaptureBufferAllocationIdentity(buffer, out identity);
+    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
     public bool TryEnsureComputeBufferReady(XRDataBuffer buffer)
     {
         // The retained command lookup cannot create a cold buffer wrapper.

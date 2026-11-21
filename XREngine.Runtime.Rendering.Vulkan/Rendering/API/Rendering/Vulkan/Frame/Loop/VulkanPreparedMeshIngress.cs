@@ -1,4 +1,5 @@
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Compute;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -20,6 +21,10 @@ internal sealed class VulkanPreparedMeshIngress
     private readonly VulkanPreparedStableBinStream _stableBinStream = new(
         VulkanMeshOperationRequestQueue.Capacity,
         VulkanMeshOperationRequestQueue.Capacity * ResourceUsesPerEntryBudget);
+    private readonly SkinningPrepassDispatcher.VulkanOutputReceipt?[] _deformationReceipts =
+        new SkinningPrepassDispatcher.VulkanOutputReceipt?[
+            SkinningPrepassDispatcher.VulkanReceiptPoolCapacity];
+    private int _deformationReceiptCount;
     private int _count;
     private int _resourceUseCount;
     private int _dynamicUiCount;
@@ -47,6 +52,7 @@ internal sealed class VulkanPreparedMeshIngress
     internal void Clear()
     {
         _stableBinStream.ThawForReuse();
+        ReleaseTransientReadResources();
         _entries.AsSpan(0, _count).Clear();
         _resourceUses.AsSpan(0, _resourceUseCount).Clear();
         _count = 0;
@@ -78,6 +84,16 @@ internal sealed class VulkanPreparedMeshIngress
 
         Clear();
         source._entries.AsSpan(0, source._count).CopyTo(_entries);
+        try
+        {
+            for (int index = 0; index < source._count; index++)
+                RetainTransientReadResource(_entries[index].Draw.DeformationOutputWitness.Receipt);
+        }
+        catch
+        {
+            Clear();
+            throw;
+        }
         source._resourceUses.AsSpan(0, source._resourceUseCount)
             .CopyTo(_resourceUses);
         _count = source._count;
@@ -99,6 +115,7 @@ internal sealed class VulkanPreparedMeshIngress
     {
         if (_count >= _entries.Length)
             return false;
+        RetainTransientReadResource(draw.DeformationOutputWitness.Receipt);
         PendingMeshDraw ownedDraw = draw with { CaptureOwnerToken = context.CaptureOwnerToken };
         _entries[_count++] = new(
             passIndex, target, ownedDraw, context, preserveSubmissionOrder,
@@ -106,6 +123,35 @@ internal sealed class VulkanPreparedMeshIngress
         if (isDynamicUi)
             _dynamicUiCount++;
         return true;
+    }
+
+    internal void ReleaseTransientReadResources()
+    {
+        for (int index = 0; index < _deformationReceiptCount; index++)
+        {
+            _deformationReceipts[index]?.ReleaseAuthoringUse();
+            _deformationReceipts[index] = null;
+        }
+        _deformationReceiptCount = 0;
+    }
+
+    private void RetainTransientReadResource(
+        SkinningPrepassDispatcher.VulkanOutputReceipt? receipt)
+    {
+        if (receipt is null)
+            return;
+        for (int index = 0; index < _deformationReceiptCount; index++)
+            if (ReferenceEquals(_deformationReceipts[index], receipt))
+                return;
+        if (_deformationReceiptCount >= _deformationReceipts.Length)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.MainScene,
+                _deformationReceipts.Length,
+                _deformationReceiptCount + 1,
+                "Prepared mesh ingress exceeded its deformation receipt capacity.");
+
+        receipt.RetainAuthoringUse();
+        _deformationReceipts[_deformationReceiptCount++] = receipt;
     }
 
     /// <summary>
@@ -299,7 +345,7 @@ internal sealed class VulkanPreparedMeshIngress
                     out bool collected))
             {
                 failure = CreateStableBinFailure(
-                    EVulkanPreparedMeshIngressFailureKind.PackageExceptionUnmatchedHandle,
+                    EVulkanPreparedMeshIngressFailureKind.PackageExceptionMissingSubmission,
                     -1,
                     default,
                     package,
@@ -385,14 +431,23 @@ internal sealed class VulkanPreparedMeshIngress
             package?.SourceRevision ?? 0L,
             packageException,
             selectedPipeline,
-            DescribeIngressEntries());
+            DescribeIngressEntries(package, in packageException));
     }
 
-    private string DescribeIngressEntries()
+    private string DescribeIngressEntries(
+        BackendReadyFramePackage? package,
+        in BackendReadyOrderedExceptionRecord exception)
     {
-        const int entryLimit = 16;
+        const int entryLimit = 32;
         int count = Math.Min(_count, entryLimit);
         var summary = new System.Text.StringBuilder(count * 128);
+        summary.Append("[cohortHit=").Append(IsCohortHit)
+            .Append(" reused=").Append(ReusedOperationCount)
+            .Append(" holes=").Append(LegacyHoleMaterializationCount)
+            .Append(" packageState=").Append(package?.State)
+            .Append(" canonical=").Append(package?.CanonicalScenePublication)
+            .Append(']');
+        AppendExpectedCommand(summary, package, in exception);
         for (int index = 0; index < count; ++index)
         {
             ref readonly VulkanPreparedMeshIngressEntry entry = ref _entries[index];
@@ -414,6 +469,7 @@ internal sealed class VulkanPreparedMeshIngress
                 .Append(" materialId=").Append(material?.ID)
                 .Append(" mesh=").Append(draw.Renderer.MeshRenderer.Mesh?.Name ?? "<null>")
                 .Append(" rendererId=").Append(draw.Renderer.MeshRenderer.ID)
+                .Append(" residentTemplate=").Append(draw.ResidentTemplateHandle)
                 .Append(']');
         }
 
@@ -421,6 +477,59 @@ internal sealed class VulkanPreparedMeshIngress
             summary.Append(" remaining=").Append(_count - count);
         return summary.ToString();
     }
+
+    /// <summary>Reports the captured command only when frame admission fails.</summary>
+    private static void AppendExpectedCommand(
+        System.Text.StringBuilder summary,
+        BackendReadyFramePackage? package,
+        in BackendReadyOrderedExceptionRecord exception)
+    {
+        if (package is null ||
+            !package.TryGetCanonicalPublicationSnapshot(out AdvancedGpuScenePublicationSnapshot publication))
+            return;
+
+        foreach (ref readonly AdvancedDrawSubmissionRecord submission in publication.Submission.Records)
+        {
+            if (submission.Draw != exception.DrawHandle ||
+                submission.PassIndex != unchecked((uint)exception.PassIndex) ||
+                submission.SourceOrder != exception.OrderKey)
+                continue;
+
+            summary.Append(" [expected stableKey=").Append(submission.StableQueryKey)
+                .Append(" legacyIndex=").Append(submission.LegacyCommandIndex);
+            if (package.TryGetPass(exception.PassIndex, out BackendReadyRenderPass pass))
+            {
+                for (int index = 0; index < pass.CommandCount; ++index)
+                {
+                    RenderCommand command = package.GetPassCommand(in pass, index);
+                    if (command.StableQueryKey != submission.StableQueryKey)
+                        continue;
+
+                    summary.Append(" command=").Append(command.GetType().Name)
+                        .Append(" enabled=").Append(command.RenderEnabled);
+                    if (command is RenderCommandMesh3D meshCommand)
+                    {
+                        AdvancedMeshRenderSnapshot captured = meshCommand.CaptureAdvancedPreparationSnapshot();
+                        XRMaterial? material = captured.MaterialOverride ?? captured.Renderer?.Material;
+                        AdvancedGpuSceneDrawIdentitySnapshot identity = meshCommand.CanonicalDrawIdentitySnapshot;
+                        summary.Append(" rendererId=").Append(captured.Renderer?.ID)
+                            .Append(" mesh=").Append(captured.Renderer?.Mesh?.Name)
+                            .Append(" material=").Append(material?.Name)
+                            .Append(" materialId=").Append(material?.ID)
+                            .Append(" supplementalPass=").Append(meshCommand.RenderSupplementalMaterialPass)
+                            .Append(" identityValid=").Append(identity.IsValid)
+                            .Append(" handle=").Append(identity.Primary.Handle)
+                            .Append(" sourceCount=").Append(identity.Handles?.Count ?? 0)
+                            .Append(" publication=").Append(identity.Publication.Publication);
+                    }
+                    break;
+                }
+            }
+            summary.Append(']');
+            return;
+        }
+    }
+
     internal void PublishDrawStats()
     {
         for (int index = 0; index < _count; index++)

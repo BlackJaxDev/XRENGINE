@@ -258,7 +258,7 @@ internal sealed partial class VulkanCommandRuntime
             int operationIndex = chain.SourceStartIndex + drawIndex;
             if (operations.GetHeader(operationIndex).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
                 return false;
-            PendingMeshDraw draw = operations.Stream.GetMeshDraw(operationIndex).Draw;
+            ref readonly PendingMeshDraw draw = ref operations.Stream.GetMeshDraw(operationIndex).Draw;
 
             VulkanMeshFrameDataFamilyKey family = VulkanMeshFrameDataFamilyKey.From(
                 frameDataSlot,

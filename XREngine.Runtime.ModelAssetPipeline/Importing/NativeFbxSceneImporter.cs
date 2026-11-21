@@ -19,7 +19,7 @@ using Matrix4x4 = System.Numerics.Matrix4x4;
 
 namespace XREngine;
 
-internal static class NativeFbxSceneImporter
+internal static partial class NativeFbxSceneImporter
 {
     internal readonly record struct ImportResult(
         SceneNode RootNode,
@@ -49,6 +49,10 @@ internal static class NativeFbxSceneImporter
             Source.BlendshapeNames = blendshapeNames;
             if (calculateTangents && !Source.HasTangents)
                 Source.GenerateTangentsFromUv0(Indices);
+            // The importer adds one vertex for each polygon corner. Merge the corners whose
+            // attributes are bit-equal, after tangent generation so that generated tangents
+            // are compared. Skinned and blendshape sources are not changed.
+            Source.WeldExactDuplicates(Indices);
             XRMesh mesh = new(Source, Indices);
             _source = null;
             Indices = [];
@@ -281,6 +285,7 @@ internal static class NativeFbxSceneImporter
                 Array.Sort(meshes, static (left, right) => left.ObjectIndex.CompareTo(right.ObjectIndex));
                 bool flipUvY = importOptions?.ImportSteps.HasFlag(ModelImportSteps.FlipUVs) ?? true;
                 bool calculateTangents = importOptions?.ImportSteps.HasFlag(ModelImportSteps.CalculateTangentSpace) ?? true;
+                ModelTangentImportPolicy tangentPolicy = importOptions?.TangentImportPolicy ?? ModelTangentImportPolicy.Default;
                 bool importBlendShapeNormals = importOptions?.ImportBlendShapeNormals ?? true;
 
                 List<MeshBuildWorkItem> workItems = [];
@@ -391,6 +396,7 @@ internal static class NativeFbxSceneImporter
                             flipUvY,
                             importBlendShapeNormals,
                             calculateTangents,
+                            tangentPolicy,
                             cancellationToken,
                             rootNode.Transform,
                             generateMeshRenderersAsync,
@@ -626,6 +632,7 @@ internal static class NativeFbxSceneImporter
         bool flipUvY,
         bool importBlendShapeNormals,
         bool calculateTangents,
+        ModelTangentImportPolicy tangentPolicy,
         CancellationToken cancellationToken,
         TransformBase rootTransform,
         bool generateMeshRenderersAsync,
@@ -639,6 +646,13 @@ internal static class NativeFbxSceneImporter
         IReadOnlyList<int> polygonVertexIndices = meshGeometry.PolygonVertexIndices;
         FbxLayerElement<Vector3>? normalLayer = meshGeometry.Normals.Count > 0 ? meshGeometry.Normals[0] : null;
         FbxLayerElement<Vector3>? tangentLayer = meshGeometry.Tangents.Count > 0 ? meshGeometry.Tangents[0] : null;
+        bool generateCompatibleTangents = tangentPolicy == ModelTangentImportPolicy.CalculateMikkCompatible;
+        if (generateCompatibleTangents && (normalLayer is null || meshGeometry.TextureCoordinates.Count == 0))
+            throw new InvalidDataException($"Mesh '{meshGeometry.Name}' requests Mikk-compatible tangents but has no source normals or UV0.");
+        Vector4[]? generatedTangents = generateCompatibleTangents
+            ? GenerateSourceTangents(meshGeometry, intermediateNode.GeometryTransform, normalLayer!, flipUvY, cancellationToken)
+            : null;
+        int generatedCornerIndex = 0;
         FbxLayerElement<Vector3>? binormalLayer = meshGeometry.Binormals is { Count: > 0 } ? meshGeometry.Binormals[0] : null;
         string[]? blendShapeNames = blendShapeChannels.Count > 0 ? BuildBlendshapeNames(blendShapeChannels) : null;
         int[] shapeIndexByChannel = BuildShapeIndexByChannel(blendShapeChannels, blendShapeNames);
@@ -655,6 +669,20 @@ internal static class NativeFbxSceneImporter
                 int polygonVertexCount = CountPolygonVertexCount(polygonVertexIndices, polygonVertexStart);
                 int materialSlot = ResolveMaterialSlot(meshGeometry.Materials, polygonIndex, polygonVertexStart, nodeMaterials.Count);
                 List<MeshChunkBuilder> chunks = buildersByMaterialSlot[materialSlot] ??= [];
+                if (generatedTangents is not null)
+                {
+                    int triangleCornerCount = Math.Max(0, polygonVertexCount - 2) * 3;
+                    AppendGeneratedTangentPolygon(
+                        chunks, materialSlot, polygonVertexStart, polygonIndex, polygonVertexCount,
+                        polygonVertexIndices, meshGeometry, intermediateNode.GeometryTransform, normalLayer!,
+                        generatedTangents.AsSpan(generatedCornerIndex, triangleCornerCount), flipUvY,
+                        importBlendShapeNormals, skinWeightsByControlPoint, blendShapeChannels,
+                        shapeIndexByChannel, scratch);
+                    generatedCornerIndex += triangleCornerCount;
+                    polygonVertexStart += polygonVertexCount;
+                    polygonIndex++;
+                    continue;
+                }
                 MeshChunkBuilder chunk = chunks.Count > 0 && chunks[^1].CanAppendPolygon(polygonVertexCount)
                     ? chunks[^1]
                     : CreateChunk(chunks, materialSlot, polygonVertexIndices.Count - polygonVertexStart, polygonVertexCount);
@@ -729,7 +757,8 @@ internal static class NativeFbxSceneImporter
                     if (chunk.Source.VertexCount == 0 || chunk.Indices.Count == 0)
                         continue;
 
-                    XRMesh xrMesh = chunk.BuildMesh(blendShapeNames, calculateTangents);
+                    XRMesh xrMesh = chunk.BuildMesh(blendShapeNames,
+                        tangentPolicy == ModelTangentImportPolicy.Default && calculateTangents);
                     SubMesh subMesh = new(new SubMeshLOD(material, xrMesh, 0.0f)
                     {
                         GenerateAsync = generateMeshRenderersAsync,
@@ -781,13 +810,78 @@ internal static class NativeFbxSceneImporter
                 materialSlot,
                 new XRMeshPackedSource(
                     normalLayer is not null,
-                    tangentLayer is not null,
+                    tangentLayer is not null || generateCompatibleTangents,
                     meshGeometry.TextureCoordinates.Count,
                     meshGeometry.Colors.Count,
                     vertexCapacity),
                 indexCapacity);
             chunks.Add(chunk);
             return chunk;
+        }
+
+        void AppendGeneratedTangentPolygon(
+            List<MeshChunkBuilder> chunks,
+            int materialSlot,
+            int polygonVertexStart,
+            int polygonIndex,
+            int polygonVertexCount,
+            IReadOnlyList<int> polygonVertexIndices,
+            FbxMeshGeometry meshGeometry,
+            Matrix4x4 geometryTransform,
+            FbxLayerElement<Vector3> normalLayer,
+            ReadOnlySpan<Vector4> cornerTangents,
+            bool flipUvY,
+            bool importBlendShapeNormals,
+            IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint,
+            IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels,
+            int[] shapeIndexByChannel,
+            PackedVertexScratch scratch)
+        {
+            if (polygonVertexCount < 3)
+                return;
+
+            Dictionary<(int vertex, Vector4 tangent), int> variantIndices = new();
+            List<(int vertex, Vector4 tangent)> variants = [];
+            int[] triangleVariants = new int[cornerTangents.Length];
+            for (int corner = 0; corner < cornerTangents.Length; corner++)
+            {
+                int triangle = corner / 3;
+                int localVertex = (corner % 3) switch
+                {
+                    0 => 0,
+                    1 => triangle + 1,
+                    _ => triangle + 2,
+                };
+                var key = (localVertex, cornerTangents[corner]);
+                if (!variantIndices.TryGetValue(key, out int variant))
+                {
+                    variant = variants.Count;
+                    variants.Add(key);
+                    variantIndices.Add(key, variant);
+                }
+                triangleVariants[corner] = variant;
+            }
+
+            if (variants.Count > ushort.MaxValue + 1)
+                throw new InvalidDataException($"Mesh '{meshGeometry.Name}' has a polygon with too many tangent vertices.");
+            MeshChunkBuilder chunk = chunks.Count > 0 && chunks[^1].CanAppendPolygon(variants.Count)
+                ? chunks[^1]
+                : CreateChunk(chunks, materialSlot, variants.Count, variants.Count);
+            int baseVertex = chunk.Source.VertexCount;
+            for (int variant = 0; variant < variants.Count; variant++)
+            {
+                (int localVertex, Vector4 tangent) = variants[variant];
+                int polygonVertexIndex = polygonVertexStart + localVertex;
+                int encodedControlPoint = polygonVertexIndices[polygonVertexIndex];
+                int controlPointIndex = encodedControlPoint < 0 ? ~encodedControlPoint : encodedControlPoint;
+                AppendPolygonVertex(
+                    chunk.Source, scratch, meshGeometry, geometryTransform, controlPointIndex,
+                    polygonVertexIndex, polygonIndex, normalLayer, null, null, Vector3.Zero,
+                    false, flipUvY, importBlendShapeNormals, skinWeightsByControlPoint,
+                    blendShapeChannels, shapeIndexByChannel, tangent);
+            }
+            for (int corner = 0; corner < triangleVariants.Length; corner++)
+                chunk.Indices.Add(baseVertex + triangleVariants[corner]);
         }
     }
 
@@ -1044,6 +1138,30 @@ internal static class NativeFbxSceneImporter
         IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint,
         IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels,
         int[] shapeIndexByChannel)
+        => AppendPolygonVertex(source, scratch, meshGeometry, geometryTransform, controlPointIndex,
+            polygonVertexIndex, polygonIndex, normalLayer, tangentLayer, binormalLayer,
+            polygonBitangent, hasPolygonBitangent, flipUvY, importBlendShapeNormals,
+            skinWeightsByControlPoint, blendShapeChannels, shapeIndexByChannel, null);
+
+    private static void AppendPolygonVertex(
+        XRMeshPackedSource source,
+        PackedVertexScratch scratch,
+        FbxMeshGeometry meshGeometry,
+        Matrix4x4 geometryTransform,
+        int controlPointIndex,
+        int polygonVertexIndex,
+        int polygonIndex,
+        FbxLayerElement<Vector3>? normalLayer,
+        FbxLayerElement<Vector3>? tangentLayer,
+        FbxLayerElement<Vector3>? binormalLayer,
+        Vector3 polygonBitangent,
+        bool hasPolygonBitangent,
+        bool flipUvY,
+        bool importBlendShapeNormals,
+        IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint,
+        IReadOnlyList<FbxBlendShapeChannelBinding> blendShapeChannels,
+        int[] shapeIndexByChannel,
+        Vector4? generatedTangent)
     {
         Vector3 position = controlPointIndex >= 0 && controlPointIndex < meshGeometry.ControlPoints.Count
             ? Vector3.Transform(meshGeometry.ControlPoints[controlPointIndex], geometryTransform)
@@ -1109,7 +1227,7 @@ internal static class NativeFbxSceneImporter
         for (int set = 0; set < scratch.Colors.Length; set++)
             scratch.Colors[set] = ResolveLayerValue(meshGeometry.Colors[set], controlPointIndex, polygonVertexIndex, polygonIndex, Vector4.One);
 
-        source.AddVertex(position, baseNormal, new Vector4(baseTangent, bitangentSign), scratch.TexCoords, scratch.Colors);
+        source.AddVertex(position, baseNormal, generatedTangent ?? new Vector4(baseTangent, bitangentSign), scratch.TexCoords, scratch.Colors);
 
         if (skinWeightsByControlPoint is not null
             && controlPointIndex >= 0
@@ -1673,10 +1791,20 @@ internal static class NativeFbxSceneImporter
         return null;
     }
 
+    /// <summary>
+    /// True when a lowercase FBX texture property, display name, and file name name an ambient
+    /// occlusion map: "occlusion", or "ao" as its own token (for example "brick_ao").
+    /// </summary>
+    private static bool IsAmbientOcclusionTextureName(string text)
+        => text.Contains("occlusion") ||
+           text.EndsWith("_ao", StringComparison.Ordinal) ||
+           text.Contains("_ao_", StringComparison.Ordinal) ||
+           text.Contains("_ao ", StringComparison.Ordinal);
+
     private static TextureType MapTextureType(string? propertyName, FbxSceneObject textureObject, string filePath)
     {
         string basis = propertyName ?? textureObject.DisplayName;
-        basis = basis + " " + Path.GetFileNameWithoutExtension(filePath);
+        basis = $"{basis} {Path.GetFileNameWithoutExtension(filePath)}";
 
         return basis.ToLowerInvariant() switch
         {
@@ -1687,6 +1815,8 @@ internal static class NativeFbxSceneImporter
             var text when text.Contains("emiss") => TextureType.Emissive,
             var text when text.Contains("metal") => TextureType.Metalness,
             var text when text.Contains("rough") => TextureType.Roughness,
+            // An ambient occlusion map must not fall through to the base color default.
+            var text when IsAmbientOcclusionTextureName(text) => TextureType.AmbientOcclusion,
             var text when text.Contains("basecolor") || text.Contains("diffuse") => TextureType.BaseColor,
             _ => TextureType.Diffuse,
         };
@@ -1704,7 +1834,10 @@ internal static class NativeFbxSceneImporter
         Vector3 diffuseColor = GetVectorProperty(materialObject, "DiffuseColor")
             ?? GetVectorProperty(materialObject, "BaseColor")
             ?? new Vector3((float)ColorF4.Magenta.R, (float)ColorF4.Magenta.G, (float)ColorF4.Magenta.B);
+        // The deferred surface keeps the authored Opacity scalar. The resolved opacity
+        // (which also reads TransparencyFactor) only decides forward glass below.
         float opacity = GetFloatProperty(materialObject, "Opacity") ?? 1.0f;
+        float resolvedOpacity = ResolveImportedOpacity(materialObject);
         float? roughness = GetFloatProperty(materialObject, "Roughness");
         float metallic = GetFloatProperty(materialObject, "Metalness") ?? 0.0f;
         Vector3 emissive = GetVectorProperty(materialObject, "EmissiveColor") ?? Vector3.Zero;
@@ -1726,6 +1859,9 @@ internal static class NativeFbxSceneImporter
         if (material.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 &&
             !StandardLitTextureSurfaceBinding.TryRead(material, out _, out _))
             material.EngineSemantic = EngineMaterialSemanticIdentity.None;
+        // A connected TransparencyFactor map controls coverage; the scalar is only its fallback.
+        if (!hasTransparencyFactorMask)
+            ModelAssetImporter.ApplyImportedOpacity(material, resolvedOpacity, diffuseColor);
     }
 
     private static bool ShouldUseTransparentBlend(FbxSceneObject? materialObject)
@@ -1733,11 +1869,18 @@ internal static class NativeFbxSceneImporter
         if (materialObject is null)
             return false;
 
-        float opacity = GetFloatProperty(materialObject, "Opacity") ?? 1.0f;
-        float transparencyFactor = GetFloatProperty(materialObject, "TransparencyFactor") ?? 0.0f;
-        Vector3 transparentColor = GetVectorProperty(materialObject, "TransparentColor") ?? Vector3.Zero;
-        return opacity < 0.999f || transparencyFactor > 0.001f || transparentColor.LengthSquared() > 0.0f;
+        return ResolveImportedOpacity(materialObject) < ModelAssetImporter.ImportedOpaqueThreshold;
     }
+
+    /// <summary>
+    /// Resolves the FBX material opacity: <c>Opacity</c> when present, otherwise one minus
+    /// <c>TransparencyFactor</c> times <c>TransparentColor</c>.
+    /// </summary>
+    private static float ResolveImportedOpacity(FbxSceneObject materialObject)
+        => ModelAssetImporter.ResolveImportedOpacity(
+            GetFloatProperty(materialObject, "Opacity"),
+            GetFloatProperty(materialObject, "TransparencyFactor"),
+            GetVectorProperty(materialObject, "TransparentColor"));
 
     private static string? GetInlineAttribute(FbxSceneObject sceneObject, string key)
         => sceneObject.InlineAttributes.TryGetValue(key, out FbxSemanticValue value) ? value.AsString() : null;

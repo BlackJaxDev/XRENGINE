@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Physics.DebugVisualization;
 
 namespace XREngine.Rendering.Compute;
 
@@ -112,7 +113,7 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
         uint visualizedLines = visualizedNodes * LinesPerBox;
         if (!EnsureResources(visualizedLines))
             return false;
-        if (!_linesRenderer!.TryPrepareForRendering(forceNoStereo: true))
+        if (!_linesRenderer!.TryPrepareForRendering())
             return false;
 
         try
@@ -152,7 +153,7 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
             material?.SetFloat(0, request.LineWidth);
             material?.SetInt(1, (int)visualizedLines);
 
-            _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines, forceNoStereo: true);
+            _linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, visualizedLines);
 
             return true;
         }
@@ -225,7 +226,7 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
             if (material is null)
                 return false;
 
-            _linesRenderer = new XRMeshRenderer(new XRMesh([new Vertex(Vector3.Zero)]), material)
+            _linesRenderer = new XRMeshRenderer(DebugPrimitiveShaders.CreateQuadScaffold(), material)
             {
                 GenerateAsync = false,
                 GenerationPriority = EMeshGenerationPriority.RenderPipeline
@@ -249,8 +250,7 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
 
     private static XRMaterial CreateLineMaterial()
     {
-        XRShader vert = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-        XRShader geom = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "gs", "LineInstance.gs"), EShaderType.Geometry);
+        XRShader[] vertexShaders = DebugPrimitiveShaders.LoadVertexShaders("Line", compressed: false);
         XRShader frag = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitiveLine.fs"), EShaderType.Fragment);
 
         ShaderVar[] vars =
@@ -259,7 +259,7 @@ public sealed class GpuBvhDebugLineRenderer : IDisposable
             new ShaderInt(0, "TotalLines"),
         ];
 
-        var material = new XRMaterial(vars, [vert, geom, frag]);
+        var material = new XRMaterial(vars, [.. vertexShaders, frag]);
         material.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions;
         material.RenderOptions.CullMode = ECullMode.None;
         material.RenderOptions.DepthTest.Enabled = ERenderParamUsage.Disabled;

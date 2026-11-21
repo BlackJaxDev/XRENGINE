@@ -986,6 +986,45 @@ The OpenXR path has a setting named `ParallelCommandBufferRecording` and
 persistent workers for the two eye primaries. That mechanism is not the same as
 desktop command-chain secondary recording.
 
+The eye workers are render work domain lanes. `ResolveOpenXrEyeRenderLaneId`
+maps the left eye to lane 0, which the render thread runs inside
+`RenderWorkDomain.ExecuteAndWait`, and the right eye to lane 1, which a
+background render worker runs. The domain has one lane per background worker
+plus lane 0, so with zero render workers both eyes map to lane 0 and record one
+after the other. Startup prevents that case: `Engine.ResolveExecutionTopology`
+raises a `0` or automatic worker request to 1 when OpenXR starts in this mode.
+An explicit `XRE_RENDER_WORKER_THREADS` value is kept. When the eyes still share
+one lane, `VulkanFrameLoop.ReportSerializedParallelEyeRecording` logs one
+warning and increments
+`vr.process_openxr_parallel_eye_record_serialized_frames` on each frame.
+
+A parallel batch that ends with an exception ends its frame without projection
+layers. `VulkanFrameLoop.ReportParallelEyeBatchFailure` (an exception filter, so
+the exception keeps its stack) counts it in
+`vr.process_openxr_parallel_eye_record_failed_batches` and writes the reason to
+`render-readiness-failures.log`, which Release sessions also write. A failed eye
+adds its own line with the eye, frame, lane and thread. Only batches whose two
+eyes recorded give the `openxr_eye_primary_record_span_ms` and overlap samples.
+These two gauges keep the values of the last recorded batch: a stats snapshot
+without an eye batch (most render iterations of a per-eye XR frame) does not
+reset them to 0. The `process_` totals count every successful batch.
+
+The two eye lanes share some locks. `VulkanLockContentionTelemetry` counts the
+contended waits on them (`EVulkanLockContentionSite`): the command-buffer bind
+state gate that every tracked bind takes (`bind_state`), the draw recording lock
+of each `VkMeshRenderer` (`mesh_record`), the mapped uniform arena reservation
+lock (`mapped_arena_reservation`), the descriptor publication locks
+(`descriptor_publication`) and the OpenXR submission tracker gate
+(`submission_tracker`). `VulkanFrameLockScope` tries the lock first, so an
+uncontended acquisition reads no clock and does not allocate; only a failed try
+times the wait. Each site reports the wait count, the total wait and the longest
+wait for the render thread (lane 0) and for all other threads, as process totals:
+`get_render_profiler_stats` under
+`vulkan.lock_contention.<site>.{render_thread,other_threads}.{count,wait_ms,max_us}`,
+and the capture line as
+`vulkan_lock_contention_<site>_{render_thread,other_threads}_{count,wait_ms}`.
+Take the difference between two snapshots for one measurement window.
+
 The two-eye API contract treats the first request as left and the second as
 right. Both preparation phases finish before either worker records. Regardless
 of worker completion order, submission builds one graphics-queue `SubmitInfo`
@@ -1016,6 +1055,26 @@ while ordinary Vulkan image state and the OpenXR ownership lifecycle remain
 command-buffer-local until ordered submission validation and publication.
 Successful submission merges the journals in `[left, right]` order regardless
 of worker completion order.
+
+### Captured Eye Operation Pool
+
+Desktop materialization rents mesh operations from the worker's
+`VulkanFrameOpWorkspace`, which reuses an operation in the next render frame.
+Captured OpenXR eye and mirror operations can stay referenced after their
+render frame ends, so they do not use that pool. `EnqueueQueuedMeshDraw` gives
+an eye or mirror context without a workspace the frame loop's captured-eye
+workspace instead. That workspace is created with a reuse distance of 8 render
+frames:
+
+- It keeps operations in a ring ordered by rent frame.
+- It reuses the oldest operation only when its last rent is at least 8 frames
+  old and the operation holds no authoring resource.
+- Otherwise the caller creates an operation, and the ring grows to its
+  high-water mark.
+- The distance mode takes a lock, so eye workers can share it.
+
+Without this pool, each eye draw created a new operation and resource-use list,
+about 3.4 KB per draw (about 13.6 MB per second on the imported avatar).
 
 This distinction matters when reading telemetry:
 

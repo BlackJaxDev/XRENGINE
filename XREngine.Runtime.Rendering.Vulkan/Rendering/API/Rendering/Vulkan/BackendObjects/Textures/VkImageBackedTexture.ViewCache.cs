@@ -23,7 +23,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     {
         if (_image.Handle == 0)
         {
-            DestroyView(ref _view);
+            DestroyCurrentView();
             Debug.VulkanWarningEvery(
                 $"Vulkan.Texture.ViewWithoutImage.{Data.GetHashCode()}",
                 TimeSpan.FromSeconds(2),
@@ -44,8 +44,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (replacement == _view)
             return;
 
-        DestroyView(ref _view);
-        _view = replacement;
+        DestroyCurrentView();
+        SetCurrentView(replacement);
     }
 
     /// <summary>
@@ -74,7 +74,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             Image = _image,
             ViewType = descriptor.ViewType,
             Format = ResolvedFormat,
-            Components = new ComponentMapping(ComponentSwizzle.Identity, ComponentSwizzle.Identity, ComponentSwizzle.Identity, ComponentSwizzle.Identity),
+            Components = VkFormatConversions.GetSampledComponentMapping(ResolvedFormat),
             SubresourceRange = new ImageSubresourceRange
             {
                 AspectMask = aspectMask,
@@ -109,7 +109,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// </summary>
     private static ImageAspectFlags NormalizeAspectMaskForFormat(Format format, ImageAspectFlags requested)
     {
-        bool isDepthStencil = format is Format.D16Unorm or Format.X8D24UnormPack32 or Format.D32Sfloat or Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
+        // S8Uint is stencil-only: its views use the stencil aspect alone.
+        bool stencilOnly = format == Format.S8Uint;
+        bool isDepthStencil = stencilOnly || format is Format.D16Unorm or Format.X8D24UnormPack32 or Format.D32Sfloat or Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
         if (!isDepthStencil)
         {
             ImageAspectFlags colorMask = requested & ImageAspectFlags.ColorBit;
@@ -117,8 +119,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
 
         bool hasStencil = format is Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint;
-        ImageAspectFlags supported = hasStencil
-            ? (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)
+        ImageAspectFlags supported = stencilOnly ? ImageAspectFlags.StencilBit
+            : hasStencil ? (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)
             : ImageAspectFlags.DepthBit;
 
         ImageAspectFlags normalized = requested & supported;
@@ -222,7 +224,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                 "VkImageBackedTexture.DestroyCurrentViews");
         }
 
-        _view = default;
+        SetCurrentView(default);
         _attachmentViews.Clear();
 
         if (removeActiveCacheEntry && _image.Handle != 0)
@@ -231,7 +233,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     private void ForgetCurrentViews(bool removeActiveCacheEntry)
     {
-        _view = default;
+        SetCurrentView(default);
         _attachmentViews.Clear();
 
         if (removeActiveCacheEntry && _image.Handle != 0)
@@ -753,7 +755,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (!IsCachedImageViewBackedByImage(entry.PrimaryView, image))
             return false;
 
-        _view = entry.PrimaryView;
+        SetCurrentView(entry.PrimaryView);
         _attachmentViews.Clear();
         foreach (KeyValuePair<AttachmentViewKey, VulkanOwnedImageView> pair in entry.AttachmentViews)
         {

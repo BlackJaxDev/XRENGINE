@@ -13,7 +13,11 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanFrameTelemetry
 {
-    internal const uint GpuProfilerMaxScopesPerFrame = 512;
+    /// <summary>
+    /// Scope budget of one primary recording. The pass and compute scopes add one scope per
+    /// render-graph pass and per generic dispatch, so the budget leaves room for them.
+    /// </summary>
+    internal const uint GpuProfilerMaxScopesPerFrame = 2048;
     internal const uint GpuProfilerQueryCount = GpuProfilerMaxScopesPerFrame * 2;
     internal const string GpuProfilerBackendName = "Vulkan";
     internal const string GpuProfilerQuarantinedMessage =
@@ -51,11 +55,28 @@ internal sealed class VulkanFrameTelemetry
     internal bool[]? _vulkanGpuProfilerQueryReady;
     internal List<VulkanGpuProfilerPendingScope>[]? _vulkanGpuProfilerPendingScopes;
     internal int[]? _vulkanGpuProfilerPendingQueryCounts;
+    /// <summary>
+    /// Readback buffer of the GPU profiler queries. Desktop and eye slots can be read on
+    /// different threads, so each thread has its own buffer, allocated once.
+    /// </summary>
+    [ThreadStatic]
+    private static ulong[]? s_gpuProfilerTimestampScratch;
     internal ulong[]? _vulkanGpuProfilerSubmittedFrameIds;
     internal bool _vulkanGpuProfilerEnabled;
     internal bool _vulkanGpuProfilerRecordingActive;
     internal bool _vulkanGpuProfilerBudgetWarningIssued;
     internal int _vulkanGpuProfilerRecordingFrameSlot = -1;
+
+    /// <summary>
+    /// Root label of the GPU profiler scopes that are recorded now, or null for the
+    /// unlabeled root. An OpenXR quad-view stereo record sets it to the view pair, so a
+    /// GPU timing dump shows the wide and inset pairs as separate trees. Render-thread
+    /// state; recordings on parallel workers can mix labels.
+    /// </summary>
+    internal string? GpuProfilerRootLabel;
+
+    /// <summary>Labeled copies of the static profiler paths, so labeling allocates once per path.</summary>
+    internal readonly System.Runtime.CompilerServices.ConditionalWeakTable<string[], Dictionary<string, string[]>> LabeledGpuProfilerPaths = new();
     internal uint _vulkanGpuProfilerNextQuery;
     internal readonly Dictionary<string, ulong> _gpuRenderStatsTraceHashes = [];
     internal readonly VulkanFinalPresentationLedgerState _finalPresentationLedger =
@@ -702,19 +723,46 @@ internal sealed class VulkanFrameTelemetry
 
         if ((uint)queryCount > GpuProfilerQueryCount)
             throw new InvalidOperationException("GPU profiler query count exceeded its fixed pool budget.");
-        ulong* timestamps = stackalloc ulong[queryCount * 2];
+        // Value and availability pairs for every query of the slot.
+        ulong[] timestampBuffer = s_gpuProfilerTimestampScratch ??= new ulong[GpuProfilerQueryCount * 2];
+        fixed (ulong* timestamps = timestampBuffer)
+        {
+            if (!ReadGpuProfilerQueries(api, device, queryPool, queryCount, samples, frameId, timestamps))
+                return default;
+        }
+
+        samples.Clear();
+        _vulkanGpuProfilerPendingQueryCounts[frameSlot] = 0;
+        _vulkanGpuProfilerSubmittedFrameIds[frameSlot] = 0;
+        _vulkanGpuProfilerQueryReady[frameSlot] = false;
+        return queryPool;
+    }
+
+    /// <summary>
+    /// Reads the timestamps of one slot into <paramref name="timestamps"/> and records a sample
+    /// for each pending scope. Returns false when a query is not available yet.
+    /// </summary>
+    private unsafe bool ReadGpuProfilerQueries(
+        Vk api,
+        Device device,
+        QueryPool queryPool,
+        int queryCount,
+        List<VulkanGpuProfilerPendingScope> samples,
+        ulong frameId,
+        ulong* timestamps)
+    {
         Result result = api.GetQueryPoolResults(
             device, queryPool, 0, (uint)queryCount,
             (nuint)(sizeof(ulong) * queryCount * 2), timestamps,
             (ulong)(sizeof(ulong) * 2),
             QueryResultFlags.Result64Bit | QueryResultFlags.ResultWithAvailabilityBit);
         if (result == Result.NotReady)
-            return default;
+            return false;
         if (result != Result.Success)
             throw new InvalidOperationException($"GPU profiler query read failed: {result}.");
         for (int query = 0; query < queryCount; query++)
             if (timestamps[query * 2 + 1] == 0)
-                return default;
+                return false;
 
         for (int index = 0; index < samples.Count; index++)
         {
@@ -729,12 +777,7 @@ internal sealed class VulkanFrameTelemetry
         }
         RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(
             ERendererProfilerCounter.TimestampQueryReadbackBytes, queryCount * sizeof(ulong) * 2);
-        samples.Clear();
-        _vulkanGpuProfilerPendingQueryCounts[frameSlot] = 0;
-        _vulkanGpuProfilerSubmittedFrameIds[frameSlot] = 0;
-        _vulkanGpuProfilerQueryReady[frameSlot] = false;
-
-        return queryPool;
+        return true;
     }
 
     public void RecordCpuStage(EVulkanCpuStage stage, TimeSpan elapsed, long allocatedBytes, long boundaryAllocatedBytes)

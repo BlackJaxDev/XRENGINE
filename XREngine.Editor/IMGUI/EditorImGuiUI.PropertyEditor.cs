@@ -16,6 +16,7 @@ using XREngine.Data.Core;
 using XREngine.Editor.ComponentEditors;
 using XREngine.Editor.Services;
 using XREngine.Editor.UI;
+using XREngine.Editor.UI.Tools;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Components;
@@ -789,6 +790,8 @@ public static partial class EditorImGuiUI
             ImGui.PushID(property.Name);
             string treeLabel = $"{label} ({value.GetType().Name})";
             bool open = ImGui.TreeNodeEx(treeLabel, ImGuiTreeNodeFlags.None);
+            bool treeHovered = ImGui.IsItemHovered();
+            DrawExplainPopupForInspectorMember(owner, property, label, description, value);
 
             // Add Clear button for nullable, writable properties
             if (isNullable && canWrite)
@@ -813,7 +816,7 @@ public static partial class EditorImGuiUI
                 }
             }
 
-            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+            if (!string.IsNullOrEmpty(description) && treeHovered)
                 ImGui.SetTooltip(description);
 
             if (open)
@@ -1578,7 +1581,7 @@ public static partial class EditorImGuiUI
                         else if (entryValue is not null)
                         {
                             string childLabel = $"{label}[{FormatDictionaryKey(key)}]";
-                            DrawSettingsObject(GetInspectorTargets(entryValue!), childLabel, description, visited, false, property.Name + "_" + i.ToString(CultureInfo.InvariantCulture));
+                            DrawSettingsObject(GetInspectorTargets(entryValue!), childLabel, description, visited, false, string.Create(CultureInfo.InvariantCulture, $"{property.Name}_{i}"));
                         }
                         else
                         {
@@ -2662,7 +2665,9 @@ public static partial class EditorImGuiUI
             if (isAssetType)
             {
                 ImGui.TextUnformatted($"{displayName}:");
-                if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                bool labelHovered = ImGui.IsItemHovered();
+                DrawExplainPopupForInspectorMember(owner, property, displayName, description, null);
+                if (!string.IsNullOrEmpty(description) && labelHovered)
                     ImGui.SetTooltip(description);
 
                 ImGui.SameLine();
@@ -2679,7 +2684,9 @@ public static partial class EditorImGuiUI
                 int typeCount = typeDescriptors.Count;
 
                 ImGui.TextUnformatted($"{displayName}:");
-                if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                bool labelHovered = ImGui.IsItemHovered();
+                DrawExplainPopupForInspectorMember(owner, property, displayName, description, null);
+                if (!string.IsNullOrEmpty(description) && labelHovered)
                     ImGui.SetTooltip(description);
 
                 ImGui.SameLine();
@@ -2726,7 +2733,9 @@ public static partial class EditorImGuiUI
             {
                 // Not a type that uses type selector, just show null
                 ImGui.TextUnformatted($"{displayName}: <null>");
-                if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+                bool labelHovered = ImGui.IsItemHovered();
+                DrawExplainPopupForInspectorMember(owner, property, displayName, description, null);
+                if (!string.IsNullOrEmpty(description) && labelHovered)
                     ImGui.SetTooltip(description);
             }
 
@@ -2736,7 +2745,9 @@ public static partial class EditorImGuiUI
         private static void DrawNullComponentReferenceProperty(object owner, PropertyInfo property, string displayName, string? description, Type componentType, bool canWrite, bool isNullable)
         {
             ImGui.TextUnformatted($"{displayName}:");
-            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+            bool labelHovered = ImGui.IsItemHovered();
+            DrawExplainPopupForInspectorMember(owner, property, displayName, description, null);
+            if (!string.IsNullOrEmpty(description) && labelHovered)
                 ImGui.SetTooltip(description);
 
             using (new ImGuiDisabledScope(!canWrite))
@@ -2810,7 +2821,9 @@ public static partial class EditorImGuiUI
 
             string treeLabel = $"{label}: {GetComponentReferenceDisplayLabel(value)}";
             bool open = ImGui.TreeNodeEx(treeLabel, ImGuiTreeNodeFlags.None);
-            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+            bool treeHovered = ImGui.IsItemHovered();
+            DrawExplainPopupForInspectorMember(owner, property, label, description, value);
+            if (!string.IsNullOrEmpty(description) && treeHovered)
                 ImGui.SetTooltip(description);
 
             if (canWrite)
@@ -3559,11 +3572,25 @@ public static partial class EditorImGuiUI
             MemberInfo member,
             string displayName,
             string? description,
-            ActiveEditorPreferenceOverride? activeOverride = null)
+            ActiveEditorPreferenceOverride? activeOverride = null,
+            InspectorTargetSet? targets = null,
+            object? currentValue = null)
         {
             bool clippedLabel = ImGui.CalcTextSize(displayName).X > ImGui.GetContentRegionAvail().X;
             ImGui.TextUnformatted(displayName);
             bool labelHovered = ImGui.IsItemHovered();
+
+            if (targets is not null)
+            {
+                ImGui.PushID(member.MetadataToken);
+                if (ImGui.BeginPopupContextItem("##ExplainInspectorMember"))
+                {
+                    if (ImGui.MenuItem("Explain this"))
+                        PublishInspectorMemberHelp(member, displayName, description, targets, currentValue);
+                    ImGui.EndPopup();
+                }
+                ImGui.PopID();
+            }
 
             if (activeOverride is not null)
             {
@@ -3593,6 +3620,73 @@ public static partial class EditorImGuiUI
                 }
                 ImGui.EndTooltip();
             }
+        }
+
+        private static void PublishInspectorMemberHelp(
+            MemberInfo member,
+            string displayName,
+            string? description,
+            InspectorTargetSet targets,
+            object? value)
+        {
+            object target = targets.PrimaryTarget;
+            string? targetId = targets.HasMultipleTargets || target is not XRObjectBase objectBase
+                ? null : objectBase.ID.ToString();
+            string targetName = targets.HasMultipleTargets
+                ? $"{targets.Targets.Count} selected objects"
+                : target is XRComponent component
+                    ? $"{component.SceneNode?.Name ?? "Detached"} / {component.Name ?? component.GetType().Name}"
+                    : target.GetType().Name;
+            string symbol = $"{member.DeclaringType?.FullName ?? target.GetType().FullName}.{member.Name}";
+            string? valueText = targets.HasMultipleTargets ? "Multiple values"
+                : IsSensitiveInspectorMember(member.Name) ? "Hidden"
+                : FormatInspectorHelpValue(value);
+            AssistantHelpRequests.Publish(new AssistantHelpRequest(
+                member is PropertyInfo ? "property" : "field",
+                displayName,
+                $"Inspector / {target.GetType().Name}",
+                symbol,
+                targetId,
+                targetName,
+                valueText,
+                description));
+        }
+
+        private static void DrawExplainPopupForInspectorMember(
+            object owner,
+            MemberInfo member,
+            string displayName,
+            string? description,
+            object? value)
+        {
+            if (!ImGui.BeginPopupContextItem("##ExplainInspectorMember"))
+                return;
+
+            if (ImGui.MenuItem("Explain this"))
+                PublishInspectorMemberHelp(member, displayName, description, GetInspectorTargets(owner), value);
+            ImGui.EndPopup();
+        }
+
+        private static bool IsSensitiveInspectorMember(string name)
+            => name.Contains("Token", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Secret", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Password", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("ApiKey", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Credential", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("Authorization", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("PrivateKey", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("ConnectionString", StringComparison.OrdinalIgnoreCase);
+
+        private static string? FormatInspectorHelpValue(object? value)
+        {
+            if (value is null)
+                return "None";
+            if (value is bool or char or decimal or sbyte or byte or short or ushort or int or uint
+                or long or ulong or float or double or Enum)
+                return Convert.ToString(value, CultureInfo.InvariantCulture);
+            if (value is string text)
+                return text.Length <= 256 ? text : text[..256] + "...";
+            return $"{value.GetType().Name} (open the Inspector for its current values)";
         }
 
         private static void DrawActiveEditorPreferenceOverrideTooltip(ActiveEditorPreferenceOverride activeOverride)
@@ -3820,7 +3914,8 @@ public static partial class EditorImGuiUI
             BeginInspectorPropertyRow();
             ImGui.TableSetColumnIndex(0);
             TryGetActiveEditorPreferenceOverride(targets, property, out ActiveEditorPreferenceOverride? activeOverride);
-            DrawInspectorMemberLabel(property, displayName, description, activeOverride);
+            DrawInspectorMemberLabel(property, displayName, description, activeOverride,
+                targets, !valueRetrievalFailed && values.Count > 0 ? values[0] : null);
             ImGui.TableSetColumnIndex(1);
             ImGui.PushID(property.Name);
 
@@ -4367,8 +4462,7 @@ public static partial class EditorImGuiUI
                         "Unset uses the subsystem default.";
                     ImGui.SetTooltip(
                         $"Launch: {state.LaunchValue ?? "<unset>"}\n" +
-                        $"Effective: {state.EffectiveValue ?? "<unset>"}\n" +
-                        defaultBehavior);
+                        $"Effective: {state.EffectiveValue ?? "<unset>"}\n{defaultBehavior}");
                 }
 
                 string? valueToSet = null;
@@ -4479,7 +4573,8 @@ public static partial class EditorImGuiUI
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimpleFieldRow");
             BeginInspectorPropertyRow();
             ImGui.TableSetColumnIndex(0);
-            DrawInspectorMemberLabel(field, displayName, description);
+            DrawInspectorMemberLabel(field, displayName, description, targets: targets,
+                currentValue: !valueRetrievalFailed && values.Count > 0 ? values[0] : null);
             ImGui.TableSetColumnIndex(1);
 
             ImGui.PushID(field.Name);
@@ -4646,7 +4741,9 @@ public static partial class EditorImGuiUI
             ImGui.PushID(field.Name);
 
             ImGui.TextUnformatted($"{displayName}:");
-            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+            bool labelHovered = ImGui.IsItemHovered();
+            DrawExplainPopupForInspectorMember(owner, field, displayName, description, null);
+            if (!string.IsNullOrEmpty(description) && labelHovered)
                 ImGui.SetTooltip(description);
 
             ImGui.SameLine();
@@ -4689,7 +4786,9 @@ public static partial class EditorImGuiUI
             ImGui.PushID(field.Name);
             string treeLabel = $"{label} ({value.GetType().Name})";
             bool open = ImGui.TreeNodeEx(treeLabel, ImGuiTreeNodeFlags.None);
-            if (!string.IsNullOrEmpty(description) && ImGui.IsItemHovered())
+            bool treeHovered = ImGui.IsItemHovered();
+            DrawExplainPopupForInspectorMember(owner, field, label, description, value);
+            if (!string.IsNullOrEmpty(description) && treeHovered)
                 ImGui.SetTooltip(description);
 
             if (open)

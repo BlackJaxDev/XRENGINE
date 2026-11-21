@@ -273,6 +273,11 @@ internal sealed partial class VulkanFrameLoop
                 if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
                     dispatched = NvidiaDlssManager.Native.TryQueueProxyPresent(
                         StreamlineDeviceBinding, queue, ref presentInfo, out result, out failureReason);
+                else if (OutputRuntime.Desktop.DxgiRing is { } dxgiRing)
+                {
+                    dispatched = TryDispatchDesktopDxgiPresent(dxgiRing, ref presentInfo, presentFence, out result);
+                    failureReason = dispatched ? string.Empty : $"DXGI present submission failed ({result})";
+                }
                 else
                 {
                     result = OutputRuntime.Desktop.SwapchainExtension!.QueuePresent(queue, ref presentInfo);

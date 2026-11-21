@@ -39,6 +39,7 @@ public unsafe partial class OpenXRAPI
     {
         AssertOpenXrRenderThread(nameof(RenderFrame));
         long submitStart = Stopwatch.GetTimestamp();
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.XrRenderStart);
         // Render thread: only submit if the CollectVisible thread prepared a frame.
         if (!_sessionBegun)
             return;
@@ -55,6 +56,7 @@ public unsafe partial class OpenXRAPI
         _smokePendingFrameTiming.EngineRenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         bool endFrameAttempted = false;
+        bool submittedEyes = false;
         try
         {
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
@@ -68,6 +70,8 @@ public unsafe partial class OpenXRAPI
 
         if (Volatile.Read(ref _frameSkipRender) != 0)
         {
+            MarkNoLayerReason((EOpenXrNoLayerReason)Volatile.Read(ref _frameSkipRenderReason));
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.FrameSkip);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -85,6 +89,8 @@ public unsafe partial class OpenXRAPI
 
         if (!TryResolveOpenXrViewRenderModeForCurrentBackend(out _))
         {
+            MarkNoLayerReason(EOpenXrNoLayerReason.UnsupportedViewRenderMode);
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.UnsupportedViewMode);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -103,6 +109,10 @@ public unsafe partial class OpenXRAPI
         if (!TryValidateOpenXrEyePipelineSelection(out string pipelineDiagnostic, out bool pipelinePending))
         {
             ReportOpenXrEyePipelineSelectionRejected(pipelineDiagnostic, pipelinePending);
+            MarkNoLayerReason(EOpenXrNoLayerReason.PipelineSelectionRejected);
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(pipelinePending
+                ? XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.EyePipelinePending
+                : XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.EyePipelineRejected);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -181,6 +191,8 @@ public unsafe partial class OpenXRAPI
 
         if (!allEyesRendered)
         {
+            MarkNoLayerReason(EOpenXrNoLayerReason.EyeRenderFailed);
+            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.EyeRenderFailure);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,
@@ -208,6 +220,7 @@ public unsafe partial class OpenXRAPI
         };
 
         var endFrameResult = EndFrameWithTiming(in frameEndInfo, ref endFrameAttempted);
+        submittedEyes = endFrameResult == Result.Success;
         if (endFrameResult == Result.Success && allEyesRendered)
             CommitOpenXrViewHistory(frameNo, frameEndInfo.DisplayTime);
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
@@ -229,6 +242,7 @@ public unsafe partial class OpenXRAPI
             {
                 try
                 {
+                    RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.FrameException);
                     FrameEndInfo cleanupEndInfo = new()
                     {
                         Type = StructureType.FrameEndInfo,
@@ -261,6 +275,10 @@ public unsafe partial class OpenXRAPI
             {
                 _sessionBegun = false;
             }
+
+            // XR collect pacing: record whether this frame submitted eyes, and set the collect
+            // release again for a frame that ended without reaching xrEndFrame.
+            ReleasePacedCollect(submittedEyes);
 
             // This is the admission publication observed by the pacing owner.
             // Finish every old-frame write before admitting the next frame.
@@ -562,7 +580,12 @@ public unsafe partial class OpenXRAPI
 
             // Late-update: refresh tracked poses as close to rendering as possible.
             // This updates the view poses used for projection submission and device transforms.
-            if (_sessionBegun && Volatile.Read(ref _pendingXrFrame) != 0)
+            // Only a render frame that submits the prepared XR frame needs it. While a frame is
+            // begun but not yet collected and swapped, the render loop can run many times, and
+            // each late locate and action sync is a runtime call whose result no frame uses.
+            if (_sessionBegun &&
+                Volatile.Read(ref _pendingXrFrame) != 0 &&
+                Volatile.Read(ref _framePrepared) != 0)
             {
                 using var latePoseSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.LatePose");
                 // Capture predicted pose before late update for debug comparison.
@@ -831,6 +854,7 @@ public unsafe partial class OpenXRAPI
                 // A begun OpenXR frame must still reach xrEndFrame. Mark it as a deliberate
                 // no-layer frame so SwapBuffers publishes it to the render thread instead of
                 // leaving the runtime frame pending forever.
+                Volatile.Write(ref _frameSkipRenderReason, (int)EOpenXrNoLayerReason.CollectUnsupportedViewRenderMode);
                 Volatile.Write(ref _frameSkipRender, 1);
                 success = true;
                 return;
@@ -906,6 +930,11 @@ public unsafe partial class OpenXRAPI
             {
                 leftEyePipeline = GetOrCreateOpenXrPipeline(sourcePipeline, eyeIndex: 0);
                 rightEyePipeline = GetOrCreateOpenXrPipeline(sourcePipeline, eyeIndex: 1);
+                // The eye cameras share one state collection, and a collection keys its states by
+                // pipeline ID. The right eye pipeline reads the left eye pipeline's state, so the
+                // two eyes always use the same post-process settings.
+                leftEyePipeline.PostProcessStateOwner = null;
+                rightEyePipeline.PostProcessStateOwner = leftEyePipeline;
                 if (!ReferenceEquals(_openXrLeftViewport!.RenderPipeline, leftEyePipeline))
                     _openXrLeftViewport.RenderPipeline = leftEyePipeline;
                 if (!ReferenceEquals(_openXrRightViewport!.RenderPipeline, rightEyePipeline))
@@ -975,6 +1004,10 @@ public unsafe partial class OpenXRAPI
             if (useTrueSinglePassStereo)
             {
                 _openXrStereoUpdatingBufferFree = false;
+                // With quad view, the wide stereo viewport renders views 0 and 1 only.
+                collectViewport.OpenXrViewPair = IsOpenXrInsetPairActive
+                    ? 0
+                    : RenderFrameViewSetPublication.AllViews;
                 if (!CollectOpenXrStereoVisible(
                         resolvedWorld,
                         _openXrLeftEyeCamera,
@@ -992,6 +1025,17 @@ public unsafe partial class OpenXRAPI
                 rightAdded = collectedAdded;
                 leftBuildTicks = collectedBuildTicks;
                 rightBuildTicks = collectedBuildTicks;
+
+                // Quad view renders the inset pair as a second layered stereo batch.
+                if (IsOpenXrInsetPairActive &&
+                    !TryCollectOpenXrInsetPair(resolvedWorld, baseCamera, sourcePipeline, leftEyePipeline, out _))
+                {
+                    Debug.RenderingWarningEvery(
+                        "OpenXR.CollectVisible.InsetPairFailed",
+                        TimeSpan.FromSeconds(1),
+                        "[OpenXR] CollectVisible skipped: the quad-view inset pair could not be prepared.");
+                    return;
+                }
             }
             else
             {
@@ -1222,7 +1266,7 @@ public unsafe partial class OpenXRAPI
         XRCamera rightEyeCamera,
         VrViewRenderModeResolution viewModeResolution)
     {
-        XRCamera sourceCamera = ReferenceEquals(_openXrEyeSettingsSourceCamera, rightEyeCamera)
+        XRCamera sourceCamera = ReferenceEquals(_openXrEyeSettingsLink.SourceCamera, rightEyeCamera)
             ? rightEyeCamera
             : leftEyeCamera;
         XRCamera secondaryCamera = ReferenceEquals(sourceCamera, leftEyeCamera)
@@ -1245,7 +1289,10 @@ public unsafe partial class OpenXRAPI
         uint? msaaSampleCountOverride = antiAliasingOverride is EAntiAliasingMode.Msaa
             ? sourceCamera.MsaaSampleCountOverride ?? secondaryCamera.MsaaSampleCountOverride
             : null;
-        float? tsrRenderScaleOverride = antiAliasingOverride is EAntiAliasingMode.Tsr
+        // The TSR scale follows the resolved mode, not only an explicit AA override: with the
+        // default TSR mode the eye cameras carry no AA override, and clearing their scale here
+        // would undo an eye camera's scale one frame after the frame profile applied it.
+        float? tsrRenderScaleOverride = antiAliasingMode == EAntiAliasingMode.Tsr
             ? sourceCamera.TsrRenderScaleOverride ?? secondaryCamera.TsrRenderScaleOverride
             : null;
         float? phase524bTsrRenderScale = _phase524bTsrRenderScaleOverride;
@@ -1258,29 +1305,36 @@ public unsafe partial class OpenXRAPI
 
         try
         {
-            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 1);
-            ApplyOpenXrEyeCameraRenderSettings(leftEyeCamera, antiAliasingOverride, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
-            ApplyOpenXrEyeCameraRenderSettings(rightEyeCamera, antiAliasingOverride, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
+            _openXrEyeSettingsLink.BeginMirroringSuppression();
+            ApplyOpenXrEyeCameraRenderSettings(leftEyeCamera, antiAliasingOverride, antiAliasingMode, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
+            ApplyOpenXrEyeCameraRenderSettings(rightEyeCamera, antiAliasingOverride, antiAliasingMode, msaaSampleCountOverride, outputHdrOverride, tsrRenderScaleOverride);
         }
         finally
         {
-            Volatile.Write(ref _openXrSyncingEyeCameraSettings, 0);
+            _openXrEyeSettingsLink.EndMirroringSuppression();
         }
     }
 
+    /// <summary>
+    /// Writes the shared eye render settings to one eye camera. <paramref name="antiAliasingOverride"/>
+    /// is the camera's AA override (null keeps the global mode); <paramref name="resolvedAntiAliasingMode"/>
+    /// is the mode the eye renders with. The TSR scale is kept whenever the eye renders with TSR, so
+    /// the eye camera stays the single source of the eye's internal size.
+    /// </summary>
     private static void ApplyOpenXrEyeCameraRenderSettings(
         XRCamera eyeCamera,
-        EAntiAliasingMode? antiAliasingMode,
+        EAntiAliasingMode? antiAliasingOverride,
+        EAntiAliasingMode resolvedAntiAliasingMode,
         uint? msaaSampleCountOverride,
         bool? outputHdrOverride,
         float? tsrRenderScaleOverride)
     {
-        eyeCamera.AntiAliasingModeOverride = antiAliasingMode;
-        eyeCamera.MsaaSampleCountOverride = antiAliasingMode is EAntiAliasingMode.Msaa
+        eyeCamera.AntiAliasingModeOverride = antiAliasingOverride;
+        eyeCamera.MsaaSampleCountOverride = antiAliasingOverride is EAntiAliasingMode.Msaa
             ? msaaSampleCountOverride
             : null;
         eyeCamera.OutputHDROverride = outputHdrOverride;
-        eyeCamera.TsrRenderScaleOverride = antiAliasingMode is EAntiAliasingMode.Tsr
+        eyeCamera.TsrRenderScaleOverride = resolvedAntiAliasingMode == EAntiAliasingMode.Tsr
             ? tsrRenderScaleOverride
             : null;
     }
@@ -1331,19 +1385,26 @@ public unsafe partial class OpenXRAPI
     {
         ReleaseOpenXrExternalEyeViewportPipelineForTrueStereo(_openXrLeftViewport, 0);
         ReleaseOpenXrExternalEyeViewportPipelineForTrueStereo(_openXrRightViewport, 1);
+        // True stereo renders through the stereo viewport, so it may get a pipeline again.
+        _openXrStereoViewport?.RenderPipelineInstance.EndPipelineReleaseByOwner();
     }
 
+    /// <summary>
+    /// Holds a per-eye viewport without a pipeline while true single-pass stereo renders both
+    /// eyes through the stereo viewport. The hold is explicit (owner release), so code that
+    /// reads the viewport's pipeline does not create a default pipeline for it every frame.
+    /// </summary>
     private static void ReleaseOpenXrExternalEyeViewportPipelineForTrueStereo(XRViewport? viewport, int eyeIndex)
     {
         if (viewport is null)
             return;
 
         viewport.MeshRenderCommandsOverride = null;
-        if (viewport.RenderPipelineInstance.AssignedPipeline is null)
+        bool hadPipeline = viewport.RenderPipelineInstance.AssignedPipeline is not null;
+        string pipelineName = hadPipeline ? viewport.RenderPipelineInstance.DebugName : string.Empty;
+        viewport.RenderPipelineInstance.ReleasePipelineByOwner(viewport);
+        if (!hadPipeline)
             return;
-
-        string pipelineName = viewport.RenderPipelineInstance.DebugName;
-        viewport.RenderPipeline = null;
 
         Debug.RenderingEvery(
             $"OpenXR.TrueStereo.ReleaseExternalEyePipeline.{eyeIndex}",
@@ -1353,18 +1414,24 @@ public unsafe partial class OpenXRAPI
             eyeIndex);
     }
 
+    /// <summary>
+    /// Holds the true-stereo viewport without a pipeline while the per-eye viewports render,
+    /// and ends the hold of the per-eye viewports so they can get their pipelines again.
+    /// </summary>
     private void ReleaseOpenXrStereoViewportPipelineForExternalEyes()
     {
+        _openXrLeftViewport?.RenderPipelineInstance.EndPipelineReleaseByOwner();
+        _openXrRightViewport?.RenderPipelineInstance.EndPipelineReleaseByOwner();
         XRViewport? viewport = _openXrStereoViewport;
         if (viewport is null)
             return;
 
         viewport.MeshRenderCommandsOverride = null;
-        if (viewport.RenderPipelineInstance.AssignedPipeline is null)
+        bool hadPipeline = viewport.RenderPipelineInstance.AssignedPipeline is not null;
+        string pipelineName = hadPipeline ? viewport.RenderPipelineInstance.DebugName : string.Empty;
+        viewport.RenderPipelineInstance.ReleasePipelineByOwner(viewport);
+        if (!hadPipeline)
             return;
-
-        string pipelineName = viewport.RenderPipelineInstance.DebugName;
-        viewport.RenderPipeline = null;
 
         Debug.RenderingEvery(
             $"OpenXR.ExternalEyes.ReleaseStereoPipeline.{GetHashCode()}",
@@ -1647,6 +1714,9 @@ public unsafe partial class OpenXRAPI
             {
                 stereoViewport.SwapBuffers(stereoMeshCommands, allowScreenSpaceUISwap: false);
                 _openXrStereoUpdatingBufferFree = true;
+                Volatile.Write(ref _lastPublishedTrueSinglePassStereo, 1);
+                Volatile.Write(ref _lastPublishedTwoPassEyes, 0);
+                SwapOpenXrInsetPairCommands();
                 Debug.RenderingEvery(
                     $"OpenXR.SwapBuffers.TrueStereoCommands.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
@@ -1669,6 +1739,8 @@ public unsafe partial class OpenXRAPI
             RenderCommandCollection rightCommands = _openXrRightViewport.RenderPipelineInstance.MeshRenderCommands;
             _openXrLeftViewport.SwapBuffers(leftCommands, allowScreenSpaceUISwap: false);
             _openXrRightViewport.SwapBuffers(rightCommands, allowScreenSpaceUISwap: false);
+            Volatile.Write(ref _lastPublishedTrueSinglePassStereo, 0);
+            Volatile.Write(ref _lastPublishedTwoPassEyes, 1);
         }
 
         Interlocked.Exchange(ref _framePrepared, 1);
@@ -1735,8 +1807,10 @@ public unsafe partial class OpenXRAPI
 
             if (_frameState.ShouldRender == 0)
             {
+                Volatile.Write(ref _frameSkipRenderReason, (int)EOpenXrNoLayerReason.RuntimeShouldNotRender);
                 Volatile.Write(ref _frameSkipRender, 1);
                 Volatile.Write(ref _pendingXrFrame, 1);
+                SignalPendingFrameForCollectPacing();
 
                 if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo))
                     Debug.Out($"OpenXR[{frameNo}] Prepare: ShouldRender=0 (will EndFrame with no layers)");
@@ -1798,6 +1872,7 @@ public unsafe partial class OpenXRAPI
             }
 
             Volatile.Write(ref _pendingXrFrame, 1);
+            SignalPendingFrameForCollectPacing();
         }
         finally
         {
@@ -1807,8 +1882,10 @@ public unsafe partial class OpenXRAPI
 
     private void EndBegunFrameWithoutLayers(int frameNo, string reason)
     {
+        RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrNoLayerFrame(XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.PrepareAborted);
         try
         {
+            MarkNoLayerReason(EOpenXrNoLayerReason.FrameAborted);
             var frameEndInfoNoLayers = new FrameEndInfo
             {
                 Type = StructureType.FrameEndInfo,

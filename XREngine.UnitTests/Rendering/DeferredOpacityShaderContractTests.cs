@@ -30,9 +30,9 @@ public sealed class DeferredOpacityShaderContractTests
 
     [Test]
     [TestCase("Common/TexturedAlphaDeferred.fs", "texture(Texture1, FragUV0).r")]
-    [TestCase("Common/TexturedNormalAlphaDeferred.fs", "texture(Texture2, FragUV0).r")]
+    [TestCase("Common/TexturedNormalAlphaDeferred.fs", "XRENGINE_SampleSurface(Texture2, uv).r")]
     [TestCase("Common/TexturedSpecAlphaDeferred.fs", "texture(Texture2, FragUV0).r")]
-    [TestCase("Common/TexturedNormalSpecAlphaDeferred.fs", "texture(Texture3, FragUV0).r")]
+    [TestCase("Common/TexturedNormalSpecAlphaDeferred.fs", "XRENGINE_SampleSurface(Texture3, uv).r")]
     public void AlphaMaskDeferredShaders_CombineBaseAlphaAndSeparateOpacityTexture(string shaderRelativePath, string alphaMaskSample)
     {
         string source = LoadShaderSource(shaderRelativePath);

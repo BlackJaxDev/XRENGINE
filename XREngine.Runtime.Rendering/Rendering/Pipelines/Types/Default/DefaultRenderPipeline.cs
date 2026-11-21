@@ -157,88 +157,15 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         => MeshSubmissionStrategy is EMeshSubmissionStrategy.GpuIndirectZeroReadback or
             EMeshSubmissionStrategy.GpuIndirectInstrumented;
 
-    internal static bool UseOpenXrVulkanDesktopStartupSafePath
-        => UseOpenXrVulkanDesktopStartupSafePathForViewport(null);
-
-    internal static bool UseOpenXrVulkanDesktopStartupSafePathForViewport(XRViewport? viewport)
-        => IsVulkanRuntimeActiveOrExpected() &&
-           IsOpenXrRuntimeRequestedOrExpected() &&
-           !IsStereoPass &&
-           IsOpenXrExternalSwapchainTargetPass(viewport);
-
-    private static bool IsOpenXrExternalSwapchainTargetPass(XRViewport? explicitViewport)
-    {
-        if (explicitViewport?.RendersToExternalSwapchainTarget == true)
-            return true;
-
-        // Only trust the viewport of the pass that is actively rendering. Falling back to
-        // LastWindowViewport let eye-viewport state leak into desktop-context evaluation
-        // (and into command-chain bakes), permanently stripping bloom/exposure/temporal
-        // passes from the shared chain. With no active viewport (e.g. chain generation),
-        // evaluate false so the baked chain is the full superset and runtime
-        // ConditionEvaluators decide per context.
-        XRViewport? viewport = explicitViewport ??
-            RuntimeEngine.Rendering.State.RenderingPipelineState?.WindowViewport ??
-            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.WindowViewport;
-
-        return viewport?.RendersToExternalSwapchainTarget == true &&
-            !RuntimeEngine.Rendering.State.IsSceneCapturePass &&
-            !RuntimeEngine.Rendering.State.IsLightProbePass;
-    }
-
-    private static bool IsVulkanRuntimeActiveOrExpected()
-    {
-        if (IsVulkan ||
-            RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.Vulkan)
-        {
-            return true;
-        }
-
-        string? unitTestRenderApi = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi);
-        return string.Equals(unitTestRenderApi, "Vulkan", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsOpenXrRuntimeRequestedOrExpected()
-    {
-        if (RuntimeRenderingHostServices.Presentation.IsOpenXrRuntimeRequested ||
-            RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
-            RuntimeEngine.VRState.IsOpenXRActive ||
-            RuntimeEngine.VRState.OpenXRApi is not null)
-        {
-            return true;
-        }
-
-        return UnitTestEnvironmentRequestsOpenXr;
-    }
-
-    // Unit-test launch variables are immutable for the process lifetime. Cache
-    // them once instead of materializing environment strings from every
-    // DefaultRenderPipeline condition evaluator on every frame.
-    private static readonly bool UnitTestEnvironmentRequestsOpenXr =
-        ResolveUnitTestEnvironmentRequestsOpenXr();
-
-    private static bool ResolveUnitTestEnvironmentRequestsOpenXr()
-    {
-        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
-        return string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase) ||
-               IsTruthyEnvironmentValue(
-                   Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
-    }
-
-    private static bool IsTruthyEnvironmentValue(string? value)
-        => !string.IsNullOrWhiteSpace(value) &&
-           (string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(value, "on", StringComparison.OrdinalIgnoreCase));
-
     private static bool EnableComputeDependentPasses
-        => VulkanFeatureProfile.EnableComputeDependentPasses &&
-           !UseOpenXrVulkanDesktopStartupSafePath;
+        => VulkanFeatureProfile.EnableComputeDependentPasses;
 
+    /// <summary>
+    /// True unless a VR eye frame runs with order-independent transparency off in the eye
+    /// feature profile (<see cref="VrEyeFrameRules"/>).
+    /// </summary>
     private static bool EnableWeightedBlendedOitPasses
-        => !UseOpenXrVulkanDesktopStartupSafePath;
+        => VrEyeFrameRules.AllowsOrderIndependentTransparency();
 
     private bool EnableTransparencySceneCopyResources
         => EnableWeightedBlendedOitPasses || ExactTransparencyEnabled;
@@ -422,20 +349,28 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera)
     {
         EAntiAliasingMode mode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
-        return GetRequestedInternalResolutionForCamera(camera, mode);
+        return GetRequestedInternalResolutionForCamera(camera, mode, allowVendorUpscale: true);
     }
 
-    internal override float? GetRequestedInternalResolutionForCamera(XRCamera? camera, EAntiAliasingMode effectiveAntiAliasingMode)
+    /// <summary>
+    /// Returns the internal render scale that the anti-aliasing mode requests for <paramref name="camera"/>.
+    /// The caller (<see cref="XRRenderPipelineInstance"/>) decides whether TSR history is available for the
+    /// view and does not call this method for TSR without history. The vendor (DLSS or XeSS) scale applies
+    /// only when <paramref name="allowVendorUpscale"/> is true.
+    /// </summary>
+    internal override float? GetRequestedInternalResolutionForCamera(
+        XRCamera? camera,
+        EAntiAliasingMode effectiveAntiAliasingMode,
+        bool allowVendorUpscale)
     {
         EAntiAliasingMode mode = effectiveAntiAliasingMode;
-        if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))
+        if (allowVendorUpscale &&
+            !IsRenderingExternalSwapchainTarget() &&
+            TryResolveVendorInternalResolutionScale(out float vendorScale))
             return vendorScale;
 
         if (mode == EAntiAliasingMode.Dlaa)
             return 1.0f;
-
-        if (mode == EAntiAliasingMode.Tsr && DisableHistoryBasedVrEffects())
-            return null;
 
         return mode == EAntiAliasingMode.Tsr
             ? Math.Clamp(camera?.TsrRenderScaleOverride ?? RuntimeEngine.Rendering.Settings.TsrRenderScale, 0.5f, 1.0f)
@@ -1645,12 +1580,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     /// True when the current camera uses MSAA and the deferred pipeline should run in MSAA mode.
     /// </summary>
     internal static bool RuntimeEnableMsaaTargets
-        => RuntimeEnableMsaa
-        && !UseOpenXrVulkanDesktopStartupSafePath;
+        => RuntimeEnableMsaa;
 
     internal static bool RuntimeEnableMsaaDeferred
         => RuntimeEnableMsaaTargets
-        && !UseOpenXrVulkanDesktopStartupSafePath
+        && VrEyeFrameRules.AllowsDeferredMsaa()
         && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as DefaultRenderPipeline)?.EnableDeferredMsaa == true;
 
     private const string TonemappingStageKey = CommonPostProcessStages.StageKeys.Tonemapping;
@@ -1755,19 +1689,19 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     }
 
     private bool EnableTransformIdVisualization
-        => !UseOpenXrVulkanDesktopStartupSafePath && !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransformId;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransformId;
 
     private bool EnableTransparencyAccumulationVisualization
-        => !UseOpenXrVulkanDesktopStartupSafePath && !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransparencyAccumulation;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransparencyAccumulation;
 
     private bool EnableTransparencyRevealageVisualization
-        => !UseOpenXrVulkanDesktopStartupSafePath && !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransparencyRevealage;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransparencyRevealage;
 
     private bool EnableTransparencyOverdrawVisualization
-        => !UseOpenXrVulkanDesktopStartupSafePath && !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransparencyOverdrawHeatmap;
+        => !Stereo && RuntimeEngine.EditorPreferences.Debug.VisualizeTransparencyOverdrawHeatmap;
 
     private bool EnableFullOverdrawVisualization
-        => !UseOpenXrVulkanDesktopStartupSafePath && !Stereo && ResolveDebugVisualizationSettings()?.FullOverdrawEnabled == true;
+        => !Stereo && ResolveDebugVisualizationSettings()?.FullOverdrawEnabled == true;
 
     private bool EnablePerPixelLinkedListVisualization
         => ExactTransparencyEnabled && RuntimeEngine.EditorPreferences.Debug.VisualizePerPixelLinkedListFragments;
@@ -2050,7 +1984,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     }
     private ViewportRenderCommandContainer CreateFinalBlitCommands(string sourceFboName, bool bypassVendorUpscale)
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath || bypassVendorUpscale)
+        if (bypassVendorUpscale)
             return CreateDirectWindowPresentCommands(sourceFboName);
 
         var cmds = new ViewportRenderCommandContainer(this);
@@ -2566,7 +2500,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
 
     private int EvaluateAmbientOcclusionMode()
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
+        if (!VrEyeFrameRules.AllowsAmbientOcclusion())
             return AmbientOcclusionDisabledMode;
 
         AmbientOcclusionSettings? aoSettings = ResolveAmbientOcclusionSettings();
@@ -2933,7 +2867,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
 
     private bool ShouldUseAmbientOcclusion()
     {
-        if (UseOpenXrVulkanDesktopStartupSafePath)
+        if (!VrEyeFrameRules.AllowsAmbientOcclusion())
             return false;
 
         AmbientOcclusionSettings? settings = ResolveAmbientOcclusionSettings();

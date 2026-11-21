@@ -13,6 +13,7 @@ internal sealed class DesktopVrServicesLease : IDisposable
     private readonly IRuntimeVrStateServices _previousState;
     private readonly IRuntimeVrRenderingServices _previousRendering;
     private readonly IRuntimeVrLifecycleServices _previousLifecycle;
+    private readonly IRuntimeVrTeleportPublisher? _previousTeleportPublisher;
     private EngineRuntimeVrInputServices? _ownedInput;
     private EngineRuntimeVrStateServices? _ownedState;
     private EngineRuntimeVrRenderingServices? _ownedRendering;
@@ -28,6 +29,7 @@ internal sealed class DesktopVrServicesLease : IDisposable
         _previousState = RuntimeVrStateServices.Current;
         _previousRendering = RuntimeVrRenderingServices.Current;
         _previousLifecycle = RuntimeEngine.VRState.LifecycleServices;
+        _previousTeleportPublisher = RuntimeEngine.VRState.TeleportPublisher;
 
         try
         {
@@ -44,6 +46,9 @@ internal sealed class DesktopVrServicesLease : IDisposable
             {
                 _ownedRendering = new EngineRuntimeVrRenderingServices();
                 RuntimeVrRenderingServices.Current = _ownedRendering;
+
+                // Rendering-side code, for example a cutscene rig move, cannot reference the input project.
+                RuntimeEngine.VRState.TeleportPublisher = EngineRuntimeVrTeleportPublisher.Instance;
             }
         }
         catch (Exception installationFailure)
@@ -73,6 +78,7 @@ internal sealed class DesktopVrServicesLease : IDisposable
         Restore(() => RuntimeVrStateServices.Current = _previousState, ref failures);
         Restore(() => RuntimeVrInputServices.Current = _previousInput, ref failures);
         Restore(() => RuntimeEngine.VRState.LifecycleServices = _previousLifecycle, ref failures);
+        Restore(() => RuntimeEngine.VRState.TeleportPublisher = _previousTeleportPublisher, ref failures);
 
         // Slot setters detach their forwarding subscriptions; providers then release their
         // separate native-device and action/session hooks.

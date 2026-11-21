@@ -1,0 +1,49 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+#ifdef XR_ADV_VISIBILITY_ARRAY
+layout(r32ui, binding = 0) readonly uniform uimage2DArray VisibilityMetadata;
+layout(rgba8, binding = 1) writeonly uniform image2DArray EditorHighlightMask;
+layout(rg32ui, binding = 2) readonly uniform uimage2DArray VisibilityIdentity;
+layout(rgba16, binding = 3) writeonly uniform image2DArray EditorPickingIdentity;
+#else
+layout(r32ui, binding = 0) readonly uniform uimage2D VisibilityMetadata;
+layout(rgba8, binding = 1) writeonly uniform image2D EditorHighlightMask;
+layout(rg32ui, binding = 2) readonly uniform uimage2D VisibilityIdentity;
+layout(rgba16, binding = 3) writeonly uniform image2D EditorPickingIdentity;
+#endif
+
+void main()
+{
+#ifdef XR_ADV_VISIBILITY_ARRAY
+    ivec3 pixel = ivec3(gl_GlobalInvocationID.xyz);
+    if (any(greaterThanEqual(pixel, imageSize(EditorHighlightMask))))
+        return;
+#else
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(pixel, imageSize(EditorHighlightMask))))
+        return;
+#endif
+
+    uint metadata = imageLoad(VisibilityMetadata, pixel).r;
+    if (metadata == 0xFFFFFFFFu)
+    {
+        imageStore(EditorHighlightMask, pixel, vec4(0.0));
+        imageStore(EditorPickingIdentity, pixel, vec4(0.0));
+        return;
+    }
+
+    uint flags = (metadata >> 25u) & 3u;
+    imageStore(EditorHighlightMask, pixel,
+        vec4(float(flags & 1u), float((flags >> 1u) & 1u), 0.0, 1.0));
+    uint draw = imageLoad(VisibilityIdentity, pixel).r;
+    if (draw == 0u || draw == 0xFFFFFFFFu)
+    {
+        imageStore(EditorPickingIdentity, pixel, vec4(0.0));
+        return;
+    }
+
+    imageStore(EditorPickingIdentity, pixel,
+        vec4(float(draw & 0xFFFFu), float(draw >> 16u), 1.0, 65535.0) / 65535.0);
+}

@@ -1,4 +1,6 @@
+using System;
 using System.Collections;
+using System.Collections.Generic;
 
 namespace XREngine.Rendering.RenderGraph;
 
@@ -10,6 +12,7 @@ namespace XREngine.Rendering.RenderGraph;
 public sealed class RenderPassMetadataSnapshot : IReadOnlyList<RenderPassMetadata>
 {
     private readonly RenderPassMetadata[] _passes;
+    private readonly Dictionary<string, int> _passIndicesByName;
     private readonly RenderPassMetadataRevisionSource _revisionSource;
 
     internal RenderPassMetadataSnapshot(
@@ -18,6 +21,12 @@ public sealed class RenderPassMetadataSnapshot : IReadOnlyList<RenderPassMetadat
     {
         _passes = passes;
         _revisionSource = revisionSource;
+        _passIndicesByName = new Dictionary<string, int>(passes.Length, StringComparer.OrdinalIgnoreCase);
+        for (int index = 0; index < passes.Length; index++)
+        {
+            RenderPassMetadata pass = passes[index];
+            _passIndicesByName.TryAdd(pass.Name, pass.PassIndex);
+        }
     }
 
     public int Count => _passes.Length;
@@ -25,6 +34,12 @@ public sealed class RenderPassMetadataSnapshot : IReadOnlyList<RenderPassMetadat
     public RenderPassMetadata this[int index] => _passes[index];
 
     public int RevisionStamp => _revisionSource.Generation;
+
+    /// <summary>
+    /// Resolves a pass index by its render-graph pass name without scanning the snapshot.
+    /// </summary>
+    public bool TryGetPassIndex(string passName, out int passIndex)
+        => _passIndicesByName.TryGetValue(passName, out passIndex);
 
     /// <summary>
     /// Looks up pass metadata by its stable pass index without walking the

@@ -352,7 +352,8 @@ namespace XREngine.Rendering.OpenGL
                 EMeshBillboardMode billboardMode,
                 bool forceNoStereo,
                 in XREngine.Rendering.Commands.AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
-                Vector4 sourceFlatDirection)
+                Vector4 sourceFlatDirection,
+                uint editorHighlightBits)
                 => Render(modelMatrix, previousModelMatrix, materialOverride, renderOptionsOverride,
                     instances, billboardMode, forceNoStereo, sourceFlatDirection);
 
@@ -674,6 +675,16 @@ namespace XREngine.Rendering.OpenGL
                 OnSettingUniforms(vtx!, mat!);
                 vtx!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
                 mat!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
+                MeshRenderer.EnterResourcePublicationLease();
+                try
+                {
+                    if (!MeshRenderer.TryPrepareUdimTriangleCoverage(Mesh, bindingMaterial.Data, publishInactive: false, out failureReason))
+                        return false;
+                }
+                finally
+                {
+                    MeshRenderer.ExitResourcePublicationLease();
+                }
                 PublishTypedBindingPublishers(
                     bindingMaterial.Data.BindingPublishers,
                     vtx!.Data,

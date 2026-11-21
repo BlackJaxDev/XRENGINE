@@ -58,13 +58,14 @@ void XR_ADV_ApplyDecalToSurface(
         opacity *= XR_ADV_SampleTexture2DGrad(maskReference, decalUv, vec2(0.0), vec2(0.0)).a;
     if (opacity <= 0.0) return;
     vec4 decalRmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
-    if ((flags & 4u) != 0u) decalRmse.xy *= XR_ADV_StandardTexture(material, 2u, decalUv, vec2(0.0), vec2(0.0), vec4(1.0)).rg;
+    if ((flags & 4u) != 0u) decalRmse.xy *= XR_ADV_StandardRoughnessMetallic(flags,
+        XR_ADV_StandardTexture(material, 2u, decalUv, vec2(0.0), vec2(0.0), vec4(1.0)));
     albedo = mix(albedo, decalBase.rgb, opacity);
     roughness = mix(roughness, clamp(decalRmse.x, 0.04, 1.0), opacity);
     metallic = mix(metallic, clamp(decalRmse.y, 0.0, 1.0), opacity);
     if ((decal.flags & XR_ADV_DECAL_AFFECT_NORMALS) != 0u && (flags & 2u) != 0u)
     {
-        vec3 localNormal = XR_ADV_StandardTexture(material, 1u, decalUv, vec2(0.0), vec2(0.0), vec4(0.5,0.5,1.0,1.0)).xyz * 2.0 - 1.0;
+        vec3 localNormal = XR_ADV_DecodeTangentNormal(XR_ADV_StandardTexture(material, 1u, decalUv, vec2(0.0), vec2(0.0), vec4(0.5,0.5,1.0,1.0)));
         // For p_local = p_world * worldToDecal, the local plane normal maps
         // to world space through worldToDecal itself. This preserves the OBB
         // tangent basis under non-uniform decal transforms.

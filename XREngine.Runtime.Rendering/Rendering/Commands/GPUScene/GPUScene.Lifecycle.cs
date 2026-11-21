@@ -65,6 +65,7 @@ namespace XREngine.Rendering.Commands
             _meshletValidationRevisionByMeshId.Clear();
             _meshletRangeDirtyRange.Clear();
             DestroyMeshletBufferGenerations();
+            DiscardPendingLodAtlasReleases();
 
             _lodTableBuffer?.Destroy();
             _lodTableBuffer = MakeLodTableBuffer();
@@ -206,6 +207,7 @@ namespace XREngine.Rendering.Commands
             _meshletValidationRevisionByMeshId.Clear();
             _meshletRangeDirtyRange.Clear();
             DestroyMeshletBufferGenerations();
+            DiscardPendingLodAtlasReleases();
             _lodTableBuffer?.Destroy();
             _lodTableBuffer = null;
             _lodRequestBuffer?.Destroy();
@@ -262,9 +264,7 @@ namespace XREngine.Rendering.Commands
             _atlasDirty = false;
             _atlasVertexCount = 0;
             _atlasIndexCount = 0;
-            _atlasMeshOffsets.Clear();
             _atlasMeshRefCounts.Clear();
-            _indirectFaceIndices.Clear();
             _atlasVersion = 0;
             _atlasIndexElementSize = IndexSize.FourBytes;
             _activeAtlasTiers.Clear();

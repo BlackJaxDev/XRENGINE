@@ -12,10 +12,7 @@ namespace XREngine.Rendering.Models.Materials
         protected override void SetProgramUniform(XRRenderProgram program, string location)
             => program.Uniform(location, _value);
         internal override string GetShaderValueString()
-            => string.Format("uVector3({0}, {1}, {2})",
-              _value.X.ToString(),
-              _value.Y.ToString(),
-              _value.Z.ToString());
+            => $"uVector3({_value.X}, {_value.Y}, {_value.Z})";
         [Browsable(false)]
         public override object GenericValue => Value;
 

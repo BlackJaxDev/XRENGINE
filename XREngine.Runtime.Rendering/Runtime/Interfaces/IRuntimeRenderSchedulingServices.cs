@@ -60,6 +60,19 @@ public interface IRuntimeRenderSchedulingServices
     void UnsubscribeViewportSwapBuffers(Action swapBuffers);
 
     /// <summary>
+    /// Subscribes a callback to the host frame output preparation event. The event runs on the
+    /// collect thread after the collect frame id advances and before any collect callback, so a
+    /// viewport can decide its output pacing for the frame before the lights plan their shadow
+    /// work. Hosts without this event never call the callback.
+    /// </summary>
+    void SubscribeViewportPrepareFrameOutput(Action prepareFrameOutput) { }
+
+    /// <summary>
+    /// Unsubscribes a callback from the host frame output preparation event.
+    /// </summary>
+    void UnsubscribeViewportPrepareFrameOutput(Action prepareFrameOutput) { }
+
+    /// <summary>
     /// Subscribes a callback to the host viewport collect-visible frame event.
     /// </summary>
     void SubscribeViewportCollectVisible(Action collectVisible);
@@ -169,7 +182,7 @@ public interface IRuntimeRenderSchedulingServices
         => task();
 
     /// <summary>
-    /// Queues a render-thread coroutine that returns <see langword="true"/> when it should continue.
+    /// Queues a render-thread coroutine. The task returns <see langword="true"/> when it is complete and <see langword="false"/> to run again at the next dispatch.
     /// </summary>
     void EnqueueRenderThreadCoroutine(Func<bool> task);
 
@@ -179,7 +192,7 @@ public interface IRuntimeRenderSchedulingServices
     void EnqueueRenderThreadCoroutine(Func<bool> task, RenderThreadJobKind renderThreadKind);
 
     /// <summary>
-    /// Queues a named render-thread coroutine that returns <see langword="true"/> when it should continue.
+    /// Queues a named render-thread coroutine. The task returns <see langword="true"/> when it is complete and <see langword="false"/> to run again at the next dispatch.
     /// </summary>
     void EnqueueRenderThreadCoroutine(Func<bool> task, string reason);
 

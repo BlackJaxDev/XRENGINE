@@ -9,4 +9,5 @@ internal readonly record struct VulkanResidentDrawTemplateVariantKey(
     EMeshSubmissionStrategy SubmissionStrategy,
     ulong InstrumentationSchema,
     EVulkanResidentTemplateMeshDialect MeshDialect,
-    ulong OutputProfileVariant);
+    ulong OutputProfileVariant,
+    ulong SkinnedOutputSetIdentity);

@@ -55,7 +55,7 @@ namespace XREngine
 
         private string _mcpAssistantOpenAiApiKeyEnvVar = string.Empty;
 
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("OpenAI API Key (env var)")]
         [Description("If set, the OpenAI API key is read from this process environment variable at runtime and the key is NOT persisted to disk.")]
         [YamlMember(Alias = "McpAssistantOpenAiApiKeyEnvVar")]
@@ -80,7 +80,7 @@ namespace XREngine
 
         private string _mcpAssistantAnthropicApiKeyEnvVar = string.Empty;
 
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Anthropic API Key (env var)")]
         [Description("If set, the Anthropic API key is read from this process environment variable at runtime and the key is NOT persisted to disk.")]
         [YamlMember(Alias = "McpAssistantAnthropicApiKeyEnvVar")]
@@ -105,7 +105,7 @@ namespace XREngine
 
         private string _mcpAssistantGeminiApiKeyEnvVar = string.Empty;
 
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("Gemini API Key (env var)")]
         [Description("If set, the Gemini API key is read from this process environment variable at runtime and the key is NOT persisted to disk.")]
         [YamlMember(Alias = "McpAssistantGeminiApiKeyEnvVar")]
@@ -130,7 +130,7 @@ namespace XREngine
 
         private string _mcpAssistantGitHubModelsTokenEnvVar = string.Empty;
 
-        [Category("MCP Assistant")]
+        [Category("Assistant")]
         [DisplayName("GitHub Models Token (env var)")]
         [Description("If set, the GitHub Models token is read from this process environment variable at runtime and the token is NOT persisted to disk.")]
         [YamlMember(Alias = "McpAssistantGitHubModelsTokenEnvVar")]

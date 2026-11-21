@@ -24,6 +24,9 @@ public static partial class EditorImGuiUI
         (EVrDesktopView.TextureOutput, "Spectator texture"),
     ];
     
+    // Keeps the combo and its popup inside the main window. A wider popup
+    // can become a separate platform window, which may not receive item clicks.
+    private const float OpenXrDesktopViewComboWidth = 140f;
     private const float ToolbarButtonSize = 26f;
     private const float ToolbarHeight = 34f;
     private const float ToolbarSpacing = 4f;
@@ -340,6 +343,7 @@ public static partial class EditorImGuiUI
         ImGui.SameLine(0f, ToolbarSpacing);
         EVrDesktopView view = EditorOpenXrPawnSwitcher.DesktopView;
         string currentLabel = OpenXrDesktopViews[(int)view].Label;
+        ImGui.SetNextItemWidth(OpenXrDesktopViewComboWidth);
         if (!ImGui.BeginCombo("Desktop view##OpenXR", currentLabel))
             return;
 

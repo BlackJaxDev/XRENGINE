@@ -171,9 +171,9 @@ public sealed class GpuKeyIdRadixSort : IDisposable
         {
             _offsets = new XRDataBuffer(OffsetsBufferName, EBufferTarget.ShaderStorageBuffer, offsetCount, EComponentType.UInt, 1u, false, true, allocateClientSideSource: false)
             {
-                // The histogram pass writes every offset that the prefix and scatter passes read.
+                // The histogram pass writes every offset in device-local memory before the prefix and scatter passes read it.
                 GpuProduced = true,
-                Usage = EBufferUsage.DynamicCopy,
+                Usage = EBufferUsage.StaticCopy,
                 DisposeOnPush = false,
                 PadEndingToVec4 = true,
             };

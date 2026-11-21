@@ -53,6 +53,7 @@ internal static partial class PublishedAnimationPropertyCodec
                 InterpolationTypeIn = (ERadialInterpType)source.InterpolationTypeIn,
                 InterpolationTypeOut = (ERadialInterpType)source.InterpolationTypeOut
             };
+            key.NormalizeRestoredInterpolation();
             animation.Keyframes.Add(key);
         }
         if (state.IsBaked)

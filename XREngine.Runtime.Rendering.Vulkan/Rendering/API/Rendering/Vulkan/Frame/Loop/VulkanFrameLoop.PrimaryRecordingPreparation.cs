@@ -4,7 +4,10 @@ using System.Numerics;
 using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
+using XREngine.Rendering.Compute;
+using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Vulkan.RenderGraph;
+using XREngine.Rendering.OutputDomains;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -20,11 +23,30 @@ internal sealed partial class VulkanFrameLoop
     private readonly HashSet<ulong> _presentNowMeshCompletedSignatures =
         new(MaxWarmMeshPreparationSignatures);
 
+    private static bool SameDeformationOutput(
+        in PendingMeshDraw cached,
+        in VulkanMeshRenderRequest current)
+    {
+        if (cached.SkinnedOutputSetIdentity != current.SkinnedOutputSetIdentity)
+            return false;
+
+        DeformationOutputWitness cachedWitness = cached.DeformationOutputWitness;
+        DeformationOutputWitness currentWitness = current.DeformationOutputWitness;
+        return !cachedWitness.IsValid && !currentWitness.IsValid ||
+               cachedWitness.IsValid && currentWitness.IsValid &&
+               cachedWitness.AllocationIdentity.Matches(currentWitness.AllocationIdentity);
+    }
+
     private VulkanPrimaryCommandRecordingResult RecordPreparedDesktopPrimary(
         ref VulkanFrameAttempt attempt,
         uint imageIndex,
         bool preserveSwapchainForImGuiOverlay)
     {
+        // The second half of a split worker frame has no preparation left: its
+        // first half built the plan and the worker recorded it.
+        if (_desktopWorkerCarry.IsActive && !_desktopWorkerFirstHalf)
+            return FinishDesktopWorkerRecording(ref attempt);
+
         _ = attempt.CompletePhase(
             EVulkanFrameStage.PlanBuild,
             EDesktopFrameFlow.Continue);
@@ -50,6 +72,27 @@ internal sealed partial class VulkanFrameLoop
                 $"Desktop image index {imageIndex} has no command artifact slot.");
         }
 
+        // Worker recording records into the frame slot's offscreen target with
+        // artifacts selected by frame slot, so it does not use the image-indexed
+        // command buffers that the render thread may touch at the same time.
+        VulkanDesktopOffscreenColorResources? offscreenColor =
+            ResolveDesktopOffscreenColorTarget();
+        attempt.UsesDesktopOffscreenTarget = offscreenColor is not null;
+        attempt.DesktopOffscreenImage = offscreenColor?.Images[attempt.FrameSlot] ?? default;
+        uint artifactIndex = imageIndex;
+        CommandBuffer primaryCommandBuffer = primaryBuffers[imageIndex];
+        CommandBuffer dynamicUiCommandBuffer = dynamicUiBuffers[imageIndex];
+        VulkanPrimaryCommandPlan? workerPrimaryPlan = null;
+        if (offscreenColor is not null)
+        {
+            PrimaryCommandArtifactOwner workerOwner = GetOrCreateDesktopWorkerPrimaryOwner(
+                checked((uint)attempt.FrameSlot),
+                out artifactIndex);
+            primaryCommandBuffer = workerOwner.PrimaryCommandBuffer;
+            dynamicUiCommandBuffer = workerOwner.DynamicUiSecondaryCommandBuffer;
+            workerPrimaryPlan = workerOwner.PrimaryCommandPlan;
+        }
+
         FrameOp[] textureUploadOperations = [];
         FrameOp[] drainedOperations = [];
         FrameOp[] staticOperations = [];
@@ -68,6 +111,7 @@ internal sealed partial class VulkanFrameLoop
                 ? attempt.AcceptedFramePlan
                 : null;
         bool submissionMarkersTransferred = false;
+        bool operationLeasesTransferred = false;
         try
         {
             if (acceptedPlan is not null)
@@ -313,7 +357,7 @@ internal sealed partial class VulkanFrameLoop
             // images, compile synchronously, or wait for a cold dependency.
             // Existing published generations remain eligible for this attempt;
             // anything else returns the acquired image through normal deferral.
-            VulkanPrimaryCommandPlan primaryPlan = primaryPlans[imageIndex];
+            VulkanPrimaryCommandPlan primaryPlan = workerPrimaryPlan ?? primaryPlans[imageIndex];
             string replanReason = string.Empty;
             bool nativeBarrierBindingsSuperseded = false;
             int recordingAttemptLimit = attempt.InteractiveResize ? 1 : 2;
@@ -417,7 +461,8 @@ internal sealed partial class VulkanFrameLoop
                         attempt.FrameNumber,
                         _commandRuntime.StateTracker.ClearColor,
                         out VulkanPreparedPrimaryAuthority authority,
-                        out string authorityFailure))
+                        out string authorityFailure,
+                        offscreenColor))
                 {
                     replanReason = authorityFailure;
                     continue;
@@ -526,10 +571,10 @@ internal sealed partial class VulkanFrameLoop
 
                 VulkanPreparedPrimaryCommandInput input =
                     PreparePrimaryCommandInput(
-                        imageIndex,
+                        artifactIndex,
                         checked((uint)attempt.FrameSlot),
-                        primaryBuffers[imageIndex],
-                        dynamicUiBuffers[imageIndex],
+                        primaryCommandBuffer,
+                        dynamicUiCommandBuffer,
                         framePlan,
                         primaryPlan,
                         in authority,
@@ -539,12 +584,33 @@ internal sealed partial class VulkanFrameLoop
                 _ = attempt.CompletePhase(
                     EVulkanFrameStage.CommandRecord,
                     EDesktopFrameFlow.Continue);
+                // The first half of a split worker frame hands the recording to
+                // the worker and returns. The visibility input leases and the
+                // submission markers stay with the carry until the second half.
+                if (_desktopWorkerFirstHalf && acceptedPlan is not null && meshMaterializationComplete)
+                {
+                    StartDesktopWorkerRecording(
+                        ref attempt,
+                        in input,
+                        framePlan,
+                        staticOperations,
+                        staticOperationCount,
+                        dynamicUiOperations,
+                        dynamicUiOperationCount,
+                        textureUploadOperations,
+                        textureUploadOperationCount);
+                    operationLeasesTransferred = true;
+                    submissionMarkersTransferred = true;
+                    return VulkanPrimaryCommandRecordingResult.NoAuthoredOutput(
+                        "The desktop recording continues on the worker lane.");
+                }
+
                 VulkanPrimaryCommandRecordingResult result;
                 using (VulkanCpuStageScope primaryRecordingStage = new(
                            _telemetry,
                            EVulkanCpuStage.PrimaryRecording))
                 {
-                    result = _commandRuntime.RecordPrimary(in input);
+                    result = RecordDesktopPrimaryForExecutionMode(in input);
                 }
                 result = ApplyDesktopPresentNowResultContract(
                     ref attempt,
@@ -634,12 +700,15 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
-            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
-                staticOperations.AsSpan(0, staticOperationCount));
-            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
-                dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
-            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
-                textureUploadOperations.AsSpan(0, textureUploadOperationCount));
+            if (!operationLeasesTransferred)
+            {
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                    staticOperations.AsSpan(0, staticOperationCount));
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                    dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                    textureUploadOperations.AsSpan(0, textureUploadOperationCount));
+            }
             if (!drainedOperationsTransferred)
             {
                 VulkanAdvancedVisibilityInputLease.ReleaseOperations(
@@ -650,7 +719,7 @@ internal sealed partial class VulkanFrameLoop
             if (!submissionMarkersTransferred)
             {
                 _commandRuntime.DiscardSubmissionMarkersForCommandBuffer(
-                    primaryBuffers[imageIndex]);
+                    primaryCommandBuffer);
                 if (acceptedPlan is not null)
                 {
                     acceptedPlan.SettleUnsubmittedSubmissionMarkers();
@@ -982,7 +1051,8 @@ internal sealed partial class VulkanFrameLoop
         ulong sourceFrameId = 0UL,
         bool requireCompleteCohort = false,
         bool allowFrameOwnedAuthoringOperations = false,
-        int requiredSourceOperationCount = -1)
+        int requiredSourceOperationCount = -1,
+        bool openXrEyeCohort = false)
     {
         VulkanPresentNowReadinessWatchdog inactiveWatchdog = default;
         return MaterializeQueuedMeshRenderRequestsCore(
@@ -999,6 +1069,7 @@ internal sealed partial class VulkanFrameLoop
             sliceColdPreparation: false,
             allowFrameOwnedAuthoringOperations,
             requiredSourceOperationCount,
+            openXrEyeCohort,
             ref inactiveWatchdog);
     }
 
@@ -1026,6 +1097,7 @@ internal sealed partial class VulkanFrameLoop
             sliceColdPreparation: sliceColdPreparation,
             allowFrameOwnedAuthoringOperations,
             requiredSourceOperationCount: -1,
+            openXrEyeCohort: false,
             ref watchdog);
 
     private bool MaterializeQueuedMeshRenderRequestsCore(
@@ -1042,6 +1114,7 @@ internal sealed partial class VulkanFrameLoop
         bool sliceColdPreparation,
         bool allowFrameOwnedAuthoringOperations,
         int requiredSourceOperationCount,
+        bool openXrEyeCohort,
         ref VulkanPresentNowReadinessWatchdog watchdog)
     {
         deferredReason = string.Empty;
@@ -1065,11 +1138,13 @@ internal sealed partial class VulkanFrameLoop
         NormalizeQueuedMeshRenderRequests(requestCount);
         ApplyResidentTemplateProjectionDeltas(requestCount);
         InjectResidentTemplateDeviceLossIfRequested();
+        bool hasIndexedIndirect = false;
         for (int index = 0; index < requestCount; ++index)
         {
             if (_meshOperationRequestScratch[index].IndexedIndirect is not null)
             {
                 allowPreparedCohort = false;
+                hasIndexedIndirect = true;
                 break;
             }
         }
@@ -1118,6 +1193,22 @@ internal sealed partial class VulkanFrameLoop
                 out _),
             foregroundRequired,
             _telemetry);
+        VulkanPreparedMeshOperationCohort? openXrCohort =
+            openXrEyeCohort && !allowPreparedCohort && !hasIndexedIndirect
+                ? SelectOpenXrMeshOperationCohort(requestCount)
+                : null;
+        if (openXrCohort is not null &&
+            TryReuseOpenXrMeshOperationCohort(
+                openXrCohort,
+                requestCount,
+                in materializationSnapshot,
+                allowFrameOwnedAuthoringOperations))
+        {
+            VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
+            return true;
+        }
+
         bool preparedCohortMatched = false;
         bool stagedPreparedCohort = false;
         if (allowPreparedCohort)
@@ -1145,6 +1236,9 @@ internal sealed partial class VulkanFrameLoop
                 in materializationSnapshot,
                 out preparedCohortMatched,
                 out deferredReason);
+            RenderOutputDomainTelemetry.Count(preparedCohortMatched
+                ? ERenderOutputDomainCounter.MeshCohortMatches
+                : ERenderOutputDomainCounter.MeshCohortMisses);
         }
         if (stagedPreparedCohort)
         {
@@ -1199,6 +1293,13 @@ internal sealed partial class VulkanFrameLoop
                     _quarantinedMeshOperationSignatures.Contains(
                         preparationSignature))
                 {
+                    if (request.RequiredForOutput)
+                    {
+                        string reason = $"Required mesh draw is quarantined: pass={request.PassIndex}, " +
+                            $"mesh='{request.Renderer.Mesh?.Name ?? "<unnamed>"}'.";
+                        throw new RequiredRenderCommandException(reason,
+                            new NotSupportedException(reason));
+                    }
                     quarantinedRequestCount++;
                     cohortMaterializationComplete = false;
                     continue;
@@ -1207,6 +1308,12 @@ internal sealed partial class VulkanFrameLoop
                 XRRenderPipelineInstance? pipeline = request.Pipeline;
                 if (pipeline is null)
                 {
+                    if (request.RequiredForOutput)
+                    {
+                        const string reason = "A required mesh draw lost its rendering pipeline.";
+                        throw new RequiredRenderCommandException(reason,
+                            new InvalidOperationException(reason));
+                    }
                     cohortMaterializationComplete = false;
                     continue;
                 }
@@ -1276,7 +1383,7 @@ internal sealed partial class VulkanFrameLoop
                         : default;
                 do
                 {
-                    if (request.Context.CaptureOwnerToken is { IsOpen: false })
+                    if (VulkanMeshRenderRequest.GetContextReference(in request).CaptureOwnerToken is { IsOpen: false })
                     {
                         captureOwnerClosed = true;
                         materialized = false;
@@ -1291,7 +1398,7 @@ internal sealed partial class VulkanFrameLoop
                         prewarmDescriptorAllocation: !previouslyMaterialized,
                         out operationRequest,
                         out plannerGenerationDetail);
-                    if (request.Context.CaptureOwnerToken is { IsOpen: false })
+                    if (VulkanMeshRenderRequest.GetContextReference(in request).CaptureOwnerToken is { IsOpen: false })
                     {
                         captureOwnerClosed = true;
                         materialized = false;
@@ -1361,6 +1468,13 @@ internal sealed partial class VulkanFrameLoop
                         allowFrameOwnedAuthoringOperations,
                         out FrameOp? enqueuedOperation))
                 {
+                    if (request.RequiredForOutput)
+                    {
+                        string reason = $"Required mesh draw could not enter the frame operation queue: " +
+                            $"pass={request.PassIndex}, mesh='{request.Renderer.Mesh?.Name ?? "<unnamed>"}'.";
+                        throw new RequiredRenderCommandException(reason,
+                            new NotSupportedException(reason));
+                    }
                     _meshOperationWarmPreparationSignatures.Remove(
                         preparationSignature);
                     if (preparationSignature != 0)
@@ -1394,7 +1508,10 @@ internal sealed partial class VulkanFrameLoop
                 }
 
                 bool reusable = request.IndexedIndirect is null &&
-                    IsPreparedMeshOperationCohortEligible(in request, in operationRequest);
+                    IsPreparedMeshOperationCohortEligible(
+                        in request,
+                        in operationRequest,
+                        openXrEye: openXrCohort is not null);
                 if (reusable && enqueuedOperation is MeshDrawOp { PreserveSubmissionOrder: true })
                     reusable = false;
                 _meshOperationMaterializationScratch[requestIndex] =
@@ -1451,13 +1568,29 @@ internal sealed partial class VulkanFrameLoop
                 $"Requests={requestCount}, deferred={deferredRequestCount}, unavailable={unavailableRequestCount}, " +
                 $"quarantined={quarantinedRequestCount}, resume={resumeRequestIndex}. Detail: {deferredReason}";
 
-        if (allowPreparedCohort &&
+        bool cohortPublishable =
             cohortMaterializationComplete &&
             reusableCohortEntryCount > 0 &&
-            cohortResourceUseCount <= _preparedMeshIngress.ResourceUseCapacity &&
             deferredRequestCount == 0 &&
             unavailableRequestCount == 0 &&
-            quarantinedRequestCount == 0)
+            quarantinedRequestCount == 0;
+        if (openXrCohort is not null)
+        {
+            if (cohortPublishable)
+            {
+                openXrCohort.Publish(
+                    _meshOperationCohortEntryScratch.AsSpan(0, requestCount),
+                    _meshOperationMaterializationScratch.AsSpan(0, requestCount));
+                Interlocked.Increment(ref _openXrMeshCohortBuilds);
+            }
+            else
+            {
+                openXrCohort.Invalidate();
+            }
+        }
+        else if (allowPreparedCohort &&
+            cohortPublishable &&
+            cohortResourceUseCount <= _preparedMeshIngress.ResourceUseCapacity)
         {
             _preparedMeshOperationCohort.Publish(
                 _meshOperationCohortEntryScratch.AsSpan(0, requestCount),
@@ -1773,17 +1906,36 @@ internal sealed partial class VulkanFrameLoop
                 }
                 else
                 {
+                    PendingMeshDraw cachedDraw = template.Draw;
+                    if (!SameDeformationOutput(
+                            in cachedDraw, in request) ||
+                        !SkinningPrepassDispatcher.ValidateVulkanOutputWitness(
+                            request.Renderer.MeshRenderer,
+                            request.DeformationOutputWitness))
+                    {
+                        _preparedMeshOperationCohort.Invalidate();
+                        deferredReason =
+                            "Prepared mesh-operation cohort has no valid deformation output receipt.";
+                        return false;
+                    }
+
                     PendingMeshDraw draw = template.Draw with
                     {
                         ModelMatrix = request.ModelMatrix,
                         PreviousModelMatrix = request.PreviousModelMatrix,
                         SourceFlatDirection = request.SourceFlatDirection,
+                        EditorHighlightBits = request.EditorHighlightBits,
+                        EditorHighlightOutput = request.EditorHighlightOutput,
                         MaterialOverride = request.ResolvedMaterial.Material,
                         Instances = request.ExpandedInstances,
                         BillboardMode = request.BillboardMode,
                         TransformId = request.TransformId,
                         ViewSnapshot = request.ViewSnapshot,
                         ShadowCasterRelevance = request.ShadowCasterRelevance,
+                        CanonicalDrawIdentitySnapshot = request.CanonicalDrawIdentitySnapshot,
+                        ResidentTemplateHandle = request.ResidentTemplateHandle,
+                        DeformationOutputWitness = request.DeformationOutputWitness,
+                        SkinnedOutputSetIdentity = request.SkinnedOutputSetIdentity,
                     };
                     draw = draw with
                     {
@@ -1873,8 +2025,23 @@ internal sealed partial class VulkanFrameLoop
             {
                 ref readonly VulkanMeshRenderRequest request =
                     ref _meshOperationRequestScratch[index];
+                if (!SkinningPrepassDispatcher.ValidateVulkanOutputWitness(
+                        request.Renderer.MeshRenderer,
+                        request.DeformationOutputWitness))
+                {
+                    deferredReason =
+                        "Resident mesh template has no valid deformation output receipt.";
+                    return false;
+                }
+
                 VulkanResidentDrawTemplate template =
                     _residentTemplateHitScratch[index]!;
+                PendingMeshDraw templateDraw = template.NativeState.DrawTemplate;
+                if (!SameDeformationOutput(in templateDraw, in request))
+                {
+                    deferredReason = "Resident mesh template binds a different deformation output allocation.";
+                    return false;
+                }
                 XRRenderPipelineInstance pipeline = request.Pipeline!;
                 XRCamera? camera = pipeline.LastRenderingCamera ??
                     pipeline.LastSceneCamera;
@@ -1895,6 +2062,8 @@ internal sealed partial class VulkanFrameLoop
                     ModelMatrix = request.ModelMatrix,
                     PreviousModelMatrix = request.PreviousModelMatrix,
                     SourceFlatDirection = request.SourceFlatDirection,
+                    EditorHighlightBits = request.EditorHighlightBits,
+                    EditorHighlightOutput = request.EditorHighlightOutput,
                     MaterialOverride = request.ResolvedMaterial.Material,
                     Instances = request.ExpandedInstances,
                     BillboardMode = request.BillboardMode,
@@ -1905,6 +2074,8 @@ internal sealed partial class VulkanFrameLoop
                         request.CanonicalDrawIdentitySnapshot,
                     ResidentTemplateHandle =
                         _residentTemplateHandleScratch[index],
+                    DeformationOutputWitness = request.DeformationOutputWitness,
+                    SkinnedOutputSetIdentity = request.SkinnedOutputSetIdentity,
                 };
                 draw = draw with
                 {
@@ -1972,9 +2143,17 @@ internal sealed partial class VulkanFrameLoop
                 legacyHoleMaterializationCount);
     }
 
+    /// <summary>
+    /// Decides whether a materialized request may be kept as a cohort recipe.
+    /// The OpenXR eye cohort also accepts typed binding publishers and frame-source
+    /// samplers: every reuse reacquires the persistent binding artifact and requires
+    /// the same object, and that artifact is keyed by the publishers' generations,
+    /// while recording resolves frame-source descriptors live for each draw.
+    /// </summary>
     private bool IsPreparedMeshOperationCohortEligible(
         in VulkanMeshRenderRequest request,
-        in VulkanMeshOperationRequest operation)
+        in VulkanMeshOperationRequest operation,
+        bool openXrEye = false)
     {
         XRMaterial material = request.ResolvedMaterial.Material;
         VkRenderProgram? program = operation.Draw.PreparedProgram;
@@ -1982,7 +2161,7 @@ internal sealed partial class VulkanFrameLoop
             operation.Draw.ProgramBindingSnapshot;
         bool reusableBindings = bindings is null ||
             (bindings.IsImmutableBindingArtifact &&
-             !bindings.HasMutableFrameSourceSamplerBindings);
+             (openXrEye || !bindings.HasMutableFrameSourceSamplerBindings));
         return request.Pipeline is not null &&
                request.Renderer.IsActive &&
                request.Renderer.BackendContext.IsDeviceOperational &&
@@ -2002,8 +2181,9 @@ internal sealed partial class VulkanFrameLoop
                !request.Renderer.MeshRenderer.HasRenderDataPreparation &&
                !request.Renderer.MeshRenderer.HasSettingUniformsHandlers &&
                !material.HasSettingUniformsHandlers &&
-               material.BindingPublishers.Count == 0 &&
-               request.Renderer.MeshRenderer.BindingPublishers.Count == 0 &&
+               (openXrEye ||
+                (material.BindingPublishers.Count == 0 &&
+                 request.Renderer.MeshRenderer.BindingPublishers.Count == 0)) &&
                RuntimeEngine.Rendering.State.RenderingPipelineState
                    ?.HasActiveScopedBindings != true &&
                program is { IsActive: true, IsLinked: true } &&
@@ -2014,16 +2194,19 @@ internal sealed partial class VulkanFrameLoop
     private bool IsPreparedMeshOperationCohortMatch(
         in VulkanMeshRenderRequest current,
         in VulkanPreparedMeshOperationCohortEntry cached,
-        in VulkanMeshOperationRequest template)
+        in VulkanMeshOperationRequest template,
+        bool openXrEye = false)
     {
         if ((cached.IsReusable &&
-             !IsPreparedMeshOperationCohortEligible(in current, in template)) ||
+             !IsPreparedMeshOperationCohortEligible(in current, in template, openXrEye)) ||
             !ReferenceEquals(current.Renderer, cached.Renderer) ||
             current.PassIndex != cached.PassIndex ||
             !ReferenceEquals(current.Pipeline, cached.Pipeline) ||
             !ReferenceEquals(current.ResolvedMaterial.Material, cached.Material) ||
             current.PreparationCompatibilitySignature !=
                 cached.PreparationCompatibilitySignature ||
+            (cached.IsReusable &&
+             !SameDeformationOutput(template.Draw, in current)) ||
             !ReferenceEquals(current.MaterialOverride, cached.MaterialOverride) ||
             !ReferenceEquals(current.RenderOptionsOverride,
                 cached.RenderOptionsOverride) ||
@@ -2186,8 +2369,11 @@ internal sealed partial class VulkanFrameLoop
         out VulkanMeshOperationRequest operationRequest,
         out string plannerGenerationDetail)
     {
-        FrameOpContext requestContext = request.Context;
-        VulkanMeshProducerSnapshot producer = request.Producer;
+        RenderOutputDomainTelemetry.Count(ERenderOutputDomainCounter.MeshRequestsMaterialized);
+        ref readonly FrameOpContext requestContext =
+            ref VulkanMeshRenderRequest.GetContextReference(in request);
+        ref readonly VulkanMeshProducerSnapshot producer =
+            ref VulkanMeshRenderRequest.GetProducerReference(in request);
         int descriptorViewFamilyIdentity =
             requestContext.OutputTargetIdentity != 0
                 ? requestContext.OutputTargetIdentity
@@ -2257,6 +2443,19 @@ internal sealed partial class VulkanFrameLoop
                 OperationWorkspace = _commandRuntime.GetFrameOpWorkspace(),
             };
         }
+        else if (context.OperationWorkspace is null &&
+            context.ContextKind is EVulkanFrameOpContextKind.OpenXrEye or
+                EVulkanFrameOpContextKind.OpenXrMirror)
+        {
+            // Captured eye operations can stay referenced after their render
+            // frame ends, so the per-frame worker pool cannot hold them. This pool
+            // reuses an operation only after the frames in flight have passed,
+            // which removes a new operation and resource-use list per eye draw.
+            context = context with
+            {
+                OperationWorkspace = _openXrCapturedOperationWorkspace,
+            };
+        }
 
         XRFrameBuffer? target =
             request.ExplicitTarget ?? request.ProducerSnapshot.Target;
@@ -2287,12 +2486,14 @@ internal sealed partial class VulkanFrameLoop
                 context.PreserveSubmissionOrderBlock ||
                 queueThread.OrderedComputeBatchCapture is not null);
         }
+        operation.AttachTransientReadResource(
+            request.Draw.DeformationOutputWitness.Receipt);
         bool accepted = _commandRuntime.TryEnqueueContentFrameOperation(
             _frameOperationQueue,
             operation,
             passIndex,
             out _);
-        if (!accepted && request.IndexedIndirect is not null)
+        if (!accepted)
             operation.ReleaseAuthoringSnapshot();
         return accepted;
     }
@@ -2548,7 +2749,11 @@ internal sealed partial class VulkanFrameLoop
             authority.Policy,
             authority.TrackedTargetLayout,
             FrameDataSlotIndex: frameDataSlotIndex,
-            TimingQuerySlotIndex: imageIndex,
+            // Worker artifacts have no swapchain image, so they use the frame-data
+            // slot as their timing slot, like OpenXR eye primaries.
+            TimingQuerySlotIndex: imageIndex >= VulkanCommandRuntime.DesktopWorkerArtifactIndexBase
+                ? frameDataSlotIndex
+                : imageIndex,
             ReadOnlyStorageAuthority: FrameDataArena is { } arena
                 ? ResourceRuntime.ReadOnlyStoragePreparedMap.CreateAuthority(
                     arena,
@@ -2574,15 +2779,12 @@ internal sealed partial class VulkanFrameLoop
         ulong sourceFrameId,
         ColorF4 clearColor,
         out VulkanPreparedPrimaryAuthority authority,
-        out string reason)
+        out string reason,
+        VulkanDesktopOffscreenColorResources? offscreenColor = null)
     {
         authority = default;
         reason = string.Empty;
 
-        Image desktopImage = OutputRuntime.Desktop.Images is not null &&
-            imageIndex < OutputRuntime.Desktop.Images.Length
-                ? OutputRuntime.Desktop.Images[imageIndex]
-                : default;
         ImageSubresourceRange colorRange = new()
         {
             AspectMask = ImageAspectFlags.ColorBit,
@@ -2591,35 +2793,60 @@ internal sealed partial class VulkanFrameLoop
             BaseArrayLayer = 0,
             LayerCount = 1,
         };
-        _commandRuntime.Synchronization.TryGetSubmittedImageLayout(
-            desktopImage,
-            in colorRange,
-            out ImageLayout trackedTargetLayout);
-
-        VulkanSwapchainRecordingTargetInput targetInput = new(
-            imageIndex,
-            OpenXrTargetContext: null,
-            OutputRuntime.DesktopDepthResources,
-            OpenXrInitialColorLayout: ImageLayout.Undefined,
-            DesktopInitialColorLayout: trackedTargetLayout);
-        SwapchainRecordingTarget target = OutputRuntime.ResolveRecordingTarget(
-            in targetInput);
-        if (!target.IsValid)
+        ImageLayout trackedTargetLayout;
+        SwapchainRecordingTarget target;
+        if (offscreenColor is not null)
         {
-            reason =
-                "The acquired desktop image no longer has a valid frozen recording target.";
-            return false;
+            // The scene records into the frame slot's offscreen color image with the
+            // shared desktop depth target. Nothing here reads the acquired image, so
+            // worker preparation can run before the desktop acquire.
+            if (!TryCaptureDesktopOffscreenRecordingTarget(
+                    offscreenColor,
+                    presentationDescriptorSlot,
+                    in colorRange,
+                    out target,
+                    out trackedTargetLayout,
+                    out reason))
+            {
+                return false;
+            }
         }
-
-        target = target with
+        else
         {
-            RenderPass = ResourceRuntime.SwapchainRenderPass,
-            LoadRenderPass = ResourceRuntime.SwapchainLoadRenderPass,
-            Framebuffer = OutputRuntime.Desktop.Framebuffers is not null &&
-                imageIndex < OutputRuntime.Desktop.Framebuffers.Length
-                    ? OutputRuntime.Desktop.Framebuffers[imageIndex]
-                    : default,
-        };
+            Image desktopImage = OutputRuntime.Desktop.Images is not null &&
+                imageIndex < OutputRuntime.Desktop.Images.Length
+                    ? OutputRuntime.Desktop.Images[imageIndex]
+                    : default;
+            _commandRuntime.Synchronization.TryGetSubmittedImageLayout(
+                desktopImage,
+                in colorRange,
+                out trackedTargetLayout);
+
+            VulkanSwapchainRecordingTargetInput targetInput = new(
+                imageIndex,
+                OpenXrTargetContext: null,
+                OutputRuntime.DesktopDepthResources,
+                OpenXrInitialColorLayout: ImageLayout.Undefined,
+                DesktopInitialColorLayout: trackedTargetLayout);
+            target = OutputRuntime.ResolveRecordingTarget(
+                in targetInput);
+            if (!target.IsValid)
+            {
+                reason =
+                    "The acquired desktop image no longer has a valid frozen recording target.";
+                return false;
+            }
+
+            target = target with
+            {
+                RenderPass = ResourceRuntime.SwapchainRenderPass,
+                LoadRenderPass = ResourceRuntime.SwapchainLoadRenderPass,
+                Framebuffer = OutputRuntime.Desktop.Framebuffers is not null &&
+                    imageIndex < OutputRuntime.Desktop.Framebuffers.Length
+                        ? OutputRuntime.Desktop.Framebuffers[imageIndex]
+                        : default,
+            };
+        }
         VulkanPreparedResourcePlanStamp resourcePlanStamp = new(
             frozenPlanningSnapshot,
             plannerState.ResourcePlannerRevision,
@@ -2655,6 +2882,8 @@ internal sealed partial class VulkanFrameLoop
             QueueOverlapMode: RuntimeEngine.EffectiveSettings.VulkanQueueOverlapMode,
             ResizeContinuityPresentationSource: resizeContinuitySource,
             ResizeContinuityPresentationSourceLease: resizeContinuitySourceLease);
+        if (offscreenColor is not null)
+            policy = policy with { FinalTargetLayout = ImageLayout.TransferSrcOptimal };
         authority = new VulkanPreparedPrimaryAuthority(
             target,
             CapturePreparedRenderTargetSnapshot(
@@ -2671,6 +2900,52 @@ internal sealed partial class VulkanFrameLoop
                     .VkForceSwapchainMagenta),
             policy,
             trackedTargetLayout);
+        return true;
+    }
+
+    /// <summary>
+    /// Builds the recording target for desktop worker recording: the frame slot's
+    /// offscreen color image and the shared desktop depth target. Dynamic rendering
+    /// is required, so no render pass or framebuffer is set.
+    /// </summary>
+    private bool TryCaptureDesktopOffscreenRecordingTarget(
+        VulkanDesktopOffscreenColorResources offscreenColor,
+        int frameSlot,
+        in ImageSubresourceRange colorRange,
+        out SwapchainRecordingTarget target,
+        out ImageLayout trackedTargetLayout,
+        out string reason)
+    {
+        target = default;
+        trackedTargetLayout = ImageLayout.Undefined;
+        reason = string.Empty;
+        VulkanSwapchainDepthResources? depth = OutputRuntime.DesktopDepthResources;
+        if (offscreenColor.OutputGeneration != OutputRuntime.Desktop.Generation ||
+            (uint)frameSlot >= (uint)offscreenColor.SlotCount ||
+            depth is null ||
+            depth.Extent.Width != offscreenColor.Extent.Width ||
+            depth.Extent.Height != offscreenColor.Extent.Height)
+        {
+            reason = "The desktop offscreen color target does not match the live desktop output generation.";
+            return false;
+        }
+
+        Image offscreenImage = offscreenColor.Images[frameSlot];
+        _commandRuntime.Synchronization.TryGetSubmittedImageLayout(
+            offscreenImage,
+            in colorRange,
+            out trackedTargetLayout);
+        target = new SwapchainRecordingTarget(
+            offscreenImage,
+            offscreenColor.Views[frameSlot],
+            offscreenColor.Format,
+            offscreenColor.Extent,
+            depth.Image,
+            depth.View,
+            depth.Format,
+            depth.Aspect,
+            trackedTargetLayout,
+            ImageEverPresentedAtRecordStart: trackedTargetLayout != ImageLayout.Undefined);
         return true;
     }
 
@@ -2830,7 +3105,7 @@ internal sealed partial class VulkanFrameLoop
                 {
                     if (renderer.Mesh?.HasSkinning == true)
                         renderer.MeshRenderer.PushBoneMatricesToGPU();
-                    if (renderer.Mesh?.HasBlendshapes == true)
+                    if (renderer.Mesh?.HasBlendshapeDeformation == true)
                         renderer.MeshRenderer.PushBlendshapeWeightsToGPU();
                 }
             }

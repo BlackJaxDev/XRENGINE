@@ -19,9 +19,23 @@ and generated published-game launchers:
 - `Benchmark`
 - `PublishedDefault`
 
-Executable project files declare the compile/runtimeconfig side of GC behavior:
-editor and VR client use workstation/background GC, the server uses server GC,
-and generated launcher projects use workstation/background GC by default.
+Executable project files declare the compile/runtimeconfig side of GC behavior.
+The editor, the VR client, the server, and generated launcher projects use
+server GC with background collection and dynamic adaptation
+(`GarbageCollectionAdaptationMode` 1, also called DATAS). Games must not stutter,
+so the GC mode with the shortest pauses is the default for every session.
+
+On the imported-avatar VR test (2026-11-02, 40 s windows, same build):
+
+| GC mode | Collections | Total pause | Mean pause | Worst second |
+|---|---:|---:|---:|---:|
+| Workstation, background | 18 | 126 ms | 7.0 ms | 20.6 ms |
+| Server, DATAS | 9 | 19 ms | 2.1 ms | 3.8 ms |
+| Server, 32 fixed heaps | 1 | 128 ms | 128 ms | 128 ms |
+| Server, 4 fixed heaps | 5 | 23 ms | 4.6 ms | 12.2 ms |
+
+Do not turn off dynamic adaptation with server GC: a fixed heap count per core
+gives a very large gen0 budget and a long pause when it fills.
 Runtime latency mode is selected by `Engine.ConfigureMemoryPolicy(...)` and
 `Engine.EnsureMemoryPolicyConfigured(...)` so launch mode can still choose
 editor, desktop, VR, server, benchmark, or published-game behavior.

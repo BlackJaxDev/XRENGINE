@@ -496,6 +496,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
                 catch (Exception ex)
                 {
+                    if (ex is RequiredRenderCommandException or RenderResourcePreparationPendingException)
+                    {
+                        // A pending required resource must defer the complete frame.
+                        UnwindFrameBufferBindings(i);
+                        throw;
+                    }
                     if (instance.PropagateCommandExceptions)
                     {
                         commandFailure ??= ex;
@@ -600,13 +606,21 @@ namespace XREngine.Rendering.Pipelines.Commands
             for (int i = 0; i < _collectVisibleCommands.Count; i++)
                 _collectVisibleCommands[i].CollectVisible();
         }
+        /// <summary>
+        /// Profiler scope names for <see cref="SwapBuffers"/>, one per command type. The names are
+        /// built once, so the per-frame swap does not format a new string for every command.
+        /// </summary>
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, string> SwapScopeNames = new();
+
         public void SwapBuffers()
         {
             using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("ViewportRenderCommandContainer.SwapBuffers");
             for (int i = 0; i < _collectVisibleCommands.Count; i++)
             {
                 var command = _collectVisibleCommands[i];
-                using var commandSample = RuntimeRenderingHostServices.Profiling.StartProfileScope($"ViewportRenderCommandContainer.Swap.{command.GetType().Name}");
+                string scopeName = SwapScopeNames.GetOrAdd(command.GetType(),
+                    static type => "ViewportRenderCommandContainer.Swap." + type.Name);
+                using var commandSample = RuntimeRenderingHostServices.Profiling.StartProfileScope(scopeName);
                 command.SwapBuffers();
             }
         }

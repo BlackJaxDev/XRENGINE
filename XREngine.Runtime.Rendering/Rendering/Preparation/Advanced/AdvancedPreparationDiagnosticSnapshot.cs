@@ -12,6 +12,9 @@ public readonly record struct AdvancedPreparationDiagnosticSnapshot(
     AdvancedFrameUploadTelemetrySnapshot FrameUploadTelemetry,
     AdvancedVisibilityContentTelemetry VisibilityContent)
 {
+    /// <summary>Current cold mesh preparation cursor and budget.</summary>
+    public AdvancedMeshPreparationDiagnosticSnapshot MeshPreparation { get; init; }
+
     /// <summary>Exact mesh-input generation selected for the last preparation attempt.</summary>
     public ulong DeformationSourceGeneration { get; init; }
 

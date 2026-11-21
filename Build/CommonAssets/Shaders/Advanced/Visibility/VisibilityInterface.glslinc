@@ -14,6 +14,17 @@
 #define XR_ADV_VIS_PRODUCER_CPU_STATIC_INDEXED 3u
 #define XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED 4u
 
+// One meshlet task workgroup tests this many consecutive meshlets of one draw.
+// The preparation shaders launch ceil(meshletCount / this value) task groups
+// for a meshlet draw.
+#define XR_ADV_TASK_MESHLETS_PER_GROUP 32u
+// Flags in the late mesh payload table of a meshlet draw. Bit 31: the draw
+// was already drawn by the early raster, so the late task stage only adds the
+// meshlets that early did not draw (recheck). Bit 30: no current-frame depth
+// pyramid exists (multisample visibility), so the late task stage skips Hi-Z.
+#define XR_ADV_LATE_MESHLET_RECHECK (1u << 31u)
+#define XR_ADV_LATE_MESHLET_NO_HIZ (1u << 30u)
+#define XR_ADV_LATE_MESHLET_PAYLOAD_MASK 0x3FFFFFFFu
 #define XR_ADV_VIS_PRODUCER_MASK 0x7u
 #define XR_ADV_VIS_ORIGIN_SHIFT 3u
 #define XR_ADV_VIS_MASKED_SHIFT 4u
@@ -188,6 +199,49 @@ readonly buffer XRAdvancedVisibilityCandidates { uint records[]; } XR_ADV_Visibi
 #endif
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_PERSISTENT_STATE)
 buffer XRAdvancedVisibilityPersistentState { uint records[]; } XR_ADV_VisibilityPersistentState;
+
+#if defined(XR_ADV_BACKEND_VULKAN)
+// Meshlet visibility history of the Vulkan meshlet task stage. One persistent
+// buffer is shared by all frame slots and is used in GPU submission order.
+// Layout, in 32-bit words:
+//   [0, MAX_VIEWS)       one parity word per view;
+//   then for each view   two bit sets of SET_WORDS words each.
+// For a view with parity p, set p is the previous-frame set and set p ^ 1 is
+// the current-frame set. Bit m of a set belongs to global meshlet index m.
+// EarlyVisibility flips the parity once per frame and view. The early task
+// stage reads only the previous set. LateVisibility clears the current set,
+// and the late task stage sets bits in it with atomicOr only. A meshlet index
+// at or above the capacity has no history: it counts as visible last frame.
+#ifndef XR_ADV_BINDING_VISIBILITY_MESHLET_HISTORY
+#define XR_ADV_BINDING_VISIBILITY_MESHLET_HISTORY 71
+#endif
+#define XR_ADV_MESHLET_HISTORY_MAX_VIEWS 8u
+#define XR_ADV_MESHLET_HISTORY_MESHLET_CAPACITY 2097152u
+#define XR_ADV_MESHLET_HISTORY_SET_WORDS (XR_ADV_MESHLET_HISTORY_MESHLET_CAPACITY / 32u)
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_MESHLET_HISTORY)
+buffer XRAdvancedVisibilityMeshletHistory { uint words[]; } XR_ADV_VisibilityMeshletHistory;
+
+bool XR_ADV_MeshletHistoryAvailable(uint viewIndex)
+{
+    uint required = XR_ADV_MESHLET_HISTORY_MAX_VIEWS +
+        XR_ADV_MESHLET_HISTORY_MAX_VIEWS * 2u * XR_ADV_MESHLET_HISTORY_SET_WORDS;
+    return viewIndex < XR_ADV_MESHLET_HISTORY_MAX_VIEWS &&
+        uint(XR_ADV_VisibilityMeshletHistory.words.length()) >= required;
+}
+
+uint XR_ADV_MeshletHistoryParity(uint viewIndex)
+{
+    return XR_ADV_VisibilityMeshletHistory.words[viewIndex] & 1u;
+}
+
+// Word index of the 32 meshlets that start at (meshletIndex & ~31) in one set.
+uint XR_ADV_MeshletHistoryWord(uint viewIndex, uint setIndex, uint meshletIndex)
+{
+    return XR_ADV_MESHLET_HISTORY_MAX_VIEWS +
+        (viewIndex * 2u + setIndex) * XR_ADV_MESHLET_HISTORY_SET_WORDS +
+        (meshletIndex >> 5u);
+}
+#endif
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_DEFERRED_INDICES)
 buffer XRAdvancedVisibilityDeferredIndices { uint records[]; } XR_ADV_VisibilityDeferredIndices;
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_VISIBLE_INDICES)
@@ -221,7 +275,13 @@ struct XRAdvancedVisibilityCounterRecord
     uint decodeOutOfBounds;
     uint depthPyramidBuilds;
     uint unsupportedDisplacement;
-    uint reserved[5];
+    // Words 11 and 12 belong to PatchPhysicsChainBounds.comp.
+    uint reserved[2];
+    // Early-raster meshlet task-stage results. The late-compute counter copy
+    // runs after the early raster, so the delayed receipt holds these words.
+    uint meshletEarlyVisible;
+    uint meshletEarlyFrustumCulled;
+    uint meshletEarlyConeCulled;
     uvec2 drawLookupSegment;
     uvec2 instanceLookupSegment;
     uvec2 transformLookupSegment;
@@ -233,6 +293,10 @@ struct XRAdvancedVisibilityCounterRecord
     uvec2 textureLookupSegment;
     uvec2 samplerLookupSegment;
     uvec2 shadowLookupSegment;
+    // Early-raster meshlet results that follow the lookup segments: meshlets that
+    // the previous-frame history culled, and triangles of the launched meshlets.
+    uint meshletEarlyHistoryCulled;
+    uint meshletEarlyTriangles;
 };
 
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_COUNTERS)
@@ -441,11 +505,15 @@ buffer XRAdvancedVisibilityLateMeshPayloads { uint records[]; } XR_ADV_Visibilit
 #if defined(XR_ADV_ENABLE_DEPTH_PYRAMID_IMAGES) && defined(XR_ADV_BACKEND_VULKAN)
 layout(set = XR_ADV_VISIBILITY_SET, binding = XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_SAMPLED)
 uniform sampler2D XR_ADV_DepthPyramidSampled;
-layout(set = XR_ADV_VISIBILITY_SET, binding = XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE, r32f)
-writeonly uniform image2D XR_ADV_DepthPyramidStorage;
 #define XR_ADV_DEPTH_PYRAMID_SIZE() textureSize(XR_ADV_DepthPyramidSampled, 0)
 #define XR_ADV_LOAD_DEPTH_PYRAMID(coordinate) texelFetch(XR_ADV_DepthPyramidSampled, coordinate, 0)
+// The late meshlet task stage only reads the pyramid. The storage binding is
+// visible to compute only, so the task stage must not declare it.
+#if !defined(XR_ADV_VISIBILITY_LATE_TASK)
+layout(set = XR_ADV_VISIBILITY_SET, binding = XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE, r32f)
+writeonly uniform image2D XR_ADV_DepthPyramidStorage;
 #define XR_ADV_STORE_DEPTH_PYRAMID(coordinate, value) imageStore(XR_ADV_DepthPyramidStorage, coordinate, value)
+#endif
 #elif defined(XR_ADV_ENABLE_DEPTH_PYRAMID_IMAGES) && defined(XR_ADV_BACKEND_OPENGL)
 // GL owns one layered image for the complete frozen view set.  The preparation
 // push record selects the physical layer, avoiding a mutable per-view uniform
@@ -654,14 +722,15 @@ bool XR_ADV_TryResolveTextureReference(
         XR_ADV_LoadEncodedSampler(encodedSamplerIndex);
     if ((encodedSampler.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
         return false;
-    encodedReference =
+    // A texture that is still loading has encoded index 0, the generic fallback row.
+    // Check residency before the assignment, so a failed resolve keeps the fallback
+    // of this binding (for example white base color) and not the generic zero.
+    XRAdvancedEncodedTextureReference resolvedReference =
         XR_ADV_LoadEncodedTexture(textureRecord.encodedReferenceIndex);
-#endif
-    if ((encodedReference.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
+    if ((resolvedReference.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
         return false;
-
-#if !defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
-    encodedReference.payload1 = encodedSampler.payload0;
+    resolvedReference.payload1 = encodedSampler.payload0;
+    encodedReference = resolvedReference;
 #endif
     return true;
 }

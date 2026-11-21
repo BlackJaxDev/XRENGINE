@@ -10,10 +10,41 @@ public static partial class SerializedMaterialImporter
     private static void ApplySourceToonLatePassMetadata(
         XRMaterial material,
         SerializedMaterialDocument document,
-        ICollection<MaterialConversionDiagnostic> diagnostics)
+        ICollection<MaterialConversionDiagnostic> diagnostics,
+        SourceOrderedSurfacePlan orderedSurface)
     {
         if (material.RenderPass != (int)EDefaultRenderPass.TransparentForward)
             return;
+
+        if (SourceToonRenderStateConverter.IsHornsSoftOutlineSource(document))
+        {
+            material.AdvancedLatePassMetadata = new AdvancedLatePassMetadata(
+                EAdvancedLatePassKind.SpecialEffects,
+                writesDepth: material.RenderOptions.DepthTest.UpdateDepth,
+                isOrderDependent: true)
+            {
+                TemporalUnsupportedReason = "The imported material has no coverage-matching temporal shader variants.",
+            };
+            return;
+        }
+
+        if (orderedSurface.Contract != EAdvancedSourceSurfaceContract.None)
+        {
+            bool hasSceneColor = orderedSurface.HasSceneColor;
+            material.AdvancedLatePassMetadata = new AdvancedLatePassMetadata(
+                EAdvancedLatePassKind.SpecialEffects,
+                requiresSceneColorSnapshot: hasSceneColor,
+                sceneColorSamplerName: hasSceneColor
+                    ? AdvancedSceneColorContract.SourceOrderedSamplerName
+                    : AdvancedSceneColorContract.SceneColorSamplerName,
+                writesDepth: material.RenderOptions.DepthTest?.UpdateDepth == true,
+                isOrderDependent: true)
+            {
+                SourceSurfaceContract = orderedSurface.Contract,
+                TemporalUnsupportedReason = "The imported source material has no coverage-matching temporal shader variants for its geometry.",
+            };
+            return;
+        }
 
         RenderingParameters options = material.RenderOptions;
         bool requiresSceneColor =

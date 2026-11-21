@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
 {
     internal sealed partial class VulkanFrameLoop
     {
-        private const uint DesktopSubmitCommandBufferCapacity = 4;
+        private const uint DesktopSubmitCommandBufferCapacity = 5;
 
         internal VulkanDesktopFramePhaseResult SubmitDesktopFrame(
             ref VulkanFrameAttempt attempt)
@@ -121,6 +121,14 @@ namespace XREngine.Rendering.Vulkan
                     commandBuffers,
                     ref commandBufferCount,
                     attempt.SceneCommandBuffer);
+                if (attempt.HasDesktopOffscreenCopyCommandBuffer &&
+                    attempt.DesktopOffscreenCopyCommandBuffer.Handle != 0)
+                {
+                    AppendDesktopSubmitCommandBuffer(
+                        commandBuffers,
+                        ref commandBufferCount,
+                        attempt.DesktopOffscreenCopyCommandBuffer);
+                }
                 if (attempt.HasImGuiOverlayCommandBuffer &&
                     attempt.ImGuiOverlayCommandBuffer.Handle != 0)
                 {
@@ -323,6 +331,13 @@ namespace XREngine.Rendering.Vulkan
                             // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
                             // settlement flags before profiling/telemetry scopes can unwind.
                             attempt.Submitted = true;
+                            if (attempt.AcceptedFramePlan is { } acceptedPlan)
+                            {
+                                if (submitReceipt.LifetimePinsTransferred)
+                                    acceptedPlan.ReleaseDeformationReadLeasesAfterLifetimePinsTransferred();
+                                else
+                                    acceptedPlan.MarkNativeSubmissionAcceptedWithoutLifetimePins();
+                            }
                             attempt.AcceptedFramePlan?.CommitAttestedFrameViewHistory();
                             attempt.AcceptedFramePlan?.CommitRecordedAdvancedPickingSources();
                             _gpuDiagnosticReadbackSidecar?.MarkPrimarySubmissionAccepted(
@@ -421,9 +436,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 _frameTelemetry.MarkFrameTimingSubmitted(
-                    unchecked((int)Math.Min(
-                        attempt.ImageIndex,
-                        int.MaxValue)),
+                    ResolveDesktopTimingQueryIndex(in attempt),
                     RuntimeEngine.Rendering.State.RenderFrameId);
                 CommitSubmittedDesktopTextureUpload(
                     ref attempt,
@@ -636,12 +649,19 @@ namespace XREngine.Rendering.Vulkan
             if (attempt.CommandArtifactsSettled)
                 return;
 
-            Span<ulong> handles = stackalloc ulong[3];
+            Span<ulong> handles = stackalloc ulong[4];
             int count = 0;
             count = AddRejectedArtifactHandle(
                 handles,
                 count,
                 attempt.SceneCommandBuffer);
+            if (attempt.HasDesktopOffscreenCopyCommandBuffer)
+            {
+                count = AddRejectedArtifactHandle(
+                    handles,
+                    count,
+                    attempt.DesktopOffscreenCopyCommandBuffer);
+            }
             if (attempt.HasImGuiOverlayCommandBuffer)
             {
                 count = AddRejectedArtifactHandle(

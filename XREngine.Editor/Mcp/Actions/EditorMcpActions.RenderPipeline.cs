@@ -252,13 +252,28 @@ namespace XREngine.Editor.Mcp
                 enabled = lane.Enabled,
                 consumerReady = lane.ConsumerReady,
                 consumerFrameId = lane.ConsumerFrameId,
-                holdUntilFrameId = lane.HoldUntilFrameId,
+                holdOwnerFramesRemaining = lane.HoldOwnerFramesRemaining,
                 deferredGroups = lane.DeferredGroups,
                 acceptedGroups = lane.AcceptedGroups,
                 rejectedGroups = lane.RejectedGroups,
                 unconsumedGroups = lane.UnconsumedGroups,
+                ownerAbsentGroups = lane.OwnerAbsentGroups,
                 genericGroups = lane.GenericGroups,
+                ownerlessDeferredEntries = lane.OwnerlessDeferredEntries,
+                directionalAtlasResets = lane.DirectionalAtlasResets,
+                directionalTileNoProducerDeferrals = lane.DirectionalTileNoProducerDeferrals,
+                submissionReverts = lane.SubmissionReverts,
+                genericNoCasterProducerDeclines = lane.GenericNoCasterProducerDeclines,
                 lastDeclineReason = lane.LastDeclineReason,
+                casterProducer = lane.CasterProducer,
+                casterProducerReason = lane.CasterProducerReason,
+                // Process totals of texture source mismatches that failed a canonical package
+                // check (admission or lowering), by reason, and the last reason.
+                sourceMismatch = new
+                {
+                    last = XREngine.Rendering.Commands.AdvancedTextureSourceMismatchDiagnostics.Last.ToString(),
+                    totals = XREngine.Rendering.Commands.AdvancedTextureSourceMismatchDiagnostics.CaptureTotals(),
+                },
             };
         }
 
@@ -266,9 +281,10 @@ namespace XREngine.Editor.Mcp
         {
             XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
             AdvancedRenderPipelineOutputBinding binding = instance.AdvancedOutputBinding;
-            AdvancedRenderPipeline? pipeline = instance.Pipeline as AdvancedRenderPipeline
-                ?? (binding.IsBound && instance.Pipeline is IAdvancedRenderStageFamilyHost host
-                    ? host.AdvancedStageFamilyDefinition : null);
+            RenderPipeline? appliedPipeline = instance.GetFullyAppliedPipeline();
+            AdvancedRenderPipeline? pipeline = appliedPipeline as AdvancedRenderPipeline
+                ?? (binding.IsBound && appliedPipeline is RvcRenderPipeline rvc
+                    ? rvc.GetExistingAdvancedStageFamily() : null);
             IRuntimeRendererHost? renderer = viewport.Window?.Renderer ??
                 RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as IRuntimeRendererHost;
             AdvancedRenderPipelineCapabilities capabilities = renderer?
@@ -359,7 +375,7 @@ namespace XREngine.Editor.Mcp
                 },
                 profile = new
                 {
-                    pipeline = instance.Pipeline?.DebugName,
+                    pipeline = appliedPipeline?.DebugName,
                     advancedFamily = pipeline?.DebugName,
                     stereoMode = pipeline?.StereoMode.ToString(),
                     offscreenProfile = pipeline?.OffscreenProfile,
@@ -391,6 +407,7 @@ namespace XREngine.Editor.Mcp
                     active = DescribeResourceMaterialization(instance.ActiveGeneration),
                     pending = DescribeResourceMaterialization(instance.PendingGeneration),
                 },
+                tsrResolveForm = pipeline?.TsrResolveForm.ToString(),
                 temporalHistory = BuildTemporalHistoryDiagnostics(instance),
                 directionalShadowLane = DescribeDirectionalShadowLane(viewport),
                 resources = new
@@ -729,7 +746,7 @@ namespace XREngine.Editor.Mcp
                     AdvancedRenderPipelineOutputBinding advancedBinding =
                         viewport.RenderPipelineInstance.AdvancedOutputBinding;
                     IRuntimeScreenSpaceUserInterface? ui = viewport.ScreenSpaceUserInterfaceOverride
-                        ?? cameraComponent?.GetUserInterfaceOverlay();
+                        ?? viewport.ScreenSpaceUserInterfaceCamera?.GetUserInterfaceOverlay();
                     SceneNode? cameraNode = cameraComponent?.SceneNode;
                     activeWindowViewports.Add(new
                     {
@@ -793,7 +810,7 @@ namespace XREngine.Editor.Mcp
         }
 
         [XRMcp(Name = "list_vulkan_image_allocation_diagnostics", Permission = McpPermissionLevel.ReadOnly)]
-        [Description("List live Vulkan image allocation sizes by debug name for VRAM pressure diagnostics.")]
+        [Description("List live Vulkan image allocation sizes by debug name, and live buffer allocation bytes grouped by registering owner and memory type (bufferOwners), for VRAM pressure and memory placement diagnostics.")]
         public static Task<McpToolResponse> ListVulkanImageAllocationDiagnosticsAsync(
             [McpName("limit"), Description("Maximum number of largest allocations to return.")] int limit = 64)
         {

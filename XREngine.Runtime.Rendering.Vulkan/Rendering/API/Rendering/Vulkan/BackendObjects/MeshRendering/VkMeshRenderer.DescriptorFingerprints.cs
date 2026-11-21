@@ -139,8 +139,10 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		bool usesSharedMaterialTier,
 		ComputeDispatchSnapshot? bindingSnapshot = null,
-		bool includeFrameSourceDescriptors = true)
+		bool includeFrameSourceDescriptors = true,
+		VkRenderProgram? programOverride = null)
 	{
+		VkRenderProgram? activeProgram = programOverride ?? _program;
 		if (TryComputePublishedDescriptorResourceFingerprint(
 			material,
 			frameCount,
@@ -148,7 +150,8 @@ internal unsafe partial class VkMeshRenderer
 			usesSharedMaterialTier,
 			bindingSnapshot,
 			includeFrameSourceDescriptors,
-			out ulong publishedFingerprint))
+			out ulong publishedFingerprint,
+			activeProgram))
 		{
 			return publishedFingerprint;
 		}
@@ -160,7 +163,7 @@ internal unsafe partial class VkMeshRenderer
 		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 		{
 			DescriptorBindingInfo binding = bindings[bindingIndex];
-			if (_program?.IsDescriptorSetExternallyOwned(binding.Set) == true)
+			if (activeProgram?.IsDescriptorSetExternallyOwned(binding.Set) == true)
 				continue;
 			if ((usesSharedMaterialTier && binding.Set == VulkanMeshRenderingConventions.DescriptorSetMaterial) ||
 				(excludesGlobalTextureArray && binding.Set == VulkanBindlessMaterialDescriptors.TextureArraySet))
@@ -188,7 +191,8 @@ internal unsafe partial class VkMeshRenderer
 								drawUniformSlot,
 								out DescriptorBufferInfo info,
 								out retainedPipelineBuffer,
-								bindingSnapshot);
+								bindingSnapshot,
+								activeProgram);
 							hash.Add(resolved);
 							if (!resolved)
 								continue;
@@ -221,12 +225,16 @@ internal unsafe partial class VkMeshRenderer
 						break;
 					}
 
+					bool usesNamedArrayElements = descriptorCount > 1 && !string.IsNullOrWhiteSpace(binding.Name);
 					for (int arrayIndex = 0; arrayIndex < descriptorCount; arrayIndex++)
 					{
+						DescriptorBindingInfo elementBinding = usesNamedArrayElements
+							? binding with { Name = ResolveDescriptorArrayElementName(binding.Name, arrayIndex) }
+							: binding;
 						bool resolved = TryResolveImage(
-							binding,
+							elementBinding,
 							material,
-							binding.DescriptorType,
+							elementBinding.DescriptorType,
 							out DescriptorImageInfo info,
 							out XRTexture? retainedTexture,
 							arrayIndex,
@@ -312,7 +320,8 @@ internal unsafe partial class VkMeshRenderer
 		bool usesSharedMaterialTier,
 		ComputeDispatchSnapshot? bindingSnapshot,
 		bool includeFrameSourceDescriptors,
-		out ulong fingerprint)
+		out ulong fingerprint,
+		VkRenderProgram? programOverride = null)
 	{
 		fingerprint = 0UL;
 		// Immutable storage is hashed below by its lowered slice. A material set outside the
@@ -323,7 +332,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		if (bindingSnapshot is not
 			{ HasPublishedBindingLayoutSignatures: true } ||
-			_program is not { } program ||
+			(programOverride ?? _program) is not { } program ||
 			BackendContext.Resources.MappedFrameArena is not
 				{ IsActive: true } frameArena)
 		{
@@ -612,14 +621,40 @@ internal unsafe partial class VkMeshRenderer
 		(DescriptorAllocation, int, ComputeDispatchSnapshot) refreshKey = canSkipRepeat
 			? (_activeDescriptorAllocation!, descriptorSlotIndex, snapshot!)
 			: default;
+		// A shared binding artifact keeps its reference across frames. When the previous
+		// refresh of this key left a stamp and nothing in the stamp changed (no image, view or
+		// sampler generation event, same pipeline, view family and allocation state), the
+		// resolved native image payloads are the ones already written.
+		bool stampable = canSkipRepeat && snapshot!.IsImmutableBindingArtifact;
+		DescriptorProofStamp stamp = stampable ? CaptureDescriptorProofStamp(_activeDescriptorAllocation!, material) : default;
+		bool stampHit = false;
 		if (canSkipRepeat &&
-			_frameSourceDescriptorRefreshes.TryGetValue(refreshKey, out ulong refreshedFrameId) &&
-			refreshedFrameId == renderFrameId)
+			_frameSourceDescriptorRefreshes.TryGetValue(refreshKey, out (ulong RenderFrameId, DescriptorProofStamp Stamp) refreshed))
 		{
-			reason = "frame-source sampler descriptors already refreshed this frame";
-			return true;
+			if (refreshed.RenderFrameId == renderFrameId)
+			{
+				reason = "frame-source sampler descriptors already refreshed this frame";
+				return true;
+			}
+
+			if (stampable && VulkanDescriptorProofStamps.Enabled)
+			{
+				stampHit = refreshed.Stamp == stamp;
+				if (!stampHit)
+				{
+					VulkanDescriptorProofStamps.RecordFrameSourceMiss();
+				}
+				else if (!VulkanDescriptorProofStamps.Verify)
+				{
+					VulkanDescriptorProofStamps.RecordFrameSourceHit();
+					_frameSourceDescriptorRefreshes[refreshKey] = (renderFrameId, stamp);
+					reason = "frame-source sampler descriptors unchanged since the stamped refresh";
+					return true;
+				}
+			}
 		}
 
+		ulong writesBefore = _descriptorPreparationWrites;
 		if (!TryRefreshFrameSourceSamplerDescriptors(
 			_activeDescriptorAllocation,
 			descriptorSlotIndex,
@@ -634,11 +669,20 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
+		if (stampHit)
+		{
+			// Verify mode: the stamp claimed that the refresh would write nothing.
+			VulkanDescriptorProofStamps.RecordVerify(writesBefore != _descriptorPreparationWrites);
+		}
+
 		if (canSkipRepeat)
 		{
 			if (_frameSourceDescriptorRefreshes.Count >= MaxFrameDescriptorAllocations)
 				_frameSourceDescriptorRefreshes.Clear();
-			_frameSourceDescriptorRefreshes[refreshKey] = renderFrameId;
+			// Capture the stamp after the refresh: its writes are part of the stamped state.
+			_frameSourceDescriptorRefreshes[refreshKey] = (
+				renderFrameId,
+				stampable ? CaptureDescriptorProofStamp(_activeDescriptorAllocation!, material) : default);
 		}
 
 		return true;
@@ -783,10 +827,14 @@ internal unsafe partial class VkMeshRenderer
 			int retainedTextureCount = 0;
 			try
 			{
+				bool usesNamedArrayElements = descriptorCount > 1 && !string.IsNullOrWhiteSpace(binding.Name);
 				for (int arrayIndex = 0; arrayIndex < (int)descriptorCount; arrayIndex++)
 				{
+					DescriptorBindingInfo elementBinding = usesNamedArrayElements
+						? binding with { Name = ResolveDescriptorArrayElementName(binding.Name, arrayIndex) }
+						: binding;
 					bool resolved = TryResolveImage(
-						binding, material, binding.DescriptorType,
+						elementBinding, material, elementBinding.DescriptorType,
 						out imageInfos[arrayIndex], out XRTexture? retainedTexture,
 						arrayIndex, snapshot);
 					if (retainedTexture is not null)
@@ -840,6 +888,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 
+			_descriptorPreparationWrites++;
 			RecordFrameSourceDescriptorWriteSignature(allocation, descriptorSlotIndex, binding, descriptorCount, resolvedImageInfos);
 			ObserveFinalPresentationDescriptor(
 				descriptorSlotIndex,

@@ -16,6 +16,7 @@ using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
 
 using VkBufferHandle = Silk.NET.Vulkan.Buffer;
@@ -26,6 +27,15 @@ internal unsafe partial class VkMeshRenderer
 {
 	private XRDataBuffer? _cachedActiveSkinPaletteBuffer;
 	private BufferStructuralIdentity _cachedActiveSkinPaletteIdentity;
+	private ulong _lastCollectedSkinnedOutputSetIdentity;
+	private XRDataBuffer? _lastCollectedSkinnedPositions;
+	private XRDataBuffer? _lastCollectedSkinnedNormals;
+	private XRDataBuffer? _lastCollectedSkinnedTangents;
+	private XRDataBuffer? _lastCollectedSkinnedInterleaved;
+	private readonly List<KeyValuePair<string, XRDataBuffer>> _collectedSourceBufferScratch = new();
+	// Keep published arrays immutable when a deformation output set becomes active again.
+	private readonly BufferReadinessSnapshot?[] _bufferReadinessCache = new BufferReadinessSnapshot?[8];
+	private int _nextBufferReadinessCacheSlot;
 
 	/// <summary>
 	/// Gathers all named GPU data buffers from both the Mesh and the MeshRenderer,
@@ -38,27 +48,59 @@ internal unsafe partial class VkMeshRenderer
 		{
 			_bufferCache.Clear();
 
-			var meshBuffers = Mesh?.Buffers as IEventDictionary<string, XRDataBuffer>;
+			XRMesh.BufferCollection? meshBuffers = Mesh?.Buffers;
 			if (meshBuffers is not null)
-				foreach (var pair in meshBuffers)
+			{
+				meshBuffers.CopyEntriesTo(_collectedSourceBufferScratch);
+				for (int i = 0; i < _collectedSourceBufferScratch.Count; i++)
+				{
+					KeyValuePair<string, XRDataBuffer> pair = _collectedSourceBufferScratch[i];
 					_bufferCache[pair.Key] = ProgramCreationPort.GetOrCreateBuffer(pair.Value, generateNow: false);
+				}
+			}
 
-			var rendererBuffers = MeshRenderer.Buffers as IEventDictionary<string, XRDataBuffer>;
-			if (rendererBuffers is not null)
-				foreach (var pair in rendererBuffers)
-					_bufferCache[pair.Key] = ProgramCreationPort.GetOrCreateBuffer(pair.Value, generateNow: false);
+			XRMesh.BufferCollection rendererBuffers = MeshRenderer.Buffers;
+			rendererBuffers.CopyEntriesTo(_collectedSourceBufferScratch);
+			for (int i = 0; i < _collectedSourceBufferScratch.Count; i++)
+			{
+				KeyValuePair<string, XRDataBuffer> pair = _collectedSourceBufferScratch[i];
+				_bufferCache[pair.Key] = ProgramCreationPort.GetOrCreateBuffer(pair.Value, generateNow: false);
+			}
+			_collectedSourceBufferScratch.Clear();
 
 			FilterRuntimeDeformationSourceBuffers();
 			OverrideCollectedSkinPaletteWithActiveSource();
 			AddRuntimeDeformationBuffers();
+			XRMeshRenderer.SkinnedOutputResourceSnapshot selectedOutputs =
+				MeshRenderer.CaptureSkinnedOutputResources();
+			ulong selectedOutputSetIdentity = MeshRenderer.SkinnedOutputSetIdentity;
+			bool outputSetSwitched = _lastCollectedSkinnedOutputSetIdentity != 0UL &&
+				selectedOutputSetIdentity != 0UL &&
+				_lastCollectedSkinnedOutputSetIdentity != selectedOutputSetIdentity;
+			bool onlyOutputSetChanged = outputSetSwitched &&
+				NonOutputBufferIdentitiesUnchanged(in selectedOutputs);
 			CaptureRuntimeDeformationBufferReferences();
 
 			_observedNativeBufferBindingRevision = BackendContext.Resources.NativeBufferBindingRevision;
 			bool structuralBindingsChanged = UpdateBufferStructuralIdentitySnapshot();
+			_lastCollectedSkinnedOutputSetIdentity = selectedOutputSetIdentity;
+			_lastCollectedSkinnedPositions =
+				HasSelectedOutputEntry(ComputePositionBufferName, selectedOutputs.Positions)
+					? selectedOutputs.Positions : null;
+			_lastCollectedSkinnedNormals =
+				HasSelectedOutputEntry(ComputeNormalBufferName, selectedOutputs.Normals)
+					? selectedOutputs.Normals : null;
+			_lastCollectedSkinnedTangents =
+				HasSelectedOutputEntry(ComputeTangentBufferName, selectedOutputs.Tangents)
+					? selectedOutputs.Tangents : null;
+			_lastCollectedSkinnedInterleaved =
+				HasSelectedOutputEntry(ComputeInterleavedBufferName, selectedOutputs.Interleaved)
+					? selectedOutputs.Interleaved : null;
 			PublishCachedBufferResourceFingerprint();
 			if (structuralBindingsChanged)
 			{
-				BumpPreparationCompatibilityRevision();
+				if (!onlyOutputSetChanged)
+					BumpPreparationCompatibilityRevision();
 				_buffersDirty = true;
 				_descriptorDirty = true;
 				InvalidateVertexInputStructureNoLock();
@@ -68,6 +110,59 @@ internal unsafe partial class VkMeshRenderer
 			PublishBufferReadinessSnapshot();
 		}
 	}
+
+	private bool NonOutputBufferIdentitiesUnchanged(
+		in XRMeshRenderer.SkinnedOutputResourceSnapshot selectedOutputs)
+	{
+		int previousCount = 0;
+		foreach (KeyValuePair<string, BufferStructuralIdentity> prior in _bufferStructuralIdentities)
+		{
+			if (IsPreviousOutputName(prior.Key))
+				continue;
+
+			previousCount++;
+			if (!_bufferCache.TryGetValue(prior.Key, out VkDataBuffer? current) ||
+				IsSelectedOutputEntry(prior.Key, current, in selectedOutputs) ||
+				prior.Value != CaptureBufferStructuralIdentity(current))
+			{
+				return false;
+			}
+		}
+
+		int currentCount = 0;
+		foreach (KeyValuePair<string, VkDataBuffer> current in _bufferCache)
+			if (!IsSelectedOutputEntry(current.Key, current.Value, in selectedOutputs))
+				currentCount++;
+		return previousCount == currentCount;
+	}
+
+	private bool IsPreviousOutputName(string name)
+		=> name switch
+		{
+			ComputePositionBufferName => _lastCollectedSkinnedPositions is not null,
+			ComputeNormalBufferName => _lastCollectedSkinnedNormals is not null,
+			ComputeTangentBufferName => _lastCollectedSkinnedTangents is not null,
+			ComputeInterleavedBufferName => _lastCollectedSkinnedInterleaved is not null,
+			_ => false,
+		};
+
+	private bool HasSelectedOutputEntry(string name, XRDataBuffer? output)
+		=> output is not null &&
+		   _bufferCache.TryGetValue(name, out VkDataBuffer? current) &&
+		   ReferenceEquals(current.Data, output);
+
+	private static bool IsSelectedOutputEntry(
+		string name,
+		VkDataBuffer buffer,
+		in XRMeshRenderer.SkinnedOutputResourceSnapshot outputs)
+		=> name switch
+		{
+			ComputePositionBufferName => ReferenceEquals(buffer.Data, outputs.Positions),
+			ComputeNormalBufferName => ReferenceEquals(buffer.Data, outputs.Normals),
+			ComputeTangentBufferName => ReferenceEquals(buffer.Data, outputs.Tangents),
+			ComputeInterleavedBufferName => ReferenceEquals(buffer.Data, outputs.Interleaved),
+			_ => false,
+		};
 
 	/// <summary>
 	/// Re-captures the collected buffers' native identities after any native buffer binding
@@ -140,50 +235,50 @@ internal unsafe partial class VkMeshRenderer
 		bool allowSkinning = RuntimeEngine.Rendering.Settings.AllowSkinning;
 		bool allowBlendshapes = RuntimeEngine.Rendering.Settings.AllowBlendshapes;
 		bool hasSkinning = skinningState?.UtilizedBones.Length > 0;
-		bool hasBlendshapes = mesh?.BlendshapeCount > 0;
+		bool hasBlendshapes = mesh?.HasBlendshapeDeformation == true;
 		bool useComputeSkinning = hasSkinning
 			&& allowSkinning
 			&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-			&& !RuntimeEngine.Rendering.State.IsVulkan;
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
 		bool useVertexSkinning = hasSkinning && allowSkinning && !useComputeSkinning;
 		bool useComputeBlendshapes = hasBlendshapes
 			&& allowBlendshapes
-			&& !RuntimeEngine.Rendering.State.IsVulkan
+			&& XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh)
 			&& (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
 		bool useVertexBlendshapes = hasBlendshapes && allowBlendshapes && !useComputeBlendshapes;
 
 		if (!useVertexSkinning)
 		{
-			RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceCoreIndices.ToString());
-			RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceCoreWeights.ToString());
-			RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
-			RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
-			RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrices}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.SkinPalette}Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BoneInfluenceCoreIndices));
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BoneInfluenceCoreWeights));
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BoneInfluenceSpillHeaders));
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BoneInfluenceSpillEntries));
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BoneMatrices) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BoneInvBindMatrices) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.SkinPalette) + "Buffer");
 		}
 		else if (skinningState?.InfluenceEncoding is SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill)
 		{
-			RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrices}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BoneMatrices) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BoneInvBindMatrices) + "Buffer");
 			if (!skinningState.HasSpillInfluences)
 			{
-				RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
-				RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
+				RemoveCollectedBuffer(nameof(ECommonBufferType.BoneInfluenceSpillHeaders));
+				RemoveCollectedBuffer(nameof(ECommonBufferType.BoneInfluenceSpillEntries));
 			}
 		}
 
 		if (!useVertexBlendshapes)
 		{
-			RemoveCollectedBuffer(ECommonBufferType.BlendshapeCount.ToString());
-			RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeIndices}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeWeights}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeActiveWeights}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeSparseRecords}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer");
-			RemoveCollectedBuffer($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeCount));
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeIndices) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeDeltas) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeWeights) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeActiveWeights) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeSparseShapeRanges) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeSparseRecords) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeQuantizedDeltas) + "Buffer");
+			RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeQuantizationMetadata) + "Buffer");
 		}
 	}
 
@@ -197,7 +292,7 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private void OverrideCollectedSkinPaletteWithActiveSource()
 	{
-		string shaderName = $"{ECommonBufferType.SkinPalette}Buffer";
+		const string shaderName = nameof(ECommonBufferType.SkinPalette) + "Buffer";
 		if (!_bufferCache.ContainsKey(shaderName)
 			|| MeshRenderer.ActiveSkinPaletteBuffer is not { } activeSkinPalette)
 			return;
@@ -212,14 +307,10 @@ internal unsafe partial class VkMeshRenderer
 			MeshRenderer.CaptureSkinnedOutputResources();
 		XRMeshRenderer.BlendshapeResourceSnapshot blendshapeState =
 			MeshRenderer.CaptureBlendshapeResources();
-		bool useComputeSkinning = mesh?.HasSkinning == true
-			&& RuntimeEngine.Rendering.Settings.AllowSkinning
-			&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
-			&& !RuntimeEngine.Rendering.State.IsVulkan;
-		bool useComputeBlendshapes = mesh?.BlendshapeCount > 0
-			&& RuntimeEngine.Rendering.Settings.AllowBlendshapes
-			&& !RuntimeEngine.Rendering.State.IsVulkan
-			&& (RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
+		bool useComputeSkinning = SkinningPrepassDispatcher.UsesComputeSkinning(mesh);
+		bool useComputeBlendshapes = SkinningPrepassDispatcher.UsesComputeBlendshapes(mesh)
+			|| (useComputeSkinning && mesh?.HasBlendshapeDeformation == true
+				&& RuntimeEngine.Rendering.Settings.AllowBlendshapes);
 
 		if (useComputeSkinning || useComputeBlendshapes)
 		{
@@ -230,7 +321,7 @@ internal unsafe partial class VkMeshRenderer
 			AddMeshDeformSourceBuffers();
 		}
 
-		bool directBlendshapePath = mesh?.BlendshapeCount > 0
+		bool directBlendshapePath = mesh?.HasBlendshapeDeformation == true
 			&& RuntimeEngine.Rendering.Settings.AllowBlendshapes
 			&& !useComputeBlendshapes;
 		if (directBlendshapePath
@@ -496,6 +587,34 @@ internal unsafe partial class VkMeshRenderer
 			if (buffer.Data.Target != EBufferTarget.ArrayBuffer)
 				shaderGeneratedBufferCount++;
 
+		string missingExpectedIndexBufferDetail = ResolveMissingExpectedIndexBufferDetail();
+		uint triangleIndexCount = _triangleIndexBuffer?.Data.ElementCount ?? 0u;
+		uint lineIndexCount = _lineIndexBuffer?.Data.ElementCount ?? 0u;
+		uint pointIndexCount = _pointIndexBuffer?.Data.ElementCount ?? 0u;
+		XRMesh? mesh = Mesh;
+		uint fallbackVertexCount = mesh is null
+			? 0u
+			: (uint)Math.Max(mesh.VertexCount, 0);
+		bool fallbackIsTriangleClass = mesh is not null &&
+			mesh.Type is not (EPrimitiveType.Points or EPrimitiveType.Lines or EPrimitiveType.LineStrip);
+		bool indexBuffersIncluded = !_indexBuffersSkippedForShaderGeneratedVertices;
+		for (int i = 0; i < _bufferReadinessCache.Length; i++)
+		{
+			BufferReadinessSnapshot? cached = _bufferReadinessCache[i];
+			if (cached is null ||
+				!MatchesBufferReadinessMembership(
+					cached, requiredBufferCount, shaderGeneratedBufferCount,
+					missingExpectedIndexBufferDetail, triangleIndexCount, lineIndexCount,
+					pointIndexCount, fallbackVertexCount, fallbackIsTriangleClass,
+					indexBuffersIncluded))
+			{
+				continue;
+			}
+
+			Volatile.Write(ref _bufferReadinessSnapshot, cached);
+			return;
+		}
+
 		KeyValuePair<string, VkDataBuffer>[] requiredBuffers =
 			new KeyValuePair<string, VkDataBuffer>[requiredBufferCount];
 		KeyValuePair<string, VkDataBuffer>[] shaderGeneratedRequiredBuffers =
@@ -516,19 +635,7 @@ internal unsafe partial class VkMeshRenderer
 			AppendIndexBuffer("Points", _pointIndexBuffer);
 		}
 
-		string missingExpectedIndexBufferDetail = ResolveMissingExpectedIndexBufferDetail();
-		uint triangleIndexCount = _triangleIndexBuffer?.Data.ElementCount ?? 0u;
-		uint lineIndexCount = _lineIndexBuffer?.Data.ElementCount ?? 0u;
-		uint pointIndexCount = _pointIndexBuffer?.Data.ElementCount ?? 0u;
-		XRMesh? mesh = Mesh;
-		uint fallbackVertexCount = mesh is null
-			? 0u
-			: (uint)Math.Max(mesh.VertexCount, 0);
-		bool fallbackIsTriangleClass = mesh is not null &&
-			mesh.Type is not (EPrimitiveType.Points or EPrimitiveType.Lines or EPrimitiveType.LineStrip);
-		Volatile.Write(
-			ref _bufferReadinessSnapshot,
-			new BufferReadinessSnapshot(
+		BufferReadinessSnapshot snapshot = new(
 				requiredBuffers,
 				shaderGeneratedRequiredBuffers,
 				missingExpectedIndexBufferDetail,
@@ -536,7 +643,11 @@ internal unsafe partial class VkMeshRenderer
 				lineIndexCount,
 				pointIndexCount,
 				fallbackVertexCount,
-				fallbackIsTriangleClass));
+				fallbackIsTriangleClass,
+				indexBuffersIncluded);
+		_bufferReadinessCache[_nextBufferReadinessCacheSlot] = snapshot;
+		_nextBufferReadinessCacheSlot = (_nextBufferReadinessCacheSlot + 1) % _bufferReadinessCache.Length;
+		Volatile.Write(ref _bufferReadinessSnapshot, snapshot);
 		return;
 
 		void AppendIndexBuffer(string name, VkDataBuffer? buffer)
@@ -549,6 +660,77 @@ internal unsafe partial class VkMeshRenderer
 			shaderGeneratedRequiredBuffers[shaderGeneratedIndex++] = pair;
 		}
 	}
+
+	private bool MatchesBufferReadinessMembership(
+		BufferReadinessSnapshot snapshot,
+		int requiredBufferCount,
+		int shaderGeneratedBufferCount,
+		string missingExpectedIndexBufferDetail,
+		uint triangleIndexCount,
+		uint lineIndexCount,
+		uint pointIndexCount,
+		uint fallbackVertexCount,
+		bool fallbackIsTriangleClass,
+		bool indexBuffersIncluded)
+	{
+		if (snapshot.RequiredBuffers.Length != requiredBufferCount ||
+			snapshot.ShaderGeneratedRequiredBuffers.Length != shaderGeneratedBufferCount ||
+			!string.Equals(snapshot.MissingExpectedIndexBufferDetail, missingExpectedIndexBufferDetail, StringComparison.Ordinal) ||
+			snapshot.TriangleIndexCount != triangleIndexCount ||
+			snapshot.LineIndexCount != lineIndexCount ||
+			snapshot.PointIndexCount != pointIndexCount ||
+			snapshot.FallbackVertexCount != fallbackVertexCount ||
+			snapshot.FallbackIsTriangleClass != fallbackIsTriangleClass ||
+			snapshot.IndexBuffersIncluded != indexBuffersIncluded)
+		{
+			return false;
+		}
+
+		int requiredIndex = 0;
+		int shaderIndex = 0;
+		foreach (KeyValuePair<string, VkDataBuffer> pair in _bufferCache)
+		{
+			if (!SameBufferPair(snapshot.RequiredBuffers[requiredIndex++], pair))
+				return false;
+			if (pair.Value.Data.Target == EBufferTarget.ArrayBuffer)
+				continue;
+			if (!SameBufferPair(snapshot.ShaderGeneratedRequiredBuffers[shaderIndex++], pair))
+				return false;
+		}
+
+		if (indexBuffersIncluded)
+		{
+			if (!MatchesIndexBuffer(snapshot, "Triangles", _triangleIndexBuffer, ref requiredIndex, ref shaderIndex) ||
+				!MatchesIndexBuffer(snapshot, "Lines", _lineIndexBuffer, ref requiredIndex, ref shaderIndex) ||
+				!MatchesIndexBuffer(snapshot, "Points", _pointIndexBuffer, ref requiredIndex, ref shaderIndex))
+			{
+				return false;
+			}
+		}
+
+		return requiredIndex == requiredBufferCount && shaderIndex == shaderGeneratedBufferCount;
+	}
+
+	private static bool MatchesIndexBuffer(
+		BufferReadinessSnapshot snapshot,
+		string name,
+		VkDataBuffer? buffer,
+		ref int requiredIndex,
+		ref int shaderIndex)
+	{
+		if (buffer is null)
+			return true;
+
+		KeyValuePair<string, VkDataBuffer> expected = new(name, buffer);
+		return SameBufferPair(snapshot.RequiredBuffers[requiredIndex++], expected) &&
+			   SameBufferPair(snapshot.ShaderGeneratedRequiredBuffers[shaderIndex++], expected);
+	}
+
+	private static bool SameBufferPair(
+		in KeyValuePair<string, VkDataBuffer> left,
+		in KeyValuePair<string, VkDataBuffer> right)
+		=> string.Equals(left.Key, right.Key, StringComparison.Ordinal) &&
+		   ReferenceEquals(left.Value, right.Value);
 
 	private string ResolveMissingExpectedIndexBufferDetail()
 	{

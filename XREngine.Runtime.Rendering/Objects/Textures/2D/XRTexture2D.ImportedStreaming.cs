@@ -3,6 +3,7 @@ using MemoryPack;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
+using XREngine.Core.Files;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
@@ -14,6 +15,16 @@ public partial class XRTexture2D
     // resident image becomes the logical texture source; the scene publisher
     // consumes that change at its next SwapCommandBuffers boundary.
     private long _canonicalSourceContentGeneration = 1L;
+
+    // The content generation of the last mutation that was not a dense streaming resident
+    // commit. long.MaxValue while such a mutation is being published. The Vulkan Advanced
+    // source check reads it to accept a publication whose texture only changed residency.
+    private long _lastNonResidencyContentGeneration = 1L;
+
+    // The content generation of the resident commit that ended the loading placeholder state,
+    // or 0 when the texture never was a placeholder (or still is one). A publication from an
+    // older generation described the placeholder, which never drew.
+    private long _firstResidentContentGeneration;
 
     // Imported-streaming metadata is written as one logical transaction. This is
     // deliberately separate from CanonicalSourceContentGeneration: capture outputs
@@ -52,8 +63,19 @@ public partial class XRTexture2D
                 CaptureImportedResidentAuthoredSettings(),
                 ResolveImportedResidentFormat(this, residentData.SizedInternalFormat),
                 lockMipLevel,
-                includeMipChain && mipCount > 0 ? mipCount - 1 : 0);
+                ResolveResidentSmallestAllowedMipLevel(residentData, includeMipChain));
         }
+    }
+
+    private static int ResolveResidentSmallestAllowedMipLevel(
+        in TextureStreamingResidentData residentData,
+        bool includeMipChain)
+    {
+        if (residentData.GenerateMipChainOnGpu)
+            return Math.Max(residentData.ResidentMipLevelCount - 1, 0);
+
+        int mipCount = residentData.Mipmaps.Length;
+        return includeMipChain && mipCount > 0 ? mipCount - 1 : 0;
     }
 
     internal bool IsImportedResidentPublicationPlanCurrent(in ImportedTextureResidentPublicationPlan plan)
@@ -71,6 +93,10 @@ public partial class XRTexture2D
     internal void CommitImportedResidentPublication(in ImportedTextureResidentPublicationPlan plan)
     {
         Mipmap2D[] mipmaps = plan.ResidentData.Mipmaps;
+        // Sparse samplers clamp relative to the resident base. A change away from sparse
+        // residency is therefore not a residency-only change for the published sampler.
+        bool hadSparseResidency = HasSparseResidencyState;
+        bool wasPlaceholder = IsAwaitingFirstResidency;
         SetField(ref _streamingLockMipLevel, plan.LockMipLevel, publishNotifications: false);
         SetField(ref _mipmaps, mipmaps, publishNotifications: false);
         TrackStreamingResidentMipmaps(mipmaps);
@@ -86,7 +112,14 @@ public partial class XRTexture2D
         SetField(ref _residencyState.SparseLevelCount, 0, publishNotifications: false);
         SetField(ref _residencyState.CommittedBytes, 0L, publishNotifications: false);
         SetField(ref _residencyState.ResidentPageSelection, SparseTextureStreamingPageSelection.Full, publishNotifications: false);
-        PublishCanonicalSourceContentMutation();
+        // Clear the placeholder state before the source generation advances, so a publisher
+        // that sees the new generation also sees real resident data.
+        ClearAwaitingFirstResidency();
+        long generation = hadSparseResidency
+            ? PublishCanonicalSourceContentMutation()
+            : PublishCanonicalResidencyMutation();
+        if (wasPlaceholder)
+            Volatile.Write(ref _firstResidentContentGeneration, generation);
     }
 
     internal ulong CanonicalSourceContentGeneration
@@ -99,11 +132,66 @@ public partial class XRTexture2D
     internal ulong ImportedSourceMetadataEpoch
         => unchecked((ulong)Volatile.Read(ref _importedSourceMetadataEpoch));
 
-    private void PublishCanonicalSourceContentMutation()
+    /// <summary>
+    /// True when every content change after <paramref name="capturedGeneration"/> was a dense
+    /// streaming resident commit: the texture got another resident mip chain (other mip count
+    /// or extent), but no capture output, sparse commit or other mutation changed it. A
+    /// published record from that generation then has the same shape as the current image; only
+    /// its width, height, mip count and sampler LOD clamps can be stale.
+    /// </summary>
+    internal bool IsCanonicalResidencyOnlyChangeSince(ulong capturedGeneration)
+    {
+        long lastNonResidency = Volatile.Read(ref _lastNonResidencyContentGeneration);
+        return capturedGeneration != 0UL &&
+            lastNonResidency != long.MaxValue &&
+            unchecked((ulong)lastNonResidency) <= capturedGeneration;
+    }
+
+    /// <summary>
+    /// True when <paramref name="capturedGeneration"/> is from before the resident commit that
+    /// ended the loading placeholder state, and every change after that commit was also a dense
+    /// resident commit. A publication from that generation described the placeholder, which
+    /// the renderers never drew (they used the binding fallback instead).
+    /// </summary>
+    internal bool WasCanonicalPlaceholderAt(ulong capturedGeneration)
+    {
+        long firstResident = Volatile.Read(ref _firstResidentContentGeneration);
+        long lastNonResidency = Volatile.Read(ref _lastNonResidencyContentGeneration);
+        return firstResident != 0L &&
+            capturedGeneration != 0UL &&
+            capturedGeneration < unchecked((ulong)firstResident) &&
+            lastNonResidency != long.MaxValue &&
+            lastNonResidency <= firstResident;
+    }
+
+    private bool HasSparseResidencyState
+        => SparseTextureStreamingEnabled ||
+           SparseTextureStreamingResidentBaseMipLevel != int.MaxValue ||
+           SparseTextureStreamingCommittedBaseMipLevel != int.MaxValue ||
+           SparseTextureStreamingCommittedBytes > 0L;
+
+    /// <summary>
+    /// Advances the content generation for any change that is not a dense resident commit.
+    /// The marker is set to long.MaxValue first, so a reader that sees the new generation
+    /// never sees this change as residency-only.
+    /// </summary>
+    private long PublishCanonicalSourceContentMutation()
+    {
+        Volatile.Write(ref _lastNonResidencyContentGeneration, long.MaxValue);
+        long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        if (generation == 0L)
+            generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        Volatile.Write(ref _lastNonResidencyContentGeneration, generation);
+        return generation;
+    }
+
+    /// <summary>Advances the content generation for a dense streaming resident commit and returns it.</summary>
+    private long PublishCanonicalResidencyMutation()
     {
         long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
         if (generation == 0L)
-            _ = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+            generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        return generation;
     }
 
     private void BeginImportedSourceMetadataWrite()
@@ -160,6 +248,7 @@ public partial class XRTexture2D
     public bool TryRestoreImportedTextureStreamingSource()
     {
         if (!AllowAutomaticImportedTextureStreaming
+            || (PreferSynchronousGpuUpload && HasHydratedSourceMipmaps())
             || !RuntimeRenderingHostServices.HasConcreteHost
             || !RuntimeTextureSourceAccess.CanAccessHostFiles
             || string.IsNullOrWhiteSpace(OriginalPath)
@@ -168,8 +257,78 @@ public partial class XRTexture2D
             return false;
         }
 
-        RegisterImportedTextureStreamingPlaceholder(Path.GetFullPath(OriginalPath), this);
+        // A cook can write the source path as a portable game:// or engine:// reference. Resolve it before any file system call.
+        if (!AssetReferencePath.TryResolveFileSystemPath(OriginalPath, out string? sourcePath))
+            return false;
+
+        RegisterImportedTextureStreamingPlaceholder(Path.GetFullPath(sourcePath), this);
         return true;
+    }
+
+    /// <summary>
+    /// Returns whether mip 0 holds the decoded source image (or other real pixels), and not only a
+    /// loading placeholder.
+    /// </summary>
+    /// <remarks>
+    /// The model importer gives a streamed texture a filler image as its mipmaps, and a native
+    /// texture asset saves that filler. After a load, the filler is the only CPU data of the
+    /// texture until streaming publishes the source image. Callers that keep CPU pixels and skip
+    /// streaming (for example a synchronous capture) use this value, so they do not keep the
+    /// filler as the texture content.
+    /// </remarks>
+    public bool HasHydratedSourceMipmaps()
+        => !IsAwaitingFirstResidency
+            && Mipmaps is { Length: > 0 } mips
+            && mips[0] is { Data: { Length: > 4, IsDisposed: false } } mip
+            && !IsFillerPlaceholder(mip);
+
+    private static byte[]? s_fillerPixels;
+    private static uint s_fillerWidth;
+    private static uint s_fillerHeight;
+    private static readonly Lock s_fillerPixelsSync = new();
+
+    /// <summary>
+    /// True when <paramref name="mip"/> holds exactly the importer filler image. The normal-map
+    /// filler is one texel, so the length check of <see cref="HasHydratedSourceMipmaps"/> already
+    /// excludes it.
+    /// </summary>
+    private static bool IsFillerPlaceholder(Mipmap2D mip)
+    {
+        byte[] filler = GetFillerPixels(out uint width, out uint height);
+        return mip.Width == width
+            && mip.Height == height
+            && mip.Data is { IsDisposed: false } data
+            && data.AsReadOnlySpan().SequenceEqual(filler);
+    }
+
+    /// <summary>
+    /// Reads the pixels of <see cref="FillerImage"/> once, in the same mipmap layout that the
+    /// importer writes, and keeps them for the placeholder comparison.
+    /// </summary>
+    private static byte[] GetFillerPixels(out uint width, out uint height)
+    {
+        byte[]? pixels = Volatile.Read(ref s_fillerPixels);
+        if (pixels is null)
+        {
+            lock (s_fillerPixelsSync)
+            {
+                pixels = s_fillerPixels;
+                if (pixels is null)
+                {
+                    using RuntimeImage filler = FillerImage;
+                    Mipmap2D mip = new(filler);
+                    pixels = mip.Data?.GetBytes() ?? [];
+                    s_fillerWidth = mip.Width;
+                    s_fillerHeight = mip.Height;
+                    mip.Data?.Dispose();
+                    Volatile.Write(ref s_fillerPixels, pixels);
+                }
+            }
+        }
+
+        width = s_fillerWidth;
+        height = s_fillerHeight;
+        return pixels;
     }
 
     public static EnumeratorJob ScheduleImportedTexturePreviewJob(
@@ -213,6 +372,14 @@ public partial class XRTexture2D
         => HasAssetExtension(filePath);
 
     internal static string ResolveTextureStreamingAuthorityPathInternal(string filePath, out string? originalSourcePath)
+        => ResolveTextureStreamingAuthorityPathInternal(filePath, usage: null, out originalSourcePath);
+
+    /// <summary>
+    /// Resolves the authority path for a texture role. With role-dependent block
+    /// compression, the role selects a cache variant folder, so the cook knows the role.
+    /// </summary>
+    /// <param name="usage">The texture role, or null when it is unknown.</param>
+    internal static string ResolveTextureStreamingAuthorityPathInternal(string filePath, ETextureImportUsage? usage, out string? originalSourcePath)
     {
         RuntimeTextureSourceAccess.RequireHostFiles();
         originalSourcePath = null;
@@ -223,7 +390,10 @@ public partial class XRTexture2D
         if (HasAssetExtension(normalizedPath))
             return normalizedPath;
 
-        string authorityPath = RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath);
+        string? variantKey = usage is { } role ? TextureCookUsageVariant.ResolveVariantKey(role) : null;
+        string authorityPath = variantKey is null
+            ? RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath)
+            : RuntimeRenderingHostServices.Assets.ResolveTextureStreamingAuthorityPath(normalizedPath, variantKey);
         if (string.IsNullOrWhiteSpace(authorityPath))
             return normalizedPath;
 
@@ -236,7 +406,7 @@ public partial class XRTexture2D
 
     internal static void ApplyTextureStreamingAuthorityPath(XRTexture2D texture, string requestedFilePath)
     {
-        string authorityPath = ResolveTextureStreamingAuthorityPathInternal(requestedFilePath, out string? originalSourcePath);
+        string authorityPath = ResolveTextureStreamingAuthorityPathInternal(requestedFilePath, texture.ImportedUsage, out string? originalSourcePath);
         texture.FilePath = authorityPath;
         if (!string.IsNullOrWhiteSpace(originalSourcePath))
             texture.OriginalPath ??= originalSourcePath;
@@ -341,7 +511,8 @@ public partial class XRTexture2D
         bool includeMipChain,
         string? timingLabel = null,
         double decodeMilliseconds = 0.0,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ETextureImportUsage? usage = null)
     {
         uint sourceWidth = image.Width;
         uint sourceHeight = image.Height;
@@ -354,7 +525,7 @@ public partial class XRTexture2D
         long resizeStartTimestamp = StartImportedTextureTiming();
         uint residentLimit = Math.Max(1u, maxResidentDimension);
         using RuntimeImage? resizedImage = Math.Max(image.Width, image.Height) > residentLimit
-            ? ResizePreviewIfNeeded(image, residentLimit)
+            ? ResizePreviewIfNeeded(image, residentLimit, usage)
             : null;
         RuntimeImage residentSource = resizedImage ?? image;
         double resizeMilliseconds = CompleteImportedTextureTiming(resizeStartTimestamp);
@@ -362,7 +533,7 @@ public partial class XRTexture2D
         cancellationToken.ThrowIfCancellationRequested();
         long mipBuildStartTimestamp = StartImportedTextureTiming();
         Mipmap2D[] mipmaps = includeMipChain
-            ? GetMipmapsFromImage(residentSource)
+            ? GetMipmapsFromImage(residentSource, usage)
             : [new Mipmap2D(residentSource)];
         try
         {
@@ -448,6 +619,7 @@ public partial class XRTexture2D
                 residentData.Mipmaps.Length);
         }
 
+        bool hadSparseResidency = texture.HasSparseResidencyState;
         texture.ClearSparseTextureStreamingState();
 
         texture.Mipmaps = residentData.Mipmaps;
@@ -459,7 +631,10 @@ public partial class XRTexture2D
         texture.SmallestAllowedMipmapLevel = includeMipChain && residentData.Mipmaps.Length > 0
             ? residentData.Mipmaps.Length - 1
             : 0;
-        texture.PublishCanonicalSourceContentMutation();
+        if (hadSparseResidency)
+            texture.PublishCanonicalSourceContentMutation();
+        else
+            texture.PublishCanonicalResidencyMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;
@@ -515,6 +690,7 @@ public partial class XRTexture2D
                 residentData.Mipmaps.Length);
         }
 
+        bool hadSparseResidency = texture.HasSparseResidencyState;
         texture.ClearSparseTextureStreamingState();
         texture.StreamingLockMipLevel = lockMipLevel;
         texture.Mipmaps = residentData.Mipmaps;
@@ -527,7 +703,10 @@ public partial class XRTexture2D
             smallestAllowedMipmapLevel: includeMipChain && residentData.Mipmaps.Length > 0
                 ? residentData.Mipmaps.Length - 1
                 : 0);
-        texture.PublishCanonicalSourceContentMutation();
+        if (hadSparseResidency)
+            texture.PublishCanonicalSourceContentMutation();
+        else
+            texture.PublishCanonicalResidencyMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;
@@ -553,6 +732,8 @@ public partial class XRTexture2D
             (ETextureColorSpace.Srgb, ESizedInternalFormat.Rgba8) => ESizedInternalFormat.Srgb8Alpha8,
             (ETextureColorSpace.Linear, ESizedInternalFormat.Srgb8) => ESizedInternalFormat.Rgb8,
             (ETextureColorSpace.Linear, ESizedInternalFormat.Srgb8Alpha8) => ESizedInternalFormat.Rgba8,
+            (ETextureColorSpace.Srgb, ESizedInternalFormat.Bc7Unorm) => ESizedInternalFormat.Bc7Srgb,
+            (ETextureColorSpace.Linear, ESizedInternalFormat.Bc7Srgb) => ESizedInternalFormat.Bc7Unorm,
             _ => decodedFormat,
         };
 
@@ -583,14 +764,21 @@ public partial class XRTexture2D
         int mipCount = includeMipChain
             ? XRTexture.GetSmallestMipmapLevel(residentWidth, residentHeight) + 1
             : 1;
-        int bytesPerPixel = Math.Max(1, RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(format));
+        // Block formats store less than one byte per pixel (BC4 stores half a byte), so an
+        // integer bytes-per-pixel value cannot express them. Count whole 4x4 blocks instead.
+        bool blockCompressed = TextureBlockFormats.IsBlockCompressed(format);
+        int bytesPerPixel = blockCompressed
+            ? 0
+            : Math.Max(1, RuntimeRenderingHostServices.BackendInterop.GetBytesPerPixel(format));
 
         long totalBytes = 0L;
         for (int mipIndex = 0; mipIndex < mipCount; mipIndex++)
         {
             uint mipWidth = Math.Max(1u, residentWidth >> mipIndex);
             uint mipHeight = Math.Max(1u, residentHeight >> mipIndex);
-            totalBytes += (long)mipWidth * mipHeight * bytesPerPixel;
+            totalBytes += blockCompressed
+                ? TextureBlockFormats.GetImageBytes(format, mipWidth, mipHeight)
+                : (long)mipWidth * mipHeight * bytesPerPixel;
         }
 
         return totalBytes;

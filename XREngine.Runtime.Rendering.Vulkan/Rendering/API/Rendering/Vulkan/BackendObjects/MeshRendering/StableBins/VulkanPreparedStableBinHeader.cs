@@ -10,7 +10,10 @@ internal readonly record struct VulkanPreparedStableBinHeader(
     AdvancedIndirectRange IndirectRange = default,
     VulkanVisibilityRasterPipeline RasterPipeline = default,
     VulkanResidentDrawTemplateNativeState NativeState = default,
-    VulkanVisibilityRasterPipeline ShadowRasterPipeline = default)
+    VulkanVisibilityRasterPipeline ShadowRasterPipeline = default,
+    VulkanVisibilityRasterPipeline DecalRasterPipeline = default,
+    VulkanResidentDrawTemplateNativeState DecalNativeState = default,
+    VulkanVisibilityRasterPipeline LateRasterPipeline = default)
 {
     /// <summary>
     /// A bin is recordable by the advanced visibility raster lane only after
@@ -26,4 +29,21 @@ internal readonly record struct VulkanPreparedStableBinHeader(
     /// depth-only pipeline for the atlas-page closure.
     /// </summary>
     internal bool IsDirectionalShadowReady => IsRasterReady && ShadowRasterPipeline.IsValid;
+
+    /// <summary>
+    /// The late raster pipeline of a meshlet bin. Its task stage adds the Hi-Z
+    /// test and writes the meshlet occlusion history. Other bins draw the late
+    /// raster with <see cref="RasterPipeline"/> and leave this invalid.
+    /// </summary>
+    internal bool HasLateMeshletRaster => LateRasterPipeline.IsValid;
+
+    /// <summary>
+    /// A mesh surface decal bin. Only the decal buffer lane draws it; the visibility
+    /// raster and the shadow lanes skip it.
+    /// </summary>
+    internal bool IsSurfaceDecal => IndirectRange.Key.Coverage == EAdvancedMaterialCoverageMode.Decal;
+
+    /// <summary>The decal buffer lane can draw this bin with its blended pipeline.</summary>
+    internal bool IsDecalBufferReady => HasSealedSubmission && IsSurfaceDecal &&
+        DecalRasterPipeline.IsValid && DecalNativeState.IsValid;
 }

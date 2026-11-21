@@ -54,6 +54,13 @@ namespace XREngine
         private readonly ConcurrentDictionary<string, byte> _pendingFeatureCacheImports =
             new(StringComparer.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// Cache paths whose warm-up cook failed, with the source write time of that attempt.
+        /// A new warm-up for the same cache path waits until the source file changes.
+        /// </summary>
+        private readonly ConcurrentDictionary<string, long> _failedFeatureCacheImports =
+            new(StringComparer.OrdinalIgnoreCase);
+
         private static bool IsOnJobThread
             => JobManager.IsJobWorkerThread;
 

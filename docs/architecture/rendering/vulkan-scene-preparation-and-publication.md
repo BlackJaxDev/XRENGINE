@@ -120,6 +120,14 @@ GPUScene auxiliary rows do not contain descriptor, texture or sampler state.
 Those epochs belong to Advanced material-table publication. A draw-metadata
 comparison cannot validate those separate dependencies.
 
+Each full Advanced scene plan validates the Uber shader manifest for each
+distinct NativeUber material before it reuses that material in the same plan.
+The plan keeps a source and revision proof for later rows. A changed material,
+shader, source owner, or shader service causes another full check. The next
+full plan starts with no proofs. A retained proof does not replace the first
+file and directory dependency check in a new plan. The publisher reports full
+check, proof hit, and retained proof counts for the last full plan.
+
 Several materials can share one state class under the current last-writer
 row definition. This can still cause state-class writes during merged-node
 motion. The result record preserves that limit; it is not evidence that every
@@ -131,6 +139,17 @@ remaining write is redundant.
 leases. The range planner uses preallocated hash lookup storage and remembered
 payload-range indices. It compares the complete key on collision and preserves
 first-encounter grouping.
+
+Advanced preparation reads the canonical scene reference and snapshot from the
+published backend-ready frame package. It checks that the package database is
+the world GPU scene database, then takes its own publication lease before it
+builds. The service keeps that lease until it replaces the cached preparation,
+resets after renderer retirement, or is disposed. It takes a replacement lease
+before it releases the old one. The cache key is the world frame ID, the GPU
+scene instance, and the exact package publication. A second publication in the
+same frame cannot replace a successful preparation; the consumer receives a
+rejection with no prepared GPU output. Extraction uses the retained snapshot
+throughout the build, even when the scene publishes a newer frame.
 
 Scene/publication identity, temporal and feedback epochs, view capacity,
 geometry compaction and bounded static-deformation generations remain part of
@@ -178,6 +197,32 @@ outcomes. A generation owns its preparation task. Polling must not synchronously
 link, compile or wait, duplicate requests, or reset progress. Only a complete
 compatible family can become ready. Unsupported capability and failed work
 remain visible; required draws cannot silently disappear or use a CPU fallback.
+
+Each required Advanced native stage must author its operation in the current
+command-chain invocation. If its world snapshot, output binding, target or
+backend resources are pending, the command aborts the full invocation. The
+pipeline then declines that frame and fails its history, picking and output
+reservations. A known unsupported host, provider or GI plan reports a
+terminal required-command failure. The stage records its existing diagnostic
+and offscreen rejection before it propagates either failure. Directional
+shadow groups keep their separate generic-lane rejection path. The WebGPU
+neutral ambient-occlusion stage can still omit its native operation.
+
+The standard native shading family prepares the single-sample shader before
+admission. A sealed frame that uses multisample visibility requests its shade
+shader through a separate background preparation task. That task owns an exact
+shader generation and pipeline snapshot. The base family stays ready while the
+multisample shader is pending. Frame association and recording check the shader
+for the sealed visibility mode. A pending or failed multisample shader defers
+that frame; the render thread does not compile it or wait for it.
+
+A sealed scene with native Uber materials also requires the Uber shade shader
+for its visibility mode. Single-sample scenes require `ShadeUber`; multisample
+scenes require the combined standard and Uber shader. Missing or pending work
+retries the frame. Failed work requires a state change before retry. A scene
+without Uber materials does not wait for an Uber shader. The optional
+background prewarm setting can still request one without changing admission.
+The standard shader does not shade Uber materials as a fallback.
 
 Additive program links and first shader-module creation retain existing
 dependency leases. Program/layout and shader-module replacement use exact
@@ -227,12 +272,43 @@ and multiview state. The last lease controls mesh retirement. This contract
 does not extend to light volumes, debug primitives or procedural fullscreen
 drawing without separate evidence.
 
+### Debug Shape Preparation
+
+The Advanced main-view debug pass creates minimum-capacity point and line
+resources when the Gizmos camera layer is active. Their visible counts stay
+unchanged. Vulkan captures two preparation-only mesh requests in the active
+forward framebuffer scope. It prepares their actual program and graphics
+pipeline variants without adding mesh requests or frame operations to the
+scene. Pending or failed preparation keeps only those optional point and line
+draws out of scene recording. Triangle draws remain available.
+After an idle warmup succeeds, the pass skips further zero-count captures for
+the same viewport, target and resource generation. A nonzero draw still runs
+live preparation checks, including after shader or pipeline invalidation.
+
+The same pass checks each debug-owned text draw before it enters the scene.
+The render thread owns debug text objects. Other threads enqueue text updates.
+Each update refreshes the label lifetime. Text traversal reuses key storage
+instead of allocating a key snapshot for each frame.
+Other UI text keeps its normal draw path. Legacy framebuffer rendering and
+passes without an Advanced forward framebuffer keep their normal GPU path.
+`RuntimeEngine.Rendering.Debug.GetDebugShapePreparationDiagnostics` reports
+the last point/line and text status and reason. A target compatibility cache
+uses the live native attachment identities and planner state. Program and
+pipeline readiness still use the normal Vulkan checks after each capture.
+
 ## Recording Allocations And Borrowed State
 
 Prepared-cohort comparisons use scalar extent, viewport, scissor and
 fixed-function fields. They preserve float semantics and indexed-array
 reference identity. Nested Vulkan handle equality must not cause boxing in
 warmed validation or lowering.
+
+Reused mesh operations take the canonical draw identity and resident template
+handle from the current request. The cached operation supplies reusable physical
+state, but it cannot supply the publication authority for a later frame.
+Failed ingress diagnostics distinguish a missing immutable submission from a
+collected command with no matching ingress. They include the captured command
+and publication identities without creating material variants.
 
 Subscription refresh reuses sets, dictionaries and submesh snapshot buffers.
 Program activation invalidates pipeline, descriptor and vertex-input state

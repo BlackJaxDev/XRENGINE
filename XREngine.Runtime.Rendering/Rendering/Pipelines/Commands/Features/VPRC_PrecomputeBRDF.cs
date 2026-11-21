@@ -9,7 +9,7 @@ public sealed class VPRC_PrecomputeBRDF : ViewportRenderCommand
 {
     protected override void Execute()
     {
-        if (ActivePipelineInstance.Pipeline is IAdvancedRenderStageFamilyHost)
+        if (ActivePipelineInstance.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
         {
             AdvancedRenderPipelineOutputBinding binding = ActivePipelineInstance.AdvancedOutputBinding;
             AdvancedVisibilityFamilyReservation reservation = binding.Reservation;
@@ -20,7 +20,8 @@ public sealed class VPRC_PrecomputeBRDF : ViewportRenderCommand
                 return;
         }
 
-        if (ParentPipeline?.TryGetRenderPassIndex(nameof(VPRC_PrecomputeBRDF), out int passIndex) != true)
+        int passIndex = ResolveActiveRenderGraphPassIndex(nameof(VPRC_PrecomputeBRDF));
+        if (passIndex == int.MinValue)
         {
             Debug.RenderingWarningEvery("BRDF.MissingPassMetadata", TimeSpan.FromSeconds(5),
                 "BRDF lookup initialization requires its declared graphics pass.");

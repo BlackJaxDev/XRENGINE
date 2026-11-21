@@ -1,0 +1,259 @@
+#version 460 core
+#extension GL_EXT_mesh_shader : require
+#extension GL_ARB_shader_draw_parameters : require
+#extension GL_GOOGLE_include_directive : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+
+// One task workgroup tests up to 32 consecutive meshlets of one visible draw.
+// Each lane tests one meshlet and the surviving meshlet indices are compacted
+// in lane order into the task payload. The group then launches one mesh
+// workgroup per survivor.
+//
+// Two variants share this source:
+// - Early (no XR_ADV_VISIBILITY_LATE_TASK): frustum and normal-cone tests, plus
+//   the previous-frame visibility bit of the meshlet history. It writes no
+//   history. It never declares the depth pyramid, whose layout is undefined
+//   during the early raster.
+// - Late (XR_ADV_VISIBILITY_LATE_TASK): the same frustum and cone tests plus a
+//   Hi-Z test against this frame's depth pyramid, which is shader-read-only
+//   during the late raster. It sets the current-frame history bit of every
+//   meshlet that passes, with atomicOr only. A recheck draw (an early draw sent
+//   again by LateVisibility) recomputes what the early raster drew from the same
+//   inputs and launches only the other survivors.
+//
+// View rule: the task stage cannot read gl_ViewIndex, so every test uses the
+// view record and the history of push.viewIndex. The mesh stage discards all
+// hardware views except push.viewIndex, so this output rasterizes only into
+// the view that was tested.
+layout(local_size_x = 32) in;
+
+// Matches the mesh-shader visibility ABI.
+layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
+{
+    uint meshArgumentBase;
+    uint producerAndOrigin;
+    uint viewIndex;
+    uint flags;
+} XR_ADV_VisibilityRasterPush;
+
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityRasterPush.viewIndex
+#define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
+#if defined(XR_ADV_VISIBILITY_LATE_TASK)
+#define XR_ADV_ENABLE_DEPTH_PYRAMID_IMAGES 1
+#endif
+#include "VisibilityInterface.glslinc"
+#include "VisibilityMeshletCulling.glslinc"
+
+taskPayloadSharedEXT XRAdvancedVisibilityTaskPayload XR_ADV_TaskPayload;
+
+shared uint XR_ADV_TaskSurvivorFlags[XR_ADV_TASK_MESHLETS_PER_GROUP];
+shared uint XR_ADV_TaskCullReasons[XR_ADV_TASK_MESHLETS_PER_GROUP];
+shared uint XR_ADV_TaskTriangles[XR_ADV_TASK_MESHLETS_PER_GROUP];
+
+void main()
+{
+    uint lane = gl_LocalInvocationID.x;
+    uint viewIndex = XR_ADV_VisibilityRasterPush.viewIndex;
+    uint drawArgumentIndex = XR_ADV_VisibilityRasterPush.meshArgumentBase + uint(gl_DrawID);
+#if defined(XR_ADV_VISIBILITY_LATE_TASK)
+    uint payloadTableLength = uint(XR_ADV_VisibilityLateMeshPayloads.records.length());
+#else
+    uint payloadTableLength = uint(XR_ADV_VisibilityMeshPayloads.records.length());
+#endif
+
+    // Every lane reaches EmitMeshTasksEXT exactly once. Invalid work emits no
+    // mesh groups; the mesh stage repeats the full record validation.
+    bool groupValid =
+        drawArgumentIndex >= XR_ADV_VisibilityRasterPush.meshArgumentBase &&
+        drawArgumentIndex < payloadTableLength;
+    uint payloadIndex = XR_ADV_VIS_INVALID;
+    bool recheck = false;
+    bool hiZAllowed = false;
+    if (groupValid)
+    {
+#if defined(XR_ADV_VISIBILITY_LATE_TASK)
+        uint lateEntry = XR_ADV_VisibilityLateMeshPayloads.records[drawArgumentIndex];
+        payloadIndex = lateEntry & XR_ADV_LATE_MESHLET_PAYLOAD_MASK;
+        recheck = (lateEntry & XR_ADV_LATE_MESHLET_RECHECK) != 0u;
+        hiZAllowed = (lateEntry & XR_ADV_LATE_MESHLET_NO_HIZ) == 0u;
+#else
+        payloadIndex = XR_ADV_VisibilityMeshPayloads.records[drawArgumentIndex];
+#endif
+        groupValid = payloadIndex < uint(XR_ADV_VisibilityPayloads.records.length());
+    }
+
+    uint cullReason = XR_ADV_MESHLET_CULL_INVALID;
+    uint meshletIndex = XR_ADV_VIS_INVALID;
+    bool historyUsable = false;
+    uint previousSet = 0u;
+    uint laneTriangles = 0u;
+    if (groupValid)
+    {
+        // Draw-level records are the same for every lane of the group.
+        XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
+        uint producer = XR_ADV_VisibilityRasterPush.producerAndOrigin & XR_ADV_VIS_PRODUCER_MASK;
+        uint drawDense = XR_ADV_ResolveVisibilityHandle(payload.draw, VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+        uint transformDense = XR_ADV_INVALID_DENSE_INDEX;
+        if (drawDense != XR_ADV_INVALID_DENSE_INDEX)
+        {
+            XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+            transformDense = XR_ADV_ResolveVisibilityHandle(draw.currentTransform, VisibilityTransformLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+        }
+        uint local = gl_WorkGroupID.x * XR_ADV_TASK_MESHLETS_PER_GROUP + lane;
+        meshletIndex = payload.meshletOffset + local;
+        if (transformDense != XR_ADV_INVALID_DENSE_INDEX &&
+            viewIndex < uint(XR_ADV_Views.records.length()) &&
+            local < payload.meshletCount &&
+            meshletIndex >= payload.meshletOffset &&
+            meshletIndex < uint(XR_ADV_VisibilityMeshlets.records.length()) &&
+            meshletIndex <= 0xFFFFFFu)
+        {
+            XRAdvancedTransformRecord transform = XR_ADV_LoadTransform(transformDense);
+            XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+            XRAdvancedMeshletDrawCullState drawState =
+                XR_ADV_MeshletDrawCullState(transform.world, payload.cullMode, producer);
+            XRAdvancedVisibilityMeshletDescriptor meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
+            laneTriangles = meshlet.triangleCount;
+#if defined(XR_ADV_CLUSTER_LOD_CUT)
+            // The cut variant tests the cluster cut first. A cluster outside the
+            // cut is not drawn, and the late variant does not set its history bit.
+            // A cluster that enters the cut has no history bit, so the late raster
+            // tests it against this frame's depth pyramid.
+            XRAdvancedClusterCutState cut = XR_ADV_ClusterCutState(payload.geometry, producer, viewIndex, view);
+            bool inCut = !cut.applies || XR_ADV_ClusterInCut(meshletIndex, cut, drawState);
+            cullReason = inCut
+                ? XR_ADV_ClassifyVisibilityMeshlet(
+                    meshlet,
+                    drawState,
+                    producer,
+                    view.viewProjectionUnjittered,
+                    view.cameraPositionAndNear.xyz)
+                : XR_ADV_MESHLET_CULL_LOD;
+#else
+            cullReason = XR_ADV_ClassifyVisibilityMeshlet(
+                meshlet,
+                drawState,
+                producer,
+                view.viewProjectionUnjittered,
+                view.cameraPositionAndNear.xyz);
+#endif
+
+            // History applies to static meshlets only; skinned meshlets are never
+            // culled, so their history is not read or written.
+            historyUsable =
+                producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
+                XR_ADV_MeshletHistoryAvailable(viewIndex) &&
+                meshletIndex < XR_ADV_MESHLET_HISTORY_MESHLET_CAPACITY;
+            bool historyTrusted = historyUsable && XR_ADV_MeshletViewHistoryValid(view);
+            if (historyUsable)
+                previousSet = XR_ADV_MeshletHistoryParity(viewIndex);
+            bool visibleLastFrame = true;
+            if (historyTrusted)
+            {
+                uint word = XR_ADV_VisibilityMeshletHistory.words[
+                    XR_ADV_MeshletHistoryWord(viewIndex, previousSet, meshletIndex)];
+                visibleLastFrame = ((word >> (meshletIndex & 31u)) & 1u) != 0u;
+            }
+
+#if defined(XR_ADV_VISIBILITY_LATE_TASK)
+            // What the early raster drew for this meshlet: the same frustum and
+            // cone result and the same previous-frame bit and history flag.
+            bool drawnEarly = recheck &&
+                cullReason == XR_ADV_MESHLET_CULL_NONE &&
+                visibleLastFrame;
+            if (cullReason == XR_ADV_MESHLET_CULL_NONE &&
+                hiZAllowed &&
+                producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
+                XR_ADV_MeshletSphereOccluded(XR_ADV_MeshletWorldSphere(meshlet, drawState), view))
+            {
+                cullReason = XR_ADV_MESHLET_CULL_OCCLUDED;
+            }
+            // Record the late result for the next frame. Bits are only set, never
+            // cleared, here: LateVisibility cleared the current set before this
+            // raster. Two invocations that share a word (or two draws that share a
+            // meshlet) therefore produce the same result in any order, and a
+            // shared meshlet bit means "visible for at least one instance".
+            if (historyUsable && cullReason == XR_ADV_MESHLET_CULL_NONE)
+            {
+                atomicOr(
+                    XR_ADV_VisibilityMeshletHistory.words[
+                        XR_ADV_MeshletHistoryWord(viewIndex, previousSet ^ 1u, meshletIndex)],
+                    1u << (meshletIndex & 31u));
+            }
+            if (cullReason == XR_ADV_MESHLET_CULL_NONE && drawnEarly)
+                cullReason = XR_ADV_MESHLET_CULL_HISTORY;
+#else
+            if (cullReason == XR_ADV_MESHLET_CULL_NONE && !visibleLastFrame)
+                cullReason = XR_ADV_MESHLET_CULL_HISTORY;
+#endif
+        }
+    }
+
+    bool visible = cullReason == XR_ADV_MESHLET_CULL_NONE;
+    uint survivorSlot;
+    uint survivorCount;
+    if (gl_SubgroupSize >= XR_ADV_TASK_MESHLETS_PER_GROUP)
+    {
+        // The whole workgroup is one subgroup. The exclusive ballot count keeps
+        // the survivors in lane order, so the mesh launch order is stable.
+        uvec4 ballot = subgroupBallot(visible);
+        survivorSlot = subgroupBallotExclusiveBitCount(ballot);
+        survivorCount = subgroupBallotBitCount(ballot);
+    }
+    else
+    {
+        // Narrow subgroups: the same lane-order compaction through shared memory.
+        XR_ADV_TaskSurvivorFlags[lane] = visible ? 1u : 0u;
+        barrier();
+        survivorSlot = 0u;
+        survivorCount = 0u;
+        for (uint other = 0u; other < XR_ADV_TASK_MESHLETS_PER_GROUP; ++other)
+        {
+            uint flag = XR_ADV_TaskSurvivorFlags[other];
+            survivorSlot += other < lane ? flag : 0u;
+            survivorCount += flag;
+        }
+    }
+    if (visible)
+        XR_ADV_TaskPayload.meshletIndex[survivorSlot] = meshletIndex;
+    if (lane == 0u)
+        XR_ADV_TaskPayload.payloadIndex = payloadIndex;
+
+#if !defined(XR_ADV_VISIBILITY_LATE_TASK)
+    // Early-phase telemetry for the delayed counter receipt. One atomic per
+    // counter per group. The late raster runs after that receipt is copied.
+    XR_ADV_TaskCullReasons[lane] = cullReason;
+    XR_ADV_TaskTriangles[lane] = visible ? laneTriangles : 0u;
+    barrier();
+    if (lane == 0u)
+    {
+        uint visibleCount = 0u;
+        uint frustumCount = 0u;
+        uint coneCount = 0u;
+        uint historyCount = 0u;
+        uint triangleCount = 0u;
+        for (uint other = 0u; other < XR_ADV_TASK_MESHLETS_PER_GROUP; ++other)
+        {
+            uint reason = XR_ADV_TaskCullReasons[other];
+            visibleCount += reason == XR_ADV_MESHLET_CULL_NONE ? 1u : 0u;
+            frustumCount += reason == XR_ADV_MESHLET_CULL_FRUSTUM ? 1u : 0u;
+            coneCount += reason == XR_ADV_MESHLET_CULL_CONE ? 1u : 0u;
+            historyCount += reason == XR_ADV_MESHLET_CULL_HISTORY ? 1u : 0u;
+            triangleCount += XR_ADV_TaskTriangles[other];
+        }
+        if (visibleCount != 0u)
+            atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyVisible, visibleCount);
+        if (frustumCount != 0u)
+            atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyFrustumCulled, frustumCount);
+        if (coneCount != 0u)
+            atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyConeCulled, coneCount);
+        if (historyCount != 0u)
+            atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyHistoryCulled, historyCount);
+        if (triangleCount != 0u)
+            atomicAdd(XR_ADV_VisibilityCounters.meshletEarlyTriangles, triangleCount);
+    }
+#endif
+
+    EmitMeshTasksEXT(survivorCount, 1u, 1u);
+}

@@ -140,11 +140,58 @@ internal sealed partial class VulkanCommandRuntime
         return EVulkanCommandChainWorkerEligibility.Eligible;
     }
 
+    private readonly int[] _commandChainEligibleLanes = new int[EngineExecutionTopology.MaximumWorkerCount + 1];
+
+    /// <summary>
+    /// Captures the physical lanes that command-chain recording may use before any
+    /// lane arena is touched: lanes below <paramref name="laneCount"/> that
+    /// asynchronous render work does not reserve. With no reservation the list is
+    /// <c>0..laneCount-1</c>, so the chain-to-lane mapping does not change.
+    /// </summary>
+    private int CaptureEligibleCommandChainLanes(int laneCount)
+    {
+        ulong reserved = GetRenderWorkDomain().AsynchronousLaneMask;
+        int count = 0;
+        int limit = Math.Min(laneCount, _commandChainEligibleLanes.Length);
+        for (int lane = 0; lane < limit; lane++)
+        {
+            if ((reserved & (1UL << lane)) == 0UL)
+                _commandChainEligibleLanes[count++] = lane;
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Rents the command-chain batch and claims the eligible lanes before any lane
+    /// arena is touched. The claim holds until dispatch, so asynchronous work cannot
+    /// reserve a lane whose arena this recording uses. A failed claim means that a
+    /// reservation appeared after the lane capture, which only the owner thread can
+    /// make, so it fails loudly.
+    /// </summary>
+    private RenderWorkBatchLease ClaimCommandChainLanes(int eligibleLaneCount)
+    {
+        RenderWorkDomain domain = GetRenderWorkDomain();
+        ulong laneMask = 0UL;
+        for (int index = 0; index < eligibleLaneCount; index++)
+            laneMask |= 1UL << _commandChainEligibleLanes[index];
+
+        RenderWorkBatchLease lease = domain.RentBatch(eligibleLaneCount);
+        RenderWorkAdmissionResult claim = domain.TryClaimSynchronousLanes(lease, laneMask);
+        if (claim.IsAdmitted)
+            return lease;
+
+        lease.Dispose();
+        throw new InvalidOperationException(
+            $"Command-chain lanes 0x{laneMask:X} cannot be claimed: {claim.Reason}.");
+    }
+
     private static VulkanCommandChainWorkerEligibilityResult AssignCommandChainRecordingWorker(
         VulkanCommandChainRecordingBatch batch,
         CommandChain chain,
-        int laneCount)
+        ReadOnlySpan<int> eligibleLanes)
     {
+        int laneCount = eligibleLanes.Length;
         EVulkanCommandChainWorkerEligibility encodability =
             EvaluatePreparedCommandChainWorkerEncodability(batch, chain);
         if (encodability != EVulkanCommandChainWorkerEligibility.Eligible)
@@ -156,9 +203,10 @@ internal sealed partial class VulkanCommandRuntime
                 EVulkanCommandChainWorkerEligibility.TooLittleIndependentWork);
         }
 
+        // Hash into the eligible list and store the physical lane id.
         return new VulkanCommandChainWorkerEligibilityResult(
             EVulkanCommandChainWorkerEligibility.Eligible,
-            ResolveCommandChainRecordingWorkerIndex(chain.Key, laneCount));
+            eligibleLanes[ResolveCommandChainRecordingWorkerIndex(chain.Key, laneCount)]);
     }
 
     private static EVulkanCommandChainWorkerEligibility
@@ -251,8 +299,14 @@ internal sealed partial class VulkanCommandRuntime
         return eligibility;
     }
 
+    /// <summary>
+    /// Executes the command-chain batch on the lanes that <paramref name="lease"/>
+    /// claims, from <see cref="ClaimCommandChainLanes"/>. The method disposes the
+    /// lease and sets it to default when it executes; otherwise the caller disposes it.
+    /// </summary>
     private CommandChainWorkerTiming DispatchCommandChainRecordingWorkers(
         VulkanCommandChainRecordingBatch batch,
+        ref RenderWorkBatchLease lease,
         int laneCount,
         int frameSlot)
     {
@@ -265,14 +319,17 @@ internal sealed partial class VulkanCommandRuntime
         if (activeLaneCount == 0)
             return default;
 
+        if (!lease.IsValid)
+            throw new InvalidOperationException("Command-chain dispatch needs the lane claim from preparation.");
+
         batch.DispatchTimestamp = Stopwatch.GetTimestamp();
         batch.PublishQueueTelemetry(batch.JobCount);
         RenderWorkDomain domain = GetRenderWorkDomain();
-        RenderWorkBatchLease lease = domain.RentBatch(activeLaneCount);
+        lease.ShrinkItemCount(activeLaneCount);
         int itemIndex = 0;
         for (int laneId = 0; laneId < laneCount; laneId++)
         {
-            if ((batch.ActiveWorkerMask & (1u << laneId)) == 0)
+            if ((batch.ActiveWorkerMask & (1UL << laneId)) == 0UL)
                 continue;
 
             batch.GetLaneWork(
@@ -307,6 +364,7 @@ internal sealed partial class VulkanCommandRuntime
         {
             Volatile.Write(ref _activeCommandChainRecordingWorkerCount, 0);
             lease.Dispose();
+            lease = default;
         }
 
         TimeSpan waitTime = Stopwatch.GetElapsedTime(waitStarted);

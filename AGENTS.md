@@ -2,7 +2,9 @@
 
 ## Project And Working Agreement
 
-XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10, OpenGL 4.6 primary; Vulkan/DX12 are WIP. OpenXR and SteamVR/OpenVR exist; OpenVR is the tested path. Default to the ImGui editor unless explicitly targeting the unstable native UI.
+XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10. The default target is **Vulkan with the `AdvancedRenderPipeline` (ARP)**. OpenGL 4.6 and the `DefaultRenderPipeline` are secondary; DX12 is WIP. OpenXR and SteamVR/OpenVR exist; OpenVR is the tested path. Default to the ImGui editor unless explicitly targeting the unstable native UI.
+
+- Validate rendering, performance, and live-editor work on Vulkan + ARP first. In per-session settings, set the render backend to Vulkan and `RenderPipeline` to `AdvancedRenderPipeline`. Check copied settings files before a run, because older copies select `DefaultRenderPipeline`. Report OpenGL or `DefaultRenderPipeline` results only as secondary rows, unless the task targets them.
 
 - Favor clean, maintainable, high-performance v1 architecture and root-cause fixes. Breaking APIs, renames, and restructuring are acceptable; avoid speculative rewrites, unrelated churn, and drive-by formatting.
 - Identify the subsystem, run mode, nearby tests, and relevant docs/tasks/launch profiles before editing. Follow existing style and validate through the narrowest useful build, test, or runtime path.
@@ -20,13 +22,21 @@ XRENGINE is a pre-v1, Windows-first C# XR engine/editor: Windows 10/11, .NET 10,
 - Use short, clear sentences, active voice, and consistent technical terms. Give each instruction a clear action. Keep technical names, code identifiers, commands, and quoted source text exact.
 - Follow the [maintainer code and writing style](docs/developer-guides/ai/maintainer-style.md) when producing code, comments, XML summaries, commit messages, pull request text, documentation, or user summaries. Current explicit instructions take priority.
 
+### Comments And Member Summaries
+
+- Write for a developer who is learning the subsystem. Explain the concrete operation and why the code needs it. Include the relevant input, output, or state change when it helps the reader follow the data flow. Do not repeat obvious syntax.
+- Method and type names are navigation aids, not explanations. State what the named code does and how its result is used. For registrations, name the actual consumer and explain what the registration supplies to it.
+- Replace vague verbs such as "restores," "handles," or "processes" with the specific actions. For example, write "Reads the saved track data, creates an AnimationClip, and fills its animation members" instead of "Restores the animation."
+- Explain unfamiliar subsystem terms where they matter. Distinguish steps such as identifying a type, creating an object, reading its saved values, and applying those values during playback. Keep comments concise, but do not omit the mechanism or reason merely to make them shorter. Verify claims against the implementation.
+
 ## Read On Demand
 
 These linked guides remain required instructions for their respective tasks; read them before acting:
 
 - **Broker/API workers or hierarchical swarms:** [broker policy](docs/developer-guides/ai/agent-broker-policy.md). Setup/trust/restarts: [broker user guide](docs/user-guide/ai/local-agent-broker.md); implementation/security: [broker developer guide](docs/developer-guides/ai/local-agent-broker.md).
 - **Editor/MCP/RenderDoc work or launch/settings/tooling changes:** relevant sections of [editor and tooling workflows](docs/developer-guides/ai/agent-editor-workflows.md). MCP: [setup](docs/user-guide/ai/mcp-server.md) and [protocol/tools](docs/developer-guides/ai/mcp-server.md).
-- **Rendering changes:** [DefaultRenderPipeline invariants](docs/architecture/rendering/default-render-pipeline-notes.md) and [mesh submission contracts](docs/architecture/rendering/mesh-submission-strategies.md).
+- **Window videos (the user asks for a video, recording, or clip of an XRENGINE window):** [record-window-video skill](.agents/skills/record-window-video/SKILL.md), which uses `Tools/Record-WindowVideo.ps1` (ffmpeg `gfxcapture`). Ask before you download ffmpeg.
+- **Rendering changes:** [AdvancedRenderPipeline](docs/architecture/rendering/advanced-render-pipeline.md) (the default pipeline), [DefaultRenderPipeline invariants](docs/architecture/rendering/default-render-pipeline-notes.md), and [mesh submission contracts](docs/architecture/rendering/mesh-submission-strategies.md).
 - **Licensing, dependencies, or contributions:** `LICENSE.md`, `LEGAL/README.md`, and relevant `LEGAL/` guidance.
 
 ## Model Routing And Delegation

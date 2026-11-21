@@ -110,6 +110,8 @@ namespace XREngine.Rendering.Commands
                     flags |= GPUIndirectRenderFlags.CastShadow;
                 if (snapshot.Owner.ReceivesShadows)
                     flags |= GPUIndirectRenderFlags.ReceiveShadows;
+                if (snapshot.Owner.ShadowCasterDynamic)
+                    flags |= GPUIndirectRenderFlags.ShadowCasterDynamic;
             }
             if (snapshot.SharedOpaqueShadow)
             {
@@ -120,7 +122,7 @@ namespace XREngine.Rendering.Commands
 
             if (mesh.HasSkinning)
                 flags |= GPUIndirectRenderFlags.Skinned;
-            if (mesh.HasBlendshapes)
+            if (mesh.HasBlendshapeDeformation)
                 flags |= GPUIndirectRenderFlags.BlendShapes;
             if (snapshot.Instances > 1u)
                 flags |= GPUIndirectRenderFlags.Instanced;

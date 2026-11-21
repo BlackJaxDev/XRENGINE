@@ -26,6 +26,9 @@ public static partial class OutlinePassVariantFactory
         if (RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked)
             return CreateCookedMaterialVariant(sourceMaterial, pass);
 
+        if (pass.ShaderBehavior == EngineMaterialSemanticIdentity.UberSoftOutlineV2)
+            return CreateSoftOutlineVariant(sourceMaterial, pass);
+
         XRShader? fragment;
         if (sourceMaterial.TryGetUberMaterialState(out XRShader? canonicalFragment, out ShaderUiManifest manifest) &&
             canonicalFragment is not null)
@@ -55,7 +58,6 @@ public static partial class OutlinePassVariantFactory
         {
             UberOutlineSourceMaterial = sourceMaterial,
             Name = string.Concat(sourceMaterial.Name, " [Outline]"),
-            Parameters = sourceMaterial.Parameters,
             Textures = sourceMaterial.Textures,
             RenderPass = pass.RenderPass,
             BillboardMode = sourceMaterial.BillboardMode,
@@ -65,13 +67,15 @@ public static partial class OutlinePassVariantFactory
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
             UberAuthoredState = sourceMaterial.UberAuthoredState,
             RenderOptions = pass.RenderOptions,
+            // Attach source parameters after pass setters update their own values.
+            Parameters = sourceMaterial.Parameters,
         };
 
         // Set the source before shaders. Material initialization must keep the
         // pass-specific generated fragment instead of restoring the base source.
         variant.Shaders = [monoVertex, ovrVertex, nvVertex, fragment];
 
-        variant.SettingUniforms += (_, program) => sourceMaterial.OnSettingUniforms(program);
+        sourceMaterial.ShareUniformSourcesWith(variant);
         return variant;
     }
 
@@ -79,5 +83,38 @@ public static partial class OutlinePassVariantFactory
     {
         XRShader source = ShaderHelper.LoadEngineShader(Path.Combine("Uber", fileName), EShaderType.Vertex);
         return ShaderHelper.CreateDefinedShaderVariant(source, OutlinePassDefine) ?? source;
+    }
+
+    private static XRMaterial CreateSoftOutlineVariant(XRMaterial source, MaterialPassDefinition pass)
+    {
+        XRShader vertex = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.vert"), EShaderType.Vertex);
+        XRShader geometry = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "SoftOutlineSilhouette.gs"), EShaderType.Geometry);
+        XRShader fragment = ShaderHelper.LoadEngineShader(Path.Combine("Uber", "SoftOutlineSilhouette.fs"), EShaderType.Fragment);
+
+        XRMaterial variant = new()
+        {
+            UberOutlineSourceMaterial = source,
+            Name = string.Concat(source.Name, " [Soft Outline]"),
+            Textures = source.Textures,
+            RenderPass = pass.RenderPass,
+            BillboardMode = source.BillboardMode,
+            AlphaCutoff = source.AlphaCutoff,
+            TransparencyMode = ETransparencyMode.AlphaBlend,
+            TransparentTechniqueOverride = source.TransparentTechniqueOverride,
+            TransparentSortPriority = source.TransparentSortPriority,
+            RenderOptions = pass.RenderOptions,
+            AdvancedLatePassMetadata = new AdvancedLatePassMetadata(
+                EAdvancedLatePassKind.SpecialEffects,
+                isOrderDependent: true)
+            {
+                TemporalUnsupportedReason = "The soft outline has no coverage-matching temporal shader variants.",
+            },
+            // Attach source parameters after the alpha-blend setter runs.
+            Parameters = source.Parameters,
+        };
+        variant.Shaders = [vertex, geometry, fragment];
+        variant.EngineSemantic = EngineMaterialSemanticIdentity.UberSoftOutlineV2;
+        source.ShareUniformSourcesWith(variant);
+        return variant;
     }
 }

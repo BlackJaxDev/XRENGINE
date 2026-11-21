@@ -23,6 +23,9 @@ internal sealed partial class VulkanFrameDataArena
     private readonly VulkanMappedFrameArenaBackend _backend;
     private readonly object _structureSync = new();
     private readonly ulong _initialChunkCapacity;
+    // True for the canonical frame-data arena: its CPU-written Advanced scene storage lane prefers
+    // device-local host-visible memory (resizable BAR). Upload staging arenas keep system memory.
+    private readonly bool _preferDeviceLocalSceneStorage;
     private readonly VulkanFrameDataChunk?[][][] _chunks = new VulkanFrameDataChunk?[LaneCount][][];
     private readonly ulong[][][] _nextOffsets = new ulong[LaneCount][][];
     private readonly int[] _chunkGroupCounts = new int[LaneCount];
@@ -59,10 +62,21 @@ internal sealed partial class VulkanFrameDataArena
         long FlushExpansionBytes,
         long InvalidateExpansionBytes);
 
-    internal VulkanFrameDataArena(VulkanMappedFrameArenaBackend backend, ulong initialChunkCapacity = 65_536UL)
+    /// <param name="backend">The chunk allocator.</param>
+    /// <param name="initialChunkCapacity">The first chunk size of each lane.</param>
+    /// <param name="preferDeviceLocalSceneStorage">
+    /// Places the <see cref="EVulkanFrameDataLane.AdvancedSceneStorage"/> lane in device-local
+    /// host-visible memory when it exists. The CPU only writes that lane, sequentially, and the GPU
+    /// reads it every frame, so system memory would make each GPU read cross PCIe.
+    /// </param>
+    internal VulkanFrameDataArena(
+        VulkanMappedFrameArenaBackend backend,
+        ulong initialChunkCapacity = 65_536UL,
+        bool preferDeviceLocalSceneStorage = false)
     {
         _backend = backend ?? throw new ArgumentNullException(nameof(backend));
         _initialChunkCapacity = Math.Max(initialChunkCapacity, 1UL);
+        _preferDeviceLocalSceneStorage = preferDeviceLocalSceneStorage;
         Identity = unchecked((ulong)Interlocked.Increment(ref s_nextIdentity));
         if (Identity == 0)
             Identity = unchecked((ulong)Interlocked.Increment(ref s_nextIdentity));
@@ -587,7 +601,8 @@ internal sealed partial class VulkanFrameDataArena
                     capacity,
                     _usages[laneIndex],
                     _labels[laneIndex],
-                    preferDeviceLocal: laneIndex == (int)EVulkanFrameDataLane.AdvancedVisibilityStorage);
+                    preferDeviceLocal: laneIndex == (int)EVulkanFrameDataLane.AdvancedVisibilityStorage ||
+                        (_preferDeviceLocalSceneStorage && laneIndex == (int)EVulkanFrameDataLane.AdvancedSceneStorage));
                 if (chunk.AllocationLength > MaximumMappedBytes ||
                     actualMappedBytes > MaximumMappedBytes - chunk.AllocationLength ||
                     currentMappedBytes > MaximumMappedBytes - actualMappedBytes - chunk.AllocationLength)

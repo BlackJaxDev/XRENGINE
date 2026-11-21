@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Commands;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Vulkan;
 using XREngine.Components.Lights;
@@ -102,6 +103,17 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     }
 
     private int _renderPass;
+    private EAdvancedSourceOrderedSlice _sourceOrderedSlice;
+    /// <summary>Selects commands around the frozen source scene-color boundary.</summary>
+    public EAdvancedSourceOrderedSlice SourceOrderedSlice
+    {
+        get => _sourceOrderedSlice;
+        set
+        {
+            if (SetField(ref _sourceOrderedSlice, value))
+                ParentPipeline?.NotifyCommandChainStructureChanged();
+        }
+    }
     public int RenderPass
     {
         get => _renderPass;
@@ -137,9 +149,18 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     /// Returns the pass index that backend operations emitted by this command should use.
     /// </summary>
     internal int ResolveRenderGraphPassIndex()
-        => _resolvedRenderGraphPassIndex != int.MinValue
+    {
+        if (!string.IsNullOrWhiteSpace(RenderGraphPassName))
+        {
+            int activePassIndex = ResolveActiveRenderGraphPassIndex(RenderGraphPassName!);
+            if (activePassIndex != int.MinValue)
+                return activePassIndex;
+        }
+
+        return _resolvedRenderGraphPassIndex != int.MinValue
             ? _resolvedRenderGraphPassIndex
             : RenderPass;
+    }
 
     /// <summary>
     /// Declares textures sampled by dynamically selected mesh material variants in this pass.
@@ -236,7 +257,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             return false;
 
         if (EnforceAdvancedLatePassEligibility &&
-            activeInstance.Pipeline is AdvancedRenderPipeline advanced &&
+            activeInstance.Pipeline?.ResolveAdvancedStageFamily() is { } advanced &&
             !advanced.TryValidateLatePassProfile(RenderPass, out string? reason))
         {
             ReportAdvancedLatePassRejection(reason);
@@ -450,6 +471,16 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
                 target.ColorAccess,
                 colorLoad,
                 target.GetColorStoreOp());
+
+            if (target.Name == AdvancedRenderPipeline.ForwardPassFBOName &&
+                context.HasResource(AdvancedRenderPipeline.EditorHighlightMaskTextureName))
+            {
+                builder.DependsOn(context.GetOrCreateSyntheticPass(
+                        "Advanced.EditorHighlightSeed", ERenderGraphPassStage.Compute).PassIndex)
+                    .UseColorAttachment(
+                        MakeTextureResource(AdvancedRenderPipeline.EditorHighlightMaskTextureName),
+                        ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+            }
 
             UseRenderTargetDepthStencilAttachments(builder, target, depthLoad, stencilLoad);
         }

@@ -149,53 +149,49 @@ namespace XREngine.Animation
         }
         public void RemoveLast()
         {
-            if (Last is null)
-                return;
-
-            if (First == Last)
-            {
-                First = null;
-                Last = null;
-                --Count;
-                OnChanged();
-            }
-            else
-            {
-                Keyframe temp = Last;
-                Last = Last.Prev as T;
-                temp.Remove();
-            }
+            Last?.Remove();
         }
         public void RemoveFirst()
         {
-            if (First is null)
-                return;
-
-            if (First == Last)
-            {
-                First = null;
-                Last = null;
-                --Count;
-                OnChanged();
-            }
-            else
-            {
-                Keyframe temp = First;
-                First = First.Next as T;
-                temp.Remove();
-            }
+            First?.Remove();
         }
         public T? GetKeyBefore(float second)
         {
+            // Walk the links directly. The track enumerator allocates, and sampling calls this each frame.
             T? bestKey = null;
-            foreach (var key in this)
-                if (key.Second <= second)
-                    bestKey = key as T;
-                else
-                    break;
+            for (Keyframe? key = First; key is not null && key.Second <= second; key = key.Next)
+                bestKey = key as T;
 
             return bestKey;
         }
+        /// <summary>
+        /// Finds the same key as <see cref="GetKeyBefore"/>, and starts the walk at a key in this track.
+        /// </summary>
+        /// <param name="second">The time to find a key for.</param>
+        /// <param name="start">The key to start from, or null to start from the first key.</param>
+        /// <param name="steps">The number of links that the walk followed.</param>
+        internal T? FindKeyBefore(float second, T? start, out int steps)
+        {
+            steps = 0;
+            Keyframe? key = start ?? First;
+            while (key is not null && key.Second > second)
+            {
+                key = key.Prev;
+                ++steps;
+            }
+
+            if (key is null)
+                return null;
+
+            for (Keyframe? next = key.Next; next is not null && next.Second <= second; next = key.Next)
+            {
+                key = next;
+                ++steps;
+            }
+
+            return key as T;
+        }
+
         public override IEnumerator<Keyframe> GetEnumerator()
         {
             Keyframe? node = First;
@@ -242,9 +238,17 @@ namespace XREngine.Animation
 
         public void Clear()
         {
+            // Detach each key, so that a retained reference cannot identify this track.
+            for (Keyframe? key = First, next; key is not null; key = next)
+            {
+                next = key.Next;
+                key.Remove(notifyChange: false);
+            }
+
             _first = null;
             _last = null;
             Count = 0;
+            ++Revision;
         }
 
         public int IndexOf(object? value)

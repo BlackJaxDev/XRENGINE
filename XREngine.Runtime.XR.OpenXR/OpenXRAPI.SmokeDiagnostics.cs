@@ -47,6 +47,9 @@ public unsafe partial class OpenXRAPI
     private int _smokeDesktopMirrorComposed;
     private long _smokeSubmittedFrameCount;
     private long _smokeNoLayerFrameCount;
+    private readonly long[] _smokeNoLayerReasonCounts = new long[Enum.GetValues<EOpenXrNoLayerReason>().Length];
+    private int _smokePendingNoLayerReason;
+    private int _frameSkipRenderReason;
     private long _smokeEndFrameFailureCount;
     private long _smokeMissedDeadlineCount;
     private long _strictSinglePassStereoSequentialFallbackAttemptCount;
@@ -172,6 +175,7 @@ public unsafe partial class OpenXRAPI
                 SwapchainRetirement = retirement,
                 SubmittedFrameCount = Volatile.Read(ref _smokeSubmittedFrameCount),
                 NoLayerFrameCount = Volatile.Read(ref _smokeNoLayerFrameCount),
+                NoLayerFrameReasons = CaptureSmokeNoLayerReasons(),
                 EndFrameFailureCount = Volatile.Read(ref _smokeEndFrameFailureCount),
                 StrictSinglePassStereoSequentialFallbackAttemptCount = Volatile.Read(ref _strictSinglePassStereoSequentialFallbackAttemptCount),
                 StrictSpsInjectedFailureStage = _strictSpsInjectedFailureStage.ToString(),
@@ -319,6 +323,8 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _smokeDesktopMirrorComposed, 0);
         Volatile.Write(ref _smokeSubmittedFrameCount, 0);
         Volatile.Write(ref _smokeNoLayerFrameCount, 0);
+        for (int i = 0; i < _smokeNoLayerReasonCounts.Length; i++)
+            Volatile.Write(ref _smokeNoLayerReasonCounts[i], 0);
         Volatile.Write(ref _smokeEndFrameFailureCount, 0);
         Volatile.Write(ref _smokeMissedDeadlineCount, 0);
         Volatile.Write(ref _strictSinglePassStereoSequentialFallbackAttemptCount, 0);
@@ -477,7 +483,12 @@ public unsafe partial class OpenXRAPI
             if (layerCount > 0)
                 Interlocked.Increment(ref _smokeSubmittedFrameCount);
             else
+            {
                 Interlocked.Increment(ref _smokeNoLayerFrameCount);
+                int reason = Interlocked.Exchange(ref _smokePendingNoLayerReason, (int)EOpenXrNoLayerReason.Unknown);
+                if ((uint)reason < (uint)_smokeNoLayerReasonCounts.Length)
+                    Interlocked.Increment(ref _smokeNoLayerReasonCounts[reason]);
+            }
         }
         else
         {
@@ -494,6 +505,23 @@ public unsafe partial class OpenXRAPI
         {
             RecordSmokeFailureOnce($"Smoke frame-ledger callback failed: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    /// <summary>Records why the next xrEndFrame call submits no layer.</summary>
+    private void MarkNoLayerReason(EOpenXrNoLayerReason reason)
+        => Volatile.Write(ref _smokePendingNoLayerReason, (int)reason);
+
+    /// <summary>Copies the non-zero no-layer reason counters for a diagnostics snapshot.</summary>
+    private Dictionary<string, long> CaptureSmokeNoLayerReasons()
+    {
+        Dictionary<string, long> reasons = [];
+        for (int i = 0; i < _smokeNoLayerReasonCounts.Length; i++)
+        {
+            long count = Volatile.Read(ref _smokeNoLayerReasonCounts[i]);
+            if (count != 0)
+                reasons[((EOpenXrNoLayerReason)i).ToString()] = count;
+        }
+        return reasons;
     }
 
     private void RecordSmokeDesktopMirrorComposed()

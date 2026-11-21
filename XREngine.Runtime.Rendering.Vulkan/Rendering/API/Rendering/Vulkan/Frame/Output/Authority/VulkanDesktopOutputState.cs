@@ -40,12 +40,23 @@ internal sealed class VulkanDesktopOutputState
     internal Extent2D Extent;
     internal ulong Generation;
     internal VulkanSwapchainDepthResources? DepthResources;
+    // Created on first use by desktop worker recording; guarded by DepthMutationGate.
+    internal VulkanDesktopOffscreenColorResources? OffscreenColorResources;
     internal object DepthMutationGate { get; } = new();
     internal int RecreateInProgress;
     internal bool Maintenance1Enabled;
     internal bool PresentScalingActive;
     internal SurfacePresentScalingCapabilitiesEXT PresentScalingCapabilities;
     internal VulkanPresentationProfileSnapshot PresentationProfile;
+
+    // DXGI flip-model present path. DxgiPresenter lives for the whole output; DxgiRing
+    // belongs to the live generation. DxgiStartupFailed keeps the native path after a
+    // logged fallback.
+    internal VulkanDxgiPresenter? DxgiPresenter;
+    internal VulkanDxgiImageRing? DxgiRing;
+    internal bool DxgiStartupFailed;
+    internal uint DxgiSyncInterval;
+    internal bool DxgiAllowTearing;
 
     internal bool IsPresentScalingExtentSupported(
         uint swapchainWidth,

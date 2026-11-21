@@ -7,6 +7,8 @@ public static class AdvancedSceneColorContract
 {
     public const string SceneColorSnapshotResourceName = "AdvancedShading.SceneColorSnapshot";
     public const string SceneColorSamplerName = "AdvancedSceneColorSnapshot";
+    public const string SourceOrderedSnapshotResourceName = "AdvancedShading.SourceOrderedSceneColorSnapshot";
+    public const string SourceOrderedSamplerName = "_SourceSceneColor";
 
     /// <summary>
     /// Determines whether a dedicated scene color copy is required based on active refractive draws.
@@ -34,10 +36,18 @@ public static class AdvancedSceneColorContract
 
         XRRenderPipelineInstance? instance =
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-        if (instance?.Pipeline is not AdvancedRenderPipeline ||
-            instance.GetTexture<XRTexture>(SceneColorSnapshotResourceName) is not
-                XRTexture snapshot)
+        string resourceName = metadata.SourceSurfaceContract ==
+            EAdvancedSourceSurfaceContract.SceneColorToonV1
+                ? SourceOrderedSnapshotResourceName
+                : SceneColorSnapshotResourceName;
+        if (instance?.Pipeline?.ResolveAdvancedStageFamily() is null)
+            return;
+
+        if (instance.GetTexture<XRTexture>(resourceName) is not XRTexture snapshot)
         {
+            if (metadata.SourceSurfaceContract == EAdvancedSourceSurfaceContract.SceneColorToonV1)
+                throw new RenderResourcePreparationPendingException(
+                    "The required source-ordered scene color snapshot is unavailable.");
             return;
         }
 

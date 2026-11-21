@@ -320,6 +320,12 @@ internal sealed partial class VulkanFrameLoop
         return frozen;
     }
 
+    /// <summary>
+    /// Checks that every frame op captured for one OpenXR eye belongs to that eye. Ops that use
+    /// planner resources must have the eye swapchain extent as display extent. Their internal
+    /// extent can be smaller (the TSR render scale) but not empty or larger than the display extent.
+    /// Ops that write the swapchain image must cover the full image.
+    /// </summary>
     private static void ValidateOpenXrExternalFrameOpContexts(
         FrameOp[] ops,
         in Extent2D extent,
@@ -340,8 +346,10 @@ internal sealed partial class VulkanFrameLoop
 
             if (context.DisplayWidth == extent.Width &&
                 context.DisplayHeight == extent.Height &&
-                context.InternalWidth == extent.Width &&
-                context.InternalHeight == extent.Height)
+                context.InternalWidth > 0 &&
+                context.InternalHeight > 0 &&
+                context.InternalWidth <= extent.Width &&
+                context.InternalHeight <= extent.Height)
             {
                 continue;
             }
@@ -508,18 +516,20 @@ internal sealed partial class VulkanFrameLoop
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
             FrameOp capturedOp = ops[opIndex];
-            XRRenderPipelineInstance? pipeline = capturedOp.Context.PipelineInstance;
+            // FrameOpContext is large; read the captured context by reference.
+            ref readonly FrameOpContext capturedContext = ref capturedOp.ContextReference;
+            XRRenderPipelineInstance? pipeline = capturedContext.PipelineInstance;
             if (pipeline is null)
                 continue;
 
             RenderResourceRegistry activeRegistry = pipeline.Resources;
-            FrameOpContext context = capturedOp.Context with
+            FrameOpContext context = capturedContext with
             {
                 ResourceRegistry = activeRegistry,
-                DisplayWidth = pipeline.ResourceDisplayWidth ?? capturedOp.Context.DisplayWidth,
-                DisplayHeight = pipeline.ResourceDisplayHeight ?? capturedOp.Context.DisplayHeight,
-                InternalWidth = pipeline.ResourceInternalWidth ?? capturedOp.Context.InternalWidth,
-                InternalHeight = pipeline.ResourceInternalHeight ?? capturedOp.Context.InternalHeight,
+                DisplayWidth = pipeline.ResourceDisplayWidth ?? capturedContext.DisplayWidth,
+                DisplayHeight = pipeline.ResourceDisplayHeight ?? capturedContext.DisplayHeight,
+                InternalWidth = pipeline.ResourceInternalWidth ?? capturedContext.InternalWidth,
+                InternalHeight = pipeline.ResourceInternalHeight ?? capturedContext.InternalHeight,
                 ResourceGeneration = unchecked((ulong)Math.Max(pipeline.ResourceGeneration, 0)),
                 DescriptorGeneration = ResolveFrameOpContextDescriptorGeneration(activeRegistry),
                 ResourceRegistrySignatureSnapshot = VulkanFramePlanner.ComputeResourceRegistrySignature(activeRegistry),
@@ -532,7 +542,7 @@ internal sealed partial class VulkanFrameLoop
 
             ComputeDispatchSnapshot? snapshot = op switch
             {
-                MeshDrawOp meshDraw => meshDraw.Draw.ProgramBindingSnapshot,
+                MeshDrawOp meshDraw => meshDraw.DrawRef.ProgramBindingSnapshot,
                 ComputeDispatchOp compute => compute.Snapshot,
                 ComputeDispatchIndirectOp computeIndirect => computeIndirect.Snapshot,
                 _ => null,

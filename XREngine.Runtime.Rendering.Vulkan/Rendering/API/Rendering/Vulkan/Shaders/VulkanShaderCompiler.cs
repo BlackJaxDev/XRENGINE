@@ -18,14 +18,14 @@ using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal static class VulkanShaderCompiler
+internal static partial class VulkanShaderCompiler
 {
     // shaderc_env_version_vulkan_1_4 from shaderc/env.h. Keep the numeric value
     // here because Silk.NET exposes the environment kind but not its versions.
     internal const uint Vulkan14TargetEnvironmentVersion = 0x00404000u;
     internal const SpirvVersion VulkanTargetSpirvVersion = SpirvVersion.Shaderc16;
     internal const string TargetProfileIdentity = "Vulkan1.4-SPIRV1.6";
-    internal const string ShaderAbiIdentity = "XREngine.VulkanShaderAbi.v3";
+    internal const string ShaderAbiIdentity = "XREngine.VulkanShaderAbi.v4";
 
     private static readonly Shaderc ShadercApi = VulkanShaderCompilerLibrary.CreateApi();
     private static readonly Regex OvrMultiviewExtensionRegex = new(
@@ -100,6 +100,69 @@ internal static class VulkanShaderCompiler
         return CompilePrepared(shader, prepared);
     }
 
+    /// <summary>
+    /// Compiles a shader that has no shader backend object, such as a backend overlay shader,
+    /// through the shader artifact disk cache. A cache hit skips the GLSL-to-SPIR-V compile.
+    /// </summary>
+    /// <param name="shader">The GLSL shader with entry point <c>main</c>.</param>
+    /// <param name="stageFlags">The Vulkan stage of the shader.</param>
+    /// <returns>The SPIR-V module bytes.</returns>
+    internal static byte[] CompileWithArtifactCache(XRShader shader, ShaderStageFlags stageFlags)
+    {
+        int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
+        bool useVulkanClipDepthRemap = RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap;
+        PreparedSource prepared = Prepare(shader, useVulkanClipDepthRemap);
+        string artifactIdentity = BuildArtifactIdentity(
+            shader,
+            shaderConfigVersion,
+            useVulkanClipDepthRemap,
+            prepared.RewrittenSource);
+
+        if (VulkanShaderArtifactCache.TryRead(
+            artifactIdentity,
+            shader,
+            shaderConfigVersion,
+            useVulkanClipDepthRemap,
+            prepared.RewrittenSource,
+            prepared.AutoUniformBlocks,
+            stageFlags,
+            string.Empty,
+            out VulkanShaderArtifact cachedArtifact))
+        {
+            return cachedArtifact.SpirV;
+        }
+
+        byte[] spirv = CompilePrepared(shader, prepared);
+        QueueArtifactWrite(shader, stageFlags, prepared, artifactIdentity, shaderConfigVersion, useVulkanClipDepthRemap, spirv);
+        return spirv;
+    }
+
+    private static void QueueArtifactWrite(
+        XRShader shader,
+        ShaderStageFlags stageFlags,
+        PreparedSource prepared,
+        string artifactIdentity,
+        int shaderConfigVersion,
+        bool useVulkanClipDepthRemap,
+        byte[] spirv)
+    {
+        VulkanShaderArtifact artifact = new(
+            artifactIdentity,
+            shader.Type,
+            prepared.EntryPoint,
+            shader.Source?.FilePath ?? shader.FilePath,
+            prepared.RewrittenSource,
+            spirv,
+            VulkanShaderReflection.ExtractBindings(spirv, stageFlags, prepared.RewrittenSource),
+            prepared.AutoUniformBlock,
+            new Dictionary<string, uint>(StringComparer.Ordinal),
+            stageFlags,
+            shaderConfigVersion,
+            useVulkanClipDepthRemap,
+            FrequencyOwnedAutoUniformBlocks: prepared.AutoUniformBlocks);
+        VulkanShaderArtifactCache.QueueWrite(artifact);
+    }
+
     public static PreparedSource Prepare(XRShader shader, bool useVulkanClipDepthRemap)
         => Prepare(shader, useVulkanClipDepthRemap, null);
 
@@ -133,6 +196,9 @@ internal static class VulkanShaderCompiler
         rewrittenSource = RemoveVulkanMultiviewNumViewsLayout(rewrittenSource);
         if (RequiresExtMultiviewDirective(rewrittenSource))
             rewrittenSource = EnsureExtMultiviewDirective(rewrittenSource);
+        if (shader.Type == EShaderType.Fragment &&
+            rewrittenSource.Contains(EditorHighlightFragmentSourceAdapter.PickingColorFunctionName, StringComparison.Ordinal))
+            rewrittenSource = FinalizeEditorPickingSource(shader, rewrittenSource);
         return new PreparedSource(
             entryPoint,
             shader.Source?.Text ?? string.Empty,
@@ -248,7 +314,7 @@ internal static class VulkanShaderCompiler
         builder.Append("ShaderConfigVersion=").Append(shaderConfigVersion.ToString(CultureInfo.InvariantCulture)).Append('\n');
         builder.Append("useVulkanClipDepthRemap=").Append(useVulkanClipDepthRemap ? '1' : '0').Append('\n');
         builder.Append("Optimizer=").Append(ResolvedShaderSourceOptimizer.BuildIdentitySegment()).Append('\n');
-        builder.AppendLine("Rewrite=VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine:v1");
+        builder.AppendLine("Rewrite=VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine:v2");
 
         if (shader.TryGetResolvedShaderSource(out ResolvedShaderSource resolved, annotateIncludes: false, logFailures: false))
         {

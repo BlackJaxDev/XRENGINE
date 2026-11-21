@@ -92,7 +92,16 @@ public sealed partial class AdvancedGpuScenePublisher
     internal void PrepareUnchangedRowGate(GPUScene scene)
     {
         DiscardPreparedUnchangedRowGate();
-        EAdvancedPreparedGateOutcome outcome = TryPrepareUnchangedRowGate(scene);
+        EAdvancedPreparedGateOutcome outcome;
+        ulong previousWitnessEpoch = AdvancedSourceWitnessEpoch.Begin();
+        try
+        {
+            outcome = TryPrepareUnchangedRowGate(scene);
+        }
+        finally
+        {
+            AdvancedSourceWitnessEpoch.End(previousWitnessEpoch);
+        }
         if (outcome == EAdvancedPreparedGateOutcome.Prepared)
         {
             AdvancedPreparedGateTelemetry.RecordPrepared();
@@ -661,7 +670,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     out AdvancedEngineSurfaceRecord engineSurface) ||
                 !Database.Materials.TryGetUberBaseSurface(witness.Handle,
                     out AdvancedUberBaseSurfaceRecord uberSurface) ||
-                !CommittedMaterialBindingsMatch(material, layout, bindings,
+                !WitnessedCommittedMaterialBindingsMatch(witness.Handle, material, layout, bindings,
                     in engineSurface, in uberSurface) ||
                 !_materialPublisher.HeaderMatches(
                     witness.Handle,
@@ -704,8 +713,7 @@ public sealed partial class AdvancedGpuScenePublisher
         string[] messages = new string[(int)EAdvancedPreparedGateOutcome.Count];
         for (int index = 0; index < messages.Length; ++index)
             messages[index] =
-                "[CanonicalPublication] The prepared unchanged-row verdict passed, but the swap-time gate failed. Witness: " +
-                ((EAdvancedPreparedGateOutcome)index).ToString() + ".";
+                $"[CanonicalPublication] The prepared unchanged-row verdict passed, but the swap-time gate failed. Witness: {(EAdvancedPreparedGateOutcome)index}.";
         return messages;
     }
 }

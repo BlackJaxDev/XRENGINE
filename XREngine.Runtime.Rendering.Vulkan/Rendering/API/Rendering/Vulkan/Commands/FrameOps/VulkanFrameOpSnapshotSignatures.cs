@@ -496,15 +496,17 @@ internal static class VulkanFrameOpSnapshotSignatures
             case EShaderVarType._vec3: hash.Add(value.Vector3); break;
             case EShaderVarType._vec4: hash.Add(value.Vector4); break;
             case EShaderVarType._mat4: hash.Add(value.Matrix4x4); break;
-            case EShaderVarType._dvec2: hash.Add(new DVector2(value.DVector4.X, value.DVector4.Y)); break;
-            case EShaderVarType._dvec3: hash.Add(new DVector3(value.DVector4.X, value.DVector4.Y, value.DVector4.Z)); break;
-            case EShaderVarType._dvec4: hash.Add(value.DVector4); break;
-            case EShaderVarType._ivec2: hash.Add(new IVector2(value.IVector4.X, value.IVector4.Y)); break;
-            case EShaderVarType._ivec3: hash.Add(new IVector3(value.IVector4.X, value.IVector4.Y, value.IVector4.Z)); break;
-            case EShaderVarType._ivec4: hash.Add(value.IVector4); break;
-            case EShaderVarType._uvec2: hash.Add(new UVector2(value.UVector4.X, value.UVector4.Y)); break;
-            case EShaderVarType._uvec3: hash.Add(new UVector3(value.UVector4.X, value.UVector4.Y, value.UVector4.Z)); break;
-            case EShaderVarType._uvec4: hash.Add(value.UVector4); break;
+            // The engine integer and double vectors do not override GetHashCode, so hashing
+            // them whole boxed each value. Hash the components instead.
+            case EShaderVarType._dvec2: hash.Add(value.DVector4.X); hash.Add(value.DVector4.Y); break;
+            case EShaderVarType._dvec3: hash.Add(value.DVector4.X); hash.Add(value.DVector4.Y); hash.Add(value.DVector4.Z); break;
+            case EShaderVarType._dvec4: hash.Add(value.DVector4.X); hash.Add(value.DVector4.Y); hash.Add(value.DVector4.Z); hash.Add(value.DVector4.W); break;
+            case EShaderVarType._ivec2: hash.Add(value.IVector4.X); hash.Add(value.IVector4.Y); break;
+            case EShaderVarType._ivec3: hash.Add(value.IVector4.X); hash.Add(value.IVector4.Y); hash.Add(value.IVector4.Z); break;
+            case EShaderVarType._ivec4: hash.Add(value.IVector4.X); hash.Add(value.IVector4.Y); hash.Add(value.IVector4.Z); hash.Add(value.IVector4.W); break;
+            case EShaderVarType._uvec2: hash.Add(value.UVector4.X); hash.Add(value.UVector4.Y); break;
+            case EShaderVarType._uvec3: hash.Add(value.UVector4.X); hash.Add(value.UVector4.Y); hash.Add(value.UVector4.Z); break;
+            case EShaderVarType._uvec4: hash.Add(value.UVector4.X); hash.Add(value.UVector4.Y); hash.Add(value.UVector4.Z); hash.Add(value.UVector4.W); break;
             default: hash.Add(0); break;
         }
     }

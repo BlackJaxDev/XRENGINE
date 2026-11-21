@@ -118,6 +118,7 @@ public partial class AdvancedRenderPipeline
             .Layers(layers)
             .StereoCompatible(layers > 1u)
             .DependsOn(AdvancedVisibilityResourceNames.Metadata)
+            .When(static profile => !OmitsVisibilitySelection(profile))
             .DebugLabel("Advanced editor selection identity")
             .Add();
 
@@ -191,12 +192,14 @@ public partial class AdvancedRenderPipeline
         DeclareVisibilityPersistentBuffers(builder);
         DeclareVisibilityFrameSlotBuffers(builder);
 
-        builder.FrameBuffer(AdvancedVisibilityResourceNames.FrameBuffer)
+        var visibilityFrameBuffer = builder.FrameBuffer(AdvancedVisibilityResourceNames.FrameBuffer)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Size(internalSize)
             .Color(0, AdvancedVisibilityResourceNames.Identity, layerIndex: -1)
-            .Color(1, AdvancedVisibilityResourceNames.Metadata, layerIndex: -1)
-            .Color(2, AdvancedVisibilityResourceNames.Selection, layerIndex: -1)
+            .Color(1, AdvancedVisibilityResourceNames.Metadata, layerIndex: -1);
+        if (!OmitsVisibilitySelection(builder.Profile))
+            visibilityFrameBuffer.Color(2, AdvancedVisibilityResourceNames.Selection, layerIndex: -1);
+        visibilityFrameBuffer
             .DepthStencil(
                 AdvancedVisibilityResourceNames.DepthStencil,
                 layerIndex: -1)
@@ -464,6 +467,7 @@ public partial class AdvancedRenderPipeline
             .RequiresStorageUsage(storage)
             .Factory(() => CreateVisibilityTexture(
                 name,
+                size,
                 internalFormat,
                 pixelFormat,
                 pixelType,
@@ -511,8 +515,16 @@ public partial class AdvancedRenderPipeline
                 target,
                 usage));
 
+    /// <summary>
+    /// Creates the texture of one visibility-family resource. The extent follows the declared size
+    /// policy: the depth tile grid uses one texel per 64x64 tile, an absolute policy uses its pixel
+    /// size (for example the 1x1 shading diagnostics placeholder), and every other resource uses
+    /// the internal resolution. The resource manager rejects a texture whose extent differs from
+    /// the declared policy, so the factory must resolve the same extent.
+    /// </summary>
     private XRTexture CreateVisibilityTexture(
         string name,
+        RenderResourceSizePolicy size,
         EPixelInternalFormat internalFormat,
         EPixelFormat pixelFormat,
         EPixelType pixelType,
@@ -524,8 +536,11 @@ public partial class AdvancedRenderPipeline
         bool isDepthTileGrid = name is
             AdvancedVisibilityResourceNames.CurrentDepthPyramid or
             AdvancedVisibilityResourceNames.PreviousDepthPyramid;
-        uint width = isDepthTileGrid ? DivideRoundUp(InternalWidth, 64u) : InternalWidth;
-        uint height = isDepthTileGrid ? DivideRoundUp(InternalHeight, 64u) : InternalHeight;
+        bool absoluteSize = size.SizeClass == RenderResourceSizeClass.AbsolutePixels;
+        uint width = isDepthTileGrid ? DivideRoundUp(InternalWidth, 64u)
+            : absoluteSize ? Math.Max(1u, size.Width) : InternalWidth;
+        uint height = isDepthTileGrid ? DivideRoundUp(InternalHeight, 64u)
+            : absoluteSize ? Math.Max(1u, size.Height) : InternalHeight;
         XRTexture texture;
         if (layers > 1u)
         {
@@ -677,14 +692,23 @@ public partial class AdvancedRenderPipeline
         => checked((Math.Max(value, 1u) + divisor - 1u) / divisor);
 
     private XRFrameBuffer CreateVisibilityFrameBuffer()
-        => new(
-            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Identity), EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Metadata), EFrameBufferAttachment.ColorAttachment1, 0, -1),
-            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Selection), EFrameBufferAttachment.ColorAttachment2, 0, -1),
-            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
-        {
-            Name = AdvancedVisibilityResourceNames.FrameBuffer,
-        };
+        => GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Selection) is null
+            // Selection omitted (OmitsVisibilitySelection): identity, metadata and depth only.
+            ? new(
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Identity), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Metadata), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            {
+                Name = AdvancedVisibilityResourceNames.FrameBuffer,
+            }
+            : new(
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Identity), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Metadata), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Selection), EFrameBufferAttachment.ColorAttachment2, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+            {
+                Name = AdvancedVisibilityResourceNames.FrameBuffer,
+            };
 
     private XRFrameBuffer CreateVisibilityDebugFrameBuffer()
         => new(

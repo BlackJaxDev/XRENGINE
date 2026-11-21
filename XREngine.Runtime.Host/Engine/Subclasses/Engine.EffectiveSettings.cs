@@ -793,6 +793,22 @@ namespace XREngine
             }
 
             /// <summary>
+            /// Gets the effective render limit while a VR runtime owns presentation.
+            /// Resolved from: User Override > Project Setting. Null removes the engine limit.
+            /// This value does not inherit <see cref="TargetFramesPerSecond"/>, because the desktop
+            /// limit must not hide how fast the engine can produce headset frames.
+            /// </summary>
+            public static float? VrTargetFramesPerSecond
+            {
+                get
+                {
+                    if (UserSettings?.VrTargetFramesPerSecondOverride is { HasOverride: true } userOverride)
+                        return userOverride.Value;
+                    return GameSettings?.VrTargetFramesPerSecond;
+                }
+            }
+
+            /// <summary>
             /// Gets the effective fixed frames per second (physics rate).
             /// Resolved from: User Override > Project Setting (no engine default)
             /// </summary>
@@ -984,6 +1000,13 @@ namespace XREngine
                     UserSettings?.AudioArchitectureV2 ?? false,
                     GameSettings?.AudioArchitectureV2Override,
                     EditorPreferencesOverrides?.AudioArchitectureV2Override);
+
+            /// <summary>
+            /// Gets whether the split VR desktop frame waits for enough XR slack before it
+            /// starts the next desktop frame. Resolved from: User Setting > Engine Default (off).
+            /// </summary>
+            public static bool VrDesktopSplitSlackGate
+                => UserSettings?.VrDesktopSplitSlackGate ?? false;
 
             /// <summary>
             /// Gets the effective audio sample rate.

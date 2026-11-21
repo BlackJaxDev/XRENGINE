@@ -5,6 +5,8 @@
 #include "StandardMaterial.glslinc"
 #include "StandardPBR.glslinc"
 #include "Advanced/Shading/StandardIbl.glslinc"
+// The shading kernel resolves the directional shadow once per work group.
+#define XR_ADV_SHADOW_GROUP_CACHE 1
 #include "StandardShadow.glslinc"
 #include "AdvancedDecalModifier.glslinc"
 #pragma snippet "NormalEncoding"
@@ -40,7 +42,13 @@ XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
 #define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
 #endif
 
+#include "NativeDecalBuffer.glslinc"
 #include "ShadeNativeOpaqueEvaluator.glslinc"
+#include "FoveatedQuadShading.glslinc"
+
+// Compacted pixel list for foveated quad shading (one entry per invocation).
+shared uint s_foveatedShadeCount;
+shared uint s_foveatedShadePixels[256];
 
 void main()
 {
@@ -66,8 +74,15 @@ void main()
         if (tileCapacity == 0u || u_Push.kernelIndex > membershipCapacity / tileCapacity) return;
         uint rangeBase = u_Push.kernelIndex * tileCapacity;
         uint rangeCapacity = min(tileCapacity, membershipCapacity - rangeBase);
-        if (localTile >= min(XR_ADV_KernelCounts.counts[u_Push.kernelIndex], rangeCapacity)) return;
-        uint membership = rangeBase + localTile;
+        // This view's dispatch launches only its own memberships: the range
+        // [end(view - 1), end(view)) of the kernel's list.
+        uint viewEnd = min(XR_ADV_KernelCounts.counts[
+            XR_ADV_KERNEL_VIEW_END_INDEX(u_Push.viewIndex, u_Push.kernelIndex)], rangeCapacity);
+        uint viewBase = u_Push.viewIndex == 0u ? 0u : XR_ADV_KernelCounts.counts[
+            XR_ADV_KERNEL_VIEW_END_INDEX(u_Push.viewIndex - 1u, u_Push.kernelIndex)];
+        uint rangeIndex = viewBase + localTile;
+        if (rangeIndex >= viewEnd) return;
+        uint membership = rangeBase + rangeIndex;
         XRAdvancedKernelTile kernelTile = XR_ADV_KernelTiles.records[membership];
         if (kernelTile.shadingKernelId != u_Push.kernelIndex) return;
         kernelTileFlags = kernelTile.flags;
@@ -82,15 +97,76 @@ void main()
         pixel = uvec2(tile.packedTileCoord & 0xFFFFu,
             tile.packedTileCoord >> 16u) * 16u + gl_LocalInvocationID.xy;
     }
+    // Every return above is uniform for the work group, so all invocations reach the
+    // barriers of the shadow cache fill.
+    XR_ADV_FillShadowGroupCache(viewIndex, min(u_Push.lightCount, uint(XR_ADV_Lights.records.length())));
+    // Foveated quad shading: a peripheral follower takes its block
+    // representative's result in the fill pass, so it does not shade here.
+    // The pixels that still shade are packed into the first invocations of the
+    // group, so whole subgroups of followers idle instead of leaving one active
+    // lane per block. Every return above is uniform for the work group, so all
+    // invocations reach these barriers.
+    if (XR_ADV_FoveatedQuadsEnabled())
+    {
+        if (gl_LocalInvocationIndex == 0u)
+            s_foveatedShadeCount = 0u;
+        barrier();
+        bool shades = false;
+        if (all(lessThan(pixel, u_Push.screenExtent)) && viewIndex < u_Push.viewCount)
+        {
+            uvec2 candidateIdentity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
+            uvec2 representative;
+            shades = !XR_ADV_TryGetFoveatedRepresentative(pixel, viewIndex, candidateIdentity, representative);
+        }
+        if (shades)
+            s_foveatedShadePixels[atomicAdd(s_foveatedShadeCount, 1u)] = pixel.x | (pixel.y << 16u);
+        barrier();
+        if (gl_LocalInvocationIndex >= s_foveatedShadeCount) return;
+        uint packedPixel = s_foveatedShadePixels[gl_LocalInvocationIndex];
+        pixel = uvec2(packedPixel & 0xFFFFu, packedPixel >> 16u);
+    }
     if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount) return;
 
-    XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
+#if defined(XR_ADV_NATIVE_SHADING_FAMILY)
+    // A family kernel writes only the pixels of its own family. The standard kernel
+    // also owns uncovered and unresolved pixels. The ownership test comes before the
+    // first store, so the standard and Uber passes never overwrite each other.
     uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
-    if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID) return;
+    bool covered = identity.x != 0u && identity.x != XR_ADV_VIS_INVALID;
+    uint metadata = 0u;
+    uint materialDense = 0u, kernelDense = 0u;
+    bool resolved = false;
+    if (covered)
+    {
+        metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
+        resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
+    }
+    bool owned = resolved
+        ? XR_ADV_KernelShadesMaterialFamily(materialDense)
+        : XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_STANDARD;
+    if (!owned) return;
+    // Only an uncovered pixel gets the neutral surface inputs. A covered pixel gets its full
+    // store from the one dispatch that shades it. A tile is in the lists of several kernels,
+    // and those dispatches run without a barrier between them, so a neutral store here for a
+    // pixel of another kernel could overwrite that kernel's surface inputs.
+    if (!covered)
+    {
+        XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
+        return;
+    }
+#else
+    uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
+    if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID)
+    {
+        // See the family branch: only an uncovered pixel gets the neutral surface inputs.
+        XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
+        return;
+    }
 
     uint metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
     uint materialDense, kernelDense;
     bool resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
+#endif
     if (!repair && resolved && kernelDense != u_Push.kernelIndex) return;
     if (!repair && resolved)
     {
@@ -117,5 +193,7 @@ void main()
         kernelTileFlags,
         true,
         result);
+    if (XR_ADV_IsTintedEdgeHalfRateRepresentative(pixel, viewIndex, identity))
+        result.radiance *= vec3(0.35, 1.0, 0.35);
     XR_ADV_StoreOpaqueSampleResult(pixel, viewIndex, result);
 }

@@ -149,14 +149,10 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
 
-                using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.Textures", ProfilerScopeKind.AlwaysOnHotPathLoop))
-                {
-                    if (shadowBindingPlan is not null)
-                        SetTextureUniforms(materialProgram, shadowBindingSource!, shadowBindingPlan.TextureIndices);
-                    else
-                        SetTextureUniforms(materialProgram);
-                }
-
+                // Bind engine uniforms (forward lighting, shadows, AO, and PBR environment maps) before
+                // material textures so shared engine placeholder samplers deduplicate onto one unit first.
+                // Once an active engine sampler has bound to its deduplicated unit, its unused nominal
+                // unit is released for active material samplers instead of staying reserved for the draw.
                 EUniformRequirements requiredEngineUniforms =
                     (renderOptions?.RequiredEngineUniforms ?? EUniformRequirements.None) |
                     materialProgram.GetActiveEngineUniformRequirements();
@@ -164,6 +160,14 @@ namespace XREngine.Rendering.OpenGL
                 {
                     using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.EngineUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop))
                         SetEngineUniforms(materialProgram, requiredEngineUniforms);
+                }
+
+                using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.Textures", ProfilerScopeKind.AlwaysOnHotPathLoop))
+                {
+                    if (shadowBindingPlan is not null)
+                        SetTextureUniforms(materialProgram, shadowBindingSource!, shadowBindingPlan.TextureIndices);
+                    else
+                        SetTextureUniforms(materialProgram);
                 }
 
                 using (RuntimeEngine.Profiler.Start("GLMaterial.SetUniforms.MaterialHook", ProfilerScopeKind.AlwaysOnHotPathLoop))
@@ -378,19 +382,62 @@ namespace XREngine.Rendering.OpenGL
                 using var sample = RuntimeEngine.Profiler.Start("GLMaterial.SetTextureUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 XRTexture2D.RecordImportedTextureMaterialBinding(material);
 
-                // Use textureIndex as textureUnit so that null entries preserve
-                // the correspondence between array position and GL texture unit.
-                // Shaders with layout(binding=X) rely on this stable mapping;
-                // the previous compact-unit scheme shifted all bindings when a
-                // texture slot was null, breaking deferred lighting in particular.
-                for (int textureIndex = 0; textureIndex < material.Textures.Count; ++textureIndex)
+                int textureCount = material.Textures.Count;
+                int maxFixedUnits = Math.Max(1, Renderer.MaxFragmentTextureImageUnits);
+                bool hasFixedUnitFallbackCandidate = false;
+
+                // Bind active named samplers before fixed-unit fallbacks. Feature-rich Uber materials
+                // carry 50+ texture slots while each compiled variant keeps only referenced samplers
+                // active; binding inactive lower-index slots first would fill the 32 fragment texture
+                // image units and starve active higher-index samplers (such as surface_extensions maps).
+                for (int textureIndex = 0; textureIndex < textureCount; ++textureIndex)
                 {
                     if (!TryGetTexture(material, textureIndex, out IGLTexture texture))
+                        continue;
+
+                    if (HasActiveMaterialSamplerUniform(program, texture, textureIndex))
+                        SetTextureUniform(program, material, textureIndex, texture, textureIndex);
+                    else if (textureIndex < maxFixedUnits)
+                        hasFixedUnitFallbackCandidate = true;
+                }
+
+                // Preserve textureIndex -> GL texture unit fallback for non-Uber shaders that declare
+                // layout(binding = X) samplers under custom GLSL names (such as deferred lighting).
+                if (!hasFixedUnitFallbackCandidate ||
+                    !program.HasActiveSamplerUniforms() ||
+                    IsNamedOnlyUberMaterial(material))
+                {
+                    return;
+                }
+
+                int fallbackLimit = Math.Min(textureCount, maxFixedUnits);
+                for (int textureIndex = 0; textureIndex < fallbackLimit; ++textureIndex)
+                {
+                    if (!TryGetTexture(material, textureIndex, out IGLTexture texture))
+                        continue;
+
+                    if (HasActiveMaterialSamplerUniform(program, texture, textureIndex))
                         continue;
 
                     SetTextureUniform(program, material, textureIndex, texture, textureIndex);
                 }
             }
+
+            private static bool HasActiveMaterialSamplerUniform(GLRenderProgram program, IGLTexture texture, int textureIndex)
+            {
+                string resolvedSamplerName = texture.ResolveSamplerName(textureIndex, null);
+                if (program.GetUniformLocation(resolvedSamplerName) >= 0)
+                    return true;
+
+                string indexedSamplerName = XRTexture.GetIndexedSamplerName(textureIndex);
+                return !string.Equals(resolvedSamplerName, indexedSamplerName, StringComparison.Ordinal)
+                    && program.GetUniformLocation(indexedSamplerName) >= 0;
+            }
+
+            private static bool IsNamedOnlyUberMaterial(XRMaterialBase material)
+                => material is XRMaterial uberMaterial
+                    && (uberMaterial.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1
+                        || !uberMaterial.ActiveUberVariant.IsEmpty);
 
             private void SetTextureUniforms(GLRenderProgram program, XRMaterialBase material, IReadOnlyList<int> textureIndices)
             {

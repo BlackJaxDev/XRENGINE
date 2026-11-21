@@ -423,7 +423,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             public ulong Hash { get; private set; }
-            public bool Link(bool force = false, bool nonBlocking = false)
+            public bool Link(bool force = false, bool nonBlocking = false, bool allowSynchronousFallbackFromPoll = false)
             {
                 using var prof = RuntimeEngine.Profiler.Start("GLRenderProgram.Link", ProfilerScopeKind.ConditionalLoop);
 
@@ -434,11 +434,11 @@ namespace XREngine.Rendering.OpenGL
                     return true;
                 }
 
-                return LinkPendingProgram(force, nonBlocking);
+                return LinkPendingProgram(force, nonBlocking, allowSynchronousFallbackFromPoll);
             }
 
             // Keep asynchronous link closures out of the already-linked hot path.
-            private bool LinkPendingProgram(bool force, bool nonBlocking)
+            private bool LinkPendingProgram(bool force, bool nonBlocking, bool allowSynchronousFallbackFromPoll)
             {
                 if (RendererReloadFailureInjection.IsEnabled(
                         RendererReloadInjectedFailure.ProgramLink))
@@ -777,7 +777,8 @@ namespace XREngine.Rendering.OpenGL
                         !ShouldBypassBinaryCacheForLiveUberVariant() &&
                         !IsAsyncBinaryUploadTimedOutCacheKey(cacheKey);
                     binProg = _preparedBinProg;
-                    _linkDataPrepared = false;
+                    if (force || _preparedLinkGeneration != Volatile.Read(ref _linkPreparationGeneration))
+                        _linkDataPrepared = false;
                     _hashComputed = true;
                 }
                 else
@@ -1213,7 +1214,9 @@ namespace XREngine.Rendering.OpenGL
                         IsKnownAsyncLinkHazard: isKnownAsyncLinkHazard,
                         PreferSharedContextForLargeSource: preferSharedContextForLargeSource,
                         HashPreviouslyFailed: false,
-                        AllowSynchronousSourceLink: false,
+                        AllowSynchronousSourceLink: allowSynchronousFallbackFromPoll &&
+                            !sharedContextCompileAvailable &&
+                            (!driverParallelSourceAvailable || isKnownAsyncLinkHazard),
                         ForceSynchronousSourceRetry: forceSynchronousSourceRetry,
                         SourceCompilationFaulted: GLProgramCompileLinkQueue.SourceCompilationFaulted));
                     LogRenderingProgramBuildEvent(
@@ -1334,7 +1337,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                     if (sourceSelection.Lane == EOpenGLProgramBuildLane.SynchronousSource)
                     {
-                        if (nonBlocking && !forceSynchronousSourceRetry)
+                        if (nonBlocking && !allowSynchronousFallbackFromPoll && !forceSynchronousSourceRetry)
                         {
                             // Phase B: defer the synchronous source-compile fallback
                             // off the render-prep hot path. PollPendingAsyncPrograms

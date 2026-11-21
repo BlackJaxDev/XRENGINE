@@ -58,6 +58,40 @@ public ref struct TransformHierarchyMutationBatch
         }
     }
 
+    /// <summary>Sets a local rotation without enqueuing the individual transform.</summary>
+    public void SetLocalRotation(Transform transform, Quaternion localRotation)
+    {
+        ArgumentNullException.ThrowIfNull(transform);
+        EnsureActive();
+        _hasMutations = true;
+        TransformBase.EnterHierarchyMutation(transform);
+        try
+        {
+            transform.Rotation = localRotation;
+        }
+        finally
+        {
+            TransformBase.ExitHierarchyMutation(transform);
+        }
+    }
+
+    /// <summary>Sets a local translation without enqueuing the individual transform.</summary>
+    public void SetLocalTranslation(Transform transform, Vector3 localTranslation)
+    {
+        ArgumentNullException.ThrowIfNull(transform);
+        EnsureActive();
+        _hasMutations = true;
+        TransformBase.EnterHierarchyMutation(transform);
+        try
+        {
+            transform.Translation = localTranslation;
+        }
+        finally
+        {
+            TransformBase.ExitHierarchyMutation(transform);
+        }
+    }
+
     /// <summary>
     /// Refreshes a transform's cached matrices inside the batch. This is useful
     /// when a later world-space mutation depends on the updated parent inverse.

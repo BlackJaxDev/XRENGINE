@@ -1,0 +1,22 @@
+#version 460
+
+// Clears the visible splat counter and the overflow counter on the GPU before a compute producer writes splats.
+// Running the clear in the command stream avoids overwriting counters that an earlier in-flight frame still reads.
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 48) writeonly buffer GaussianSplatVisibleCount
+{
+    uint visibleCount;
+};
+
+layout(std430, binding = 49) writeonly buffer GaussianSplatOverflow
+{
+    uint overflowCount;
+};
+
+void main()
+{
+    visibleCount = 0u;
+    overflowCount = 0u;
+}

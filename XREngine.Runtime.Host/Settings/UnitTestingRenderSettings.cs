@@ -15,6 +15,18 @@ public class UnitTestingRenderSettings
     /// Relative paths are resolved from the process working directory.
     /// </summary>
     public string? CustomRenderPipelineScriptPath { get; set; }
+
+    /// <summary>
+    /// Sets the <c>AdvancedVirtualGeometry</c> engine setting: Vulkan Advanced visibility draws a
+    /// cluster cut of models cooked with a cluster hierarchy (<c>GenerateClusterHierarchy</c>).
+    /// </summary>
+    public bool VirtualGeometry { get; set; }
+
+    /// <summary>
+    /// Sets the <c>AdvancedVirtualGeometryPixelThreshold</c> engine setting: the cluster cut
+    /// threshold in render pixels of projected error.
+    /// </summary>
+    public float VirtualGeometryPixelThreshold { get; set; } = 1.0f;
     public UnitTestingOpenGLRenderSettings OpenGL { get; set; } = new();
     public UnitTestingVulkanRenderSettings Vulkan { get; set; } = new();
 }

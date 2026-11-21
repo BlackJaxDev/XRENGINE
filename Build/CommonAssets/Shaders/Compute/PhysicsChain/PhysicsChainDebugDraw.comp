@@ -100,7 +100,7 @@ void main()
     uint localIndex = gl_GlobalInvocationID.x;
     if (localIndex == 0u)
     {
-        IndexCount = 1u;
+        IndexCount = 6u; // Two-triangle quad scaffold; the vertex stage expands each instance.
         InstanceCount = uint(ParticleCount);
         FirstIndex = 0u;
         VertexOffset = 0;

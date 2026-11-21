@@ -13,6 +13,7 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | [Render Pipeline Resource Lifecycle](render-pipeline-resource-lifecycle.md) | Implemented contract for declared pipeline resources, generation-based materialization, staged resize, and atomic resource swaps. |
 | [Render Pipeline Workbench](../editor/render-pipeline-workbench.md) | The editor window that shows and edits render pipelines: views, cached model, drafts, derived pipelines, and MCP tools. |
 | [Advanced Render Pipeline](advanced-render-pipeline.md) | `AdvancedRenderPipeline` visibility-buffer frame flow, invariants, capability floor, and output ownership for desktop, OpenXR, and offscreen. |
+| [Editor Highlight Module](editor-highlight-module.md) | Optional Advanced and RVC editor mask, authored stencil ownership, draw output policy, and backend limits. |
 | [Shadow Atlas](shadow-atlas.md) | Shadow atlas allocator, solve, relevance, threading and publication, stale-frame and reprojection rules, and directional cascade publication. |
 | [Transparency And OIT](transparency-and-oit.md) | Transparent surface routing, weighted blended order-independent transparency, and exact transparency experiments in the Default and Advanced pipelines. |
 | [GPU Hi-Z Occlusion Culling](gpu-hiz-occlusion-culling.md) | Cull, occlusion, and indirect buffer contract, the two-pass Hi-Z flow, and barrier obligations for each backend. |
@@ -27,6 +28,7 @@ Documentation for XREngine's rendering system — how windows are created, graph
 | [Mesh Submission Strategies](mesh-submission-strategies.md) | The `EMeshSubmissionStrategy` contract for CPU direct, instrumented GPU indirect, zero-readback GPU indirect, and meshlet submission. |
 | [WebGPU Indirect Submission](webgpu-indirect-submission.md) | GPU-written arguments and counts, authored original-index and compute-meshlet routes, ordered submission, and completion ownership. |
 | [Standard Lit-Color Surface Binding](standard-lit-color-surface.md) | Exact engine-authored lit-color schemas, numeric normalization, versioned cache behavior, and renderer admission boundaries. |
+| [Surface Parallax Occlusion Mapping](surface-parallax-occlusion.md) | Surface-detail map classification (height, bump, normal), POM with depth offset in Default deferred and Uber, the optional silhouette clip, and stereo camera selection. |
 | [CPU Scene BVH](cpu-scene-bvh.md) | Production CPU-direct scene index: flat snapshot publication, sparse refit, deterministic SAH construction, lock-free traversal, quality maintenance, and diagnostics. |
 | [GPU Scene BVH](gpu-scene-bvh.md) | GPU-resident command TLAS: revision-aware lifecycle, normalization, stable radix construction, compact nodes, refit, root-down traversal, and fallback behavior. |
 | [Retinal Visibility Cache Rendering](retinal-visibility-cache-rendering.md) | RVC architecture and validation entry point for OpenXR quad-view/foveated VR rendering: view-set contracts, quad-view plumbing, selectable RVC pipeline, visible fallback, frame-graph resources, pass stages, renderer capability hooks, and validation gates. |

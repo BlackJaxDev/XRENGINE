@@ -1,5 +1,6 @@
 using Silk.NET.Core;
 using Silk.NET.Core.Native;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using Silk.NET.Vulkan;
@@ -112,6 +113,9 @@ internal sealed partial class VulkanDeviceContext
             ValidationFeatureEnableEXT* enabledValidationFeatures = stackalloc ValidationFeatureEnableEXT[4];
             DebugUtilsMessengerCreateInfoEXT debugCreateInfo = default;
             ValidationFeaturesEXT validationFeatures = default;
+            Bool32 shaderAccessHeuristic = true;
+            LayerSettingEXT syncShaderAccessSetting = default;
+            LayerSettingsCreateInfoEXT layerSettings = default;
             uint enabledValidationFeatureCount = enableValidationLayers
                 ? PopulateEnabledValidationFeatures(validation, enabledValidationFeatures)
                 : 0u;
@@ -122,6 +126,29 @@ internal sealed partial class VulkanDeviceContext
                 createInfo.EnabledLayerCount = (uint)validationLayers.Length;
                 createInfo.PpEnabledLayerNames = (byte**)SilkMarshal.StringArrayToPtr(validationLayers);
                 debugCreateInfo = PrepareDebugMessengerCreateInfo();
+                void* validationChain = &debugCreateInfo;
+                if (validation.EnableSynchronizationValidation && UsesSyncShaderAccessHeuristic())
+                {
+                    // Synchronization validation records the buffers and images that shaders use
+                    // through descriptors only with this layer setting. Without it, a clean run
+                    // checks only transfer, attachment and layout-transition accesses.
+                    syncShaderAccessSetting = new()
+                    {
+                        PLayerName = (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetReference("VK_LAYER_KHRONOS_validation\0"u8)),
+                        PSettingName = (byte*)Unsafe.AsPointer(ref MemoryMarshal.GetReference("syncval_shader_accesses_heuristic\0"u8)),
+                        Type = LayerSettingTypeEXT.Bool32Ext,
+                        ValueCount = 1,
+                        PValues = &shaderAccessHeuristic,
+                    };
+                    layerSettings = new()
+                    {
+                        SType = StructureType.LayerSettingsCreateInfoExt,
+                        PNext = validationChain,
+                        SettingCount = 1,
+                        PSettings = &syncShaderAccessSetting,
+                    };
+                    validationChain = &layerSettings;
+                }
                 if (enabledValidationFeatureCount > 0)
                 {
                     validationFeatures = new()
@@ -129,12 +156,12 @@ internal sealed partial class VulkanDeviceContext
                         SType = StructureType.ValidationFeaturesExt,
                         EnabledValidationFeatureCount = enabledValidationFeatureCount,
                         PEnabledValidationFeatures = enabledValidationFeatures,
-                        PNext = &debugCreateInfo,
+                        PNext = validationChain,
                     };
                     createInfo.PNext = &validationFeatures;
                 }
                 else
-                    createInfo.PNext = &debugCreateInfo;
+                    createInfo.PNext = validationChain;
             }
 
             Instance createdInstance;
@@ -421,6 +448,18 @@ internal sealed partial class VulkanDeviceContext
 
     private static string FormatApiVersion(uint apiVersion)
         => $"{apiVersion >> 22}.{(apiVersion >> 12) & 0x3FFu}.{apiVersion & 0xFFFu}";
+
+    /// <summary>
+    /// True unless <see cref="XREngineEnvironmentVariables.VulkanSynchronizationShaderAccesses"/>
+    /// is 0 or false. The layer setting finds hazards on shader resources, but its static analysis
+    /// can report accesses that a runtime branch skips, so it can be turned off for a run.
+    /// </summary>
+    private static bool UsesSyncShaderAccessHeuristic()
+    {
+        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanSynchronizationShaderAccesses);
+        return !(string.Equals(value, "0", StringComparison.Ordinal) ||
+                 string.Equals(value, "false", StringComparison.OrdinalIgnoreCase));
+    }
 
     private static unsafe uint PopulateEnabledValidationFeatures(
         VulkanDeviceValidationRequest validation,

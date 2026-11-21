@@ -434,6 +434,9 @@ internal sealed class VulkanAutoUniformBindingSchema
             "blendshapeWeightThreshold" => (EVulkanAutoUniformSpecialSource.BlendshapeWeightThreshold, EShaderVarType._float),
             "usePrecombinedBlendshapeDeltas" => (EVulkanAutoUniformSpecialSource.UsePrecombinedBlendshapeDeltas, EShaderVarType._int),
             "u_SourceFlatDirection" => (EVulkanAutoUniformSpecialSource.SourceFlatDirection, EShaderVarType._vec4),
+            "XRENGINE_EditorHighlightFlags" => (EVulkanAutoUniformSpecialSource.EditorHighlightFlags, EShaderVarType._uint),
+            "XRENGINE_EditorPickingKey" => (EVulkanAutoUniformSpecialSource.TransformId, EShaderVarType._uint),
+            "XRENGINE_EditorPickingCoverage" => (EVulkanAutoUniformSpecialSource.EditorPickingCoverage, EShaderVarType._uint),
             _ => (EVulkanAutoUniformSpecialSource.None, default),
         };
         return source != EVulkanAutoUniformSpecialSource.None;

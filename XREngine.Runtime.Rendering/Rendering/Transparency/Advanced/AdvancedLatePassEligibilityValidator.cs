@@ -68,7 +68,7 @@ public static class AdvancedLatePassEligibilityValidator
             GpuTransparencyClassification.ResolveDomain(mode) is
                 EGpuTransparencyDomain.OpaqueOrOther or
                 EGpuTransparencyDomain.Masked;
-        AdvancedLatePassMetadata? metadata = material.AdvancedLatePassMetadata;
+        AdvancedLatePassMetadata? metadata = material.ResolveAdvancedLatePassMetadata();
         if (metadata is null)
         {
             // On-top is an intentional overlay lane and may contain opaque
@@ -85,9 +85,20 @@ public static class AdvancedLatePassEligibilityValidator
             return false;
         }
 
+        bool verifiedSourceOrdered = metadata.SourceSurfaceContract != EAdvancedSourceSurfaceContract.None &&
+            IsVerifiedSourceOrderedBase(material, renderPass, metadata);
+        if (metadata.SourceSurfaceContract != EAdvancedSourceSurfaceContract.None &&
+            !verifiedSourceOrdered)
+        {
+            rejectionReason = "The source-ordered surface does not match its verified Uber base-pass contract.";
+            return false;
+        }
+
         bool rejectOpaqueOrMasked =
             isOpaqueOrMasked &&
-            renderPass != (int)EDefaultRenderPass.OnTopForward;
+            renderPass != (int)EDefaultRenderPass.OnTopForward &&
+            !IsVerifiedSoftOutlineBase(material, renderPass, metadata) &&
+            !verifiedSourceOrdered;
         if (!TryValidateLatePass(metadata, rejectOpaqueOrMasked, out rejectionReason))
             return false;
 
@@ -104,6 +115,68 @@ public static class AdvancedLatePassEligibilityValidator
         }
 
         return true;
+    }
+
+    internal static bool IsVerifiedSoftOutlineBase(
+        XRMaterial material,
+        int renderPass,
+        AdvancedLatePassMetadata metadata)
+    {
+        if (renderPass != (int)EDefaultRenderPass.TransparentForward ||
+            material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 ||
+            material.GetEffectiveTransparencyMode() != ETransparencyMode.Opaque ||
+            metadata.Kind != EAdvancedLatePassKind.SpecialEffects ||
+            material.PassSet.SourceRenderQueue != 3000 ||
+            material.PassSet.QueuePriority != 0 ||
+            !material.PassSet.TryGetPass(EMaterialPassIdentity.Base, out MaterialPassDefinition basePass) ||
+            !basePass.Enabled || basePass.RenderPass != renderPass ||
+            !ReferenceEquals(basePass.RenderOptions, material.RenderOptions) ||
+            !material.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outlinePass) ||
+            !outlinePass.Enabled || outlinePass.RenderPass != renderPass ||
+            outlinePass.ShaderBehavior != EngineMaterialSemanticIdentity.UberSoftOutlineV2)
+            return false;
+
+        RenderingParameters options = basePass.RenderOptions;
+        return options.DepthTest.Enabled == ERenderParamUsage.Enabled &&
+               options.DepthTest.UpdateDepth &&
+               options.BlendModeAllDrawBuffers is { Enabled: ERenderParamUsage.Disabled };
+    }
+
+    /// <summary>Checks the imported source queue and canonical Uber base draw before admitting it after native shading.</summary>
+    internal static bool IsVerifiedSourceOrderedBase(
+        XRMaterial material,
+        int renderPass,
+        AdvancedLatePassMetadata metadata)
+    {
+        if (renderPass != (int)EDefaultRenderPass.TransparentForward ||
+            material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 ||
+            metadata.SourceSurfaceContract is not
+                (EAdvancedSourceSurfaceContract.OrderedToonV1 or EAdvancedSourceSurfaceContract.SceneColorToonV1) ||
+            metadata.Kind != EAdvancedLatePassKind.SpecialEffects ||
+            !metadata.IsOrderDependent ||
+            material.PassSet.SourceRenderQueue <= 2500 ||
+            material.PassSet.QueuePriority != material.PassSet.SourceRenderQueue - 3000 ||
+            (material.PassSet.TryGetPass(EMaterialPassIdentity.EarlyDepth, out MaterialPassDefinition earlyDepthPass) &&
+                earlyDepthPass.Enabled) ||
+            (material.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outlinePass) &&
+                outlinePass.Enabled) ||
+            !material.PassSet.TryGetPass(EMaterialPassIdentity.Base, out MaterialPassDefinition basePass) ||
+            !basePass.Enabled || basePass.RenderPass != renderPass ||
+            !ReferenceEquals(basePass.RenderOptions, material.RenderOptions) ||
+            basePass.RenderOptions.AlphaToCoverage != ERenderParamUsage.Disabled ||
+            !material.HasCurrentVerifiedUberSourceIdentity())
+            return false;
+
+        return metadata.SourceSurfaceContract switch
+        {
+            EAdvancedSourceSurfaceContract.OrderedToonV1 =>
+                !metadata.RequiresSceneColorSnapshot,
+            EAdvancedSourceSurfaceContract.SceneColorToonV1 =>
+                metadata.RequiresSceneColorSnapshot &&
+                metadata.SceneColorSamplerName == AdvancedSceneColorContract.SourceOrderedSamplerName &&
+                metadata.SceneColorTextureUnit >= 0,
+            _ => false,
+        };
     }
 
     public static bool IsAdvancedLateRenderPass(int renderPass)

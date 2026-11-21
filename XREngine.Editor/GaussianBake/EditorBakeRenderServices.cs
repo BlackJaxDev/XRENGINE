@@ -7,10 +7,12 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Build;
 using XREngine.Rendering.Models.Gaussian.Baking.Input;
+using XREngine.Rendering.Models.Gaussian.Baking.Motion;
 using XREngine.Rendering.Models.Gaussian.Baking.Rendering;
 using XREngine.Rendering.Models.Gaussian.Baking.Video;
 using XREngine.Rendering.Models.Gaussian.Baking.Views;
 using XREngine.Rendering.Models.Gaussian.Cache;
+using XREngine.Rendering.Residency;
 using XREngine.Scene;
 
 namespace XREngine.Editor.GaussianBake;
@@ -20,7 +22,7 @@ namespace XREngine.Editor.GaussianBake;
 /// edit mode on the update thread, and makes it the world of every window, so that the world lights are collected
 /// and published each frame. Each capture then runs as a render-thread coroutine with a detached offscreen viewport.
 /// </summary>
-public sealed class EditorBakeRenderServices : IBakeRenderServices
+public sealed class EditorBakeRenderServices : IBakeRenderServices, IDisposable
 {
     /// <summary>The name of the scene node that plays the cache during a loop recording.</summary>
     public const string LoopNodeName = "GaussianBakeLoopCache";
@@ -35,6 +37,9 @@ public sealed class EditorBakeRenderServices : IBakeRenderServices
     private static readonly TimeSpan NodeRemovalWait = TimeSpan.FromSeconds(30);
 
     private readonly SceneNode _stage;
+    private readonly HashSet<XRTexture2D> _requestedStreamedTextures = new(ReferenceEqualityComparer.Instance);
+    private readonly List<TextureResidencyHandle> _residencyHandles = [];
+    private IDisposable? _cutsceneBudgetLease;
     private CookedBakeInput? _activeInput;
     private RuntimeWorld? _runtimeWorld;
     private IRuntimeRenderWorld? _renderWorld;
@@ -65,7 +70,7 @@ public sealed class EditorBakeRenderServices : IBakeRenderServices
 
         using CancellationTokenSource timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(CaptureTimeout);
-        BakeViewCapture capture = new(_renderWorld!, _targets, _contentBounds, poses, width, height, timeout.Token);
+        BakeViewCapture capture = new(_renderWorld!, _targets, _contentBounds, poses, width, height, timeout.Token, residencyHandles: _residencyHandles);
         RuntimeEngine.AddRenderThreadCoroutine(capture.Step, "GaussianBake.CaptureViews", RenderThreadJobKind.RequiresGraphicsContext);
         try
         {
@@ -171,6 +176,10 @@ public sealed class EditorBakeRenderServices : IBakeRenderServices
         if (!BakeWorldFactory.TryComputeContentBounds(input, out AABB contentBounds))
             throw new GaussianBakeException(GaussianBakeFailureCodes.ContentEmpty, $"The asset '{input.AssetPath}' has no renderable mesh with valid bounds.");
 
+        // Resolve Uber shader includes and prepare specialized material variants on this worker thread,
+        // because ShaderSourceResolver blocks synchronous host-file reads on the update thread.
+        PrepareContentMaterials(input, prepareUberVariants: true);
+
         XRWorld world = BakeWorldFactory.Create(input, _stage);
 
         // World activation follows the play-mode transitions of the editor: it runs on the update thread.
@@ -194,7 +203,18 @@ public sealed class EditorBakeRenderServices : IBakeRenderServices
         Debug.Out($"[GaussianBake] Bake world '{world.Name}' is active with {targets.Length} render targets.");
     }
 
-    private static (RuntimeWorld RuntimeWorld, IRuntimeRenderWorld RenderWorld, RenderInfo3D[] Targets) ActivateWorld(XRWorld world, CookedBakeInput input)
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        for (int i = 0; i < _residencyHandles.Count; i++)
+            _residencyHandles[i].Dispose();
+        _residencyHandles.Clear();
+        _requestedStreamedTextures.Clear();
+        _cutsceneBudgetLease?.Dispose();
+        _cutsceneBudgetLease = null;
+    }
+
+    private (RuntimeWorld RuntimeWorld, IRuntimeRenderWorld RenderWorld, RenderInfo3D[] Targets) ActivateWorld(XRWorld world, CookedBakeInput input)
     {
         RuntimeWorld runtimeWorld = Engine.GetOrCreateWorld(world);
         Task beginEdit = RuntimeWorldHostServices.Current?.BeginEditModeAsync(runtimeWorld) ?? runtimeWorld.BeginPlayAsync();
@@ -206,15 +226,22 @@ public sealed class EditorBakeRenderServices : IBakeRenderServices
     /// <summary>
     /// Collects the render infos of the content. Light components are not content: their render infos are editor previews.
     /// </summary>
-    private static RenderInfo3D[] CollectTargets(CookedBakeInput input)
+    private RenderInfo3D[] CollectTargets(CookedBakeInput input)
     {
         List<RenderInfo3D> targets = [];
         foreach (SceneNode root in BakeWorldFactory.EnumerateContentRoots(input))
         {
             root.IterateComponents(component =>
             {
+                if (!BakeMotionSelector.IsEnabled(component, root))
+                    return;
                 if (component is not IRenderable renderable || component is LightComponent)
                     return;
+
+                if (component is ModelComponent modelComponent)
+                {
+                    PrepareModelComponentMaterials(modelComponent, prepareUberVariants: false);
+                }
 
                 foreach (RenderInfo info in renderable.RenderedObjects)
                     if (info is RenderInfo3D info3D)
@@ -223,6 +250,89 @@ public sealed class EditorBakeRenderServices : IBakeRenderServices
         }
 
         return [.. targets];
+    }
+
+    private void PrepareContentMaterials(CookedBakeInput input, bool prepareUberVariants)
+    {
+        foreach (SceneNode root in BakeWorldFactory.EnumerateContentRoots(input))
+        {
+            root.IterateComponents<ModelComponent>(modelComponent =>
+            {
+                if (!BakeMotionSelector.IsEnabled(modelComponent, root))
+                    return;
+
+                PrepareModelComponentMaterials(modelComponent, prepareUberVariants);
+            }, iterateChildHierarchy: true);
+        }
+    }
+
+    private void PrepareModelComponentMaterials(ModelComponent modelComponent, bool prepareUberVariants)
+    {
+        foreach (RenderableMesh renderableMesh in modelComponent.Meshes)
+        {
+            PrepareCaptureMaterial(renderableMesh.MaterialOverride, prepareUberVariants);
+            foreach (var lod in renderableMesh.LODs)
+                PrepareCaptureMaterial(lod?.Renderer?.Material, prepareUberVariants);
+        }
+
+        if (modelComponent.Model is { } model)
+        {
+            foreach (var subMesh in model.Meshes)
+            {
+                if (subMesh is null)
+                    continue;
+
+                foreach (var lod in subMesh.LODs)
+                    PrepareCaptureMaterial(lod?.Material, prepareUberVariants);
+            }
+        }
+    }
+
+    private void PrepareCaptureMaterial(XRMaterial? material, bool prepareUberVariants)
+    {
+        if (material is null)
+            return;
+
+        RequestMaterialTextureResidency(material);
+        material.EnsureUberStateInitialized();
+        RequestMaterialTextureResidency(material);
+
+        // The canonical UberShader.frag compiles with default-off feature modules (matcap, rim lighting, emission,
+        // and more) removed. Lit projection renders triangles, so it freezes current parameter values into a static
+        // per-material variant and prewarms enabled companion passes.
+        if (prepareUberVariants)
+        {
+            material.FreezeUberPropertiesForStaticCapture();
+            material.PrewarmUberPassSetImmediately();
+        }
+    }
+
+    private void RequestMaterialTextureResidency(XRMaterial material)
+    {
+        foreach (XRTexture? texture in material.Textures)
+        {
+            if (texture is not XRTexture2D texture2D)
+                continue;
+
+            texture2D.PreferSynchronousGpuUpload = true;
+            // A texture asset keeps only a filler placeholder until streaming loads its source.
+            if (texture2D.HasHydratedSourceMipmaps() ||
+                (string.IsNullOrWhiteSpace(texture2D.OriginalPath) && string.IsNullOrWhiteSpace(texture2D.FilePath)) ||
+                !_requestedStreamedTextures.Add(texture2D))
+            {
+                continue;
+            }
+
+            _cutsceneBudgetLease ??= TextureResidencyRequests.Shared.AcquireBudgetProfile(ETextureStreamingBudgetProfile.Cutscene);
+            TextureResidencyHandle? handle = TextureResidencyRequests.Shared.RequestResidency(
+                texture2D,
+                targetMip: 0,
+                deadlineFrame: 0L,
+                priority: JobPriority.Highest,
+                generation: 1);
+            if (handle is not null)
+                _residencyHandles.Add(handle);
+        }
     }
 
     /// <summary>

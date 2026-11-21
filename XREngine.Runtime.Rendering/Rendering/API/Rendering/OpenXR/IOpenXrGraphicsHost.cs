@@ -18,6 +18,13 @@ public interface IOpenXrGraphicsHost
     void SetSwapchain(uint viewIndex, ulong swapchainHandle, uint imageCount);
     ulong DetachSwapchain(uint viewIndex);
     bool HasAcquiredImage(ulong swapchainHandle);
+    /// <summary>
+    /// True when an OpenXR call returned a runtime loss code (session lost, instance lost, runtime
+    /// failure or runtime unavailable) and the runtime loss transition has not completed yet.
+    /// <see cref="CheckResult"/> marks the loss. A binding uses this to tell a lost runtime, where
+    /// the swapchain ownership ledger no longer applies, from a real ownership failure.
+    /// </summary>
+    bool IsRuntimeLossPending { get; }
     bool AreSwapchainImagesReleased(ReadOnlySpan<ulong> swapchainHandles);
     void AbandonAcquiredImagesAfterDeviceLoss();
     void AbandonActiveSwapchainsAfterDeviceLoss();
@@ -37,6 +44,12 @@ public interface IOpenXrGraphicsHost
     XRViewport? LeftViewport { get; }
     XRViewport? RightViewport { get; }
     XRViewport? StereoViewport { get; }
+    /// <summary>True when the quad-view configuration renders a wide pair (views 0, 1) and an inset pair (views 2, 3).</summary>
+    bool InsetPairActive { get; }
+    /// <summary>Layered stereo viewport of the inset pair, or null without quad view.</summary>
+    XRViewport? InsetStereoViewport { get; }
+    XRCamera? LeftInsetEyeCamera { get; }
+    XRCamera? RightInsetEyeCamera { get; }
     int PendingFrameNumber { get; }
     ulong PendingFrameId { get; }
     long PendingPredictedDisplayTime { get; }

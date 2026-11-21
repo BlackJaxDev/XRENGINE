@@ -10,4 +10,9 @@ public enum EAdvancedVisibilityStageBackendPhase
     LateCompute,
     LateRaster,
     MultisampleResolve,
+    /// <summary>
+    /// Draws mesh surface decals into the decal buffer after the final visibility depth.
+    /// Only backends that report <see cref="IAdvancedVisibilityStageBackendCapability.SupportsAdvancedSurfaceDecalBuffer"/> receive it.
+    /// </summary>
+    DecalBuffer,
 }

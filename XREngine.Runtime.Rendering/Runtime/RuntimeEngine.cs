@@ -1004,6 +1004,10 @@ public static partial class RuntimeEngine
             public static ulong RenderFrameId => StateData.RenderFrameId;
             public static IRuntimeRenderCommandExecutionState? ActiveRenderCommandExecutionState => StateData.ActiveRenderCommandExecutionState;
             public static int CurrentRenderGraphPassIndex => StateData.CurrentRenderGraphPassIndex;
+            /// <summary>
+            /// Gets the authored mesh pass independently of the render-graph scheduling index.
+            /// </summary>
+            public static int CurrentAuthoredRenderPassIndex => StateData.CurrentAuthoredRenderPassIndex;
             internal static XRRenderPipelineInstance? CurrentRenderGraphPassPipeline => StateData.CurrentRenderGraphPassPipeline;
             public static uint CurrentTransformId => StateData.CurrentTransformId;
             public static XRRenderPipelineInstance? CurrentRenderingPipeline => StateData.CurrentRenderingPipeline;
@@ -1071,6 +1075,7 @@ public static partial class RuntimeEngine
             public static bool SupportsOpenGLGeometryShaderViewportIndex { get; internal set; }
             public static int MaxOpenGLViewports { get; internal set; } = 1;
             public static bool HasVulkanMultiView { get; internal set; }
+            public static bool HasVulkanMultiviewGeometryShader { get; internal set; }
             public static bool HasAnyMultiViewExtension => HasOvrMultiViewExtension || HasVulkanMultiView;
             public static bool DebugInstanceRenderingAvailable { get; internal set; } = true;
             public static bool IsNVIDIA { get; internal set; }
@@ -1105,6 +1110,11 @@ public static partial class RuntimeEngine
             public static bool ForwardPlusEnabled => ForwardPlusLocalLightsBuffer is not null && ForwardPlusVisibleIndicesBuffer is not null && ForwardPlusLocalLightCount > 0;
 
             public static IDisposable PushRenderGraphPassIndex(int passIndex) => StateData.PushRenderGraphPassIndex(passIndex);
+            /// <summary>
+            /// Saves the scheduling index and authored mesh pass in one nested render scope.
+            /// </summary>
+            public static IDisposable PushRenderGraphPassIndex(int passIndex, int authoredRenderPassIndex)
+                => StateData.PushRenderGraphPassIndex(passIndex, authoredRenderPassIndex);
             public static IDisposable PushTransformId(uint transformId) => StateData.PushTransformId(transformId);
             public static IDisposable? PushRenderingPipeline(XRRenderPipelineInstance pipeline) => Rendering.PushRenderingPipeline(pipeline);
             public static RenderingPipelineOverrideScope PushRenderingPipelineOverride(XRRenderPipelineInstance? pipeline)
@@ -1342,6 +1352,10 @@ public static partial class RuntimeEngine
                 => t_renderGraphPasses is { Count: > 0 } stack
                     ? stack.Peek().PassIndex
                     : int.MinValue;
+            public int CurrentAuthoredRenderPassIndex
+                => t_renderGraphPasses is { Count: > 0 } stack
+                    ? stack.Peek().AuthoredRenderPassIndex
+                    : int.MinValue;
             internal XRRenderPipelineInstance? CurrentRenderGraphPassPipeline
                 => t_renderGraphPasses is { Count: > 0 } stack
                     ? stack.Peek().OwnerPipeline
@@ -1364,10 +1378,13 @@ public static partial class RuntimeEngine
             }
 
             public IDisposable PushRenderGraphPassIndex(int passIndex)
+                => PushRenderGraphPassIndex(passIndex, passIndex);
+
+            public IDisposable PushRenderGraphPassIndex(int passIndex, int authoredRenderPassIndex)
             {
                 CurrentRenderingPipeline?.RegisterExecutedRenderGraphPass(passIndex);
                 Stack<RenderGraphPassScopeState> stack = RenderGraphPasses;
-                stack.Push(new RenderGraphPassScopeState(passIndex, CurrentRenderingPipeline));
+                stack.Push(new RenderGraphPassScopeState(passIndex, authoredRenderPassIndex, CurrentRenderingPipeline));
                 return StateObject.New(PopRenderGraphPassAction, stack);
             }
 

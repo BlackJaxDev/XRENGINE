@@ -57,6 +57,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     public EditorFlyingCameraPawnComponent()
     {
+        _editorPickCompleted = OnEditorPickCompleted;
+        _applyPendingEditorPick = ApplyPendingEditorPick;
+        _dispatchEditorPickOnRenderThread = DispatchEditorPickOnRenderThread;
+        _applyEditorPickRejection = ApplyEditorPickRejection;
         _postRenderRC = new((int)EDefaultRenderPass.PostRender, PostRender);
         _renderHighlightRC = new((int)EDefaultRenderPass.OpaqueForward, RenderHighlight);
 
@@ -66,25 +70,83 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             RenderInfo3D.New(this, _renderHighlightRC)
         ];
         Selection.SelectionChanged += Selection_SelectionChanged;
+        _prewarmTransformToolTick = PrewarmTransformToolTick;
+    }
+
+    private readonly WorldTick _prewarmTransformToolTick;
+    private readonly Action<EditorPickingResult> _editorPickCompleted;
+    private readonly Action _applyPendingEditorPick;
+    private readonly Action _dispatchEditorPickOnRenderThread;
+    private readonly Action _applyEditorPickRejection;
+    private readonly object _editorPickDeliverySync = new();
+    private XRViewport? _editorPickDispatchViewport;
+    private Vector2 _editorPickDispatchPosition;
+    private string? _editorPickDispatchFailure;
+    private bool _editorPickDispatchSelection;
+    private EditorPickingResult _pendingEditorPickResult;
+    private bool _pendingEditorPickSelect;
+    private bool _editorPickMainTaskQueued;
+    private bool _editorPickSelectOnCompletion;
+    private EditorPickingRequest? _activeEditorPickRequest;
+    private bool _editorPickRetrySelectionPending;
+    private Vector2 _editorPickRetrySelectionPosition;
+
+    protected override void OnComponentActivated()
+    {
+        base.OnComponentActivated();
+        // Build the transform tool one tick after activation, outside the activation pass,
+        // so the first selection does not pay the one-time creation cost.
+        RegisterTick(ETickGroup.Late, ETickOrder.Logic, _prewarmTransformToolTick);
+    }
+
+    private void PrewarmTransformToolTick()
+    {
+        UnregisterTick(ETickGroup.Late, ETickOrder.Logic, _prewarmTransformToolTick);
+        if (SceneNode?.World is RuntimeWorld runtimeWorld)
+            TransformTool3D.Prewarm(runtimeWorld);
     }
 
     private void Selection_SelectionChanged(SceneNode[] selection)
     {
+        long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         SceneNode? transformToolTarget = GetTransformToolTarget(selection);
+        long probeTarget = System.Diagnostics.Stopwatch.GetTimestamp();
+        long probeToolDone;
+        bool firstToolCreation = false;
         if (transformToolTarget is null)
         {
             TransformToolUndoAdapter.Attach(null);
-            TransformTool3D.DestroyInstance();
+            TransformTool3D.HideInstance();
+            probeToolDone = System.Diagnostics.Stopwatch.GetTimestamp();
         }
         else
         {
+            SceneNode? previousToolNode = TransformTool3D.InstanceNode;
+            firstToolCreation = previousToolNode is null || !ReferenceEquals(previousToolNode.World, transformToolTarget.World);
             var tool = TransformTool3D.GetInstance(transformToolTarget.Transform);
+            probeToolDone = System.Diagnostics.Stopwatch.GetTimestamp();
             TransformToolUndoAdapter.Attach(tool);
             if (tool is null)
-                TransformTool3D.DestroyInstance();
+                TransformTool3D.HideInstance();
         }
+        long probeAttached = System.Diagnostics.Stopwatch.GetTimestamp();
         UpdateSelectionHighlight();
+        long probeHighlight = System.Diagnostics.Stopwatch.GetTimestamp();
         InvalidateView();
+        long probeEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        double total = System.Diagnostics.Stopwatch.GetElapsedTime(probeStart, probeEnd).TotalMilliseconds;
+        if (total >= PickProbeThresholdMilliseconds)
+        {
+            static double Ms(long a, long b) => System.Diagnostics.Stopwatch.GetElapsedTime(a, b).TotalMilliseconds;
+            Debug.WriteAuxiliaryLog(
+                PickProbeLogFile,
+                $"[PawnSelectionChanged] total={total:F2} ms getTarget={Ms(probeStart, probeTarget):F2} " +
+                $"transformTool={Ms(probeTarget, probeToolDone):F2} firstToolCreation={firstToolCreation} " +
+                $"undoAttach={Ms(probeToolDone, probeAttached):F2} selectionHighlight={Ms(probeAttached, probeHighlight):F2} " +
+                $"highlightedMeshes={_currentSelectionHighlightMeshes.Count} invalidateView={Ms(probeHighlight, probeEnd):F2} " +
+                $"target='{transformToolTarget?.Name}'");
+        }
     }
 
     private static SceneNode? GetTransformToolTarget(SceneNode[] selection)
@@ -99,13 +161,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     /// <summary>
-    /// Updates the selection highlight, enabling stencil on selected meshes and disabling on deselected ones.
+    /// Publishes the selection flag for selected meshes and clears it for deselected meshes.
     /// </summary>
     private void UpdateSelectionHighlight()
     {
         // Clear previous selection highlights
         foreach (var mesh in _currentSelectionHighlightMeshes)
-            DefaultRenderPipeline.SetHighlighted(mesh, false, isSelection: true);
+            SetEditorMeshHighlight(mesh, false, isSelection: true);
         _currentSelectionHighlightMeshes.Clear();
 
         if (!SelectionOutlineEnabled)
@@ -119,10 +181,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 foreach (var mesh in modelComponent.Meshes)
                 {
                     if (_currentSelectionHighlightMeshes.Add(mesh))
-                        DefaultRenderPipeline.SetHighlighted(mesh, true, isSelection: true);
+                        SetEditorMeshHighlight(mesh, true, isSelection: true);
                 }
             }
         }
+    }
+
+    private void SetEditorMeshHighlight(RenderableMesh mesh, bool enabled, bool isSelection = false)
+    {
+        int bit = isSelection ? DefaultRenderPipeline.StencilRefSelection : DefaultRenderPipeline.StencilRefHover;
+        mesh.SetEditorHighlightBit(bit, enabled);
     }
 
     private Vector3? _worldDragPoint = null;
@@ -385,7 +453,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private bool _hoverOutlineEnabled = true;
     /// <summary>
-    /// If true, renders an outline around the mesh currently under the cursor using stencil buffer.
+    /// Enables the editor highlight module for the mesh under the cursor.
     /// </summary>
     [Category("Raycasting")]
     [DisplayName("Hover Outline")]
@@ -415,7 +483,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private bool _selectionOutlineEnabled = true;
     /// <summary>
-    /// If true, renders an outline around selected meshes using stencil buffer.
+    /// Enables the editor highlight module for selected meshes.
     /// </summary>
     [Category("Selection")]
     [DisplayName("Selection Outline")]
@@ -1290,9 +1358,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         else
             ClearLastViewportMouseSegment();
 
-        SceneNode? tfmTool = TransformTool3D.InstanceNode;
-        if (tfmTool is not null && tfmTool.TryGetComponent<TransformTool3D>(out var comp))
-            comp?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
+        if (TransformTool3D.GetActiveInstance(out TransformTool3D? tfmTool))
+            tfmTool?.MouseMove(_lastRaycastSegment, cam.Camera, LeftClickPressed);
 
         UpdateSelectionDrag(vp);
 
@@ -1351,6 +1418,47 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// </summary>
     private void DispatchWorldPickIfNeeded(XRViewport vp, Vector2 normalizedCursorPos)
     {
+        if (_editorPickRetrySelectionPending &&
+            normalizedCursorPos != _editorPickRetrySelectionPosition)
+        {
+            _editorPickRetrySelectionPending = false;
+            _selectAfterForcedPick = false;
+        }
+        EditorPickingRequest? activeEditorRequest;
+        lock (_editorPickDeliverySync)
+            activeEditorRequest = _activeEditorPickRequest;
+        if (activeEditorRequest is { } activeRequest && !activeRequest.IsActive)
+        {
+            bool deliveryQueued;
+            lock (_editorPickDeliverySync)
+                deliveryQueued = _editorPickMainTaskQueued;
+            if (!deliveryQueued)
+            {
+                if (_editorPickSelectOnCompletion &&
+                    normalizedCursorPos == _lastPickCursorPosition &&
+                    CanApplyCurrentWorldPickHover())
+                {
+                    _selectAfterForcedPick = true;
+                    _editorPickRetrySelectionPending = true;
+                    _editorPickRetrySelectionPosition = _lastPickCursorPosition;
+                }
+                lock (_editorPickDeliverySync)
+                    _activeEditorPickRequest = null;
+                CompleteWorldPickDispatch();
+                _lastPickCursorPosition = new(float.NaN, float.NaN);
+            }
+        }
+        if (vp.RenderPipelineInstance.UsesAdvancedScenePicking &&
+            !vp.RenderPipelineInstance.EditorPickingModuleEnabled)
+        {
+            _forceRepick = false;
+            _selectAfterForcedPick = false;
+            _editorPickRetrySelectionPending = false;
+            _lastPickCursorPosition = new(float.NaN, float.NaN);
+            ClearHoverHighlight();
+            return;
+        }
+
         // Gate: cursor must be inside the viewport [0,1] range.
         bool cursorInViewport =
             normalizedCursorPos.X >= 0f && normalizedCursorPos.X <= 1f &&
@@ -1403,7 +1511,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         bool selectOnCompletion = _selectAfterForcedPick;
         _selectAfterForcedPick = false;
 
-        if (vp.RenderPipelineInstance.Pipeline is AdvancedRenderPipeline)
+        if (vp.RenderPipelineInstance.UsesAdvancedScenePicking)
         {
             DispatchAdvancedVisibilityPick(vp, normalizedCursorPos, selectOnCompletion);
             return;
@@ -1421,18 +1529,65 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         Vector2 normalizedCursorPosition,
         bool selectOnCompletion)
     {
-        if (viewport.TryPickAdvancedAsync(
-                normalizedCursorPosition,
-                viewIndex: 0u,
-                result => Engine.EnqueueMainThreadTask(
-                    () => ApplyAdvancedVisibilityPick(result, selectOnCompletion),
-                    "EditorFlyingCameraPawnComponent.AdvancedPickResult"),
-                out _,
-                out string? failure))
+        _editorPickRetrySelectionPending = false;
+        lock (_editorPickDeliverySync)
         {
+            _editorPickSelectOnCompletion = selectOnCompletion;
+            _editorPickDispatchViewport = viewport;
+            _editorPickDispatchPosition = normalizedCursorPosition;
+            _editorPickDispatchSelection = selectOnCompletion;
+        }
+        Engine.EnqueueRenderThreadTask(_dispatchEditorPickOnRenderThread,
+            "EditorFlyingCameraPawnComponent.EditorPickReadback",
+            RenderThreadJobKind.Readback);
+    }
+
+    private void DispatchEditorPickOnRenderThread()
+    {
+        XRViewport? viewport;
+        Vector2 position;
+        lock (_editorPickDeliverySync)
+        {
+            viewport = _editorPickDispatchViewport;
+            position = _editorPickDispatchPosition;
+        }
+        EditorPickingRequest? request = null;
+        string? failure = "The editor viewport is no longer available.";
+        if (viewport is not null && viewport.TryPickEditorAsync(position,
+                viewIndex: 0u, _editorPickCompleted, out request, out failure))
+        {
+            lock (_editorPickDeliverySync)
+                _activeEditorPickRequest = request;
             return;
         }
 
+        lock (_editorPickDeliverySync)
+        {
+            _activeEditorPickRequest = null;
+            _editorPickDispatchFailure = failure ?? "unspecified backend rejection";
+        }
+        Engine.EnqueueMainThreadTask(_applyEditorPickRejection,
+            "EditorFlyingCameraPawnComponent.EditorPickRejected");
+    }
+
+    private void ApplyEditorPickRejection()
+    {
+        Vector2 normalizedCursorPosition;
+        bool selectOnCompletion;
+        string? failure;
+        lock (_editorPickDeliverySync)
+        {
+            normalizedCursorPosition = _editorPickDispatchPosition;
+            selectOnCompletion = _editorPickDispatchSelection;
+            failure = _editorPickDispatchFailure;
+        }
+        _lastPickCursorPosition = new(float.NaN, float.NaN);
+        if (selectOnCompletion && CanApplyCurrentWorldPickHover())
+        {
+            _selectAfterForcedPick = true;
+            _editorPickRetrySelectionPending = true;
+            _editorPickRetrySelectionPosition = normalizedCursorPosition;
+        }
         CompleteWorldPickDispatch();
         Debug.RenderingWarningEvery(
             "Editor.AdvancedPicking.ReadbackRejected",
@@ -1442,13 +1597,74 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         ClearHoverHighlight();
     }
 
+    private void OnEditorPickCompleted(EditorPickingResult result)
+    {
+        bool queueTask;
+        lock (_editorPickDeliverySync)
+        {
+            _pendingEditorPickResult = result;
+            _pendingEditorPickSelect = _editorPickSelectOnCompletion;
+            queueTask = !_editorPickMainTaskQueued;
+            _editorPickMainTaskQueued = true;
+        }
+        if (queueTask)
+            Engine.EnqueueMainThreadTask(_applyPendingEditorPick,
+                "EditorFlyingCameraPawnComponent.EditorPickResult");
+    }
+
+    private void ApplyPendingEditorPick()
+    {
+        EditorPickingResult result;
+        bool selectOnCompletion;
+        lock (_editorPickDeliverySync)
+        {
+            result = _pendingEditorPickResult;
+            selectOnCompletion = _pendingEditorPickSelect;
+            _editorPickMainTaskQueued = false;
+        }
+        lock (_editorPickDeliverySync)
+            _activeEditorPickRequest = null;
+        ApplyEditorVisibilityPick(in result, selectOnCompletion);
+    }
+
+    private void ApplyEditorVisibilityPick(
+        in EditorPickingResult result,
+        bool selectOnCompletion)
+    {
+        _hoverProbeChanged = false;
+        _hoverProbeOffMs = 0.0;
+        _hoverProbeOnMs = 0.0;
+        _hoverProbeInvalidateMs = 0.0;
+        bool canApplyHover = CanApplyCurrentWorldPickHover();
+        CompleteWorldPickDispatch();
+
+        SceneNode? node = ResolvePickingSceneNode(result.RenderInfo);
+        if (node is not null && !ReferenceEquals(node.World, World))
+            node = null;
+
+        if (canApplyHover && node is not null)
+            UpdateHoverHighlight(result.RenderableMesh);
+        else
+            ClearHoverHighlight();
+
+        if (selectOnCompletion && canApplyHover)
+            Selection.SceneNodes = node is null ? [] : [node];
+    }
+
     private void ApplyAdvancedVisibilityPick(
         in AdvancedPickingResult result,
         bool selectOnCompletion)
     {
+        long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        _hoverProbeChanged = false;
+        _hoverProbeOffMs = 0.0;
+        _hoverProbeOnMs = 0.0;
+        _hoverProbeInvalidateMs = 0.0;
         bool canApplyHover = CanApplyCurrentWorldPickHover();
         CompleteWorldPickDispatch();
+        long probeDispatchDone = System.Diagnostics.Stopwatch.GetTimestamp();
         SceneNode? node = ResolveAdvancedPickingSceneNode(in result);
+        long probeResolved = System.Diagnostics.Stopwatch.GetTimestamp();
         if (node is not null && !ReferenceEquals(node.World, World))
             node = null;
         if (result.IsHit && node is null)
@@ -1461,18 +1677,70 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 result.Draw.Generation);
         }
 
+        long probeHoverStart = System.Diagnostics.Stopwatch.GetTimestamp();
         if (canApplyHover)
             UpdateAdvancedPickingHover(result.AuthoringRenderInfo, result.PrimitiveSection);
         else
             ClearHoverHighlight();
+        long probeHoverDone = System.Diagnostics.Stopwatch.GetTimestamp();
 
         if (selectOnCompletion)
             Selection.SceneNodes = node is null ? [] : [node];
+        long probeEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        double probeTotal = System.Diagnostics.Stopwatch.GetElapsedTime(probeStart, probeEnd).TotalMilliseconds;
+        if (probeTotal >= PickProbeThresholdMilliseconds)
+        {
+            static double Ms(long a, long b) => System.Diagnostics.Stopwatch.GetElapsedTime(a, b).TotalMilliseconds;
+            Debug.WriteAuxiliaryLog(
+                PickProbeLogFile,
+                $"[PickApply] total={probeTotal:F2} ms completeDispatch={Ms(probeStart, probeDispatchDone):F2} " +
+                $"resolveNode={Ms(probeDispatchDone, probeResolved):F2} warnCheck={Ms(probeResolved, probeHoverStart):F2} " +
+                $"hover={Ms(probeHoverStart, probeHoverDone):F2} [highlightOff={_hoverProbeOffMs:F2} highlightOn={_hoverProbeOnMs:F2} " +
+                $"invalidateView={_hoverProbeInvalidateMs:F2} changed={_hoverProbeChanged}] " +
+                $"selection={Ms(probeHoverDone, probeEnd):F2} select={selectOnCompletion} hit={result.IsHit} node='{node?.Name}'");
+        }
+
+        if (_hoverProbeChanged)
+            ScheduleHoverFrameProbe(framesRemaining: 3, previousTimestamp: probeEnd);
+    }
+
+    private const string PickProbeLogFile = "editor-pick-timing.log";
+    private const double PickProbeThresholdMilliseconds = 4.0;
+    private bool _hoverProbeChanged;
+    private double _hoverProbeOffMs;
+    private double _hoverProbeOnMs;
+    private double _hoverProbeInvalidateMs;
+
+    /// <summary>
+    /// Logs the render-thread frame time of the frames after a hover change. Each step
+    /// runs as a render-thread job and enqueues the next step, so one line is written per
+    /// job with the time since the previous job and the last render delta.
+    /// </summary>
+    private void ScheduleHoverFrameProbe(int framesRemaining, long previousTimestamp)
+    {
+        if (framesRemaining <= 0)
+            return;
+
+        Engine.EnqueueMainThreadTask(
+            () =>
+            {
+                long now = System.Diagnostics.Stopwatch.GetTimestamp();
+                Debug.WriteAuxiliaryLog(
+                    PickProbeLogFile,
+                    $"[HoverFrame] step={4 - framesRemaining} sincePrevious={System.Diagnostics.Stopwatch.GetElapsedTime(previousTimestamp, now).TotalMilliseconds:F2} ms " +
+                    $"renderDelta={Engine.Time.Timer.Render.Delta * 1000.0:F2} ms");
+                ScheduleHoverFrameProbe(framesRemaining - 1, now);
+            },
+            "EditorFlyingCameraPawnComponent.HoverFrameProbe");
     }
 
     private static SceneNode? ResolveAdvancedPickingSceneNode(
         in AdvancedPickingResult result)
-        => result.AuthoringRenderInfo?.Owner switch
+        => ResolvePickingSceneNode(result.AuthoringRenderInfo);
+
+    private static SceneNode? ResolvePickingSceneNode(RenderInfo? renderInfo)
+        => renderInfo?.Owner switch
         {
             XRComponent component => component.SceneNode,
             TransformBase transform => transform.SceneNode,
@@ -1865,7 +2133,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     /// <summary>
-    /// Updates the hover highlight, enabling stencil on the new renderable mesh and disabling on the previous.
+    /// Publishes the hover flag for the new mesh and clears it for the previous mesh.
     /// </summary>
     private void UpdateHoverHighlight(RenderableMesh? newMesh)
     {
@@ -1873,14 +2141,22 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (ReferenceEquals(_currentHoverHighlightMesh, effectiveMesh))
             return;
 
+        long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         if (_currentHoverHighlightMesh is not null)
-            DefaultRenderPipeline.SetHighlighted(_currentHoverHighlightMesh, false);
+            SetEditorMeshHighlight(_currentHoverHighlightMesh, false);
+        long probeOff = System.Diagnostics.Stopwatch.GetTimestamp();
 
         if (effectiveMesh is not null)
-            DefaultRenderPipeline.SetHighlighted(effectiveMesh, true);
+            SetEditorMeshHighlight(effectiveMesh, true);
+        long probeOn = System.Diagnostics.Stopwatch.GetTimestamp();
 
         _currentHoverHighlightMesh = effectiveMesh;
         InvalidateView();
+        long probeEnd = System.Diagnostics.Stopwatch.GetTimestamp();
+        _hoverProbeChanged = true;
+        _hoverProbeOffMs = System.Diagnostics.Stopwatch.GetElapsedTime(probeStart, probeOff).TotalMilliseconds;
+        _hoverProbeOnMs = System.Diagnostics.Stopwatch.GetElapsedTime(probeOff, probeOn).TotalMilliseconds;
+        _hoverProbeInvalidateMs = System.Diagnostics.Stopwatch.GetElapsedTime(probeOn, probeEnd).TotalMilliseconds;
     }
 
     /// <summary>
@@ -1890,7 +2166,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (_currentHoverHighlightMesh is not null)
         {
-            DefaultRenderPipeline.SetHighlighted(_currentHoverHighlightMesh, false);
+            SetEditorMeshHighlight(_currentHoverHighlightMesh, false);
             _currentHoverHighlightMesh = null;
             InvalidateView();
         }

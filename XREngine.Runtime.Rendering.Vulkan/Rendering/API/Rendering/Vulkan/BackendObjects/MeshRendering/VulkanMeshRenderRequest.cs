@@ -2,6 +2,7 @@ using System.Numerics;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Compute;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -35,12 +36,52 @@ internal readonly record struct VulkanMeshRenderRequest(
     VulkanResidentDrawTemplateHandle ResidentTemplateHandle,
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
+    // The two large members keep a backing field, so hot readers can take them by
+    // reference (see the Get...Reference helpers) instead of copying them.
+    private readonly FrameOpContext _context = Context;
+    private readonly VulkanMeshProducerSnapshot _producer = Producer;
+
+    public FrameOpContext Context
+    {
+        get => _context;
+        init => _context = value;
+    }
+
+    public VulkanMeshProducerSnapshot Producer
+    {
+        get => _producer;
+        init => _producer = value;
+    }
+
+    internal static ref readonly FrameOpContext GetContextReference(
+        in VulkanMeshRenderRequest request)
+        => ref request._context;
+
+    internal static ref readonly VulkanMeshProducerSnapshot GetProducerReference(
+        in VulkanMeshRenderRequest request)
+        => ref request._producer;
+
     internal Vector4 SourceFlatDirection { get; init; }
+    internal uint EditorHighlightBits { get; init; }
+    internal bool SuppressLegacyGizmoStencil { get; init; }
+    internal EditorHighlightRasterOutput EditorHighlightOutput { get; init; }
+    /// <summary>Pass state that the queuing pass had when it queued this request.</summary>
+    internal EVulkanMeshDrawPassStateFlags PassStateFlags { get; init; }
     internal VulkanMeshIndexedIndirectPayload? IndexedIndirect { get; init; }
     internal VulkanRequiredProducerInsertionToken RequiredProducerInsertionToken { get; init; }
+    internal DeformationOutputWitness DeformationOutputWitness { get; init; }
+    internal ulong SkinnedOutputSetIdentity { get; init; }
+    /// <summary>Rejects a deferred draw that cannot enter the accepted frame.</summary>
+    internal bool RequiredForOutput { get; init; }
 
     internal static void ReleaseAuthoringLease(ref VulkanMeshRenderRequest request)
     {
+        if (request.DeformationOutputWitness.Receipt is { } receipt)
+        {
+            request = request with { DeformationOutputWitness = default };
+            receipt.ReleaseAuthoringUse();
+        }
+
         if (request.IndexedIndirect is not { AuthoringLease: { } owner } payload)
             return;
         request = request with

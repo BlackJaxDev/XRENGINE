@@ -29,6 +29,8 @@ public sealed partial class McpAssistantWindow
     private async Task<JsonArray?> FetchMcpToolListAsync(CancellationToken ct)
     {
         string url = _mcpServerUrl.Trim();
+        if (!McpServerHost.OwnsAssistantEndpoint(url))
+            throw new InvalidOperationException("Assistant tools require this editor's active MCP server.");
         var payload = new JsonObject
         {
             ["jsonrpc"] = "2.0",
@@ -55,7 +57,21 @@ public sealed partial class McpAssistantWindow
             return null;
 
         if (result.TryGetProperty("tools", out JsonElement toolsEl) && toolsEl.ValueKind == JsonValueKind.Array)
-            return JsonSerializer.Deserialize<JsonArray>(toolsEl.GetRawText());
+        {
+            JsonArray discovered = JsonSerializer.Deserialize<JsonArray>(toolsEl.GetRawText()) ?? [];
+            for (int i = discovered.Count - 1; i >= 0; i--)
+            {
+                if (discovered[i] is not JsonObject tool)
+                    continue;
+                string name = tool["name"]?.GetValue<string>() ?? string.Empty;
+                bool readOnly = IsReadOnlyAssistantTool(name);
+                if (readOnly)
+                    _requestReadOnlyTools.Add(name);
+                else if (IsReadOnlyRequest)
+                    discovered.RemoveAt(i);
+            }
+            return discovered;
+        }
 
         return null;
     }

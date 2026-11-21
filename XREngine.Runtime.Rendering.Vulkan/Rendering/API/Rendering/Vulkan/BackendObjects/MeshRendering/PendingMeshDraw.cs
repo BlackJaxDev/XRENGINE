@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Vulkan;
@@ -19,8 +20,8 @@ internal readonly record struct PendingMeshDraw(
     bool DepthWriteEnabled,
     CompareOp DepthCompareOp,
     bool StencilTestEnabled,
-    StencilOpState FrontStencilState,
-    StencilOpState BackStencilState,
+    VulkanStencilFaceState FrontStencilState,
+    VulkanStencilFaceState BackStencilState,
     uint StencilWriteMask,
     ColorComponentFlags ColorWriteMask,
     CullModeFlags CullMode,
@@ -48,10 +49,19 @@ internal readonly record struct PendingMeshDraw(
     AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
     WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
+    /// <summary>An empty draw that a by-reference reader can point to when an operation has no draw.</summary>
+    internal static readonly PendingMeshDraw Empty;
+
     internal Vector4 SourceFlatDirection { get; init; }
+    internal uint EditorHighlightBits { get; init; }
+    internal EditorHighlightRasterOutput EditorHighlightOutput { get; init; }
+    /// <summary>Pass state that the queuing pass had when it queued this draw.</summary>
+    internal EVulkanMeshDrawPassStateFlags PassStateFlags { get; init; }
     internal RenderCaptureOwnerToken? CaptureOwnerToken { get; init; }
     internal EPrimitiveType IndirectTopology { get; init; } = EPrimitiveType.Triangles;
     internal IRenderResourceLeaseOwner? IndexedIndirectAuthoringLease { get; init; }
+    internal DeformationOutputWitness DeformationOutputWitness { get; init; }
+    internal ulong SkinnedOutputSetIdentity { get; init; }
 
     internal AdvancedGpuSceneDrawIdentity CanonicalDrawIdentity
         => CanonicalDrawIdentitySnapshot.Primary;

@@ -92,13 +92,13 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
                 ShaderProgramArtifact rasterArtifact = artifact ?? throw new InvalidOperationException("EngineMeshDiagnostic.ArtifactRequired.");
                 _vertex = new XRShader(EShaderType.Vertex)
                 {
-                    Name = rasterArtifact.Name + " vertex", SourceLanguage = ShaderSourceLanguage.Slang,
-                    EntryPoint = rasterArtifact.VertexEntryPoint, CookedArtifact = rasterArtifact,
+                    Name = $"{rasterArtifact.Name} vertex", SourceLanguage = ShaderSourceLanguage.Slang,
+                    EntryPoint = rasterArtifact.VertexEntryPoint ?? string.Empty, CookedArtifact = rasterArtifact,
                 };
                 _fragment = new XRShader(EShaderType.Fragment)
                 {
-                    Name = rasterArtifact.Name + " fragment", SourceLanguage = ShaderSourceLanguage.Slang,
-                    EntryPoint = rasterArtifact.FragmentEntryPoint, CookedArtifact = rasterArtifact,
+                    Name = $"{rasterArtifact.Name} fragment", SourceLanguage = ShaderSourceLanguage.Slang,
+                    EntryPoint = rasterArtifact.FragmentEntryPoint ?? string.Empty, CookedArtifact = rasterArtifact,
                 };
                 _material = new XRMaterial(_vertex, _fragment)
                 {
@@ -302,12 +302,11 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
             $"deferred={pipeline.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.OpaqueDeferred)}; " +
             $"forward={pipeline.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.OpaqueForward)}; " +
             $"HDR FBO={pipeline.GetFBO<XRFrameBuffer>(DefaultRenderPipeline.ForwardPassFBOName) is not null}; " +
-            (_shadow ? $"shadow requests={_directional?.StandaloneShadowRenderRequestCount}; shadow passes={_directional?.StandaloneShadowRenderPassCount}; shadow casters={_directional?.PrimaryShadowCasterCount}; {GetShadowRenderStatus()}; " : "") +
-            (_debug ? $"debug callbacks={RuntimeEngine.Rendering.Debug.LastDebugDrawComponentCallbackCount}; case={_debugCase}; " : "") +
-            (_effects ? $"effects case={_effectsCase}; AO target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebGtaoFinalTextureName) is not null}; bloom target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebBloomCombinedTextureName) is not null}; " : "") +
-            (_unlit ? $"unlit case={_unlitCase}; " : "") +
-            (_unlit && _unlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback
-                ? $"indexed strategy={_renderer.LastAuthoredIndexedSubmissionStrategy}; indexed reason={_renderer.LastAuthoredIndexedSubmissionReason}; " : "") +
+            $"{(_shadow ? $"shadow requests={_directional?.StandaloneShadowRenderRequestCount}; shadow passes={_directional?.StandaloneShadowRenderPassCount}; shadow casters={_directional?.PrimaryShadowCasterCount}; {GetShadowRenderStatus()}; " : "")}" +
+            $"{(_debug ? $"debug callbacks={RuntimeEngine.Rendering.Debug.LastDebugDrawComponentCallbackCount}; case={_debugCase}; " : "")}" +
+            $"{(_effects ? $"effects case={_effectsCase}; AO target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebGtaoFinalTextureName) is not null}; bloom target={pipeline.GetTexture<XRTexture2D>(DefaultRenderPipeline.WebBloomCombinedTextureName) is not null}; " : "")}" +
+            $"{(_unlit ? $"unlit case={_unlitCase}; " : "")}" +
+            $"{(_unlit && _unlitProfile.SubmissionStrategy == EMeshSubmissionStrategy.GpuIndirectZeroReadback ? $"indexed strategy={_renderer.LastAuthoredIndexedSubmissionStrategy}; indexed reason={_renderer.LastAuthoredIndexedSubmissionReason}; " : "")}" +
             $"draw preparation={_renderer.GetPendingEngineDrawStatus()}; " +
             $"program preparation={_renderer.GetPendingEngineProgramStatus()}; " +
             $"pipeline decline={pipeline.LastRenderDeclineReason ?? "none"}; " +

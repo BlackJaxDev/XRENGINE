@@ -31,6 +31,8 @@ The engine resolves one `EngineExecutionTopology` and constructs one
 `EngineWorkScheduler` before creating windows or a render backend. The default
 policy reserves up to four foreground engine loops, selects general workers
 automatically with a cap of 16, and creates no background render workers.
+General workers run at below-normal thread priority, so heavy background work,
+such as startup asset loads, does not make the rest of the PC slow.
 Logical render lane 0 still exists and runs on the participating render thread.
 
 Execution settings follow the normal engine, project, user, then environment
@@ -85,13 +87,20 @@ domain and retains the batch instead of silently recycling partial output.
 - `XR_JOB_WORKER_CAP`: general worker cap (`1..32`).
 - `XRE_RENDER_WORKER_THREADS`: render-domain workers used by renderer-neutral
   preparation and lane-affine backend recording (`-1` for auto, `0` for lane 0
-  only, or `1..32` background lanes).
+  only, or `1..32` background lanes). When OpenXR starts with the
+  `ParallelCommandBufferRecording` view mode and this variable is not set, the
+  engine uses at least 1 worker, so the two eyes record in parallel. If you set
+  this variable to `0`, the eyes record one after the other and the log shows a
+  warning.
 - `XRE_RENDER_WORKER_THREAD_CAP`: render-domain background-lane auto cap
   (`1..32`).
 - `XRE_RESERVED_FOREGROUND_THREADS`: foreground-loop reservation (`-1` for auto,
   or `1..32`).
 - `XRE_ALLOW_CPU_OVERSUBSCRIPTION`: diagnostic opt-in (`true`, `false`, `1`, or
   `0`).
+- `XRE_PREFER_LARGEST_CACHE_CORES`: `0` keeps the full process affinity on a CPU
+  whose L3 caches have different sizes. Overrides the `PreferLargestCacheCores`
+  engine setting (on by default).
 - `XRE_RENDER_WORKER_QOS`: render-domain background-lane policy (`OsDefault`
   or diagnostic `High`).
 - `XR_JOB_QUEUE_LIMIT`: bounded queue capacity.

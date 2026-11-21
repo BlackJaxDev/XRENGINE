@@ -59,6 +59,20 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public string? SourceProjectRootOverride { get; set; }
 
     /// <summary>
+    /// True to keep importing an external .prefab when the source project is missing required visual assets, for
+    /// example a texture or a material. The import uses fallback materials and reports each missing asset. The default
+    /// stops the import, because the result does not match the source look. Model importers ignore this value.
+    /// </summary>
+    public bool AllowPartialSourceImport { get; set; }
+
+    /// <summary>
+    /// The name of one top-level object in an external Unity <c>.unity</c> scene. When set, the scene imports as a
+    /// prefab of that object only, with its root translation moved to the origin, instead of as a whole scene. Use it
+    /// for an avatar that exists only as a prefab instance inside a scene. Model importers ignore this value.
+    /// </summary>
+    public string? SourceSceneRootName { get; set; }
+
+    /// <summary>
     /// Backwards-compatibility: older cached YAML stored the combined flags under "PostProcessSteps".
     /// This setter-only property allows deserialization without re-serializing it.
     /// </summary>
@@ -208,6 +222,11 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     public bool ImportBlendShapeNormals { get; set; } = true;
 
     /// <summary>
+    /// Selects the tangent rule for FBX import. The default keeps each backend's existing behavior.
+    /// </summary>
+    public ModelTangentImportPolicy TangentImportPolicy { get; set; } = ModelTangentImportPolicy.Default;
+
+    /// <summary>
     /// If true, treat the source file as Z-up (common in some DCCs).
     /// </summary>
     public bool ZUp { get; set; } = false;
@@ -221,6 +240,20 @@ public sealed class ModelImportOptions : IXR3rdPartyImportOptions
     /// Controls how explicit opacity maps should be interpreted during import.
     /// </summary>
     public EOpacityMapMode OpacityMapMode { get; set; } = EOpacityMapMode.Auto;
+
+    /// <summary>
+    /// Controls how the surface-detail texture (normal, bump or height slot) is used: an RGB normal map,
+    /// a bump map (height-derived lighting normals), or a height map (parallax occlusion mapping plus
+    /// height-derived normals). Auto classifies the texture content.
+    /// </summary>
+    public ESurfaceDetailMapMode SurfaceDetailMapMode { get; set; } = ESurfaceDetailMapMode.Auto;
+
+    /// <summary>
+    /// Controls whether materials with an opacity map and "decal" in their name become surface
+    /// decals. The Advanced Render Pipeline on Vulkan blends a surface decal over the surface
+    /// below it before lighting. Other renderers draw it as a masked material.
+    /// </summary>
+    public EDecalMaterialMode DecalMaterialMode { get; set; } = EDecalMaterialMode.Auto;
 
     /// <summary>
     /// Enables Assimp multithreading when the Assimp backend is used.

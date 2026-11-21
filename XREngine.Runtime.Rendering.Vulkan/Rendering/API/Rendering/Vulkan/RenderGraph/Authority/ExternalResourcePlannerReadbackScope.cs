@@ -415,7 +415,8 @@ internal sealed class ExternalResourcePlannerReadbackScope : IDisposable
            !ReferenceEquals(state.RenderGraphPlan, VulkanRenderGraphPlan.Empty) &&
            VulkanResourcePlannerSessionService.IsReusableState(state) &&
            state.LastActiveFrameOpContext is FrameOpContext preparedContext &&
-           VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(preparedContext) == key;
+           VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(preparedContext) == key &&
+           VulkanResourcePlannerSessionService.MatchesPlannedExtent(state, key);
 
     private static int Score(in ResourcePlannerRuntimeState state)
     {

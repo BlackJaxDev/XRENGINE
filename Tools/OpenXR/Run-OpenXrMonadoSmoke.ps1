@@ -923,6 +923,7 @@ try {
         XRE_UNIT_TEST_WORLD_KIND                = "Default"
         XRE_UNIT_TEST_RENDER_API                = $Renderer
         XRE_UNIT_TEST_VR_MODE                   = "MonadoOpenXR"
+        XRE_UNIT_TEST_VR_DESKTOP_VIEW           = "FirstPerson"
         XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS   = $previewStereoViews
         XRE_WINDOW_TITLE                        = "XRE OpenXR Monado Smoke"
         XRE_SMOKE_FRAMES                        = [string]$SmokeFrames

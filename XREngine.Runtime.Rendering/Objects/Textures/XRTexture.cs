@@ -26,8 +26,14 @@ namespace XREngine.Rendering
             bool publishNotifications = true,
             [CallerMemberName] string? propertyName = null)
         {
+            bool changed;
             lock (_importedSourceMetadataWriteSync)
-                return SetField(ref field, value, publishNotifications, propertyName);
+                changed = SetField(ref field, value, publishNotifications, propertyName);
+            // Advance here too: a write without notifications, or one made while
+            // notifications are suppressed, does not reach OnPropertyChanged.
+            if (changed)
+                AdvanceAdvancedSourceVersion();
+            return changed;
         }
         // Cached "Texture{N}" sampler strings — avoids per-call string interpolation on hot render paths.
         // The cache grows on demand, because imported materials can have more than 32 textures.

@@ -28,14 +28,30 @@ internal sealed partial class SkinningPrepassDispatcher
 
         private int _lastVertexCount;
         private bool _lastWasInterleaved;
+        private const int OutputSlotCapacity = 4;
+        private OutputSlot?[] _outputSlots = new OutputSlot?[OutputSlotCapacity];
+        private int _outputSlotCount;
+        private int _activeOutputSlot;
         private bool _hasValidOutput;
         private bool _lastDidSkinning;
         private bool _lastDidBlendshapes;
         private bool _lastUsedPrecombinedBlendshapes;
         private ulong _lastOutputVersion;
         private int _lastDispatchedPoseHash;
+        private VulkanOutputReceipt? _outputReceipt;
+        private AbstractRenderer? _outputBackendOwner;
+        private OutputAllocationIdentity _outputAllocationIdentity;
+        private bool _outputAttemptUnfenced;
+        private ulong _outputAttemptId;
+        private ulong _outputAttemptVersion;
+        private string? _lastReuseRejection;
 
         public ulong LastComputePrepassFrameId;
+
+        ~RendererResources()
+        {
+            Interlocked.Exchange(ref _outputReceipt, null)?.ReleaseReference();
+        }
 
         /// <summary>
         /// Gets the output buffer containing skinned positions.
@@ -127,18 +143,157 @@ internal sealed partial class SkinningPrepassDispatcher
         }
 
         public bool HasFrameOutput(ulong frameId, bool doSkinning, bool doBlendshapes, bool usePrecombinedBlendshapes)
-            => LastComputePrepassFrameId == frameId
-                && _hasValidOutput
+            => (RuntimeEngine.Rendering.State.IsVulkan
+                    ? HasVulkanOutputForCurrentAttempt(
+                        SkinningPrepassDispatcher.ActiveProducerAttemptId,
+                        doSkinning,
+                        doBlendshapes,
+                        usePrecombinedBlendshapes)
+                    : LastComputePrepassFrameId == frameId && _hasValidOutput)
                 && _lastDidSkinning == doSkinning
                 && _lastDidBlendshapes == doBlendshapes
                 && _lastUsedPrecombinedBlendshapes == usePrecombinedBlendshapes;
 
+        public bool HasVulkanOutputForCurrentAttempt(
+            ulong attemptId,
+            bool doSkinning,
+            bool doBlendshapes,
+            bool usePrecombinedBlendshapes)
+        {
+            VulkanOutputReceipt? receipt = _outputReceipt;
+            if (receipt is null ||
+                attemptId == 0UL ||
+                _outputAttemptId != attemptId ||
+                !receipt.IsUsableForCurrentAttempt(attemptId) ||
+                !ReferenceEquals(_outputBackendOwner, receipt.BackendOwner) ||
+                !ReferenceEquals(AbstractRenderer.Current, receipt.BackendOwner) ||
+                _outputAttemptVersion != _renderer.SkinnedOutputVersion ||
+                _lastDidSkinning != doSkinning ||
+                _lastDidBlendshapes != doBlendshapes ||
+                _lastUsedPrecombinedBlendshapes != usePrecombinedBlendshapes ||
+                (doSkinning && _lastDispatchedPoseHash != _renderer.ComputeCurrentBonePoseHash()) ||
+                !TryCaptureOutputAllocationIdentity(receipt.BackendOwner, out OutputAllocationIdentity current) ||
+                !_outputAllocationIdentity.Matches(current))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public bool TryCaptureConsumerWitness(
+            ulong activeAttemptId,
+            AbstractRenderer backendOwner,
+            bool doSkinning,
+            bool doBlendshapes,
+            bool usePrecombinedBlendshapes,
+            out DeformationOutputWitness witness)
+        {
+            witness = default;
+            bool currentAttempt = HasVulkanOutputForCurrentAttempt(
+                activeAttemptId,
+                doSkinning,
+                doBlendshapes,
+                usePrecombinedBlendshapes);
+            if (!currentAttempt &&
+                !HasSubmittedOutputForConsumer(
+                    backendOwner,
+                    doSkinning))
+            {
+                return false;
+            }
+
+            VulkanOutputReceipt? receipt = _outputReceipt;
+            if (receipt is null ||
+                !ReferenceEquals(receipt.BackendOwner, backendOwner) ||
+                !TryCaptureOutputAllocationIdentity(backendOwner, out OutputAllocationIdentity allocationIdentity) ||
+                !_outputAllocationIdentity.Matches(allocationIdentity))
+            {
+                return false;
+            }
+
+            receipt.RetainAuthoringUse();
+            witness = new DeformationOutputWitness(
+                receipt,
+                backendOwner,
+                receipt.AttemptId,
+                _outputAttemptVersion,
+                _lastDispatchedPoseHash,
+                currentAttempt ? doSkinning : _lastDidSkinning,
+                _lastDidBlendshapes,
+                _lastUsedPrecombinedBlendshapes,
+                allocationIdentity);
+            return true;
+        }
+
+        private bool HasSubmittedOutputForConsumer(
+            AbstractRenderer backendOwner,
+            bool doSkinning)
+        {
+            VulkanOutputReceipt? receipt = _outputReceipt;
+            return receipt is not null &&
+                   receipt.IsSubmittedAndHealthy &&
+                   ReferenceEquals(receipt.BackendOwner, backendOwner) &&
+                   ReferenceEquals(_outputBackendOwner, backendOwner) &&
+                   _outputAttemptId == receipt.AttemptId &&
+                   _lastDidSkinning == doSkinning &&
+                   TryCaptureOutputAllocationIdentity(backendOwner, out OutputAllocationIdentity current) &&
+                   _outputAllocationIdentity.Matches(current);
+        }
+
+        public bool ValidateConsumerWitness(in DeformationOutputWitness witness)
+        {
+            VulkanOutputReceipt receipt = witness.Receipt;
+            if (!ReferenceEquals(_outputReceipt, receipt) ||
+                !ReferenceEquals(_outputBackendOwner, witness.BackendOwner) ||
+                _outputAttemptId != witness.AttemptId ||
+                _outputAttemptVersion != witness.OutputVersion ||
+                !ReferenceEquals(receipt.BackendOwner, witness.BackendOwner) ||
+                receipt.AttemptId != witness.AttemptId ||
+                !receipt.IsHealthyForFrozenConsumer ||
+                !TryCaptureOutputAllocationIdentity(witness.BackendOwner, out OutputAllocationIdentity current) ||
+                !witness.AllocationIdentity.Matches(current))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
         public bool CanReuseOutput(bool doSkinning, bool doBlendshapes, bool usePrecombinedBlendshapes)
         {
+            if (RuntimeEngine.Rendering.State.IsVulkan && _outputReceipt is null)
+            {
+                _hasValidOutput = false;
+                _lastReuseRejection = "No output receipt";
+                return false;
+            }
+
+            if (!_hasValidOutput && !TryPromoteSubmittedOutput())
+            {
+                _lastReuseRejection = "Submitted output could not be promoted";
+                return false;
+            }
+
+            if (_outputReceipt is { } receipt &&
+                (!receipt.IsSubmittedAndHealthy ||
+                 !ReferenceEquals(_outputBackendOwner, AbstractRenderer.Current) ||
+                 !TryCaptureOutputAllocationIdentity(receipt.BackendOwner, out OutputAllocationIdentity current) ||
+                 !_outputAllocationIdentity.Matches(current)))
+            {
+                _hasValidOutput = false;
+                _renderer.MarkSkinnedOutputDirty();
+                _lastReuseRejection = "Receipt, owner, or allocation identity changed";
+                return false;
+            }
+
             // Cached output is valid only for stable renderer-owned inputs. External/gpu-driven
             // skin palettes can change without this cache seeing a renderer dirty flag.
             if (doSkinning && !_seedInputsSettled)
+            {
+                _lastReuseRejection = "Skin palette seed is not settled";
                 return false;
+            }
 
             if (!_hasValidOutput
                 || _renderer.SkinnedOutputDirty
@@ -149,12 +304,17 @@ internal sealed partial class SkinningPrepassDispatcher
                 || _lastOutputVersion != _renderer.SkinnedOutputVersion
                 || (doSkinning && (_renderer.HasExternalSkinPaletteSource || _renderer.HasGpuDrivenBoneSource)))
             {
+                _lastReuseRejection = "Renderer input or output version changed";
                 return false;
             }
 
             if (doSkinning && _lastDispatchedPoseHash != _renderer.ComputeCurrentBonePoseHash())
+            {
+                _lastReuseRejection = "Bone pose hash changed";
                 return false;
+            }
 
+            _lastReuseRejection = null;
             return doSkinning || doBlendshapes;
         }
 
@@ -167,6 +327,245 @@ internal sealed partial class SkinningPrepassDispatcher
             _lastOutputVersion = dispatchedVersion;
             _lastDispatchedPoseHash = doSkinning ? _renderer.ComputeCurrentBonePoseHash() : 0;
             _renderer.MarkSkinnedOutputClean(dispatchedVersion);
+        }
+
+        public bool TryCaptureOutputAllocationIdentity(
+            AbstractRenderer renderer,
+            out OutputAllocationIdentity identity)
+        {
+            identity = default;
+            if (renderer is not IRuntimeRendererHost host ||
+                !host.TryGetBackendCapability<IGpuBufferContentReuseCapability>(
+                    out IGpuBufferContentReuseCapability? capability) ||
+                capability is null)
+            {
+                return false;
+            }
+
+            XRMeshRenderer.SkinnedOutputResourceSnapshot outputs =
+                _renderer.CaptureSkinnedOutputResources();
+            if (outputs.Positions is null && outputs.Normals is null &&
+                outputs.Tangents is null && outputs.Interleaved is null)
+            {
+                return false;
+            }
+            if (!TryCapture(capability, outputs.Positions, out GpuBufferAllocationIdentity? positions) ||
+                !TryCapture(capability, outputs.Normals, out GpuBufferAllocationIdentity? normals) ||
+                !TryCapture(capability, outputs.Tangents, out GpuBufferAllocationIdentity? tangents) ||
+                !TryCapture(capability, outputs.Interleaved, out GpuBufferAllocationIdentity? interleaved))
+            {
+                return false;
+            }
+
+            identity = new OutputAllocationIdentity(positions, normals, tangents, interleaved);
+            return true;
+        }
+
+        public void MarkOutputAttemptAuthored(
+            ulong attemptId,
+            AbstractRenderer backendOwner,
+            in OutputAllocationIdentity allocationIdentity,
+            bool doSkinning,
+            bool doBlendshapes,
+            bool usePrecombinedBlendshapes,
+            ulong outputVersion)
+        {
+            ClearOutputReceipt();
+            _hasValidOutput = false;
+            _outputAttemptUnfenced = false;
+            _outputBackendOwner = backendOwner;
+            _outputAllocationIdentity = allocationIdentity;
+            _outputAttemptId = attemptId;
+            _outputAttemptVersion = outputVersion;
+            _lastDidSkinning = doSkinning;
+            _lastDidBlendshapes = doBlendshapes;
+            _lastUsedPrecombinedBlendshapes = usePrecombinedBlendshapes;
+            _lastOutputVersion = outputVersion;
+            _lastDispatchedPoseHash = doSkinning ? _renderer.ComputeCurrentBonePoseHash() : 0;
+            LastComputePrepassFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        }
+
+        public void AttachOutputReceipt(VulkanOutputReceipt receipt)
+        {
+            if (_outputAttemptId != receipt.AttemptId)
+                return;
+
+            _outputAttemptUnfenced = false;
+            _outputReceipt = receipt;
+            receipt.AddReference();
+        }
+
+        public bool CanOverwriteOutput(
+            AbstractRenderer backendOwner,
+            out string? failureReason,
+            out OutputReuseFailureSnapshot failureSnapshot)
+        {
+            failureReason = null;
+            failureSnapshot = default;
+            if (_outputReceipt?.HasConsumerUses == true)
+            {
+                failureReason = "Vulkan deformation output is retained by a frozen consumer.";
+                failureSnapshot = CaptureOutputReuseFailure(backendOwner, failureReason);
+                return false;
+            }
+
+            if (_outputReceipt is null && !_outputAttemptUnfenced)
+                return true;
+
+            if (_outputReceipt?.Fence?.SubmissionStatus == EGpuFenceSubmissionStatus.AwaitingSubmission)
+            {
+                failureReason = "Vulkan deformation output is awaiting producer submission.";
+                failureSnapshot = CaptureOutputReuseFailure(backendOwner, failureReason);
+                return false;
+            }
+
+            if (backendOwner is not IRuntimeRendererHost host ||
+                !host.TryGetBackendCapability<IGpuBufferContentReuseCapability>(
+                    out IGpuBufferContentReuseCapability? capability) ||
+                capability is null)
+            {
+                failureReason = "Vulkan deformation output has no buffer reuse capability.";
+                failureSnapshot = CaptureOutputReuseFailure(backendOwner, failureReason);
+                return false;
+            }
+
+            XRMeshRenderer.SkinnedOutputResourceSnapshot outputs =
+                _renderer.CaptureSkinnedOutputResources();
+            if (!CanReuse(capability, outputs.Positions) ||
+                !CanReuse(capability, outputs.Normals) ||
+                !CanReuse(capability, outputs.Tangents) ||
+                !CanReuse(capability, outputs.Interleaved))
+            {
+                failureReason = "Vulkan deformation output allocation is not ready for content reuse.";
+                failureSnapshot = CaptureOutputReuseFailure(backendOwner, failureReason);
+                return false;
+            }
+
+            ClearOutputReceipt();
+            _outputAttemptUnfenced = false;
+            _hasValidOutput = false;
+            return true;
+        }
+
+        private OutputReuseFailureSnapshot CaptureOutputReuseFailure(AbstractRenderer backendOwner, string reason)
+        {
+            IGpuBufferContentReuseCapability? capability = null;
+            if (backendOwner is IRuntimeRendererHost host)
+                host.TryGetBackendCapability(out capability);
+
+            XRMeshRenderer.SkinnedOutputResourceSnapshot outputs = _renderer.CaptureSkinnedOutputResources();
+            return new OutputReuseFailureSnapshot(
+                _renderer.Mesh?.Name,
+                reason,
+                _lastReuseRejection,
+                _seedInputsSettled,
+                _hasValidOutput,
+                _renderer.SkinnedOutputDirty,
+                _renderer.HasPendingComputeSkinningInputChanges,
+                _lastOutputVersion,
+                _renderer.SkinnedOutputVersion,
+                _outputAttemptId,
+                _outputAttemptVersion,
+                SkinningPrepassDispatcher.ActiveProducerAttemptId,
+                LastComputePrepassFrameId,
+                _outputReceipt?.AttemptId,
+                _outputReceipt?.ProducerAccepted,
+                _outputReceipt?.ReferenceCount,
+                _outputReceipt?.ConsumerUseCount,
+                _lastDispatchedPoseHash,
+                _renderer.ComputeCurrentBonePoseHash(),
+                _renderer.HasExternalSkinPaletteSource,
+                _renderer.HasGpuDrivenBoneSource,
+                _outputReceipt?.Fence?.SubmissionStatus,
+                _outputReceipt?.HasConsumerUses == true,
+                GetReuseStatus(capability, outputs.Positions),
+                GetReuseStatus(capability, outputs.Normals),
+                GetReuseStatus(capability, outputs.Tangents),
+                GetReuseStatus(capability, outputs.Interleaved));
+        }
+
+        private static EGpuBufferContentReuseStatus? GetReuseStatus(
+            IGpuBufferContentReuseCapability? capability,
+            XRDataBuffer? buffer)
+            => capability is not null && buffer is not null
+                ? capability.QueryBufferContentReuse(buffer)
+                : null;
+
+        private static bool TryCapture(
+            IGpuBufferContentReuseCapability capability,
+            XRDataBuffer? buffer,
+            out GpuBufferAllocationIdentity? captured)
+        {
+            captured = null;
+            if (buffer is null)
+                return true;
+            if (!capability.TryCaptureBufferAllocationIdentity(buffer, out GpuBufferAllocationIdentity value))
+                return false;
+            captured = value;
+            return true;
+        }
+
+        private static bool CanReuse(
+            IGpuBufferContentReuseCapability capability,
+            XRDataBuffer? buffer)
+            => buffer is null || capability.QueryBufferContentReuse(buffer) == EGpuBufferContentReuseStatus.Ready;
+
+        public void MarkOutputAttemptUnfenced(
+            ulong attemptId,
+            AbstractRenderer backendOwner,
+            ulong outputVersion,
+            bool doSkinning,
+            bool doBlendshapes,
+            bool usePrecombinedBlendshapes)
+        {
+            ClearOutputReceipt();
+            _hasValidOutput = false;
+            _outputAttemptUnfenced = true;
+            _outputAttemptId = attemptId;
+            _outputAttemptVersion = outputVersion;
+            _outputBackendOwner = backendOwner;
+            _lastDidSkinning = doSkinning;
+            _lastDidBlendshapes = doBlendshapes;
+            _lastUsedPrecombinedBlendshapes = usePrecombinedBlendshapes;
+            _renderer.MarkSkinnedOutputDirty();
+        }
+
+        public void MarkOutputReceiptUnavailable()
+        {
+            _hasValidOutput = false;
+            _outputAttemptUnfenced = true;
+            _renderer.MarkSkinnedOutputDirty();
+        }
+
+        private bool TryPromoteSubmittedOutput()
+        {
+            VulkanOutputReceipt? receipt = _outputReceipt;
+            if (receipt is null)
+                return false;
+
+            if (!receipt.IsSubmittedAndHealthy ||
+                !ReferenceEquals(_outputBackendOwner, receipt.BackendOwner) ||
+                _outputAttemptVersion != _renderer.SkinnedOutputVersion ||
+                !TryCaptureOutputAllocationIdentity(receipt.BackendOwner, out OutputAllocationIdentity current) ||
+                !_outputAllocationIdentity.Matches(current))
+            {
+                if (receipt.Fence?.SubmissionStatus == EGpuFenceSubmissionStatus.Failed ||
+                    receipt.Fence?.Poll() == EGpuFenceStatus.Failed)
+                {
+                    _hasValidOutput = false;
+                    _renderer.MarkSkinnedOutputDirty();
+                }
+                return false;
+            }
+
+            _hasValidOutput = true;
+            _renderer.MarkSkinnedOutputClean(_outputAttemptVersion);
+            return true;
+        }
+
+        private void ClearOutputReceipt()
+        {
+            Interlocked.Exchange(ref _outputReceipt, null)?.ReleaseReference();
         }
 
         public XRDataBuffer? ResetSkinnedBoundsBuffer(XRMesh mesh)
@@ -294,14 +693,14 @@ internal sealed partial class SkinningPrepassDispatcher
             _renderer.EnterResourceTeardownGate();
             try
             {
-                XRMeshRenderer.SkinnedOutputResourceSnapshot outputResources =
-                    _renderer.CaptureSkinnedOutputResources();
-                outputResources.Positions?.Destroy();
-                outputResources.Normals?.Destroy();
-                outputResources.Tangents?.Destroy();
-                outputResources.Interleaved?.Destroy();
+                for (int i = 0; i < _outputSlotCount; i++)
+                    _outputSlots[i]?.Destroy();
+                _outputSlots = new OutputSlot?[OutputSlotCapacity];
+                _outputSlotCount = 0;
+                _activeOutputSlot = 0;
                 if (_ownsSkinnedBoundsBuffer)
                     _skinnedBounds?.Destroy();
+                DestroySkinPaletteSnapshots();
                 _renderer.InstallSkinnedOutputResources(null, null, null, null);
                 _skinnedBounds = null;
                 _ownsSkinnedBoundsBuffer = false;
@@ -316,6 +715,7 @@ internal sealed partial class SkinningPrepassDispatcher
                 _seedInputsSettled = false;
                 _settleLogged = false;
                 _renderer.ResetSkinPaletteSeedState();
+                ClearOutputReceipt();
                 _lastDidSkinning = false;
                 _lastDidBlendshapes = false;
                 _lastUsedPrecombinedBlendshapes = false;
@@ -326,6 +726,8 @@ internal sealed partial class SkinningPrepassDispatcher
             {
                 _renderer.ExitResourceTeardownGate();
             }
+
+            GC.SuppressFinalize(this);
         }
 
         private static readonly PackedUInt4 PositiveInfinityPacked = PackedUInt4.FromVector(new Vector4(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity, 1f));

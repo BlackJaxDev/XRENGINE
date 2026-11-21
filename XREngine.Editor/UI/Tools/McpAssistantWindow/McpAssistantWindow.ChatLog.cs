@@ -21,371 +21,27 @@ namespace XREngine.Editor.UI.Tools;
 
 public sealed partial class McpAssistantWindow
 {
-    // ── Chat Log ─────────────────────────────────────────────────────────
-
-    private void DrawChatLog()
-    {
-        if (_history.Count < _lastChatHistoryCount)
-            _chatRowHeightCache.Clear();
-        _lastChatHistoryCount = _history.Count;
-
-        // Reserve space for the prompt bar at the bottom.
-        float promptBarHeight = GetPromptInputHeight() + 44f;
-        float available = ImGui.GetContentRegionAvail().Y - promptBarHeight;
-        if (available < 80f)
-            available = 80f;
-
-        ImGui.PushStyleColor(ImGuiCol.ChildBg, ColorChatBg);
-        ImGui.BeginChild("##ChatLog", new Vector2(-1f, available), ImGuiChildFlags.Borders);
-
-        if (_history.Count == 0)
-        {
-            // Keep the placeholder pinned and high-contrast so it is always visible.
-            ImGui.SetCursorPos(new Vector2(12f, 12f));
-            ImGui.TextColored(ColorPlaceholder, "Send a prompt to begin a conversation.");
-        }
-        else
-        {
-            ImGui.Spacing();
-            DrawVirtualizedChatRows();
-        }
-
-        // Auto-scroll when streaming or when a new message was just added.
-        if (_scrollToBottom || (AutoScroll && _isBusy))
-        {
-            ImGui.Dummy(new Vector2(1.0f, 0.0f));
-            ImGui.SetScrollHereY(1.0f);
-            _scrollToBottom = false;
-        }
-
-        ImGui.EndChild();
-        ImGui.PopStyleColor();
-    }
-
-    private void DrawVirtualizedChatRows()
-    {
-        const float overscanLines = 8.0f;
-
-        int messageCount = _history.Count;
-        float lineHeight = ImGui.GetTextLineHeightWithSpacing();
-        float overscanHeight = lineHeight * overscanLines;
-        float visibleMin = Math.Max(0.0f, ImGui.GetScrollY() - overscanHeight);
-        float visibleMax = ImGui.GetScrollY() + ImGui.GetWindowHeight() + overscanHeight;
-
-        float topSpacerHeight = 0.0f;
-        int startIndex = 0;
-        for (; startIndex < messageCount; startIndex++)
-        {
-            float rowHeight = GetEstimatedChatRowHeight(_history[startIndex], lineHeight);
-            if (topSpacerHeight + rowHeight >= visibleMin)
-                break;
-
-            topSpacerHeight += rowHeight;
-        }
-
-        float accumulatedHeight = topSpacerHeight;
-        int endIndex = startIndex;
-        for (; endIndex < messageCount; endIndex++)
-        {
-            float rowHeight = GetEstimatedChatRowHeight(_history[endIndex], lineHeight);
-            if (accumulatedHeight > visibleMax && endIndex > startIndex)
-                break;
-
-            accumulatedHeight += rowHeight;
-        }
-
-        float bottomSpacerHeight = 0.0f;
-        for (int i = endIndex; i < messageCount; i++)
-            bottomSpacerHeight += GetEstimatedChatRowHeight(_history[i], lineHeight);
-
-        if (topSpacerHeight > 0.0f)
-            ImGui.Dummy(new Vector2(1.0f, topSpacerHeight));
-
-        for (int i = startIndex; i < endIndex; i++)
-        {
-            ChatMessage msg = _history[i];
-            float rowStart = ImGui.GetCursorPosY();
-            DrawChatMessageRow(msg, i, messageCount);
-            float measuredHeight = Math.Max(ImGui.GetCursorPosY() - rowStart, lineHeight * 3.0f);
-            _chatRowHeightCache[msg] = measuredHeight;
-        }
-
-        if (bottomSpacerHeight > 0.0f)
-            ImGui.Dummy(new Vector2(1.0f, bottomSpacerHeight));
-    }
-
-    private float GetEstimatedChatRowHeight(ChatMessage message, float lineHeight)
-    {
-        if (_chatRowHeightCache.TryGetValue(message, out float cachedHeight))
-            return cachedHeight;
-
-        int toolCallCount;
-        lock (message.ToolCallsSyncRoot)
-            toolCallCount = message.ToolCalls.Count;
-
-        int estimatedLines = Math.Max(1, Math.Min(64, (message.Content.Length / 84) + 1));
-        float estimatedHeight = (estimatedLines + 4.0f) * lineHeight;
-        if (!string.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
-            estimatedHeight += toolCallCount * lineHeight * 2.5f;
-
-        return Math.Max(estimatedHeight, lineHeight * 5.0f);
-    }
-
-    private void DrawChatMessageRow(ChatMessage msg, int index, int messageCount)
-    {
-        bool isUser = string.Equals(msg.Role, "user", StringComparison.OrdinalIgnoreCase);
-
-        if (isUser)
-            DrawUserMessage(msg);
-        else
-            DrawAssistantMessage(msg, index);
-
-        if (index >= messageCount - 1)
-            return;
-
-        ImGui.Spacing();
-        var dl = ImGui.GetWindowDrawList();
-        Vector2 p = ImGui.GetCursorScreenPos();
-        float w = ImGui.GetContentRegionAvail().X;
-        dl.AddLine(p, p + new Vector2(w, 0), ImGui.ColorConvertFloat4ToU32(ColorSeparator));
-        ImGui.Spacing();
-        ImGui.Spacing();
-    }
-
-    // ── Copilot-Style Message Rendering ──────────────────────────────────
-
-    private static void DrawUserMessage(ChatMessage msg)
-    {
-        var drawList = ImGui.GetWindowDrawList();
-        drawList.ChannelsSplit(2);
-        drawList.ChannelsSetCurrent(1);
-
-        Vector2 startPos = ImGui.GetCursorScreenPos();
-        float startY = ImGui.GetCursorPosY();
-
-        ImGui.Indent(8f);
-
-        // Header: "You" + timestamp.
-        ImGui.TextColored(ColorUser, "You");
-        ImGui.SameLine();
-        ImGui.TextColored(ColorTimestamp, msg.Timestamp.ToString("HH:mm:ss"));
-
-        ImGui.Spacing();
-
-        // User message body.
-        ImGui.PushTextWrapPos(0.0f);
-        ImGui.TextUnformatted(msg.Content);
-        ImGui.PopTextWrapPos();
-
-        ImGui.Unindent(8f);
-        ImGui.Spacing();
-
-        // Draw subtle background bubble behind the rendered content.
-        float endY = ImGui.GetCursorPosY();
-        float height = endY - startY;
-        float width = ImGui.GetContentRegionAvail().X + 16f;
-        drawList.ChannelsSetCurrent(0);
-        drawList.AddRectFilled(
-            startPos - new Vector2(4f, 2f),
-            startPos + new Vector2(width, height - 2f),
-            ImGui.ColorConvertFloat4ToU32(ColorUserBubble),
-            6f);
-
-        drawList.ChannelsMerge();
-    }
-
-    private void DrawAssistantMessage(ChatMessage msg, int index)
-    {
-        var drawList = ImGui.GetWindowDrawList();
-        drawList.ChannelsSplit(2);
-        drawList.ChannelsSetCurrent(1);
-
-        Vector2 startPos = ImGui.GetCursorScreenPos();
-        float startY = ImGui.GetCursorPosY();
-
-        ImGui.Indent(8f);
-
-        // Header: "Assistant" + timestamp + streaming indicator.
-        ImGui.TextColored(ColorAssistant, "Assistant");
-        ImGui.SameLine();
-        ImGui.TextColored(ColorTimestamp, msg.Timestamp.ToString("HH:mm:ss"));
-
-        if (msg.IsStreaming)
-        {
-            ImGui.SameLine();
-            int dots = ((int)(ImGui.GetTime() * 3.0)) % 4;
-            ImGui.TextColored(ColorBusy, "Working" + new string('.', dots + 1));
-        }
-
-        ImGui.Spacing();
-
-        // Render segments in chronological order when available.
-        ContentSegment[] segments = SnapshotSegments(msg);
-        if (segments.Length > 0)
-        {
-            for (int s = 0; s < segments.Length; s++)
-            {
-                var seg = segments[s];
-                if (seg.Kind == ContentSegment.SegmentKind.Text)
-                {
-                    string text = NormalizeForUiDisplay(GetDisplayContent(seg.Text));
-                    if (!string.IsNullOrWhiteSpace(text))
-                    {
-                        RenderRichContent(text);
-                        ImGui.Spacing();
-                        ImGui.Spacing();
-                    }
-                }
-                else if (seg.Kind == ContentSegment.SegmentKind.ToolCallGroup)
-                {
-                    ToolCallEntry[] groupCalls;
-                    lock (msg.SegmentsSyncRoot)
-                        groupCalls = [.. seg.ToolCalls];
-
-                    if (groupCalls.Length > 0)
-                    {
-                        int groupUiId = seg.UiId != 0 ? seg.UiId : (index * 100 + s);
-                        DrawToolCallsSection(groupCalls, groupUiId);
-                        ImGui.Spacing();
-                    }
-                }
-            }
-        }
-        else
-        {
-            // Legacy fallback: text then tool calls.
-            string displayContent = NormalizeForUiDisplay(GetDisplayContent(msg.Content));
-            if (!string.IsNullOrWhiteSpace(displayContent))
-                RenderRichContent(displayContent);
-
-            ToolCallEntry[] toolCallsSnapshot = SnapshotToolCalls(msg);
-            if (toolCallsSnapshot.Length > 0)
-                DrawToolCallsSection(toolCallsSnapshot, index);
-        }
-
-        ImGui.Unindent(8f);
-        ImGui.Spacing();
-        ImGui.Spacing();
-
-        // Draw subtle background bubble.
-        float endY = ImGui.GetCursorPosY();
-        float height = endY - startY;
-        float width = ImGui.GetContentRegionAvail().X + 16f;
-        drawList.ChannelsSetCurrent(0);
-        drawList.AddRectFilled(
-            startPos - new Vector2(4f, 2f),
-            startPos + new Vector2(width, height - 2f),
-            ImGui.ColorConvertFloat4ToU32(ColorAssistantBubble),
-            6f);
-
-        drawList.ChannelsMerge();
-    }
-    /// <summary>
-    /// Renders the collapsible tool calls section, styled like Copilot Chat's
-    /// expandable "Used N references" / "Working..." blocks.
-    /// </summary>
-    private void DrawToolCallsSection(IReadOnlyList<ToolCallEntry> toolCalls, int messageIndex)
-    {
-        int total = toolCalls.Count;
-        int completed = 0;
-        int errors = 0;
-
-        for (int i = 0; i < total; i++)
-        {
-            ToolCallEntry call = toolCalls[i];
-            if (call.IsComplete)
-                completed++;
-            if (call.IsError)
-                errors++;
-        }
-
-        bool allDone = completed == total;
-
-        // Section header with count badge + status icon.
-        string statusIcon = allDone ? (errors > 0 ? "!" : "\u2714") : "\u2026"; // ✔ or … or !
-        string headerLabel = allDone
-            ? $"{statusIcon} {total} tool call{(total != 1 ? "s" : "")} completed"
-            : $"{statusIcon} Running {total - completed} of {total} tool call{(total != 1 ? "s" : "")}...";
-
-        if (errors > 0)
-            headerLabel += $" ({errors} failed)";
-
-        ImGui.PushStyleColor(ImGuiCol.Header, ColorToolSection);
-        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, ColorToolSectionHover);
-        ImGui.PushStyleColor(ImGuiCol.HeaderActive, ColorToolSectionHover);
-
-        bool open = ImGui.TreeNodeEx($"{headerLabel}##tools_{messageIndex}",
-            ImGuiTreeNodeFlags.SpanAvailWidth | (allDone ? ImGuiTreeNodeFlags.None : ImGuiTreeNodeFlags.DefaultOpen));
-
-        ImGui.PopStyleColor(3);
-
-        if (!open)
-            return;
-
-        for (int i = 0; i < total; i++)
-        {
-            ToolCallEntry call = toolCalls[i];
-
-            // Status icon with visual indicators.
-            if (!call.IsComplete)
-            {
-                int dots = ((int)(ImGui.GetTime() * 2.5)) % 4;
-                string spinner = dots switch { 0 => "|", 1 => "/", 2 => "-", _ => "\\" };
-                ImGui.TextColored(ColorBusy, spinner);
-            }
-            else if (call.IsError)
-                ImGui.TextColored(ColorError, "x");
-            else
-                ImGui.TextColored(ColorDone, "\u2713"); // ✓
-
-            ImGui.SameLine();
-
-            // Tool name in a distinct color.
-            ImGui.TextColored(new Vector4(0.65f, 0.50f, 0.90f, 1f), call.ToolName);
-
-            // Build a concise one-line description.
-            if (call.IsComplete && !string.IsNullOrEmpty(call.ResultSummary))
-            {
-                ImGui.SameLine();
-                var resultColor = call.IsError ? ColorError : new Vector4(0.55f, 0.78f, 0.55f, 1f);
-                bool resultFirst = false;
-                RenderColoredTextWithGuidLinks($"  {call.ResultSummary}", resultColor, ref resultFirst);
-            }
-            else if (!string.IsNullOrEmpty(call.ArgsSummary))
-            {
-                ImGui.SameLine();
-                bool argsFirst = false;
-                RenderColoredTextWithGuidLinks($"  ({call.ArgsSummary})", ColorTimestamp, ref argsFirst);
-            }
-
-            // File path link + image preview for tool results.
-            if (!string.IsNullOrEmpty(call.ResultFilePath))
-            {
-                DrawFilePathLink(call.ResultFilePath, messageIndex, i);
-
-                // Image preview thumbnail.
-                if (IsImageFilePath(call.ResultFilePath) && File.Exists(call.ResultFilePath))
-                    DrawImagePreview(call.ResultFilePath, messageIndex, i);
-            }
-        }
-
-        ImGui.TreePop();
-        ImGui.Spacing();
-    }
+    private readonly Dictionary<string, string> _artifactFileNames = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Renders a clickable file path link that opens the file location in Explorer,
     /// plus an "Open" button that launches the file with the default application.
     /// </summary>
-    private static void DrawFilePathLink(string filePath, int messageIndex, int callIndex)
+    private void DrawFilePathLink(string filePath, int messageIndex, int callIndex)
     {
-        string fileName = Path.GetFileName(filePath);
-        ImGui.Indent(20f);
+        if (!_artifactFileNames.TryGetValue(filePath, out string? fileName))
+        {
+            fileName = Path.GetFileName(filePath);
+            _artifactFileNames.Add(filePath, fileName);
+        }
+        ImGui.PushID(messageIndex);
+        ImGui.PushID(callIndex);
+        ImGui.PushID("Artifact");
 
         // Clickable file name link.
         ImGui.PushStyleColor(ImGuiCol.Text, ColorFilePath);
-        bool clicked = ImGui.Selectable($"{fileName}##fp_{messageIndex}_{callIndex}", false,
-            ImGuiSelectableFlags.None, new Vector2(ImGui.CalcTextSize(fileName).X + 4f, 0));
+        bool clicked = ImGui.Selectable(fileName, false,
+            ImGuiSelectableFlags.None, new Vector2(Math.Min(ImGui.GetContentRegionAvail().X, ImGui.CalcTextSize(fileName).X + 4f), 0));
         ImGui.PopStyleColor();
 
         if (ImGui.IsItemHovered())
@@ -409,8 +65,7 @@ public sealed partial class McpAssistantWindow
         }
 
         // "Open" button to launch with default application.
-        ImGui.SameLine();
-        if (ImGui.SmallButton($"Open##open_{messageIndex}_{callIndex}") && File.Exists(filePath))
+        if (ImGui.SmallButton("Open file") && File.Exists(filePath))
         {
             try
             {
@@ -422,7 +77,9 @@ public sealed partial class McpAssistantWindow
             catch { /* Non-critical */ }
         }
 
-        ImGui.Unindent(20f);
+        ImGui.PopID();
+        ImGui.PopID();
+        ImGui.PopID();
     }
 
     /// <summary>
@@ -431,10 +88,12 @@ public sealed partial class McpAssistantWindow
     /// </summary>
     private void DrawImagePreview(string imagePath, int messageIndex, int callIndex)
     {
-        ImGui.Indent(20f);
-
-        bool previewOpen = ImGui.TreeNodeEx($"Preview##imgpreview_{messageIndex}_{callIndex}",
-            ImGuiTreeNodeFlags.None);
+        ImGui.PushID(messageIndex);
+        ImGui.PushID(callIndex);
+        bool previewOpen = ImGui.TreeNodeEx("Image preview",
+            ImGuiTreeNodeFlags.DefaultOpen);
+        if (ImGui.IsItemToggledOpen())
+            _followChat = false;
 
         if (previewOpen)
         {
@@ -455,12 +114,14 @@ public sealed partial class McpAssistantWindow
 
             if (texture is not null)
             {
-                const float maxPreviewEdge = 256f;
+                float maxPreviewEdge = Math.Max(1f, Math.Min(480f, ImGui.GetContentRegionAvail().X));
                 nint handle = nint.Zero;
+                var options = new RenderTexturePreviewOptions(ForceBaseMipSampling: true, UploadIfNeeded: true);
 
                 if (Engine.IsRenderThread)
                     EditorTexturePreviewService.TryGetHandle(
                         texture,
+                        in options,
                         out handle,
                         out _,
                         out _);
@@ -473,8 +134,8 @@ public sealed partial class McpAssistantWindow
                     if (scale > 1f) scale = 1f;
                     var displaySize = new Vector2(w * scale, h * scale);
 
+                    // File pixels already use the image's top-to-bottom row order.
                     ImGui.Image(handle, displaySize);
-                    ImGui.TextDisabled($"{(int)w} x {(int)h}");
                 }
                 else
                 {
@@ -489,7 +150,8 @@ public sealed partial class McpAssistantWindow
             ImGui.TreePop();
         }
 
-        ImGui.Unindent(20f);
+        ImGui.PopID();
+        ImGui.PopID();
     }
 
     private static ToolCallEntry[] SnapshotToolCalls(ChatMessage message)

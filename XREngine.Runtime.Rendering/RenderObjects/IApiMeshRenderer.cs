@@ -18,7 +18,8 @@ public interface IApiMeshRenderer
         EMeshBillboardMode billboardMode,
         bool forceNoStereo,
         in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot,
-        Vector4 sourceFlatDirection);
+        Vector4 sourceFlatDirection,
+        uint editorHighlightBits);
 
     /// <summary>Submits one indexed draw from retained GPU-authored arguments.</summary>
     bool RenderIndexedIndirect(

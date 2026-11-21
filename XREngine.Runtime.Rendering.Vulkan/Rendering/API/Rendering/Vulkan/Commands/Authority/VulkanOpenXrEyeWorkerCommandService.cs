@@ -1,3 +1,5 @@
+using XREngine.Execution;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -35,6 +37,7 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
     }
 
     internal VulkanOpenXrEyeWorkerCommandResult Execute(
+        RenderWorkBatchLease claimedLease,
         in OpenXrPreparedEyeRecordWorkerInput leftEye,
         in OpenXrPreparedEyeRecordWorkerInput rightEye,
         in OpenXrPreparedEyeCommandBufferInput leftPrepared,
@@ -55,7 +58,7 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
 
         OpenXrEyeRecordWorkerBatchResult batch =
             (_scheduler ??= new OpenXrEyeRecordWorkerScheduler())
-            .Record(runtime, recording, leftEye, rightEye);
+            .Record(runtime, recording, claimedLease, leftEye, rightEye);
         OpenXrEyeRecordWorkerResult leftResult = batch.Left;
         OpenXrEyeRecordWorkerResult rightResult = batch.Right;
         if (!batch.Left.Success || !batch.Right.Success)

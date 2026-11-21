@@ -48,6 +48,9 @@ internal sealed partial class SkinningPrepassDispatcher
                 return;
 
             XRMeshRenderer.SkinnedOutputResourceSnapshot oldOutputResources = default;
+            OutputSlot?[]? oldOutputSlots = null;
+            int oldOutputSlotCount = 0;
+            int oldActiveOutputSlot = 0;
             XRMesh? oldLastMesh = null;
             int oldLastVertexCount = 0;
             bool oldLastWasInterleaved = false;
@@ -58,77 +61,10 @@ internal sealed partial class SkinningPrepassDispatcher
             bool oldLastUsedPrecombinedBlendshapes = false;
 
             using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
-            XRDataBuffer? newPositions = null;
-            XRDataBuffer? newNormals = null;
-            XRDataBuffer? newTangents = null;
-            XRDataBuffer? newInterleaved = null;
             bool lifetimeLeaseHeld = false;
-
-            if (isInterleaved)
-            {
-                int stride = (int)mesh.InterleavedStride;
-                uint vertexWords = (uint)(vertexCount * stride / sizeof(float));
-                uint boundsWordOffset = AlignUp(vertexWords, 4u);
-                newInterleaved = new XRDataBuffer(
-                    "SkinnedInterleaved",
-                    EBufferTarget.ShaderStorageBuffer,
-                    boundsWordOffset + 8u,
-                    EComponentType.Float,
-                    1,
-                    true,
-                    false)
-                {
-                    BindingIndexOverride = MeshDeformationBindingLayout.ComputeInterleaved,
-                    Usage = EBufferUsage.DynamicDraw,
-                    DisposeOnPush = false
-                };
-            }
-            else
-            {
-                newPositions = new XRDataBuffer(
-                    "SkinnedPositions",
-                    EBufferTarget.ShaderStorageBuffer,
-                    (uint)vertexCount + 2u,
-                    EComponentType.Float,
-                    4,
-                    true,
-                    false)
-                {
-                    BindingIndexOverride = MeshDeformationBindingLayout.ComputePosition,
-                    Usage = EBufferUsage.DynamicDraw,
-                    DisposeOnPush = false
-                };
-
-                if (mesh.HasNormals)
-                    newNormals = new XRDataBuffer(
-                        "SkinnedNormals",
-                        EBufferTarget.ShaderStorageBuffer,
-                        (uint)vertexCount,
-                        EComponentType.Float,
-                        4,
-                        true,
-                        false)
-                    {
-                        BindingIndexOverride = MeshDeformationBindingLayout.ComputeNormal,
-                        Usage = EBufferUsage.DynamicDraw,
-                        DisposeOnPush = false
-                    };
-
-                if (mesh.HasTangents)
-                    newTangents = new XRDataBuffer(
-                        "SkinnedTangents",
-                        EBufferTarget.ShaderStorageBuffer,
-                        (uint)vertexCount,
-                        EComponentType.Float,
-                        4,
-                        true,
-                        false)
-                    {
-                        BindingIndexOverride = MeshDeformationBindingLayout.ComputeTangent,
-                        Usage = EBufferUsage.DynamicDraw,
-                        DisposeOnPush = false
-                    };
-            }
+            XRMeshRenderer.SkinnedOutputResourceState newState = CreateOutputState(mesh, isInterleaved);
+            OutputSlot?[] newOutputSlots = new OutputSlot?[OutputSlotCapacity];
+            newOutputSlots[0] = new OutputSlot(newState) { HasBeenSelected = true };
 
             publication.Complete(
                 beforeCachePublication: () =>
@@ -139,6 +75,9 @@ internal sealed partial class SkinningPrepassDispatcher
                         throw new ObjectDisposedException(nameof(RendererResources));
 
                     oldOutputResources = _renderer.CaptureSkinnedOutputResources();
+                    oldOutputSlots = _outputSlots;
+                    oldOutputSlotCount = _outputSlotCount;
+                    oldActiveOutputSlot = _activeOutputSlot;
                     oldLastMesh = _lastMesh;
                     oldLastVertexCount = _lastVertexCount;
                     oldLastWasInterleaved = _lastWasInterleaved;
@@ -147,11 +86,10 @@ internal sealed partial class SkinningPrepassDispatcher
                     oldSeedInputsSettled = _seedInputsSettled;
                     oldSettleLogged = _settleLogged;
                     oldLastUsedPrecombinedBlendshapes = _lastUsedPrecombinedBlendshapes;
-                    _renderer.InstallSkinnedOutputResources(
-                        newPositions,
-                        newNormals,
-                        newTangents,
-                        newInterleaved);
+                    _renderer.InstallSkinnedOutputResources(newState);
+                    _outputSlots = newOutputSlots;
+                    _outputSlotCount = 1;
+                    _activeOutputSlot = 0;
                     _lastMesh = mesh;
                     _lastVertexCount = vertexCount;
                     _lastWasInterleaved = isInterleaved;
@@ -168,11 +106,17 @@ internal sealed partial class SkinningPrepassDispatcher
                         return;
                     try
                     {
-                        _renderer.InstallSkinnedOutputResources(
-                            oldOutputResources.Positions,
-                            oldOutputResources.Normals,
-                            oldOutputResources.Tangents,
-                            oldOutputResources.Interleaved);
+                        if (oldOutputSlotCount > 0 && oldOutputSlots?[oldActiveOutputSlot] is { } oldSlot)
+                            _renderer.InstallSkinnedOutputResources(oldSlot.State);
+                        else
+                            _renderer.InstallSkinnedOutputResources(
+                                oldOutputResources.Positions,
+                                oldOutputResources.Normals,
+                                oldOutputResources.Tangents,
+                                oldOutputResources.Interleaved);
+                        _outputSlots = oldOutputSlots ?? new OutputSlot?[OutputSlotCapacity];
+                        _outputSlotCount = oldOutputSlotCount;
+                        _activeOutputSlot = oldActiveOutputSlot;
                         _lastMesh = oldLastMesh;
                         _lastVertexCount = oldLastVertexCount;
                         _lastWasInterleaved = oldLastWasInterleaved;
@@ -194,10 +138,18 @@ internal sealed partial class SkinningPrepassDispatcher
                         return;
                     try
                     {
-                        oldOutputResources.Positions?.Destroy();
-                        oldOutputResources.Normals?.Destroy();
-                        oldOutputResources.Tangents?.Destroy();
-                        oldOutputResources.Interleaved?.Destroy();
+                        if (oldOutputSlotCount > 0 && oldOutputSlots is not null)
+                        {
+                            for (int i = 0; i < oldOutputSlotCount; i++)
+                                oldOutputSlots[i]?.Destroy();
+                        }
+                        else
+                        {
+                            oldOutputResources.Positions?.Destroy();
+                            oldOutputResources.Normals?.Destroy();
+                            oldOutputResources.Tangents?.Destroy();
+                            oldOutputResources.Interleaved?.Destroy();
+                        }
                         _renderer.ResetSkinPaletteSeedState();
                         _renderer.MarkSkinnedOutputDirty();
                     }
@@ -207,6 +159,86 @@ internal sealed partial class SkinningPrepassDispatcher
                         _renderer.ExitResourcePublicationLease();
                     }
                 });
+        }
+
+        private static XRMeshRenderer.SkinnedOutputResourceState CreateOutputState(
+            XRMesh mesh,
+            bool isInterleaved)
+        {
+            int vertexCount = mesh.VertexCount;
+            XRDataBuffer? positions = null;
+            XRDataBuffer? normals = null;
+            XRDataBuffer? tangents = null;
+            XRDataBuffer? interleaved = null;
+
+            if (isInterleaved)
+            {
+                int stride = (int)mesh.InterleavedStride;
+                uint vertexWords = (uint)(vertexCount * stride / sizeof(float));
+                uint boundsWordOffset = AlignUp(vertexWords, 4u);
+                interleaved = new XRDataBuffer(
+                    "SkinnedInterleaved",
+                    EBufferTarget.ShaderStorageBuffer,
+                    boundsWordOffset + 8u,
+                    EComponentType.Float,
+                    1,
+                    true,
+                    false)
+                {
+                    BindingIndexOverride = MeshDeformationBindingLayout.ComputeInterleaved,
+                    Usage = EBufferUsage.StaticCopy,
+                    DisposeOnPush = false
+                };
+            }
+            else
+            {
+                positions = new XRDataBuffer(
+                    "SkinnedPositions",
+                    EBufferTarget.ShaderStorageBuffer,
+                    (uint)vertexCount + 2u,
+                    EComponentType.Float,
+                    4,
+                    true,
+                    false)
+                {
+                    BindingIndexOverride = MeshDeformationBindingLayout.ComputePosition,
+                    Usage = EBufferUsage.StaticCopy,
+                    DisposeOnPush = false
+                };
+
+                if (mesh.HasNormals)
+                    normals = new XRDataBuffer(
+                        "SkinnedNormals",
+                        EBufferTarget.ShaderStorageBuffer,
+                        (uint)vertexCount,
+                        EComponentType.Float,
+                        4,
+                        true,
+                        false)
+                    {
+                        BindingIndexOverride = MeshDeformationBindingLayout.ComputeNormal,
+                        Usage = EBufferUsage.StaticCopy,
+                        DisposeOnPush = false
+                    };
+
+                if (mesh.HasTangents)
+                    tangents = new XRDataBuffer(
+                        "SkinnedTangents",
+                        EBufferTarget.ShaderStorageBuffer,
+                        (uint)vertexCount,
+                        EComponentType.Float,
+                        4,
+                        true,
+                        false)
+                    {
+                        BindingIndexOverride = MeshDeformationBindingLayout.ComputeTangent,
+                        Usage = EBufferUsage.StaticCopy,
+                        DisposeOnPush = false
+                    };
+            }
+
+            return XRMeshRenderer.CreateSkinnedOutputResourceState(
+                positions, normals, tangents, interleaved);
         }
     }
 }

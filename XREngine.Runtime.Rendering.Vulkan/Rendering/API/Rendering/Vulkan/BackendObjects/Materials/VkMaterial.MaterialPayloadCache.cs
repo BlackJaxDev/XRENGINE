@@ -3,14 +3,12 @@ namespace XREngine.Rendering.Vulkan;
 internal unsafe partial class VkMaterial
 {
     private const int MaximumCachedAutoUniformMaterialPlans = 4096;
-    private MaterialUniformBindingCacheKey _materialUniformBindingPayloadKey;
-    private MaterialUniformBindingPayload? _materialUniformBindingPayload;
-    private bool _hasMaterialUniformBindingPayload;
-    private readonly Dictionary<
-        AutoUniformMaterialWritePlanCacheKey,
-        AutoUniformMaterialWritePlan> _autoUniformMaterialWritePlans = [];
-    private ulong _autoUniformMaterialPlanLayoutVersion;
-    private ulong _autoUniformMaterialPlanValueVersion;
+    // Draw recording reads the payload for every draw, so reads take no lock. A
+    // new payload publishes a new immutable entry.
+    private MaterialUniformBindingPayloadEntry? _materialUniformBindingPayloadEntry;
+    // Draw recording reads this table for every auto-uniform block, so reads take
+    // no lock. A new plan publishes a new immutable table under the state lock.
+    private AutoUniformMaterialWritePlanTable? _autoUniformMaterialWritePlanTable;
 
     /// <summary>
     /// Retrieves the immutable numeric payload owned by this exact material
@@ -21,75 +19,91 @@ internal unsafe partial class VkMaterial
         in MaterialUniformBindingCacheKey key,
         out MaterialUniformBindingPayload? payload)
     {
-        lock (_stateSync)
+        MaterialUniformBindingPayloadEntry? entry = Volatile.Read(ref _materialUniformBindingPayloadEntry);
+        if (entry is not null && entry.Key.Equals(key))
         {
-            if (_hasMaterialUniformBindingPayload &&
-                _materialUniformBindingPayloadKey.Equals(key))
-            {
-                payload = _materialUniformBindingPayload;
-                return payload is not null;
-            }
-
-            payload = null;
-            return false;
+            payload = entry.Payload;
+            return true;
         }
+
+        payload = null;
+        return false;
     }
 
     internal void CacheMaterialUniformBindingPayload(
         in MaterialUniformBindingCacheKey key,
         MaterialUniformBindingPayload payload)
-    {
-        lock (_stateSync)
-        {
-            _materialUniformBindingPayloadKey = key;
-            _materialUniformBindingPayload = payload;
-            _hasMaterialUniformBindingPayload = true;
-        }
-    }
+        => Volatile.Write(
+            ref _materialUniformBindingPayloadEntry,
+            new MaterialUniformBindingPayloadEntry(key, payload));
 
     internal void GetMaterialUniformBindingPayloadCacheState(
         in MaterialUniformBindingCacheKey key,
         out bool hasPayload,
         out bool keyMatches)
     {
-        lock (_stateSync)
-        {
-            hasPayload = _hasMaterialUniformBindingPayload &&
-                _materialUniformBindingPayload is not null;
-            keyMatches = hasPayload &&
-                _materialUniformBindingPayloadKey.Equals(key);
-        }
+        MaterialUniformBindingPayloadEntry? entry = Volatile.Read(ref _materialUniformBindingPayloadEntry);
+        hasPayload = entry is not null;
+        keyMatches = hasPayload && entry!.Key.Equals(key);
     }
 
     internal bool TryGetAutoUniformMaterialWritePlan(
         in AutoUniformMaterialWritePlanCacheKey key,
         out AutoUniformMaterialWritePlan? plan)
     {
-        lock (_stateSync)
-            return _autoUniformMaterialWritePlans.TryGetValue(key, out plan);
+        AutoUniformMaterialWritePlanTable? table = Volatile.Read(ref _autoUniformMaterialWritePlanTable);
+        if (table is null)
+        {
+            plan = null;
+            return false;
+        }
+
+        return table.Plans.TryGetValue(key, out plan);
     }
 
+    /// <summary>
+    /// Publishes a table that adds <paramref name="plan"/>. A material layout or value
+    /// version change, or a full table, starts a new table. Plans are built only on
+    /// a cache miss, so the copy happens rarely after warm-up.
+    /// </summary>
     internal void CacheAutoUniformMaterialWritePlan(
         in AutoUniformMaterialWritePlanCacheKey key,
         AutoUniformMaterialWritePlan plan)
     {
         lock (_stateSync)
         {
-            if (_autoUniformMaterialPlanLayoutVersion !=
-                    key.MaterialLayoutVersion ||
-                _autoUniformMaterialPlanValueVersion !=
-                    key.MaterialValueVersion ||
-                _autoUniformMaterialWritePlans.Count >=
-                    MaximumCachedAutoUniformMaterialPlans)
-            {
-                _autoUniformMaterialWritePlans.Clear();
-                _autoUniformMaterialPlanLayoutVersion =
-                    key.MaterialLayoutVersion;
-                _autoUniformMaterialPlanValueVersion =
-                    key.MaterialValueVersion;
-            }
-
-            _autoUniformMaterialWritePlans[key] = plan;
+            AutoUniformMaterialWritePlanTable? current = _autoUniformMaterialWritePlanTable;
+            bool reuse = current is not null &&
+                current.LayoutVersion == key.MaterialLayoutVersion &&
+                current.ValueVersion == key.MaterialValueVersion &&
+                current.Plans.Count < MaximumCachedAutoUniformMaterialPlans;
+            Dictionary<AutoUniformMaterialWritePlanCacheKey, AutoUniformMaterialWritePlan> plans = reuse
+                ? new(current!.Plans)
+                : new(1);
+            plans[key] = plan;
+            Volatile.Write(
+                ref _autoUniformMaterialWritePlanTable,
+                new AutoUniformMaterialWritePlanTable(key.MaterialLayoutVersion, key.MaterialValueVersion, plans));
         }
+    }
+
+    /// <summary>Immutable write-plan table for one material layout and value version.</summary>
+    private sealed class AutoUniformMaterialWritePlanTable(
+        ulong layoutVersion,
+        ulong valueVersion,
+        Dictionary<AutoUniformMaterialWritePlanCacheKey, AutoUniformMaterialWritePlan> plans)
+    {
+        internal ulong LayoutVersion { get; } = layoutVersion;
+        internal ulong ValueVersion { get; } = valueVersion;
+        internal Dictionary<AutoUniformMaterialWritePlanCacheKey, AutoUniformMaterialWritePlan> Plans { get; } = plans;
+    }
+
+    /// <summary>Immutable numeric payload for one material uniform binding key.</summary>
+    private sealed class MaterialUniformBindingPayloadEntry(
+        MaterialUniformBindingCacheKey key,
+        MaterialUniformBindingPayload payload)
+    {
+        internal MaterialUniformBindingCacheKey Key { get; } = key;
+        internal MaterialUniformBindingPayload Payload { get; } = payload;
     }
 }

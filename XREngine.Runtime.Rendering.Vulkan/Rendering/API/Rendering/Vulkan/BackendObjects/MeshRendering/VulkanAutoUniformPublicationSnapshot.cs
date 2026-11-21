@@ -40,6 +40,8 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
     [ThreadStatic]
     private static XRCamera? s_cachedRightEyeCamera;
     [ThreadStatic]
+    private static ulong s_cachedViewPacketId;
+    [ThreadStatic]
     private static bool s_cachedIsStereoPass;
     [ThreadStatic]
     private static bool s_cachedUseUnjitteredProjection;
@@ -73,6 +75,7 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
             ReferenceEquals(s_cachedPipeline, pipeline) &&
             ReferenceEquals(s_cachedCamera, camera) &&
             ReferenceEquals(s_cachedRightEyeCamera, rightEyeCamera) &&
+            s_cachedViewPacketId == (draw.ViewSnapshot?.PacketId ?? 0UL) &&
             s_cachedIsStereoPass == draw.IsStereoPass &&
             s_cachedUseUnjitteredProjection ==
                 draw.UseUnjitteredProjection;
@@ -102,6 +105,7 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
             s_cachedPipeline = pipeline;
             s_cachedCamera = camera;
             s_cachedRightEyeCamera = rightEyeCamera;
+            s_cachedViewPacketId = draw.ViewSnapshot?.PacketId ?? 0UL;
             s_cachedIsStereoPass = draw.IsStereoPass;
             s_cachedUseUnjitteredProjection =
                 draw.UseUnjitteredProjection;
@@ -273,7 +277,16 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
         hash.Add(draw.SourceFlatDirection.Y);
         hash.Add(draw.SourceFlatDirection.Z);
         hash.Add(draw.SourceFlatDirection.W);
+        hash.Add(draw.EditorHighlightBits);
         hash.Add(draw.TransformId);
+        // Picking coverage uses the frozen RGB blend state, including draws that
+        // write only stencil or depth. Keep its object uniform cache current.
+        hash.Add((uint)draw.EditorHighlightOutput.Role);
+        hash.Add((uint)draw.ColorWriteMask);
+        hash.Add(draw.BlendEnabled);
+        hash.Add((uint)draw.ColorBlendOp);
+        hash.Add((uint)draw.SrcColorBlendFactor);
+        hash.Add((uint)draw.DstColorBlendFactor);
         hash.Add((uint)draw.BillboardMode);
         hash.Add(skinPaletteBase);
         hash.Add(skinPaletteCount);

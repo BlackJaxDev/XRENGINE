@@ -88,7 +88,7 @@ internal unsafe partial class VkMeshRenderer
 		out string failureReason,
 		out bool pipelineUnavailable)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			return RecordDrawNoLock(
 				commandBuffer,
@@ -238,7 +238,7 @@ internal unsafe partial class VkMeshRenderer
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushSkinning"))
 				MeshRenderer.PushBoneMatricesToGPU();
 		}
-		if (Mesh?.HasBlendshapes == true)
+		if (Mesh?.HasBlendshapeDeformation == true)
 		{
 			using (StartMeshDrawDetailScope("Vulkan.MeshDraw.PushBlendshapes"))
 				MeshRenderer.PushBlendshapeWeightsToGPU();
@@ -323,11 +323,12 @@ internal unsafe partial class VkMeshRenderer
 			PushPerDrawConstants(state.CommandBuffer, state.Material, state.Draw);
 
 		bool descriptorsBound;
+		string descriptorFailure;
 		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
-			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex);
+			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex, out descriptorFailure);
 		if (!descriptorsBound)
 		{
-			state.FailureReason = "indexed descriptors unavailable";
+			state.FailureReason = $"indexed descriptors unavailable: {descriptorFailure}";
 			if (state.VerboseTrace)
 				Debug.MeshesWarning("[DrawTrace] {0}: BindDescriptors FAILED", Mesh?.Name ?? "?");
 			return false;
@@ -446,11 +447,12 @@ internal unsafe partial class VkMeshRenderer
 			PushPerDrawConstants(state.CommandBuffer, state.Material, state.Draw);
 
 		bool descriptorsBound;
+		string descriptorFailure;
 		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
-			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex);
+			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex, out descriptorFailure);
 		if (!descriptorsBound)
 		{
-			state.FailureReason = "non-indexed descriptors unavailable";
+			state.FailureReason = $"non-indexed descriptors unavailable: {descriptorFailure}";
 			if (state.VerboseTrace)
 				Debug.MeshesWarning("[DrawTrace] {0}: non-indexed descriptors unavailable; pass={1} target={2}", Mesh?.Name ?? "?", state.PassIndex, state.TargetName);
 			return false;
@@ -532,7 +534,7 @@ internal unsafe partial class VkMeshRenderer
 		out VulkanPreparedMeshDrawState recordingState,
 		out string reason)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			return TryPrepareMeshDrawRecordingStateNoLock(
 				preparedFrame,
@@ -656,7 +658,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (Mesh?.HasSkinning == true)
 			MeshRenderer.PushBoneMatricesToGPU();
-		if (Mesh?.HasBlendshapes == true)
+		if (Mesh?.HasBlendshapeDeformation == true)
 			MeshRenderer.PushBlendshapeWeightsToGPU();
 
 		VulkanPreparedMeshPrimitive primitive0 = default;
@@ -2563,13 +2565,14 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		int drawUniformSlot,
 		int frameIndex,
-		out string reason)
+		out string reason,
+		VulkanFrameTelemetry? telemetry = null)
 	{
 		// The primary reuse refresh and secondary recording paths can prepare the
 		// same renderer concurrently. They mutate the active program, descriptor
 		// allocation, and dynamic UBO state, so they must share RecordDraw's lock.
-		lock (_recordDrawSync)
-			return TryPrewarmFrameDataForRecordingNoLock(draw, drawUniformSlot, frameIndex, out reason);
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
+			return TryPrewarmFrameDataForRecordingNoLock(draw, drawUniformSlot, frameIndex, out reason, telemetry);
 	}
 
 	/// <summary>
@@ -2582,7 +2585,7 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		out string reason)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return TryPrepareFrameDataStructuresForRecordingNoLock(draw, out reason);
 	}
 
@@ -2634,7 +2637,7 @@ internal unsafe partial class VkMeshRenderer
 		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
 		bool frameDataAlreadyPrewarmed = false)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			if ((!frameDataAlreadyPrewarmed &&
 				 !TryPrewarmFrameDataForRecordingNoLock(
@@ -2667,16 +2670,12 @@ internal unsafe partial class VkMeshRenderer
 		}
 	}
 
-	private bool TryPrewarmFrameDataForRecordingNoLock(
-		in PendingMeshDraw draw,
-		int drawUniformSlot,
-		int frameIndex,
-		out string reason)
+	/// <summary>Activates the draw's program for a frame-data prewarm.</summary>
+	private bool TryActivatePrewarmProgramNoLock(in PendingMeshDraw draw, out XRMaterial material, out string reason)
 	{
-		if (!IsFrameDataOwnerOpen(draw, out reason))
-			return false;
+		reason = "Ready";
 		ActivateDrawMaterializationSnapshot(draw);
-		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+		material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
 
 		if (!IsActive)
 			Generate();
@@ -2717,43 +2716,77 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			reason = "program pending";
 			return false;
 		}
+		return true;
+	}
 
+	/// <summary>
+	/// Times one prewarm step when a frame telemetry is supplied and fine-grained
+	/// profiling is on. A default scope records nothing.
+	/// </summary>
+	private static VulkanCpuStageScope PrewarmStage(VulkanFrameTelemetry? telemetry, EVulkanCpuStage stage)
+		=> telemetry is null ? default : new VulkanCpuStageScope(telemetry, stage);
+
+	private bool TryPrewarmFrameDataForRecordingNoLock(
+		in PendingMeshDraw draw,
+		int drawUniformSlot,
+		int frameIndex,
+		out string reason,
+		VulkanFrameTelemetry? telemetry = null)
+	{
+		if (!IsFrameDataOwnerOpen(draw, out reason))
+			return false;
+		XRMaterial material;
+		bool programReady;
+		using (PrewarmStage(telemetry, EVulkanCpuStage.PrewarmProgramActivation))
+			programReady = TryActivatePrewarmProgramNoLock(draw, out material, out reason);
+		if (!programReady)
+			return false;
+
+		VulkanCpuStageScope bufferStage = PrewarmStage(telemetry, EVulkanCpuStage.PrewarmBufferPreparation);
 		EnsureRuntimeDeformationBuffersCurrent();
 		bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
 		EnsureBuffers(usesShaderGeneratedVertices);
-
-		if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
+		bool buffersReady = AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices);
+		bufferStage.Dispose();
+		if (!buffersReady)
 		{
 			reason = $"buffers not ready: {bufferDetail}";
 			return false;
 		}
 
-		// A captured snapshot already holds the scoped and lighting bindings of its frame.
-		if (draw.ProgramBindingSnapshot is { } programBindingSnapshot)
+		using (PrewarmStage(telemetry, EVulkanCpuStage.PrewarmBindingApplication))
 		{
-			_program?.ClearBindings();
-			_program?.ApplyBindingSnapshot(programBindingSnapshot);
-		}
-		else
-		{
-			ApplyScopedProgramBindingsForPreparation(material);
-		}
-		if (_program?.Data is { } programData)
-			NotifyDrawUniforms(material, programData, draw);
+			// A captured snapshot already holds the scoped and lighting bindings of its frame.
+			if (draw.ProgramBindingSnapshot is { } programBindingSnapshot)
+			{
+				_program?.ClearBindings();
+				_program?.ApplyBindingSnapshot(programBindingSnapshot);
+			}
+			else
+			{
+				ApplyScopedProgramBindingsForPreparation(material);
+			}
+			if (_program?.Data is { } programData)
+				NotifyDrawUniforms(material, programData, draw);
 
-		BuildVertexInputState();
+			BuildVertexInputState();
+		}
 
-		if (!EnsureDescriptorSets(material, drawUniformSlot, frameIndex, draw.ProgramBindingSnapshot))
+		bool descriptorsReady;
+		using (PrewarmStage(telemetry, EVulkanCpuStage.PrewarmDescriptorSets))
+			descriptorsReady = EnsureDescriptorSets(material, drawUniformSlot, frameIndex, draw.ProgramBindingSnapshot);
+		if (!descriptorsReady)
 		{
 			reason = $"descriptors pending ({_lastDescriptorPreparationFailure}); program='{_program?.Data?.Name ?? "<unnamed program>"}'";
 			return false;
 		}
 
+		using VulkanCpuStageScope frameSourceStage = PrewarmStage(telemetry, EVulkanCpuStage.PrewarmFrameSourceDescriptors);
 		if (!TryRefreshFrameSourceDescriptorSetsForDraw(
 				frameIndex,
 				drawUniformSlot,
@@ -2796,7 +2829,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			reason = "program pending after frame-wide prewarm";
 			return false;
@@ -2811,6 +2844,8 @@ internal unsafe partial class VkMeshRenderer
 		else
 		{
 			ApplyScopedProgramBindingsForPreparation(material);
+			if (_program?.Data is { } programData)
+				NotifyDrawUniforms(material, programData, draw);
 		}
 
 		if (!EnsureDescriptorSets(
@@ -2902,7 +2937,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			reason = "program pending";
 			return false;
@@ -2934,9 +2969,41 @@ internal unsafe partial class VkMeshRenderer
 		bool foregroundRequired,
 		out bool retryable,
 		out string reason)
+		=> TryPrewarmGraphicsPipelinesForRecording(
+			draw,
+			renderPass,
+			useDynamicRendering,
+			dynamicRenderingFormats,
+			passIndex,
+			passMetadata,
+			depthStencilReadOnly,
+			pipelineName,
+			foregroundRequired,
+			out retryable,
+			out reason,
+			out _);
+
+	/// <summary>
+	/// Runs the pipeline step of one draw for every topology of the renderer. <paramref name="activeProgram"/> is the active
+	/// program of the renderer at the end of the step, read under the recording lock, or null when the step did not run.
+	/// </summary>
+	internal bool TryPrewarmGraphicsPipelinesForRecording(
+		in PendingMeshDraw draw,
+		RenderPass renderPass,
+		bool useDynamicRendering,
+		DynamicRenderingFormatSignature dynamicRenderingFormats,
+		int passIndex,
+		IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+		bool depthStencilReadOnly,
+		string pipelineName,
+		bool foregroundRequired,
+		out bool retryable,
+		out string reason,
+		out VkRenderProgram? activeProgram)
 	{
 		retryable = false;
 		reason = string.Empty;
+		activeProgram = null;
 		if (!_recordDrawSync.TryEnter())
 		{
 			retryable = true;
@@ -3081,6 +3148,7 @@ internal unsafe partial class VkMeshRenderer
 				reason = "Ready";
 			else if (reason.Length == 0)
 				reason = "graphics pipeline preparation failed without a diagnostic";
+			activeProgram = _program;
 			return ready;
 		}
 		finally
@@ -3119,7 +3187,7 @@ internal unsafe partial class VkMeshRenderer
 		// renderer-owned descriptor and UBO state consumed by RecordDraw.
 		// Serializing it with recording keeps a draw from observing another
 		// output's active program or dynamic-uniform slot during camera motion.
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return TryRefreshReusableCommandBufferFrameDataNoLock(
 				imageIndex,
 				draw,
@@ -3137,7 +3205,7 @@ internal unsafe partial class VkMeshRenderer
 		EVulkanBindingFrequencyMask frequencyMask,
 		out string reason)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			reason = "frame-frequency reusable";
 			if (!IsFrameDataOwnerOpen(draw, out reason))
@@ -3186,7 +3254,7 @@ internal unsafe partial class VkMeshRenderer
 	internal bool SupportsOwnerOnlyReusableFrameDataRefresh(
 		in PendingMeshDraw draw)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return SupportsOwnerOnlyReusableFrameDataRefreshNoLock(
 				draw,
 				allowPlanOwnedFrameSourceSamplers: false);
@@ -3195,7 +3263,7 @@ internal unsafe partial class VkMeshRenderer
 	/// <summary>Identifies draws whose physical frame source must be published for every active descriptor slot.</summary>
 	internal bool RequiresPerDrawFrameSourceDescriptorRefresh(in PendingMeshDraw draw)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return RequiresPerDrawFrameSourceDescriptorRefreshNoLock(draw);
 	}
 
@@ -3227,7 +3295,7 @@ internal unsafe partial class VkMeshRenderer
 		in PendingMeshDraw draw,
 		bool allowPlanOwnedFrameSourceSamplers)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return SupportsOwnerOnlyReusableFrameDataRefreshNoLock(
 				draw,
 				allowPlanOwnedFrameSourceSamplers);
@@ -3236,7 +3304,7 @@ internal unsafe partial class VkMeshRenderer
 	internal string? DescribeOwnerOnlyReusableFrameDataRefreshBlocker(
 		in PendingMeshDraw draw)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 			return DescribeOwnerOnlyReusableFrameDataRefreshBlockerNoLock(draw);
 	}
 
@@ -3309,7 +3377,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 		if (Mesh?.HasSkinning == true)
 			return "skinning frame-source descriptors are active";
-		if (Mesh?.HasBlendshapes == true)
+		if (Mesh?.HasBlendshapeDeformation == true)
 			return "blendshape frame-source descriptors are active";
 
 		if (publicationProgram.BindingSchema is not { } bindingSchema)
@@ -3548,7 +3616,7 @@ internal unsafe partial class VkMeshRenderer
 
 	internal string DescribeReusableCommandBufferFrameDataBlocker(in PendingMeshDraw draw, int drawUniformSlot)
 	{
-		lock (_recordDrawSync)
+		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			ActivateDrawMaterializationSnapshot(draw);
 			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);

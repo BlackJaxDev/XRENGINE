@@ -1927,7 +1927,15 @@ namespace XREngine.Rendering.Commands
             if (!VulkanFeatureProfile.EnableBindlessMaterialTable && !materialTableRequired)
                 return true;
 
+            // The per-material bucket scan binds each material through its own
+            // program and never reads the table, so building rows for it only
+            // costs render-thread time.
+            if (ZeroReadbackMaterialDrawPath == EZeroReadbackMaterialDrawPath.FullBucketScanDiagnostic &&
+                MeshPrimitivePathPreference == EMeshPrimitivePathPreference.TraditionalOnly)
+                return true;
+
             _materialTable ??= new GPUMaterialTable(128);
+            BeginMaterialTextureReadinessUpdate();
             var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
             XRMaterial? overrideMaterial = renderState?.OverrideMaterial;
             bool useDepthNormalMaterialVariants = renderState?.UseDepthNormalMaterialVariants ?? false;
@@ -2089,8 +2097,15 @@ namespace XREngine.Rendering.Commands
                 }
 
                 XRMaterial? effectiveMaterial = ResolveEffectiveGpuMaterial(material, overrideMaterial, useDepthNormalMaterialVariants);
+                // Only the plain residency check is cached. Descriptor-index and
+                // bindless modes publish texture references that the backend owns.
+                bool cacheTextureReadiness = textureReferenceMode == EMaterialTableTextureReferenceMode.None;
+                bool texturesConfirmedResident = cacheTextureReadiness &&
+                    effectiveMaterial is not null &&
+                    IsMaterialTextureReadinessConfirmed(materialId, effectiveMaterial);
                 GPUMaterialEntry entry = BuildMaterialEntry(
                     effectiveMaterial,
+                    texturesConfirmedResident,
                     textureReferenceMode,
                     materialCapability,
                     out GPUMaterialTextureReferences textureReferences,
@@ -2098,6 +2113,11 @@ namespace XREngine.Rendering.Commands
                     out int rowNonReadyTextureReferences,
                     out ulong rowDescriptorPublicationGeneration);
                 _materialTable!.AddOrUpdate(materialId, entry, textureReferences);
+                if (cacheTextureReadiness && !texturesConfirmedResident)
+                    RecordMaterialTextureReadiness(
+                        materialId,
+                        effectiveMaterial,
+                        residencyStatus == EMaterialTextureReferenceStatus.Ready);
 
                 if (residencyStatus == EMaterialTextureReferenceStatus.Ready)
                     readyRows++;
@@ -2110,8 +2130,14 @@ namespace XREngine.Rendering.Commands
             return readyRows == materialMap.Count && invalidMaterialIds == 0;
         }
 
+        /// <summary>
+        /// Builds one material-table row. When <paramref name="texturesConfirmedResident"/>
+        /// is true, an earlier update confirmed that every texture of the material is
+        /// resident, so the row sets the texture flags without a new residency check.
+        /// </summary>
         private static GPUMaterialEntry BuildMaterialEntry(
             XRMaterial? material,
+            bool texturesConfirmedResident,
             EMaterialTableTextureReferenceMode textureReferenceMode,
             IMaterialTableBackendCapability? materialCapability,
             out GPUMaterialTextureReferences textureReferences,
@@ -2138,7 +2164,9 @@ namespace XREngine.Rendering.Commands
             XRTexture? rm = source.RM;
             flags = entry.Flags;
 
-            if (albedo is not null)
+            if (albedo is not null && texturesConfirmedResident)
+                flags |= 1u << 0;
+            else if (albedo is not null)
             {
                 flags |= 1u << 0;
                 MaterialTextureReferenceResolution resolution = ResolveMaterialTexture(
@@ -2155,7 +2183,9 @@ namespace XREngine.Rendering.Commands
                 textureReferences = textureReferences with { Albedo = resolution.Reference };
             }
 
-            if (normal is not null)
+            if (normal is not null && texturesConfirmedResident)
+                flags |= 1u << 1;
+            else if (normal is not null)
             {
                 flags |= 1u << 1;
                 MaterialTextureReferenceResolution resolution = ResolveMaterialTexture(
@@ -2172,7 +2202,9 @@ namespace XREngine.Rendering.Commands
                 textureReferences = textureReferences with { Normal = resolution.Reference };
             }
 
-            if (rm is not null)
+            if (rm is not null && texturesConfirmedResident)
+                flags |= 1u << 2;
+            else if (rm is not null)
             {
                 flags |= 1u << 2;
                 MaterialTextureReferenceResolution resolution = ResolveMaterialTexture(

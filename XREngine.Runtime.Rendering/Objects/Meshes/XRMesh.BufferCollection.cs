@@ -864,6 +864,21 @@ namespace XREngine.Rendering
             }
             public IEnumerator<KeyValuePair<string, XRDataBuffer>> GetEnumerator()
                 => ((IEnumerable<KeyValuePair<string, XRDataBuffer>>)SnapshotBuffers()).GetEnumerator();
+
+            /// <summary>
+            /// Copies the current buffer entries into reusable storage under the mutation lock.
+            /// The caller can create backend wrappers after the lock is released.
+            /// </summary>
+            public void CopyEntriesTo(List<KeyValuePair<string, XRDataBuffer>> destination)
+            {
+                ArgumentNullException.ThrowIfNull(destination);
+                lock (_mutationLock)
+                {
+                    destination.Clear();
+                    foreach (KeyValuePair<string, XRDataBuffer> pair in _buffers)
+                        destination.Add(pair);
+                }
+            }
             public void Remove(object key)
             {
                 if (key is string bindingName)

@@ -1,4 +1,15 @@
 <Solution>
+  <Project Path="XREngine.UnityScriptHost.Contracts/XREngine.UnityScriptHost.Contracts.csproj" />
+  <Project Path="XREngine.UnityScriptHost/XREngine.UnityScriptHost.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/Runtime/XREngine.UnityScriptHost.Compatibility.Runtime.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEngine/XREngine.UnityScriptHost.Compatibility.UnityEngine.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEditor/XREngine.UnityScriptHost.Compatibility.UnityEditor.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEngine.CoreModule/XREngine.UnityScriptHost.Compatibility.UnityEngine.CoreModule.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEngine.AnimationModule/XREngine.UnityScriptHost.Compatibility.UnityEngine.AnimationModule.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEngine.InputLegacyModule/XREngine.UnityScriptHost.Compatibility.UnityEngine.InputLegacyModule.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/UnityEditor.CoreModule/XREngine.UnityScriptHost.Compatibility.UnityEditor.CoreModule.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/Annotations/XREngine.UnityScriptHost.Compatibility.Annotations.csproj" />
+  <Project Path="XREngine.UnityScriptHost.Compatibility/MethodPatching/XREngine.UnityScriptHost.Compatibility.MethodPatching.csproj" />
   <Project Path="XREngine.Benchmarks/XREngine.Benchmarks.csproj" />
   <Project Path="XREngine.ControlPlane/XREngine.ControlPlane.csproj" />
   <Project Path="XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj" />
@@ -20,6 +31,7 @@
   <Project Path="XREngine.Runtime.AudioIntegration/XREngine.Runtime.AudioIntegration.csproj" />
   <Project Path="XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj" />
   <Project Path="XREngine.Runtime.Core/XREngine.Runtime.Core.csproj" />
+  <Project Path="XREngine.Runtime.CutsceneIntegration/XREngine.Runtime.CutsceneIntegration.csproj" />
   <Project Path="XREngine.Runtime.Diagnostics.Native/XREngine.Runtime.Diagnostics.Native.csproj" />
   <Project Path="XREngine.Runtime.Execution.Threads/XREngine.Runtime.Execution.Threads.csproj" />
   <Project Path="XREngine.Runtime.Host/XREngine.Runtime.Host.csproj" />
@@ -50,6 +62,7 @@
   <Project Path="XREngine.Audio.SteamAudio/XREngine.Audio.SteamAudio.csproj" />
   <Project Path="XREngine.Audio.NAudio/XREngine.Audio.NAudio.csproj" />
   <Project Path="XREngine.Runtime.Media.FFmpeg/XREngine.Runtime.Media.FFmpeg.csproj" />
+  <Project Path="XREngine.Runtime.Imaging.Bc7Enc/XREngine.Runtime.Imaging.Bc7Enc.csproj" />
   <Project Path="XREngine.Runtime.Imaging.Magick/XREngine.Runtime.Imaging.Magick.csproj" />
   <Project Path="XREngine.Runtime.Platform.Desktop/XREngine.Runtime.Platform.Desktop.csproj" />
   <Project Path="XREngine.Runtime.Platform.Browser/XREngine.Runtime.Platform.Browser.csproj" />

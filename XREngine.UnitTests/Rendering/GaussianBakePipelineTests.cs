@@ -698,7 +698,7 @@ public sealed class GaussianBakePipelineTests
         WritePreviousOutput(final);
         string missingStage = Path.Combine(_workRoot, "missing-stage.pak");
         GaussianBakePreparation preparation = await PrepareAsync(
-            AvatarOptions(final, "--stage", missingStage + BakeSplatPreviewOptions.StageSeparator + "Fixtures/Stage.asset"));
+            AvatarOptions(final, "--stage", $"{missingStage}{BakeSplatPreviewOptions.StageSeparator}Fixtures/Stage.asset"));
         preparation.IsPrepared.ShouldBeTrue(preparation.Report.FailureDetail);
         string inputSha = preparation.Report.Input.ShouldNotBeNull().Sha256.ShouldNotBeNull();
         StagingFoldersOf(final).Length.ShouldBe(1);
@@ -856,7 +856,7 @@ public sealed class GaussianBakePipelineTests
         string full = Path.GetFullPath(final);
         string parent = Path.GetDirectoryName(full)!;
         return Directory.Exists(parent)
-            ? Directory.GetDirectories(parent, Path.GetFileName(full) + BakeOutputDirectory.StagingSuffix + "*")
+            ? Directory.GetDirectories(parent, $"{Path.GetFileName(full)}{BakeOutputDirectory.StagingSuffix}*")
             : [];
     }
 

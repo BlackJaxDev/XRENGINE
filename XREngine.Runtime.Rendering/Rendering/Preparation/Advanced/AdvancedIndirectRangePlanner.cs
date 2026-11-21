@@ -126,12 +126,10 @@ public sealed class AdvancedIndirectRangePlanner
                     break;
             }
 
-            // Indexed draws use one canonical index atlas. Each payload keeps
-            // its own geometry handle and indexed arguments.
+            // Indexed and meshlet draws read the shared atlases. Each payload keeps
+            // its own geometry handle and arguments, so one range holds many meshes.
             AdvancedIndirectRangeKey key = new(
-                producer == EAdvancedGeometryProducer.IndirectIndexed
-                    ? default
-                    : payload.Geometry,
+                AdvancedIndirectRangeKey.RangeGeometry(producer, payload.Geometry),
                 payload.RasterStateClass,
                 payload.Coverage,
                 payload.CullMode,

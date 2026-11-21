@@ -65,6 +65,7 @@ namespace XREngine.Rendering.OpenGL
                 _preparedCompileInputs = compileInputs;
                 Volatile.Write(ref _preparedCompileSourceBytes, CountCompileInputSourceBytes(compileInputs));
                 _linkPreparationFailure = null;
+                _preparedLinkGeneration = Volatile.Read(ref _linkPreparationGeneration);
                 _linkDataPrepared = true;
 
                 double preparationMilliseconds = StopwatchTicksToMilliseconds(Stopwatch.GetTimestamp() - preparationStartTimestamp);
@@ -336,6 +337,7 @@ namespace XREngine.Rendering.OpenGL
                 _preparedCacheKey = null;
                 _preparedIsCached = false;
                 _preparedBinProg = default;
+                _preparedLinkGeneration = -1;
                 _linkDataPrepared = false;
             }
 

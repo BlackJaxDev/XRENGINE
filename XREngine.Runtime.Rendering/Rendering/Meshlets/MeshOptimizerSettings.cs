@@ -88,6 +88,7 @@ public partial class MeshletGenerationSettings : XRBase
     private bool _optimizeMeshlets = true;
     private int _optimizeLevel = 0;
     private bool _computeBounds = true;
+    private bool _buildClusterHierarchy;
     private bool _encodeMeshlets;
     private bool _encodeVertexReferences = true;
 
@@ -149,6 +150,18 @@ public partial class MeshletGenerationSettings : XRBase
     {
         get => _optimizeLevel;
         set => SetField(ref _optimizeLevel, Math.Clamp(value, 0, 9));
+    }
+
+    /// <summary>
+    /// Cooks a cluster level-of-detail hierarchy (level-0 meshlets plus coarser cluster levels, with
+    /// crack-free group borders) instead of a single meshlet level. Off by default: the cook takes
+    /// longer and the payload is about twice the size. Renderers without cut selection draw only the
+    /// level-0 meshlets of such a payload.
+    /// </summary>
+    public bool BuildClusterHierarchy
+    {
+        get => _buildClusterHierarchy;
+        set => SetField(ref _buildClusterHierarchy, value);
     }
 
     public bool ComputeBounds

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using XREngine.Rendering.VideoStreaming.Interfaces;
@@ -110,6 +111,22 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     private bool _isOpen;
 
     // ═══════════════════════════════════════════════════════════════
+    // Fields — Clock-Driven Mode And Seeking
+    // ═══════════════════════════════════════════════════════════════
+
+    /// <summary>True when the caller paces every frame by its clock (<see cref="StreamOpenOptions.ClockDrivenPresentation"/>).</summary>
+    private bool _clockDriven;
+
+    /// <summary>The generation of the newest seek. Frames of an older generation are dropped.</summary>
+    private int _seekGeneration;
+
+    /// <summary>The frame buffers that the decoder can use again, in the clock-driven mode.</summary>
+    private readonly Stack<byte[]> _bufferPool = new();
+
+    /// <summary>The buffer of the last dequeued frame. The next dequeue, seek, or close gives it back to the pool.</summary>
+    private byte[]? _lentBuffer;
+
+    // ═══════════════════════════════════════════════════════════════
     // Constructor
     // ═══════════════════════════════════════════════════════════════
 
@@ -123,7 +140,10 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
             OnVideoFrameRateDetected = OnVideoFrameRateDetected,
             OnError = err => Trace.TraceWarning($"Stream decoder error: {err}")
         };
+        _rentVideoBuffer = RentVideoBuffer;
     }
+
+    private readonly Func<int, byte[]> _rentVideoBuffer;
 
     // ═══════════════════════════════════════════════════════════════
     // Events & Properties
@@ -134,6 +154,12 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
 
     /// <inheritdoc />
     public bool IsOpen => _isOpen;
+
+    /// <inheritdoc />
+    public bool CanSeek => _isOpen && _clockDriven && _decoder.IsSeekable;
+
+    /// <inheritdoc />
+    public string? LastSeekError => _decoder.LastSeekError;
 
     /// <inheritdoc />
     public int QueuedVideoFrameCount { get { lock (_sync) return _videoFrames.Count; } }
@@ -179,8 +205,16 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
             _audioQueueCapacity = Math.Max(1, options.AudioQueueCapacity);
         }
 
+        _clockDriven = options?.ClockDrivenPresentation == true;
+        _decoder.RentVideoBuffer = _clockDriven ? _rentVideoBuffer : null;
+        _closing = false;
+
         await _decoder.OpenAsync(url, options, cancellationToken).ConfigureAwait(false);
-        _isOpen = true;
+        lock (_sync)
+        {
+            _isOpen = true;
+            Monitor.PulseAll(_sync);
+        }
     }
 
     /// <summary>
@@ -202,6 +236,8 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     {
         // Signal closing early to unblock any backpressure waits in decode callbacks.
         _closing = true;
+        lock (_sync)
+            Monitor.PulseAll(_sync);
         _decoder.Stop();
 
         lock (_sync)
@@ -209,6 +245,8 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
             _isOpen = false;
             _videoFrames.Clear();
             _audioFrames.Clear();
+            _bufferPool.Clear();
+            _lentBuffer = null;
             _latestQueuedVideoPts = long.MinValue;
             _videoPlaybackStarted = false;
             _videoPlaybackBaseWallTicks = 0;
@@ -224,6 +262,8 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     public void Dispose()
     {
         _closing = true;
+        lock (_sync)
+            Monitor.PulseAll(_sync);
         _decoder.Dispose();
         _isOpen = false;
     }
@@ -249,6 +289,9 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     {
         lock (_sync)
         {
+            if (_clockDriven)
+                return TryDequeueClockDrivenFrame(audioClockTicks, out frame);
+
             if (_videoFrames.Count == 0)
             {
                 frame = default;
@@ -413,6 +456,123 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     }
 
     /// <summary>
+    /// Dequeues the next frame whose time is at or before the clock plus <see cref="TargetVideoBufferTicks"/>. Zero is a
+    /// valid clock, and no wall time is used. The buffer of the frame of the previous call goes back to the pool first.
+    /// Call it with <see cref="_sync"/> held.
+    /// </summary>
+    private bool TryDequeueClockDrivenFrame(long clockTicks, out DecodedVideoFrame frame)
+    {
+        ReturnLentBuffer();
+        if (_videoFrames.Count == 0 || _videoFrames.Peek().PresentationTimestampTicks > clockTicks + TargetVideoBufferTicks)
+        {
+            frame = default;
+            return false;
+        }
+
+        frame = _videoFrames.Dequeue();
+        if (MemoryMarshal.TryGetArray(frame.PackedData, out ArraySegment<byte> segment))
+            _lentBuffer = segment.Array;
+
+        // The decoder thread waits for queue space.
+        Monitor.PulseAll(_sync);
+        return true;
+    }
+
+    /// <inheritdoc />
+    public Task SeekAsync(long targetTicks, EVideoSeekMode mode, CancellationToken cancellationToken)
+    {
+        if (!CanSeek)
+            return Task.FromException(new NotSupportedException(CannotSeekMessage));
+
+        lock (_sync)
+        {
+            // The generation and the post happen under one lock, so two callers cannot post in the opposite order.
+            int generation = BeginSeek();
+            Task task = _decoder.SeekAsync(Math.Max(0L, targetTicks), mode, generation, cancellationToken);
+            Monitor.PulseAll(_sync);
+            return task;
+        }
+    }
+
+    /// <inheritdoc />
+    public int RequestSeek(long targetTicks, EVideoSeekMode mode)
+    {
+        if (!CanSeek)
+            return -1;
+
+        lock (_sync)
+        {
+            int generation = BeginSeek();
+            bool posted = _decoder.RequestSeek(Math.Max(0L, targetTicks), mode, generation, null);
+            Monitor.PulseAll(_sync);
+            return posted ? generation : -1;
+        }
+    }
+
+    /// <inheritdoc />
+    public EVideoSeekState GetSeekState(int requestId)
+    {
+        if (requestId < 0 || requestId != Volatile.Read(ref _seekGeneration))
+            return EVideoSeekState.Cancelled;
+        return _decoder.GetSeekState(requestId);
+    }
+
+    private const string CannotSeekMessage = "The media session cannot seek: it is not open in the clock-driven mode, or the source is not a local file with a known duration.";
+
+    // Frames of the old position must not reach the caller. A frame that the decoder delivers before it starts this seek
+    // carries the old generation, so the enqueue drops it. Call with _sync held.
+    private int BeginSeek()
+    {
+        int generation = ++_seekGeneration;
+        DropQueuedVideoFrames();
+        return generation;
+    }
+
+    // Call with _sync held.
+    private void DropQueuedVideoFrames()
+    {
+        ReturnLentBuffer();
+        while (_videoFrames.Count > 0)
+            ReturnBuffer(_videoFrames.Dequeue().PackedData);
+        _latestQueuedVideoPts = long.MinValue;
+    }
+
+    // Call with _sync held.
+    private void ReturnLentBuffer()
+    {
+        if (_lentBuffer is null)
+            return;
+        if (_bufferPool.Count < _videoQueueCapacity + 2)
+            _bufferPool.Push(_lentBuffer);
+        _lentBuffer = null;
+    }
+
+    // Call with _sync held.
+    private void ReturnBuffer(ReadOnlyMemory<byte> data)
+    {
+        if (_clockDriven && MemoryMarshal.TryGetArray(data, out ArraySegment<byte> segment) && segment.Array is { } array && _bufferPool.Count < _videoQueueCapacity + 2)
+            _bufferPool.Push(array);
+    }
+
+    /// <summary>
+    /// Gives the decoder a frame buffer of exactly <paramref name="length"/> bytes from the pool. A buffer of another length
+    /// is dropped, so a size change allocates once for each pooled buffer.
+    /// </summary>
+    private byte[] RentVideoBuffer(int length)
+    {
+        lock (_sync)
+        {
+            while (_bufferPool.Count > 0)
+            {
+                byte[] buffer = _bufferPool.Pop();
+                if (buffer.Length == length)
+                    return buffer;
+            }
+        }
+        return new byte[length];
+    }
+
+    /// <summary>
     /// Attempts to dequeue the next decoded audio frame.
     /// Audio frames are not paced here — the consumer submits them to
     /// OpenAL and relies on the audio hardware for playback timing.
@@ -449,6 +609,12 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
     /// </summary>
     private void OnDecodedVideoFrame(DecodedVideoFrame frame)
     {
+        if (_clockDriven)
+        {
+            EnqueueClockDrivenFrame(frame);
+            return;
+        }
+
         // Short bounded wait (2 iterations × Sleep(1) ≈ 2–30 ms).
         // With the large default queue (180 frames ≈ 3 s at 60 fps) this
         // rarely triggers, but it gives the render thread a brief chance
@@ -479,6 +645,44 @@ internal sealed class HlsMediaStreamSession : IMediaStreamSession
                 return; // Queue still full — drop this frame.
 
             Thread.Sleep(1);
+        }
+    }
+
+    /// <summary>
+    /// Enqueues a frame in the clock-driven mode. The decode thread waits for queue space and never drops a frame of the
+    /// current position, so playback stays sequential. A frame of an older seek generation is dropped, and a new seek or a
+    /// close stops the wait.
+    /// </summary>
+    private void EnqueueClockDrivenFrame(DecodedVideoFrame frame)
+    {
+        int generation = _decoder.ExecutingGeneration;
+        while (true)
+        {
+            lock (_sync)
+            {
+                if (_closing || generation != _seekGeneration)
+                {
+                    ReturnBuffer(frame.PackedData);
+                    return;
+                }
+
+                // The decoder starts before the open returns, so a first frame waits for the open.
+                if (_isOpen && _videoFrames.Count < _videoQueueCapacity)
+                {
+                    _videoFrames.Enqueue(frame);
+                    _latestQueuedVideoPts = frame.PresentationTimestampTicks;
+                    return;
+                }
+
+                if (_decoder.HasPendingSeek)
+                {
+                    ReturnBuffer(frame.PackedData);
+                    return;
+                }
+
+                // A dequeue, a seek, an open, and a close pulse the lock. The timeout is a guard only.
+                Monitor.Wait(_sync, 100);
+            }
         }
     }
 

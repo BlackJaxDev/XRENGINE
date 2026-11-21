@@ -161,7 +161,11 @@ vec3 DDGIShadingNormal(PackedTriangle triangle, vec3 barycentric, DDGIMaterial m
                     vec3 bitangent = normalize(cross(normal, tangent));
                     if (dot(bitangent, sourceBitangent) < 0.0)
                         bitangent = -bitangent;
-                    vec3 mapped = DDGISampleMap(material.normalMap, uv01, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;
+                    vec4 mappedSample = DDGISampleMap(material.normalMap, uv01, vec4(0.5, 0.5, 1.0, 1.0));
+                    vec3 mapped = mappedSample.xyz * 2.0 - 1.0;
+                    // A BC5 normal map samples with alpha 0 and stores only X and Y: rebuild Z.
+                    if (mappedSample.a < 0.5)
+                        mapped.z = sqrt(clamp(1.0 - dot(mapped.xy, mapped.xy), 0.0, 1.0));
                     mapped.xy *= material.surface.y;
                     if (dot(mapped, mapped) > 1e-8)
                         normal = normalize(mat3(tangent, bitangent, normal) * mapped);

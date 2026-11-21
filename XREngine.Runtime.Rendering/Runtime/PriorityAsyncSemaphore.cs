@@ -4,6 +4,10 @@ using System.Threading.Tasks;
 
 namespace XREngine.Rendering;
 
+/// <summary>
+/// An async semaphore that grants permits in priority order. The capacity can change while permits are held: a larger
+/// capacity grants waiters at once, and a smaller capacity takes effect as the held permits are released.
+/// </summary>
 internal sealed class PriorityAsyncSemaphore
 {
     private sealed class Waiter(JobPriority priority)
@@ -39,17 +43,51 @@ internal sealed class PriorityAsyncSemaphore
 
     private readonly Queue<Waiter>[] _queues;
     private readonly object _sync = new();
-    private int _availableCount;
+    private int _capacity;
+    private int _inUse;
+    private int _waiting;
+    private long _excessReleases;
 
     public PriorityAsyncSemaphore(int initialCount)
     {
         if (initialCount <= 0)
             throw new ArgumentOutOfRangeException(nameof(initialCount), "Initial count must be positive.");
 
-        _availableCount = initialCount;
+        _capacity = initialCount;
         _queues = new Queue<Waiter>[(int)JobPriority.Highest + 1];
         for (int i = 0; i < _queues.Length; i++)
             _queues[i] = new Queue<Waiter>();
+    }
+
+    /// <summary>The number of permits that can be held at the same time.</summary>
+    public int Capacity => Volatile.Read(ref _capacity);
+
+    /// <summary>The number of permits that are held now.</summary>
+    public int InUse => Volatile.Read(ref _inUse);
+
+    /// <summary>The number of waiters in the queues, including canceled waiters that were not dequeued yet.</summary>
+    public int WaitingCount => Volatile.Read(ref _waiting);
+
+    /// <summary>The number of <see cref="Release"/> calls that had no held permit. A nonzero value is a caller defect.</summary>
+    public long ExcessReleaseCount => Interlocked.Read(ref _excessReleases);
+
+    /// <summary>
+    /// Changes the number of permits that can be held at the same time. It does not take back held permits.
+    /// </summary>
+    /// <param name="capacity">The new capacity. It must be positive.</param>
+    public void SetCapacity(int capacity)
+    {
+        if (capacity <= 0)
+            throw new ArgumentOutOfRangeException(nameof(capacity), "Capacity must be positive.");
+
+        lock (_sync)
+        {
+            if (_capacity == capacity)
+                return;
+
+            Volatile.Write(ref _capacity, capacity);
+            GrantWaitersNoLock();
+        }
     }
 
     /// <summary>
@@ -63,15 +101,16 @@ internal sealed class PriorityAsyncSemaphore
 
         lock (_sync)
         {
-            if (_availableCount > 0 && !HasWaiters())
+            if (_inUse < _capacity && !HasWaiters())
             {
-                _availableCount--;
+                Volatile.Write(ref _inUse, _inUse + 1);
                 return ValueTask.FromResult(true);
             }
 
             Waiter waiter = new(NormalizePriority(priority));
             waiter.CancellationRegistration = cancellationToken.Register(static state => ((Waiter)state!).Cancel(), waiter);
             _queues[(int)waiter.Priority].Enqueue(waiter);
+            Volatile.Write(ref _waiting, _waiting + 1);
             return new ValueTask<bool>(waiter.Completion.Task);
         }
     }
@@ -80,18 +119,33 @@ internal sealed class PriorityAsyncSemaphore
     {
         lock (_sync)
         {
-            while (TryDequeueNextWaiter(out Waiter? waiter))
+            if (_inUse <= 0)
             {
-                if (waiter is null)
-                    continue;
-
-                if (waiter.TryGrant())
-                    return;
-
-                waiter.CancellationRegistration.Dispose();
+                // Before the capacity could change, an extra release raised the available count. Count it, so the
+                // defect stays visible, and do not let it grant a permit.
+                Interlocked.Increment(ref _excessReleases);
+                return;
             }
 
-            _availableCount++;
+            Volatile.Write(ref _inUse, _inUse - 1);
+            GrantWaitersNoLock();
+        }
+    }
+
+    private void GrantWaitersNoLock()
+    {
+        while (_inUse < _capacity && TryDequeueNextWaiter(out Waiter? waiter))
+        {
+            if (waiter is null)
+                continue;
+
+            if (waiter.TryGrant())
+            {
+                Volatile.Write(ref _inUse, _inUse + 1);
+                continue;
+            }
+
+            waiter.CancellationRegistration.Dispose();
         }
     }
 
@@ -114,6 +168,7 @@ internal sealed class PriorityAsyncSemaphore
             while (queue.Count > 0)
             {
                 Waiter candidate = queue.Dequeue();
+                Volatile.Write(ref _waiting, Math.Max(0, _waiting - 1));
                 if (candidate.IsCanceled)
                 {
                     candidate.CancellationRegistration.Dispose();

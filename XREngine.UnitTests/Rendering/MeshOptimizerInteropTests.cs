@@ -372,9 +372,8 @@ public sealed class MeshOptimizerInteropTests
     public void GPUScene_ProductionMeshletDataIsSceneOwnedBySourceContract()
     {
         string gpuSceneSource =
-            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.CommandBuffers.cs").Replace("\r\n", "\n") +
-            "\n" +
-            ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AddRemove.cs").Replace("\r\n", "\n");
+            $"{ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.CommandBuffers.cs").Replace("\r\n", "\n")}\n" +
+            $"{ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/GPUScene/GPUScene.AddRemove.cs").Replace("\r\n", "\n")}";
 
         gpuSceneSource.ShouldContain("public XRDataBuffer MeshletRangeBuffer");
         gpuSceneSource.ShouldContain("public XRDataBuffer MeshletDescriptorBuffer");

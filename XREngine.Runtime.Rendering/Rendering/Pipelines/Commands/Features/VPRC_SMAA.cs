@@ -23,7 +23,7 @@ public sealed class VPRC_SMAA : ViewportRenderCommand
         requirements.RequireOperation("framebuffer");
         if (requirements.Backend != RendererBackendId.WebGPU)
             return;
-        bool advanced = ParentPipeline is AdvancedRenderPipeline;
+        bool advanced = ParentPipeline?.ResolveAdvancedStageFamily() is not null;
         requirements.RequireRasterProgram(advanced ? "advanced::smaa-edge" : "smaa-edge");
         requirements.RequireRasterProgram(advanced ? "advanced::smaa-blend" : "smaa-blend");
         requirements.RequireRasterProgram(advanced ? "advanced::smaa-neighborhood" : "smaa-neighborhood");
@@ -376,7 +376,7 @@ void main()
         => _webResources
             ? WebPipelineRasterProgram.CreateShaders(
                 instance.Pipeline ?? throw new InvalidOperationException("WebGPU.SMAA.PipelineMissing: the selected SMAA chain requires an owning pipeline."),
-                instance.Pipeline is AdvancedRenderPipeline ? $"advanced::{pass}" : pass)
+                instance.Pipeline?.ResolveAdvancedStageFamily() is not null ? $"advanced::{pass}" : pass)
             : [new XRShader(EShaderType.Fragment, ResolveShaderCode(shaderCode, Stereo))];
 
     internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
@@ -586,17 +586,10 @@ void main()
 
     private bool TryResolvePassIndex(string passName, out int passIndex)
     {
-        RenderPipeline? pipeline = ParentPipeline;
-        if (pipeline?.PassMetadata is not { Count: > 0 })
-        {
-            passIndex = int.MinValue;
-            return true;
-        }
-
-        if (pipeline.TryGetRenderPassIndex(passName, out passIndex))
+        passIndex = ResolveActiveRenderGraphPassIndex(passName, out bool hasRenderGraphMetadata);
+        if (!hasRenderGraphMetadata || passIndex != int.MinValue)
             return true;
 
-        passIndex = int.MinValue;
         if (_webResources)
             throw new InvalidOperationException($"WebGPU.SMAA.PassMissing: selected pass '{passName}' is absent from the render graph.");
         Debug.RenderingWarningEvery(

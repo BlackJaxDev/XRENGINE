@@ -146,6 +146,12 @@ when the library is missing. The script needs git, CMake, and a C++ compiler too
 pwsh Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
 ```
 
+Build the patched GLFW 3.4 library before a Windows x64 editor or VR client build. This step needs CMake and Visual Studio 2022 C++ tools. The build stops with a command to run when the DLL is missing:
+
+```powershell
+pwsh Tools/Dependencies/Build-Glfw.ps1 -Rid win-x64
+```
+
 Then build the solution:
 
 ```powershell

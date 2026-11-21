@@ -205,6 +205,7 @@ internal sealed partial class VulkanDeviceContext
 
         EVulkanDeviceCapability capabilities = EVulkanDeviceCapability.None;
         Include(ref capabilities, EVulkanDeviceCapability.Anisotropy, MutableCapabilities._supportsAnisotropy);
+        Include(ref capabilities, EVulkanDeviceCapability.TextureCompressionBc, MutableCapabilities._supportsTextureCompressionBc);
         Include(ref capabilities, EVulkanDeviceCapability.MultipleGraphicsQueues, SupportsMultipleGraphicsQueues);
         Include(ref capabilities, EVulkanDeviceCapability.TimelineSemaphores, MutableCapabilities._supportsTimelineSemaphores);
         Include(ref capabilities, EVulkanDeviceCapability.Synchronization2, MutableCapabilities._supportsSynchronization2);

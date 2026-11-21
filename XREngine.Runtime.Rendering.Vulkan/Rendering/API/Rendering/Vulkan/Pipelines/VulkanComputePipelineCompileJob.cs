@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.Tasks;
 
 namespace XREngine.Rendering.Vulkan;
@@ -9,5 +10,6 @@ internal sealed class VulkanComputePipelineCompileJob(
 {
     public VulkanComputePipelineBuildRequest Request { get; } = request;
     public Task<VulkanComputePipelineCompileResult> Task { get; } = task;
+    public long QueuedTimestamp { get; } = Stopwatch.GetTimestamp();
     public void PromoteToForeground() => promoteToForeground();
 }

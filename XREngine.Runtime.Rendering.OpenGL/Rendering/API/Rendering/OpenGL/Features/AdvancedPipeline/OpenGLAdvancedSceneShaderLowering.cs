@@ -129,7 +129,7 @@ internal static class OpenGLAdvancedSceneShaderLowering
 
     private static string ReplaceIndexedLoads(string source, Table table)
     {
-        Regex indexed = new(@"\b" + Regex.Escape(table.Instance) + @"\s*\.\s*" + Regex.Escape(table.Field) + @"\s*\[");
+        Regex indexed = new($@"\b{Regex.Escape(table.Instance)}\s*\.\s*{Regex.Escape(table.Field)}\s*\[");
         StringBuilder result = new(source.Length);
         int copied = 0, search = 0;
         while (indexed.Match(source, search) is { Success: true } match)
@@ -166,16 +166,25 @@ internal static class OpenGLAdvancedSceneShaderLowering
 
     private static string DecodeExpression(TypeLayout layout, string offset)
     {
-        if (layout.IsScalar) return DecodeScalar(layout.Name, offset);
+        if (layout.IsScalar)
+            return DecodeScalar(layout.Name, offset);
         if (layout.IsVector)
         {
             string scalar = layout.Name[0] is 'u' ? "uint" : layout.Name[0] is 'i' ? "int" : "float";
-            string ctor = layout.Name;
-            return ctor + "(" + string.Join(", ", Enumerable.Range(0, layout.Components).Select(index => DecodeScalar(scalar, Offset(offset, index * 4)))) + ")";
+            string components = string.Join(", ", Enumerable.Range(0, layout.Components).Select(index => DecodeScalar(scalar, Offset(offset, index * 4))));
+            return $"{layout.Name}({components})";
         }
         if (layout.Name == "mat4")
-            return "transpose(mat4(" + string.Join(", ", Enumerable.Range(0, 4).Select(index => "vec4(" + string.Join(", ", Enumerable.Range(0, 4).Select(component => DecodeScalar("float", Offset(offset, index * 16 + component * 4)))) + ")")) + "))";
-        return layout.Name + "(" + string.Join(", ", ((StructLayout)layout).Fields.Select(field => DecodeExpression(field.Layout!, Offset(offset, checked((int)field.Offset))))) + ")";
+        {
+            string columns = string.Join(", ", Enumerable.Range(0, 4).Select(index =>
+            {
+                string elements = string.Join(", ", Enumerable.Range(0, 4).Select(component => DecodeScalar("float", Offset(offset, index * 16 + component * 4))));
+                return $"vec4({elements})";
+            }));
+            return $"transpose(mat4({columns}))";
+        }
+        string fields = string.Join(", ", ((StructLayout)layout).Fields.Select(field => DecodeExpression(field.Layout!, Offset(offset, checked((int)field.Offset)))));
+        return $"{layout.Name}({fields})";
     }
 
     private static string DecodeScalar(string type, string offset) => type switch

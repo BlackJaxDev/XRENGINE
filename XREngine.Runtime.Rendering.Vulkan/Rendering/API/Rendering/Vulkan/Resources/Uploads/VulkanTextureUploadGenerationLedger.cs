@@ -550,9 +550,16 @@ internal sealed partial class VulkanTextureUploadService
                     texture,
                     requiredGeneration,
                     publishedGeneration,
+                    uploadGeneration,
                     hasPendingTransition,
                     out string rehydrationFailure))
             {
+                bool hasFreshState = ImportedTextureStreamingManager.Instance.TryGetGenerationState(
+                    texture, out long freshPublished, out long freshUpload, out _, out bool freshPending);
+                Debug.WriteAuxiliaryLog("texture-upload-timing.log",
+                    $"[TextureRehydration.FailureSnapshot] texture={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(texture)} " +
+                    $"sampledPublished={publishedGeneration} sampledUpload={uploadGeneration} sampledPending={hasPendingTransition} " +
+                    $"hasFreshState={hasFreshState} freshPublished={freshPublished} freshUpload={freshUpload} freshPending={freshPending}");
                 manifest.FailCapture(
                     rehydrationFailure,
                     EVulkanPresentNowFailureDisposition.RendererTerminal);
@@ -711,6 +718,7 @@ internal sealed partial class VulkanTextureUploadService
         XRTexture2D texture,
         long requiredGeneration,
         long publishedGeneration,
+        long uploadGeneration,
         bool hasPendingTransition,
         out string detail)
     {
@@ -749,7 +757,13 @@ internal sealed partial class VulkanTextureUploadService
                 return true;
             }
 
-            detail = "Texture residency restoration upload lost its native generation ticket.";
+            detail = $"Texture '{texture.Name}' residency restoration upload lost its native generation ticket. " +
+                $"texture={System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(texture)} " +
+                $"required={requiredGeneration} published={publishedGeneration} upload={uploadGeneration} " +
+                $"pending={hasPendingTransition} restorationSource={record.RehydrationSourceGeneration} " +
+                $"restorationUpload={record.RehydrationUploadGeneration} " +
+                $"nativePublished={record.LatestPublishedStreamingGeneration} entries={record.Entries.Count}.";
+            Debug.WriteAuxiliaryLog("texture-upload-timing.log", $"[TextureRehydration.MissingTicket] {detail}");
             record.RehydrationFailureDetail = detail;
             return true;
         }

@@ -16,11 +16,31 @@ public partial class AdvancedRenderPipeline
     private uint _froxelDepthSlices = AdvancedFroxelGridDimensions.DefaultDepthSlices;
 
     /// <summary>
-    /// Diagnostic visualization mode for native opaque shading and clustered lighting.
+    /// Process-wide shading debug view from <see cref="XREngineEnvironmentVariables.AdvancedShadingDebugView"/>,
+    /// or null when the variable is unset or invalid. Read once at type initialization.
+    /// </summary>
+    private static readonly EAdvancedShadingDebugView? s_shadingDebugViewOverride = ResolveShadingDebugViewOverride();
+
+    private static EAdvancedShadingDebugView? ResolveShadingDebugViewOverride()
+    {
+        string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedShadingDebugView);
+        if (string.IsNullOrWhiteSpace(value))
+            return null;
+        return Enum.TryParse(value.Trim(), ignoreCase: true, out EAdvancedShadingDebugView view) &&
+               Enum.IsDefined(view)
+            ? view
+            : null;
+    }
+
+    /// <summary>
+    /// Diagnostic visualization mode for native opaque shading and clustered lighting. When
+    /// <see cref="XREngineEnvironmentVariables.AdvancedShadingDebugView"/> is set, every Advanced
+    /// stage family (desktop, per-eye, stereo and RVC) returns that view instead of its own value,
+    /// so one launch shows the same view in every output.
     /// </summary>
     public EAdvancedShadingDebugView ShadingDebugView
     {
-        get => _shadingDebugView;
+        get => s_shadingDebugViewOverride ?? _shadingDebugView;
         set
         {
             if (!SetField(ref _shadingDebugView, value))
@@ -42,6 +62,12 @@ public partial class AdvancedRenderPipeline
             InvalidateNativeShadingResourceProfile();
         }
     }
+
+    /// <summary>
+    /// True when this family declares the RVC shadelet telemetry counters. Only
+    /// <see cref="RvcRenderPipeline"/> sets it, before the family builds resources.
+    /// </summary>
+    internal bool DeclaresRvcShadeletTelemetry { get; set; }
 
     private void InvalidateNativeShadingResourceProfile()
         => InvalidateOwnedInstancePhysicalResources("NativeShadingProfileChanged");
@@ -163,6 +189,18 @@ public partial class AdvancedRenderPipeline
                 .Lifetime(RenderResourceLifetime.Transient)
                 .DebugLabel($"Advanced light/decal-index allocation and overflow counters slot {slot}")
                 .Add();
+
+            if (DeclaresRvcShadeletTelemetry)
+            {
+                VisibilityBuffer<uint>(builder,
+                        RvcShadeletTelemetryResourceNames.Counters(slot),
+                        (uint)RvcShadeletTelemetryCounters.GpuWordCount,
+                        EBufferTarget.ShaderStorageBuffer,
+                        EBufferUsage.DynamicRead)
+                    .Lifetime(RenderResourceLifetime.Transient)
+                    .DebugLabel($"RVC shadelet telemetry counters slot {slot}")
+                    .Add();
+            }
         }
 
         // 5. Native HDR Scene Output Texture
@@ -242,7 +280,28 @@ public partial class AdvancedRenderPipeline
                 AdvancedVisibilityResourceNames.Identity,
                 AdvancedVisibilityResourceNames.Metadata,
                 AdvancedVisibilityResourceNames.DepthStencil)
+            .When(static profile => (profile.FeatureMask & ShadingDiagnosticsOmittedFeatureBit) == 0UL)
             .DebugLabel("Advanced native shading diagnostics")
+            .Add();
+
+        // 7b. Shading diagnostics placeholder. An output that omits the diagnostics image (OpenXR
+        // eyes without a shading debug view) still needs an image at the diagnostics binding. A
+        // dedicated 1x1 image, created with the resource generation, fills it. It has the same
+        // layer count, so each view gets its own layer view like the real image. The shading push
+        // flag stops every store to it, and no other binding refers to it, so sync validation sees
+        // no hazard against the visibility inputs.
+        ReconstructionTexture(
+                builder,
+                AdvancedShadingResourceNames.ShadingDiagnosticsPlaceholder,
+                RenderResourceSizePolicy.Absolute(1u, 1u),
+                EPixelInternalFormat.R32ui,
+                EPixelFormat.RedInteger,
+                EPixelType.UnsignedInt,
+                ESizedInternalFormat.R32ui)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .When(static profile => (profile.FeatureMask & ShadingDiagnosticsOmittedFeatureBit) != 0UL)
+            .DebugLabel("Advanced native shading diagnostics placeholder")
             .Add();
 
         // 8. Ambient Occlusion Output Texture
@@ -281,5 +340,72 @@ public partial class AdvancedRenderPipeline
                 AdvancedVisibilityResourceNames.Metadata)
             .DebugLabel("Advanced native shading debug visualization")
             .Add();
+
+        DeclareDecalBufferResources(builder, internalSize, layers);
     }
+
+    /// <summary>
+    /// Mesh surface decal buffer: two single-sample RGBA8 targets and their framebuffer with the
+    /// resolved visibility depth (read-only during the decal pass).
+    /// </summary>
+    private void DeclareDecalBufferResources(
+        RenderPipelineResourceLayoutBuilder builder,
+        RenderResourceSizePolicy internalSize,
+        uint layers)
+    {
+        VisibilityTexture(
+                builder,
+                AdvancedDecalBufferResourceNames.Albedo,
+                internalSize,
+                RenderPipelineResourceUsage.ColorAttachment |
+                RenderPipelineResourceUsage.SampledTexture,
+                EPixelInternalFormat.Rgba8,
+                EPixelFormat.Rgba,
+                EPixelType.UnsignedByte,
+                ESizedInternalFormat.Rgba8,
+                EFrameBufferAttachment.ColorAttachment0,
+                storage: false)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .DependsOn(AdvancedVisibilityResourceNames.DepthStencil)
+            .DebugLabel("Advanced surface decal buffer albedo")
+            .Add();
+
+        VisibilityTexture(
+                builder,
+                AdvancedDecalBufferResourceNames.Surface,
+                internalSize,
+                RenderPipelineResourceUsage.ColorAttachment |
+                RenderPipelineResourceUsage.SampledTexture,
+                EPixelInternalFormat.Rgba8,
+                EPixelFormat.Rgba,
+                EPixelType.UnsignedByte,
+                ESizedInternalFormat.Rgba8,
+                EFrameBufferAttachment.ColorAttachment1,
+                storage: false)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .DependsOn(AdvancedDecalBufferResourceNames.Albedo)
+            .DebugLabel("Advanced surface decal buffer roughness/metallic")
+            .Add();
+
+        builder.FrameBuffer(AdvancedDecalBufferResourceNames.FrameBuffer)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Size(internalSize)
+            .Color(0, AdvancedDecalBufferResourceNames.Albedo, layerIndex: -1)
+            .Color(1, AdvancedDecalBufferResourceNames.Surface, layerIndex: -1)
+            .DepthStencil(AdvancedVisibilityResourceNames.DepthStencil, layerIndex: -1)
+            .Factory(CreateDecalBufferFrameBuffer)
+            .DebugLabel("Advanced surface decal buffer FBO")
+            .Add();
+    }
+
+    private XRFrameBuffer CreateDecalBufferFrameBuffer()
+        => new(
+            (RequireVisibilityAttachment(AdvancedDecalBufferResourceNames.Albedo), EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (RequireVisibilityAttachment(AdvancedDecalBufferResourceNames.Surface), EFrameBufferAttachment.ColorAttachment1, 0, -1),
+            (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
+        {
+            Name = AdvancedDecalBufferResourceNames.FrameBuffer,
+        };
 }

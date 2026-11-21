@@ -150,11 +150,16 @@ path, byte length, and last-write time. Repeated references to that revision
 reuse the validation result without retaining decoded pixels. A new root, a
 changed revision, or a failed decode requires validation again.
 
-Required texture validation uses `IRuntimeImageCodec.Validate(Stream)`. It
+Required texture validation uses `IRuntimeImageCodec.Validate(Stream, sourcePath)`. It
 checks the full decoded image without exporting RGBA pixels that import would
 immediately discard. The stream and native decode state are released after
 each image. Deferred texture registration still loads pixels when rendering
-needs them; validation does not change texture quality or resolution.
+needs them; validation does not change texture quality or resolution. File-backed
+decode paths pass the same source path. The image codec uses an explicit TGA
+format hint for `.tga` files because their header can lack a reliable automatic
+format signature. Other source formats keep automatic detection. A TGA decode
+failure stays visible; the importer does not rename the source or substitute an
+image.
 
 Coordinate conversion streams packed blendshape targets and keeps only a
 compact array of base attributes. Unity model import disables early native
@@ -174,7 +179,26 @@ and animation clips remain independent for each avatar instance.
 
 Use `Kind: Static` to retain each converted hierarchy without the unit-world
 avatar setup. `Kind: Animated` adds that setup to prefab roots. Scene files do
-not receive avatar setup on their scene parent. Independent prefab scenes do
+not receive avatar setup on their scene parent. Use `PackageEntryPath` to select
+one scene or prefab from the main package by its `Assets/...` path. Set
+`SceneRootName` to publish only the uniquely named top-level node and its children. An
+animated import then attaches startup animation to that selected node. A missing
+or ambiguous selection fails instead of selecting a different avatar. For example:
+
+The importer checks all scene dependencies and composes all prefab instances
+before it selects the root. It cooks meshes only for the selected root.
+
+```json
+{
+  "Kind": "Animated",
+  "Path": "misc/Avatar.unitypackage",
+  "PackageEntryPath": "Assets/Avatar/Main.unity",
+  "SceneRootName": "Avatar"
+}
+```
+
+Root selection controls publication; the converter still validates the source
+scene before selecting the hierarchy. Independent prefab scenes do
 not bind to the Main Scene pawn or its locomotion setup. Scale, rotation, translation,
 static instance count, and static collider options apply to each entry.
 
@@ -194,6 +218,14 @@ models remain available. Strict imports still reject these coordinate settings.
 Diagnostics keep the source GUID and
 property, and the manifest reports `PartialVisual` instead of complete visual
 conversion. The default is `false` for strict imports.
+
+A material that is present but cannot be converted never stops an import, in strict
+or partial mode. When a shader-specific conversion (source toon, lilToon)
+fails, the importer uses the generic Unity material conversion. When that also fails,
+the importer puts a lit magenta fallback in the same renderer slot. The manifest
+records a `UNITYMAT0003` or `UNITYPARTIAL0003` warning and reports `PartialVisual`.
+The unit-testing world logs each source toon material that uses a fallback. An animated
+strict import still fails when an avatar component reports an error.
 
 Poiyomi Pro materials use the existing lossy Uber conversion when source shader
 or serialized `OriginalShader` evidence identifies Pro. Partial imports can also
@@ -266,6 +298,16 @@ behavior-only references may remain missing; required model, material, and
 texture references fail the visual import instead of being replaced by an
 invisible placeholder.
 
+For external-model prefab instances with generation 2 file IDs, material-slot
+overrides are checked after target resolution. Overrides for absent model
+objects or indices beyond the renderer material array length are stale and do
+not require the old material. An explicit `m_Materials.Array.size` sets that
+length. Otherwise, the imported source renderer slot count sets it. A stale
+element must not add a renderer slot or repeat mesh geometry. Cleanup applies
+only to the owning prefab instance. Missing materials in retained slots still
+fail a strict import. A final dependency check runs before the composed
+hierarchy is published.
+
 ## Supported Source Assets
 
 The Unity-oriented conversion paths currently include:
@@ -315,9 +357,16 @@ modifications are diagnosed and ignored.
 
 `tangentSpace.blendShapeNormalImportMode` in the `ModelImporter` metadata sets `ModelImportOptions.ImportBlendShapeNormals`. Mode 2 ignores blendshape normals: shapes then move positions only and keep the base normals and tangents. Other modes use the authored normal deltas; mode 1 does not recalculate them. Both FBX producers honor this setting, and it is part of the model cache identity.
 
+`tangentSpace.tangentImportMode` sets `ModelImportOptions.TangentImportPolicy`.
+Mode 0 imports authored tangents. Mode 3 calculates Mikk-compatible tangents with
+the selected FBX importer. Other source modes use the default engine policy until
+their calculation rules are supported. The selected policy is part of the model
+cache identity. Mode 3 fails if the native generator cannot run.
+
 ### Forced Anisotropic Filtering
 
 When the current quality level in `ProjectSettings/QualitySettings.asset` sets `anisotropicTextures: 2`, the importer raises mipmapped, non-point textures to at least anisotropy level 9. A texture with level 0 keeps anisotropy off.
+
 
 ### Source Rim Blur
 
@@ -353,6 +402,10 @@ The importer stores that list on `HumanoidAuthoredTPoseComponent` at the model r
 Humanoid clip tracks use the FBX contract, which mirrors X and faces +Z. Unity prefab imports mirror Z and face -Z. `HumanoidComponent` converts the requested Body frame by the yaw between `BodyAxes.Forward` and +Z. Without this conversion, Body pitch and roll have the opposite sign on the avatar. The pose audit common space still assumes the FBX contract, so prefab avatars report a 180 degree yaw difference there. Compare their local rotations instead.
 
 ## PhysBone Conversion
+
+Explicit source collider lists remain active when `allowCollision` is false.
+That source setting controls unlisted global colliders. It does not remove
+colliders assigned directly to the chain.
 
 The importer converts VRChat PhysBone components to `PhysicsChainComponent`. VRChat does not publish the solver equations. The mapping and the chain settings below come from black-box measurement of plain test chains in Unity Play mode.
 
@@ -445,6 +498,11 @@ engine-authored Uber materials keep their existing cubemap composition.
 Source overlays run in this order: matcap, cubemap, then view rim. A replacing
 cubemap must not overwrite a rim that the source shader applies afterward.
 
+The native cubemap uses an sRGB format only for 8-bit sources whose Unity
+metadata enables sRGB. HDR sources (`.hdr`, `.exr`) decode to float faces and
+keep a linear float format, as in Unity, which ignores the sRGB flag for them.
+An 8-bit sRGB format for float faces makes the Vulkan upload reject every frame.
+
 Source matcap slots use linear texel filtering, trilinear mip filtering when
 mips are enabled, and repeat wrap, as required by the source shader's inline
 sampler. Their texture cache partition is separate from the default sampling
@@ -484,10 +542,15 @@ monochromatic, cap, multiplier, and addition controls. It does not include
 shadow visibility or ambient occlusion. Zero strength retains the previous
 emission result. This operation does not change other emission sources.
 
-The source toon converter sets `_WorldAmbientOcclusionStrength` to 0, because the
-source shaders read only their own AO maps and no screen-space AO texture. The
-uber shader mixes screen AO toward 1 by this value, in standard and source light
-modes. Set it above 0 to let world AO darken a converted material.
+The source toon converter sets `_WorldAmbientOcclusionStrength` to 1. Converted
+materials use the full camera ambient occlusion result, including GTAO. Set the
+AO mode, strength, and enabled state in the camera post-processing settings.
+Both native Advanced and forward Uber shading apply camera diffuse AO to
+source indirect light, wrapped light, and environment rim lighting. Camera
+specular occlusion also affects Mochie and clear-coat probe reflections.
+Direct light and emission remain separate. Source material AO maps remain
+separate. A camera with AO
+disabled supplies neutral occlusion, so this default does not darken the material.
 
 The serialized prefab cache version invalidates output that lacks this mapping.
 
@@ -504,9 +567,32 @@ reflects the source Z axis, so the strand cross products use the corresponding
 reversed signs.
 
 An unassigned anisotropy color map uses the source fallback `(1, 1, 1, 0)`.
-Assigned anisotropy maps, global masks, and toon edges fail source conversion
-with a diagnostic until those paths have an exact GPU implementation. The
-serialized prefab cache version invalidates output without this source stage.
+An assigned map supplies color and an alpha offset for each strand layer.
+The importer keeps its UV, scale, offset, and pan. A source global mask changes
+the shadow mask before the strand response. Native Advanced samples neighboring
+map and mask values when it calculates a toon edge footprint. The importer
+rejects unsupported UV, mask index, and mask blend values.
+
+### Native Outline, Decal, And ShadeMap Operations
+
+The Advanced pipeline consumes outline companions from both `OpaqueForward`
+and `MaskedForward`. It keeps the authored pass identity. A native base row
+omits the separate outline operation only when a matching enabled companion
+exists. Stereo hull outlines require an active two-eye Vulkan multiview target
+and use each eye's camera position. Multisample hull output and temporal replay
+remain unsupported and report a failure.
+
+Native decals apply source global masks when their view and distance modifiers
+are neutral. Unsupported view-dependent masks, depth controls, and chroma
+controls still fail native admission. ShadeMap lighting samples `_FirstShadeMap`
+with its authored UV, transform, and pan. Its alpha blends the shadow-band color;
+the general shadow tint remains separate.
+
+Native layered emission applies each slot's global mask to its emission
+contribution. The local mask still controls the base-color replacement weight.
+Decal and emission masks use full render time for texture pan; source matcap,
+glitter, and anisotropy masks retain their source time scale. Disabled global
+masks return a neutral value.
 
 ### Authored Source Ambient Lighting
 
@@ -601,7 +687,8 @@ creating a source-runtime emulation layer.
 
 ## Manifest, Reimport, And Failure Policy
 
-Every imported Unity prefab embeds a `SerializedPrefabImportManifest`. It records the
+Each imported Unity prefab has editor evidence in a `SerializedPrefabImportManifest`
+sidecar. This evidence is separate from the native runtime asset. It records the
 entry source, Unity project root and editor version, completion tier,
 SHA-256-fingerprinted reached dependencies, GUID/local-file-ID identity,
 dependency kind, referring property, timestamps, source length, conversion
@@ -630,7 +717,15 @@ recorded as non-blocking intentional conversion loss and are never resolved to
 runtime methods by reflection. Animation manifest schema 3 likewise stores
 only bounded digests for opaque source payloads.
 
+The manifest also retains partial per-feature conversion coverage for selected
+avatar components. Each record names the source component, observed native
+mapping or loss, and any known missing capability. Unclassified causes remain
+unknown. Old manifests default to unassessed coverage. See
+[conversion coverage records](unity-script-host.md#conversion-coverage-records)
+for the schema and current limits. This reporting adds no runtime behavior.
+
 ## Related Documentation
 
+- [Unity Script Host](unity-script-host.md)
 - [Model Import](model-import.md)
 - [Poiyomi Toon Material Conversion](../rendering/poiyomi-toon-material-conversion.md)

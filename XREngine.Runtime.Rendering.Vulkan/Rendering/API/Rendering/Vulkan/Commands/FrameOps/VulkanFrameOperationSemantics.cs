@@ -123,7 +123,8 @@ internal static class VulkanFrameOperationSemantics
             TransformFeedbackOp transformFeedback => transformFeedback.Target ?? transformFeedback.Context.OutputFrameBuffer,
             AdvancedVisibilityOp visibility
                 when visibility.Request.Stage is EAdvancedRenderStage.VisibilityRaster or
-                    EAdvancedRenderStage.DirectionalShadowRaster
+                    EAdvancedRenderStage.DirectionalShadowRaster ||
+                    visibility.Request.Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer
                 => visibility.Target,
             _ => null,
         };
@@ -208,6 +209,16 @@ internal static class VulkanFrameOperationSemantics
                         EFrameOpResourceAccess.Write);
                     break;
                 }
+                if (visibility.Request.Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer)
+                {
+                    // The decal buffer writes its two color targets and only tests
+                    // the resolved visibility depth.
+                    AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write,
+                        includeColor: true, includeDepth: false, includeStencil: false);
+                    AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Read,
+                        includeColor: false, includeDepth: true, includeStencil: true);
+                    break;
+                }
                 if (visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster ||
                     visibility.Request.Phase ==
                         EAdvancedVisibilityStageBackendPhase.LateRaster)
@@ -228,10 +239,11 @@ internal static class VulkanFrameOperationSemantics
                         ref uses,
                         RenderGraphResourceNames.MakeTexture(visibility.Request.MetadataTargetName),
                         version);
-                    AddLogicalResourceUse(
-                        ref uses,
-                        RenderGraphResourceNames.MakeTexture(visibility.Request.SelectionTargetName),
-                        version);
+                    if (!visibility.Request.OmitsSelectionTarget)
+                        AddLogicalResourceUse(
+                            ref uses,
+                            RenderGraphResourceNames.MakeTexture(visibility.Request.SelectionTargetName),
+                            version);
                     AddLogicalResourceUse(
                         ref uses,
                         RenderGraphResourceNames.MakeTexture(visibility.Request.DepthTargetName),
@@ -366,13 +378,21 @@ internal static class VulkanFrameOperationSemantics
             AddStreamlineUse(ref uses, exposure, version, EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
     }
 
+    /// <summary>
+    /// Adds the use of a Streamline image. An image with an engine texture uses the identity of
+    /// that texture, the same identity as a framebuffer write of the texture, so the graph
+    /// orders the DLSS read after the pass that wrote its input and the DLSS write before its
+    /// readers. An image without an engine texture (a swapchain image) uses its native handle.
+    /// </summary>
     private static void AddStreamlineUse(
         ref FrameOpResourceUseList uses,
         in VulkanStreamlineImage image,
         ulong version,
         EFrameOpResourceAccess access)
     {
-        if (image.Image.Handle != 0UL)
+        if (image.Owner is { } owner)
+            uses.Add(ComputeResourceIdentity(owner), version, access);
+        else if (image.Image.Handle != 0UL)
             uses.Add(image.Image.Handle, version, access);
     }
 
@@ -403,8 +423,7 @@ internal static class VulkanFrameOperationSemantics
         switch (op)
         {
             case MeshDrawOp meshDraw:
-                PendingMeshDraw draw = meshDraw.Draw;
-                PublishMeshDrawStats(meshDraw.PassIndex, in draw);
+                PublishMeshDrawStats(meshDraw.PassIndex, in meshDraw.DrawRef);
                 break;
             case IndirectDrawOp indirectDraw:
                 PublishFrameDrawStats(new VulkanFrameDrawStats(
@@ -426,7 +445,7 @@ internal static class VulkanFrameOperationSemantics
         in PendingMeshDraw draw)
     {
         if (passIndex != int.MinValue)
-            PublishFrameDrawStats(draw.Renderer.EstimateFrameDrawStats(draw));
+            PublishFrameDrawStats(draw.Renderer.EstimateFrameDrawStats(in draw));
     }
 
     private static void PublishFrameDrawStats(VulkanFrameDrawStats stats)

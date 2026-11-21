@@ -67,6 +67,8 @@ namespace XREngine.Scene.Components.Editing
 
         /// <summary>
         /// Removes the current instance of the transformation tool from the scene.
+        /// Use this only for real teardown. To remove the tool from view when the
+        /// selection clears, use <see cref="HideInstance"/>.
         /// </summary>
         public static void DestroyInstance()
         {
@@ -74,11 +76,67 @@ namespace XREngine.Scene.Components.Editing
             _instanceNode = null;
         }
 
+        /// <summary>
+        /// Hides the transformation tool and releases its target, but keeps the instance.
+        /// The inactive node does not render, tick, or receive input. The next
+        /// <see cref="GetInstance"/> call retargets and shows the same instance, so a new
+        /// selection does not pay the cost to build the tool meshes again.
+        /// </summary>
+        public static void HideInstance()
+        {
+            SceneNode? node = _instanceNode;
+            if (node is null)
+                return;
+
+            if (node.TryGetComponent(out TransformTool3D? tool) && tool is not null)
+                tool.TargetSocket = null;
+
+            node.IsActiveSelf = false;
+        }
+
+        /// <summary>
+        /// Gets the transformation tool when it is visible. A hidden instance returns false.
+        /// </summary>
         public static bool GetActiveInstance(out TransformTool3D? comp)
         {
             comp = null;
             var instance = InstanceNode;
-            return instance is not null && instance.TryGetComponent(out comp) && comp is not null;
+            return instance is not null &&
+                instance.IsActiveSelf &&
+                instance.TryGetComponent(out comp) &&
+                comp is not null;
+        }
+
+        /// <summary>
+        /// Creates the transformation tool hidden in the world, if it does not exist there yet.
+        /// This moves the one-time cost to build the tool meshes and materials out of the first selection.
+        /// </summary>
+        public static void Prewarm(RuntimeWorld world)
+        {
+            if (_instanceNode?.World == world)
+                return;
+
+            EnsureInstanceNode(world);
+            HideInstance();
+        }
+
+        /// <summary>
+        /// Returns the tool component on the instance node for the world. Creates the node in
+        /// the hidden editor scene when it does not exist or belongs to a different world.
+        /// </summary>
+        private static TransformTool3D EnsureInstanceNode(RuntimeWorld runtimeWorld)
+        {
+            if (_instanceNode?.World != runtimeWorld)
+            {
+                EditorWorldIntegration world = EditorWorldIntegrationRegistry.GetOrAttach(runtimeWorld);
+                _instanceNode?.Destroy();
+                _instanceNode = new SceneNode("TransformTool3D");
+                // Add the transform tool to the hidden editor scene so it's not saved or shown in hierarchy
+                world.AddToEditorScene(_instanceNode);
+            }
+
+            return _instanceNode.GetComponent<TransformTool3D>() ??
+                _instanceNode.AddComponent(static () => new TransformTool3D())!;
         }
 
         private static ETransformSpace _transformSpace = ETransformSpace.World;
@@ -119,25 +177,16 @@ namespace XREngine.Scene.Components.Editing
         {
             if (comp.SceneNode?.SuppressTransformTools == true)
             {
-                DestroyInstance();
+                HideInstance();
                 return null;
             }
 
             if (comp?.World is not RuntimeWorld runtimeWorld)
                 return null;
 
-            EditorWorldIntegration world = EditorWorldIntegrationRegistry.GetOrAttach(runtimeWorld);
-
-            if (_instanceNode?.World != runtimeWorld)
-            {
-                _instanceNode?.Destroy();
-                _instanceNode = new SceneNode("TransformTool3D");
-                // Add the transform tool to the hidden editor scene so it's not saved or shown in hierarchy
-                world.AddToEditorScene(_instanceNode);
-            }
-
-            TransformTool3D instance = _instanceNode.GetComponent<TransformTool3D>() ??
-                _instanceNode.AddComponent(static () => new TransformTool3D())!;
+            TransformTool3D instance = EnsureInstanceNode(runtimeWorld);
+            // Activate before the tick registers: deactivation clears the component ticks.
+            instance.SceneNode.IsActiveSelf = true;
             instance.RegisterDisplayTransformTick();
             instance.TargetSocket = comp;
 

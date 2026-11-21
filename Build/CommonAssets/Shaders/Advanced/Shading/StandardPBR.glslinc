@@ -53,6 +53,17 @@ float XR_ADV_SpecularOcclusion(float NoV, float ambientOcclusion, float roughnes
     return clamp(pow(max(NoV + ambientOcclusion, 0.0), exponent) - 1.0 + ambientOcclusion, 0.0, 1.0);
 }
 
+// Normal-map micro-occlusion for GTAO. GTAO reads only depth, so the creases of a normal map
+// get no AO. A mapped normal that bends away from the surface normal sees part of its hemisphere
+// blocked by the surface itself. 0.5 + 0.5 * cos(bend) estimates the open part of that
+// hemisphere. The result never darkens more than XR_ADV_GTAO_MICRO_OCCLUSION_MAX_DARKENING.
+const float XR_ADV_GTAO_MICRO_OCCLUSION_MAX_DARKENING = 0.3;
+float XR_ADV_NormalMapMicroOcclusion(float mappedDotSurfaceNormal)
+{
+    float open = 0.5 + 0.5 * clamp(mappedDotSurfaceNormal, 0.0, 1.0);
+    return max(open, 1.0 - XR_ADV_GTAO_MICRO_OCCLUSION_MAX_DARKENING);
+}
+
 // Shading flag 128 makes specular light use plain AO, as without the specular occlusion setting.
 float XR_ADV_SpecularVisibility(uint flags, float NoV, float ambientOcclusion, float roughness)
 {

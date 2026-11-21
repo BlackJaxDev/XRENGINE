@@ -69,7 +69,7 @@ public static partial class EditorImGuiUI
         };
 
     /// <summary>Draws the overlay marker of <paramref name="command"/> on the current line when a patch changed it.</summary>
-    private static void DrawWorkbenchPatchMarker(RenderPipeline? pipeline, Rendering.Pipelines.Commands.ViewportRenderCommand command)
+    private static void DrawWorkbenchPatchMarker(RenderPipeline? pipeline, XREngine.Rendering.Pipelines.Commands.ViewportRenderCommand command)
     {
         if (pipeline is null || !pipeline.IsDerived || !pipeline.OverlayReport.Markers.TryGetValue(command, out ERenderCommandPatchKind kind))
             return;
@@ -81,7 +81,7 @@ public static partial class EditorImGuiUI
     }
 
     /// <summary>Draws the context menu of a command row: copy the anchor id or the patch target.</summary>
-    private static void DrawWorkbenchCommandContextMenu(RenderPipeline? pipeline, Rendering.Pipelines.Commands.ViewportRenderCommand command)
+    private static void DrawWorkbenchCommandContextMenu(RenderPipeline? pipeline, XREngine.Rendering.Pipelines.Commands.ViewportRenderCommand command)
     {
         if (!ImGui.BeginPopupContextItem("##WorkbenchCommandContext"))
             return;

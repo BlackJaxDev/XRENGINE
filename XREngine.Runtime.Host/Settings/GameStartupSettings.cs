@@ -7,6 +7,7 @@ using XREngine.Data.Rendering;
 using XREngine.Networking;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
+using YamlDotNet.Serialization;
 
 namespace XREngine
 {
@@ -37,6 +38,7 @@ namespace XREngine
         private float _fixedFramesPerSecond = 90.0f;
         private float? _targetFramesPerSecond = 90.0f;
         private float? _unfocusedTargetFramesPerSecond = null;
+        private float? _vrTargetFramesPerSecond = null;
         private bool _runVRInPlace = true;
         private bool _gpuRenderDispatch = false;
         private bool _runWithoutWindows;
@@ -191,9 +193,15 @@ namespace XREngine
             set => SetField(ref _multiplayerReservationId, value);
         }
 
+        /// <summary>
+        /// Opaque player-scoped admission grant. It stays in memory only: the YAML save does not write it, and a publish
+        /// clears it. A launched game gets it from the realtime join handoff (<c>XRE_REALTIME_JOIN_PAYLOAD</c> in the process
+        /// environment) or from a managed client launch configuration. Never log it.
+        /// </summary>
         [Category("Networking")]
-        [Description("Opaque player-scoped admission grant. This must not be persisted or logged.")]
+        [Description("Opaque player-scoped admission grant. It stays in memory only and must not be logged. A launched game gets it from the realtime join handoff.")]
         [Secret]
+        [YamlIgnore]
         public string? MultiplayerAdmissionSecret
         {
             get => _multiplayerAdmissionSecret;
@@ -338,6 +346,18 @@ namespace XREngine
         {
             get => _unfocusedTargetFramesPerSecond;
             set => SetField(ref _unfocusedTargetFramesPerSecond, value);
+        }
+
+        /// <summary>
+        /// Gets or sets the engine render limit while a VR runtime owns presentation.
+        /// Null removes the engine limit. The VR runtime still paces each frame to the headset display.
+        /// </summary>
+        [Category("Time")]
+        [Description("Target render frames per second while in VR. Null removes the engine limit; the VR runtime still paces frames to the headset refresh rate.")]
+        public float? VrTargetFramesPerSecond
+        {
+            get => _vrTargetFramesPerSecond;
+            set => SetField(ref _vrTargetFramesPerSecond, value);
         }
 
         [Category("Time")]

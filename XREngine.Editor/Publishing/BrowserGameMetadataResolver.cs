@@ -255,9 +255,9 @@ internal sealed class BrowserGameMetadataResolver : IDisposable
         ExportedType type = metadata.GetExportedType(handle);
         string name = metadata.GetString(type.Name);
         if (type.Implementation.Kind == HandleKind.ExportedType)
-            return GetExportedName(metadata, (ExportedTypeHandle)type.Implementation, depth + 1) + "+" + name;
+            return $"{GetExportedName(metadata, (ExportedTypeHandle)type.Implementation, depth + 1)}+{name}";
         string ns = metadata.GetString(type.Namespace);
-        return string.IsNullOrEmpty(ns) ? name : ns + "." + name;
+        return string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
     }
 
     private static bool MatchesReference(MetadataReader source, AssemblyReference expected, MetadataReader target)

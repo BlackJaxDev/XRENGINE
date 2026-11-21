@@ -1365,7 +1365,7 @@ public partial class HumanoidComponent
 
     private Matrix4x4 GetSkeletonRootRelativeBindTransform(Matrix4x4 worldBindTransform)
     {
-        Matrix4x4 rootBind = GetHumanoidBindWorldPose(SceneNode);
+        Matrix4x4 rootBind = GetAuthoredHumanoidBindWorldPose(SceneNode);
         return Matrix4x4.Invert(rootBind, out Matrix4x4 inverseRoot)
             ? worldBindTransform * inverseRoot
             : worldBindTransform;

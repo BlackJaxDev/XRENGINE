@@ -30,6 +30,8 @@ public sealed partial class AdvancedGpuDeformationResources :
     private readonly Dictionary<(XRMeshRenderer Renderer, XRMesh Mesh), AdvancedGpuDeformationPoseEntry>
         _poseEntries;
     private readonly XRGpuFence?[] _slotProducerFences;
+    // Frame id of the preparation that inserted each slot's producer fence. Diagnostics only.
+    private readonly ulong[] _slotProducerFrameIds;
     private readonly bool[] _slotOutputValid;
     private readonly bool[] _slotReusePoisoned;
     private readonly AdvancedPhysicsOutputSource[] _slotPhysicsSources;
@@ -144,6 +146,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             _frameSlotCount,
             initialVertices);
         _slotProducerFences = new XRGpuFence?[_frameSlotCount];
+        _slotProducerFrameIds = new ulong[_frameSlotCount];
         _slotOutputValid = new bool[_frameSlotCount];
         _slotReusePoisoned = new bool[_frameSlotCount];
         _slotPhysicsSources = new AdvancedPhysicsOutputSource[_frameSlotCount];
@@ -458,8 +461,9 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         _ = completedValue;
+        LastBeginFrameDeferral = EAdvancedDeformationSlotDeferral.None;
         if (!TryAcquireOutputSlot(currentFrameSlot))
-            return false;
+            return RecordBeginFrameDeferral(LastOutputReuseDeferral);
         ReleaseStaticGenerationPin(currentFrameSlot);
         _staticGeneration.EnsureInitialized();
         return TryOpenFrame(
@@ -493,11 +497,12 @@ public sealed partial class AdvancedGpuDeformationResources :
         }
 
         _ = completedValue;
+        LastBeginFrameDeferral = EAdvancedDeformationSlotDeferral.None;
         if (!TryAcquireOutputSlot(currentFrameSlot))
-            return false;
+            return RecordBeginFrameDeferral(LastOutputReuseDeferral);
         ReleaseStaticGenerationPin(currentFrameSlot);
         if (!TrySelectStaticGeneration(scene, databaseEpoch, sourceGeneration))
-            return false;
+            return RecordBeginFrameDeferral(EAdvancedDeformationSlotDeferral.StaticGeneration);
 
         return TryOpenFrame(
             frameId,
@@ -515,16 +520,16 @@ public sealed partial class AdvancedGpuDeformationResources :
         bool outputReplaced = false;
         if (requiredOutputVertexCapacity > _outputBuffers.VertexCapacity)
         {
-            if (!TryAcquireAllOutputSlots() ||
-                !TryReplaceOutputBuffers(requiredOutputVertexCapacity))
-            {
-                return false;
-            }
+            if (!TryAcquireAllOutputSlots())
+                return RecordBeginFrameDeferral(LastOutputReuseDeferral);
+            if (!TryReplaceOutputBuffers(requiredOutputVertexCapacity))
+                return RecordBeginFrameDeferral(EAdvancedDeformationSlotDeferral.OutputGrowth);
             ReleaseAllStaticGenerationPins();
             outputReplaced = true;
         }
 
         _frameId = frameId;
+        _lastOpenedOutputSlot = (int)currentFrameSlot;
         // The static generation and the preparation policy can change at a frame boundary.
         _meshSliceRevision++;
         _meshPreparationPolicy = ResolveMeshPreparationPolicy();
@@ -618,13 +623,13 @@ public sealed partial class AdvancedGpuDeformationResources :
             slice = entry.Slice;
             return retainedEnvelope is not { } cachedEnvelope ||
                 (cachedEnvelope.Matches(renderer, mesh) &&
-                    (mesh.BlendshapeCount == 0u ||
+                    (!mesh.HasBlendshapeDeformation ||
                         slice.BlendshapeVersion == cachedEnvelope.BlendshapeWeightsVersion));
         }
 
         bool packed = UsesPackedAggregateInputs;
         bool skinning = !packed || mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
-        bool blendshapes = mesh.HasBlendshapes && (!packed || RuntimeEngine.Rendering.Settings.AllowBlendshapes);
+        bool blendshapes = mesh.HasBlendshapeDeformation && (!packed || RuntimeEngine.Rendering.Settings.AllowBlendshapes);
         // A covered renderer draws the retained physics palette, and the retained envelope
         // proves the mesh, geometry revision, bind root, and bone layout. Without active
         // blendshapes it needs no renderer input preparation; only its pose version is read.
@@ -887,24 +892,25 @@ public sealed partial class AdvancedGpuDeformationResources :
             {
                 // Accepted work without a completion marker has unknown lifetime.
                 // Poison the slot and retain its static source generation.
-                _slotReusePoisoned[_currentFrameSlot] = true;
+                PoisonCurrentSlot(EAdvancedDeformationSlotPoisonCause.NoProducerFence, null);
                 return false;
             }
             if (_slotProducerFences[_currentFrameSlot] is not null)
             {
                 producerFence.Dispose();
-                _slotReusePoisoned[_currentFrameSlot] = true;
+                PoisonCurrentSlot(EAdvancedDeformationSlotPoisonCause.ProducerFenceAlreadyPresent, null);
                 return false;
             }
 
             _slotProducerFences[_currentFrameSlot] = producerFence;
+            _slotProducerFrameIds[_currentFrameSlot] = _frameId;
             _slotOutputValid[_currentFrameSlot] = executed;
             _slotPhysicsSources[_currentFrameSlot] = executed ? _pendingPhysicsSource : default;
             return executed;
         }
-        catch
+        catch (Exception ex)
         {
-            _slotReusePoisoned[_currentFrameSlot] = true;
+            PoisonCurrentSlot(EAdvancedDeformationSlotPoisonCause.DispatchException, ex);
             throw;
         }
     }

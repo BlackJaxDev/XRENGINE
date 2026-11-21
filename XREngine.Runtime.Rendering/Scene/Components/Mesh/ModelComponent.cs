@@ -244,6 +244,26 @@ namespace XREngine.Components.Scene.Mesh
                         long generation = _runtimeMeshRebuildGeneration;
                         Model? model = Model;
                         SubMesh[] sources = model is null ? [] : [.. model.Meshes];
+                        Dictionary<SubMesh, XRMaterial>? preservedOverridesBySource = null;
+                        if (!_meshLinks.IsEmpty)
+                        {
+                            foreach ((SubMesh linkedSource, RenderableMesh linkedMesh) in _meshLinks)
+                            {
+                                if (linkedMesh.MaterialOverride is { } materialOverride)
+                                    (preservedOverridesBySource ??= new(ReferenceEqualityComparer.Instance))[linkedSource] = materialOverride;
+                            }
+                        }
+                        else if (sources.Length > 0 &&
+                                 Meshes.Count == sources.Length &&
+                                 (_subscribedModel is null || ReferenceEquals(_subscribedModel, model)))
+                        {
+                            for (int slotIndex = 0; slotIndex < sources.Length; slotIndex++)
+                            {
+                                if (Meshes[slotIndex].MaterialOverride is { } materialOverride)
+                                    (preservedOverridesBySource ??= new(ReferenceEqualityComparer.Instance))[sources[slotIndex]] = materialOverride;
+                            }
+                        }
+
                         if (_subscribedModel is not null)
                             UnsubscribeModelMeshEvents(_subscribedModel);
 
@@ -258,6 +278,12 @@ namespace XREngine.Components.Scene.Mesh
                             foreach (SubMesh source in sources)
                             {
                                 RenderableMesh renderable = CreateRenderableMesh(source);
+                                if (preservedOverridesBySource is not null &&
+                                    preservedOverridesBySource.TryGetValue(source, out XRMaterial? preservedOverride))
+                                {
+                                    renderable.MaterialOverride = preservedOverride;
+                                }
+
                                 prepared.Add((source, renderable));
                                 if (!IsCurrentModelBuild(model, generation, sources))
                                     break;
@@ -741,6 +767,9 @@ namespace XREngine.Components.Scene.Mesh
             return closest;
         }
 
+        [ThreadStatic]
+        private static List<XRMeshRenderer>? t_blendshapeRendererScratch;
+
         public IEnumerable<XRMeshRenderer> GetAllRenderersWhere(Predicate<XRMeshRenderer> predicate)
         {
             List<XRMeshRenderer> renderers = [];
@@ -784,6 +813,11 @@ namespace XREngine.Components.Scene.Mesh
                     lod.Renderer.SetBlendshapeWeight((uint)index, percentage);
         }
 
+        /// <summary>
+        /// Applies authored default blendshape weights to all active LOD mesh renderers.
+        /// </summary>
+        public void EnsureDefaultBlendShapeWeightsApplied() => ApplyDefaultBlendShapeWeights();
+
         private void ApplyDefaultBlendShapeWeights()
         {
             if (_defaultBlendShapeWeights.Count == 0)
@@ -801,17 +835,34 @@ namespace XREngine.Components.Scene.Mesh
         }
         public void SetBlendShapeWeightNormalized(string blendshapeName, float weight, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
         {
-            //Debug.Out($"SetBlendShapeWeightNormalized: {blendshapeName} {weight}");
+            // Animation drives this for every animated blendshape on every tick.
+            // A renderer applies a weight only when its mesh maps the exact name
+            // to an index, so a direct index lookup gives the same result as the
+            // former name scan with comparison comp, without a closure, a renderer
+            // list, an LOD array, or culture-aware comparisons.
+            // Take the scratch list while in use, so a nested call gets its own list.
+            List<XRMeshRenderer> renderers = t_blendshapeRendererScratch ?? [];
+            t_blendshapeRendererScratch = null;
+            try
+            {
+                foreach (RenderableMesh mesh in Meshes)
+                    mesh.AppendLodRenderers(renderers);
 
-            bool HasMatchingBlendshape(XRMeshRenderer x)
-                => (x?.Mesh?.HasBlendshapes ?? false) && x.Mesh!.BlendshapeNames.Contains(blendshapeName, comp);
-            var rends = GetAllRenderersWhere(HasMatchingBlendshape);
-            //if (!rends.Any())
-            //{
-            //    Debug.LogWarning($"No renderers found with blendshape {blendshapeName}");
-            //    return;
-            //}
-            rends.ForEach(x => x.SetBlendshapeWeightNormalized(blendshapeName, weight));
+                for (int index = 0; index < renderers.Count; index++)
+                {
+                    XRMeshRenderer renderer = renderers[index];
+                    if (renderer?.Mesh is { HasBlendshapes: true } &&
+                        renderer.GetBlendshapeIndex(blendshapeName, out uint blendshapeIndex))
+                    {
+                        renderer.SetBlendshapeWeightNormalized(blendshapeIndex, weight);
+                    }
+                }
+            }
+            finally
+            {
+                renderers.Clear();
+                t_blendshapeRendererScratch = renderers;
+            }
         }
     }
 }

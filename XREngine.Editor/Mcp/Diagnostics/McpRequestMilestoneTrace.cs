@@ -13,8 +13,12 @@ internal sealed class McpRequestMilestoneTrace
     private static int s_nextIndex;
     private static int s_count;
 
-    internal static bool Enabled { get; } =
+    /// <summary>True when <c>XRE_MCP_REQUEST_TRACE</c> is <c>1</c> (invoke_method calls only) or <c>all</c> (every tool call).</summary>
+    internal static bool Enabled { get; } = AllTools ||
         string.Equals(Environment.GetEnvironmentVariable("XRE_MCP_REQUEST_TRACE"), "1", StringComparison.Ordinal);
+
+    private static bool AllTools =>
+        string.Equals(Environment.GetEnvironmentVariable("XRE_MCP_REQUEST_TRACE"), "all", StringComparison.OrdinalIgnoreCase);
 
     private readonly long _requestId;
     private readonly long _startedAt;
@@ -44,7 +48,7 @@ internal sealed class McpRequestMilestoneTrace
             parameters.ValueKind != JsonValueKind.Object ||
             !parameters.TryGetProperty("name", out JsonElement tool) ||
             tool.ValueKind != JsonValueKind.String ||
-            !string.Equals(tool.GetString(), "invoke_method", StringComparison.OrdinalIgnoreCase))
+            (!AllTools && !string.Equals(tool.GetString(), "invoke_method", StringComparison.OrdinalIgnoreCase)))
             return null;
 
         string jsonRpcId = root.TryGetProperty("id", out JsonElement id)
@@ -61,7 +65,7 @@ internal sealed class McpRequestMilestoneTrace
         }
 
         return new McpRequestMilestoneTrace(requestId, startedAt, jsonRpcId,
-            "invoke_method", typeName, methodName);
+            Limit(tool.GetString()) ?? "invoke_method", typeName, methodName);
     }
 
     internal void Record(string milestone, string? detail = null)

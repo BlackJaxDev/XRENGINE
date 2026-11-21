@@ -1,3 +1,5 @@
+using XREngine.Rendering.Models.Materials;
+
 namespace XREngine.Rendering;
 
 public partial class XRMaterial
@@ -13,6 +15,46 @@ public partial class XRMaterial
     {
         get => _advancedLatePassMetadata;
         set => SetField(ref _advancedLatePassMetadata, value);
+    }
+
+    private static readonly AdvancedLatePassMetadata s_derivedSortedAlphaMetadata = new(
+        EAdvancedLatePassKind.SortedAlpha,
+        isOrderDependent: true)
+    {
+        TemporalUnsupportedReason = "Derived sorted-alpha metadata does not author temporal variants.",
+    };
+
+    private static readonly AdvancedLatePassMetadata s_derivedWeightedBlendedOitMetadata = new(
+        EAdvancedLatePassKind.WeightedBlendedOit)
+    {
+        TemporalUnsupportedReason = "Derived weighted blended OIT metadata does not author temporal variants.",
+    };
+
+    /// <summary>
+    /// Returns the late-pass metadata for the Advanced pipeline: the explicit
+    /// <see cref="AdvancedLatePassMetadata"/> when it is set, otherwise metadata derived from
+    /// <see cref="TransparencyMode"/> for a plain blended material.
+    /// </summary>
+    /// <remarks>
+    /// Derivation covers only <see cref="ETransparencyMode.AlphaBlend"/> in the transparent
+    /// forward pass (sorted alpha) and <see cref="ETransparencyMode.WeightedBlendedOit"/> in the
+    /// weighted blended OIT pass. Derived metadata never requests the scene color snapshot, so
+    /// a material that samples scene color must still author its metadata. The derived records
+    /// are shared and immutable, so this call does not allocate.
+    /// </remarks>
+    public AdvancedLatePassMetadata? ResolveAdvancedLatePassMetadata()
+    {
+        if (_advancedLatePassMetadata is { } explicitMetadata)
+            return explicitMetadata;
+
+        return TransparencyMode switch
+        {
+            ETransparencyMode.AlphaBlend when RenderPass == (int)EDefaultRenderPass.TransparentForward
+                => s_derivedSortedAlphaMetadata,
+            ETransparencyMode.WeightedBlendedOit when RenderPass == (int)EDefaultRenderPass.WeightedBlendedOitForward
+                => s_derivedWeightedBlendedOitMetadata,
+            _ => null,
+        };
     }
 
     public bool TryGetAdvancedLateTemporalMaterial(EAdvancedLateTemporalOutput output, out XRMaterial? material)

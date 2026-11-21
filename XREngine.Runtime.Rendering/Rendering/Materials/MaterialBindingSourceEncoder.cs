@@ -21,16 +21,40 @@ namespace XREngine.Rendering.Materials
             bool hasSurfaceBindings = material.SurfaceTextureBindings.Length != 0;
             XRTexture? albedo = material.GetSurfaceTexture(EMaterialTextureSemantic.BaseColor)?.Texture;
             XRTexture? normal = material.GetSurfaceTexture(EMaterialTextureSemantic.Normal)?.Texture;
-            XRTexture? rm = material.GetSurfaceTexture(EMaterialTextureSemantic.Metallic)?.Texture ??
-                material.GetSurfaceTexture(EMaterialTextureSemantic.Roughness)?.Texture;
+            MaterialSurfaceTextureBinding? metallicBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Metallic);
+            MaterialSurfaceTextureBinding? roughnessBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Roughness);
+            XRTexture? rm = metallicBinding?.Texture ?? roughnessBinding?.Texture;
+            // A glTF metallic-roughness texture binds once for both roles: roughness in green and
+            // metallic in blue. The RM slot then reads those channels instead of red and green.
+            bool packedMetallicRoughness = hasSurfaceBindings &&
+                metallicBinding is not null && roughnessBinding is not null &&
+                ReferenceEquals(metallicBinding.Texture, roughnessBinding.Texture) &&
+                roughnessBinding.Channel == 1 && metallicBinding.Channel == 2;
             MaterialSurfaceTextureBinding? emissiveBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Emissive);
             XRTexture? emissive = emissiveBinding?.Texture;
-            if (!hasSurfaceBindings)
+            // A separate opacity map only matters for coverage. A map that is also the base
+            // color adds nothing, because coverage already reads the albedo alpha.
+            XRTexture? opacity = material.GetSurfaceTexture(EMaterialTextureSemantic.Opacity)?.Texture;
+            bool uberSource = !hasSurfaceBindings && IsUberSource(material);
+            if (uberSource)
+            {
+                // Converted uber materials name their samplers by role. Their texture
+                // order follows the source shader, so slot 2 is often a matcap or mask.
+                albedo = FindTextureBySampler(material, "_MainTex");
+                normal = FindTextureBySampler(material, "_BumpMap");
+                rm = null;
+                emissive = FindTextureBySampler(material, "_EmissionMap");
+                opacity = null;
+            }
+            else if (!hasSurfaceBindings)
             {
                 albedo = material.Textures.Count > 0 ? material.Textures[0] : null;
                 normal = material.Textures.Count > 1 ? material.Textures[1] : null;
                 rm = material.Textures.Count > 2 ? material.Textures[2] : null;
+                opacity = null;
             }
+            if (ReferenceEquals(opacity, albedo))
+                opacity = null;
             uint flags = 0u;
 
             if (albedo is not null)
@@ -38,9 +62,47 @@ namespace XREngine.Rendering.Materials
             if (normal is not null)
                 flags |= 1u << 1;
             if (rm is not null)
+            {
                 flags |= 1u << 2;
+                if (packedMetallicRoughness)
+                    flags |= GPUMaterialEntry.PackedMetallicRoughnessFlag;
+            }
             if (material.GetEffectiveTransparencyMode() is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
+            {
                 flags |= GPUMaterialEntry.MaskedCoverageFlag;
+                if (opacity is not null)
+                    flags |= GPUMaterialEntry.OpacityTextureFlag;
+            }
+            else
+            {
+                // Only masked coverage reads the opacity map.
+                opacity = null;
+            }
+
+            SurfaceDetailControls surfaceDetail = ResolveSurfaceDetail(material, ref normal, uberSource);
+            if (normal is not null)
+                flags |= 1u << 1;
+            flags |= surfaceDetail.Flags;
+
+            // Only an explicit occlusion surface binding with a strength above 0 publishes the
+            // texture and its flag. Without the flag, native shading samples no occlusion texture.
+            MaterialSurfaceTextureBinding? occlusionBinding = hasSurfaceBindings
+                ? material.GetSurfaceTexture(EMaterialTextureSemantic.Occlusion)
+                : null;
+            XRTexture? occlusion = occlusionBinding?.Texture;
+            float occlusionStrength = Math.Clamp(material.OcclusionStrength, 0.0f, 1.0f);
+            uint occlusionControls = 0u;
+            if (occlusion is not null && occlusionStrength > 0.0f)
+            {
+                flags |= GPUMaterialEntry.OcclusionTextureFlag;
+                occlusionControls = (uint)Math.Clamp(occlusionBinding!.Channel, 0, 3) |
+                    (occlusionBinding.TexCoordSet > 0 ? GPUMaterialEntry.OcclusionUv1Flag : 0u);
+            }
+            else
+            {
+                occlusion = null;
+                occlusionStrength = 1.0f;
+            }
 
             return new MaterialBindingSourceSnapshot(
                 new GPUMaterialEntry
@@ -49,6 +111,10 @@ namespace XREngine.Rendering.Materials
                     BaseColorOpacity = ResolveBaseColorOpacity(material),
                     RMSE = ResolveRmse(material),
                     AlphaCutoff = material.AlphaCutoff,
+                    SurfaceDetailHeightScale = surfaceDetail.HeightScale,
+                    ParallaxScale = surfaceDetail.ParallaxScale,
+                    OcclusionStrength = occlusionStrength,
+                    OcclusionControls = occlusionControls,
                 },
                 albedo,
                 normal,
@@ -58,11 +124,68 @@ namespace XREngine.Rendering.Materials
                 ResolveEmissionStrength(material),
                 ResolveEmissionTextureMetadata(emissiveBinding),
                 emissiveBinding?.UvScaleOffset ?? new Vector4(1.0f, 1.0f, 0.0f, 0.0f),
-                emissiveBinding?.UvRotation ?? 0.0f);
+                emissiveBinding?.UvRotation ?? 0.0f,
+                opacity,
+                occlusion);
+        }
+
+        private readonly record struct SurfaceDetailControls(uint Flags, float HeightScale, float ParallaxScale);
+
+        /// <summary>
+        /// Resolves the height-map controls of the surface-detail (normal) slot. Imported height and
+        /// bump maps (<c>NormalMapMode</c> 1) have no normal surface binding, so their legacy slot
+        /// (Texture1) supplies the texture. <c>ParallaxScale</c> marks parallax occlusion mapping.
+        /// </summary>
+        private static SurfaceDetailControls ResolveSurfaceDetail(XRMaterial material, ref XRTexture? normal, bool uberSource)
+        {
+            if ((material.Parameter<ShaderInt>("NormalMapMode")?.Value ?? 0) != 1)
+                return default;
+
+            if (normal is null && !uberSource && material.Textures.Count > 1)
+                normal = material.Textures[1];
+            if (normal is null)
+                return default;
+
+            uint flags = GPUMaterialEntry.HeightMapFlag;
+            float heightScale = material.Parameter<ShaderFloat>("HeightMapScale")?.Value ?? 1.0f;
+            float parallaxScale = 0.0f;
+            if (!uberSource && material.Parameter<ShaderFloat>("ParallaxScale") is { Value: > 0.0f } parallax)
+            {
+                parallaxScale = parallax.Value;
+                uint maxSteps = (uint)Math.Clamp(material.Parameter<ShaderInt>("ParallaxMaxSteps")?.Value ?? 32, 1, 255);
+                uint minSteps = (uint)Math.Clamp(material.Parameter<ShaderInt>("ParallaxMinSteps")?.Value ?? 8, 1, 255);
+                uint refineSteps = (uint)Math.Clamp(material.Parameter<ShaderInt>("ParallaxRefineSteps")?.Value ?? 5, 0, 15);
+                flags |= GPUMaterialEntry.ParallaxFlag |
+                    (maxSteps << GPUMaterialEntry.ParallaxMaxStepsShift) |
+                    (minSteps << GPUMaterialEntry.ParallaxMinStepsShift) |
+                    (refineSteps << GPUMaterialEntry.ParallaxRefineStepsShift);
+                if ((material.Parameter<ShaderInt>("ParallaxSilhouette")?.Value ?? 0) != 0)
+                    flags |= GPUMaterialEntry.ParallaxSilhouetteFlag;
+            }
+
+            return new SurfaceDetailControls(flags, heightScale, parallaxScale);
+        }
+
+        /// <summary>True for a converted uber material, which carries the uber lighting-mode parameter.</summary>
+        private static bool IsUberSource(XRMaterial material)
+            => material.Parameter<ShaderInt>("_LightingMode") is not null;
+
+        private static XRTexture? FindTextureBySampler(XRMaterial material, string samplerName)
+        {
+            EventList<XRTexture?> textures = material.Textures;
+            for (int index = 0; index < textures.Count; index++)
+                if (textures[index] is { } texture &&
+                    string.Equals(texture.SamplerName, samplerName, StringComparison.Ordinal))
+                    return texture;
+            return null;
         }
 
         private static Vector4 ResolveBaseColorOpacity(XRMaterial material)
         {
+            // Converted uber materials tint the base map with _Color.
+            if (material.Parameter<ShaderVector4>("_Color") is { } uberColor)
+                return uberColor.Value;
+
             Vector3 baseColor = material.Parameter<ShaderVector3>("BaseColor")?.Value ?? Vector3.One;
             float opacity = material.Parameter<ShaderFloat>("Opacity")?.Value ?? 1.0f;
 

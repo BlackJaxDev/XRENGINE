@@ -118,6 +118,14 @@ namespace XREngine.Rendering
         public readonly long ShaderStateRevision = shaderStateRevision;
         }
 
+    // A use whose combined program is still compiling.
+    private readonly struct PendingProgramUse(XRRenderProgramDescriptor descriptor, XRRenderProgram? fallbackProgram, long shaderStateRevision)
+        {
+        public readonly XRRenderProgramDescriptor Descriptor = descriptor;
+        public readonly XRRenderProgram? FallbackProgram = fallbackProgram;
+        public readonly long ShaderStateRevision = shaderStateRevision;
+        }
+
         private readonly struct MaterialTableProgramCache(
             XRRenderProgram program,
             XRShader? generatedVertexShader,
@@ -141,6 +149,14 @@ namespace XREngine.Rendering
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), XRRenderProgramDescriptor> _materialProgramUseDescriptors = [];
+        // The material shader state revision that each use's descriptor was built from. Materials that
+        // share shaders share one pooled program, so the pooled entry's revision belongs to whichever
+        // material created it and cannot validate another material's use.
+        private readonly Dictionary<(uint materialId, int rendererKey), long> _materialProgramUseRevisions = [];
+        // Uses whose program is still compiling, with the program to draw meanwhile. Building a
+        // descriptor generates shaders and resolves their source, so a pending use must not
+        // rebuild it every frame while the compile runs.
+        private readonly Dictionary<(uint materialId, int rendererKey), PendingProgramUse> _pendingMaterialProgramUses = [];
         private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass, bool forwardColorPass, bool stereoMultiview), MaterialTableProgramCache> _materialTablePrograms = [];
         private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, bool meshletDebugDisplay, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
@@ -2235,14 +2251,18 @@ namespace XREngine.Rendering
         // Ensure or create a combined graphics program for the given material ID (MVP: combined program only)
         private XRRenderProgram? EnsureCombinedProgram(uint materialID, XRMaterial material, XRMeshRenderer? vaoRenderer)
         {
-            GpuDebug($"=== EnsureCombinedProgram: materialID={materialID} ===");
-            
+            // Guarded: the string overload of GpuDebug formats its message before the level check.
+            if (IsEnabled(LogCategory.Draw, LogLevel.Debug))
+                GpuDebug($"=== EnsureCombinedProgram: materialID={materialID} ===");
+
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             long shaderStateRevision = material.ShaderStateRevision;
             (uint materialId, int rendererKey) useKey = (materialID, rendererKey);
 
-            if (TryGetReadyCombinedProgramFromUseCache(useKey, shaderStateRevision, material, out XRRenderProgram? cachedProgram))
+            if (TryGetCombinedProgramFromUseCache(useKey, shaderStateRevision, material, out XRRenderProgram? cachedProgram))
                 return cachedProgram;
+            if (TryGetPendingCombinedProgramFromUseCache(useKey, shaderStateRevision, material, out XRRenderProgram? pendingUseProgram))
+                return pendingUseProgram;
 
             GpuDebug($"Creating new program for material: {material.Name ?? "<unnamed>"}");
             GpuDebug($"Material has {material.Shaders.Count} shaders");
@@ -2307,6 +2327,7 @@ namespace XREngine.Rendering
                 ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
                 existing.Program.Link();
                 _materialProgramUseDescriptors[useKey] = descriptor;
+                _materialProgramUseRevisions[useKey] = shaderStateRevision;
                 return existing.Program;
             }
 
@@ -2316,12 +2337,15 @@ namespace XREngine.Rendering
                 if (IsProgramReadyForCurrentRenderer(pending.Program))
                 {
                     _pendingMaterialPrograms.Remove(descriptor);
+                    _pendingMaterialProgramUses.Remove(useKey);
                     _materialPrograms[descriptor] = pending;
                     _materialProgramUseDescriptors[useKey] = descriptor;
+                    _materialProgramUseRevisions[useKey] = shaderStateRevision;
                     ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
                     return pending.Program;
                 }
 
+                _pendingMaterialProgramUses[useKey] = new(descriptor, fallbackProgram, shaderStateRevision);
                 ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
                 return fallbackProgram ?? pending.Program;
             }
@@ -2352,16 +2376,61 @@ namespace XREngine.Rendering
             {
                 _materialPrograms[descriptor] = cacheEntry;
                 _materialProgramUseDescriptors[useKey] = descriptor;
+                _materialProgramUseRevisions[useKey] = shaderStateRevision;
                 return program;
             }
 
             _pendingMaterialPrograms[descriptor] = cacheEntry;
+            _pendingMaterialProgramUses[useKey] = new(descriptor, fallbackProgram, shaderStateRevision);
             //Debug.Meshes("Program cached");
             
             return fallbackProgram;
         }
 
-        private bool TryGetReadyCombinedProgramFromUseCache(
+        /// <summary>
+        /// Returns the program to draw while a use's program still compiles, without rebuilding its
+        /// descriptor. A ready program moves to the ready caches. A changed material, variant or
+        /// shader configuration drops the pending use, so the caller builds a new descriptor.
+        /// </summary>
+        private bool TryGetPendingCombinedProgramFromUseCache(
+            (uint materialId, int rendererKey) useKey,
+            long shaderStateRevision,
+            XRMaterial material,
+            out XRRenderProgram? program)
+        {
+            program = null;
+            if (!_pendingMaterialProgramUses.TryGetValue(useKey, out PendingProgramUse use))
+                return false;
+
+            XRRenderProgramDescriptor descriptor = use.Descriptor;
+            if (use.ShaderStateRevision != shaderStateRevision ||
+                descriptor.RenderSettingsVersion != RuntimeEngine.Rendering.Settings.ShaderConfigVersion ||
+                descriptor.MaterialVariantHash != material.ActiveUberVariant.VariantHash ||
+                !_pendingMaterialPrograms.TryGetValue(descriptor, out MaterialProgramCache pending))
+            {
+                _pendingMaterialProgramUses.Remove(useKey);
+                return false;
+            }
+
+            pending.Program.Link();
+            if (IsProgramReadyForCurrentRenderer(pending.Program))
+            {
+                _pendingMaterialPrograms.Remove(descriptor);
+                _pendingMaterialProgramUses.Remove(useKey);
+                _materialPrograms[descriptor] = pending;
+                _materialProgramUseDescriptors[useKey] = descriptor;
+                _materialProgramUseRevisions[useKey] = shaderStateRevision;
+                ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
+                program = pending.Program;
+                return true;
+            }
+
+            ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
+            program = use.FallbackProgram ?? pending.Program;
+            return true;
+        }
+
+        private bool TryGetCombinedProgramFromUseCache(
             (uint materialId, int rendererKey) useKey,
             long shaderStateRevision,
             XRMaterial material,
@@ -2378,14 +2447,17 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            if (!_materialPrograms.TryGetValue(descriptor, out MaterialProgramCache cache) ||
-                cache.ShaderStateRevision != shaderStateRevision)
+            if (!_materialProgramUseRevisions.TryGetValue(useKey, out long useRevision) ||
+                useRevision != shaderStateRevision ||
+                !_materialPrograms.TryGetValue(descriptor, out MaterialProgramCache cache))
             {
                 return false;
             }
 
+            // A program that is not ready yet is the same one that a descriptor rebuild would
+            // find in the pool, so return it and let its link progress instead of rebuilding.
             if (!IsProgramReadyForCurrentRenderer(cache.Program))
-                return false;
+                cache.Program.Link();
 
             ShaderProgramLifecycleDiagnostics.RecordGpuDrivenProgramPoolHit();
             program = cache.Program;
@@ -3760,7 +3832,7 @@ namespace XREngine.Rendering
                 sb.AppendLine("    vec3 worldNormal = normalize(FragNorm);");
                 if (samplesMaterialTextures)
                 {
-                    sb.AppendLine("    if ((flags & 2u) != 0u)");
+                    sb.AppendLine($"    if ((flags & 2u) != 0u && (flags & {GPUMaterialEntry.HeightMapFlag}u) == 0u)");
                     sb.AppendLine("    {");
                     sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
                     sb.AppendLine("        mat3 tangentToWorld = mat3(normalize(FragTan), normalize(FragBinorm), worldNormal);");
@@ -3818,7 +3890,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    float materialAmbientOcclusion = 1.0;");
             if (samplesMaterialTextures)
             {
-                sb.AppendLine("    if ((flags & 2u) != 0u)");
+                sb.AppendLine($"    if ((flags & 2u) != 0u && (flags & {GPUMaterialEntry.HeightMapFlag}u) == 0u)");
                 sb.AppendLine("    {");
                 sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
                 sb.AppendLine("        mat3 tangentToWorld = mat3(normalize(FragTan), normalize(FragBinorm), worldNormal);");
@@ -3967,7 +4039,7 @@ namespace XREngine.Rendering
             sb.AppendLine("    vec3 worldNormal = normalize(FragNorm);");
             if (samplesMaterialTextures)
             {
-                sb.AppendLine("    if ((flags & 2u) != 0u)");
+                sb.AppendLine($"    if ((flags & 2u) != 0u && (flags & {GPUMaterialEntry.HeightMapFlag}u) == 0u)");
                 sb.AppendLine("    {");
                 sb.AppendLine("        vec3 tangentNormal = SampleBindlessTexture(material.NormalHandleIndex, FragUV0, vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;");
                 sb.AppendLine("        mat3 tangentToWorld = mat3(normalize(FragTan), normalize(FragBinorm), worldNormal);");
@@ -4131,6 +4203,7 @@ namespace XREngine.Rendering
                 }
             }
             sb.AppendLine("uniform int UseInstanceTransformBuffer; // XRENGINE_FREQUENCY(RuntimeCallback)");
+            sb.AppendLine("uniform int ClipSpaceYDirection;");
             sb.AppendLine();
 
             sb.AppendLine("uint LoadTransformId(uint drawID)");
@@ -6083,6 +6156,11 @@ namespace XREngine.Rendering
                 reason);
         }
 
+        private static readonly string AtlasPositionBufferKey = ECommonBufferType.Position.ToString();
+        private static readonly string AtlasNormalBufferKey = ECommonBufferType.Normal.ToString();
+        private static readonly string AtlasTangentBufferKey = ECommonBufferType.Tangent.ToString();
+        private static readonly string AtlasTexCoord0BufferKey = $"{ECommonBufferType.TexCoord}{0}";
+
         private XRMeshRenderer? ConfigureIndirectRendererForTier(GPUScene scene, EAtlasTier tier)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ConfigureIndirectRendererForTier");
@@ -6111,19 +6189,28 @@ namespace XREngine.Rendering
             if (positions is null || indices is null)
                 return null;
 
+            // The bucket scan configures the same tier renderer once per material
+            // slot. Each buffer change rebuilds the backend buffer bindings, so
+            // only a changed atlas buffer may touch the collection.
             static void SetOrRemoveBuffer(XRMeshRenderer renderer, string key, XRDataBuffer? buffer)
             {
-                if (renderer.Buffers.ContainsKey(key))
+                bool present = renderer.Buffers.TryGetValue(key, out XRDataBuffer? current);
+                if (present && ReferenceEquals(current, buffer))
+                    return;
+                if (!present && buffer is null)
+                    return;
+
+                if (present)
                     renderer.Buffers.Remove(key);
 
                 if (buffer is not null)
                     renderer.Buffers.Add(key, buffer);
             }
 
-            SetOrRemoveBuffer(vaoRenderer, ECommonBufferType.Position.ToString(), positions);
-            SetOrRemoveBuffer(vaoRenderer, ECommonBufferType.Normal.ToString(), normals);
-            SetOrRemoveBuffer(vaoRenderer, ECommonBufferType.Tangent.ToString(), tangents);
-            SetOrRemoveBuffer(vaoRenderer, $"{ECommonBufferType.TexCoord}{0}", uv0);
+            SetOrRemoveBuffer(vaoRenderer, AtlasPositionBufferKey, positions);
+            SetOrRemoveBuffer(vaoRenderer, AtlasNormalBufferKey, normals);
+            SetOrRemoveBuffer(vaoRenderer, AtlasTangentBufferKey, tangents);
+            SetOrRemoveBuffer(vaoRenderer, AtlasTexCoord0BufferKey, uv0);
 
             var renderer = AbstractRenderer.Current;
             if (renderer is null)
@@ -6723,7 +6810,9 @@ namespace XREngine.Rendering
             foreach (var cache in _pendingMaterialPrograms.Values)
                 DestroyMaterialProgramCache(cache);
             _pendingMaterialPrograms.Clear();
+            _pendingMaterialProgramUses.Clear();
             _materialProgramUseDescriptors.Clear();
+            _materialProgramUseRevisions.Clear();
             foreach (var cache in _materialTablePrograms.Values)
                 DestroyMaterialTableProgramCache(cache);
             _materialTablePrograms.Clear();

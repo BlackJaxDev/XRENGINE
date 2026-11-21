@@ -13,6 +13,9 @@ public sealed class RenderBindingPublisherCollection :
     private readonly object _mutationLock = new();
     private IRenderBindingPublisher[] _snapshot = [];
 
+    /// <summary>Raised after a publisher is added or removed, outside the mutation lock.</summary>
+    internal event Action? Changed;
+
     /// <inheritdoc/>
     public int Count => Volatile.Read(ref _snapshot).Length;
 
@@ -42,6 +45,8 @@ public sealed class RenderBindingPublisherCollection :
             replacement[^1] = publisher;
             Volatile.Write(ref _snapshot, replacement);
         }
+
+        Changed?.Invoke();
     }
 
     /// <summary>
@@ -70,26 +75,30 @@ public sealed class RenderBindingPublisherCollection :
             if (current.Length == 1)
             {
                 Volatile.Write(ref _snapshot, []);
-                return true;
             }
-
-            IRenderBindingPublisher[] replacement =
-                new IRenderBindingPublisher[current.Length - 1];
-            if (matchIndex > 0)
-                Array.Copy(current, 0, replacement, 0, matchIndex);
-            if (matchIndex < replacement.Length)
+            else
             {
-                Array.Copy(
-                    current,
-                    matchIndex + 1,
-                    replacement,
-                    matchIndex,
-                    replacement.Length - matchIndex);
-            }
 
-            Volatile.Write(ref _snapshot, replacement);
-            return true;
+                IRenderBindingPublisher[] replacement =
+                    new IRenderBindingPublisher[current.Length - 1];
+                if (matchIndex > 0)
+                    Array.Copy(current, 0, replacement, 0, matchIndex);
+                if (matchIndex < replacement.Length)
+                {
+                    Array.Copy(
+                        current,
+                        matchIndex + 1,
+                        replacement,
+                        matchIndex,
+                        replacement.Length - matchIndex);
+                }
+
+                Volatile.Write(ref _snapshot, replacement);
+            }
         }
+
+        Changed?.Invoke();
+        return true;
     }
 
     /// <summary>
@@ -99,6 +108,7 @@ public sealed class RenderBindingPublisherCollection :
     {
         lock (_mutationLock)
             Volatile.Write(ref _snapshot, []);
+        Changed?.Invoke();
     }
 
     internal IRenderBindingPublisher[] CaptureSnapshot()

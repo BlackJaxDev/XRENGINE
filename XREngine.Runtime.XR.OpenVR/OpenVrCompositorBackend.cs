@@ -3,7 +3,7 @@ using XREngine.Input;
 
 namespace XREngine;
 
-/// <summary>Owns OpenVR compositor texture state and the single post-present handoff.</summary>
+/// <summary>Owns OpenVR compositor texture state, the single post-present handoff, and the compositor fade.</summary>
 internal sealed class OpenVrCompositorBackend : IRuntimeOpenVrCompositor
 {
     public static OpenVrCompositorBackend Instance { get; } = new();
@@ -44,5 +44,27 @@ internal sealed class OpenVrCompositorBackend : IRuntimeOpenVrCompositor
         _textureBounds = bounds;
         compositor.PostPresentHandoff();
         return new RuntimeOpenVrSubmitResult((int)left, (int)right);
+    }
+
+    public bool IsAvailable
+        => Valve.VR.OpenVR.System is not null && Valve.VR.OpenVR.Compositor is not null;
+
+    public bool TryFadeToColor(float seconds, float red, float green, float blue, float alpha)
+    {
+        CVRCompositor? compositor = Valve.VR.OpenVR.System is null ? null : Valve.VR.OpenVR.Compositor;
+        if (compositor is null)
+            return false;
+
+        try
+        {
+            // The fade is a foreground fade over the scene layer. A background fade would apply only when the application stops submitting.
+            compositor.FadeToColor(seconds, red, green, blue, alpha, false);
+            return true;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            // A runtime that stopped can fail the call. The caller treats the fade as lost and reports it.
+            return false;
+        }
     }
 }

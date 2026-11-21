@@ -110,7 +110,9 @@ public sealed class VulkanCpuDirectOcclusionTests
         proxyRenderer.ShouldContain("RenderingCameraOverride is a thread-local stack");
         proxyRenderer.ShouldContain("RuntimeEngine.Rendering.State.RenderingCameraOverride = null;");
         proxyRenderer.ShouldContain("rp.DepthTest.Function = EComparison.Lequal;");
-        frameOps.ShouldContain("RuntimeEngine.Rendering.State.MapDepthComparison(dt.Function)");
+        string drawState = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanMeshDrawFixedState.cs");
+        drawState.ShouldContain("RuntimeEngine.Rendering.State.MapDepthComparison(dt.Function)");
+        frameOps.ShouldContain("VulkanMeshDrawFixedState.Resolve(");
 
         string depthPrepass = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_ForwardDepthNormalPrePass.cs");
         depthPrepass.ShouldContain("commands.RenderCPUMeshOnly(pass);");

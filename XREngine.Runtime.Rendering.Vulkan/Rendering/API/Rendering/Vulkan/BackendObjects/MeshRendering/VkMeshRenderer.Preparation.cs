@@ -20,6 +20,20 @@ internal unsafe partial class VkMeshRenderer
 
 	public string LastPrepareDetail => _lastPrepareDetail;
 
+	internal bool HasTerminalProgramPreparationFailure
+	{
+		get
+		{
+			if (_program is null)
+				return false;
+			XRRenderProgram.EShaderProgramBackendStage stage =
+				_program.Data.ShaderMetadata.Backend.Stage;
+			return stage is XRRenderProgram.EShaderProgramBackendStage.Failed or
+				XRRenderProgram.EShaderProgramBackendStage.BinaryUploadFailed or
+				XRRenderProgram.EShaderProgramBackendStage.Abandoned;
+		}
+	}
+
 	public bool TryPrepareForRendering()
 		=> TryPrepareForDrawEnqueue(ResolveMaterial(null, 1u), false, out _);
 
@@ -51,6 +65,9 @@ internal unsafe partial class VkMeshRenderer
 
 		if (MeshRenderer.HasRenderDataPreparation)
 			MeshRenderer.OnPreparingRenderData();
+
+		if (!TryEnsureUberRasterSourceReady(material, out reason))
+			return false;
 
 		EnsureRuntimeDeformationBuffersCurrent();
 		XRMaterial coverageSource = material.ShadowBindingSourceMaterial ?? material;
@@ -106,7 +123,8 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		bool requireExactGeometry,
 		out string reason,
-		bool indexedIndirect = false)
+		bool indexedIndirect = false,
+		EditorHighlightRasterOutput editorHighlightOutput = default)
 	{
 		reason = "Ready";
 
@@ -133,6 +151,9 @@ internal unsafe partial class VkMeshRenderer
 		if (MeshRenderer.HasRenderDataPreparation)
 			MeshRenderer.OnPreparingRenderData();
 
+		if (!TryEnsureUberRasterSourceReady(material, out reason))
+			return false;
+
 		EnsureRuntimeDeformationBuffersCurrent();
 
 		RequestIndexPreparationBeforeDrawAdmission();
@@ -153,7 +174,7 @@ internal unsafe partial class VkMeshRenderer
 			_activeProgramLinkGeneration == _program.LinkGeneration &&
 			!_buffersDirty &&
 			!shaderConfigurationChanged &&
-			IsActiveGeneratedProgramCurrent(material);
+			IsActiveGeneratedProgramCurrent(material, editorHighlightOutput);
 		if (canReuseProgramAndBuffers &&
 			AreCachedBuffersReadyForRendering(out _, ProgramUsesShaderGeneratedVertices()))
 		{
@@ -164,7 +185,7 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
-		if (!EnsureProgram(material))
+		if (!EnsureProgram(material, editorHighlightOutput))
 			return SetPrepareResult(false, "ProgramsPending", DescribePendingProgram(), out reason);
 		if (requiresTriangleCoverage && ProgramUsesShaderGeneratedVertices())
 			return SetPrepareResult(false, "UnsupportedVertexUdimDraw", "Vertex-mode UDIM discard requires the original triangle vertex stream.", out reason);
@@ -185,29 +206,72 @@ internal unsafe partial class VkMeshRenderer
 		return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("DeferredUntilRecording"), out reason);
 	}
 
+	/// <summary>
+	/// Reacquires the persistent binding artifact of a kept draw recipe. The renderer's
+	/// UDIM coverage publisher follows the program that was prepared last, which can be
+	/// another variant of this renderer, so the publisher is first brought to the state
+	/// that a full materialization with <paramref name="program"/> publishes.
+	/// </summary>
+	internal bool TryGetCurrentPersistentProgramBindingArtifactForReuse(
+		XRMaterial material,
+		VkRenderProgram program,
+		in LayeredShadowUniformState shadowUniformState,
+		out ComputeDispatchSnapshot? artifact)
+	{
+		artifact = null;
+		if (!_recordDrawSync.TryEnter())
+			return false;
+		try
+		{
+			XRMaterial coverageSource = material.ShadowBindingSourceMaterial ?? material;
+			bool required = NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(coverageSource);
+			bool reflected = ReflectsUdimTriangleCoverage(program);
+			if (required && !reflected)
+				return false;
+			MeshRenderer.EnterResourcePublicationLease();
+			try
+			{
+				if (!MeshRenderer.TryPrepareUdimTriangleCoverage(Mesh, material, reflected, out _))
+					return false;
+			}
+			finally
+			{
+				MeshRenderer.ExitResourcePublicationLease();
+			}
+		}
+		finally
+		{
+			_recordDrawSync.Exit();
+		}
+		return TryGetCurrentPersistentProgramBindingArtifact(material, program, in shadowUniformState, out artifact);
+	}
+
+	private static bool ReflectsUdimTriangleCoverage(VkRenderProgram? program)
+	{
+		if (program is null)
+			return false;
+		var bindings = program.DescriptorBindings;
+		for (int index = 0; index < bindings.Count; index++)
+		{
+			if (bindings[index].Set == 0u &&
+				bindings[index].Binding == XRMeshRenderer.UdimTriangleCoverageBinding &&
+				bindings[index].Name == "SourceUdimTriangleCoverage" &&
+				bindings[index].DescriptorType == Silk.NET.Vulkan.DescriptorType.StorageBuffer &&
+				bindings[index].Count == 1u &&
+				(bindings[index].StageFlags & Silk.NET.Vulkan.ShaderStageFlags.FragmentBit) != 0)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private bool TryPrepareUdimTriangleCoverageForProgram(
 		XRMaterial material,
 		bool required,
 		out string reason)
 	{
-		bool reflected = false;
-		if (_program is { } program)
-		{
-			var bindings = program.DescriptorBindings;
-			for (int index = 0; index < bindings.Count; index++)
-			{
-				if (bindings[index].Set == 0u &&
-					bindings[index].Binding == XRMeshRenderer.UdimTriangleCoverageBinding &&
-					bindings[index].Name == "SourceUdimTriangleCoverage" &&
-					bindings[index].DescriptorType == Silk.NET.Vulkan.DescriptorType.StorageBuffer &&
-					bindings[index].Count == 1u &&
-					(bindings[index].StageFlags & Silk.NET.Vulkan.ShaderStageFlags.FragmentBit) != 0)
-				{
-					reflected = true;
-					break;
-				}
-			}
-		}
+		bool reflected = ReflectsUdimTriangleCoverage(_program);
 		if (required && !reflected)
 			return SetPrepareResult(false, "UnsupportedVertexUdimProgram", "The active program has no source triangle UDIM coverage binding.", out reason);
 		bool prepared;
@@ -234,6 +298,33 @@ internal unsafe partial class VkMeshRenderer
 
 		XRRenderProgram.ShaderProgramBackendStatus status = _program.Data.ShaderMetadata.Backend;
 		return $"Program='{_program.Data.Name}' active={_program.IsActive} linkReady={_program.Data.LinkReady} stage={status.Stage} failure='{status.FailureReason}' detail='{status.Detail}'";
+	}
+
+	private bool TryEnsureUberRasterSourceReady(XRMaterial material, out string reason)
+	{
+		if (material.IsUberRasterSourceReady())
+		{
+			reason = "Ready";
+			return true;
+		}
+
+		UberMaterialVariantStatus status = material.UberVariantStatus;
+		if (status.Stage is not (EUberMaterialVariantStage.Requested or
+			EUberMaterialVariantStage.Preparing or
+			EUberMaterialVariantStage.Compiling or
+			EUberMaterialVariantStage.Failed))
+		{
+			material.RequestUberVariantRebuild();
+			status = material.UberVariantStatus;
+		}
+
+		string detail = $"Authored Uber raster source is not ready: material='{material.Name ?? "<unnamed>"}' " +
+			$"stage={status.Stage} activeHash={status.ActiveVariantHash:x16} " +
+			$"requestedHash={status.RequestedVariantHash:x16} failure='{status.FailureReason ?? "<none>"}'.";
+		return SetPrepareResult(false,
+			status.Stage == EUberMaterialVariantStage.Failed ? "UberVariantFailed" : "UberVariantPending",
+			detail,
+			out reason);
 	}
 
 	private bool TryPrepareCapturedProgramForRecording(
@@ -384,13 +475,19 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		string? identity = preparedProgramIdentity ?? preparedProgram.Data?.Name;
+		string? identity = preparedProgramIdentity ?? ResolveProgramInterfaceIdentity(preparedProgram.Data);
+		// The captured identity can be the renderer's identity at enqueue time, so it alone
+		// cannot prove a relink: the two programs must also share one interface.
 		bool replacingSameInterface =
 			_program is not null &&
 			!ReferenceEquals(_program, preparedProgram) &&
 			string.Equals(
 				_activeProgramIdentity,
 				identity,
+				StringComparison.Ordinal) &&
+			string.Equals(
+				ResolveProgramInterfaceIdentity(_program.Data),
+				ResolveProgramInterfaceIdentity(preparedProgram.Data),
 				StringComparison.Ordinal);
 		if (!ReferenceEquals(_program, preparedProgram) ||
 			_program is null ||
@@ -429,6 +526,19 @@ internal unsafe partial class VkMeshRenderer
 	/// program interface when that interface is rebuilt in place or its backend
 	/// wrapper is replaced.
 	/// </summary>
+	/// <summary>
+	/// Names the program interface for relink detection. Generated programs, such as the
+	/// GPU-driven combined programs, can share a display name across materials; their
+	/// descriptor key is unique per shader set and variant, so it identifies the interface.
+	/// </summary>
+	private static string? ResolveProgramInterfaceIdentity(XRRenderProgram? program)
+	{
+		if (program is null)
+			return null;
+		XRRenderProgramDescriptor descriptor = program.ProgramDescriptor;
+		return descriptor.IsEmpty ? program.Name : descriptor.StableKey;
+	}
+
 	private void ObserveActiveProgramLinkGeneration(
 		VkRenderProgram program,
 		bool replacingSameInterface = false)
@@ -483,7 +593,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private bool CanReuseCapturedPreparedRenderState(XRMaterial material, VkRenderProgram preparedProgram, string? preparedProgramIdentity)
 	{
-		string? identity = preparedProgramIdentity ?? preparedProgram.Data?.Name;
+		string? identity = preparedProgramIdentity ?? ResolveProgramInterfaceIdentity(preparedProgram.Data);
 		return ReferenceEquals(_lastPreparedMaterial, material) &&
 			ReferenceEquals(_program, preparedProgram) &&
 			string.Equals(_activeProgramIdentity, identity, StringComparison.Ordinal) &&

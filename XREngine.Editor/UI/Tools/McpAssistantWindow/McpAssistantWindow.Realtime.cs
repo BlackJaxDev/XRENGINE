@@ -143,9 +143,10 @@ public sealed partial class McpAssistantWindow
 
                 var tcEntry = new ToolCallEntry
                 {
-                    ToolName = FormatToolName(pendingDone.Name),
+                    ToolName = pendingDone.Name,
                     ArgsSummary = SummarizeToolArguments(pendingDone.Name, pendingDone.Arguments.ToString()),
                 };
+                tcEntry.SetInvocation(pendingDone.Arguments.ToString());
                 AddToolCallSegmented(target, tcEntry);
 
                 var toolResult = await ExecuteRealtimeFunctionCallAsync(pendingDone, ct);
@@ -155,6 +156,7 @@ public sealed partial class McpAssistantWindow
                 tcEntry.ContextResultSummary = SummarizeToolResultForContext(toolResult.FunctionOutput);
                 tcEntry.IsError = toolResult.IsError;
                 tcEntry.IsComplete = true;
+                tcEntry.UpdateOutcome(toolResult.FunctionOutput);
 
                 if (toolResult.IsError)
                     Debug.LogWarning($"MCP tool call '{pendingDone.Name}' failed: {toolResult.FunctionOutput}");
@@ -180,6 +182,8 @@ public sealed partial class McpAssistantWindow
             else if (string.Equals(eventType, "error", StringComparison.OrdinalIgnoreCase))
             {
                 usage.Result = "Failed";
+                target.Status = ChatMessageStatus.Failed;
+                target.StatusDetail = "The realtime provider reported an error.";
                 target.Content = BuildAssistantContent(sb, toolLog, json);
                 break;
             }
@@ -263,7 +267,7 @@ public sealed partial class McpAssistantWindow
         ["response"] = new JsonObject { ["modalities"] = new JsonArray("text") }
     };
 
-    private static JsonArray BuildRealtimeFunctionTools() =>
+    private JsonArray BuildRealtimeFunctionTools() => IsReadOnlyRequest ? [] :
     [
         new JsonObject
         {
@@ -341,6 +345,13 @@ public sealed partial class McpAssistantWindow
 
     private async Task<RealtimeFunctionResult> ExecuteRealtimeFunctionCallAsync(PendingFunctionCall call, CancellationToken ct)
     {
+        if (IsReadOnlyRequest)
+            return new RealtimeFunctionResult
+            {
+                IsError = true,
+                FunctionOutput = "{\"ok\":false,\"error\":\"Realtime capture tools are unavailable in read-only mode.\"}"
+            };
+
         if (!string.Equals(call.Name, "request_view_screenshot", StringComparison.Ordinal))
         {
             return new RealtimeFunctionResult

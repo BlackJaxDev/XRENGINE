@@ -103,6 +103,7 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.FramePlan?.RequiresFreshEmptyTerminalWrite == true)
                 {
                     noAuthoredDesktopOutput = true;
+                    CaptureMissingTerminalWrite(ref recordingState);
                     recordingState.RecordingDeferredReason =
                         "the desktop frame recorded no authored scene terminal write";
                     _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);

@@ -366,6 +366,13 @@ public sealed class EditorRenderPipelineDiagnosticsPreferences(EditorDebugOption
         set => owner.DebugPresentClear = value;
     }
 
+    [EnvironmentVariablePreference(XREngineEnvironmentVariables.DebugRetryRecoveryClear)]
+    public bool DebugRetryRecoveryClear
+    {
+        get => owner.DebugRetryRecoveryClear;
+        set => owner.DebugRetryRecoveryClear = value;
+    }
+
     [EnvironmentVariablePreference(XREngineEnvironmentVariables.DeferredDebug)]
     public int DeferredDebugView
     {
@@ -420,6 +427,7 @@ public sealed class EditorRenderPipelineDiagnosticsPreferences(EditorDebugOption
         QuadBlitDiagnostics = source.QuadBlitDiagnostics;
         PostProcessDiagnostics = source.PostProcessDiagnostics;
         DebugPresentClear = source.DebugPresentClear;
+        DebugRetryRecoveryClear = source.DebugRetryRecoveryClear;
         DeferredDebugView = source.DeferredDebugView;
         DiagDeferredLighting = source.DiagDeferredLighting;
         ForceFullViewport = source.ForceFullViewport;

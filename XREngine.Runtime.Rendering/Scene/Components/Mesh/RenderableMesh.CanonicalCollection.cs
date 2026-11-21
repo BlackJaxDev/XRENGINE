@@ -92,6 +92,9 @@ public partial class RenderableMesh
             !scene.TryGetCanonicalCompatibilityReason(_rc, 0, out _);
     }
 
+    /// <summary>True after the first collect seeded the palette and draw matrices from the current render state.</summary>
+    internal bool InitialRenderStateSeeded => _initialRenderStateSeeded;
+
     private void SeedInitialRenderState(XRMeshRenderer? renderer)
     {
         if (_initialRenderStateSeeded)

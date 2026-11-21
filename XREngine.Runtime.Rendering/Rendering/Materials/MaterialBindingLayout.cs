@@ -58,12 +58,19 @@ namespace XREngine.Rendering.Materials
         EMaterialBindingScope Scope = EMaterialBindingScope.Material,
         EMaterialBindingStorage Storage = EMaterialBindingStorage.Field);
 
+    /// <summary>
+    /// One texture of a material binding layout. Its position in the texture list is its binding
+    /// slot. Its handle word normally comes before the flags word. <paramref name="PackHandleAfterFields"/>
+    /// packs the handle word after the fields instead, so a texture added to an existing layout keeps
+    /// the word offsets of every earlier member.
+    /// </summary>
     public sealed record MaterialTextureBinding(
         string Name,
         string Semantic,
         string Dimensionality,
         string DefaultLiteral = "0u",
-        EMaterialBindingStorage Storage = EMaterialBindingStorage.Bindless);
+        EMaterialBindingStorage Storage = EMaterialBindingStorage.Bindless,
+        bool PackHandleAfterFields = false);
 
     public sealed record MaterialBindingPackedMember(
         string Name,
@@ -239,7 +246,8 @@ namespace XREngine.Rendering.Materials
 
             foreach (MaterialTextureBinding texture in textures)
             {
-                members.Add(new(texture.Name + "HandleIndex", "uint", wordOffset++, 1u, texture.DefaultLiteral));
+                if (!texture.PackHandleAfterFields)
+                    members.Add(new(texture.Name + "HandleIndex", "uint", wordOffset++, 1u, texture.DefaultLiteral));
             }
 
             if (usesFlags)
@@ -252,6 +260,12 @@ namespace XREngine.Rendering.Materials
                 uint wordCount = GetStd430WordCount(field.GlslType);
                 members.Add(new(field.Name, field.GlslType, wordOffset, wordCount, field.DefaultLiteral));
                 wordOffset += wordCount;
+            }
+
+            foreach (MaterialTextureBinding texture in textures)
+            {
+                if (texture.PackHandleAfterFields)
+                    members.Add(new(texture.Name + "HandleIndex", "uint", wordOffset++, 1u, texture.DefaultLiteral));
             }
 
             return [.. members];
@@ -473,6 +487,8 @@ namespace XREngine.Rendering.Materials
                 !TryWriteUInt(layout, destination, "NormalHandleIndex", entry.NormalHandleIndex, out error) ||
                 !TryWriteUInt(layout, destination, "RMHandleIndex", entry.RMHandleIndex, out error) ||
                 !TryWriteUInt(layout, destination, "Flags", entry.Flags, out error) ||
+                !TryWriteUInt(layout, destination, "OpacityHandleIndex", entry.OpacityHandleIndex, out error) ||
+                !TryWriteOptionalUInt(layout, destination, "OcclusionHandleIndex", entry.OcclusionHandleIndex, out error) ||
                 !TryWriteVector4(layout, destination, "BaseColorOpacity", entry.BaseColorOpacity, out error) ||
                 !TryWriteVector4(layout, destination, "RMSE", entry.RMSE, out error) ||
                 !TryWriteVector4(layout, destination, "EmissionColor", emissionColor, out error) ||
@@ -480,7 +496,11 @@ namespace XREngine.Rendering.Materials
                 !TryWriteVector4(layout, destination, "EmissionTextureMetadata", emissionTextureMetadata, out error) ||
                 !TryWriteVector4(layout, destination, "EmissionUvScaleOffset", emissionUvScaleOffset, out error) ||
                 !TryWriteFloat(layout, destination, "EmissionUvRotation", emissionUvRotation, out error) ||
-                !TryWriteFloat(layout, destination, "AlphaCutoff", entry.AlphaCutoff, out error))
+                !TryWriteFloat(layout, destination, "AlphaCutoff", entry.AlphaCutoff, out error) ||
+                !TryWriteOptionalFloat(layout, destination, "SurfaceDetailHeightScale", entry.SurfaceDetailHeightScale, out error) ||
+                !TryWriteOptionalFloat(layout, destination, "ParallaxScale", entry.ParallaxScale, out error) ||
+                !TryWriteOptionalFloat(layout, destination, "OcclusionStrength", entry.OcclusionStrength, out error) ||
+                !TryWriteOptionalUInt(layout, destination, "OcclusionControls", entry.OcclusionControls, out error))
             {
                 return false;
             }
@@ -511,6 +531,34 @@ namespace XREngine.Rendering.Materials
 
             destination[(int)member.WordOffset] = BitConverter.SingleToUInt32Bits(value);
             return true;
+        }
+
+        /// <summary>
+        /// Writes a float member when the layout declares it. Layouts without the member skip it.
+        /// </summary>
+        private static bool TryWriteOptionalFloat(MaterialBindingLayout layout, Span<uint> destination, string memberName, float value, out string error)
+        {
+            if (!layout.TryGetPackedMember(memberName, out _))
+            {
+                error = string.Empty;
+                return true;
+            }
+
+            return TryWriteFloat(layout, destination, memberName, value, out error);
+        }
+
+        /// <summary>
+        /// Writes a uint member when the layout declares it. Layouts without the member skip it.
+        /// </summary>
+        private static bool TryWriteOptionalUInt(MaterialBindingLayout layout, Span<uint> destination, string memberName, uint value, out string error)
+        {
+            if (!layout.TryGetPackedMember(memberName, out _))
+            {
+                error = string.Empty;
+                return true;
+            }
+
+            return TryWriteUInt(layout, destination, memberName, value, out error);
         }
 
         private static bool TryWriteVector4(MaterialBindingLayout layout, Span<uint> destination, string memberName, Vector4 value, out string error)
@@ -638,6 +686,14 @@ namespace XREngine.Rendering.Materials
         /// </summary>
         public const uint VulkanMaterialTextureDescriptorTableBinding = 31u;
 
+        /// <summary>
+        /// Texture slots of the standard layouts (<see cref="OpaqueDeferred"/>, <see cref="ForwardOpaque"/>,
+        /// <see cref="MaskedForward"/>): albedo, normal, metallic-roughness, emissive, opacity, and
+        /// ambient occlusion. The occlusion handle and its controls follow the other fields (words 36-38),
+        /// so the earlier word offsets match layouts without occlusion.
+        /// </summary>
+        public const int StandardTextureCount = 6;
+
         public static MaterialBindingLayout OpaqueDeferred { get; } = new(
             "DeferredOpaque",
             (int)EDefaultRenderPass.OpaqueDeferred,
@@ -657,12 +713,18 @@ namespace XREngine.Rendering.Materials
                 new("EmissionUvScaleOffset", "vec4", "emissionUvScaleOffset", "vec4(1.0, 1.0, 0.0, 0.0)"),
                 new("EmissionUvRotation", "float", "emissionUvRotation", "0.0"),
                 new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
+                new("SurfaceDetailHeightScale", "float", "surfaceDetailHeightScale", "0.0"),
+                new("ParallaxScale", "float", "parallaxScale", "0.0"),
+                new("OcclusionStrength", "float", "occlusionStrength", "1.0"),
+                new("OcclusionControls", "uint", "occlusionControls", "0u"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
                 new("Emissive", "emissive", "2D"),
+                new("Opacity", "opacity", "2D"),
+                new("Occlusion", "occlusion", "2D", PackHandleAfterFields: true),
             ],
             supportsGeneratedMaterialTableDispatch: true);
 
@@ -681,12 +743,18 @@ namespace XREngine.Rendering.Materials
                 new("EmissionUvScaleOffset", "vec4", "emissionUvScaleOffset", "vec4(1.0, 1.0, 0.0, 0.0)"),
                 new("EmissionUvRotation", "float", "emissionUvRotation", "0.0"),
                 new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
+                new("SurfaceDetailHeightScale", "float", "surfaceDetailHeightScale", "0.0"),
+                new("ParallaxScale", "float", "parallaxScale", "0.0"),
+                new("OcclusionStrength", "float", "occlusionStrength", "1.0"),
+                new("OcclusionControls", "uint", "occlusionControls", "0u"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
                 new("Emissive", "emissive", "2D"),
+                new("Opacity", "opacity", "2D"),
+                new("Occlusion", "occlusion", "2D", PackHandleAfterFields: true),
             ],
             supportsGeneratedMaterialTableDispatch: true);
 
@@ -705,12 +773,18 @@ namespace XREngine.Rendering.Materials
                 new("EmissionUvScaleOffset", "vec4", "emissionUvScaleOffset", "vec4(1.0, 1.0, 0.0, 0.0)"),
                 new("EmissionUvRotation", "float", "emissionUvRotation", "0.0"),
                 new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
+                new("SurfaceDetailHeightScale", "float", "surfaceDetailHeightScale", "0.0"),
+                new("ParallaxScale", "float", "parallaxScale", "0.0"),
+                new("OcclusionStrength", "float", "occlusionStrength", "1.0"),
+                new("OcclusionControls", "uint", "occlusionControls", "0u"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
                 new("Emissive", "emissive", "2D"),
+                new("Opacity", "opacity", "2D"),
+                new("Occlusion", "occlusion", "2D", PackHandleAfterFields: true),
             ],
             supportsGeneratedMaterialTableDispatch: true);
 

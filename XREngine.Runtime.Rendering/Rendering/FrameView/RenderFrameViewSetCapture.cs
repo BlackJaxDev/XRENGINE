@@ -11,7 +11,27 @@ public static class RenderFrameViewSetCapture
     [ThreadStatic]
     private static float? s_elapsedTimeOverride;
 
-    internal static float ResolveElapsedTime(float elapsedTime) => s_elapsedTimeOverride ?? elapsedTime;
+    private static float s_diagnosticElapsedTime = float.NaN;
+
+    internal static float ResolveElapsedTime(float elapsedTime)
+    {
+        if (s_elapsedTimeOverride is float scopedTime)
+            return scopedTime;
+        float diagnosticTime = Volatile.Read(ref s_diagnosticElapsedTime);
+        return float.IsNaN(diagnosticTime) ? elapsedTime : diagnosticTime;
+    }
+
+    /// <summary>
+    /// Freezes render-side elapsed time for a visual comparison without changing the physics clock.
+    /// This includes shared shader time and the CPU exposure update cadence.
+    /// A scoped capture time takes priority. Pass null to restore the engine time.
+    /// </summary>
+    public static void SetDiagnosticElapsedTime(float? elapsedTime)
+    {
+        if (elapsedTime.HasValue && !float.IsFinite(elapsedTime.Value))
+            throw new ArgumentOutOfRangeException(nameof(elapsedTime));
+        Volatile.Write(ref s_diagnosticElapsedTime, elapsedTime ?? float.NaN);
+    }
 
     /// <summary>Freezes shared view uniforms for a multi-frame scene capture without changing the engine clock.</summary>
     public static ElapsedTimeScope PushElapsedTime(float? elapsedTime) => new(elapsedTime);
@@ -106,6 +126,13 @@ public static class RenderFrameViewSetCapture
         var builder = new RenderFrameViewSetBuilder(storage);
         if (rightCamera is null)
         {
+            if (frozenDesktopView is null &&
+                TryResolveOpenXrPerEyeView(state, camera, out EVrOutputViewKind eyeKind, out ulong eyeHistoryKey))
+            {
+                builder.Add(CaptureView(camera, eyeKind, 0u, width, height, eyeHistoryKey));
+                return builder.Build(EVrViewRenderMode.SequentialViews, EVrVisibilityPolicy.PerView, 1, "OpenXR eye frame view");
+            }
+
             RenderFrameViewDescriptor view = frozenDesktopView ??
                 CaptureView(
                     camera,
@@ -148,6 +175,34 @@ public static class RenderFrameViewSetCapture
             EVrVisibilityPolicy.SharedFrameViewSet,
             1,
             "Stereo frame views");
+    }
+
+    /// <summary>
+    /// True when <paramref name="state"/> is the mono render of one OpenXR per-eye view (the
+    /// sequential views and parallel command buffer recording modes): not a stereo pass, the
+    /// viewport writes an external eye swapchain image, and the camera is an eye camera. The view
+    /// then gets that eye's kind and history key, like a stereo eye view. The eye kind sets the
+    /// stereo eye flag of the view record, which selects the headset directional shadow cascades,
+    /// and the eye history key keeps the two eyes' visibility and depth-pyramid history apart.
+    /// </summary>
+    private static bool TryResolveOpenXrPerEyeView(
+        IRuntimeRenderCommandExecutionState state,
+        IRuntimeRenderCamera camera,
+        out EVrOutputViewKind kind,
+        out ulong historyKey)
+    {
+        if (!state.StereoPass && !state.ShadowPass &&
+            state.WindowViewport is XRViewport { RendersToExternalSwapchainTarget: true } &&
+            camera is XRCamera { StereoEyeLeft: bool leftEye })
+        {
+            kind = leftEye ? EVrOutputViewKind.LeftEye : EVrOutputViewKind.RightEye;
+            historyKey = leftEye ? LeftEyeHistoryKey : RightEyeHistoryKey;
+            return true;
+        }
+
+        kind = EVrOutputViewKind.DesktopEditor;
+        historyKey = MonoHistoryKey;
+        return false;
     }
 
     private static string GetViewDebugName(EVrOutputViewKind kind)

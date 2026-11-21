@@ -53,7 +53,8 @@ public partial class GPUScene
             foreach (XRMeshRenderer? renderer in _meshSubmissionLodRenderers)
                 if ((record.MaterialOverride ?? renderer?.Material)?.PassSet.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outline) == true && outline.Enabled)
                 {
-                    bool modeled = outline.ShaderBehavior == EngineMaterialSemanticIdentity.UberOutlineV1;
+                    bool modeled = outline.ShaderBehavior == EngineMaterialSemanticIdentity.UberOutlineV1 ||
+                        outline.ShaderBehavior == EngineMaterialSemanticIdentity.UberSoftOutlineV2;
                     destination.WritableRecords[recordIndex] = destination.WritableRecords[recordIndex] with
                     {
                         MaterialOutlineCommand = renderable!.MaterialOutlineCommand,
@@ -93,7 +94,7 @@ public partial class GPUScene
                 if (record.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
                     metadata.Flags |= (uint)GPUIndirectRenderFlags.CpuFallbackOnly;
                 if (mesh.HasSkinning) metadata.Flags |= (uint)GPUIndirectRenderFlags.Skinned;
-                if (mesh.HasBlendshapes) metadata.Flags |= (uint)GPUIndirectRenderFlags.BlendShapes;
+                if (mesh.HasBlendshapeDeformation) metadata.Flags |= (uint)GPUIndirectRenderFlags.BlendShapes;
                 Matrix4x4 currentWorld = record.CurrentWorld;
                 Matrix4x4 previousWorld = record.PreviousWorld;
                 bool unresolvedTransform = record.WorldMatrixIsModelMatrix &&
@@ -121,18 +122,19 @@ public partial class GPUScene
                     SourcePrimitiveCount = Math.Max(1, renderer.Submeshes.Count),
                     SourceBindings = bindings, BillboardMode = material.BillboardMode,
                     AuthoredPrimitiveInstanceCount = renderer.Submeshes.Count == 0 ? 1u : renderer.Submeshes[record.PrimitiveIndex].InstanceCount,
-                    HasSkinning = mesh.HasSkinning, HasBlendshapes = mesh.HasBlendshapes,
+                    HasSkinning = mesh.HasSkinning, HasBlendshapes = mesh.HasBlendshapeDeformation,
                     MeshletPayload = payload, GeometryRevision = mesh.GeometryRevision,
                     PayloadValidationRevision = payload?.ValidationRevision ?? 0,
                     PayloadOwnerGeometryRevision = payload?.OwnerGeometryRevision ?? 0,
                     PayloadOwnerValidationToken = payload?.OwnerValidationToken ?? 0,
                 };
                 if (passSet?.TryGetPass(EMaterialPassIdentity.Outline, out MaterialPassDefinition outlinePass) == true && outlinePass.Enabled &&
-                    outlinePass.ShaderBehavior == EngineMaterialSemanticIdentity.UberOutlineV1)
+                    (outlinePass.ShaderBehavior == EngineMaterialSemanticIdentity.UberOutlineV1 ||
+                     outlinePass.ShaderBehavior == EngineMaterialSemanticIdentity.UberSoftOutlineV2))
                 {
                     XRMaterial outlineSource = record.MaterialOverride ?? renderer.Material!;
                     XRMaterial? outlineMaterial = outlineSource.OutlinePassVariant;
-                    if (outlineMaterial?.EngineSemantic != EngineMaterialSemanticIdentity.UberOutlineV1)
+                    if (outlineMaterial?.EngineSemantic != outlinePass.ShaderBehavior)
                         throw new NotSupportedException("GPUScene.OutlineCompanionMissing: the modeled outline requires its exact cooked material variant.");
                     GpuMeshSubmissionSourceBindings outlineBindings = GpuMeshSubmissionSourceBindings.Capture(
                         mesh, renderer, outlineMaterial, _updatingMeshSubmissionOutlineBindings[bindingIndex]);

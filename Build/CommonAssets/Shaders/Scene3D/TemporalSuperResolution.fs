@@ -16,13 +16,12 @@ uniform sampler2D Velocity;
 uniform sampler2D DepthView;
 uniform sampler2D HistoryDepth;
 uniform sampler2D TsrHistoryColor;
-// Stencil view of the post-temporal forward depth/stencil. Bit 0x80
-// (XRMaterial.GizmoStencilBit) marks pixels that were drawn after TAA by
-// AppendPostTemporalForwardPasses (gizmos rendered with DepthFunc=Always and
-// custom near-plane vertex shaders). Those pixels have no valid temporal
-// history and no valid motion vectors, so reusing history blurs/erodes them.
-// We detect the bit here and force history weight to zero for such pixels.
+// Editor gizmos have no valid temporal history. Scene stencil is independent.
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+uniform sampler2D EditorHighlightMask;
+#elif !defined(XR_SCENE_STENCIL_AUTHORED)
 uniform usampler2D StencilView;
+#endif
 
 #ifdef XR_ADVANCED_REACTIVE_MASK
 // Canonical opaque/late reactivity is independent of final output alpha.
@@ -126,8 +125,14 @@ vec3 SampleCurrentReconstruction(sampler2D tex, vec2 uv, vec2 texelSize)
 
 float SamplePostTemporalForwardMask(vec2 uv)
 {
-    uint stencilBits = texture(StencilView, clamp(uv, vec2(0.0f), vec2(1.0f))).r;
-    return ((stencilBits & 0x80u) != 0u) ? 1.0f : 0.0f;
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+    return step(0.5, texture(EditorHighlightMask, clamp(uv, vec2(0.0), vec2(1.0))).b);
+#elif !defined(XR_SCENE_STENCIL_AUTHORED)
+    uint stencilBits = texture(StencilView, clamp(uv, vec2(0.0), vec2(1.0))).r;
+    return ((stencilBits & 0x80u) != 0u) ? 1.0 : 0.0;
+#else
+    return 0.0;
+#endif
 }
 
 // ── Closest-depth velocity ────────────────────────────────────────

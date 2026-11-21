@@ -13,11 +13,18 @@ internal sealed class ViewSetPlan
     private ulong[] _historyKeys;
     private int _viewCount;
     private bool _isSealed;
-    private RenderFrameViewSet? _locatedOpenXrViews;
+    // The located view set holds eight large descriptors. Lookups run for each
+    // operation, so keep only the fields they read instead of copying the set.
+    private readonly ulong[] _locatedHistoryKeys = new ulong[RenderFrameViewSet.MaxViewCount];
+    private readonly uint[] _locatedViewIds = new uint[RenderFrameViewSet.MaxViewCount];
+    private readonly int[] _locatedOpenXrViewIndices = new int[RenderFrameViewSet.MaxViewCount];
+    private readonly EVrOutputViewKind[] _locatedKinds = new EVrOutputViewKind[RenderFrameViewSet.MaxViewCount];
+    private int _locatedViewCount;
+    private bool _hasLocatedOpenXrViews;
 
     internal int Count => _viewCount;
     internal bool IsSealed => _isSealed;
-    internal bool HasLocatedOpenXrViews => _locatedOpenXrViews.HasValue;
+    internal bool HasLocatedOpenXrViews => _hasLocatedOpenXrViews;
 
     internal ViewSetPlan()
         : this(4, fixedCapacity: false)
@@ -36,7 +43,8 @@ internal sealed class ViewSetPlan
     {
         _viewCount = 0;
         _isSealed = false;
-        _locatedOpenXrViews = null;
+        _locatedViewCount = 0;
+        _hasLocatedOpenXrViews = false;
     }
 
     internal void Add(in FrameOpContext context)
@@ -46,13 +54,13 @@ internal sealed class ViewSetPlan
 
         if (context.ContextKind == EVulkanFrameOpContextKind.OpenXrEye)
         {
-            if (_locatedOpenXrViews is not RenderFrameViewSet locatedViews)
+            if (!_hasLocatedOpenXrViews)
             {
                 throw new InvalidOperationException(
                     "OpenXR frame planning requires the located immutable frame view set.");
             }
 
-            AddLocatedOpenXrViews(context, locatedViews);
+            AddLocatedOpenXrViews();
             return;
         }
 
@@ -93,21 +101,27 @@ internal sealed class ViewSetPlan
             }
         }
 
-        _locatedOpenXrViews = views;
+        for (int index = 0; index < views.ViewCount; index++)
+        {
+            RenderFrameViewDescriptor view = views.GetView(index);
+            _locatedHistoryKeys[index] = view.EffectiveHistoryKey;
+            _locatedViewIds[index] = view.ViewId;
+            _locatedOpenXrViewIndices[index] = view.OpenXrViewIndex;
+            _locatedKinds[index] = view.Kind;
+        }
+
+        _locatedViewCount = views.ViewCount;
+        _hasLocatedOpenXrViews = true;
     }
 
     internal bool TryGetLocatedOpenXrViewKind(uint openXrViewIndex, out EVrOutputViewKind kind)
     {
-        if (_locatedOpenXrViews is RenderFrameViewSet views)
+        for (int index = 0; index < _locatedViewCount; index++)
         {
-            for (int index = 0; index < views.ViewCount; index++)
+            if (_locatedOpenXrViewIndices[index] == openXrViewIndex)
             {
-                RenderFrameViewDescriptor view = views.GetView(index);
-                if (view.OpenXrViewIndex == openXrViewIndex)
-                {
-                    kind = view.Kind;
-                    return true;
-                }
+                kind = _locatedKinds[index];
+                return true;
             }
         }
 
@@ -120,16 +134,12 @@ internal sealed class ViewSetPlan
         ulong logicalViewId,
         out EVrOutputViewKind kind)
     {
-        if (_locatedOpenXrViews is RenderFrameViewSet views)
+        for (int index = 0; index < _locatedViewCount; index++)
         {
-            for (int index = 0; index < views.ViewCount; index++)
+            if (_locatedHistoryKeys[index] == logicalViewId)
             {
-                RenderFrameViewDescriptor view = views.GetView(index);
-                if (view.EffectiveHistoryKey == logicalViewId)
-                {
-                    kind = view.Kind;
-                    return true;
-                }
+                kind = _locatedKinds[index];
+                return true;
             }
         }
 
@@ -147,24 +157,21 @@ internal sealed class ViewSetPlan
         return _historyKeys[index];
     }
 
-    private void AddLocatedOpenXrViews(
-        in FrameOpContext context,
-        in RenderFrameViewSet locatedViews)
+    private void AddLocatedOpenXrViews()
     {
-        for (int index = 0; index < locatedViews.ViewCount; index++)
+        for (int index = 0; index < _locatedViewCount; index++)
         {
-            RenderFrameViewDescriptor view = locatedViews.GetView(index);
             RenderViewKey key = new(
                 // An OpenXR view is a logical eye, not a pipeline-specific
                 // render invocation. Keeping producer identities here would
                 // manufacture a pipeline x eye cross product.
                 0,
                 0,
-                checked((int)view.ViewId),
+                checked((int)_locatedViewIds[index]),
                 RenderViewKind.VREye,
                 0,
                 0);
-            Add(key, view.EffectiveHistoryKey);
+            Add(key, _locatedHistoryKeys[index]);
         }
     }
 

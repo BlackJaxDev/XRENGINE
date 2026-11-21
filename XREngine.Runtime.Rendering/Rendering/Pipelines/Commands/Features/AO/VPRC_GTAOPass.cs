@@ -54,6 +54,26 @@ namespace XREngine.Rendering.Pipelines.Commands
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
         public string[] DependentFboNames { get; set; } = Array.Empty<string>();
 
+        /// <summary>
+        /// Half-resolution depth texture that replaces the depth view in generation and in both
+        /// blur passes, when the pipeline declares it. The normal texture is then also at half
+        /// resolution, the vertical blur stays at AO resolution, and the pipeline upsamples the
+        /// result in a separate pass. Null keeps full-resolution inputs and the upsampling
+        /// vertical blur.
+        /// </summary>
+        public string? ReducedInputDepthTextureName { get; set; }
+
+        /// <summary>
+        /// Half-resolution linear view depth (0 for the far plane) that GTAO generation reads instead
+        /// of <see cref="ReducedInputDepthTextureName"/> when the pipeline declares it. Generation then
+        /// rebuilds each tap position from a few projection terms (<c>DepthViewIsLinear</c>). The blur
+        /// passes keep the raw reduced depth, because their depth weights use raw depth differences.
+        /// </summary>
+        public string? ReducedInputLinearDepthTextureName { get; set; }
+
+        // Largest GTAO step radius, in full-resolution pixels.
+        private const float MaxRadiusFullResolutionPixels = 192.0f;
+
         public bool Stereo { get; set; }
 
         private sealed class InstanceState
@@ -186,6 +206,23 @@ namespace XREngine.Rendering.Pipelines.Commands
         private InstanceState GetInstanceState(XRRenderPipelineInstance instance)
             => _instanceStates.GetValue(instance, _ => new InstanceState());
 
+        /// <summary>True when the instance declares the reduced-resolution GTAO inputs.</summary>
+        private bool UsesReducedInputs(XRRenderPipelineInstance? instance)
+            => ReducedInputDepthTextureName is not null &&
+                instance?.GetTexture<XRTexture>(ReducedInputDepthTextureName) is not null;
+
+        private string InputDepthTextureName(XRRenderPipelineInstance instance)
+            => UsesReducedInputs(instance) ? ReducedInputDepthTextureName! : DepthViewTextureName;
+
+        /// <summary>True when GTAO generation reads the reduced linear view depth.</summary>
+        private bool UsesLinearGenerationDepth(XRRenderPipelineInstance? instance)
+            => UsesReducedInputs(instance) &&
+                ReducedInputLinearDepthTextureName is not null &&
+                instance?.GetTexture<XRTexture>(ReducedInputLinearDepthTextureName) is not null;
+
+        private string GenerationDepthTextureName(XRRenderPipelineInstance instance)
+            => UsesLinearGenerationDepth(instance) ? ReducedInputLinearDepthTextureName! : InputDepthTextureName(instance);
+
         public void SetOptions(bool stereo)
             => Stereo = stereo;
 
@@ -312,7 +349,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             state.HorizontalBlurTexture = horizontalBlurTex;
             state.FinalAoTexture = finalAoTex;
             ConfigureAoSampler(rawAoTex, InputSamplerName, bilinear: false);
-            ConfigureAoSampler(horizontalBlurTex, InputSamplerName, bilinear: resDivisor > 1);
+            // The vertical blur upsamples with bilinear reads, unless it stays at AO resolution.
+            ConfigureAoSampler(horizontalBlurTex, InputSamplerName,
+                bilinear: resDivisor > 1 && !UsesReducedInputs(ActivePipelineInstance));
             ConfigureAoSampler(finalAoTex, FinalIntensityTextureName, bilinear: false);
         }
 
@@ -325,7 +364,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 XRMaterial material = new([
                     RequireTexture(instance, RawIntensityTextureName),
-                    RequireTexture(instance, DepthViewTextureName),
+                    RequireTexture(instance, InputDepthTextureName(instance)),
                     RequireTexture(instance, NormalTextureName)], blurShader) { RenderOptions = renderParams };
                 XRQuadFrameBuffer frameBuffer = new(material, true, false, Stereo,
                     (RequireAttachment(instance, RawIntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
@@ -343,7 +382,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 XRMaterial material = new([
                     RequireTexture(instance, IntermediateIntensityTextureName),
-                    RequireTexture(instance, DepthViewTextureName),
+                    RequireTexture(instance, InputDepthTextureName(instance)),
                     RequireTexture(instance, NormalTextureName)], blurShader) { RenderOptions = renderParams };
                 XRQuadFrameBuffer frameBuffer = new(material, true, false, Stereo,
                     (RequireAttachment(instance, IntermediateIntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
@@ -363,7 +402,22 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRShader genShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, GTAOGenShaderName()), EShaderType.Fragment);
             XRMaterial genMaterial = new([
                 RequireTexture(instance, NormalTextureName),
-                RequireTexture(instance, DepthViewTextureName)], genShader) { RenderOptions = renderParams };
+                RequireTexture(instance, GenerationDepthTextureName(instance))], genShader) { RenderOptions = renderParams };
+            if (UsesReducedInputs(instance))
+            {
+                // The generation quad is only a source. Its declared attachment is the
+                // half-resolution normal texture; reduced inputs have no full-size G-buffer targets.
+                XRQuadFrameBuffer reducedGenFbo = new(genMaterial, true, false, Stereo,
+                    (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                {
+                    Name = GenerationFBOName
+                };
+                reducedGenFbo.FullScreenMesh.BindingPublishers.Add(
+                    new GTAOBindingPublisher(
+                        this,
+                        EGtaoBindingPublication.Generate));
+                return reducedGenFbo;
+            }
             XRQuadFrameBuffer genFbo = new(genMaterial, true, true, Stereo,
                 (RequireAttachment(instance, AlbedoTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment1, 0, -1),
@@ -419,6 +473,13 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private void GTAOGenSettings_SetUniforms(XRRenderProgram program)
         {
+            // The step radius is in pixels of the depth input. Half-resolution inputs halve the
+            // limit, so the largest radius on screen stays the same.
+            program.Uniform("MaxRadiusPixels", UsesReducedInputs(ActivePipelineInstance)
+                ? MaxRadiusFullResolutionPixels * 0.5f
+                : MaxRadiusFullResolutionPixels);
+            // Matches the depth texture that CreateDeclaredFrameBuffer bound to the generation material.
+            program.Uniform("DepthViewIsLinear", UsesLinearGenerationDepth(ActivePipelineInstance));
             AmbientOcclusionSettings? settings = GetCurrentSettings();
             if (settings is not null)
             {
@@ -447,10 +508,18 @@ namespace XREngine.Rendering.Pipelines.Commands
         private void GTAOVerticalBlur_SetUniforms(XRRenderProgram program)
         {
             SetBlurUniforms(program, new Vector2(0.0f, 1.0f));
+            var state = GetInstanceState(ActivePipelineInstance);
+            if (UsesReducedInputs(ActivePipelineInstance))
+            {
+                // With reduced inputs, the vertical blur stays at AO resolution.
+                int aoWidth = Math.Max(state.LastWidth / Math.Max(state.LastResolutionDivisor, 1), 1);
+                int aoHeight = Math.Max(state.LastHeight / Math.Max(state.LastResolutionDivisor, 1), 1);
+                program.Uniform("TexelSize", new Vector2(1.0f / aoWidth, 1.0f / aoHeight));
+                return;
+            }
             // Vertical blur upscales to full output resolution;
             // pass full-res texel size so the blur kernel spans the correct
             // number of screen pixels instead of stretching by the divisor.
-            var state = GetInstanceState(ActivePipelineInstance);
             int fullWidth = Math.Max(state.LastWidth, 1);
             int fullHeight = Math.Max(state.LastHeight, 1);
             program.Uniform("TexelSize", new Vector2(1.0f / fullWidth, 1.0f / fullHeight));

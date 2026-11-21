@@ -262,6 +262,33 @@ internal sealed class RenderFrameViewHistoryLedger
             p.Descriptor.ViewRect == d.ViewRect && p.Descriptor.DepthZeroToOne == d.DepthZeroToOne && p.Descriptor.ReversedDepth == d.ReversedDepth &&
             p.Descriptor.ProjectionMatrixUnjittered == d.ProjectionMatrixUnjittered;
 
+    /// <summary>
+    /// Gets the camera history epoch that the capture of an output sequence recorded. The epoch is the value at the
+    /// capture of the frame, so render work of an older frame does not see a later invalidation.
+    /// </summary>
+    /// <param name="sequence">The output sequence of the frame.</param>
+    /// <param name="epoch">The recorded epoch, or zero.</param>
+    /// <returns>True if the ledger has a pending or committed capture of the sequence.</returns>
+    internal bool TryGetCapturedCameraEpoch(ulong sequence, out ulong epoch)
+    {
+        lock (_sync)
+        {
+            int index = Find(sequence);
+            if (index >= 0)
+            {
+                epoch = _pending[index].CameraEpoch;
+                return true;
+            }
+            if (_committed.Occupied && _committed.Sequence == sequence)
+            {
+                epoch = _committed.CameraEpoch;
+                return true;
+            }
+            epoch = 0UL;
+            return false;
+        }
+    }
+
     private int Find(ulong sequence)
     {
         for (int i = 0; i < _pending.Length; i++) if (_pending[i].Occupied && _pending[i].Sequence == sequence) return i;

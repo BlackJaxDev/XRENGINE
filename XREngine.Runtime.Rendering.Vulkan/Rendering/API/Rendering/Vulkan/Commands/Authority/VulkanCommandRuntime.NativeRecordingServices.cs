@@ -95,8 +95,8 @@ internal sealed partial class VulkanCommandRuntime
         if (commandBufferHandle == 0 || generation == 0)
             return true;
 
-        VulkanMeshFrameDataReservationManifest manifest =
-            _commandBufferRecordingScratch.Value!.MeshFrameDataManifest;
+        CommandBufferRecordingScratch recordingScratch = _commandBufferRecordingScratch.Value!;
+        VulkanMeshFrameDataReservationManifest manifest = recordingScratch.MeshFrameDataManifest;
         bool manifestOwnsDraw = manifest.ContainsSealedDraw(owner, drawSlot, generation);
         bool workerOwnsSealedDraw = sealedGeneration != 0 && sealedGeneration == generation;
         if (!manifestOwnsDraw && !workerOwnsSealedDraw)
@@ -105,6 +105,17 @@ internal sealed partial class VulkanCommandRuntime
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDynamicUniformExhaustion();
             return false;
         }
+
+        // Every draw of one recording renews the same lease. Only the recording
+        // thread changes the lease of a command buffer that it records, so a lease
+        // that this thread acquired and that still has the recording owner for this
+        // generation needs no lock.
+        if (recordingScratch.FrameDataLeaseCommandBuffer == commandBufferHandle &&
+            recordingScratch.FrameDataLeaseRecord is { } leasedLifetime &&
+            leasedLifetime.QueuedSubmissionCount == 0 &&
+            leasedLifetime.FrameDataLease.HasRecordingOwner &&
+            leasedLifetime.FrameDataLease.Generation == generation)
+            return true;
 
         VulkanResourceLifetimeTracker lifetimeTracker = ResourceRuntime.Lifetime.Tracker;
         lock (lifetimeTracker.SyncRoot)
@@ -134,6 +145,8 @@ internal sealed partial class VulkanCommandRuntime
                     generation,
                     commandBufferQueued: lifetime.QueuedSubmissionCount != 0))
             {
+                recordingScratch.FrameDataLeaseCommandBuffer = commandBufferHandle;
+                recordingScratch.FrameDataLeaseRecord = lifetime;
                 return true;
             }
 
@@ -752,8 +765,42 @@ internal sealed partial class VulkanCommandRuntime
         Api.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.BottomOfPipeBit, queryPool, 1);
     }
 
+    /// <summary>
+    /// Counts primary recordings on a background render lane that recorded no dense GPU
+    /// profiler queries. The render thread reports a change of this count once as a backend
+    /// timing status, so the missing scopes are visible in the GPU pipeline dump.
+    /// </summary>
+    private static long s_backgroundLaneProfilerSkips;
+    private long _reportedBackgroundLaneProfilerSkips;
+
+    /// <summary>
+    /// Starts the dense GPU profiler queries of one primary recording. Only the render thread
+    /// records them: the recording cursor (active flag, frame slot, next query, budget flag)
+    /// and the per-slot query pools are shared state without a lock. A recording on a
+    /// background render lane (for example the VR desktop WorkerRecord mode, which runs while
+    /// the render thread records the eyes) therefore records no profiler queries. Before this
+    /// rule, such a recording cleared the render thread's cursor in the middle of an eye
+    /// recording and wrote timestamps into a query pool that it had not reset.
+    /// </summary>
     private void BeginVulkanGpuProfilerQueries(CommandBuffer commandBuffer, int frameSlot)
     {
+        if (!RuntimeEngine.IsRenderThread)
+        {
+            Interlocked.Increment(ref s_backgroundLaneProfilerSkips);
+            return;
+        }
+
+        long backgroundSkips = Interlocked.Read(ref s_backgroundLaneProfilerSkips);
+        if (backgroundSkips != _reportedBackgroundLaneProfilerSkips &&
+            RenderPipelineGpuProfiler.Instance.IsProfilingActive)
+        {
+            _reportedBackgroundLaneProfilerSkips = backgroundSkips;
+            RenderPipelineGpuProfiler.Instance.RecordBackendGpuTimingStatus(
+                RuntimeEngine.Rendering.State.RenderFrameId,
+                VulkanFrameTelemetry.GpuProfilerBackendName,
+                "Primary recordings on a background render lane (VR desktop WorkerRecord) record no GPU timing scopes.");
+        }
+
         FrameTelemetry._vulkanGpuProfilerRecordingActive = false;
         FrameTelemetry._vulkanGpuProfilerRecordingFrameSlot = -1;
         FrameTelemetry._vulkanGpuProfilerNextQuery = 0;
@@ -844,6 +891,7 @@ internal sealed partial class VulkanCommandRuntime
     private VulkanGpuProfilerScope BeginReservedVulkanGpuProfilerScope(
         CommandBuffer commandBuffer, QueryPool queryPool, uint startQuery, uint endQuery, string[] path)
     {
+        path = ApplyGpuProfilerRootLabel(path);
         Api.CmdWriteTimestamp(
             commandBuffer,
             PipelineStageFlags.TopOfPipeBit,
@@ -861,6 +909,28 @@ internal sealed partial class VulkanCommandRuntime
             path);
     }
 
+    /// <summary>
+    /// Returns the path with its root segment renamed to "root[label]" while a root label
+    /// is set, for example "Advanced[inset]". The labeled path is cached per source path.
+    /// </summary>
+    private string[] ApplyGpuProfilerRootLabel(string[] path)
+    {
+        string? label = FrameTelemetry.GpuProfilerRootLabel;
+        if (label is null || path.Length == 0)
+            return path;
+
+        Dictionary<string, string[]> byLabel = FrameTelemetry.LabeledGpuProfilerPaths.GetOrCreateValue(path);
+        lock (byLabel)
+        {
+            if (byLabel.TryGetValue(label, out string[]? labeled))
+                return labeled;
+            labeled = (string[])path.Clone();
+            labeled[0] = $"{path[0]}[{label}]";
+            byLabel[label] = labeled;
+            return labeled;
+        }
+    }
+
     private bool TryReserveVulkanGpuProfilerQueries(
         CommandBuffer commandBuffer,
         out QueryPool queryPool,
@@ -870,6 +940,9 @@ internal sealed partial class VulkanCommandRuntime
         queryPool = default;
         startQuery = 0;
         endQuery = 0;
+        // The recording cursor belongs to the render thread; see BeginVulkanGpuProfilerQueries.
+        if (!RuntimeEngine.IsRenderThread)
+            return false;
         int frameSlot = FrameTelemetry._vulkanGpuProfilerRecordingFrameSlot;
         if (!FrameTelemetry._vulkanGpuProfilerRecordingActive ||
             FrameTelemetry._vulkanGpuProfilerQueryPools is not { } queryPools ||
@@ -1417,6 +1490,17 @@ internal sealed partial class VulkanCommandRuntime
     /// Publishes the same lifetime and command-local image state as the legacy
     /// tracked barrier path before later commands consult that state.
     /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, string> s_renderGraphResourceTrackingNames = new();
+
+    /// <summary>
+    /// Returns the cached lifetime-tracking name of a render-graph resource, so a
+    /// tracked barrier does not format a new string for each image.
+    /// </summary>
+    private static string GetRenderGraphResourceTrackingName(int resourceId)
+        => s_renderGraphResourceTrackingNames.GetOrAdd(
+            resourceId,
+            static id => $"RenderGraphResource#{id}");
+
     internal unsafe void CmdPipelineBarrier2Tracked(
         CommandBuffer commandBuffer,
         in DependencyInfo dependencyInfo,
@@ -1479,7 +1563,7 @@ internal sealed partial class VulkanCommandRuntime
             TrackCommandBufferResource(
                 commandBuffer,
                 new VulkanResourceLifetimeKey(ObjectType.Image, frozen.NativeImage.Handle),
-                $"RenderGraphResource#{frozen.ResourceId.Value}",
+                GetRenderGraphResourceTrackingName(frozen.ResourceId.Value),
                 frozen.NativeGeneration);
         }
 

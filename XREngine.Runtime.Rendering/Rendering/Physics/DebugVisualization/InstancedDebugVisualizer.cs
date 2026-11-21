@@ -187,6 +187,7 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         private uint _pointDirtyBytes;
         private uint _lineDirtyBytes;
         private uint _triangleDirtyBytes;
+        private Action? _emitPointLinePreparationDraws;
 
         private const uint MinimumCapacity = 256;
         private const uint MaximumWebInstances = 65536;
@@ -199,30 +200,83 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         public uint PointCapacity => _pointCapacity;
         public uint LineCapacity => _lineCapacity;
         public uint TriangleCapacity => _triangleCapacity;
+        private EDebugPrimitivePreparationStatus _pointLinePreparationStatus =
+            EDebugPrimitivePreparationStatus.Ready;
+        private string _pointLinePreparationDetail = string.Empty;
+        public EDebugPrimitivePreparationStatus PointLinePreparationStatus
+            => _pointLinePreparationStatus;
+        public string PointLinePreparationDetail => _pointLinePreparationDetail;
+
+        /// <summary>
+        /// Creates the point and line draw resources with minimum storage while their
+        /// active counts stay zero. The render pass can prepare their programs before
+        /// the first debug shape requests either draw.
+        /// </summary>
+        internal void ReservePointAndLineResources(out XRMeshRenderer? points, out XRMeshRenderer? lines)
+        {
+            if (_debugPointsRenderer is null || _debugPointsBuffer is null)
+                CreateOrResizePoints(PointCount, reserve: true);
+            if (_debugLinesRenderer is null || _debugLinesBuffer is null)
+                CreateOrResizeLines(LineCount, reserve: true);
+            points = _debugPointsRenderer;
+            lines = _debugLinesRenderer;
+        }
+
+        private void EmitPointLinePreparationDraws()
+        {
+            _debugPointsRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null,
+                Math.Max(PointCount, 1u));
+            _debugLinesRenderer?.Render(Matrix4x4.Identity, Matrix4x4.Identity, null,
+                Math.Max(LineCount, 1u));
+        }
+
+        internal bool TryPreparePointAndLineDraws()
+        {
+            if (AbstractRenderer.Current is not IDebugPrimitivePreparationBackendCapability
+                { CanPrepareDebugPrimitives: true } backend)
+                return true;
+
+            ReservePointAndLineResources(out XRMeshRenderer? points, out XRMeshRenderer? lines);
+            if (points?.Material is null || lines?.Material is null)
+            {
+                SetField(ref _pointLinePreparationStatus, EDebugPrimitivePreparationStatus.Failed);
+                SetField(ref _pointLinePreparationDetail, "Debug point or line material is unavailable.");
+                return false;
+            }
+
+            _emitPointLinePreparationDraws ??= EmitPointLinePreparationDraws;
+            EDebugPrimitivePreparationStatus status = backend.TryPrepareDebugPrimitives(
+                _emitPointLinePreparationDraws, 2,
+                PointCount == 0 && LineCount == 0, out string reason);
+            SetField(ref _pointLinePreparationStatus, status);
+            SetField(ref _pointLinePreparationDetail, reason);
+            return PointLinePreparationStatus is EDebugPrimitivePreparationStatus.Ready or
+                EDebugPrimitivePreparationStatus.Unsupported;
+        }
 
         /// <summary>
         /// Renders all points, lines, and triangles in the visualizer.
         /// </summary>
-        public void Render()
+        public void Render(bool renderPointLines = true)
         {
             if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable)
                 return;
 
-            if (PointCount > 0 && _debugPointsRenderer is { } pointsRenderer)
+            if (renderPointLines && PointCount > 0 && _debugPointsRenderer is { } pointsRenderer)
             {
-                pointsRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, PointCount, forceNoStereo: true);
+                pointsRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, PointCount);
                 DrawCallCount++;
             }
 
-            if (LineCount > 0 && _debugLinesRenderer is { } linesRenderer)
+            if (renderPointLines && LineCount > 0 && _debugLinesRenderer is { } linesRenderer)
             {
-                linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, LineCount, forceNoStereo: true);
+                linesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, LineCount);
                 DrawCallCount++;
             }
 
             if (TriangleCount > 0 && _debugTrianglesRenderer is { } trianglesRenderer)
             {
-                trianglesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, TriangleCount, forceNoStereo: true);
+                trianglesRenderer.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, TriangleCount);
                 DrawCallCount++;
             }
         }
@@ -627,15 +681,21 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         }
 
         public void CreateOrResizePoints(uint count)
+            => CreateOrResizePoints(count, reserve: false);
+
+        private void CreateOrResizePoints(uint count, bool reserve)
         {
             if (!UsesWebDebugPrimitives)
                 _debugPointsRenderer?.Material?.SetInt(0, (int)count);
 
             uint previousCapacity = _pointCapacity;
-            UpdateCapacity(count, ref _pointCapacity, ref _pointUnderuseFrames);
+            UpdateCapacity(
+                reserve ? Math.Max(count, MinimumCapacity) : count,
+                ref _pointCapacity,
+                ref _pointUnderuseFrames);
             if (UsesWebDebugPrimitives)
                 _pointCapacity = Math.Min(_pointCapacity, MaximumWebInstances);
-            if (count == 0 && _debugPointsBuffer is null)
+            if (count == 0 && _debugPointsBuffer is null && !reserve)
                 return;
 
             bool createdRenderer = _debugPointsRenderer is null;
@@ -679,15 +739,21 @@ namespace XREngine.Rendering.Physics.DebugVisualization
         }
 
         public void CreateOrResizeLines(uint count)
+            => CreateOrResizeLines(count, reserve: false);
+
+        private void CreateOrResizeLines(uint count, bool reserve)
         {
             if (!UsesWebDebugPrimitives)
                 _debugLinesRenderer?.Material?.SetInt(0, (int)count);
 
             uint previousCapacity = _lineCapacity;
-            UpdateCapacity(count, ref _lineCapacity, ref _lineUnderuseFrames);
+            UpdateCapacity(
+                reserve ? Math.Max(count, MinimumCapacity) : count,
+                ref _lineCapacity,
+                ref _lineUnderuseFrames);
             if (UsesWebDebugPrimitives)
                 _lineCapacity = Math.Min(_lineCapacity, MaximumWebInstances);
-            if (count == 0 && _debugLinesBuffer is null)
+            if (count == 0 && _debugLinesBuffer is null && !reserve)
                 return;
 
             bool createdRenderer = _debugLinesRenderer is null;
@@ -822,15 +888,15 @@ namespace XREngine.Rendering.Physics.DebugVisualization
 
         private XRMeshRenderer MakePointsRenderer()
         {
-            return new XRMeshRenderer(UsesWebDebugPrimitives ? CreateDebugQuadScaffold() : CreateDebugMesh(), CreateDebugPointMaterial());
+            return new XRMeshRenderer(DebugPrimitiveShaders.CreateQuadScaffold(), CreateDebugPointMaterial());
         }
         private XRMeshRenderer MakeLineRenderer()
         {
-            return new XRMeshRenderer(UsesWebDebugPrimitives ? CreateDebugQuadScaffold() : CreateDebugMesh(), CreateDebugLineMaterial());
+            return new XRMeshRenderer(DebugPrimitiveShaders.CreateQuadScaffold(), CreateDebugLineMaterial());
         }
         private XRMeshRenderer MakeTrianglesRenderer()
         {
-            return new XRMeshRenderer(UsesWebDebugPrimitives ? CreateDebugTriangleScaffold() : CreateDebugMesh(), CreateDebugTriangleMaterial());
+            return new XRMeshRenderer(DebugPrimitiveShaders.CreateTriangleScaffold(), CreateDebugTriangleMaterial());
         }
 
         private static void AddOrReplaceRendererBuffer(XRMeshRenderer renderer, XRDataBuffer buffer)
@@ -845,8 +911,8 @@ namespace XREngine.Rendering.Physics.DebugVisualization
             renderer.GenerateAsync = false;
             renderer.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
 
-            // These geometry-shader-expanded debug primitives are not compatible
-            // with generated stereo/multiview vertex variants.
+            // The materials own their single-view and multiview vertex variants, so the
+            // renderer must not build generated stereo variants or separable pipelines.
             renderer.GetDefaultVersion().AllowShaderPipelines = false;
         }
 
@@ -908,9 +974,6 @@ namespace XREngine.Rendering.Physics.DebugVisualization
             _fullPushTriangles = true;
         }
 
-        private static XRMesh? CreateDebugMesh()
-            => new([new Vertex(Vector3.Zero)]);
-
         private static bool UsesWebDebugPrimitives
             => RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
                AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
@@ -920,17 +983,6 @@ namespace XREngine.Rendering.Physics.DebugVisualization
             if (UsesWebDebugPrimitives && count > MaximumWebInstances)
                 throw new NotSupportedException("WebGPU.Debug.InstanceCapacityExceeded: the cooked debug profile admits at most 65536 primitives per draw.");
         }
-
-        private static XRMesh CreateDebugQuadScaffold()
-            => new XRMesh(
-                [new Vertex(new Vector3(-1, -1, 0)), new Vertex(new Vector3(1, -1, 0)),
-                 new Vertex(new Vector3(-1, 1, 0)), new Vertex(new Vector3(1, 1, 0))],
-                [0, 1, 2, 2, 1, 3]);
-
-        private static XRMesh CreateDebugTriangleScaffold()
-            => new XRMesh(
-                [new Vertex(Vector3.Zero), new Vertex(Vector3.UnitX), new Vertex(2 * Vector3.UnitX)],
-                [0, 1, 2]);
 
         private XRMaterial CreateWebDebugMaterial(EngineMaterialSemanticIdentity semantic, ShaderVar[] parameters)
         {
@@ -965,21 +1017,14 @@ namespace XREngine.Rendering.Physics.DebugVisualization
             
             try
             {
-                XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-                // Stereo VS variants are excluded — multiview extensions are incompatible
-                // with the geometry shaders used for debug primitive expansion.
-                XRShader[] vertexShaders = [vertShader];
-
-                XRShader geomShader = ShaderHelper.LoadEngineShader(
-                    Path.Combine("Common", "Debug", "gs", _useCompressedBuffers ? "PointInstanceCompressed.gs" : "PointInstance.gs"),
-                    EShaderType.Geometry);
+                XRShader[] vertexShaders = DebugPrimitiveShaders.LoadVertexShaders("Point", _useCompressedBuffers);
                 XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitivePoint.fs"), EShaderType.Fragment);
                 ShaderVar[] vars =
                 [
                     new ShaderFloat(PointSize, "PointSize"),
                     new ShaderInt(0, "TotalPoints"),
                 ];
-                var mat = new XRMaterial(vars, [.. vertexShaders, geomShader, fragShader]);
+                var mat = new XRMaterial(vars, [.. vertexShaders, fragShader]);
                 mat.RenderOptions.RequiredEngineUniforms =
                     EUniformRequirements.Camera |
                     EUniformRequirements.ClipSpacePolicy;
@@ -1006,19 +1051,14 @@ namespace XREngine.Rendering.Physics.DebugVisualization
 
             try
             {
-                XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-                XRShader[] vertexShaders = [vertShader];
-
-                XRShader geomShader = ShaderHelper.LoadEngineShader(
-                    Path.Combine("Common", "Debug", "gs", _useCompressedBuffers ? "LineInstanceCompressed.gs" : "LineInstance.gs"),
-                    EShaderType.Geometry);
+                XRShader[] vertexShaders = DebugPrimitiveShaders.LoadVertexShaders("Line", _useCompressedBuffers);
                 XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitiveLine.fs"), EShaderType.Fragment);
                 ShaderVar[] vars =
                 [
                     new ShaderFloat(LineWidth, "LineWidth"),
                     new ShaderInt(0, "TotalLines"),
                 ];
-                var mat = new XRMaterial(vars, [.. vertexShaders, geomShader, fragShader]);
+                var mat = new XRMaterial(vars, [.. vertexShaders, fragShader]);
                 mat.RenderOptions.RequiredEngineUniforms =
                     EUniformRequirements.Camera |
                     EUniformRequirements.ViewportDimensions |
@@ -1045,18 +1085,13 @@ namespace XREngine.Rendering.Physics.DebugVisualization
 
             try
             {
-                XRShader vertShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "vs", "InstancedDebugPrimitive.vs"), EShaderType.Vertex);
-                XRShader[] vertexShaders = [vertShader];
-
-                XRShader geomShader = ShaderHelper.LoadEngineShader(
-                    Path.Combine("Common", "Debug", "gs", _useCompressedBuffers ? "TriangleInstanceCompressed.gs" : "TriangleInstance.gs"),
-                    EShaderType.Geometry);
+                XRShader[] vertexShaders = DebugPrimitiveShaders.LoadVertexShaders("Triangle", _useCompressedBuffers);
                 XRShader fragShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "Debug", "fs", "InstancedDebugPrimitive.fs"), EShaderType.Fragment);
                 ShaderVar[] vars =
                 [
                     new ShaderInt(0, "TotalTriangles"),
                 ];
-                var mat = new XRMaterial(vars, [.. vertexShaders, geomShader, fragShader]);
+                var mat = new XRMaterial(vars, [.. vertexShaders, fragShader]);
                 mat.RenderOptions.RequiredEngineUniforms =
                     EUniformRequirements.Camera |
                     EUniformRequirements.ClipSpacePolicy;

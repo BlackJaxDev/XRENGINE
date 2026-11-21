@@ -111,14 +111,14 @@ namespace XREngine.Animation
         }
 
         public override string WriteToString()
-            => string.Format("{0} {1} {2} {3} {4} {5}", Second, InValue.ToString(), OutValue.ToString(), InTangent.ToString(), OutTangent.ToString(), InterpolationTypeOut);
+            => $"{Second} {InValue} {OutValue} {InTangent} {OutTangent} {InterpolationTypeOut}";
 
         public override string ToString()
             => InterpolationTypeOut switch
             {
-                EVectorInterpType.Step => string.Format("[F:{0} : {3}] V:({1} {2})", Second, InValue.ToString(), OutValue.ToString(), InterpolationTypeOut),
-                EVectorInterpType.Linear => string.Format("[F:{0} : {3}] V:({1} {2})", Second, InValue.ToString(), OutValue.ToString(), InterpolationTypeOut),
-                _ => string.Format("[F:{0} : {5}] V:({1} {2}) T:({3} {4})", Second, InValue.ToString(), OutValue.ToString(), InTangent.ToString(), OutTangent.ToString(), InterpolationTypeOut),
+                EVectorInterpType.Step => $"[F:{Second} : {InterpolationTypeOut}] V:({InValue} {OutValue})",
+                EVectorInterpType.Linear => $"[F:{Second} : {InterpolationTypeOut}] V:({InValue} {OutValue})",
+                _ => $"[F:{Second} : {InterpolationTypeOut}] V:({InValue} {OutValue}) T:({InTangent} {OutTangent})",
             };
 
         public override void ReadFromString(string str)

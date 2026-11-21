@@ -115,6 +115,35 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
             Volatile.Write(ref _state, 2);
         }
     }
+    /// <summary>
+    /// Fails this fence only while it still waits for a queue submission. A fence that a
+    /// submission already bound keeps its timeline value.
+    /// </summary>
+    internal void FailIfAwaitingSubmission(EGpuFenceFailureSite site,
+        EGpuFenceNativeSubmission nativeSubmission)
+    {
+        VulkanCommandRuntime? runtime = _runtime;
+        if (runtime is null)
+        {
+            Interlocked.CompareExchange(ref _state, 2, 0);
+            return;
+        }
+
+        lock (runtime.Synchronization._submissionMarkerLock)
+        {
+            if (Volatile.Read(ref _state) != 0)
+                return;
+            RecordFirstFailureNoLock(runtime, site, nativeSubmission, 0);
+            if (Volatile.Read(ref _disposePendingBackendResolution) != 0)
+            {
+                ReturnToPoolNoLock(runtime);
+                return;
+            }
+
+            Volatile.Write(ref _state, 2);
+        }
+    }
+
     private void RecordFirstFailureNoLock(VulkanCommandRuntime runtime,
         EGpuFenceFailureSite site, EGpuFenceNativeSubmission nativeSubmission, int nativeResult)
     {
@@ -129,6 +158,21 @@ internal sealed class VulkanTimelineGpuFence : XRGpuFence
         _firstFailure = failure;
         runtime.Synchronization.RecordFenceFailureNoLock(in failure);
     }
+    public override bool TryGetTimelineDiagnostic(out ulong targetValue, out ulong completedValue)
+    {
+        targetValue = _value;
+        completedValue = 0UL;
+        if (_semaphore == 0 || _value == 0)
+            return true;
+        if (_api is not { } api || _device is not { } device || _runtime is not { } runtime ||
+            _resources is not { } resources || !device.StateMachine.IsOperational)
+            return false;
+        Result result = runtime.Synchronization.QueryTimelineCompletion(
+            api, device, resources.Lifetime.Tracker, new Semaphore(_semaphore), _value,
+            out _, out completedValue);
+        return result == Result.Success;
+    }
+
     protected override unsafe EGpuFenceStatus PollCore()
     {
         if (Volatile.Read(ref _state) == 2) return EGpuFenceStatus.Failed;

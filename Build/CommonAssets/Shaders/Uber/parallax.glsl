@@ -35,6 +35,12 @@ float sampleHeightMap(vec2 uv) {
     return heightSample[clamp(int(_ParallaxMapChannel), 0, 3)];
 }
 
+// Depth below the surface top for the ray-march modes. The height map follows the
+// Unity convention: white is the surface top, black is the deepest point.
+float sampleParallaxDepth(vec2 uv) {
+    return 1.0 - sampleHeightMap(uv);
+}
+
 // ============================================
 // Simple Parallax Mapping
 // ============================================
@@ -60,7 +66,7 @@ vec2 calculateSteepParallax(vec2 uv, vec3 viewDirTangent, float heightScale, int
     vec2 deltaUV = viewDirTangent.xy * heightScale / float(numSamples);
     
     vec2 currentUV = uv;
-    float currentHeight = sampleHeightMap(currentUV);
+    float currentHeight = sampleParallaxDepth(currentUV);
     
     // Linear search
     for (int i = 0; i < numSamples; i++) {
@@ -69,7 +75,7 @@ vec2 calculateSteepParallax(vec2 uv, vec3 viewDirTangent, float heightScale, int
         }
         
         currentUV -= deltaUV;
-        currentHeight = sampleHeightMap(currentUV);
+        currentHeight = sampleParallaxDepth(currentUV);
         currentLayerDepth += layerDepth;
     }
     
@@ -93,7 +99,7 @@ vec2 calculateParallaxOcclusion(vec2 uv, vec3 viewDirTangent, float heightScale,
     vec2 deltaUV = viewDirTangent.xy * heightScale / float(numSamples);
     
     vec2 currentUV = uv;
-    float currentHeight = sampleHeightMap(currentUV);
+    float currentHeight = sampleParallaxDepth(currentUV);
     
     // Linear search to find intersection
     vec2 prevUV = currentUV;
@@ -110,7 +116,7 @@ vec2 calculateParallaxOcclusion(vec2 uv, vec3 viewDirTangent, float heightScale,
         prevLayerDepth = currentLayerDepth;
         
         currentUV -= deltaUV;
-        currentHeight = sampleHeightMap(currentUV);
+        currentHeight = sampleParallaxDepth(currentUV);
         currentLayerDepth += layerDepth;
     }
     
@@ -142,7 +148,7 @@ vec2 calculateSilhouetteParallaxOcclusion(vec2 transformedUV, vec3 viewDirTangen
     vec2 deltaUV = viewDirTangent.xy * heightScale / float(numSamples);
 
     vec2 currentUV = transformedUV;
-    float currentHeight = sampleHeightMap(currentUV);
+    float currentHeight = sampleParallaxDepth(currentUV);
 
     vec2 prevUV = currentUV;
     float prevHeight = currentHeight;
@@ -170,7 +176,7 @@ vec2 calculateSilhouetteParallaxOcclusion(vec2 transformedUV, vec3 viewDirTangen
         prevLayerDepth = currentLayerDepth;
 
         currentUV -= deltaUV;
-        currentHeight = sampleHeightMap(currentUV);
+        currentHeight = sampleParallaxDepth(currentUV);
         currentLayerDepth += layerDepth;
     }
 
@@ -211,7 +217,7 @@ vec2 calculateReliefParallax(vec2 uv, vec3 viewDirTangent, float heightScale, in
     vec2 deltaUV = viewDirTangent.xy * heightScale / float(linearSamples);
     
     vec2 currentUV = uv;
-    float currentHeight = sampleHeightMap(currentUV);
+    float currentHeight = sampleParallaxDepth(currentUV);
     
     for (int i = 0; i < linearSamples; i++) {
         if (currentLayerDepth >= currentHeight) {
@@ -219,7 +225,7 @@ vec2 calculateReliefParallax(vec2 uv, vec3 viewDirTangent, float heightScale, in
         }
         
         currentUV -= deltaUV;
-        currentHeight = sampleHeightMap(currentUV);
+        currentHeight = sampleParallaxDepth(currentUV);
         currentLayerDepth += layerDepth;
     }
     
@@ -228,7 +234,7 @@ vec2 calculateReliefParallax(vec2 uv, vec3 viewDirTangent, float heightScale, in
     layerDepth *= 0.5;
     
     for (int i = 0; i < binarySamples; i++) {
-        currentHeight = sampleHeightMap(currentUV);
+        currentHeight = sampleParallaxDepth(currentUV);
         
         if (currentHeight > currentLayerDepth) {
             currentUV -= deltaUV;

@@ -25,13 +25,13 @@ public static partial class SerializedMaterialImporter
         bool vertexEffects = HasVertexEffects(document);
         bool audioLink = document.TryGetPositive("_EnableAudioLink") ||
                          document.ValidKeywords.Contains("POI_AUDIOLINK");
+        SetInt(material, "_AudioLinkAnimToggle", GetInt(document, "_AudioLinkAnimToggle", 1));
         bool environment = HasAnyPositive(document, "_LTCGIEnabled", "_LightVolumeEnabled", "_BlacklightEnabled");
         bool viewContext = HasAnyPositive(document, "_EnableMirrorOptions", "_MirrorTextureEnabled", "_CameraOptionsEnabled");
 
         material.SetUberFeatureEnabled("outline", outlines);
         material.SetUberFeatureEnabled("extended-effects", specialEffects);
         material.SetUberFeatureEnabled("vertex-effects", vertexEffects);
-        material.SetUberFeatureEnabled("audiolink", audioLink && UberMaterialRuntimeAdapters.AudioLink is not null);
         material.SetUberFeatureEnabled("environment-lighting", environment && UberMaterialRuntimeAdapters.Environment is not null);
         material.SetUberFeatureEnabled("view-context", viewContext);
         material.EnsureUberStateInitialized();
@@ -43,13 +43,10 @@ public static partial class SerializedMaterialImporter
 
         if (vertexEffects)
         {
-            AttachSourceToonVertexShaders(material);
             UberVertexEffectUniformBinding vertexBinding = new(material);
             material.SettingVertexUniforms += vertexBinding.Apply;
             material.RenderOptions ??= ModelAssetImporter.CreateForwardPlusUberShaderRenderOptions();
-            // GPU-indirect substitutes its own vertex program. Until its
-            // material-indexed deformation block is available, keep these
-            // meshes on the exact CPU-direct/custom-vertex path.
+            // GPU-indirect substitutes its own vertex program without these material values.
             material.RenderOptions.ExcludeFromGpuIndirect = true;
         }
 
@@ -57,10 +54,12 @@ public static partial class SerializedMaterialImporter
             material,
             audioLink,
             environment,
-            viewContext);
+            viewContext,
+            out bool audioReady);
+        material.SetUberFeatureEnabled("audiolink", audioReady);
         if (!adaptersAvailable)
         {
-            if (audioLink && UberMaterialRuntimeAdapters.AudioLink is null)
+            if (audioLink && !audioReady)
                 AddMissingAdapterDiagnostic(diagnostics, warnings, "AudioLink", "_EnableAudioLink");
             if (environment && UberMaterialRuntimeAdapters.Environment is null)
                 AddMissingAdapterDiagnostic(diagnostics, warnings, "LTCGI/light-volume", "_LTCGIEnabled");
@@ -125,8 +124,8 @@ public static partial class SerializedMaterialImporter
         MapFloat(document, material, "_OutlineShadowStrength", "_OutlineShadowStrength");
         MapInt(document, material, "_OutlineTextureUV", "_OutlineTextureUV");
         MapInt(document, material, "_OutlineMaskUV", "_OutlineMaskUV");
-        MapVector2(document, material, "_OutlineTexturePan", "_OutlineTexturePan");
-        MapVector2(document, material, "_OutlineMaskPan", "_OutlineMaskPan");
+        MapSourceToonMeshPan(document, material, "_OutlineTexturePan", "_OutlineTexturePan");
+        MapSourceToonMeshPan(document, material, "_OutlineMaskPan", "_OutlineMaskPan");
 
         MapFloat(document, material, "_DissolveContinuous", "_DissolveContinuous", "_DissolveContinuousEnabled");
         MapInt(document, material, "_DissolveCoordinateSpace", "_DissolveCoordinateSpace");
@@ -142,6 +141,8 @@ public static partial class SerializedMaterialImporter
         MapFloat(document, material, "_UvTileDiscard", "_EnableUDIMDiscardOptions", "_UVTileDiscardEnabled");
         MapInt(document, material, "_UDIMDiscardMode", "_UDIMDiscardMode");
         MapInt(document, material, "_UDIMDiscardUV", "_UDIMDiscardUV");
+        // Serialized Unity models import with FlipUVs. Source tile rows use the pre-flip V coordinate.
+        SetFloat(material, "_SourceUdimFlipV", 1.0f);
         bool activeUdimCell = false;
         for (int row = 0; row < 4; ++row)
         {
@@ -158,8 +159,8 @@ public static partial class SerializedMaterialImporter
             int uv = material.Parameter<ShaderInt>("_UDIMDiscardUV")?.Value ?? 0;
             string? unsupported = mode is not (0 or 1)
                 ? "The active UDIM discard selects an unsupported discard mode."
-                : uv is < 0 or > 1
-                    ? "The active UDIM discard selects a UV channel outside native UV0 and UV1."
+                : uv is < 0 or > 3
+                    ? "The active UDIM discard selects a UV channel outside native UV0 through UV3."
                     : mode == 0
                         ? "Vertex-mode UDIM discard requires native Advanced triangle coverage. Authored late passes do not support this mode."
                         : null;
@@ -244,7 +245,7 @@ public static partial class SerializedMaterialImporter
                     continue;
 
                 ReplaceMaterialSampler(material, destination, texture);
-                ApplyTextureTransform(material, document, source, destination);
+                ApplySourceToonMeshTextureTransform(material, document, source, destination);
                 break;
             }
         }
@@ -257,16 +258,6 @@ public static partial class SerializedMaterialImporter
                 "Beat Saber data was authored, but the pinned Poiyomi source exposes no engine-independent runtime provider contract. The state was retained without fabricating input.",
                 "_BeatSaberEnabled"));
         }
-    }
-
-    private static void AttachSourceToonVertexShaders(XRMaterial material)
-    {
-        material.SetShader(
-            EShaderType.Vertex,
-            ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader.vert"), EShaderType.Vertex),
-            coerceShaderType: true);
-        material.Shaders.Add(ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader_OVR.vert"), EShaderType.Vertex));
-        material.Shaders.Add(ShaderHelper.LoadEngineShader(Path.Combine("Uber", "UberShader_NV.vert"), EShaderType.Vertex));
     }
 
     private static void AddMissingAdapterDiagnostic(

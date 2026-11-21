@@ -14,13 +14,14 @@ public partial class AdvancedRenderPipeline
     AdvancedRenderPipeline IAdvancedRenderStageFamilyHost.AdvancedStageFamilyDefinition => this;
 
     /// <summary>
-    /// Creates the Advanced pipeline for one mono OpenXR eye output. The
-    /// instance owns its command execution, resource generations, output
-    /// reservation, and frame lifecycle. It has no screen-space UI.
+    /// Creates the Advanced pipeline for an OpenXR eye output: one mono eye, or
+    /// both eyes as one layered stereo target when <paramref name="stereo"/> is
+    /// true. The instance owns its command execution, resource generations,
+    /// output reservation, and frame lifecycle. It has no screen-space UI.
     /// </summary>
-    internal static AdvancedRenderPipeline CreateOpenXrEyePipeline()
+    internal static AdvancedRenderPipeline CreateOpenXrEyePipeline(bool stereo = false)
         => new(
-            stereo: false,
+            stereo: stereo,
             capabilityResult: null,
             offscreenProfile: null,
             stageFamilyProfile: EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye);

@@ -21,7 +21,7 @@ public partial class OpenGLRenderer : IAdvancedVisibilityStageBackendCapability
         if (!_advancedLimitsLogged)
         {
             _advancedLimitsLogged = true;
-            Debug.Rendering($"[OpenGL Advanced] Storage block limits: compute={RawGL.GetInteger(GLEnum.MaxComputeShaderStorageBlocks)}, vertex={RawGL.GetInteger(GLEnum.MaxVertexShaderStorageBlocks)}, fragment={RawGL.GetInteger(GLEnum.MaxFragmentShaderStorageBlocks)}.");
+            Debug.Rendering($"[OpenGL Advanced] Storage block limits: compute={RawGL.GetInteger(GLEnum.MaxComputeShaderStorageBlocks)}, vertex={RawGL.GetInteger(GLEnum.MaxVertexShaderStorageBlocks)}, fragment={RawGL.GetInteger(GLEnum.MaxFragmentShaderStorageBlocks)}, bindings={RawGL.GetInteger(GLEnum.MaxShaderStorageBufferBindings)}.");
         }
         if (!SupportsIndirectCountDraw() || !SupportsBindlessTextureHandles)
             return new(EAdvancedProductionExecutionState.Unsupported, "OpenGL Advanced requires indirect-count submission and bindless texture/sampler handles.");

@@ -288,10 +288,10 @@ public partial class GaussianCacheComponent
             _driverPose?.Dispose();
             _driverPose = new XRDataBuffer("GaussianCacheDriverPose", EBufferTarget.ShaderStorageBuffer, poseCount, EComponentType.Float, 4u, false, false, allocateClientSideSource: false)
             {
-                // The driver pose pass writes every vertex that the cut pass reads.
+                // The driver pose pass writes every vertex in device-local memory before the cut pass reads it.
                 GpuProduced = true,
                 BindingIndexOverride = DriverPoseBinding,
-                Usage = EBufferUsage.DynamicCopy,
+                Usage = EBufferUsage.StaticCopy,
                 DisposeOnPush = false,
                 PadEndingToVec4 = true,
             };

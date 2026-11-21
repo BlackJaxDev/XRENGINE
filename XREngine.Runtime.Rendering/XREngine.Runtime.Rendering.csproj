@@ -33,6 +33,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="../Build/CommonAssets/Shaders/Uber/vertex_manipulation.glsl"
+                      LogicalName="XREngine.Rendering.Shaders.Generator.VertexManipulation.glsl" />
   </ItemGroup>
 
   <Import Project="../Build/Registration/RuntimeContracts.props" />

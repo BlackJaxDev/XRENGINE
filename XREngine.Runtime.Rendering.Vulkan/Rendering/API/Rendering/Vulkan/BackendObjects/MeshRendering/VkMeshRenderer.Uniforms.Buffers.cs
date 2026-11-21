@@ -115,25 +115,30 @@ internal unsafe partial class VkMeshRenderer
 	/// Ensures per-frame/per-draw-slot auto uniform buffers exist and are large enough.
 	/// Destroys and recreates if the frame count, slot count, or size has changed.
 	/// </summary>
-	private bool EnsureAutoUniformBuffer(string name, uint size)
+	private bool EnsureAutoUniformBuffer(string name, uint size, VkRenderProgram? programOverride = null)
 	{
 		size = Math.Max(size, 1u);
 		int bufferCount = UniformBufferArrayLength;
 		bool useFrameArena = BackendContext.Resources.MappedFrameArena is not null;
+		VkRenderProgram? activeProgram = programOverride ?? _program;
 		if (_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? existing))
 		{
 			bool frequencyOwnedArena =
 				useFrameArena &&
-				_program is not null &&
-				_program.TryGetAutoUniformBlock(
+				activeProgram is not null &&
+				activeProgram.TryGetAutoUniformBlock(
 					name,
 					out AutoUniformBlockInfo existingBlock) &&
 				existingBlock.Frequency != EVulkanBindingFrequency.Unknown;
+			// A frequency-owned block replaces each slot view with an exact-size
+			// reservation when it writes, so the array only has to have the right
+			// shape. Checking the size there rebuilt the array whenever programs
+			// with different block sizes shared this renderer.
 			bool valid = AutoUniformBuffersValid(
 					name,
 					existing,
 					bufferCount,
-					size,
+					frequencyOwnedArena ? 1u : size,
 					requireMappedPointers: !frequencyOwnedArena) &&
 				(!useFrameArena || !existing[0].OwnsBuffer);
 			if (valid)
@@ -149,7 +154,7 @@ internal unsafe partial class VkMeshRenderer
 
 		if (useFrameArena)
 		{
-			if (!TryCreateAutoUniformArenaViews(name, size, out AutoUniformBuffer[] arenaBuffers))
+			if (!TryCreateAutoUniformArenaViews(name, size, out AutoUniformBuffer[] arenaBuffers, activeProgram))
 				return false;
 			_autoUniformBuffers[name] = arenaBuffers;
 			AutoUniformBuffersValid(name, arenaBuffers, bufferCount, size, requireMappedPointers: true);
@@ -210,14 +215,19 @@ internal unsafe partial class VkMeshRenderer
 		return true;
 	}
 
-	private bool TryCreateAutoUniformArenaViews(string name, uint size, out AutoUniformBuffer[] buffers)
+	private bool TryCreateAutoUniformArenaViews(
+		string name,
+		uint size,
+		out AutoUniformBuffer[] buffers,
+		VkRenderProgram? programOverride = null)
 	{
 		buffers = new AutoUniformBuffer[UniformBufferArrayLength];
 		VulkanMappedFrameArena? arena = BackendContext.Resources.MappedFrameArena;
 		if (arena is null)
 			return false;
-		if (_program is not null &&
-			_program.TryGetAutoUniformBlock(
+		VkRenderProgram? activeProgram = programOverride ?? _program;
+		if (activeProgram is not null &&
+			activeProgram.TryGetAutoUniformBlock(
 				name,
 				out AutoUniformBlockInfo frequencyBlock) &&
 			frequencyBlock.Frequency != EVulkanBindingFrequency.Unknown)

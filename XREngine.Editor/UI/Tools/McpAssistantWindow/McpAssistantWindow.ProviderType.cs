@@ -9,6 +9,7 @@ public sealed partial class McpAssistantWindow
         Codex,
         ClaudeCode,
         Gemini,
-        GitHubModels
+        GitHubModels,
+        Copilot
     }
 }

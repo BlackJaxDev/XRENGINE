@@ -184,6 +184,58 @@ public sealed class NetworkingContractsTests
     }
 
     [Test]
+    public void AdmissionSecret_StaysInMemory_AndTheInlineHandoffGivesItToALaunchedGame()
+    {
+        const string admission = "admission-grant-sentinel";
+        string? previousFile = Environment.GetEnvironmentVariable(RealtimeJoinHandoff.PayloadFileEnvironmentVariable);
+        string? previousInline = Environment.GetEnvironmentVariable(RealtimeJoinHandoff.PayloadEnvironmentVariable);
+        try
+        {
+            // The YAML save does not write the grant, and an older file that holds it still loads, without it.
+            GameStartupSettings saved = new() { MultiplayerAdmissionSecret = admission, MultiplayerSessionToken = "token-kept" };
+            string yaml = AssetManager.Serializer.Serialize(saved);
+            yaml.ShouldNotContain(admission);
+            yaml.ShouldNotContain(nameof(GameStartupSettings.MultiplayerAdmissionSecret));
+            yaml.ShouldContain("token-kept");
+            GameStartupSettings loaded = AssetManager.Deserializer.Deserialize<GameStartupSettings>(
+                yaml + Environment.NewLine + $"{nameof(GameStartupSettings.MultiplayerAdmissionSecret)}: {admission}{Environment.NewLine}");
+            loaded.MultiplayerAdmissionSecret.ShouldBeNull();
+            loaded.MultiplayerSessionToken.ShouldBe("token-kept");
+
+            // A launcher gives the grant to the game in the process environment, not on disk.
+            RealtimeJoinHandoffPayload payload = new()
+            {
+                SessionId = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                AccountId = "account-1",
+                ClientId = "client-1",
+                ReservationId = "reservation-1",
+                AdmissionSecret = admission,
+                WorkerGeneration = Guid.Parse("33333333-3333-3333-3333-333333333333"),
+                CredentialEpoch = 4,
+                Endpoint = CreateEndpoint(),
+                WorldAsset = CreateWorldAsset()
+            };
+            Environment.SetEnvironmentVariable(RealtimeJoinHandoff.PayloadFileEnvironmentVariable, null);
+            Environment.SetEnvironmentVariable(RealtimeJoinHandoff.PayloadEnvironmentVariable,
+                System.Text.Json.JsonSerializer.Serialize(payload, XREngineRuntimeJsonContext.Default.RealtimeJoinHandoffPayload));
+            GameStartupSettings launched = new();
+
+            DesktopRealtimeJoinHandoffLoader.TryApplyFromEnvironment(launched, out _, out string? source).ShouldBeTrue();
+
+            launched.NetworkingType.ShouldBe(ENetworkingType.Client);
+            launched.MultiplayerAdmissionSecret.ShouldBe(admission);
+            launched.MultiplayerReservationId.ShouldBe("reservation-1");
+            source.ShouldBe(RealtimeJoinHandoff.PayloadEnvironmentVariable);
+            AssetManager.Serializer.Serialize(launched).ShouldNotContain(admission);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(RealtimeJoinHandoff.PayloadFileEnvironmentVariable, previousFile);
+            Environment.SetEnvironmentVariable(RealtimeJoinHandoff.PayloadEnvironmentVariable, previousInline);
+        }
+    }
+
+    [Test]
     public void RealtimeJoinHandoff_RejectsMismatchedExpectedWorldBeforeConnect()
     {
         GameStartupSettings settings = new()

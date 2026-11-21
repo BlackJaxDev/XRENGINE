@@ -50,7 +50,8 @@ internal readonly record struct VulkanAdvancedScenePublicationState(
     VulkanFrameDataSlice EncodedSamplers,
     VulkanFrameDataSlice HandleLookups,
     VulkanFrameDataSlice FallbackTable,
-    VulkanAdvancedSceneLookupSegments LookupSegments)
+    VulkanAdvancedSceneLookupSegments LookupSegments,
+    VulkanAdvancedNativeShadingKernelFamilies KernelFamilies = default)
 {
     internal bool IsValid
         => FrameSlot >= 0 && FrameGeneration != 0u &&

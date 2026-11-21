@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Numerics;
 using System.Text;
 using System.Text.Json.Nodes;
+using LocalAgentBroker.Orchestration;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Editor.IMGUI;
@@ -80,6 +81,7 @@ public sealed class ShaderEditorWindow
     private string _aiStatus = "Idle";
     private bool _aiRunning;
     private int _aiSerial;
+    private CancellationTokenSource? _aiCancellation;
 
     private int _previewLine = 1;
     private string _previewExpression = "color";
@@ -451,18 +453,35 @@ public sealed class ShaderEditorWindow
             ImGui.TableSetupColumn("Message", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableHeadersRow();
 
-            foreach (ShaderEditorDiagnostic diagnostic in _diagnostics)
+            for (int diagnosticIndex = 0; diagnosticIndex < _diagnostics.Count; diagnosticIndex++)
             {
+                ShaderEditorDiagnostic diagnostic = _diagnostics[diagnosticIndex];
+                ImGui.PushID(diagnosticIndex);
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
                 if (ImGui.Selectable(diagnostic.Line > 0 ? diagnostic.Line.ToString() : "-", _selectedDiagnosticLine == diagnostic.Line, ImGuiSelectableFlags.SpanAllColumns))
                     _selectedDiagnosticLine = diagnostic.Line;
+                if (ImGui.BeginPopupContextItem("##ExplainShaderDiagnostic"))
+                {
+                    if (ImGui.MenuItem("Explain this error"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest(
+                            "shader diagnostic",
+                            diagnostic.Severity.ToString(),
+                            "Shader Editor / Diagnostics",
+                            TargetName: string.IsNullOrEmpty(_shaderSourcePath) ? "Unsaved shader" : Path.GetFileName(_shaderSourcePath),
+                            CurrentValue: diagnostic.Line > 0
+                                ? $"Line {diagnostic.Line}, column {diagnostic.Column}"
+                                : "No source line",
+                            Diagnostic: diagnostic.Message));
+                    ImGui.EndPopup();
+                }
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted(diagnostic.Column > 0 ? diagnostic.Column.ToString() : "-");
                 ImGui.TableNextColumn();
                 ImGui.TextColored(GetDiagnosticColor(diagnostic.Severity), diagnostic.Severity.ToString());
                 ImGui.TableNextColumn();
                 ImGui.TextWrapped(diagnostic.Message);
+                ImGui.PopID();
             }
 
             ImGui.EndTable();
@@ -927,23 +946,66 @@ public sealed class ShaderEditorWindow
 
     private void DrawAiTab()
     {
+        EditorPreferences? preferences = Engine.EditorPreferences;
+        bool useSubscription = preferences?.ShaderEditorUseSubscription == true;
+        ImGui.BeginDisabled(_aiRunning);
+        int accessMode = useSubscription ? 0 : 1;
+        if (ImGui.Combo("Access", ref accessMode, "Subscription\0OpenAI API\0") && preferences is not null)
+            preferences.ShaderEditorUseSubscription = useSubscription = accessMode == 0;
+
+        SubscriptionAssistantBrand brand = (SubscriptionAssistantBrand)(preferences?.ShaderEditorSubscriptionBrand ?? 0);
+        if (useSubscription)
+        {
+            int brandIndex = brand == SubscriptionAssistantBrand.Copilot ? 3 : (int)brand;
+            if (ImGui.Combo("Assistant", ref brandIndex, "Codex\0Claude\0Gemini\0Copilot\0") && preferences is not null)
+            {
+                preferences.ShaderEditorSubscriptionBrand = brandIndex == 3 ? 4 : brandIndex;
+                brand = (SubscriptionAssistantBrand)preferences.ShaderEditorSubscriptionBrand;
+            }
+            SubscriptionEditorConnection.DrawModelPicker(brand, "Model##ShaderSubscription", shaderModelOverride: true);
+            if (ImGui.Button("Manage account##Shader"))
+                ImGui.OpenPopup("Shader account");
+            if (ImGui.BeginPopup("Shader account"))
+            {
+                SubscriptionEditorConnection.DrawConnectionActions(brand);
+                ImGui.EndPopup();
+            }
+            ImGui.TextWrapped(SubscriptionEditorConnection.Status(brand));
+            if (ImGui.CollapsingHeader("Advanced##ShaderSubscription"))
+                SubscriptionEditorConnection.DrawExecutableSettings(brand);
+        }
+        ImGui.EndDisabled();
+
         string model = Engine.EditorPreferences?.McpAssistantOpenAiModel ?? "gpt-5-codex";
         bool hasKey = !string.IsNullOrWhiteSpace(ResolveOpenAiApiKey());
 
-        ImGui.TextUnformatted("OpenAI model");
-        ImGui.SameLine();
-        ImGui.TextDisabled(model);
-        ImGui.SameLine();
-        ImGui.TextColored(hasKey ? new Vector4(0.45f, 0.85f, 0.45f, 1f) : new Vector4(0.95f, 0.55f, 0.35f, 1f), hasKey ? "key ready" : "key missing");
+        if (!useSubscription)
+        {
+            ImGui.TextUnformatted("OpenAI model");
+            ImGui.SameLine();
+            ImGui.TextDisabled(model);
+            ImGui.SameLine();
+            ImGui.TextColored(hasKey ? new Vector4(0.45f, 0.85f, 0.45f, 1f) : new Vector4(0.95f, 0.55f, 0.35f, 1f), hasKey ? "key ready" : "key missing");
+        }
 
         ImGui.TextUnformatted("Instruction");
         ImGui.InputTextMultiline("##ShaderEditorAiInstruction", ref _aiInstruction, 4096, new Vector2(-1f, 90f), ImGuiInputTextFlags.AllowTabInput);
         TrackSessionControlUndo("Edit AI Shader Instruction");
 
-        using (new DisabledScope(_aiRunning || !hasKey))
+        using (new DisabledScope(_aiRunning || (useSubscription ? !SubscriptionEditorConnection.IsModelReady(brand, shaderModelOverride: true) : !hasKey)))
         {
             if (ImGui.Button("Request Completion"))
                 ApplyUndoableChange("Request Shader AI Completion", RequestAiCompletion);
+        }
+
+        if (_aiRunning)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel Completion"))
+            {
+                lock (_aiLock)
+                    _aiCancellation?.Cancel();
+            }
         }
 
         ImGui.SameLine();
@@ -1594,6 +1656,7 @@ public sealed class ShaderEditorWindow
     private void HandleSourceChanged(bool updateBoundSource = true)
     {
         _sourceRevision++;
+        InvalidateAiCompletion();
         if (updateBoundSource)
             UpdateBoundSourceText(_shaderSource);
         _previewLine = Math.Clamp(_previewLine, 1, Math.Max(1, CountLines(_shaderSource)));
@@ -1611,6 +1674,7 @@ public sealed class ShaderEditorWindow
     private void HandleSourceMetadataChanged()
     {
         _sourceRevision++;
+        InvalidateAiCompletion();
         _lockingToolRevision = -1;
         ResetGeneratedOutputs("Shader type changed.");
         SyncLockingToolFromCurrentSource();
@@ -1790,6 +1854,7 @@ public sealed class ShaderEditorWindow
 
     private void BindSource(XRShader? shader, TextFile? source)
     {
+        InvalidateAiCompletion();
         if (_boundSource is not null)
             _boundSource.TextChanged -= OnBoundSourceTextChanged;
 
@@ -2213,46 +2278,77 @@ public sealed class ShaderEditorWindow
 
     private void RequestAiCompletion()
     {
-        string apiKey = ResolveOpenAiApiKey();
-        if (string.IsNullOrWhiteSpace(apiKey))
+        bool useSubscription = Engine.EditorPreferences?.ShaderEditorUseSubscription == true;
+        SubscriptionAssistantBrand brand = (SubscriptionAssistantBrand)(Engine.EditorPreferences?.ShaderEditorSubscriptionBrand ?? 0);
+        string apiKey = useSubscription ? string.Empty : ResolveOpenAiApiKey();
+        if (!useSubscription && string.IsNullOrWhiteSpace(apiKey))
         {
-            _aiStatus = "OpenAI key missing";
+            lock (_aiLock)
+                _aiStatus = "OpenAI key missing";
             return;
         }
 
+        int serial;
+        CancellationTokenSource cancellation;
         lock (_aiLock)
         {
             if (_aiRunning)
                 return;
 
+            serial = Interlocked.Increment(ref _aiSerial);
+            cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            _aiCancellation = cancellation;
             _aiRunning = true;
             _aiStatus = "Requesting...";
+            _aiCompletion = string.Empty;
         }
 
-        int serial = Interlocked.Increment(ref _aiSerial);
-        string model = Engine.EditorPreferences?.McpAssistantOpenAiModel ?? "gpt-5-codex";
+        string model = useSubscription
+            ? SubscriptionEditorConnection.Model(brand, shaderModelOverride: true)
+            : Engine.EditorPreferences?.McpAssistantOpenAiModel ?? "gpt-5-codex";
+        int connectionRevision = SubscriptionEditorConnection.ConnectionRevision(brand);
         string source = _shaderSource;
+        TextFile? boundSource = _boundSource;
+        long sourceRevision = _sourceRevision;
         string instruction = _aiInstruction;
         string diagnostics = string.Join("\n", _diagnostics.Take(8).Select(diagnostic => $"{diagnostic.Severity} line {diagnostic.Line}: {diagnostic.Message}"));
 
-        _ = RequestOpenAiCompletionAsync(apiKey, model, source, instruction, diagnostics)
+        Task<string> completionTask = useSubscription
+            ? RequestSubscriptionCompletionAsync(brand, model, source, instruction, diagnostics, cancellation.Token)
+            : RequestOpenAiCompletionAsync(apiKey, model, source, instruction, diagnostics, cancellation.Token);
+        _ = completionTask
             .ContinueWith(task =>
             {
-                if (serial != Volatile.Read(ref _aiSerial))
-                    return;
-
-                if (task.Exception is not null)
-                {
-                    _aiStatus = task.Exception.GetBaseException().Message;
-                }
-                else
-                {
-                    _aiCompletion = task.Result.Trim();
-                    _aiStatus = string.IsNullOrWhiteSpace(_aiCompletion) ? "No completion" : "Completion ready";
-                }
-
                 lock (_aiLock)
+                {
+                    if (ReferenceEquals(_aiCancellation, cancellation))
+                        _aiCancellation = null;
+                    cancellation.Dispose();
+                    if (serial != _aiSerial)
+                        return;
+
+                    if (task.IsCanceled)
+                        _aiStatus = "Canceled";
+                    else if (task.Exception is not null)
+                        _aiStatus = task.Exception.GetBaseException().Message;
+                    else if (!ReferenceEquals(boundSource, _boundSource)
+                        || sourceRevision != _sourceRevision
+                        || !string.Equals(source, _shaderSource, StringComparison.Ordinal)
+                        || useSubscription != (Engine.EditorPreferences?.ShaderEditorUseSubscription == true)
+                        || (useSubscription && (int)brand != Engine.EditorPreferences?.ShaderEditorSubscriptionBrand)
+                        || (useSubscription && connectionRevision != SubscriptionEditorConnection.ConnectionRevision(brand))
+                        || !string.Equals(model, useSubscription
+                            ? SubscriptionEditorConnection.Model(brand, shaderModelOverride: true)
+                            : Engine.EditorPreferences?.McpAssistantOpenAiModel ?? "gpt-5-codex", StringComparison.Ordinal))
+                        _aiStatus = "Source or connection changed; completion discarded";
+                    else
+                    {
+                        _aiCompletion = task.Result.Trim();
+                        _aiStatus = string.IsNullOrWhiteSpace(_aiCompletion) ? "No completion" : "Completion ready";
+                    }
+
                     _aiRunning = false;
+                }
             }, TaskScheduler.Default);
     }
 
@@ -2261,7 +2357,8 @@ public sealed class ShaderEditorWindow
         string model,
         string source,
         string instruction,
-        string diagnostics)
+        string diagnostics,
+        CancellationToken cancellationToken)
     {
         var payload = new JsonObject
         {
@@ -2277,12 +2374,39 @@ public sealed class ShaderEditorWindow
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey.Trim());
 
-        using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
-        string body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+        using HttpResponseMessage response = await SharedHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        string body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
             throw new InvalidOperationException($"OpenAI HTTP {(int)response.StatusCode}: {body}");
 
         return ShaderEditorServices.ExtractOpenAiResponseText(body);
+    }
+
+    /// <summary>
+    /// Subscription completion needs the local agent runtimes, which this build does not include.
+    /// The shader editor disables the request button for subscription access, so this path only
+    /// reports the missing runtime if a caller reaches it.
+    /// </summary>
+    private static Task<string> RequestSubscriptionCompletionAsync(
+        SubscriptionAssistantBrand brand,
+        string model,
+        string source,
+        string instruction,
+        string diagnostics,
+        CancellationToken cancellationToken)
+        => Task.FromException<string>(new InvalidOperationException(SubscriptionEditorConnection.UnavailableMessage));
+
+    private void InvalidateAiCompletion()
+    {
+        Interlocked.Increment(ref _aiSerial);
+        lock (_aiLock)
+        {
+            _aiCancellation?.Cancel();
+            _aiCancellation = null;
+            _aiRunning = false;
+            _aiCompletion = string.Empty;
+            _aiStatus = "Source changed";
+        }
     }
 
     private void AppendAiCompletion()

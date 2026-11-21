@@ -1,5 +1,6 @@
 using MemoryPack;
 using XREngine.Extensions;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Numerics;
 using XREngine.Data.Rendering;
@@ -30,9 +31,55 @@ namespace XREngine.Rendering
             set => SetField(ref _renderPass, value);
         }
 
-        public event Action<XRMaterialBase, XRRenderProgram>? SettingUniforms;
+        private Action<XRMaterialBase, XRRenderProgram>? _settingUniforms;
+
+        public event Action<XRMaterialBase, XRRenderProgram>? SettingUniforms
+        {
+            add
+            {
+                _settingUniforms += value;
+                OnSettingUniformsHandlersChanged();
+            }
+            remove
+            {
+                _settingUniforms -= value;
+                OnSettingUniformsHandlersChanged();
+            }
+        }
+
+        /// <summary>
+        /// Runs after a handler is added to or removed from <see cref="SettingUniforms"/>.
+        /// Derived materials use it to rebuild variants that copied the handler set.
+        /// </summary>
+        protected virtual void OnSettingUniformsHandlersChanged()
+        {
+        }
+
+        /// <summary>
+        /// Runs after a publisher is added to or removed from <see cref="BindingPublishers"/>.
+        /// Derived materials use it to rebuild variants that copied the publisher set.
+        /// </summary>
+        protected virtual void OnBindingPublishersChanged()
+        {
+        }
+
+        /// <summary>
+        /// Names the methods attached to <see cref="SettingUniforms"/>, for diagnostics
+        /// only. It allocates, so call it only when a diagnostic switch is on.
+        /// </summary>
+        internal string DescribeSettingUniformsHandlers()
+        {
+            if (_settingUniforms is null)
+                return "<none>";
+
+            Delegate[] handlers = _settingUniforms.GetInvocationList();
+            string[] names = new string[handlers.Length];
+            for (int i = 0; i < handlers.Length; i++)
+                names[i] = $"{handlers[i].Method.DeclaringType?.FullName}.{handlers[i].Method.Name}";
+            return string.Join(", ", names);
+        }
         public virtual void OnSettingUniforms(XRRenderProgram program)
-            => SettingUniforms?.Invoke(this, program);
+            => _settingUniforms?.Invoke(this, program);
 
         /// <summary>
         /// Uploads material-owned deformation inputs to the active vertex
@@ -44,19 +91,19 @@ namespace XREngine.Rendering
             => SettingVertexUniforms?.Invoke(program);
         public bool HasSettingVertexUniformHandlers => SettingVertexUniforms is not null;
         public bool HasSettingUniformsHandlers
-            => SettingUniforms is not null;
+            => _settingUniforms is not null;
 
         /// <summary>Checks one engine-owned publisher without allocating a delegate invocation list.</summary>
         protected bool HasOnlySettingUniformsHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
-            => SettingUniforms == handler;
+            => _settingUniforms == handler;
 
         /// <summary>Checks a cold cook's explicitly recognized publishers without admitting arbitrary callbacks.</summary>
         protected bool HasOnlySettingUniformsHandlers(IReadOnlySet<Action<XRMaterialBase, XRRenderProgram>> handlers,
             Action<XRMaterialBase, XRRenderProgram>? additionalHandler = null)
         {
-            if (SettingUniforms is null)
+            if (_settingUniforms is null)
                 return true;
-            foreach (Delegate handler in SettingUniforms.GetInvocationList())
+            foreach (Delegate handler in _settingUniforms.GetInvocationList())
                 if (handler is not Action<XRMaterialBase, XRRenderProgram> typed ||
                     typed != additionalHandler && !handlers.Contains(typed))
                     return false;
@@ -107,6 +154,7 @@ namespace XREngine.Rendering
 
         public XRMaterialBase()
         {
+            BindingPublishers.Changed += OnBindingPublishersChanged;
             _ownedRenderOptions = _renderOptions;
             _ownedInitialTextures = _textures;
             AttachTextureListHandlers(_textures);
@@ -234,7 +282,10 @@ namespace XREngine.Rendering
         /// Use this to set uniform values to be passed to the fragment shader.
         /// </summary>
         public T2? Parameter<T2>(int index) where T2 : ShaderVar
-            => Parameters.IndexInRangeArrayT(index) ? Parameters[index] as T2 : null;
+        {
+            ShaderVar[] parameters = Parameters;
+            return parameters.IndexInRangeArrayT(index) ? parameters[index] as T2 : null;
+        }
 
         /// <summary>
         /// Retrieves the material's uniform parameter with the given name.
@@ -242,35 +293,37 @@ namespace XREngine.Rendering
         /// </summary>
         public T2? Parameter<T2>(string name) where T2 : ShaderVar
         {
+            ShaderVar[] parameters = Parameters;
             if (_nameIndexCache.TryGetValue(name, out var index))
             {
-                if (Parameters.IndexInRangeArrayT(index) &&
-                    string.Equals(Parameters[index]?.Name, name, StringComparison.Ordinal))
-                {
-                    return Parameter<T2>(index);
-                }
+                ShaderVar? parameter = parameters.IndexInRangeArrayT(index)
+                    ? parameters[index]
+                    : null;
+                if (string.Equals(parameter?.Name, name, StringComparison.Ordinal))
+                    return parameter as T2;
 
-                // Parameter arrays are exposed for serialization and editor mutation,
-                // so callers can reorder or replace entries without invoking the
-                // property setter. Never let a stale cached index resolve a different
-                // uniform, because Uber resource reconstruction uses this lookup to
-                // decide whether a typed parameter needs to be restored.
-                _nameIndexCache.Remove(name);
+                // The visible collector can read this cache while an editor or
+                // importer replaces parameters. Validate the index against this
+                // call's array before returning a parameter. A racing removal of
+                // a newer index only makes the next lookup scan the array again.
+                _nameIndexCache.TryRemove(name, out _);
             }
 
-            for (var i = 0; i < Parameters.Length; i++)
+            for (var i = 0; i < parameters.Length; i++)
             {
-                if (string.Equals(Parameters[i]?.Name, name, StringComparison.Ordinal))
+                ShaderVar? parameter = parameters[i];
+                if (string.Equals(parameter?.Name, name, StringComparison.Ordinal))
                 {
                     _nameIndexCache[name] = i;
-                    return Parameter<T2>(i);
+                    return parameter as T2;
                 }
             }
             return null;
         }
 
         [YamlIgnore]
-        private readonly Dictionary<string, int> _nameIndexCache = [];
+        private readonly ConcurrentDictionary<string, int> _nameIndexCache =
+            new(StringComparer.Ordinal);
 
         public void ResetNameIndexCache()
             => _nameIndexCache.Clear();
@@ -498,8 +551,28 @@ namespace XREngine.Rendering
             return _legacyIndexedSamplerNames[index] ??= XRTexture.GetIndexedSamplerName(index);
         }
 
+        private long _textureSourceVersion = 1L;
+
+        /// <summary>
+        /// Gets a version that advances when a bound texture reports an advanced
+        /// GPU source change (<see cref="XRTexture.AdvancedSourceVersion"/>). Texture
+        /// list changes advance <see cref="BindingResourceVersion"/> instead. The
+        /// advanced scene publisher compares both before it trusts a committed row.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        internal ulong TextureSourceVersion
+            => unchecked((ulong)Volatile.Read(ref _textureSourceVersion));
+
+        private void BoundTextureAdvancedSourceChanged(XRTexture texture)
+        {
+            if (Interlocked.Increment(ref _textureSourceVersion) == 0L)
+                Interlocked.Increment(ref _textureSourceVersion);
+        }
+
         private void AttachLegacyTextureHandlers(XRTexture texture)
         {
+            texture.AdvancedSourceChanged += BoundTextureAdvancedSourceChanged;
             texture.PropertyChanged += LegacyTexturePropertyChanged;
             if (texture is XRTextureViewBase view)
                 view.ViewedTextureChanged += LegacyViewedTextureChanged;
@@ -507,6 +580,7 @@ namespace XREngine.Rendering
 
         private void DetachLegacyTextureHandlers(XRTexture texture)
         {
+            texture.AdvancedSourceChanged -= BoundTextureAdvancedSourceChanged;
             texture.PropertyChanged -= LegacyTexturePropertyChanged;
             if (texture is XRTextureViewBase view)
                 view.ViewedTextureChanged -= LegacyViewedTextureChanged;
@@ -550,7 +624,10 @@ namespace XREngine.Rendering
 
             for (int index = 0; index < parameters.Length; index++)
                 if (parameters[index] is { } parameter)
+                {
                     parameter.ValueChanged += ParameterValueChanged;
+                    parameter.NameChanged += ParameterNameChanged;
+                }
         }
 
         private void DetachParameterHandlers(ShaderVar[]? parameters)
@@ -560,7 +637,10 @@ namespace XREngine.Rendering
 
             for (int index = 0; index < parameters.Length; index++)
                 if (parameters[index] is { } parameter)
+                {
                     parameter.ValueChanged -= ParameterValueChanged;
+                    parameter.NameChanged -= ParameterNameChanged;
+                }
         }
 
         /// <summary>Restores value subscriptions after a cooked reflection load suppressed property callbacks.</summary>
@@ -575,6 +655,20 @@ namespace XREngine.Rendering
 
         private void ParameterValueChanged(ShaderVar _)
             => IncrementBindingValueVersion();
+
+        /// <summary>
+        /// Reacts to a rename of one parameter. The cached name-to-index lookup is no longer
+        /// valid, and consumers that map uniform names to program slots or to encoded material
+        /// words (for example the Advanced scene publisher) must rebuild that map. A rename
+        /// therefore advances the layout version, and the value version with it, as a change
+        /// of the Parameters array does.
+        /// </summary>
+        private void ParameterNameChanged(ShaderVar _)
+        {
+            ResetNameIndexCache();
+            IncrementBindingLayoutVersion();
+            IncrementBindingValueVersion();
+        }
 
         protected void IncrementBindingValueVersion()
         {

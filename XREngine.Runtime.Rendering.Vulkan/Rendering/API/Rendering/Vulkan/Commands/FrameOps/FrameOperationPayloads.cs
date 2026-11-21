@@ -12,8 +12,16 @@ internal readonly record struct BlitPayload(XRFrameBuffer? InFbo, XRFrameBuffer?
 internal readonly record struct ClearPayload(bool ClearColor, bool ClearDepth, bool ClearStencil, ColorF4 Color, float Depth, uint Stencil, Rect2D Rect);
 internal readonly record struct TransformFeedbackPayload(VkTransformFeedback TransformFeedback, EXRTransformFeedbackOperation Operation, XRDataBuffer? CounterBuffer, ulong FeedbackBufferOffset, ulong? FeedbackBufferSize, ulong CounterBufferOffset, uint CounterOffset, uint VertexStride, uint InstanceCount, uint FirstInstance);
 internal readonly record struct QueryPayload(VkRenderQuery Query, RenderQueryDescriptor Descriptor, ERenderQueryOperation Operation, PipelineStageFlags2 TimestampStage, uint PointIndex, ReadOnlyMemory<ulong> SourceHandles, Buffer ResultDestination, ulong ResultDestinationOffset, ulong ResultStride, bool IncludeAvailability);
-internal readonly record struct MeshDrawPayload(PendingMeshDraw Draw);
-internal readonly record struct IndirectDrawPayload(VkDataBuffer IndirectBuffer, VkDataBuffer? ParameterBuffer, VkMeshRenderer MeshRenderer, PendingMeshDraw Draw, uint DrawCount, uint Stride, nuint ByteOffset, nuint CountByteOffset, bool UseCount, VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures, VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract);
+// The draw payloads keep the large draw record in a field, so a reader can take
+// it by reference (`ref readonly ... = ref payload.Draw`) instead of copying it.
+internal readonly record struct MeshDrawPayload(PendingMeshDraw Draw)
+{
+    public readonly PendingMeshDraw Draw = Draw;
+}
+internal readonly record struct IndirectDrawPayload(VkDataBuffer IndirectBuffer, VkDataBuffer? ParameterBuffer, VkMeshRenderer MeshRenderer, PendingMeshDraw Draw, uint DrawCount, uint Stride, nuint ByteOffset, nuint CountByteOffset, bool UseCount, VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures, VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract)
+{
+    public readonly PendingMeshDraw Draw = Draw;
+}
 internal readonly record struct MeshTaskDispatchIndirectCountPayload(VkRenderProgram Program, ulong ProgramLinkGeneration, ComputeDispatchSnapshot ProgramBindingSnapshot, VulkanMeshProducerSnapshot ProducerSnapshot, Pipeline Pipeline, VkDataBuffer IndirectBuffer, VkDataBuffer CountBuffer, uint MaxDrawCount, uint Stride, nuint ByteOffset, nuint CountByteOffset, VulkanBindlessMaterialDescriptorBinding? BindlessMaterialTextures);
 internal readonly record struct ComputeDispatchPayload(VkRenderProgram Program, uint GroupsX, uint GroupsY, uint GroupsZ, ComputeDispatchSnapshot Snapshot);
 internal readonly record struct ComputeDispatchIndirectPayload(VkRenderProgram Program, ComputeDispatchSnapshot Snapshot, VkDataBuffer ArgumentOwner, Buffer ArgumentBuffer, ulong ArgumentOffset, string Label);
@@ -269,7 +277,10 @@ internal sealed class FrameOperationPayloadStore
         ComputeDispatchSnapshot artifact)
     {
         ref ComputeDispatchSnapshot?[]? leases = ref _artifactLeases[GetArtifactLeaseColumn(kind)];
-        leases ??= new ComputeDispatchSnapshot?[GetArtifactLeaseRowCount(kind)];
+        // The payload column can grow after the lease column was created, so the
+        // lease column must follow it, as the interface and sealed-snapshot columns do.
+        if (leases is null || row >= leases.Length)
+            Array.Resize(ref leases, Math.Max(row + 1, GetArtifactLeaseRowCount(kind)));
         if (!artifact.TryAcquireArtifactLease())
             throw new InvalidOperationException(
                 "A frame operation sealed a binding artifact whose last lease already ended.");

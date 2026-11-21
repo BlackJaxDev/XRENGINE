@@ -12,9 +12,12 @@ public sealed partial class McpAssistantWindow
         string prompt,
         ChatMessage target,
         CancellationToken cancellationToken,
-        McpUsageEntry usage)
+        McpUsageEntry usage,
+        bool useSubscription = false,
+        bool? currentPromptLikelyNeedsTools = null)
     {
-        bool requestLikelyNeedsTools = IsLikelySceneMutationPrompt(prompt);
+        ProviderType selectedProvider = (ProviderType)ProviderIndex;
+        bool requestLikelyNeedsTools = !IsReadOnlyRequest && (currentPromptLikelyNeedsTools ?? IsLikelySceneMutationPrompt(prompt));
         usage.RequireToolUse = requestLikelyNeedsTools;
 
         List<AgentToolDefinition> tools = ConvertAssistantFunctionTools(
@@ -27,7 +30,8 @@ public sealed partial class McpAssistantWindow
             {
                 usage.McpDiscoveryFailed = true;
                 usage.Result = "MCP Fetch Failed";
-                target.Content = "MCP is enabled but no tools could be fetched from the local MCP server.";
+                target.Status = ChatMessageStatus.Failed;
+                target.StatusDetail = "Editor tools are enabled, but the local MCP server returned no tools.";
                 return;
             }
 
@@ -55,29 +59,32 @@ public sealed partial class McpAssistantWindow
                 };
             });
 
+        if (useSubscription)
+            throw new InvalidOperationException(SubscriptionEditorConnection.UnavailableMessage);
+
         string model = string.IsNullOrWhiteSpace(OpenAiModel) ? "gpt-4o" : OpenAiModel;
         string? screenshotBase64 = Interlocked.Exchange(ref _pendingScreenshotBase64, null);
         var request = new AgentRunRequest
         {
             Objective = prompt,
             RequestedModel = model,
-            ReasoningEffort = "medium",
+            ReasoningEffort = string.IsNullOrEmpty(_activeReasoningEffort) ? "medium" : _activeReasoningEffort,
             UseCompactHandoffPrompt = false,
             RequireToolUse = requestLikelyNeedsTools && AttachMcpServer,
             SystemInstructions = BuildSystemInstructions(
-                ProviderType.Codex,
+                selectedProvider,
                 requestLikelyNeedsTools,
                 attachMcp: AttachMcpServer,
                 keepCameraOnWorkingArea: AutoCameraView),
             InitialImageDataUri = screenshotBase64 is null
                 ? null
                 : $"data:image/png;base64,{screenshotBase64}",
-            HostedTools = ModelSupportsImageGeneration(model)
+            HostedTools = !IsReadOnlyRequest && ModelSupportsImageGeneration(model)
                 ? [AgentHostedTool.WebSearch, AgentHostedTool.ImageGeneration]
                 : [AgentHostedTool.WebSearch],
             ToolPolicy = new AgentToolPolicy
             {
-                AllowMutation = true,
+                AllowMutation = !IsReadOnlyRequest,
                 AllowedTools = tools.Select(static tool => tool.Name).ToArray(),
                 RequireMutationEvidence = false,
             },
@@ -85,6 +92,8 @@ public sealed partial class McpAssistantWindow
             {
                 MaxTurns = 10,
                 MaxToolCalls = 64,
+                // Viewport PNG data is larger than the broker's text-only default.
+                MaxToolResultBytes = 4 * 1024 * 1024,
                 MaxOutputTokens = 16_384,
                 MaxElapsedSeconds = 600,
                 MaxRetries = 2,
@@ -92,6 +101,7 @@ public sealed partial class McpAssistantWindow
         };
 
         var modelText = new StringBuilder();
+        int segmentStart = 0;
         var toolLog = new StringBuilder();
         var entriesByCallId = new Dictionary<string, ToolCallEntry>(StringComparer.Ordinal);
         var observer = new DelegateAgentRunObserver((runEvent, _) =>
@@ -101,20 +111,22 @@ public sealed partial class McpAssistantWindow
                 case AgentRunEventKind.TextDelta:
                     modelText.Append(runEvent.Message);
                     target.Content = BuildAssistantContent(modelText, toolLog);
-                    SyncTextSegment(target, modelText, 0);
+                    SyncTextSegment(target, modelText, segmentStart);
                     break;
                 case AgentRunEventKind.ToolStarted:
                 {
                     usage.ToolEventCount++;
                     var entry = new ToolCallEntry
                     {
-                        ToolName = FormatToolName(runEvent.ToolName ?? string.Empty),
+                        ToolName = runEvent.ToolName ?? string.Empty,
                         ArgsSummary = SummarizeToolArguments(
                             runEvent.ToolName ?? string.Empty,
                             runEvent.Message),
                     };
+                    entry.SetInvocation(runEvent.Message ?? "{}");
                     entriesByCallId[runEvent.CallId ?? Guid.NewGuid().ToString("N")] = entry;
                     AddToolCallSegmented(target, entry);
+                    segmentStart = modelText.Length;
                     target.Content = BuildAssistantContent(
                         modelText,
                         toolLog,
@@ -133,6 +145,7 @@ public sealed partial class McpAssistantWindow
                         entry.IsError = result.IsError;
                         entry.ResultFilePath = result.ImagePath;
                         entry.IsComplete = true;
+                        entry.UpdateOutcome(result.Content);
                     }
 
                     AppendToolCallLog(
@@ -147,9 +160,8 @@ public sealed partial class McpAssistantWindow
             return ValueTask.CompletedTask;
         });
 
-        var orchestrator = new AgentOrchestrator(
-            new OpenAiResponsesModelClient(SharedHttp, () => OpenAiApiKey));
-        AgentRunResult runResult = await orchestrator.RunAsync(
+        var executor = new AgentOrchestrator(new OpenAiResponsesModelClient(SharedHttp, () => OpenAiApiKey));
+        AgentRunResult runResult = await executor.RunAsync(
             Guid.NewGuid().ToString("N"),
             request,
             provider,
@@ -167,21 +179,27 @@ public sealed partial class McpAssistantWindow
                 modelText.Append($"\n\n[Image generated: {path}]");
         }
 
-        if (runResult.Failure is not null)
-        {
-            if (modelText.Length > 0)
-                modelText.AppendLine().AppendLine();
-            modelText.Append($"--- Agent run failed ---\n{runResult.Failure.Summary}");
-        }
-
         target.Content = BuildAssistantContent(modelText, toolLog);
+        SyncTextSegment(target, modelText, segmentStart);
+        target.Status = runResult.Status switch
+        {
+            AgentRunStatus.Completed => ChatMessageStatus.Completed,
+            AgentRunStatus.Cancelled => ChatMessageStatus.Stopped,
+            AgentRunStatus.Failed => ChatMessageStatus.Failed,
+            _ => ChatMessageStatus.Incomplete,
+        };
+        target.StatusDetail = runResult.Failure?.Summary ?? (target.Status switch
+        {
+            ChatMessageStatus.Stopped => "The request stopped. Any completed changes may remain in the editor.",
+            ChatMessageStatus.Failed => "The assistant request failed.",
+            ChatMessageStatus.Incomplete => "The assistant did not finish this request.",
+            _ => null,
+        });
         usage.Result = runResult.Status.ToString();
-        usage.Note = $"requested_model={runResult.RequestedModel}; actual_model={runResult.ActualModel}; "
-            + $"turns={runResult.TurnCount}; tool_calls={runResult.ToolCallCount}; "
-            + $"tokens={runResult.Usage.TotalTokens}";
+        usage.Note = $"requested_model={runResult.RequestedModel}; actual_model={runResult.ActualModel}; turns={runResult.TurnCount}; tool_calls={runResult.ToolCallCount}; tokens={runResult.Usage.TotalTokens}";
     }
 
-    private static List<AgentToolDefinition> ConvertAssistantFunctionTools(
+    private List<AgentToolDefinition> ConvertAssistantFunctionTools(
         JsonArray source,
         bool usesMcpSchema)
     {
@@ -195,10 +213,7 @@ public sealed partial class McpAssistantWindow
                 continue;
 
             JsonNode? schema = tool[usesMcpSchema ? "inputSchema" : "parameters"];
-            bool readOnly = string.Equals(name, "file_search", StringComparison.Ordinal)
-                || (!string.Equals(name, "apply_patch", StringComparison.Ordinal)
-                    && (ReadBooleanAnnotation(tool, "readOnlyHint")
-                        || !IsLikelySceneMutationTool(name)));
+            bool readOnly = IsReadOnlyAssistantTool(name);
             bool destructive = ReadBooleanAnnotation(tool, "destructiveHint");
             tools.Add(new AgentToolDefinition
             {

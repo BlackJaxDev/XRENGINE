@@ -257,14 +257,13 @@ namespace XREngine
                 ClearSettingsAssetCaches(settingsPath);
                 string? quarantinedPath = QuarantineInvalidSettingsAsset(settingsPath);
 
+                string quarantineNote = quarantinedPath is null
+                    ? "The invalid file could not be quarantined."
+                    : $"The invalid file was moved to '{quarantinedPath}'.";
                 Debug.LogWarning(
                     $"Failed to load settings asset '{settingsPath}'. " +
                     $"Using a fresh {typeof(T).Name} instance instead. " +
-                    (quarantinedPath is null
-                        ? "The invalid file could not be quarantined."
-                        : $"The invalid file was moved to '{quarantinedPath}'.") +
-                    Environment.NewLine +
-                    ex);
+                    $"{quarantineNote}{Environment.NewLine}{ex}");
 
                 var fallback = new T
                 {

@@ -164,7 +164,11 @@ public static partial class EditorUnitTests
                 TextureLoadDirSearchPaths = textureLoadDirSearchPaths,
                 CookSettings = new ModelCookSettings
                 {
-                    Meshlets = new MeshletGenerationSettings { Enabled = true },
+                    Meshlets = new MeshletGenerationSettings
+                    {
+                        Enabled = true,
+                        BuildClusterHierarchy = model.GenerateClusterHierarchy,
+                    },
                     Lods = new MeshLodGenerationSettings
                     {
                         Enabled = model.GenerateMeshletLods,
@@ -491,7 +495,8 @@ public static partial class EditorUnitTests
                                     SceneNode importedRoot = result.RootNode;
                                     var importedScene = new XRScene(Path.GetFileName(resolvedPath), importedRoot)
                                     {
-                                        IsVisible = !IsSerializedPrefabPath(resolvedPath),
+                                        IsVisible = !IsSerializedPrefabPath(resolvedPath) ||
+                                            !string.IsNullOrWhiteSpace(model.SceneRootName),
                                     };
                                     List<ModelComponent> suspendedModels = [];
                                     if (model.Kind is UnitTestModelImportKind.Animated)
@@ -523,7 +528,8 @@ public static partial class EditorUnitTests
                                     }
                                     if (model.Kind is UnitTestModelImportKind.Animated)
                                     {
-                                        if (IsSerializedPrefabPath(resolvedPath))
+                                        if (IsSerializedPrefabPath(resolvedPath) ||
+                                            !string.IsNullOrWhiteSpace(model.SceneRootName))
                                             OnFinishedImportingAvatar(result.AvatarRoot, null, result.SourceContentSha256);
                                         StageSerializedPrefabModelPublication(importedRoot, suspendedModels);
                                     }

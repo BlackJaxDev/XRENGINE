@@ -1329,7 +1329,7 @@ public class LandscapeComponent : XRComponent, IRenderable
 
     private void RenderTerrain()
     {
-        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is IAdvancedRenderStageFamilyHost)
+        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
         {
             if (Debug.ShouldLogEvery("Advanced.LandscapeCallbackRejected", TimeSpan.FromSeconds(5)))
                 Debug.RenderingWarning("[AdvancedLandscape] {0}", AdvancedRenderingUnsupportedReason);

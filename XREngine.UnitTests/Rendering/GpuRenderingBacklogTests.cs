@@ -44,8 +44,8 @@ public class GpuRenderingBacklogTests
         EnsureDynamicAtlasResidency(scene, mesh, meshId, "refcount-test");
         scene.RebuildAtlasIfDirty(EAtlasTier.Dynamic);
 
-        Dictionary<XRMesh, (int firstVertex, int firstIndex, int indexCount)> atlasOffsets =
-            GetPrivateField<Dictionary<XRMesh, (int, int, int)>>(scene, "_atlasMeshOffsets");
+        System.Collections.IDictionary atlasOffsets =
+            (System.Collections.IDictionary)GetNonPublicField(GetNonPublicField(scene, "_dynamicAtlas"), "MeshOffsets");
         Dictionary<XRMesh, int> refCounts =
             GetPrivateField<Dictionary<XRMesh, int>>(scene, "_atlasMeshRefCounts");
 
@@ -55,11 +55,11 @@ public class GpuRenderingBacklogTests
 
         InvokeNonPublic(scene, "DecrementAtlasMeshRefCount", meshId, "unit-test");
         refCounts[mesh].ShouldBe(1);
-        atlasOffsets.ContainsKey(mesh).ShouldBeTrue();
+        atlasOffsets.Contains(mesh).ShouldBeTrue();
 
         InvokeNonPublic(scene, "DecrementAtlasMeshRefCount", meshId, "unit-test");
         refCounts.ContainsKey(mesh).ShouldBeFalse();
-        atlasOffsets.ContainsKey(mesh).ShouldBeFalse();
+        atlasOffsets.Contains(mesh).ShouldBeFalse();
 
         int atlasIndexCount = GetPrivateField<int>(scene, "_atlasIndexCount");
         atlasIndexCount.ShouldBe(0);
@@ -530,15 +530,18 @@ public class GpuRenderingBacklogTests
         var lod1 = XRMesh.CreateTriangles(Vector3.UnitZ, Vector3.UnitZ + Vector3.UnitX, Vector3.UnitZ + Vector3.UnitY);
 
         scene.RegisterLogicalMeshLODs([(lod0, 96.0f), (lod1, 0.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
-        uint lod1MeshId = GetOrCreateMeshId(scene, lod1);
+        uint lod0MeshId = GetOrCreateMeshId(scene, lod0);
 
-        scene.ReleaseLOD(logicalMeshId, 1, out string? releaseFailure).ShouldBeTrue(releaseFailure);
+        // The lowest LOD is the fallback level, so only a finer level can leave.
+        scene.ReleaseLOD(logicalMeshId, 1, out _).ShouldBeFalse();
+        scene.ReleaseLOD(logicalMeshId, 0, out string? releaseFailure).ShouldBeTrue(releaseFailure);
         scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry releasedEntry).ShouldBeTrue();
-        releasedEntry.LOD1_MeshDataID.ShouldBe(0u);
+        releasedEntry.LOD0_MeshDataID.ShouldBe(0u);
+        releasedEntry.LOD1_MeshDataID.ShouldNotBe(0u);
 
-        scene.RequestLODLoad(logicalMeshId, 1, out string? requestFailure).ShouldBeTrue(requestFailure);
+        scene.RequestLODLoad(logicalMeshId, 0, out string? requestFailure).ShouldBeTrue(requestFailure);
         scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry restoredEntry).ShouldBeTrue();
-        restoredEntry.LOD1_MeshDataID.ShouldBe(lod1MeshId);
+        restoredEntry.LOD0_MeshDataID.ShouldBe(lod0MeshId);
     }
 
     [Test]
@@ -562,7 +565,7 @@ public class GpuRenderingBacklogTests
     }
 
     [Test]
-    public void LOD_StreamOnDemand_DefersNonLod0_UntilRequested()
+    public void LOD_StreamOnDemand_KeepsTheLowestLod_DefersFinerLevelsUntilRequested()
     {
         bool previous = RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand;
         RuntimeEngine.Rendering.Settings.StreamMeshLodsOnDemand = true;
@@ -576,12 +579,12 @@ public class GpuRenderingBacklogTests
 
             scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry entry).ShouldBeTrue();
             entry.LODCount.ShouldBe(2u);
-            entry.LOD0_MeshDataID.ShouldNotBe(0u);
-            entry.LOD1_MeshDataID.ShouldBe(0u);
+            entry.LOD0_MeshDataID.ShouldBe(0u);
+            entry.LOD1_MeshDataID.ShouldNotBe(0u);
 
-            scene.RequestLODLoad(logicalMeshId, 1, out string? requestFailure).ShouldBeTrue(requestFailure);
+            scene.RequestLODLoad(logicalMeshId, 0, out string? requestFailure).ShouldBeTrue(requestFailure);
             scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry loadedEntry).ShouldBeTrue();
-            loadedEntry.LOD1_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod1));
+            loadedEntry.LOD0_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod0));
         }
         finally
         {
@@ -604,13 +607,13 @@ public class GpuRenderingBacklogTests
 
             scene.RegisterLogicalMeshLODs([(lod0, 96.0f), (lod1, 0.0f)], out uint logicalMeshId, out string? failureReason).ShouldBeTrue(failureReason);
             scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry deferredEntry).ShouldBeTrue();
-            deferredEntry.LOD1_MeshDataID.ShouldBe(0u);
+            deferredEntry.LOD0_MeshDataID.ShouldBe(0u);
 
-            scene.LODRequestBuffer.SetDataRawAtIndex(logicalMeshId, 0b10u);
+            scene.LODRequestBuffer.SetDataRawAtIndex(logicalMeshId, 0b01u);
             scene.ServiceLodStreamingRequests();
 
             scene.TryGetLodTableEntry(logicalMeshId, out GPUScene.LODTableEntry loadedEntry).ShouldBeTrue();
-            loadedEntry.LOD1_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod1));
+            loadedEntry.LOD0_MeshDataID.ShouldBe(GetOrCreateMeshId(scene, lod0));
             scene.LODRequestBuffer.GetDataRawAtIndex<uint>(logicalMeshId).ShouldBe(0u);
             owner.MapCallCount.ShouldBeGreaterThan(0);
         }
@@ -746,7 +749,8 @@ public class GpuRenderingBacklogTests
         recording.ShouldContain("TryExecuteIndirectCommandChainSecondaryRun");
         workers.ShouldContain("DispatchCommandChainRecordingWorkers");
         workers.ShouldContain("RenderWorkDomain domain = GetRenderWorkDomain();");
-        workers.ShouldContain("RenderWorkBatchLease lease = domain.RentBatch(activeLaneCount);");
+        workers.ShouldContain("RenderWorkBatchLease lease = domain.RentBatch(eligibleLaneCount);");
+        workers.ShouldContain("lease.ShrinkItemCount(activeLaneCount);");
         workers.ShouldContain("result = domain.ExecuteAndWait(");
         laneArena.ShouldContain("Environment.CurrentManagedThreadId");
         laneArena.ShouldNotContain("new Thread");
@@ -902,7 +906,7 @@ public class GpuRenderingBacklogTests
         pipelineSource.ShouldContain("protected void InitializeCommandChain()");
         pipelineSource.ShouldContain("protected void RebuildCommandChain()");
         pipelineSource.ShouldContain("using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())");
-        pipelineSource.ShouldContain("CommandChain = GenerateCommandChain();");
+        pipelineSource.ShouldContain("CommandChain = GenerateChainWithOverlays();");
         pipelineSource.ShouldContain("NotifyCommandChainStructureChanged();");
 
         string pipelineDirectory = Path.Combine(
@@ -913,7 +917,7 @@ public class GpuRenderingBacklogTests
         string[] directAssignments = Directory
             .GetFiles(pipelineDirectory, "*.cs", SearchOption.AllDirectories)
             .Where(static path => !path.EndsWith("XRRenderPipeline.cs", StringComparison.Ordinal))
-            .Where(static path => File.ReadAllText(path).Contains("CommandChain = GenerateCommandChain();", StringComparison.Ordinal))
+            .Where(static path => File.ReadAllText(path).Contains("CommandChain = Generate", StringComparison.Ordinal))
             .ToArray();
 
         directAssignments.ShouldBeEmpty();

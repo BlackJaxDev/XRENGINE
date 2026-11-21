@@ -32,15 +32,17 @@ internal unsafe partial class VkMeshRenderer
 	#region Shader Program Management
 
 	/// <summary>Checks the active program against the current material and geometry shader inputs.</summary>
-	private bool IsActiveGeneratedProgramCurrent(XRMaterial material)
+	private bool IsActiveGeneratedProgramCurrent(XRMaterial material, EditorHighlightRasterOutput editorHighlightOutput = default)
 	{
 		if (_program is not { IsLinked: true } active)
 			return false;
 
-		GeneratedProgramState state = CaptureGeneratedProgramState(material);
+		GeneratedProgramState state = CaptureGeneratedProgramState(material, editorHighlightOutput);
 		return _programStateCache.TryGetValue(state, out GeneratedProgramCacheEntry? entry) &&
 			ReferenceEquals(entry.Program, active) &&
-			string.Equals(entry.Identity, _activeProgramIdentity, StringComparison.Ordinal);
+			string.Equals(entry.Identity, _activeProgramIdentity, StringComparison.Ordinal) &&
+			(!editorHighlightOutput.WritesMask ||
+			 active.TryValidateEditorHighlightFragmentOutput(editorHighlightOutput.AttachmentIndex, out _));
 	}
 
 	/// <summary>
@@ -48,11 +50,17 @@ internal unsafe partial class VkMeshRenderer
 	/// If the material lacks a vertex shader, one is auto-generated from
 	/// <c>Data.VertexShaderSource</c>. Returns false if linking fails.
 	/// </summary>
-	private bool EnsureProgram(XRMaterial material)
+	private bool EnsureProgram(XRMaterial material, EditorHighlightRasterOutput editorHighlightOutput = default)
 	{
-		GeneratedProgramState programState = CaptureGeneratedProgramState(material);
+		if (!material.IsUberRasterSourceReady())
+			return false;
+
+		GeneratedProgramState programState = CaptureGeneratedProgramState(material, editorHighlightOutput);
 		if (_programStateCache.TryGetValue(programState, out GeneratedProgramCacheEntry? cachedEntry))
-			return ActivateGeneratedProgramAndEvictSuperseded(cachedEntry);
+		{
+			_programFailureMaterial = null;
+			return ActivateGeneratedProgramAndEvictSuperseded(cachedEntry, editorHighlightOutput);
+		}
 
 		var sourceShaders = new List<XRShader>(material.Shaders.Count);
 		string? generatedVertexIdentity = null;
@@ -88,18 +96,26 @@ internal unsafe partial class VkMeshRenderer
 					material?.Name ?? "<unnamed material>",
 					Mesh?.Name ?? "<unnamed mesh>",
 					Data.VersionKindLabel);
+				_programFailureMaterial = material;
 				return false;
 			}
 
 			vertexShader = GenerateVertexShader(vsSource);
 			if (programState.TrustedOutlineVariant)
-				vertexShader = ShaderHelper.CreateDefinedShaderVariant(vertexShader, "XRENGINE_OUTLINE_PASS")
+			{
+				string outlineDefine = material.EngineSemantic == EngineMaterialSemanticIdentity.UberSoftOutlineV2
+					? "XRENGINE_SOFT_OUTLINE_PASS"
+					: "XRENGINE_OUTLINE_PASS";
+				vertexShader = ShaderHelper.CreateDefinedShaderVariant(vertexShader, outlineDefine)
 					?? throw new InvalidOperationException("The generated outline vertex shader has no outline variant.");
+			}
 			generatedVertexIdentity = XRRenderProgramDescriptor.BuildGeneratedSourceIdentity(
 				vertexShader.Source?.Text ?? vsSource);
 		}
 
 		List<XRShader> shaders = BuildCombinedShaderList(sourceShaders, vertexShader);
+		if (editorHighlightOutput.WritesMask)
+			AdaptEditorHighlightFragment(shaders, editorHighlightOutput.AttachmentIndex);
 		string generatedProgramAxes = BuildGeneratedProgramAxes(programState);
 		string shaderStageList = BuildShaderStageList(shaders);
 		string generatedProgramName = BuildGeneratedProgramName(programState, generatedProgramAxes, shaderStageList);
@@ -161,7 +177,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		_programStateCache[programState] = entry;
-		return ActivateGeneratedProgramAndEvictSuperseded(entry);
+		return ActivateGeneratedProgramAndEvictSuperseded(entry, editorHighlightOutput);
 	}
 
 	/// <summary>
@@ -170,9 +186,26 @@ internal unsafe partial class VkMeshRenderer
 	/// link so a still-compiling replacement never removes the program that is
 	/// currently rendering.
 	/// </summary>
-	private bool ActivateGeneratedProgramAndEvictSuperseded(GeneratedProgramCacheEntry entry)
+	private bool ActivateGeneratedProgramAndEvictSuperseded(
+		GeneratedProgramCacheEntry entry,
+		EditorHighlightRasterOutput editorHighlightOutput)
 	{
 		bool activated = ActivateGeneratedProgram(entry);
+		if (!activated && editorHighlightOutput.WritesMask)
+		{
+			XRRenderProgram.ShaderProgramBackendStatus status =
+				entry.Program.Data.ShaderMetadata.Backend;
+			if (status.Stage is XRRenderProgram.EShaderProgramBackendStage.Failed or
+				XRRenderProgram.EShaderProgramBackendStage.BinaryUploadFailed or
+				XRRenderProgram.EShaderProgramBackendStage.Abandoned)
+				throw new NotSupportedException(
+					$"The editor highlight fragment output failed to compile: {status.FailureReason ?? status.Detail ?? status.Stage.ToString()}");
+		}
+		if (activated && editorHighlightOutput.WritesMask &&
+			!entry.Program.TryValidateEditorHighlightFragmentOutput(
+				editorHighlightOutput.AttachmentIndex, out string failureReason))
+			throw new NotSupportedException(
+				$"The editor highlight fragment output is unsupported: {failureReason}");
 		if (activated && !entry.SupersededEntriesEvicted)
 		{
 			entry.SupersededEntriesEvicted = true;
@@ -297,21 +330,21 @@ internal unsafe partial class VkMeshRenderer
 		return linked;
 	}
 
-	private GeneratedProgramState CaptureGeneratedProgramState(XRMaterial material)
+	private GeneratedProgramState CaptureGeneratedProgramState(XRMaterial material, EditorHighlightRasterOutput editorHighlightOutput = default)
 	{
 		XRMesh? mesh = Mesh;
 		bool hasSkinning = mesh?.HasSkinning == true;
-		bool hasBlendshapes = mesh?.BlendshapeCount > 0;
-		bool isVulkan = RuntimeEngine.Rendering.State.IsVulkan;
+		bool hasBlendshapes = mesh?.HasBlendshapeDeformation == true;
+		bool computeDeformationBlocked = !XREngine.Rendering.Compute.MeshDeformationBackendPolicy.AllowsComputeDeformationFor(mesh);
 		bool useComputeSkinning =
 			hasSkinning &&
 			RuntimeEngine.Rendering.Settings.AllowSkinning &&
 			RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
-			!isVulkan;
+			!computeDeformationBlocked;
 		bool useComputeBlendshapes =
 			hasBlendshapes &&
 			RuntimeEngine.Rendering.Settings.AllowBlendshapes &&
-			!isVulkan &&
+			!computeDeformationBlocked &&
 			(RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning);
 
 		return new GeneratedProgramState(
@@ -333,13 +366,14 @@ internal unsafe partial class VkMeshRenderer
 			useComputeSkinning,
 			hasBlendshapes,
 			useComputeBlendshapes,
-			RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass && !isVulkan,
+			RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass && !RuntimeEngine.Rendering.State.IsVulkan,
 			MeshRenderer.MeshDeformEnabled,
 			material.DirectionalCascadeShadowMaterialKind,
 			material.PointShadowMaterialKind,
 			RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false,
 			RuntimeEngine.Rendering.EffectiveClipDepthRange,
-			RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+			RuntimeEngine.Rendering.Settings.ClipSpaceYDirection,
+			editorHighlightOutput);
 	}
 
 	private static ulong ComputeMaterialShaderStateSignature(XRMaterial material)
@@ -430,7 +464,7 @@ internal unsafe partial class VkMeshRenderer
 		=> $"VkCombined:{SanitizeProgramName(state.MaterialName, "material")}:{SanitizeProgramName(state.MeshName, "mesh")}:{generatedProgramAxes}:{shaderStageList}";
 
 	private static string BuildGeneratedProgramAxes(GeneratedProgramState state)
-		=> $"shaderConfig={state.ShaderConfigVersion};skinning={state.HasSkinning};computeSkinning={state.UseComputeSkinning};blendshapes={state.HasBlendshapes};computeBlendshapes={state.UseComputeBlendshapes};precombineBlendshapes={state.UsePrecombinedBlendshapes};meshDeform={state.MeshDeformEnabled};directionalShadow={state.DirectionalShadowKind};pointShadow={state.PointShadowKind};depthNormal={state.UseDepthNormalVariants};clipDepth={state.ClipDepthRange};clipY={state.ClipYDirection}";
+		=> $"shaderConfig={state.ShaderConfigVersion};skinning={state.HasSkinning};computeSkinning={state.UseComputeSkinning};blendshapes={state.HasBlendshapes};computeBlendshapes={state.UseComputeBlendshapes};precombineBlendshapes={state.UsePrecombinedBlendshapes};meshDeform={state.MeshDeformEnabled};directionalShadow={state.DirectionalShadowKind};pointShadow={state.PointShadowKind};depthNormal={state.UseDepthNormalVariants};clipDepth={state.ClipDepthRange};clipY={state.ClipYDirection};editorMaskRole={state.EditorHighlightOutput.Role};editorMaskSlot={state.EditorHighlightOutput.AttachmentIndex};editorMaskAbi={state.EditorHighlightOutput.AbiVersion}";
 
 	private static string BuildShaderStageList(IReadOnlyList<XRShader> shaders)
 	{
@@ -683,7 +717,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private static readonly ConditionalWeakTable<IReadOnlyList<RenderPassMetadata>, Tuple<long, ulong>> PassMetadataListHashes = new();
 
-	private static ulong ComputePassMetadataHash(IReadOnlyCollection<RenderPassMetadata>? passMetadata, int passIndex)
+	private static ulong ComputePassMetadataHash(IReadOnlyCollection<RenderPassMetadata>? passMetadata, int passIndex, EVulkanMeshDrawPassStateFlags passStateFlags)
 	{
 		VulkanStableHash64 hash = new(schemaVersion: 3);
 		hash.Add(passIndex);
@@ -698,10 +732,10 @@ internal unsafe partial class VkMeshRenderer
 				AddMetadata(ref hash, metadata);
 		}
 
-		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false);
-		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false);
-		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.DirectionalCascadeLayeredShadowPass ?? false);
-		hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.PointLightLayeredShadowPass ?? false);
+		// The draw captured this state when its pass queued it. Warm-up and recording
+		// run later and must not read the ambient rendering state, which another
+		// pipeline or pass can have changed by then.
+		hash.Add((int)passStateFlags);
 		return hash.Value;
 	}
 
@@ -845,7 +879,7 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 		}
-		else if (!EnsureProgram(material))
+		else if (!EnsureProgram(material, draw.EditorHighlightOutput))
 		{
 			retryable = true;
 			failureReason = "graphics program is not ready";
@@ -868,7 +902,7 @@ internal unsafe partial class VkMeshRenderer
 		ulong programPipelineHash = _program!.GetGraphicsPipelineFingerprint();
 		ulong vertexLayoutHash = ComputeVertexLayoutHash();
 		ulong descriptorLayoutHash = _program.DescriptorSchemaFingerprint;
-		ulong passMetadataHash = ComputePassMetadataHash(passMetadata, passIndex);
+		ulong passMetadataHash = ComputePassMetadataHash(passMetadata, passIndex, draw.PassStateFlags);
 		ulong featureProfileHash = ComputeFeatureProfileHash();
 		bool useNativeNegativeOneToOneDepth = RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl;
 
@@ -905,7 +939,8 @@ internal unsafe partial class VkMeshRenderer
 			effectiveDraw.DstAlphaBlendFactor,
 			effectiveDraw.ColorWriteMask,
 			Math.Max(effectiveDraw.ViewportScissorCount, 1u),
-			useNativeNegativeOneToOneDepth);
+			useNativeNegativeOneToOneDepth,
+			effectiveDraw.EditorHighlightOutput);
 
 		if (pipelineInvalidated && _pipelines.Count > 256)
 		{
@@ -1009,6 +1044,12 @@ internal unsafe partial class VkMeshRenderer
 		PipelineColorBlendAttachmentState[] blendAttachments = colorAttachmentCount == 0
 			? Array.Empty<PipelineColorBlendAttachmentState>()
 			: new PipelineColorBlendAttachmentState[colorAttachmentCount];
+		if (effectiveDraw.EditorHighlightOutput.HasAttachment &&
+			effectiveDraw.EditorHighlightOutput.PickingAttachmentIndex >= colorAttachmentCount)
+			throw new NotSupportedException("The editor highlight mask attachment is absent from the graphics target.");
+		if (effectiveDraw.EditorHighlightOutput.HasAttachment &&
+			!BackendContext.DeviceContext.IndependentBlendEnabled)
+			throw new NotSupportedException("The editor highlight mask requires Vulkan independent blending.");
 
 		for (int i = 0; i < blendAttachments.Length; i++)
 		{
@@ -1016,6 +1057,44 @@ internal unsafe partial class VkMeshRenderer
 			Format attachmentFormat = useDynamicRendering
 				? dynamicRenderingFormats.GetColorAttachmentFormat((uint)i)
 				: ProgramCreationPort.GetRenderPassColorAttachmentFormat(renderPass, (uint)i);
+			if (effectiveDraw.EditorHighlightOutput.HasAttachment &&
+				i == effectiveDraw.EditorHighlightOutput.PickingAttachmentIndex)
+			{
+				blendAttachments[i] = CreateEditorPickingBlend(attachmentFormat, effectiveDraw.EditorHighlightOutput);
+				continue;
+			}
+			if (effectiveDraw.EditorHighlightOutput.HasAttachment &&
+				i == effectiveDraw.EditorHighlightOutput.AttachmentIndex)
+			{
+				if (attachmentFormat != Format.R8G8B8A8Unorm)
+					throw new NotSupportedException("The editor highlight mask attachment must use RGBA8 UNORM.");
+				if (!effectiveDraw.EditorHighlightOutput.WritesMask)
+				{
+					attachmentBlend.ColorWriteMask = 0;
+					attachmentBlend.BlendEnable = Vk.False;
+				}
+				else
+				{
+					attachmentBlend.ColorWriteMask =
+						ColorComponentFlags.RBit | ColorComponentFlags.GBit |
+						ColorComponentFlags.BBit | ColorComponentFlags.ABit;
+					bool useMaxBlend = effectiveDraw.BlendEnabled && !effectiveDraw.DepthWriteEnabled;
+					attachmentBlend.BlendEnable = useMaxBlend ? Vk.True : Vk.False;
+					if (useMaxBlend)
+					{
+						if (!ProgramCreationPort.SupportsColorAttachmentBlend(attachmentFormat))
+							throw new NotSupportedException("The editor highlight mask format does not support blending.");
+						attachmentBlend.ColorBlendOp = BlendOp.Max;
+						attachmentBlend.AlphaBlendOp = BlendOp.Max;
+						attachmentBlend.SrcColorBlendFactor = BlendFactor.One;
+						attachmentBlend.DstColorBlendFactor = BlendFactor.One;
+						attachmentBlend.SrcAlphaBlendFactor = BlendFactor.One;
+						attachmentBlend.DstAlphaBlendFactor = BlendFactor.One;
+					}
+				}
+				blendAttachments[i] = attachmentBlend;
+				continue;
+			}
 			if (!ProgramCreationPort.SupportsColorAttachmentBlend(attachmentFormat))
 				attachmentBlend.BlendEnable = Vk.False;
 
@@ -1373,6 +1452,9 @@ internal unsafe partial class VkMeshRenderer
 		Add((ulong)key.ColorWriteMask);
 		Add(key.ViewportScissorCount);
 		Add(key.NativeNegativeOneToOneDepth ? 1UL : 0UL);
+		Add((ulong)key.EditorHighlightOutput.Role);
+		Add(key.EditorHighlightOutput.AttachmentIndex);
+		Add(key.EditorHighlightOutput.AbiVersion);
 		return hash.Value;
 
 		void Add(ulong value)

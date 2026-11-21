@@ -32,6 +32,17 @@ public partial class AdvancedRenderPipeline
     private const string AoNormalFBOName = "AdvancedAoNormalFBO";
     private const string AoFinalizeQuadFBOName = "AdvancedAoFinalizeQuadFBO";
     private const string AoFinalizeFBOName = "AdvancedAoFinalizeFBO";
+    // Half-resolution GTAO inputs: one depth sample and its normal per 2x2 block.
+    private const string AoHalfDepthTextureName = "AdvancedAoHalfDepth";
+    // Positive linear view depth at GTAO resolution (0 for the far plane). Only GTAO generation reads it.
+    private const string AoHalfLinearDepthTextureName = "AdvancedAoHalfLinearDepth";
+    private const string AoPrepareQuadFBOName = "AdvancedAoPrepareQuadFBO";
+    private const string AoPrepareFBOName = "AdvancedAoPrepareFBO";
+    private const string AoUpsampleQuadFBOName = "AdvancedAoUpsampleQuadFBO";
+    // Resolution field values. Half runs GTAO on half-resolution inputs and upsamples once.
+    private const ulong AoGtaoResolutionHalf = 0UL;
+    private const ulong AoGtaoResolutionFull = 1UL;
+    private const ulong AoGtaoResolutionQuarter = 2UL;
 
     private VPRC_SSAOPass? _ssaoAoProvider;
     private VPRC_MVAOPass? _mvaoAoProvider;
@@ -52,7 +63,7 @@ public partial class AdvancedRenderPipeline
     /// <summary>Gets the AO mode for the resources of one generation. Zero means no AO resources.</summary>
     private ulong BuildAmbientOcclusionFeatureMask(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
-        if (!UsesAmbientOcclusionPasses || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!UsesAmbientOcclusionPasses || ExcludesAmbientOcclusionForEyeResources(viewport))
             return 0UL;
 
         AmbientOcclusionSettings? settings = ResolveAmbientOcclusionSettings(instance, viewport);
@@ -70,12 +81,22 @@ public partial class AdvancedRenderPipeline
         ulong mode = (ulong)((int)AmbientOcclusionSettings.NormalizeType(settings.Type) + 1);
         ulong resolution = settings.GroundTruth.Resolution switch
         {
-            GroundTruthAmbientOcclusionSettings.EResolution.Full => 1UL,
-            GroundTruthAmbientOcclusionSettings.EResolution.Quarter => 2UL,
-            _ => 0UL,
+            GroundTruthAmbientOcclusionSettings.EResolution.Full => AoGtaoResolutionFull,
+            GroundTruthAmbientOcclusionSettings.EResolution.Quarter => AoGtaoResolutionQuarter,
+            _ => AoGtaoResolutionHalf,
         };
         return (mode << AoModeFieldShift) | (resolution << AoGtaoResolutionFieldShift);
     }
+
+    /// <summary>
+    /// True when the resources of this pipeline serve a VR eye frame whose eye feature profile
+    /// turns ambient occlusion off. The resource key reads only the explicit viewport and this
+    /// pipeline's stereo flag, so a key built inside the eye render and one built outside it
+    /// (resize, resource requests) get the same AO mask for the same eye. Only a call without a
+    /// viewport reads the render that runs on this thread.
+    /// </summary>
+    private bool ExcludesAmbientOcclusionForEyeResources(XRViewport? viewport)
+        => !VrEyeFrameRules.AllowsAmbientOcclusion(viewport, Stereo);
 
     private static int DecodeAmbientOcclusionMode(RenderPipelineResourceProfile profile)
         => (int)((profile.FeatureMask & AoModeFieldMask) >> AoModeFieldShift);
@@ -83,18 +104,46 @@ public partial class AdvancedRenderPipeline
     private static int DecodeGtaoResolutionDivisor(RenderPipelineResourceProfile profile)
         => ((profile.FeatureMask & AoGtaoResolutionFieldMask) >> AoGtaoResolutionFieldShift) switch
         {
-            1UL => 1,
-            2UL => 4,
+            AoGtaoResolutionFull => 1,
+            AoGtaoResolutionQuarter => 4,
             _ => 2,
         };
+
+    /// <summary>
+    /// True when GTAO runs at half resolution on half-resolution inputs. A prepare pass then
+    /// replaces the full-resolution AO normal pass, generation and both blur passes read the
+    /// reduced depth and normals, and one depth-aware upsample writes the full-resolution AO.
+    /// </summary>
+    private static bool UsesReducedGtaoInputs(RenderPipelineResourceProfile profile)
+        => DecodeAmbientOcclusionMode(profile) == AoModeGroundTruth &&
+            ((profile.FeatureMask & AoGtaoResolutionFieldMask) >> AoGtaoResolutionFieldShift) == AoGtaoResolutionHalf;
+
+    /// <summary>True when the current resource generation declares the reduced GTAO inputs.</summary>
+    private bool CurrentGenerationUsesReducedGtaoInputs()
+        => TryCurrentPipeline?.Resources.TryGetFrameBuffer(AoPrepareFBOName, out XRFrameBuffer? prepare) == true &&
+            prepare is not null;
 
     private static bool AoModeRunsPasses(int mode)
         => mode is not (0 or AoModeVoxel);
 
+    /// <summary>
+    /// True when the AO passes of this frame write the whole native AO image after the native AO
+    /// stage: the passes run (<see cref="AppendAdvancedAmbientOcclusionCommands"/>), and the
+    /// finalize framebuffer exists in the current resource generation. The native stage then
+    /// skips its neutral fill, because the finalize quad overwrites it before shading reads it.
+    /// AO off, VXAO, an eye frame whose eye feature profile turns AO off, a missing camera and
+    /// a missing finalize target all keep the fill.
+    /// </summary>
+    internal bool AmbientOcclusionPassesReplaceNeutralFill(XRRenderPipelineInstance instance)
+        => UsesAmbientOcclusionPasses && VrEyeFrameRules.AllowsAmbientOcclusion() &&
+            AoModeRunsPasses(EvaluateAmbientOcclusionMode()) &&
+            instance.Resources.TryGetFrameBuffer(AoFinalizeFBOName, out XRFrameBuffer? finalize) &&
+            finalize is not null;
+
     /// <summary>Gets the mode that the camera selects now, in the same form as the resource mask.</summary>
     private int EvaluateAmbientOcclusionMode()
     {
-        if (!UsesAmbientOcclusionPasses || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!UsesAmbientOcclusionPasses || !VrEyeFrameRules.AllowsAmbientOcclusion())
             return 0;
 
         AmbientOcclusionSettings? settings = ResolveAmbientOcclusionSettings();
@@ -119,11 +168,25 @@ public partial class AdvancedRenderPipeline
         var aoCommands = new ViewportRenderCommandContainer(this);
         using (aoCommands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))
         {
-            aoCommands.Add<VPRC_RenderQuadToFBO>()
+            var reducedInputs = aoCommands.Add<VPRC_IfElse>();
+            reducedInputs.Label = "AdvancedAmbientOcclusionReducedInputs";
+            reducedInputs.ConditionEvaluator = CurrentGenerationUsesReducedGtaoInputs;
+            var prepare = new ViewportRenderCommandContainer(this);
+            prepare.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(AoPrepareQuadFBOName, AoPrepareFBOName, matchDestinationRenderArea: true)
+                .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+                    .SampleTexture(DepthViewTextureName)
+                    .UseColorTexture(AoNormalTextureName)
+                    .UseColorTexture(AoHalfDepthTextureName)
+                    .UseColorTexture(AoHalfLinearDepthTextureName));
+            var normals = new ViewportRenderCommandContainer(this);
+            normals.Add<VPRC_RenderQuadToFBO>()
                 .SetTargets(AoNormalQuadFBOName, AoNormalFBOName)
                 .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
                     .SampleTexture(DepthViewTextureName)
                     .UseColorTexture(AoNormalTextureName));
+            reducedInputs.TrueCommands = prepare;
+            reducedInputs.FalseCommands = normals;
 
             var modes = aoCommands.Add<VPRC_Switch>();
             modes.Label = "AO mode";
@@ -140,10 +203,7 @@ public partial class AdvancedRenderPipeline
                     container => ConfigureHbaoPlus(container.Add<VPRC_HBAOPlusPass>()),
                     HBAOPlusRawTextureName, HBAOPlusBlurIntermediateTextureName, HBAOPlusBlurIntermediateFBOName,
                     matchDestinationRenderArea: false),
-                [AoModeGroundTruth] = CreateBlurredAmbientOcclusionCommands(
-                    container => ConfigureGtao(container.Add<VPRC_GTAOPass>()),
-                    GTAORawTextureName, GTAOBlurIntermediateTextureName, GTAOBlurIntermediateFBOName,
-                    matchDestinationRenderArea: true),
+                [AoModeGroundTruth] = CreateGtaoCommands(),
                 [AoModeSpatialHash] = CreateSpatialHashAmbientOcclusionCommands(),
             };
 
@@ -212,7 +272,59 @@ public partial class AdvancedRenderPipeline
             AoNormalTextureName);
         pass.SetOutputNames(AmbientOcclusionIntensityTextureName, AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName,
             GTAOBlurIntermediateFBOName, AoIntensityFBOName, GTAORawTextureName, GTAOBlurIntermediateTextureName);
+        pass.ReducedInputDepthTextureName = AoHalfDepthTextureName;
+        pass.ReducedInputLinearDepthTextureName = AoHalfLinearDepthTextureName;
         _gtaoAoProvider = pass;
+    }
+
+    /// <summary>
+    /// GTAO commands. With reduced inputs, generation and both blur passes run at half
+    /// resolution and read the half-resolution depth and normals. The vertical blur writes back
+    /// into the raw texture, and the upsample pass writes the full-resolution AO texture.
+    /// Without them (full or quarter resolution), the passes read the full-resolution inputs and
+    /// the vertical blur upsamples.
+    /// </summary>
+    private ViewportRenderCommandContainer CreateGtaoCommands()
+    {
+        ViewportRenderCommandContainer branch = NewAmbientOcclusionBranch();
+        ConfigureGtao(branch.Add<VPRC_GTAOPass>());
+        var reducedInputs = branch.Add<VPRC_IfElse>();
+        reducedInputs.Label = "AdvancedGtaoReducedInputs";
+        reducedInputs.ConditionEvaluator = CurrentGenerationUsesReducedGtaoInputs;
+
+        var reduced = new ViewportRenderCommandContainer(this);
+        reduced.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+                .UseColorTexture(GTAORawTextureName)
+                .SampleTexture(AoNormalTextureName)
+                .SampleTexture(AoHalfLinearDepthTextureName));
+        reduced.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AmbientOcclusionBlurFBOName, GTAOBlurIntermediateFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+                .SampleTexture(GTAORawTextureName)
+                .SampleTexture(AoHalfDepthTextureName)
+                .SampleTexture(AoNormalTextureName)
+                .UseColorTexture(GTAOBlurIntermediateTextureName));
+        reduced.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(GTAOBlurIntermediateFBOName, AmbientOcclusionBlurFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+                .SampleTexture(GTAOBlurIntermediateTextureName)
+                .SampleTexture(AoHalfDepthTextureName)
+                .SampleTexture(AoNormalTextureName)
+                .UseColorTexture(GTAORawTextureName));
+        reduced.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(AoUpsampleQuadFBOName, AoIntensityFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+                .SampleTexture(GTAORawTextureName)
+                .SampleTexture(DepthViewTextureName)
+                .UseColorTexture(AmbientOcclusionIntensityTextureName));
+
+        reducedInputs.TrueCommands = reduced;
+        reducedInputs.FalseCommands = CreateBlurredAmbientOcclusionCommandList(
+            GTAORawTextureName, GTAOBlurIntermediateTextureName, GTAOBlurIntermediateFBOName,
+            matchDestinationRenderArea: true);
+        return branch;
     }
 
     private ViewportRenderCommandContainer NewAmbientOcclusionBranch()
@@ -254,6 +366,29 @@ public partial class AdvancedRenderPipeline
     {
         ViewportRenderCommandContainer branch = NewAmbientOcclusionBranch();
         addPass(branch);
+        AddBlurredAmbientOcclusionCommands(branch, rawTexture, intermediateTexture, intermediateFbo, matchDestinationRenderArea);
+        return branch;
+    }
+
+    private ViewportRenderCommandContainer CreateBlurredAmbientOcclusionCommandList(
+        string rawTexture,
+        string intermediateTexture,
+        string intermediateFbo,
+        bool matchDestinationRenderArea)
+    {
+        var commands = new ViewportRenderCommandContainer(this);
+        AddBlurredAmbientOcclusionCommands(commands, rawTexture, intermediateTexture, intermediateFbo, matchDestinationRenderArea);
+        return commands;
+    }
+
+    /// <summary>Generate into the raw texture, blur horizontally, then blur vertically into the intensity texture.</summary>
+    private static void AddBlurredAmbientOcclusionCommands(
+        ViewportRenderCommandContainer branch,
+        string rawTexture,
+        string intermediateTexture,
+        string intermediateFbo,
+        bool matchDestinationRenderArea)
+    {
         branch.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(AmbientOcclusionFBOName, AmbientOcclusionBlurFBOName, matchDestinationRenderArea: matchDestinationRenderArea)
             .SetRenderGraphResources(AoGenerateResources(rawTexture));
@@ -271,7 +406,6 @@ public partial class AdvancedRenderPipeline
                 .SampleTexture(DepthViewTextureName)
                 .SampleTexture(AoNormalTextureName)
                 .UseColorTexture(AmbientOcclusionIntensityTextureName));
-        return branch;
     }
 
     /// <summary>The spatial hash pass writes its intensity texture from compute, with no resolve quads.</summary>
@@ -330,16 +464,37 @@ public partial class AdvancedRenderPipeline
 
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        bool reducedGtaoInputs = UsesReducedGtaoInputs(builder.Profile);
+        RenderResourceSizePolicy reducedSize = RenderResourceSizePolicy.Internal(0.5f);
 
-        DeclareLatePostColor(builder, AoNormalTextureName, internalSize, layers,
+        // With reduced GTAO inputs, the AO normals exist only at half resolution.
+        DeclareLatePostColor(builder, AoNormalTextureName, reducedGtaoInputs ? reducedSize : internalSize, layers,
             EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat, ESizedInternalFormat.Rg16f);
         DeclareLatePostColor(builder, AmbientOcclusionIntensityTextureName, internalSize, layers,
             EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f);
 
-        builder.QuadMaterial(AoNormalQuadFBOName).Lifetime(RenderResourceLifetime.Transient)
-            .DependsOn(DepthViewTextureName).Factory(CreateAoNormalQuadFbo).Add();
-        DeclareLatePostDestination(builder, AoNormalFBOName, AoNormalTextureName, internalSize,
-            () => CreateAoColorFbo(AoNormalFBOName, AoNormalTextureName));
+        if (reducedGtaoInputs)
+        {
+            DeclareLatePostColor(builder, AoHalfDepthTextureName, reducedSize, layers,
+                EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f);
+            DeclareLatePostColor(builder, AoHalfLinearDepthTextureName, reducedSize, layers,
+                EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f);
+            builder.QuadMaterial(AoPrepareQuadFBOName).Lifetime(RenderResourceLifetime.Transient)
+                .DependsOn(DepthViewTextureName).Factory(CreateAoPrepareQuadFbo).Add();
+            builder.FrameBuffer(AoPrepareFBOName).Size(reducedSize).Lifetime(RenderResourceLifetime.Persistent)
+                .Usage(RenderPipelineResourceUsage.ColorAttachment)
+                .Color(0, AoNormalTextureName).Color(1, AoHalfDepthTextureName).Color(2, AoHalfLinearDepthTextureName)
+                .Factory(CreateAoPrepareFbo).Add();
+            builder.QuadMaterial(AoUpsampleQuadFBOName).Lifetime(RenderResourceLifetime.Transient)
+                .DependsOn(GTAORawTextureName, DepthViewTextureName).Factory(CreateAoUpsampleQuadFbo).Add();
+        }
+        else
+        {
+            builder.QuadMaterial(AoNormalQuadFBOName).Lifetime(RenderResourceLifetime.Transient)
+                .DependsOn(DepthViewTextureName).Factory(CreateAoNormalQuadFbo).Add();
+            DeclareLatePostDestination(builder, AoNormalFBOName, AoNormalTextureName, internalSize,
+                () => CreateAoColorFbo(AoNormalFBOName, AoNormalTextureName));
+        }
 
         builder.QuadMaterial(AoFinalizeQuadFBOName).Lifetime(RenderResourceLifetime.Transient)
             .DependsOn(AmbientOcclusionIntensityTextureName).Factory(CreateAoFinalizeQuadFbo).Add();
@@ -381,7 +536,7 @@ public partial class AdvancedRenderPipeline
 
         // The generation pass reads the scratch textures, so it follows them.
         builder.FrameBuffer(AmbientOcclusionFBOName)
-            .Size(internalSize)
+            .Size(reducedGtaoInputs ? reducedSize : internalSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
             .DependsOn(DepthViewTextureName)
@@ -513,6 +668,56 @@ public partial class AdvancedRenderPipeline
             instance.RenderState.StereoRightEyeCamera?.SetUniforms(program, false);
     }
 
+    private XRFrameBuffer CreateAoPrepareQuadFbo()
+    {
+        XRShader shader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, Stereo ? "GTAOPrepareHalfStereo.fs" : "GTAOPrepareHalf.fs"),
+            EShaderType.Fragment);
+        XRTexture depth = GetTexture<XRTexture>(DepthViewTextureName)
+            ?? throw new InvalidOperationException("The GTAO prepare pass requires the depth view.");
+        XRMaterial material = new([depth], shader)
+        {
+            RenderOptions = CreateAoQuadRenderParameters()
+        };
+        XRQuadFrameBuffer quad = new(material, true, false, Stereo) { Name = AoPrepareQuadFBOName };
+        quad.SettingUniforms += SetAoNormalUniforms;
+        return quad;
+    }
+
+    private XRFrameBuffer CreateAoPrepareFbo()
+    {
+        if (GetTexture<XRTexture>(AoNormalTextureName) is not IFrameBufferAttachement normal ||
+            GetTexture<XRTexture>(AoHalfDepthTextureName) is not IFrameBufferAttachement depth ||
+            GetTexture<XRTexture>(AoHalfLinearDepthTextureName) is not IFrameBufferAttachement linearDepth)
+            throw new InvalidOperationException("The GTAO prepare targets must be FBO-attachable.");
+
+        return new XRFrameBuffer(
+            (normal, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (depth, EFrameBufferAttachment.ColorAttachment1, 0, -1),
+            (linearDepth, EFrameBufferAttachment.ColorAttachment2, 0, -1))
+        {
+            Name = AoPrepareFBOName
+        };
+    }
+
+    private XRFrameBuffer CreateAoUpsampleQuadFbo()
+    {
+        XRShader shader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, Stereo ? "GTAOUpsampleStereo.fs" : "GTAOUpsample.fs"),
+            EShaderType.Fragment);
+        XRTexture raw = GetTexture<XRTexture>(GTAORawTextureName)
+            ?? throw new InvalidOperationException("The GTAO upsample pass requires the blurred half-resolution AO.");
+        XRTexture depth = GetTexture<XRTexture>(DepthViewTextureName)
+            ?? throw new InvalidOperationException("The GTAO upsample pass requires the depth view.");
+        XRMaterial material = new([raw, depth], shader)
+        {
+            RenderOptions = CreateAoQuadRenderParameters()
+        };
+        XRQuadFrameBuffer quad = new(material, true, false, Stereo) { Name = AoUpsampleQuadFBOName };
+        quad.SettingUniforms += SetAoNormalUniforms;
+        return quad;
+    }
+
     private XRFrameBuffer CreateAoFinalizeQuadFbo()
     {
         XRShader shader = XRShader.EngineShader(
@@ -525,9 +730,69 @@ public partial class AdvancedRenderPipeline
             RenderOptions = CreateAoQuadRenderParameters()
         };
         XRQuadFrameBuffer quad = new(material, true, false, Stereo) { Name = AoFinalizeQuadFBOName };
-        quad.SettingUniforms += SetAoFinalizeUniforms;
+        if (UseTypedPostProcessPublishers)
+            quad.FullScreenMesh.BindingPublishers.Add(new AoFinalizeBindingPublisher(this));
+        else
+            quad.SettingUniforms += SetAoFinalizeUniforms;
         return quad;
     }
+
+    /// <summary>
+    /// Publishes the AO finalize values through a typed publisher, so the backend
+    /// keeps the captured binding snapshot while the render region, AO power and AO
+    /// input texture stay the same. A uniform callback forces a new snapshot every
+    /// frame. The shader samples <c>AmbientOcclusionTexture</c>, an engine AO name, so
+    /// the publisher owns the AO requirement and binds the intensity texture itself.
+    /// </summary>
+    private sealed class AoFinalizeBindingPublisher(AdvancedRenderPipeline owner) :
+        IRenderResourceBindingPublisher,
+        IPersistentProgramBindingRequirementOwner
+    {
+        private readonly RenderBindingGenerationTracker<AoFinalizeBindingKey> _generation = new();
+
+        public ERenderBindingFrequency Frequency => ERenderBindingFrequency.Pass;
+
+        public ulong Generation
+        {
+            get
+            {
+                XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                var region = instance?.RenderState.CurrentRenderRegion ?? default;
+                return _generation.Advance(new AoFinalizeBindingKey(
+                    instance is not null,
+                    region.Width,
+                    region.Height,
+                    owner.ResolveAmbientOcclusionSettings()?.Power ?? 1.0f,
+                    GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName),
+                    instance?.ResourceGeneration ?? 0));
+            }
+        }
+
+        public ulong ResourceGeneration => Generation;
+
+        public EUniformRequirements OwnedPersistentArtifactRequirement => EUniformRequirements.AmbientOcclusion;
+
+        public void PublishUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+            => owner.SetAoFinalizeUniforms(materialProgram);
+
+        public void PublishResources(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
+        {
+            if (GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName) is { } intensity)
+                materialProgram.Sampler(EngineShaderBindingNames.Samplers.AmbientOcclusionTexture, intensity, 0);
+        }
+    }
+
+    /// <summary>False when the A/B switch selects the uniform callbacks for these passes.</summary>
+    private static readonly bool UseTypedPostProcessPublishers =
+        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AdvancedTypedPostProcessPublishers)?.Trim() != "0";
+
+    private readonly record struct AoFinalizeBindingKey(
+        bool HasInstance,
+        int Width,
+        int Height,
+        float Power,
+        XRTexture? Intensity,
+        int PipelineResourceGeneration);
 
     private void SetAoFinalizeUniforms(XRRenderProgram program)
     {

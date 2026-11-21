@@ -57,7 +57,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
     {
         string arena = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs");
-        arena.ShouldContain("internal const int MaximumFrameSlotCount = 8;");
+        arena.ShouldContain("internal const int MaximumFrameSlotCount = 10;");
         arena.ShouldContain("private const int MaxReservations = 131_072;");
         arena.ShouldContain("if ((uint)requiredFrameSlots > MaximumFrameSlotCount)");
         arena.ShouldContain("_reservations.Count + _frequencyReservations.Count >= MaxReservations");
@@ -3240,7 +3240,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         workers.ShouldNotContain("RendererOwnerWorkerIndices");
         workers.ShouldContain("RenderWorkDomain.FatalBatchWait");
         workers.ShouldContain("batch.ActiveWorkerMask");
-        workers.ShouldContain("domain.RentBatch(activeLaneCount);");
+        workers.ShouldContain("lease.ShrinkItemCount(activeLaneCount);");
         recording.ShouldContain("AssignCommandChainRecordingWorker(");
         recording.ShouldContain("schedulingConflictCount++");
         recording.ShouldContain("entry.WorkerIndex = recordingWorkerIndex;");
@@ -3248,7 +3248,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
             recording,
             "Invalidate the whole dirty batch before any worker is",
             "MarkCommandChainSecondaryCommandBufferInvalid(",
-            "AssignCommandChainRecordingWorker(batch, chain, workerCount)",
+            "? AssignCommandChainRecordingWorker(",
             "DispatchCommandChainRecordingWorkers(");
     }
 

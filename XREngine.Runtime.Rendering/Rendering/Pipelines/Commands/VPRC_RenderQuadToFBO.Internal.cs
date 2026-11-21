@@ -154,7 +154,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (passIndex == int.MinValue && hasRenderGraphMetadata)
             {
                 if (RequiredForOutput)
-                    throw new InvalidOperationException($"RenderPipeline.RequiredOutputPassMissing: '{passName}'.");
+                    throw new RequiredRenderCommandException(
+                        $"RenderPipeline.RequiredOutputPassMissing: '{passName}'.",
+                        new InvalidOperationException("The required output has no render-graph pass."));
                 Debug.RenderingWarningEvery(
                     $"QuadBlit.MissingRenderGraphPass.{passName}",
                     TimeSpan.FromSeconds(2),
@@ -171,13 +173,17 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (sourceFBO is null)
             {
                 if (RequiredForOutput)
-                    throw new InvalidOperationException($"RenderPipeline.RequiredOutputSourceMissing: '{SourceQuadFBOName}'.");
+                    throw new RenderResourcePreparationPendingException(
+                        $"RenderPipeline.RequiredOutputSourceMissing: '{SourceQuadFBOName}'.");
                 if (DiagnosticsEnabled)
                     Debug.RenderingWarning($"[QuadBlitDiag] Source FBO '{SourceQuadFBOName}' not found as XRQuadFrameBuffer.");
                 return;
             }
 
             XRFrameBuffer? destFBO = ResolveDestinationFbo(activeInstance, sourceFBO);
+            if (RequiredForOutput && DestinationFBOName is not null && destFBO is null)
+                throw new RenderResourcePreparationPendingException(
+                    $"Required output destination '{DestinationFBOName}' is unavailable.");
             if (DiagnosticsEnabled && DestinationFBOName is not null && destFBO is null)
                 Debug.RenderingWarning($"[QuadBlitDiag] Dest FBO '{DestinationFBOName}' not found.");
 
@@ -190,8 +196,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             bool resolvedDestinationArea = TryResolveDestinationRenderArea(destFBO, out int renderWidth, out int renderHeight);
             if (MatchDestinationRenderArea && !resolvedDestinationArea)
             {
-                throw new InvalidOperationException(
-                    $"Fullscreen pass '{SourceQuadFBOName}' cannot derive a render area from destination '{destination}'.");
+                string reason = $"Fullscreen pass '{SourceQuadFBOName}' cannot derive a render area from destination '{destination}'.";
+                if (RequiredForOutput)
+                    throw new RequiredRenderCommandException(reason,
+                        new InvalidOperationException(reason));
+                throw new InvalidOperationException(reason);
             }
 
             using var renderAreaScope = MatchDestinationRenderArea
@@ -215,7 +224,15 @@ namespace XREngine.Rendering.Pipelines.Commands
                     renderHeight);
             }
 
-            sourceFBO.Render(destFBO);
+            using var requiredSubmission = RequiredMeshSubmissionScope.EnterIf(RequiredForOutput);
+            if (!sourceFBO.Render(destFBO) && RequiredForOutput)
+            {
+                string reason = $"Required fullscreen draw '{SourceQuadFBOName}' is not ready.";
+                if (sourceFBO.IsDestroyQueued || sourceFBO.IsDestroyed)
+                    throw new RequiredRenderCommandException(reason,
+                        new InvalidOperationException("The required fullscreen source was destroyed."));
+                throw new RenderResourcePreparationPendingException(reason);
+            }
         }
 
         private void ValidateDestinationScreenRegionContract(
@@ -399,19 +416,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <param name="hasRenderGraphMetadata">Indicates whether the render graph metadata is available.</param>
         /// <returns>The index of the render pass if found; otherwise, int.MinValue.</returns>
         protected int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
-        {
-            RenderPipeline? pipeline = ParentPipeline;
-            if (pipeline?.PassMetadata is not { Count: > 0 })
-            {
-                hasRenderGraphMetadata = false;
-                return int.MinValue;
-            }
-
-            hasRenderGraphMetadata = true;
-            return pipeline.TryGetRenderPassIndex(passName, out int passIndex)
-                ? passIndex
-                : int.MinValue;
-        }
+            => ResolveActiveRenderGraphPassIndex(passName, out hasRenderGraphMetadata);
 
         /// <summary>
         /// Describes the render pass for this command in the render graph, 
@@ -471,6 +476,14 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (resources?.DestinationDepthAccess is { } depthAccess)
                 builder.UseDepthAttachment(MakeFboDepthResource(destination), depthAccess,
                     ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+            else if (resources?.DestinationStencilAccess is { } stencilAccess)
+            {
+                builder.UseStencilAttachment(
+                    MakeFboStencilResource(destination),
+                    stencilAccess,
+                    resources.DestinationStencilLoad,
+                    ERenderPassStoreOp.Store);
+            }
             else if (resources?.UseDestinationDepthStencil == true)
             {
                 builder.UseDepthAttachment(

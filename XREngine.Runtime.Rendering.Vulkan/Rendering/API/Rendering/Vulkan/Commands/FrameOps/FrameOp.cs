@@ -8,7 +8,16 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     private FrameOpResourceUseList _resourceUses;
     private ComputeDispatchSnapshot? _ownedAuthoringSnapshot;
     private IRenderResourceLeaseOwner? _ownedAuthoringResource;
+    private IRenderResourceLeaseOwner? _ownedTransientReadResource;
     internal IRenderResourceLeaseOwner? AuthoringResource => _ownedAuthoringResource;
+    internal IRenderResourceLeaseOwner? TransientReadResource => _ownedTransientReadResource;
+
+    /// <summary>
+    /// Gets whether a workspace pool may hand this operation out again. An
+    /// operation that still owns an authoring resource or lease stays in use.
+    /// </summary>
+    internal virtual bool CanReuseFromPool
+        => _ownedAuthoringResource is null && _ownedTransientReadResource is null;
 
     public int PassIndex
     {
@@ -47,14 +56,15 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
         where T : FrameOp
     {
         reusable = null;
-        if (context.OperationWorkspace is null)
+        VulkanFrameOpWorkspace? workspace = ResolveRentWorkspace(context);
+        if (workspace is null)
             return false;
 
         ulong frameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
         if (frameId == 0)
             return false;
 
-        return context.OperationWorkspace.TryRent(frameId, out reusable);
+        return workspace.TryRent(frameId, out reusable);
     }
 
     internal ref FrameOpResourceUseList BeginResourceUseUpdate()
@@ -72,9 +82,22 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     {
         FrameOp copy = (FrameOp)MemberwiseClone();
         copy._ownedAuthoringSnapshot = null;
-        copy._ownedAuthoringResource?.RetainAuthoringUse();
+        IRenderResourceLeaseOwner? authoringResource = copy._ownedAuthoringResource;
+        IRenderResourceLeaseOwner? transientReadResource = copy._ownedTransientReadResource;
+        copy._ownedAuthoringResource = null;
+        copy._ownedTransientReadResource = null;
         try
         {
+            if (authoringResource is not null)
+            {
+                authoringResource.RetainAuthoringUse();
+                copy._ownedAuthoringResource = authoringResource;
+            }
+            if (transientReadResource is not null)
+            {
+                transientReadResource.RetainAuthoringUse();
+                copy._ownedTransientReadResource = transientReadResource;
+            }
             copy._resourceUses = _resourceUses.CreateSealedCopy();
             copy.OnSealedAuthoringCopyCreated();
             return copy;
@@ -100,13 +123,22 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
         _ownedAuthoringSnapshot = null;
         IRenderResourceLeaseOwner? owner = _ownedAuthoringResource;
         _ownedAuthoringResource = null;
+        IRenderResourceLeaseOwner? transientReadOwner = _ownedTransientReadResource;
+        _ownedTransientReadResource = null;
         try
         {
             snapshot?.ReleaseReadOnlyStorageBindings();
         }
         finally
         {
-            owner?.ReleaseAuthoringUse();
+            try
+            {
+                owner?.ReleaseAuthoringUse();
+            }
+            finally
+            {
+                transientReadOwner?.ReleaseAuthoringUse();
+            }
         }
     }
 
@@ -118,6 +150,23 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
             throw new InvalidOperationException("A frame operation already owns a resource lease.");
         owner.RetainAuthoringUse();
         _ownedAuthoringResource = owner;
+    }
+
+    internal void AttachTransientReadResource(IRenderResourceLeaseOwner? owner)
+    {
+        if (owner is null)
+            return;
+        if (_ownedTransientReadResource is not null)
+            throw new InvalidOperationException("A frame operation already owns a transient read lease.");
+        owner.RetainAuthoringUse();
+        _ownedTransientReadResource = owner;
+    }
+
+    internal void ReleaseTransientReadResource()
+    {
+        IRenderResourceLeaseOwner? owner = _ownedTransientReadResource;
+        _ownedTransientReadResource = null;
+        owner?.ReleaseAuthoringUse();
     }
 
     /// <summary>
@@ -132,6 +181,28 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     protected static T RetainForCurrentFrame<T>(T created, in FrameOpContext context)
         where T : FrameOp
     {
-        return context.OperationWorkspace?.Retain(created) ?? created;
+        return ResolveRentWorkspace(context)?.Retain(created) ?? created;
     }
+
+    private static VulkanFrameOpWorkspace? s_openXrCapturedWorkspace;
+
+    /// <summary>
+    /// Publishes the pool for OpenXR eye and mirror operations whose context carries
+    /// no workspace. Pass <see langword="null"/> when the renderer is destroyed.
+    /// </summary>
+    /// <remarks>
+    /// Eye compute dispatches, barriers and indirect draws take the context of the
+    /// active eye scope, which carries no workspace. Without a pool, each of them
+    /// allocates a new operation and a new resource-use list on every eye frame.
+    /// The pool must reuse an operation only after the eye frames in flight have
+    /// passed, because captured eye work can stay referenced after its render frame.
+    /// </remarks>
+    internal static void PublishOpenXrCapturedWorkspace(VulkanFrameOpWorkspace? workspace)
+        => Volatile.Write(ref s_openXrCapturedWorkspace, workspace);
+
+    private static VulkanFrameOpWorkspace? ResolveRentWorkspace(in FrameOpContext context)
+        => context.OperationWorkspace ??
+            (context.ContextKind is EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror
+                ? Volatile.Read(ref s_openXrCapturedWorkspace)
+                : null);
 }

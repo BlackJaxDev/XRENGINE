@@ -1,8 +1,12 @@
 #ifndef XRENGINE_EXTENDED_EFFECTS_GLSL
 #define XRENGINE_EXTENDED_EFFECTS_GLSL
 
+#ifndef XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS
+#include "procedural_eye.glsl"
+#endif
+
 #if defined(XRENGINE_VULKAN) && !defined(XRENGINE_UBER_DISABLE_EXTENDED_EFFECTS)
-layout(std430, set = 0, binding = 40) readonly buffer SourceUdimTriangleCoverage
+layout(std430, set = 0, binding = 78) readonly buffer SourceUdimTriangleCoverage
 {
     uvec4 sourceUdimTriangleMasks[];
 };
@@ -64,7 +68,10 @@ bool uberApplyCoverageEffects(in ToonMesh mesh)
 
     if (_UvTileDiscard > 0.5 && _UDIMDiscardMode == 1)
     {
-        vec2 tile = floor(mesh.uv[clamp(_UDIMDiscardUV, 0, 3)]);
+        vec2 tileUv = mesh.uv[clamp(_UDIMDiscardUV, 0, 3)];
+        if (_SourceUdimFlipV > 0.5)
+            tileUv.y = 1.0 - tileUv.y;
+        vec2 tile = floor(tileUv);
         if (all(greaterThanEqual(tile, vec2(0.0))) &&
             all(lessThan(tile, vec2(4.0))))
         {
@@ -106,8 +113,10 @@ void uberApplyInternalParallax(inout ToonMesh mesh)
 float uberAudioBandValue(int band, float history)
 {
 #ifndef XRENGINE_UBER_DISABLE_AUDIOLINK
+    if (band < 0 || band > 3)
+        return 0.0;
     vec2 size = max(_AudioLinkTextureSize.xy, vec2(1.0));
-    float x = (clamp(float(band), 0.0, 3.0) + 0.5) / size.x;
+    float x = (float(band) + 0.5) / size.x;
     float y = (clamp(history, 0.0, size.y - 1.0) + 0.5) / size.y;
     return texture(_AudioLinkTexture, vec2(x, y)).r;
 #else
@@ -158,6 +167,10 @@ void uberApplySurfaceEffects(
         vec4 video = texture(_VideoTexture, videoUv);
         color = mix(color, video.rgb, saturate(_VideoBlend * video.a));
     }
+
+    // Procedural mode 6 is the procedural eye. Its vignette dithers the coverage at the eye edge.
+    if (_ProceduralMode == 6)
+        alpha = xrProceduralEyeCoverageAlpha(mesh.uv[0], _MainTex_ST, _ProceduralEyeParams3);
 #endif
 
 #ifndef XRENGINE_UBER_DISABLE_AUDIOLINK
@@ -218,6 +231,25 @@ vec3 uberApplyPostEffects(in ToonMesh mesh, vec3 color)
         float flip = step(0.5, uberHash12(floor(mesh.uv[0] * max(_ProceduralParams.xy, vec2(1.0)))));
         float arc = flip < 0.5 ? abs(length(tile) - 0.5) : abs(length(tile - 1.0) - 0.5);
         color = mix(color, _ProceduralColor.rgb, smoothstep(0.08, 0.0, arc) * _ProceduralColor.a);
+    }
+    else if (mode == 6)
+    {
+        // The eye replaces the lit color with its own unlit result.
+        vec3 tangentView = transpose(mesh.TBN) * mesh.viewDir;
+        float viewLen = length(tangentView);
+        vec3 tangentViewNorm = viewLen > 1.0e-5 ? tangentView / viewLen : vec3(0.0, 0.0, 1.0);
+        // The engine bitangent points along +V, and the eye math uses the source V direction.
+        tangentViewNorm.y = -tangentViewNorm.y;
+        return xrEvaluateProceduralEye(
+            mesh.uv[0],
+            _MainTex_ST,
+            tangentViewNorm,
+            _ProceduralColor.rgb,
+            _ProceduralEyeParams0,
+            _ProceduralEyeParams1,
+            _ProceduralEyeParams2,
+            _ProceduralEyeParams3,
+            u_Time);
     }
 #endif
     return color;

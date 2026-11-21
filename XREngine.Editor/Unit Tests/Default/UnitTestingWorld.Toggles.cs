@@ -114,13 +114,30 @@ public static partial class EditorUnitTests
     {
         public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop; //Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.
         public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.ParallelCommandBufferRecording; //Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo strictly requires true layered multiview rendering and never falls back to per-eye rendering; unavailable capabilities are logged and the XR output is not rendered.
-        public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Default; //Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (SequentialViews and ParallelCommandBufferRecording), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.
+        public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Default; //Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (every view mode), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.
         public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.Off; //Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.
+        public bool AdvancedEdgeHalfRateShading { get; set; } = false; //Advanced eyes shade one pixel for each 2x2 block of the same triangle outside AdvancedEdgeHalfRateRadius and copy it to the rest of the block. Vulkan eyes without MSAA only; the desktop view is never affected.
+        public float AdvancedEdgeHalfRateRadius { get; set; } = 0.6f; //Full-rate radius around the lens center of each eye, as a fraction of the half extent of the eye image, in steps of 0.05.
+        public bool AdvancedEdgeHalfRateDebugTint { get; set; } = false; //Diagnostic: tints the 2x2 blocks that Advanced edge half-rate shading shades at half rate.
+        public int AdvancedShadowFilterTaps { get; set; } = 0; //Filter tap count of the headset shadow cascades of the primary directional light in Advanced native shading. 0 uses the values of the light. The desktop view is never affected.
         public bool PreviewStereoViews { get; set; } = false; //Shows the VR left/right eye render targets side-by-side in a screenspace UI when a VR mode is active.
         public bool AllowDesktopEditing { get; set; } = true; //When a VR pawn is active, keeps a desktop editing camera/pawn available.
+        public XREngine.Components.VR.EVrDesktopView DesktopView { get; set; } = XREngine.Components.VR.EVrDesktopView.EditorCamera; //Desktop view at OpenXR startup when AllowDesktopEditing is on. EditorCamera gives mouse and keyboard to the editor camera and pauses VR action input such as thumbstick locomotion; head and hand tracking continue. FirstPerson, Spectator, and TextureOutput keep input on the VR pawn.
         public UnitTestingVrFoveationSettings Foveation { get; set; } = new(); //Grouped VR foveated-rendering request. Unsupported explicit requests must produce visible diagnostics instead of silent fallback.
+        public UnitTestingVrEyeFeatureSettings EyeFeatures { get; set; } = new(); //Optional rendering features of every VR eye frame (single-pass stereo and per-eye, all VR pipelines). Shared by both eyes; the desktop is never affected.
         public UnitTestingOpenXrEyeResolutionSettings OpenXrEyeResolution { get; set; } = new(); //OpenXR per-eye swapchain resolution preset, custom size, and scalar for reproducible headset-resolution testing.
         public string? OpenXrRuntimeJson { get; set; } = null; //Optional process-scoped XR_RUNTIME_JSON manifest for OpenXR modes. Existing XR_RUNTIME_JSON environment values win. MonadoOpenXR auto-detects common Monado install/build locations when this is unset.
+    }
+
+    public class UnitTestingVrEyeFeatureSettings
+    {
+        public bool AmbientOcclusion { get; set; } = true; //Allows camera ambient occlusion (for example GTAO) in VR eye frames.
+        public bool FogAndAerialPerspective { get; set; } = true; //Allows volumetric fog and atmospheric aerial perspective in VR eye frames.
+        public bool OrderIndependentTransparency { get; set; } = true; //Allows weighted blended OIT and the exact transparency techniques in VR eye frames.
+        public bool DepthOfField { get; set; } = false; //Allows depth of field in VR eye frames. Off by default for comfort.
+        public bool MotionBlur { get; set; } = false; //Allows motion blur in VR eye frames. Off by default for comfort.
+        public bool DeferredMsaa { get; set; } = true; //Allows the deferred MSAA path in VR eye frames when the eye camera selects MSAA.
+        public bool ForwardPlusLightCulling { get; set; } = true; //Allows Forward+ local light culling in VR eye frames. Without it, forward and transparent surfaces in the eyes get no local lights.
     }
 
     public class UnitTestingVrFoveationSettings
@@ -294,6 +311,16 @@ public static partial class EditorUnitTests
             /// </summary>
             public string Path { get; set; } = string.Empty;
             /// <summary>
+            /// Selects one scene or prefab by its Assets-relative path inside a Unity package.
+            /// An empty value imports all scene and prefab entries from the main package.
+            /// </summary>
+            public string? PackageEntryPath { get; set; }
+            /// <summary>
+            /// Publishes only the uniquely named top-level node and its children from an imported scene.
+            /// Animated imports attach the selected startup clip to this node.
+            /// </summary>
+            public string? SceneRootName { get; set; }
+            /// <summary>
             /// Optional Unity project root (or its Assets directory) for loose scenes and prefabs.
             /// When omitted, the importer locates the owning project from the source path.
             /// Relative paths are resolved from the process working directory.
@@ -329,6 +356,14 @@ public static partial class EditorUnitTests
 
             /// <summary>Additional LOD levels requested when <see cref="GenerateMeshletLods"/> is enabled.</summary>
             public int MeshletAdditionalLodCount { get; set; } = 2;
+
+            /// <summary>
+            /// Cooks a cluster level-of-detail hierarchy for the meshlets of this model (level-0
+            /// meshlets plus coarser cluster levels with crack-free group borders). Off by default; the
+            /// cook takes longer and the meshlet data is about twice the size. Renderers without cut
+            /// selection draw only the level-0 meshlets.
+            /// </summary>
+            public bool GenerateClusterHierarchy { get; set; }
 
             /// <summary>
             /// Additional post-import actions to apply after the source model has been loaded.

@@ -11,4 +11,5 @@ internal enum ERejectedDesktopFramePolicyReason
     PresentNowFreshOutputRequired = 6,
     PresentNowRetryInitializationClear = 7,
     ResizeReleaseSuccessorRequiresAuthoredOutput = 8,
+    RetryReplaysCompletedContent = 9,
 }

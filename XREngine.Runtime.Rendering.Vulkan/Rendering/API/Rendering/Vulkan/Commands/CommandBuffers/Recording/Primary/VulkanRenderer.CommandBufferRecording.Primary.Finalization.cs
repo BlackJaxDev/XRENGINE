@@ -312,6 +312,8 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.PrimaryCommandPlan.HasTerminalAction(
                         EVulkanPrimaryPlanAction.PreparePresent);
                 EndActiveRenderPass(ref recordingState, finalClose: preparePresent);
+                // The last pass scope closes here, after its render pass ended.
+                EndPassGpuProfilerScope(ref recordingState);
 
                 int expectedPresentTransitions = recordingState.PreserveSwapchainForOverlay || !recordingState.TransitionSwapchainToPresent ? 0 : 1;
                 if (recordingState.UsedSwapchainDynamicRendering && recordingState.SwapchainPresentTransitions != expectedPresentTransitions)

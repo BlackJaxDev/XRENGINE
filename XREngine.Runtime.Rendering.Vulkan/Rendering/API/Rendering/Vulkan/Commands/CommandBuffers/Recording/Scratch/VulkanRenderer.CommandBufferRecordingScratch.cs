@@ -9,6 +9,10 @@ internal sealed partial class CommandBufferRecordingScratch
             internal const int MaxAdmittedFrameDataPreparationSignatures =
                 16384;
             public VulkanRenderScopeController RenderScope { get; } = new();
+            /// <summary>Command buffer whose frame-data lease this thread acquired last.</summary>
+            public ulong FrameDataLeaseCommandBuffer { get; set; }
+            /// <summary>Lifetime record of <see cref="FrameDataLeaseCommandBuffer"/>.</summary>
+            public VulkanCommandBufferLifetimeRecord? FrameDataLeaseRecord { get; set; }
             public Dictionary<int, VulkanSecondaryRecordingBucket> SecondaryBucketByStart { get; } = new();
             public List<VulkanSecondaryRecordingBucket> SecondaryRecordingBuckets { get; } = new(32);
             public Dictionary<int, int> SwapchainWritesByPipeline { get; } = new();
@@ -19,6 +23,12 @@ internal sealed partial class CommandBufferRecordingScratch
             public VulkanPrimarySecondaryArtifactSequence ExecutedCommandChainSecondaryArtifactSequence { get; } = new();
             public HashSet<int> PipelineDeferredOperationIndices { get; } = [];
             public HashSet<int> PipelineDeferredRequirementIndices { get; } = [];
+
+            /// <summary>The active draw readiness requests that the current admission prewarms. Reused in each admission.</summary>
+            public List<VulkanDrawReadinessRequest> DrawReadinessRequests { get; } = [];
+
+            /// <summary>The pass contexts that the current draw readiness request already checked. Reused for each request.</summary>
+            public HashSet<ulong> DrawReadinessContexts { get; } = [];
             public HashSet<int> PipelineOptionalDeferredRequirementIndices { get; } = [];
             public HashSet<ulong> AdmittedPipelinePreparationSignatures { get; } =
                 new(MaxAdmittedPipelinePreparationSignatures);

@@ -6,7 +6,9 @@ layout(location = 2) flat in uint VisibilityProducer;
 layout(location = 3) flat in uint VisibilityViewIndex;
 layout(location = 4) flat in uint VisibilityOrigin;
 layout(location = 5) flat in uint VisibilityVelocityValid;
-layout(location = 6) in vec2 VisibilityCoverageUv;
+// Locations 6 and 11-16 carry interpolated coverage attributes. This fragment
+// does not read them. Vulkan opaque programs define
+// XR_ADV_VISIBILITY_IDENTITY_ONLY, so the vertex and mesh stages do not write them.
 layout(location = 7) flat in uint VisibilityPrimitiveBase;
 layout(location = 8) flat in uint VisibilityMeshletIndex;
 layout(location = 9) flat in uint VisibilityMaterialDenseIndex;

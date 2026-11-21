@@ -10,4 +10,7 @@ internal enum EVulkanAdvancedVisibilityTargetKind : byte
 
     /// <summary>A depth-only directional shadow atlas page written by the directional shadow lane.</summary>
     DirectionalShadow = 1,
+
+    /// <summary>The mesh surface decal buffer: two RGBA8 targets and the read-only resolved depth.</summary>
+    DecalBuffer = 2,
 }

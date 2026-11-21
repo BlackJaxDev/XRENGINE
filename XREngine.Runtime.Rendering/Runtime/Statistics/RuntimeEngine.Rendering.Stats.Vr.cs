@@ -31,6 +31,13 @@ namespace XREngine
                     private static long _vrProcessOpenXrEyePrimaryRecordSamples;
                     private static long _vrProcessOpenXrEyePrimaryRecordSpanTicks;
                     private static long _vrProcessOpenXrEyePrimaryRecordOverlapTicks;
+                    private static long _vrProcessOpenXrParallelEyeRecordSerializedFrames;
+                    private static long _vrProcessOpenXrParallelEyeRecordFailedBatches;
+                    private static long _vrProcessOpenXrEyeFrameDataSlotAlternates;
+                    private static long _vrProcessOpenXrEyeFrameDataSlotWaits;
+                    private static long _vrProcessOpenXrEyeFrameDataSlotBusyFailures;
+                    private static readonly long[] _vrProcessOpenXrNoLayerFrames =
+                        new long[(int)XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason.Count];
                     private static long _vrRenderSubmitTimeTicks;
                     private static long _lastFrameVrRenderSubmitTimeTicks;
                     private static long _vrXrWaitFrameBlockTimeTicks;
@@ -115,6 +122,51 @@ namespace XREngine
                         TimeSpan.FromTicks(
                             Volatile.Read(ref _vrProcessOpenXrEyePrimaryRecordOverlapTicks))
                             .TotalMilliseconds;
+                    /// <summary>
+                    /// Gets the number of OpenXR frames in this process that requested parallel eye
+                    /// recording but recorded both eyes on one render lane, one after the other.
+                    /// </summary>
+                    public static long VrProcessOpenXrParallelEyeRecordSerializedFrames =>
+                        Volatile.Read(ref _vrProcessOpenXrParallelEyeRecordSerializedFrames);
+                    /// <summary>
+                    /// Gets the number of parallel OpenXR eye batches in this process that ended with an
+                    /// exception. The frame of each such batch ends without projection layers.
+                    /// </summary>
+                    public static long VrProcessOpenXrParallelEyeRecordFailedBatches =>
+                        Volatile.Read(ref _vrProcessOpenXrParallelEyeRecordFailedBatches);
+
+                    /// <summary>
+                    /// Gets the number of per-eye OpenXR preparations in this process that found the
+                    /// expected frame-data slot of the eye still in use and recorded into the other slot
+                    /// of the eye instead.
+                    /// </summary>
+                    public static long VrProcessOpenXrEyeFrameDataSlotAlternates =>
+                        Volatile.Read(ref _vrProcessOpenXrEyeFrameDataSlotAlternates);
+
+                    /// <summary>
+                    /// Gets the number of per-eye OpenXR preparations in this process that found both
+                    /// frame-data slots of the eye in use and waited (at most one display period) for
+                    /// the older slot.
+                    /// </summary>
+                    public static long VrProcessOpenXrEyeFrameDataSlotWaits =>
+                        Volatile.Read(ref _vrProcessOpenXrEyeFrameDataSlotWaits);
+
+                    /// <summary>
+                    /// Gets the number of per-eye OpenXR preparations in this process that failed
+                    /// because both frame-data slots of the eye stayed in use after the bounded wait.
+                    /// </summary>
+                    public static long VrProcessOpenXrEyeFrameDataSlotBusyFailures =>
+                        Volatile.Read(ref _vrProcessOpenXrEyeFrameDataSlotBusyFailures);
+
+                    /// <summary>
+                    /// Gets the number of OpenXR frames in this process that ended without projection
+                    /// layers through the exit <paramref name="reason"/>.
+                    /// </summary>
+                    public static long GetVrProcessOpenXrNoLayerFrames(
+                        XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason reason)
+                        => (uint)reason < (uint)_vrProcessOpenXrNoLayerFrames.Length
+                            ? Volatile.Read(ref _vrProcessOpenXrNoLayerFrames[(int)reason])
+                            : 0L;
                     public static double VrRenderSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrRenderSubmitTimeTicks).TotalMilliseconds;
                     public static double VrXrWaitFrameBlockTimeMs => TimeSpan.FromTicks(_lastFrameVrXrWaitFrameBlockTimeTicks).TotalMilliseconds;
                     public static double VrXrEndFrameSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrXrEndFrameSubmitTimeTicks).TotalMilliseconds;
@@ -189,12 +241,19 @@ namespace XREngine
                         _lastFrameVrRightEyeVisible = Interlocked.Exchange(ref _vrRightEyeVisible, 0);
                         _lastFrameVrLeftWorkerBuildTimeTicks = Interlocked.Exchange(ref _vrLeftWorkerBuildTimeTicks, 0);
                         _lastFrameVrRightWorkerBuildTimeTicks = Interlocked.Exchange(ref _vrRightWorkerBuildTimeTicks, 0);
-                        _lastFrameVrOpenXrEyePrimaryRecordSpanTicks = Interlocked.Exchange(
-                            ref _vrOpenXrEyePrimaryRecordSpanTicks,
-                            0);
-                        _lastFrameVrOpenXrEyePrimaryRecordOverlapTicks = Interlocked.Exchange(
-                            ref _vrOpenXrEyePrimaryRecordOverlapTicks,
-                            0);
+                        // A per-eye XR frame has several render iterations, and most of them record
+                        // other VR stats but no eye batch. Publish the eye record span and overlap
+                        // only from a snapshot that has a recorded batch, and keep the last values
+                        // otherwise, so the gauges show the last eye batch instead of 0. The
+                        // recorder writes the overlap before the span, so a span read here has its
+                        // overlap.
+                        long eyeRecordSpanTicks = Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordSpanTicks, 0);
+                        long eyeRecordOverlapTicks = Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordOverlapTicks, 0);
+                        if (eyeRecordSpanTicks > 0)
+                        {
+                            _lastFrameVrOpenXrEyePrimaryRecordSpanTicks = eyeRecordSpanTicks;
+                            _lastFrameVrOpenXrEyePrimaryRecordOverlapTicks = eyeRecordOverlapTicks;
+                        }
                         _lastFrameVrRenderSubmitTimeTicks = Interlocked.Exchange(ref _vrRenderSubmitTimeTicks, 0);
                         _lastFrameVrXrWaitFrameBlockTimeTicks = Interlocked.Exchange(ref _vrXrWaitFrameBlockTimeTicks, 0);
                         _lastFrameVrXrEndFrameSubmitTimeTicks = Interlocked.Exchange(ref _vrXrEndFrameSubmitTimeTicks, 0);
@@ -366,15 +425,55 @@ namespace XREngine
 
                         long overlapTicks = Math.Clamp(overlap.Ticks, 0, span.Ticks);
                         MarkFrameScopedStatsActive();
-                        Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordSpanTicks, span.Ticks);
+                        // Overlap first: the snapshot publishes the pair only when it reads a span.
                         Interlocked.Exchange(
                             ref _vrOpenXrEyePrimaryRecordOverlapTicks,
                             overlapTicks);
+                        Interlocked.Exchange(ref _vrOpenXrEyePrimaryRecordSpanTicks, span.Ticks);
                         Interlocked.Increment(ref _vrProcessOpenXrEyePrimaryRecordSamples);
                         Interlocked.Add(ref _vrProcessOpenXrEyePrimaryRecordSpanTicks, span.Ticks);
                         Interlocked.Add(
                             ref _vrProcessOpenXrEyePrimaryRecordOverlapTicks,
                             overlapTicks);
+                    }
+
+                    /// <summary>
+                    /// Counts one OpenXR frame that requested parallel eye recording but had only one
+                    /// render lane for both eyes. The count ignores <see cref="EnableTracking"/>,
+                    /// because it reports a fallback from the requested path.
+                    /// </summary>
+                    public static void RecordVrOpenXrParallelEyeRecordSerialized()
+                        => Interlocked.Increment(ref _vrProcessOpenXrParallelEyeRecordSerializedFrames);
+
+                    /// <summary>
+                    /// Counts one parallel OpenXR eye batch that ended with an exception. The count
+                    /// ignores <see cref="EnableTracking"/>, because it reports a dropped eye frame.
+                    /// </summary>
+                    public static void RecordVrOpenXrParallelEyeRecordFailedBatch()
+                        => Interlocked.Increment(ref _vrProcessOpenXrParallelEyeRecordFailedBatches);
+
+                    /// <summary>Counts one eye preparation that used the other frame-data slot of the eye.</summary>
+                    public static void RecordVrOpenXrEyeFrameDataSlotAlternate()
+                        => Interlocked.Increment(ref _vrProcessOpenXrEyeFrameDataSlotAlternates);
+
+                    /// <summary>Counts one eye preparation that waited because both slots of the eye were in use.</summary>
+                    public static void RecordVrOpenXrEyeFrameDataSlotWait()
+                        => Interlocked.Increment(ref _vrProcessOpenXrEyeFrameDataSlotWaits);
+
+                    /// <summary>Counts one eye preparation that failed because both slots of the eye stayed in use.</summary>
+                    public static void RecordVrOpenXrEyeFrameDataSlotBusyFailure()
+                        => Interlocked.Increment(ref _vrProcessOpenXrEyeFrameDataSlotBusyFailures);
+
+                    /// <summary>
+                    /// Counts one OpenXR frame that ended without projection layers through the exit
+                    /// <paramref name="reason"/>. The count ignores <see cref="EnableTracking"/>,
+                    /// because it reports a frame that the headset did not receive.
+                    /// </summary>
+                    public static void RecordVrOpenXrNoLayerFrame(
+                        XREngine.Rendering.API.Rendering.OpenXR.EOpenXrNoLayerFrameReason reason)
+                    {
+                        if ((uint)reason < (uint)_vrProcessOpenXrNoLayerFrames.Length)
+                            Interlocked.Increment(ref _vrProcessOpenXrNoLayerFrames[(int)reason]);
                     }
 
                     public static void RecordVrRenderSubmitTime(TimeSpan submitTime)

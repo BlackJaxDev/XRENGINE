@@ -27,12 +27,14 @@ using XREngine.Editor;
 using XREngine.Editor.Importers;
 using XREngine.Editor.Importers.SerializedAssets;
 using XREngine.Editor.Mcp;
+using XREngine.Editor.Rendering.EditorHighlight;
 using XREngine.Editor.Settings;
 using XREngine.Fbx;
 using XREngine.Native;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.EditorHighlight.Contracts;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Resources;
@@ -92,6 +94,8 @@ internal partial class Program
     private static void Main(string[] args)
     {
         Stopwatch processEntryStopwatch = Stopwatch.StartNew();
+        using IDisposable editorHighlightModule = EditorHighlightModuleRegistry.Install(
+            static () => new EditorHighlightModule());
         ImGuiBackend.Register();
         CoACD.InstallBackend(new CoAcdNativeBackend());
         using IDisposable colliderAuthoringServices =
@@ -138,6 +142,12 @@ internal partial class Program
         if (XREngine.Editor.GaussianBake.BakeSplatPreviewCommand.TryRun(args))
             return;
 
+        if (XREngine.Editor.GaussianBake.CookUnityPrefabCommand.TryRun(args))
+            return;
+
+        if (XREngine.Editor.CutsceneRecording.RecordCutsceneCommand.TryRun(args))
+            return;
+
         if (TryRunProjectBuildCommand(args))
             return;
 
@@ -172,6 +182,9 @@ internal partial class Program
 
         // Start undo/redo system
         Undo.Initialize();
+
+        // Give cutscene directors a default binding resolver and connect the preview to play mode changes
+        XREngine.Editor.Cutscenes.CutscenePreviewSession.Initialize();
 
         // Start file drop handler to support drag-and-drop importing of assets and scenes into the editor
         EditorFileDropHandler.Initialize();
@@ -208,6 +221,7 @@ internal partial class Program
         UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
         UnitTestingWorldSettingsStore.ApplyVrLaunchOverrides(settings);
         UnitTestingWorldSettingsStore.PublishVrLaunchModeForBootstrap(settings);
+        InstallEditorGpuSchedulingPriorityPolicy();
         EditorOpenXrPawnSwitcher.Configure(settings);
         UnitTestingWorldSettingsStore.ApplyAudioOverrides(settings);
         ConfigureOpenXrRuntimeServiceRecovery(settings);
@@ -215,6 +229,11 @@ internal partial class Program
         ConfigureFbxTraceLogging(settings);
         EditorUnitTests.SyncTogglesFromRuntime();
         BootstrapEditorHookRegistration.Register();
+        WriteBootstrapTrace(
+            $"Model import settings: file='{UnitTestingWorldSettingsStore.ResolveSettingsFilePath()}', " +
+            $"configured={settings.ModelsToImport?.Count ?? 0}, enabled={settings.ModelsToImport?.Count(model => model?.Enabled == true) ?? 0}, " +
+            $"synced={EditorUnitTests.Toggles.ModelsToImport?.Count ?? 0}, syncedEnabled={EditorUnitTests.Toggles.HasAnyModelsToImport}, " +
+            $"bridgeRegistered={BootstrapModelImportBridge.Current is not null}.");
         OpenXrSmokeRunController smokeRun = OpenXrSmokeRunController.Parse(args);
         smokeRun.Configure(settings);
         settingsLoadStopwatch.Stop();
@@ -284,6 +303,7 @@ internal partial class Program
         try
         {
             smokeRun.Install();
+            XREngine.Editor.Services.EditorTypeCatalogWarmup.Start();
             WriteBootstrapTrace("Calling Engine.Run.");
             // The editor owns the Edit -> Play transition. Standalone Engine.Run startup
             // would otherwise begin every world immediately and suppress the editor UI.
@@ -355,8 +375,7 @@ internal partial class Program
             return true;
 
         EngineDebug.LogWarning(
-            $"Invalid {XREngineEnvironmentVariables.OpenXrRenderPacingMode} value '{raw}'. Expected one of: " +
-            string.Join(", ", Enum.GetNames<OpenXrRenderPacingMode>()) + ".");
+            $"Invalid {XREngineEnvironmentVariables.OpenXrRenderPacingMode} value '{raw}'. Expected one of: {string.Join(", ", Enum.GetNames<OpenXrRenderPacingMode>())}.");
         return false;
     }
 
@@ -410,6 +429,9 @@ internal partial class Program
         {
             UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
             bool setUI = settings.EditorType != UnitTestEditorType.None || settings.RiveUI;
+            WriteBootstrapTrace(
+                $"Creating unit-test world: configuredModels={settings.ModelsToImport?.Count ?? 0}, " +
+                $"syncedEnabled={EditorUnitTests.Toggles.HasAnyModelsToImport}, bridgeRegistered={BootstrapModelImportBridge.Current is not null}.");
             targetWorld = BootstrapWorldFactory.CreateSelectedWorld(setUI, false);
             EngineDebug.Out("Loading Unit Testing World...");
         }
@@ -778,6 +800,29 @@ internal partial class Program
             || value.Equals("on", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Keeps the desktop editor at the BelowNormal Windows GPU scheduling class, so that a heavy
+    /// editor frame does not make the rest of the PC slow. XR uses the Normal class: a VR compositor
+    /// at Normal would otherwise get the GPU ahead of the editor's XR frames.
+    /// </summary>
+    private static void InstallEditorGpuSchedulingPriorityPolicy()
+    {
+        if (IsEnabledEnvironmentFlag(XREngineEnvironmentVariables.EditorNormalGpuPriority))
+            return;
+
+        string? vrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        bool xrRequested = !string.IsNullOrWhiteSpace(vrMode)
+            && !vrMode.Trim().Equals("Desktop", StringComparison.OrdinalIgnoreCase);
+        ApplyEditorGpuSchedulingPriority(belowNormal: !xrRequested && !RuntimeEngine.VRState.IsInVR);
+        RuntimeEngine.VRState.IsInVRChanged += static isInVR => ApplyEditorGpuSchedulingPriority(belowNormal: !isInVR);
+    }
+
+    private static void ApplyEditorGpuSchedulingPriority(bool belowNormal)
+    {
+        XREngine.Runtime.Platform.Desktop.WindowsGpuSchedulingPriority.TrySetForCurrentProcess(belowNormal, out string message);
+        WriteBootstrapTrace(message);
+    }
+
     private static bool IsEnabledEnvironmentFlag(string name)
     {
         string? value = Environment.GetEnvironmentVariable(name);
@@ -844,6 +889,9 @@ internal partial class Program
                 stopwatch.Stop();
                 WriteBootstrapTrace($"Default UI font prewarm failed after {stopwatch.Elapsed.TotalMilliseconds:F0} ms: {ex.Message}");
             }
+
+            FontGlyphSet.StartDefaultWorldFontPreparation();
+            WriteBootstrapTrace("Default world font preparation started.");
         });
     }
 
@@ -871,6 +919,7 @@ internal partial class Program
                 // Fragment shaders
                 _ = XRShader.EngineShader(Path.Combine("Common", "Text.fs"), EShaderType.Fragment);
                 _ = XRShader.EngineShader(Path.Combine("Common", "TextMsdf.fs"), EShaderType.Fragment);
+                _ = XRShader.EngineShader(Path.Combine("Common", "TextMtsdf.fs"), EShaderType.Fragment);
                 _ = XRShader.EngineShader(Path.Combine("Common", "TextMtsdfScreen.fs"), EShaderType.Fragment);
                 stopwatch.Stop();
                 WriteBootstrapTrace($"Text shaders prewarmed in {stopwatch.Elapsed.TotalMilliseconds:F0} ms.");
@@ -1431,6 +1480,7 @@ internal partial class Program
                 out string? launcherNameArg,
                 out bool? publishNativeAot,
                 out bool? validateAotCompatibility,
+                out bool? developmentArchives,
                 out string? defineConstantsArg,
                 out string? error))
         {
@@ -1460,6 +1510,7 @@ internal partial class Program
                 launcherNameArg,
                 publishNativeAot,
                 validateAotCompatibility,
+                developmentArchives,
                 defineConstantsArg);
 
             Environment.ExitCode = 0;
@@ -1649,6 +1700,7 @@ internal partial class Program
         out string? launcherNameArg,
         out bool? publishNativeAot,
         out bool? validateAotCompatibility,
+        out bool? developmentArchives,
         out string? defineConstantsArg,
         out string? error)
     {
@@ -1660,6 +1712,7 @@ internal partial class Program
         launcherNameArg = null;
         publishNativeAot = null;
         validateAotCompatibility = null;
+        developmentArchives = null;
         defineConstantsArg = null;
         error = null;
 
@@ -1754,6 +1807,22 @@ internal partial class Program
                     validateAotCompatibility = validateValue;
                     break;
 
+                case "--development-archives":
+                    if (i + 1 >= args.Length)
+                    {
+                        error = "Missing value after --development-archives (expected true/false).";
+                        return false;
+                    }
+
+                    if (!TryParseBooleanArgument(args[++i], out bool developmentArchivesValue))
+                    {
+                        error = "--development-archives must be true/false, yes/no, or 1/0.";
+                        return false;
+                    }
+
+                    developmentArchives = developmentArchivesValue;
+                    break;
+
                 case "--define-constants":
                 case "--launcher-define-constants":
                     if (i + 1 >= args.Length)
@@ -1787,6 +1856,7 @@ internal partial class Program
         string? launcherNameArg,
         bool? publishNativeAot,
         bool? validateAotCompatibility,
+        bool? developmentArchives,
         string? defineConstantsArg)
     {
         ConfigureMsBuildEnvironmentForHeadlessBuild();
@@ -1847,6 +1917,9 @@ internal partial class Program
 
         if (validateAotCompatibility.HasValue)
             settings.ValidateLauncherAotCompatibility = validateAotCompatibility.Value;
+
+        if (developmentArchives.HasValue)
+            settings.DevelopmentLauncherReadsArchives = developmentArchives.Value;
 
         // NativeAOT publish produces a self-contained output. Copying the managed
         // game and engine build directories first only bloats the final package;

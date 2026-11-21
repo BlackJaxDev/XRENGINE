@@ -1025,7 +1025,7 @@ public static class ShaderEditorServices
     private static bool ContainsDefine(string source, string defineName)
         => Regex.IsMatch(
             source,
-            @"^\s*#\s*define\s+" + Regex.Escape(defineName) + @"(?:\s|$)",
+            $@"^\s*#\s*define\s+{Regex.Escape(defineName)}(?:\s|$)",
             RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
     private static string InjectDefineAfterVersion(string source, string defineName)
@@ -1045,8 +1045,8 @@ public static class ShaderEditorServices
                     : string.Empty;
 
                 return string.IsNullOrEmpty(body)
-                    ? header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine
-                    : header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine + Environment.NewLine + body;
+                    ? $"{header}{Environment.NewLine}#define {defineName}{Environment.NewLine}"
+                    : $"{header}{Environment.NewLine}#define {defineName}{Environment.NewLine}{Environment.NewLine}{body}";
             }
 
             if (lineEnd < 0)

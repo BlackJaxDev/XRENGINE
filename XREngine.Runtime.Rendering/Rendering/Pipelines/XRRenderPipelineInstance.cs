@@ -8,6 +8,7 @@ using XREngine.Core;
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.RenderGraph;
@@ -43,6 +44,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private ResourceGenerationKey? _lastSuccessfulLayoutlessResourceKey;
     private readonly object _resourceSettingsSnapshotLock = new();
     private readonly Dictionary<RenderPipelineExternalTargetKind, ResourceGenerationSettingsSnapshot> _lastResourceSettingsSnapshotByOutput = [];
+    // Number of recent distinct settings snapshots kept per output kind.
+    private const int ResourceSettingsSnapshotHistoryLength = 4;
+    // Recent distinct settings snapshots per output kind, newest first. Revision 0 marks an empty
+    // slot (published revisions start at 1). A candidate that equals one of them, apart from the
+    // revision, reuses its revision; see CaptureResourceGenerationSettingsSnapshot.
+    private readonly Dictionary<RenderPipelineExternalTargetKind, ResourceGenerationSettingsSnapshot[]> _resourceSettingsSnapshotHistoryByOutput = [];
     private ulong _nextResourceSettingsRevision;
     private const int MaxResourceGenerationDiagnostics = 32;
     private readonly Dictionary<ResourceGenerationDeterminismIdentity, ResourceGenerationRequestDiagnostic> _resourceGenerationDiagnostics = [];
@@ -80,7 +87,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         _occlusionViewOwnership = OcclusionViewOwnership.Independent(InstanceId);
         MeshRenderCommands.SetOwnerPipeline(this);
+        _editorPickingReadbackCompleted = CompleteEditorPicking;
         CacheClearing += CancelPendingAdvancedPicking;
+        CacheClearing += CancelPendingEditorPicking;
+        CommandChainExecutionAborted += AbortEditorPickingCandidate;
     }
 
     /// <summary>
@@ -225,6 +235,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private readonly object _renderGraphValidationLock = new();
     private readonly HashSet<int> _executedRenderGraphPassIndices = [];
     private readonly HashSet<int> _executedBranchRenderGraphPassIndices = [];
+    // Pass indices of the metadata that the last render-graph validation used.
+    private readonly HashSet<int> _validationPassMetadataIndices = [];
+    private IReadOnlyCollection<RenderPassMetadata>? _validationPassMetadataSource;
+    private int _validationPassMetadataCount = -1;
     private static readonly Action<object?> PopRenderGraphBranchScopeAction =
         static state => ((XRRenderPipelineInstance)state!).PopRenderGraphBranchScope();
     private int _activeRenderGraphBranchDepth;
@@ -246,6 +260,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             // offscreen shadow viewports otherwise lose their ShadowRenderPipeline to any early read.
             if (EffectiveRequestedPipeline is { } requested)
                 return requested;
+
+            // An instance that its owner released on purpose stays without a pipeline.
+            if (IsPipelineReleasedByOwner)
+                return null;
 
             return RequestDefaultPipelineIfUnassigned(CreateDefaultRenderPipeline());
         }
@@ -316,8 +334,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         get
         {
-            RenderPipeline? pipeline = _pipeline ?? Pipeline;
-            string pipelineName = pipeline?.DebugName ?? DebugName;
+            RenderPipeline? pipeline = GetFullyAppliedPipeline();
+            string pipelineName = pipeline?.DebugName ?? "UnknownPipeline";
 
             XRCamera? cam = RenderState.SceneCamera ?? RenderState.RenderingCamera ?? LastSceneCamera ?? LastRenderingCamera;
             string cameraDescription = cam is { }
@@ -593,7 +611,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         long outputCompletionCollectGeneration,
         long? consumedCollectGenerationOverride,
         out XRGpuFence? completionFence,
-        out bool outputCompletionAuthoringStarted)
+        out bool outputCompletionAuthoringStarted,
+        bool suppressDeformationPrepass = false,
+        bool vrEyeRender = false)
     {
         completionFence = null;
         outputCompletionAuthoringStarted = false;
@@ -621,7 +641,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 consumedCollectGenerationOverride,
                 out historyOwnershipTransferred,
                 out completionFence,
-                out outputCompletionAuthoringStarted);
+                out outputCompletionAuthoringStarted,
+                suppressDeformationPrepass,
+                vrEyeRender);
         }
         finally
         {
@@ -651,7 +673,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         long? consumedCollectGenerationOverride,
         out bool historyOwnershipTransferred,
         out XRGpuFence? completionFence,
-        out bool outputCompletionAuthoringStarted)
+        out bool outputCompletionAuthoringStarted,
+        bool suppressDeformationPrepass,
+        bool vrEyeRender)
     {
         historyOwnershipTransferred = false;
         completionFence = null;
@@ -688,7 +712,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return DeclineRender("The play-mode transition suspended pipeline execution.");
         }
 
-        ApplyCurrentFrameProfile(camera, stereoRightEyeCamera, viewport);
+        ApplyCurrentFrameProfile(camera, stereoRightEyeCamera, viewport, stereoPass);
 
         using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))
         {
@@ -889,6 +913,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     return ReportExactOutputPreconditionFailure(in outputCompletionRequest, packageFailure ?? "The backend-ready frame package is invalid.");
                 }
 
+                PublishEditorPickingCandidate(
+                    activeCommands.RenderingBackendReadyPackage);
+
                 BeginRenderGraphValidationFrame();
 
                 if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend == RuntimeGraphicsApiKind.OpenGL)
@@ -906,6 +933,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 {
                     using (AbstractRenderer.Current?.EnterRenderPipelineFrameResourceScope(this, viewport))
                     {
+                        SkinningPrepassDispatcher dispatcher = SkinningPrepassDispatcher.Instance;
+                        using SkinningPrepassDispatcher.DeformationInvocationScope deformationInvocation =
+                            RuntimeEngine.Rendering.State.IsVulkan
+                                ? dispatcher.PushDeformationInvocation()
+                                : default;
+                        if (RuntimeEngine.Rendering.State.IsVulkan &&
+                            !suppressDeformationPrepass &&
+                            SkinningPrepassDispatcher.OwnsDeformation(vrEyeRender, RenderState.ShadowPass))
+                        {
+                            using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(
+                                       (int)EDefaultRenderPass.PreRender))
+                            {
+                                dispatcher.RunVisible(ActiveMeshRenderCommands);
+                            }
+                        }
+
                         long consumptionStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                         DirectionalShadowPipelineDiagnostics.Record(
                             EDirectionalShadowPipelineReceiptStage.BeforeCommandChainExecute,
@@ -914,7 +957,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                             targetFBO);
                         try
                         {
+                            BeginEditorPickingCandidateAuthoring();
                             Pipeline.CommandChain.Execute();
+                            EndEditorPickingCandidateExecution();
                         }
                         catch
                         {
@@ -930,6 +975,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     return ReportExactOutputPreconditionFailure(
                         in outputCompletionRequest,
                         exception.Message);
+                }
+                catch (RequiredRenderCommandException exception)
+                    when (exception.InnerException is RenderResourcePreparationPendingException)
+                {
+                    return ReportExactOutputPreconditionFailure(
+                        in outputCompletionRequest,
+                        exception.InnerException.Message);
                 }
 
                 if (RenderState.HasRequiredOffscreenAuthoringFailure)
@@ -968,6 +1020,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                             out completionFence);
                     completionReservationOwned = false;
                 }
+                CompleteEditorPickingCandidateAuthoring();
                 }
                 finally
                 {
@@ -1103,6 +1156,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         BackendReadyFramePackageValidationResult result =
             BackendReadyFramePackageValidator.Validate(package, in context);
         bool accepted = result.Accepted;
+        string? primaryOwnerFailure = null;
+        if (accepted && Pipeline?.ResolveAdvancedStageFamily() is not null &&
+            package.MissingPrimaryNativeOwnerCount > 0)
+        {
+            accepted = false;
+            primaryOwnerFailure =
+                $"The Advanced frame package has {package.MissingPrimaryNativeOwnerCount} enabled primary meshes without exact native submissions. First pass={package.FirstMissingPrimaryNativePass}, key={package.FirstMissingPrimaryNativeStableQueryKey}, reason={package.FirstMissingPrimaryNativeReason}.";
+        }
         if (!accepted && Debug.ShouldLogEvery(
                 "RenderFramePackage.ValidationMismatch",
                 TimeSpan.FromMilliseconds(250)))
@@ -1126,7 +1187,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 activeRegistry?.LastDescriptorMutationResourceName ?? "<none>",
                 result.Failure);
         }
-        failureReason = accepted ? null : result.Failure.ToString();
+        failureReason = accepted ? null : primaryOwnerFailure ?? result.Failure.ToString();
         RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageValidation(
             System.Diagnostics.Stopwatch.GetTimestamp() - started,
             accepted,
@@ -1503,7 +1564,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         ValidateResourceGenerationFeatureMask(key, reason);
 
-        if (!force && ActiveGeneration?.Key == key)
+        if (!force && ActiveGeneration?.Key == key && HasCurrentPassMetadata(ActiveGeneration, pipeline))
         {
             _requiresManagedResourceGeneration = true;
             _classifiedResourceLayoutKey = key;
@@ -1511,7 +1572,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return true;
         }
 
-        if (!force && PendingGeneration?.Key == key)
+        if (!force && PendingGeneration?.Key == key && HasCurrentPassMetadata(PendingGeneration, pipeline))
         {
             _requiresManagedResourceGeneration = true;
             _classifiedResourceLayoutKey = key;
@@ -1588,7 +1649,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         _requiresManagedResourceGeneration = true;
         _classifiedResourceLayoutKey = key;
 
-        if (ActiveGeneration?.Key == key && ActiveGeneration.Layout.IsStructurallyEquivalentTo(layout))
+        if (ActiveGeneration?.Key == key &&
+            ActiveGeneration.Layout.IsStructurallyEquivalentTo(layout) &&
+            HasCurrentPassMetadata(ActiveGeneration, pipeline))
         {
             DiscardPendingGeneration($"Active generation layout already matches request: {reason}");
             Debug.Rendering(
@@ -1598,6 +1661,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ActiveGeneration.Key,
                 layout.OrderedSpecs.Count);
             return true;
+        }
+        else if (ActiveGeneration?.Key == key && !HasCurrentPassMetadata(ActiveGeneration, pipeline))
+        {
+            Debug.Rendering(
+                "[RenderResources] Same-key generation request follows a command chain rebuild. Pipeline={0} Reason={1} Key={2} CommandGeneration={3}->{4}",
+                ProfilerKey,
+                reason,
+                key,
+                ActiveGeneration.CommandGeneration,
+                pipeline.CommandGeneration);
         }
         else if (ActiveGeneration?.Key == key)
         {
@@ -1609,7 +1682,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ActiveGeneration.Layout.DescribeStructuralDifferenceTo(layout));
         }
 
-        if (PendingGeneration?.Key == key && PendingGeneration.Layout.IsStructurallyEquivalentTo(layout))
+        if (PendingGeneration?.Key == key &&
+            PendingGeneration.Layout.IsStructurallyEquivalentTo(layout) &&
+            HasCurrentPassMetadata(PendingGeneration, pipeline))
             return true;
 
         if (PendingGeneration is not null)
@@ -1633,7 +1708,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             pipeline,
             _appliedPipelineRevision,
             isInitialBuild: ActiveGeneration is null,
-            passMetadata: passMetadata);
+            passMetadata: passMetadata,
+            commandGeneration: pipeline.CommandGeneration);
         ConfigurePendingGenerationDebounce(key, reason);
         Debug.Rendering(
             "[RenderResources] Pending generation requested. Pipeline={0} Reason={1} Active={2} Target={3} Delta={4} Resources={5} DebounceMs={6:F0}",
@@ -1646,6 +1722,20 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             PendingGenerationDebounceRemainingMilliseconds());
         return true;
     }
+
+    /// <summary>
+    /// True when the pass metadata of <paramref name="generation"/> comes from the current command chain of
+    /// <paramref name="pipeline"/>. A generation that another pipeline asset owns keeps the key comparison only.
+    /// </summary>
+    /// <remarks>
+    /// A command chain rebuild can keep the same resource key and layout but change the passes. For example,
+    /// when the editor highlight module is turned off, the window present reads the final post-process
+    /// framebuffer instead of the highlight output. A generation with old metadata then has no entry for the
+    /// new present pass, so the backend rejects every frame.
+    /// </remarks>
+    private static bool HasCurrentPassMetadata(RenderResourceGeneration generation, RenderPipeline pipeline)
+        => !ReferenceEquals(generation.OwnerPipeline, pipeline) ||
+           generation.CommandGeneration == pipeline.CommandGeneration;
 
     private void ValidateResourceGenerationFeatureMask(ResourceGenerationKey key, string reason)
     {
@@ -1965,13 +2055,62 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 return previous;
             }
 
-            ResourceGenerationSettingsSnapshot published = candidate with
+            // Equal content must keep one revision. Without this, a value that changes and changes
+            // back (A, B, A) got a new revision for the second A. An external swapchain generation
+            // compares the revision, so its active generation (first A) never matched the required
+            // key (second A) again, and every eye frame was declined.
+            ResourceGenerationSettingsSnapshot[] history = GetResourceSettingsSnapshotHistory(externalTargetKind);
+            ResourceGenerationSettingsSnapshot published = default;
+            bool reused = false;
+            for (int i = 0; i < history.Length; ++i)
             {
-                Revision = ++_nextResourceSettingsRevision
-            };
+                if (history[i].Revision != 0UL && (history[i] with { Revision = 0UL }) == candidate)
+                {
+                    published = history[i];
+                    reused = true;
+                    break;
+                }
+            }
+            if (!reused)
+                published = candidate with { Revision = ++_nextResourceSettingsRevision };
+
+            PromoteResourceSettingsSnapshot(history, published);
             _lastResourceSettingsSnapshotByOutput[externalTargetKind] = published;
             return published;
         }
+    }
+
+    /// <summary>Returns the recent-snapshot array of one output kind, created on first use.</summary>
+    private ResourceGenerationSettingsSnapshot[] GetResourceSettingsSnapshotHistory(RenderPipelineExternalTargetKind kind)
+    {
+        if (!_resourceSettingsSnapshotHistoryByOutput.TryGetValue(kind, out ResourceGenerationSettingsSnapshot[]? history))
+        {
+            history = new ResourceGenerationSettingsSnapshot[ResourceSettingsSnapshotHistoryLength];
+            _resourceSettingsSnapshotHistoryByOutput[kind] = history;
+        }
+        return history;
+    }
+
+    /// <summary>
+    /// Moves <paramref name="snapshot"/> to the front of the recent-snapshot array. An entry with
+    /// the same revision is removed first; when the array is full, the oldest entry drops out.
+    /// </summary>
+    private static void PromoteResourceSettingsSnapshot(
+        ResourceGenerationSettingsSnapshot[] history,
+        ResourceGenerationSettingsSnapshot snapshot)
+    {
+        int end = history.Length - 1;
+        for (int i = 0; i < history.Length; ++i)
+        {
+            if (history[i].Revision == snapshot.Revision)
+            {
+                end = i;
+                break;
+            }
+        }
+        for (int i = end; i > 0; --i)
+            history[i] = history[i - 1];
+        history[0] = snapshot;
     }
 
     /// <summary>
@@ -2143,6 +2282,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         _failedGenerationRetryAfterTimestamp = System.Diagnostics.Stopwatch.GetTimestamp()
             + StopwatchTicksFromMilliseconds(FailedGenerationRetryBackoffMilliseconds);
         SetField(ref _lastResourceGenerationFailure, reason, nameof(LastResourceGenerationFailure));
+        RenderReadinessFailureLog.Report("ResourceGeneration", ProfilerKey, key.ToString(), reason);
 
         Debug.RenderingWarning(
             "[RenderResources] Generation retry backoff armed. Pipeline={0} Reason={1} Target={2} RetryAfterMs={3:F0}",
@@ -3633,7 +3773,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             FrameBufferAttachmentDescriptor attachment = attachments[i];
             parts[i] = $"{attachment.Attachment}:{attachment.ResourceName}:mip{attachment.MipLevel}:layer{attachment.LayerIndex}";
         }
-        return "[" + string.Join(",", parts) + "]";
+        return $"[{string.Join(",", parts)}]";
     }
 
     /// <summary>
@@ -3808,47 +3948,74 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (pipeline is null)
             return;
 
-        HashSet<int> executedPasses;
-        HashSet<int> branchExecutedPasses;
+        IReadOnlyCollection<RenderPassMetadata> passMetadata =
+            ActiveGeneration?.PassMetadata ?? pipeline.PassMetadata;
+        int[]? missingExecuted = null;
+        int[]? missingBranchExecuted = null;
         lock (_renderGraphValidationLock)
         {
             if (_executedRenderGraphPassIndices.Count == 0 && _executedBranchRenderGraphPassIndices.Count == 0)
                 return;
 
-            executedPasses = [.. _executedRenderGraphPassIndices];
-            branchExecutedPasses = [.. _executedBranchRenderGraphPassIndices];
+            HashSet<int> metadataPassIndices = GetMetadataPassIndices(passMetadata);
+            // The check runs every frame; it allocates only to report a missing pass.
+            missingExecuted = CollectMissingPassMetadata(_executedRenderGraphPassIndices, metadataPassIndices);
+            missingBranchExecuted = CollectMissingPassMetadata(_executedBranchRenderGraphPassIndices, metadataPassIndices);
         }
 
-        IReadOnlyCollection<RenderPassMetadata> passMetadata =
-            ActiveGeneration?.PassMetadata ?? pipeline.PassMetadata;
-        HashSet<int> metadataPassIndices = passMetadata
-            .Select(m => m.PassIndex)
-            .ToHashSet();
-
         WarnMissingPassMetadata(
-            executedPasses,
-            metadataPassIndices,
+            missingExecuted,
             "executed",
             "[RenderDiag] Pipeline '{0}' executed render-graph passes without metadata: {1}.");
 
         WarnMissingPassMetadata(
-            branchExecutedPasses,
-            metadataPassIndices,
+            missingBranchExecuted,
             "branch-executed",
             "[RenderDiag] Pipeline '{0}' executed branch-selected passes without metadata: {1}.");
     }
 
+    /// <summary>
+    /// Returns the pass indices of <paramref name="passMetadata"/>. The set is rebuilt only
+    /// when the metadata collection changes. The caller holds <see cref="_renderGraphValidationLock"/>.
+    /// </summary>
+    private HashSet<int> GetMetadataPassIndices(IReadOnlyCollection<RenderPassMetadata> passMetadata)
+    {
+        if (!ReferenceEquals(_validationPassMetadataSource, passMetadata) ||
+            _validationPassMetadataCount != passMetadata.Count)
+        {
+            _validationPassMetadataIndices.Clear();
+            foreach (RenderPassMetadata metadata in passMetadata)
+                _validationPassMetadataIndices.Add(metadata.PassIndex);
+            _validationPassMetadataSource = passMetadata;
+            _validationPassMetadataCount = passMetadata.Count;
+        }
+        return _validationPassMetadataIndices;
+    }
+
+    private static int[]? CollectMissingPassMetadata(HashSet<int> executedPasses, HashSet<int> metadataPassIndices)
+    {
+        int missingCount = 0;
+        foreach (int passIndex in executedPasses)
+            if (!metadataPassIndices.Contains(passIndex))
+                missingCount++;
+        if (missingCount == 0)
+            return null;
+
+        int[] missing = new int[missingCount];
+        int index = 0;
+        foreach (int passIndex in executedPasses)
+            if (!metadataPassIndices.Contains(passIndex))
+                missing[index++] = passIndex;
+        Array.Sort(missing);
+        return missing;
+    }
+
     private void WarnMissingPassMetadata(
-        HashSet<int> executedPasses,
-        HashSet<int> metadataPassIndices,
+        int[]? missing,
         string scopeLabel,
         string messageTemplate)
     {
-        if (executedPasses.Count == 0)
-            return;
-
-        int[] missing = [.. executedPasses.Where(passIndex => !metadataPassIndices.Contains(passIndex)).OrderBy(passIndex => passIndex)];
-        if (missing.Length == 0)
+        if (missing is null)
             return;
 
         string missingList = string.Join(", ", missing);
@@ -3870,6 +4037,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         IReadOnlyCollection<RenderPassMetadata>? metadata =
             ActiveGeneration?.PassMetadata ?? Pipeline?.PassMetadata;
+        if (metadata is RenderPassMetadataSnapshot snapshot)
+            return snapshot.TryGetPassIndex(passName, out passIndex);
+
         if (metadata is not null)
         {
             foreach (RenderPassMetadata pass in metadata)

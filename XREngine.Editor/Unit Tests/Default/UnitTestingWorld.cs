@@ -108,6 +108,13 @@ public static partial class EditorUnitTests
         if (vrRenderingPrepared && s.RenderWindowsWhileInVR)
             s.VrMirrorMode = XREngine.Runtime.Bootstrap.BootstrapRenderSettings.ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow);
         s.VrCopyEyePreviewTextures = previewVrStereoViews;
+        if (Enum.TryParse(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
+                ignoreCase: true,
+                out EVrDesktopFrameExecutionMode desktopExecutionMode))
+        {
+            s.VrDesktopFrameExecutionMode = desktopExecutionMode;
+        }
 
         bool groupedRenderingSpecified = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering));
         if (groupedRenderingSpecified)
@@ -126,6 +133,8 @@ public static partial class EditorUnitTests
             s.VulkanRenderTargetMode = runtimeSettings.Rendering.Vulkan.RenderTargetMode;
             s.VulkanPresentationProfile = runtimeSettings.Rendering.Vulkan.PresentationProfile;
             s.Vulkan.Startup.FallbackPolicy = runtimeSettings.Rendering.BackendFallbackPolicy;
+            s.AdvancedVirtualGeometry = runtimeSettings.Rendering.VirtualGeometry;
+            s.AdvancedVirtualGeometryPixelThreshold = runtimeSettings.Rendering.VirtualGeometryPixelThreshold;
         }
         else if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
         {
@@ -149,6 +158,12 @@ public static partial class EditorUnitTests
             s.VrViewRenderMode = runtimeSettings.VR.ViewRenderMode;
             s.VrRenderPipeline = runtimeSettings.VR.RenderPipeline;
             s.RvcPipelineMode = runtimeSettings.VR.RvcPipelineMode;
+            s.RvcQuadViewEnabled = runtimeSettings.VR.RvcQuadView;
+            s.VrAdvancedEdgeHalfRateShading = runtimeSettings.VR.AdvancedEdgeHalfRateShading;
+            s.VrAdvancedEdgeHalfRateRadius = runtimeSettings.VR.AdvancedEdgeHalfRateRadius;
+            s.VrAdvancedEdgeHalfRateDebugTint = runtimeSettings.VR.AdvancedEdgeHalfRateDebugTint;
+            s.VrAdvancedShadowFilterTaps = runtimeSettings.VR.AdvancedShadowFilterTaps;
+            runtimeSettings.VR.EyeFeatures.ApplyTo(s.VrEyeFeatures);
             s.VrFoveationMode = runtimeSettings.VR.Foveation.Mode;
             s.VrFoveationQualityPreset = runtimeSettings.VR.Foveation.QualityPreset;
             s.VrFoveationRequireRequested = runtimeSettings.VR.Foveation.RequireRequested;

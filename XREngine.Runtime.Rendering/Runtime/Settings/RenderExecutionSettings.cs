@@ -23,6 +23,7 @@ public partial class RenderExecutionSettings : XRBase
     private int _reservedForegroundThreadCount = EngineExecutionTopology.AutomaticWorkerCount;
     private bool _allowCpuOversubscription;
     private ERenderWorkerQos _renderWorkerQos = ERenderWorkerQos.OsDefault;
+    private bool _preferLargestCacheCores = true;
 
     [Category("Execution")]
     [Description("General worker threads: -1 selects the startup auto policy, 0 uses cooperative inline execution, and 1..32 selects an explicit count. Requires restart.")]
@@ -78,5 +79,13 @@ public partial class RenderExecutionSettings : XRBase
     {
         get => _renderWorkerQos;
         set => SetField(ref _renderWorkerQos, value);
+    }
+
+    [Category("Execution")]
+    [Description("Restricts the process to the cores that share the largest L3 cache when the L3 caches of the CPU have different sizes (for example a stacked-cache core complex). CPUs with equal L3 caches are not changed. Requires restart.")]
+    public bool PreferLargestCacheCores
+    {
+        get => _preferLargestCacheCores;
+        set => SetField(ref _preferLargestCacheCores, value);
     }
 }

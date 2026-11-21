@@ -88,11 +88,20 @@ internal sealed partial class VulkanTextureUploadService
     {
         failureDisposition = EVulkanPresentNowFailureDisposition.RendererTerminal;
         VulkanImportedTextureUploadRequest request = upload.Request;
-        if (!TryAcquireTexturePublicationAuthority(
+        long probeStart = Stopwatch.GetTimestamp();
+        double recordStateBefore = VulkanTextureUploadTimingProbe.RecordStateTotalMilliseconds;
+        bool acquiredPublicationAuthority;
+        IDisposable? acquiredAuthority;
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Publish.AcquireAuthority"))
+        {
+            acquiredPublicationAuthority = TryAcquireTexturePublicationAuthority(
                 upload,
                 uploadSource,
-                out IDisposable? acquiredAuthority,
-                out failureDetail))
+                out acquiredAuthority,
+                out failureDetail);
+        }
+        long probeAcquired = Stopwatch.GetTimestamp();
+        if (!acquiredPublicationAuthority)
         {
             failureDisposition = EVulkanPresentNowFailureDisposition.RetryFrame;
             upload.Texture.ReleasePreparedImportedUploadResources(upload);
@@ -120,11 +129,14 @@ internal sealed partial class VulkanTextureUploadService
             return false;
         }
 
+        long probeRecordStart = Stopwatch.GetTimestamp();
         RecordState(request, VulkanTextureUploadGenerationState.Uploaded, $"{uploadSource} upload completed");
         RecordState(
             request,
             VulkanTextureUploadGenerationState.DescriptorPublishPending,
             $"publicationToken={upload.PublicationToken}");
+        long probeRecordEnd = Stopwatch.GetTimestamp();
+        long probeDescriptorEnd = probeRecordEnd;
 
         Interlocked.Increment(ref s_pendingDescriptorPublications);
         try
@@ -133,11 +145,16 @@ internal sealed partial class VulkanTextureUploadService
             EVulkanTextureDescriptorPublicationDisposition disposition;
             try
             {
-                disposition =
-                    upload.Texture.PublishSynchronizedImportedTextureUpload(
-                        upload,
-                        requireExactDescriptorPublication,
-                        out failureDetail);
+                VulkanTextureUploadTimingProbe.DescriptorDetailValid = false;
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Publish.Descriptor"))
+                {
+                    disposition =
+                        upload.Texture.PublishSynchronizedImportedTextureUpload(
+                            upload,
+                            requireExactDescriptorPublication,
+                            out failureDetail);
+                }
+                probeDescriptorEnd = Stopwatch.GetTimestamp();
             }
             catch (Exception exception)
             {
@@ -189,6 +206,15 @@ internal sealed partial class VulkanTextureUploadService
                 uploadSource,
                 publicationStart,
                 recordedUpload: false);
+            LogPublishPhases(
+                request.TextureName,
+                upload.MipLevels,
+                probeStart,
+                probeAcquired,
+                probeRecordStart,
+                probeRecordEnd,
+                probeDescriptorEnd,
+                recordStateBefore);
         }
         finally
         {
@@ -199,6 +225,43 @@ internal sealed partial class VulkanTextureUploadService
 
         failureDetail = null;
         return true;
+    }
+
+    /// <summary>
+    /// Writes one publication sub-phase line when the whole publication took
+    /// the probe threshold or more.
+    /// </summary>
+    private static void LogPublishPhases(
+        string? textureName,
+        uint mipLevels,
+        long start,
+        long acquired,
+        long recordStart,
+        long recordEnd,
+        long descriptorEnd,
+        double recordStateBefore)
+    {
+        long end = Stopwatch.GetTimestamp();
+        double total = VulkanTextureUploadTimingProbe.Ms(start, end);
+        if (total < VulkanTextureUploadTimingProbe.ThresholdMilliseconds)
+            return;
+
+        string descriptorDetail = VulkanTextureUploadTimingProbe.DescriptorDetailValid
+            ? $" [lockAndCheck={VulkanTextureUploadTimingProbe.DescriptorLockAndCheckMs:F2} activate={VulkanTextureUploadTimingProbe.DescriptorActivateMs:F2} commit={VulkanTextureUploadTimingProbe.DescriptorCommitMs:F2} wrapperSwap={VulkanTextureUploadTimingProbe.DescriptorWrapperSwapMs:F2} retireOld={VulkanTextureUploadTimingProbe.DescriptorRetireMs:F2}]"
+            : string.Empty;
+        VulkanTextureUploadTimingProbe.Write(
+            $"[VkTextureUpload.PublishPhases] texture='{textureName}' mipLevels={mipLevels} total={total:F2} ms " +
+            $"acquireAuthority={VulkanTextureUploadTimingProbe.Ms(start, acquired):F2} " +
+            $"preRecordStates={VulkanTextureUploadTimingProbe.Ms(recordStart, recordEnd):F2} " +
+            $"descriptorPublish={VulkanTextureUploadTimingProbe.Ms(recordEnd, descriptorEnd):F2}{descriptorDetail} " +
+            $"completeTail={VulkanTextureUploadTimingProbe.Ms(descriptorEnd, end):F2} " +
+            $"[markPublished={VulkanTextureUploadTimingProbe.CompleteMarkPublishedMs:F2} " +
+            $"retireStaging={VulkanTextureUploadTimingProbe.CompleteRetireStagingMs:F2} " +
+            $"latencyDiag={VulkanTextureUploadTimingProbe.CompleteLatencyMs:F2} " +
+            $"publishedStates={VulkanTextureUploadTimingProbe.CompleteStateMs:F2} " +
+            $"callbacks={VulkanTextureUploadTimingProbe.CompleteCallbacksMs:F2}] " +
+            $"recordStateThisCall={VulkanTextureUploadTimingProbe.RecordStateTotalMilliseconds - recordStateBefore:F2} " +
+            $"recordStateTotal={VulkanTextureUploadTimingProbe.RecordStateTotalMilliseconds:F2} ms/{VulkanTextureUploadTimingProbe.RecordStateCalls} calls");
     }
 
     internal void PublishCompletedRecordedTextureUpload(
@@ -311,6 +374,7 @@ internal sealed partial class VulkanTextureUploadService
         bool recordedUpload)
     {
         VulkanImportedTextureUploadRequest request = upload.Request;
+        long probeMarkStart = Stopwatch.GetTimestamp();
         try
         {
             upload.MarkPublished();
@@ -324,6 +388,7 @@ internal sealed partial class VulkanTextureUploadService
                 exception.Message);
         }
 
+        long probeRetireStart = Stopwatch.GetTimestamp();
         try
         {
             RetireTextureUploadStagingResources(resourceRuntime, upload);
@@ -337,6 +402,7 @@ internal sealed partial class VulkanTextureUploadService
                 exception.Message);
         }
 
+        long probeLatencyStart = Stopwatch.GetTimestamp();
         try
         {
             if (recordedUpload)
@@ -386,6 +452,7 @@ internal sealed partial class VulkanTextureUploadService
                 exception.Message);
         }
 
+        long probeStateStart = Stopwatch.GetTimestamp();
         try
         {
             RecordState(
@@ -406,9 +473,18 @@ internal sealed partial class VulkanTextureUploadService
                 exception.Message);
         }
 
+        long probeCallbacksStart = Stopwatch.GetTimestamp();
         Interlocked.Increment(ref s_finalPublications);
 
-        InvokeTextureUploadFinished(upload);
+        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("VkTextureUpload.Publish.FinishedCallbacks"))
+            InvokeTextureUploadFinished(upload);
+
+        long probeEnd = Stopwatch.GetTimestamp();
+        VulkanTextureUploadTimingProbe.CompleteMarkPublishedMs = VulkanTextureUploadTimingProbe.Ms(probeMarkStart, probeRetireStart);
+        VulkanTextureUploadTimingProbe.CompleteRetireStagingMs = VulkanTextureUploadTimingProbe.Ms(probeRetireStart, probeLatencyStart);
+        VulkanTextureUploadTimingProbe.CompleteLatencyMs = VulkanTextureUploadTimingProbe.Ms(probeLatencyStart, probeStateStart);
+        VulkanTextureUploadTimingProbe.CompleteStateMs = VulkanTextureUploadTimingProbe.Ms(probeStateStart, probeCallbacksStart);
+        VulkanTextureUploadTimingProbe.CompleteCallbacksMs = VulkanTextureUploadTimingProbe.Ms(probeCallbacksStart, probeEnd);
     }
 
     private static void RetireTextureUploadStagingResources(

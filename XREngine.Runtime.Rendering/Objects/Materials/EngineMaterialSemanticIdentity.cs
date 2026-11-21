@@ -73,6 +73,9 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
     /// <summary>Canonical inverse-hull expansion, color and authored alpha/dissolve coverage.</summary>
     public static EngineMaterialSemanticIdentity UberOutlineV1 => new(EngineMaterialSemantic.UberOutline, 1);
 
+    /// <summary>GPU silhouette fins for the verified Zekk soft outline pass.</summary>
+    public static EngineMaterialSemanticIdentity UberSoftOutlineV2 => new(EngineMaterialSemantic.UberOutline, 2);
+
     /// <summary>Canonical Uber base color, normal, selected-channel PBR, opacity and emission.</summary>
     public static EngineMaterialSemanticIdentity UberBaseV1 => new(EngineMaterialSemantic.UberBase, 1);
 
@@ -130,7 +133,7 @@ public readonly record struct EngineMaterialSemanticIdentity(EngineMaterialSeman
             return;
         if (Semantic == EngineMaterialSemantic.UICanvasSurface && Version == 1)
             return;
-        if (Semantic == EngineMaterialSemantic.UberOutline && Version == 1)
+        if (Semantic == EngineMaterialSemantic.UberOutline && Version is 1 or 2)
             return;
         if (Semantic == EngineMaterialSemantic.UberBase && Version == 1)
             return;

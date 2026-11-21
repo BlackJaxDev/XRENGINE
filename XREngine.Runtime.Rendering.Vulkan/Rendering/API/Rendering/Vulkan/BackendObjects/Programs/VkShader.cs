@@ -171,7 +171,7 @@ internal sealed unsafe partial class VkShader(
                     CompileStatus = ShaderCompileStatus.Pending("Vulkan", null);
                     LastCompileFailure = null;
                     LastArtifact = null;
-                    _asyncCompileTask = Task.Run(() => BuildCpuArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan));
+                    _asyncCompileTask = VulkanShaderCompileScheduler.Run(() => BuildCpuArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan));
                     _asyncCompileTasks.Add(_asyncCompileTask);
                     _ = _asyncCompileTask.ContinueWith(
                         OnAsyncCompileCompleted,
@@ -294,6 +294,9 @@ internal sealed unsafe partial class VkShader(
             _ = task.Exception;
             lock (_asyncCompileLock)
                 _asyncCompileTasks.Remove(task);
+            // A stopped desktop frame retries only after compile activity changes. The next
+            // frame attempt publishes this artifact, so the completion must wake that frame.
+            BackendContext.Resources.PipelineManager.NotifyShaderCompileCompleted();
         }
 
         private VulkanShaderArtifact BuildCpuArtifact(

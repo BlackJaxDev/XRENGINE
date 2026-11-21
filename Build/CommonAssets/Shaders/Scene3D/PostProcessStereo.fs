@@ -10,15 +10,17 @@ layout(location = 0) in vec3 FragPos;
 uniform sampler2DArray HDRSceneTex; //HDR scene color
 uniform sampler2DArray BloomBlurTexture; //Bloom
 uniform sampler2DArray DepthView; //Depth
-uniform usampler2DArray StencilView; //Stencil
+#ifndef XR_SCENE_STENCIL_AUTHORED
+uniform usampler2DArray StencilView;
 uniform vec3 HoverOutlineColor = vec3(1.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(View)
 uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f); // XRENGINE_FREQUENCY(View)
+#endif
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+uniform sampler2DArray EditorHighlightMask;
+#endif
 
 // 1x1 R32F texture containing the current exposure value (GPU-driven auto exposure)
 uniform sampler2D AutoExposureTex;
-#ifdef XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA
-uniform usampler2DArray AdvancedVisibilityMetadata;
-#endif
 uniform bool UseGpuAutoExposure; // XRENGINE_FREQUENCY(View)
 
 uniform float ChromaticAberrationIntensity; // XRENGINE_FREQUENCY(View)
@@ -221,6 +223,7 @@ vec3 ApplyVignette(vec3 sceneColor, vec2 uv)
     return mix(sceneColor, Vignette.Color, vignetteFactor);
 }
 
+#ifndef XR_SCENE_STENCIL_AUTHORED
 float GetStencilMaskBit(uint stencilValue, uint bit)
 {
     return (stencilValue & bit) != 0u ? 1.0f : 0.0f;
@@ -228,14 +231,7 @@ float GetStencilMaskBit(uint stencilValue, uint bit)
 
 uint SampleEditorHighlightSource(vec2 uv, int viewIndex)
 {
-    uint stencilFlags = texture(StencilView, vec3(uv, viewIndex)).r & 3u;
-#ifdef XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA
-    uint metadata = texture(AdvancedVisibilityMetadata, vec3(uv, viewIndex)).r;
-    uint metadataFlags = metadata == 0xFFFFFFFFu ? 0u : (metadata >> 25u) & 3u;
-    return stencilFlags | metadataFlags;
-#else
-    return stencilFlags;
-#endif
+    return texture(StencilView, vec3(uv, viewIndex)).r & 3u;
 }
 
 vec2 GetStencilOutlineIntensity(vec2 uv, int viewIndex)
@@ -288,6 +284,18 @@ vec2 GetStencilOutlineIntensity(vec2 uv, int viewIndex)
 
     return vec2(hoverOutline, selectionOutline);
 }
+#endif
+
+bool IsEditorGizmo(vec3 sourceUv)
+{
+#ifdef XR_EDITOR_HIGHLIGHT_MODULE
+    return texture(EditorHighlightMask, sourceUv).b > 0.5;
+#elif !defined(XR_SCENE_STENCIL_AUTHORED)
+    return (texture(StencilView, sourceUv).r & 0x80u) != 0u;
+#else
+    return false;
+#endif
+}
 
 // Returns the linear change per unit of sRGB-encoded display value.
 vec3 DisplayToLinearSlope(vec3 linearColor)
@@ -310,10 +318,8 @@ void main()
 
     vec3 uvi = vec3(duv, gl_ViewID_OVR);
 
-    // Gizmo bypass: pixels tagged with the gizmo stencil bit (0x80) skip tonemap,
-    // color grading, vignette, exposure, atmosphere, fog, and bloom add. They are
-    // emitted as raw HDR scene color so editor gizmos look unprocessed.
-    if ((texture(StencilView, uvi).r & 0x80u) != 0u)
+    // Keep editor gizmo colors outside scene color grading.
+    if (IsEditorGizmo(uvi))
     {
         OutColor = vec4(SafeColor(texture(HDRSceneTex, uvi).rgb), 1.0);
         return;
@@ -402,12 +408,14 @@ void main()
 
     ldrSceneColor = (ldrSceneColor - 0.5f) * ColorGrade.Contrast + 0.5f;
 
+#ifndef XR_SCENE_STENCIL_AUTHORED
     vec2 outline = GetStencilOutlineIntensity(duv, int(gl_ViewID_OVR));
     float hoverOutline = outline.x;
     float selectionOutline = outline.y;
     float outlineWeight = max(hoverOutline, selectionOutline);
     vec3 outlineColor = mix(SelectionOutlineColor, HoverOutlineColor, hoverOutline);
     ldrSceneColor = mix(ldrSceneColor, outlineColor, outlineWeight);
+#endif
 
     ldrSceneColor = ApplyVignette(ldrSceneColor, uv);
     ldrSceneColor = SafeColor(ldrSceneColor);

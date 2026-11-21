@@ -83,7 +83,7 @@ public partial class HumanoidComponent
     {
         EHumanoidAvatarBoneRole? childRole = GetPrimaryChildRole(role);
         if (childRole.HasValue && GetBoneDefinition(childRole.Value).Node is SceneNode semanticChild)
-            return Vector3.Distance(GetHumanoidBindWorldPose(node).Translation, GetHumanoidBindWorldPose(semanticChild).Translation);
+            return Vector3.Distance(GetAuthoredHumanoidBindWorldPose(node).Translation, GetAuthoredHumanoidBindWorldPose(semanticChild).Translation);
 
         float shortest = float.PositiveInfinity;
         foreach (var childTransform in node.Transform.Children)
@@ -92,8 +92,8 @@ public partial class HumanoidComponent
             if (child is null)
                 continue;
             float distance = Vector3.Distance(
-                GetHumanoidBindWorldPose(node).Translation,
-                GetHumanoidBindWorldPose(child).Translation);
+                GetAuthoredHumanoidBindWorldPose(node).Translation,
+                GetAuthoredHumanoidBindWorldPose(child).Translation);
             if (distance > 1e-6f && distance < shortest)
                 shortest = distance;
         }

@@ -38,12 +38,14 @@ internal sealed partial class VulkanCommandRuntime
         QueueFamilyIndices families = _deviceContext.QueueFamilies;
         uint graphicsFamily = families.GraphicsFamilyIndex ?? 0u;
 
+        long probeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         for (int index = 0; index < uploads.Count; index++)
             if (!uploads[index].TryValidateTransferOwnership(ResourceRuntime, out string? validationFailure))
             {
                 failureReason = validationFailure;
                 return false;
             }
+        long probeValidated = System.Diagnostics.Stopwatch.GetTimestamp();
 
         Queue submissionQueue = _deviceContext.GraphicsQueue;
         if (submissionQueue.Handle == 0)
@@ -90,6 +92,7 @@ internal sealed partial class VulkanCommandRuntime
                 failureReason = ex.Message;
                 return false;
             }
+            long probeBegun = System.Diagnostics.Stopwatch.GetTimestamp();
 
             if (gpuTimestampLease.IsValid)
             {
@@ -109,6 +112,7 @@ internal sealed partial class VulkanCommandRuntime
             if (gpuTimestampLease.IsValid)
                 Api!.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.BottomOfPipeBit,
                     gpuTimestampLease.QueryPool, 1);
+            long probeRecorded = System.Diagnostics.Stopwatch.GetTimestamp();
 
             Result endResult = EndCommandBufferTracked(commandBuffer);
             if (endResult != Result.Success)
@@ -129,6 +133,7 @@ internal sealed partial class VulkanCommandRuntime
                 return false;
             }
 
+            long probeFenced = System.Diagnostics.Stopwatch.GetTimestamp();
             SubmitInfo submitInfo = new()
             {
                 SType = StructureType.SubmitInfo,
@@ -155,6 +160,7 @@ internal sealed partial class VulkanCommandRuntime
                 bytesInFlight,
                 gpuTimestampLease);
 
+            long probeOwnerBuilt = System.Diagnostics.Stopwatch.GetTimestamp();
             VulkanSubmissionReceipt submitReceipt;
             submitReceipt = SubmitToQueueTrackedWithDisposition(
                 submissionQueue,
@@ -171,6 +177,21 @@ internal sealed partial class VulkanCommandRuntime
                 out _,
                 out _,
                 "TextureUpload.GraphicsForeground");
+            long probeSubmitted = System.Diagnostics.Stopwatch.GetTimestamp();
+            double probeTotal = VulkanTextureUploadTimingProbe.Ms(probeStart, probeSubmitted);
+            if (probeTotal >= VulkanTextureUploadTimingProbe.ThresholdMilliseconds)
+            {
+                VulkanTextureUploadTimingProbe.Write(
+                    $"[VkTextureUpload.SubmitPhases] firstTexture='{uploads[0].Request.TextureName}' uploads={uploads.Count} " +
+                    $"stagingBytes={bytesInFlight} total={probeTotal:F2} ms " +
+                    $"validateOwnership={VulkanTextureUploadTimingProbe.Ms(probeStart, probeValidated):F2} " +
+                    $"allocateBegin={VulkanTextureUploadTimingProbe.Ms(probeValidated, probeBegun):F2} " +
+                    $"record={VulkanTextureUploadTimingProbe.Ms(probeBegun, probeRecorded):F2} " +
+                    $"endAndFence={VulkanTextureUploadTimingProbe.Ms(probeRecorded, probeFenced):F2} " +
+                    $"buildOwner={VulkanTextureUploadTimingProbe.Ms(probeFenced, probeOwnerBuilt):F2} " +
+                    $"submit={VulkanTextureUploadTimingProbe.Ms(probeOwnerBuilt, probeSubmitted):F2} " +
+                    $"accepted={submitReceipt.SubmissionAccepted}");
+            }
 
             if (!submitReceipt.SubmissionAccepted)
             {
@@ -338,7 +359,8 @@ internal sealed partial class VulkanCommandRuntime
         ulong elapsedNanoseconds = RenderQueryTimestampMath.TicksToNanoseconds(
             elapsedTicks, lease.TimestampPeriodNanoseconds);
         VulkanTextureUploadService.RecordImportedTextureTransferGpu(
-            elapsedNanoseconds / 1_000_000.0);
+            elapsedNanoseconds / 1_000_000.0,
+            submitted.Uploads.Length);
     }
 
 
@@ -386,7 +408,11 @@ internal sealed partial class VulkanCommandRuntime
                 ref copyRegion);
         }
 
-        if (upload.CurrentChunkIsFinal)
+        if (upload.CurrentChunkIsFinal && upload.ResidentData.GenerateMipChainOnGpu && upload.MipLevels > 1)
+        {
+            RecordImportedTextureMipChainGeneration(commandBuffer, upload);
+        }
+        else if (upload.CurrentChunkIsFinal)
         {
             ImageMemoryBarrier releaseBarrier = new()
             {
@@ -404,6 +430,80 @@ internal sealed partial class VulkanCommandRuntime
             CmdPipelineBarrierTracked(commandBuffer, PipelineStageFlags.TransferBit,
                 upload.FinalPipelineStages, 0, 0, null, 0, null, 1, &releaseBarrier);
         }
+    }
+
+    /// <summary>
+    /// Fills mip levels 1..N-1 from the uploaded base level with linear blits,
+    /// then moves every level to the final descriptor layout. The upload batch
+    /// runs on the graphics queue, so blits are legal here. Each level leaves
+    /// TransferDst for TransferSrc after it is written, so the next blit reads
+    /// complete data.
+    /// </summary>
+    private unsafe void RecordImportedTextureMipChainGeneration(
+        CommandBuffer commandBuffer,
+        VulkanImportedTexturePendingUpload upload)
+    {
+        ImageMemoryBarrier barrier = new()
+        {
+            SType = StructureType.ImageMemoryBarrier,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            Image = upload.Image,
+            SubresourceRange = new ImageSubresourceRange
+            {
+                AspectMask = upload.AspectMask,
+                LevelCount = 1,
+                BaseArrayLayer = 0,
+                LayerCount = 1,
+            },
+        };
+
+        int width = (int)Math.Max(upload.Extent.Width, 1u);
+        int height = (int)Math.Max(upload.Extent.Height, 1u);
+        for (uint level = 1; level < upload.MipLevels; level++)
+        {
+            barrier.SubresourceRange.BaseMipLevel = level - 1;
+            barrier.OldLayout = ImageLayout.TransferDstOptimal;
+            barrier.NewLayout = ImageLayout.TransferSrcOptimal;
+            barrier.SrcAccessMask = AccessFlags.TransferWriteBit;
+            barrier.DstAccessMask = AccessFlags.TransferReadBit;
+            CmdPipelineBarrierTracked(commandBuffer, PipelineStageFlags.TransferBit,
+                PipelineStageFlags.TransferBit, 0, 0, null, 0, null, 1, &barrier);
+
+            int destinationWidth = Math.Max(width / 2, 1);
+            int destinationHeight = Math.Max(height / 2, 1);
+            ImageBlit blit = new()
+            {
+                SrcSubresource = new ImageSubresourceLayers { AspectMask = upload.AspectMask, MipLevel = level - 1, LayerCount = 1 },
+                DstSubresource = new ImageSubresourceLayers { AspectMask = upload.AspectMask, MipLevel = level, LayerCount = 1 },
+            };
+            blit.SrcOffsets.Element1 = new Offset3D(width, height, 1);
+            blit.DstOffsets.Element1 = new Offset3D(destinationWidth, destinationHeight, 1);
+            BlitImageTracked(commandBuffer, upload.Image, ImageLayout.TransferSrcOptimal,
+                upload.Image, ImageLayout.TransferDstOptimal, 1, &blit, Filter.Linear);
+
+            width = destinationWidth;
+            height = destinationHeight;
+        }
+
+        // Levels 0..N-2 are now TransferSrc and the last level is TransferDst.
+        ImageMemoryBarrier* releaseBarriers = stackalloc ImageMemoryBarrier[2];
+        releaseBarriers[0] = barrier;
+        releaseBarriers[0].SubresourceRange.BaseMipLevel = 0;
+        releaseBarriers[0].SubresourceRange.LevelCount = upload.MipLevels - 1;
+        releaseBarriers[0].OldLayout = ImageLayout.TransferSrcOptimal;
+        releaseBarriers[0].NewLayout = upload.FinalLayout;
+        releaseBarriers[0].SrcAccessMask = AccessFlags.TransferReadBit;
+        releaseBarriers[0].DstAccessMask = upload.FinalAccessMask;
+        releaseBarriers[1] = barrier;
+        releaseBarriers[1].SubresourceRange.BaseMipLevel = upload.MipLevels - 1;
+        releaseBarriers[1].SubresourceRange.LevelCount = 1;
+        releaseBarriers[1].OldLayout = ImageLayout.TransferDstOptimal;
+        releaseBarriers[1].NewLayout = upload.FinalLayout;
+        releaseBarriers[1].SrcAccessMask = AccessFlags.TransferWriteBit;
+        releaseBarriers[1].DstAccessMask = upload.FinalAccessMask;
+        CmdPipelineBarrierTracked(commandBuffer, PipelineStageFlags.TransferBit,
+            upload.FinalPipelineStages, 0, 0, null, 0, null, 2, releaseBarriers);
     }
 
     private static long CalculateUploadStagingBytes(VulkanImportedTexturePendingUpload upload)

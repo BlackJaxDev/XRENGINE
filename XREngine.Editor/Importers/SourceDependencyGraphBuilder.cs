@@ -43,32 +43,40 @@ public static partial class SourceDependencyGraphBuilder
         Visit(context.EntrySourcePath, SourceImportDependencyKind.RequiredVisual, context, graph, active, scannedFiles);
 
         SourceMaterialDependencyClassifier.ClassifyMissingTextures(context, graph);
+        ResolveOverriddenPrefabMaterials(context, graph);
+        DeferRecoverableShaders(context, graph);
 
         foreach (SourceDependencyEdge missing in graph.UnresolvedEdges)
         {
-            SourceImportDiagnosticSeverity severity = missing.Kind == SourceImportDependencyKind.RequiredVisual && !context.AllowPartialImport
-                ? SourceImportDiagnosticSeverity.Error
-                : SourceImportDiagnosticSeverity.Warning;
-            context.AddDiagnostic(
-                missing.InactiveTextureReason is null ? "UNITYDEP0001" : "UNITYDEP0004",
-                missing.InactiveTextureReason is null ? severity : SourceImportDiagnosticSeverity.Info,
-                SourceImportDiagnosticCategory.GuidResolution,
-                $"Unity GUID '{missing.TargetGuid}' with file ID '{missing.TargetFileId}' referenced by '{Path.GetFileName(missing.SourcePath)}' at '{missing.ReferringPropertyPath}' could not be resolved." +
-                    (missing.InactiveTextureReason is null ? string.Empty : $" {missing.InactiveTextureReason}"),
-                missing.SourcePath,
-                missing.ReferringPropertyPath,
-                new SourceAssetIdentity
-                {
-                    AssetGuid = missing.TargetGuid,
-                    LocalFileId = missing.TargetFileId,
-                    ObjectKind = missing.ReferringMaterialTextureSlot is null
-                        ? InferObjectKind(missing.ReferringProperty)
-                        : SourceAssetObjectKind.Texture,
-                });
+            if (!missing.DeferredPrefabMaterialValidation && !missing.DeferredShaderConversionValidation)
+                AddMissingDiagnostic(context, missing);
         }
 
         context.DependencyGraph = graph;
         return graph;
+    }
+
+    internal static void AddMissingDiagnostic(SourceProjectImportContext context, SourceDependencyEdge missing)
+    {
+        SourceImportDiagnosticSeverity severity = missing.Kind == SourceImportDependencyKind.RequiredVisual && !context.AllowPartialImport
+            ? SourceImportDiagnosticSeverity.Error
+            : SourceImportDiagnosticSeverity.Warning;
+        context.AddDiagnostic(
+            missing.InactiveTextureReason is null ? "UNITYDEP0001" : "UNITYDEP0004",
+            missing.InactiveTextureReason is null ? severity : SourceImportDiagnosticSeverity.Info,
+            SourceImportDiagnosticCategory.GuidResolution,
+            $"Unity GUID '{missing.TargetGuid}' with file ID '{missing.TargetFileId}' referenced by '{Path.GetFileName(missing.SourcePath)}' at '{missing.ReferringPropertyPath}' could not be resolved." +
+                (missing.InactiveTextureReason is null ? string.Empty : $" {missing.InactiveTextureReason}"),
+            missing.SourcePath,
+            missing.ReferringPropertyPath,
+            new SourceAssetIdentity
+            {
+                AssetGuid = missing.TargetGuid,
+                LocalFileId = missing.TargetFileId,
+                ObjectKind = missing.ReferringMaterialTextureSlot is null
+                    ? InferObjectKind(missing.ReferringProperty)
+                    : SourceAssetObjectKind.Texture,
+            });
     }
 
     public static string ComputeSha256(string path)
@@ -167,10 +175,78 @@ public static partial class SourceDependencyGraphBuilder
         string? materialTextureSlot = null;
         long? modificationTargetFileId = null;
         string? modificationPropertyPath = null;
+        string? modificationTargetGuid = null;
+        long? prefabInstanceFileId = null;
+        long? documentFileId = null;
+        int? documentClassId = null;
+        int nextMaterialIndex = -1;
+        string? prefabSourceGuid = null;
+        var prefabDocumentEdges = new List<SourceDependencyEdge>();
+        var seenMaterialModifications = new HashSet<string>(StringComparer.Ordinal);
+        var repeatedMaterialModifications = new HashSet<string>(StringComparer.Ordinal);
+
+        static string MaterialModificationKey(long targetFileId, string targetGuid, string property)
+            => $"{targetFileId}:{targetGuid.ToLowerInvariant()}:{property}";
+
+        void CompletePrefabDocument()
+        {
+            foreach (SourceDependencyEdge edge in prefabDocumentEdges)
+            {
+                if (edge.ReferringObjectFileId is long targetFileId &&
+                    edge.ReferringTargetGuid is string targetGuid &&
+                    repeatedMaterialModifications.Contains(MaterialModificationKey(
+                        targetFileId, targetGuid, edge.ReferringProperty)))
+                    edge.AmbiguousPrefabModification = true;
+            }
+            seenMaterialModifications.Clear();
+            repeatedMaterialModifications.Clear();
+
+            if (!prefabInstanceFileId.HasValue || string.IsNullOrWhiteSpace(prefabSourceGuid))
+            {
+                prefabDocumentEdges.Clear();
+                return;
+            }
+
+            string? modelPath = context.GuidIndex.ResolvePath(prefabSourceGuid);
+            if (modelPath is null || !ModelExtensions.Contains(GetCompleteExtension(modelPath)) ||
+                !File.Exists(modelPath + ".meta") ||
+                SerializedModelImporterDocumentParser.ParseFile(modelPath + ".meta").FileIdsGeneration != 2)
+            {
+                prefabDocumentEdges.Clear();
+                return;
+            }
+
+            foreach (SourceDependencyEdge edge in prefabDocumentEdges)
+            {
+                if (string.Equals(edge.ReferringTargetGuid, prefabSourceGuid, StringComparison.OrdinalIgnoreCase) &&
+                    edge.ReferringProperty.StartsWith("m_Materials.Array.data[", StringComparison.Ordinal))
+                    edge.DeferredPrefabMaterialValidation = true;
+            }
+            prefabDocumentEdges.Clear();
+        }
+
         foreach (string line in File.ReadLines(sourcePath))
         {
             context.CancellationToken.ThrowIfCancellationRequested();
             string trimmed = line.Trim();
+            Match documentHeader = PrefabInstanceDocumentHeaderRegex().Match(line);
+            if (documentHeader.Success)
+            {
+                CompletePrefabDocument();
+                documentFileId = long.Parse(documentHeader.Groups["fileId"].Value,
+                    System.Globalization.CultureInfo.InvariantCulture);
+                documentClassId = int.Parse(documentHeader.Groups["classId"].Value,
+                    System.Globalization.CultureInfo.InvariantCulture);
+                prefabInstanceFileId = documentClassId == 1001
+                    ? documentFileId
+                    : null;
+                prefabSourceGuid = null;
+                modificationTargetFileId = null;
+                modificationTargetGuid = null;
+                modificationPropertyPath = null;
+                currentProperty = string.Empty;
+                nextMaterialIndex = -1;
+            }
             if (trimmed.StartsWith("guid:", StringComparison.Ordinal))
                 continue;
 
@@ -204,22 +280,48 @@ public static partial class SourceDependencyGraphBuilder
                 }
             }
 
-            Match modificationTargetMatch = PrefabModificationTargetRegex().Match(line);
-            if (modificationTargetMatch.Success)
+            if (prefabInstanceFileId.HasValue && PrefabModificationTargetPrefixRegex().IsMatch(line))
             {
-                modificationTargetFileId = long.Parse(
-                    modificationTargetMatch.Groups["fileId"].Value,
-                    System.Globalization.CultureInfo.InvariantCulture);
+                modificationTargetFileId = null;
+                modificationTargetGuid = null;
                 modificationPropertyPath = null;
+                Match modificationTargetMatch = PrefabModificationTargetRegex().Match(line);
+                if (modificationTargetMatch.Success)
+                {
+                    modificationTargetFileId = long.Parse(
+                        modificationTargetMatch.Groups["fileId"].Value,
+                        System.Globalization.CultureInfo.InvariantCulture);
+                    Match targetGuidMatch = PrefabModificationTargetGuidRegex().Match(line);
+                    if (targetGuidMatch.Success)
+                        modificationTargetGuid = targetGuidMatch.Groups["guid"].Value;
+                }
             }
 
             Match modificationPropertyMatch = PrefabModificationPropertyRegex().Match(line);
-            if (modificationPropertyMatch.Success)
+            if (prefabInstanceFileId.HasValue && modificationPropertyMatch.Success)
+            {
                 modificationPropertyPath = modificationPropertyMatch.Groups["propertyPath"].Value.Trim();
+                if (modificationTargetFileId is long targetFileId &&
+                    modificationTargetGuid is string targetGuid &&
+                    modificationPropertyPath.StartsWith("m_Materials.Array.data[", StringComparison.Ordinal))
+                {
+                    string key = MaterialModificationKey(targetFileId, targetGuid, modificationPropertyPath);
+                    if (!seenMaterialModifications.Add(key))
+                        repeatedMaterialModifications.Add(key);
+                }
+            }
 
             Match propertyMatch = PropertyRegex().Match(trimmed);
             if (propertyMatch.Success)
+            {
                 currentProperty = propertyMatch.Groups["property"].Value;
+                nextMaterialIndex = currentProperty == "m_Materials" ? 0 : -1;
+            }
+
+            int? materialIndex = null;
+            if (nextMaterialIndex >= 0 && currentProperty == "m_Materials" &&
+                trimmed.StartsWith("- {fileID:", StringComparison.Ordinal))
+                materialIndex = nextMaterialIndex++;
 
             MatchCollection matches = SourceReferenceRegex().Matches(line);
             foreach (Match match in matches)
@@ -242,6 +344,9 @@ public static partial class SourceDependencyGraphBuilder
                 if (IsPrefabCorrespondenceProperty(serializedProperty))
                     continue;
 
+                if (prefabInstanceFileId.HasValue && serializedProperty == "m_SourcePrefab")
+                    prefabSourceGuid = guid;
+
                 bool isPrefabModificationReference =
                     modificationTargetFileId.HasValue &&
                     string.Equals(serializedProperty, "objectReference", StringComparison.Ordinal) &&
@@ -258,8 +363,17 @@ public static partial class SourceDependencyGraphBuilder
                     TargetGuid = guid,
                     TargetFileId = localFileId,
                     TargetPath = targetPath,
+                    ReferringDocumentFileId = documentFileId,
+                    ReferringDocumentClassId = documentClassId,
+                    ReferringMaterialIndex = materialIndex,
                     ReferringObjectFileId = isPrefabModificationReference
                         ? modificationTargetFileId
+                        : null,
+                    ReferringPrefabInstanceFileId = isPrefabModificationReference
+                        ? prefabInstanceFileId
+                        : null,
+                    ReferringTargetGuid = isPrefabModificationReference
+                        ? modificationTargetGuid
                         : null,
                     ReferringProperty = property,
                     ReferringMaterialTextureSlot = isMaterial &&
@@ -270,6 +384,8 @@ public static partial class SourceDependencyGraphBuilder
                     IsCycle = cycle,
                 };
                 sourceNode.OutgoingEdges.Add(edge);
+                if (isPrefabModificationReference)
+                    prefabDocumentEdges.Add(edge);
 
                 if (targetPath is null)
                 {
@@ -291,6 +407,83 @@ public static partial class SourceDependencyGraphBuilder
 
                 Visit(targetPath, kind, context, graph, active, scannedFiles);
             }
+        }
+        CompletePrefabDocument();
+    }
+
+    private static void ResolveOverriddenPrefabMaterials(SourceProjectImportContext context, SourceDependencyGraph graph)
+    {
+        if (!graph.Nodes.TryGetValue(context.EntrySourcePath, out SourceDependencyNode? entryNode) ||
+            !context.EntrySourcePath.EndsWith(".unity", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        foreach (SourceDependencyEdge missing in graph.UnresolvedEdges.ToArray())
+        {
+            if (missing.ReferringDocumentClassId != 199 ||
+                missing.ReferringMaterialIndex is not int slot ||
+                missing.ReferringDocumentFileId is not long rendererId ||
+                missing.ReferringProperty != "m_Materials" ||
+                !missing.SourcePath.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase) ||
+                !graph.Nodes.TryGetValue(missing.SourcePath, out SourceDependencyNode? prefabNode) ||
+                string.IsNullOrWhiteSpace(prefabNode.SourceGuid))
+                continue;
+
+            string property = $"m_Materials.Array.data[{slot}]";
+            SourceDependencyEdge[] instances = entryNode.OutgoingEdges.Where(edge =>
+                string.Equals(edge.TargetPath, missing.SourcePath, StringComparison.OrdinalIgnoreCase) &&
+                edge.ReferringProperty == "m_SourcePrefab" &&
+                string.Equals(edge.TargetGuid, prefabNode.SourceGuid, StringComparison.OrdinalIgnoreCase) &&
+                edge.ReferringDocumentFileId.HasValue).ToArray();
+            if (instances.Length == 0)
+                continue;
+
+            int incomingInstances = graph.Nodes.Values.Sum(node => node.OutgoingEdges.Count(edge =>
+                string.Equals(edge.TargetPath, missing.SourcePath, StringComparison.OrdinalIgnoreCase) &&
+                edge.ReferringProperty == "m_SourcePrefab"));
+            if (incomingInstances != instances.Length)
+                continue;
+
+            bool allReplaced = true;
+            foreach (SourceDependencyEdge instance in instances)
+            {
+                SourceDependencyEdge? replacement = entryNode.OutgoingEdges.LastOrDefault(edge =>
+                    edge.ReferringPrefabInstanceFileId == instance.ReferringDocumentFileId &&
+                    edge.ReferringObjectFileId == rendererId &&
+                    string.Equals(edge.ReferringTargetGuid, prefabNode.SourceGuid, StringComparison.OrdinalIgnoreCase) &&
+                    edge.ReferringProperty == property);
+                if (replacement?.TargetPath is null || replacement.AmbiguousPrefabModification ||
+                    replacement.TargetFileId != 2100000 ||
+                    !File.Exists(replacement.TargetPath) ||
+                    !replacement.TargetPath.EndsWith(".mat", StringComparison.OrdinalIgnoreCase))
+                {
+                    allReplaced = false;
+                    break;
+                }
+            }
+
+            if (!allReplaced)
+                continue;
+
+            prefabNode.OutgoingEdges.Remove(missing);
+            graph.UnresolvedEdges.Remove(missing);
+            context.ReportUnsupportedVisual(
+                "UNITYDEP0005",
+                $"Missing particle material '{missing.TargetGuid}/{missing.TargetFileId}' in '{Path.GetFileName(missing.SourcePath)}' is replaced at '{property}' in every reached scene instance. ParticleSystemRenderer is not imported, so this particle effect is omitted.",
+                missing.SourcePath,
+                property);
+        }
+    }
+
+    private static void DeferRecoverableShaders(SourceProjectImportContext context, SourceDependencyGraph graph)
+    {
+        foreach (SourceDependencyEdge missing in graph.UnresolvedEdges)
+        {
+            if (missing.ReferringProperty != "m_Shader" || missing.TargetFileId != 4800000 ||
+                !missing.SourcePath.EndsWith(".mat", StringComparison.OrdinalIgnoreCase) ||
+                !context.Resolver.TryFindOriginalShaderName(missing.TargetGuid, out _, out _))
+                continue;
+
+            missing.DeferredShaderConversionValidation = true;
         }
     }
 
@@ -384,6 +577,15 @@ public static partial class SourceDependencyGraphBuilder
         @"^\s*-\s*target:\s*\{[^\r\n{}]*?fileID:\s*(?<fileId>-?\d+)",
         RegexOptions.CultureInvariant)]
     private static partial Regex PrefabModificationTargetRegex();
+
+    [GeneratedRegex(@"^\s*-\s*target\s*:", RegexOptions.CultureInvariant)]
+    private static partial Regex PrefabModificationTargetPrefixRegex();
+
+    [GeneratedRegex(@"\bguid:\s*(?<guid>[0-9a-fA-F]{32})", RegexOptions.CultureInvariant)]
+    private static partial Regex PrefabModificationTargetGuidRegex();
+
+    [GeneratedRegex(@"^---\s*!u!(?<classId>-?\d+)\s*&(?<fileId>-?\d+)", RegexOptions.CultureInvariant)]
+    private static partial Regex PrefabInstanceDocumentHeaderRegex();
 
     [GeneratedRegex(
         @"^\s*propertyPath:\s*(?<propertyPath>.*)$",

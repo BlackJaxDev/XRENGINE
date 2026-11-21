@@ -114,6 +114,38 @@ public interface IRenderPreparationState
     }
 
     /// <summary>
+    /// Prepares the object before a LOD selection can use it, outside a recorded draw, and tells if it can draw now. The
+    /// default is <see cref="TryPrepareForRendering(out string)"/>. A backend whose draw needs more than that preparation
+    /// (for example, a pipeline or descriptor sets) can do more here.
+    /// </summary>
+    bool TryPrewarmForSelection(out string reason)
+        => TryPrepareForRendering(out reason);
+
+    /// <summary>
+    /// Starts the non-blocking preparation of a draw, if it is not started, and gives the state of the backend objects that
+    /// the draw needs: the program link and, on backends that use them, the graphics pipelines of the passes of the view in
+    /// <paramref name="query"/>. Call it on the render thread, inside a window renderer scope. It must not wait for a link
+    /// or a compile and must not allocate when nothing changed. The default gives
+    /// <see cref="ERenderDrawReadiness.NotSupported"/>, so a backend that does not report the state is never ready by
+    /// accident.
+    /// </summary>
+    /// <param name="query">The material and the view of the draw.</param>
+    /// <param name="reason">The reason of the state, for diagnostics.</param>
+    ERenderDrawReadiness QueryDrawReadiness(in RenderDrawReadinessQuery query, out string reason)
+    {
+        reason = "the render backend does not report draw readiness";
+        return ERenderDrawReadiness.NotSupported;
+    }
+
+    /// <summary>
+    /// Ends the draw readiness work that <see cref="QueryDrawReadiness"/> started for this object, for example the pipeline
+    /// prewarm requests of a backend. The caller calls it when it stops asking. The default does nothing.
+    /// </summary>
+    void EndDrawReadinessQueries()
+    {
+    }
+
+    /// <summary>
     /// Optional supplemental detail describing the most recent prepare attempt
     /// (e.g. variant counts, revision numbers, which program slots were null).
     /// Empty when not implemented or no detail captured.

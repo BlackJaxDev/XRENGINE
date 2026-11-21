@@ -14,6 +14,14 @@ While VR is active, the desktop window, editor panels, mirror composition, and X
 | `LowRatePreview` | Render a low-rate desktop preview. |
 | `FullIndependentRender` | Render the desktop scene independently. This mode is expensive. Use it for editor diagnostics. Visibility uses `EVrVisibilityPolicy.IndependentDesktopAndVrEyes`. |
 
+With `Off`, `XRWindow` does not record or present the window on most frames. It presents at a keep-alive rate of 2 Hz, so window and desktop-frame maintenance still run. Before this hold, each VR frame acquired a swapchain image, deferred an empty recording, and presented a rejected image, which delayed the next XR frame.
+
+`Engine.Rendering.Settings.VrDesktopFrameExecutionMode` (`EVrDesktopFrameExecutionMode`) selects how a recording desktop view (`FullIndependentRender`) executes while VR is active. `Inline` (the default) records, submits and presents the desktop frame on the render thread after the eyes. `WorkerRecord` records the desktop primary on reserved background render lane 2 into an engine-owned offscreen color image for the frame slot (created on first use with the swapchain format and extent, retired with the desktop WSI generation). After the scene, the render thread records a short copy from that image into the acquired swapchain image, and the ImGui and dynamic text overlays follow it. The render thread still joins the worker before it submits; a later change moves the join to the next desktop opportunity so that the desktop presents one XR frame later. `WorkerRecord` needs dynamic rendering and no Streamline frame generation, and fails loudly without them. `SeparateDomain` is reserved for a separate desktop render domain; selecting it holds the desktop window at its last image with a warning. No mode records inline instead.
+
+In `WorkerRecord`, the desktop worker owns its command pools from the batch submit until the batch join. These pools are the lane 2 arena pools and every pool that the worker thread allocates a command buffer from, such as command-chain pools and the worker thread's own pool. Vulkan requires external synchronization of a pool while a thread records, resets or frees its command buffers, and the worker does not take the command pool gate. While the batch is in flight, other threads do not free or reset command buffers from these pools. The retired command-buffer drain and the invalidated-reset drain keep those entries queued, and the join frees and resets them. The MCP profiler stats show `retired_resources.command_buffer_pending_count` and `retired_resources.command_buffer_worker_owned_deferrals_total` for this queue.
+
+Dense GPU profiler queries (`XRE_GPU_TIMESTAMP_DENSE=1`) are recorded only on the render thread, because the profiler recording cursor and its query pools are shared state without a lock. A desktop frame that the `WorkerRecord` worker records therefore has no GPU timing scopes, and the GPU pipeline dump states this as a backend status. To time the VR desktop frame on the GPU, select `Inline` (`VrDesktopFrameExecutionMode`, or `XRE_UNIT_TEST_VR_DESKTOP_FRAME_EXECUTION_MODE=Inline` in the unit-testing world).
+
 All modes except `FullIndependentRender` use `EVrVisibilityPolicy.CombinedRuntimeLeftRightCyclopean`. The legacy flags `RenderWindowsWhileInVR` and `VrMirrorComposeFromEyeTextures` are compatibility views of `VrMirrorMode`: setting `RenderWindowsWhileInVR=false` selects `Off`, and setting `VrMirrorComposeFromEyeTextures=true` selects the submitted-eye mirror path. The Unit Testing World bootstrap selects `FullIndependentRender` when a VR pawn renders desktop windows. A mirror mode change never changes XR eye submission.
 
 ## Cyclopean reconstruction contract
@@ -72,7 +80,20 @@ When `VrDesktopAutoSkipWhenOverBudget` is true and the previous whole-frame time
 
 The eyes render first in the render loop. With `VrDesktopAutoSkipWhenOverBudget` on, at most one independent desktop frame runs per XR frame, and only when its last measured cost fits before the next XR frame. `OpenXRAPI.NextFrameSlackMs` estimates that time from the eye work time and the runtime period. A held frame reports `EFrameOutputSkipReason.Budget`, and the window keeps its last image.
 
-The desktop keeps a minimum rate of 15 Hz, so the window cannot freeze. A frame admitted at this rate can delay the next XR frame.
+The decision is made at the start of the collect that prepares the frame (the timer's `PrepareFrameOutputs` event), with the XR slack known at that time. The collect, the swap and the render of the frame use this one decision. A collect in which no desktop viewport renders also retains the desktop shadow cascades (see [shadow atlas](shadow-atlas.md)).
+
+The desktop keeps a minimum rate of 15 Hz, so the window cannot freeze. A frame that is due at this rate waits for the start of the next slack window (just after `xrEndFrame`). It runs only when its measured cost goes past the next XR wake by at most 1.5 ms. When the cost does not fit, a 4 Hz fallback frame runs early in a slack window, with at least 1.5 ms of slack left. Below 1 Hz, a frame runs at any time. A frame that starts just before an XR wake delays the eye frame by most of its cost and makes the eye frame miss its display slot; on the imported avatar at 90 Hz, this change reduced missed slots from 42 to 13 of about 450 frames.
+
+## Render priority
+
+The user setting `UserSettings.VrRenderPriority` selects which output gets render-thread time first while VR is active. The default is `Vr`.
+
+- `Vr`: the XR frame priority above applies. Desktop frames that do not fit before the next XR frame are held, and the window keeps its last image.
+- `Desktop`: every due desktop frame runs. The XR budget skip, the XR slack hold and the WorkerRecord slack gate are off. A late eye frame is reprojected by the XR runtime.
+
+The priority output also owns the per-frame mesh deformation (compute skinning and blendshapes, and the mesh atlas publish). `SkinningPrepassDispatcher.OwnsDeformation` makes the decision. With `Vr`, the stereo eye render dispatches the deformation inside its own submission, and the desktop and its shadow views only read the latest results. With `Desktop`, the desktop render owns it and the eyes only read. The reading output never waits for the owner, so the two outputs keep independent rates. Its pose can be one owner frame old. Both outputs submit to one graphics queue, so queue order keeps a read from overlapping a write. Shadow views never dispatch the deformation, because they render before the owning pipeline is active. Without an active VR session, every render owns the deformation.
+
+On the imported-avatar benchmark scene at 90 Hz (zero-readback, WorkerRecord), `Desktop` gave 31 Hz VR and 31 Hz desktop with the avatar visible, and `Vr` gave 30 Hz VR and 12 Hz desktop. When the eyes cannot reach the runtime rate, the hold mostly costs desktop frames.
 
 ## Next-frame collect
 
@@ -81,6 +102,48 @@ Only one OpenXR frame can be between `xrBeginFrame` and `xrEndFrame`. In single-
 These commands use the last pose, because the next pose is not known yet. The combined culling projection is scaled by 0.85, which widens the volume by about 8 degrees at each edge. Eye rendering still applies the exact late pose, so the pose only selects the collected objects. The collect does not change the eye cameras, the pipelines, or the post-process state, because the current frame reads them on the render thread. A change of view mode or a failed view-set publication drops these commands, and the frame does a full collect.
 
 Set `XRE_OPENXR_SPECULATIVE_COLLECT=0` to turn this off. Parallel command buffer recording does not use it.
+
+## XR collect pacing
+
+The engine setting `OpenXrCollectPacing` (off by default) paces the collect loop to OpenXR frames for true single-pass stereo. `XRE_OPENXR_COLLECT_PACING=1` or `0` overrides the setting. Two-pass eyes use their own pacing, which is on by default (see below). Without it, the collect loop publishes again after each render dispatch (render pacing), also while the render thread only waits for the next XR frame. In the avatar benchmark that was about 2.6 publications for each XR frame, and an XR frame waited for the collect that was in progress when `xrWaitFrame` returned.
+
+With pacing, there is one collect and one publication for each XR frame:
+
+1. The render thread enters `xrEndFrame` for frame N. This releases the collect for frame N+1 (`OpenXRAPI.EndFrameWithTiming`). The release is at the entry, not the return. Monado blocks in `xrEndFrame` until the GPU work is done; other runtimes block in `xrWaitFrame`. From the entry, the collect overlaps the block in both cases.
+2. The collect runs the next-frame (speculative) stereo collect described above, while the render thread is still in `xrEndFrame` and the pacing thread then blocks in `xrWaitFrame` for N+1.
+3. After the swap, a publication gate waits for a located frame newer than N, assigns the speculative commands to it and marks it prepared. Only then does the engine timer publish the generation, so the render thread receives frame N+1 and its commands together.
+
+Pacing applies to true single-pass stereo with the next-frame collect (when `OpenXrCollectPacing` is on) and to two-pass eyes (`SequentialViews` and `ParallelCommandBufferRecording`, on by default), with the dedicated pacing thread (`OpenXrRenderPacingMode.DedicatedThread`), while the session is focused and the last XR frame submitted its eyes. Focus loss, a session stop, a frame without eyes and a runtime loss use render pacing at once.
+
+Two-pass eyes collect with the located views, so their collect cannot run before `xrWaitFrame` returns. Without pacing, the loop collected, swapped and published after each render dispatch, also when no XR frame was located: about 3.7 times for each XR frame in the per-eye avatar benchmark, and only one of those publications fed the eyes. With pacing, a two-pass collect waits for the render thread to enter `xrEndFrame` of the last published frame (step 1), then waits for the next located frame, and then collects and publishes that frame. The located-frame wait also ends when the independent desktop output needs its next frame: `IRuntimeRenderPresentationServices.VrIndependentDesktopNextDueTimestamp` gives the last admitted desktop frame plus the 15 Hz minimum desktop interval. That collect uses render pacing. With desktop priority, or with `VrDesktopAutoSkipWhenOverBudget` off, two-pass eyes keep render pacing, because each desktop frame then needs its own collect. Two-pass pacing does not depend on the `OpenXrCollectPacing` setting. `XRE_OPENXR_TWO_PASS_COLLECT_PACING=0` turns it off.
+
+Measured on Monado with the Sponza avatar benchmark (Vulkan, Advanced pipeline, per-eye `SequentialViews`, default desktop view):
+
+| View | Two-pass pacing off | Two-pass pacing on |
+|---|---|---|
+| Sun | 27.2 Hz | 28.9 Hz |
+| Near | 27.7 Hz | 35.6 Hz |
+
+With pacing, collect/swap cycles fell from 4.97 to 3.51 (sun) and from 4.78 to 2.70 (near) for each XR frame, the publication age fell from 37 ms to 24 ms (sun) and from 36 ms to 16.6 ms (near), and no located-frame wait reached its time limit. The desktop-due wake ended about one wait for each XR frame (1.22 at the sun, 1.00 near).
+
+While OpenXR is active, the render thread waits at most 8 ms for a publication before it returns to the host event pump (the editor always does this), so window events do not wait for a paced publication. Each wait is bounded: the limit is the larger of four display periods and two times the largest wake-to-end work of the last four frames, at most 100 ms. A wait that reaches the limit uses render pacing for that collect and is counted.
+
+Measured on Monado with the Sponza avatar benchmark (Vulkan, Advanced pipeline, welded meshes):
+
+| View | Size | Pacing off | Pacing on |
+|---|---|---|---|
+| Atrium | Monado default | 53.1 Hz | 53.8 Hz |
+| Origin | Monado default | 51.1 Hz | 63.6 Hz |
+| Atrium | 2016x2240 | 36.4 Hz | 29.7 Hz |
+| Origin | 2016x2240 | 40.9 Hz | 36.3 Hz |
+
+Pacing raises the XR rate when the render thread is the limit. When the eye GPU time is more than about two display periods (27.5 ms and 20.5 ms at 2016x2240), the rate is lower: the CPU work is the same, but `xrEndFrame` blocks about 4 to 5 ms longer, and most frames take one display period more. The cause of this is not known yet, so the setting is off by default.
+
+Desktop frames in VR use the same admission policy, but a paced collect starts when the eyes enter `xrEndFrame`, and the desktop frame that it admits renders after the next eye frame. So the admission reads the slack of that later window from completed frames: the median slack after `xrEndFrame` of the last four frames, minus the largest measured lead from the `xrEndFrame` return to the desktop render start. At the atrium the desktop rate stayed within 1 Hz (9.0 Hz to 8.1 Hz). At the origin it fell from 20.7 Hz to 7.5 Hz while the XR rate rose.
+
+With pacing, collect-keyed budgets keep their real-time rate. `CollectBudgetPeriods` counts the XR display periods since the last paced collect (the fraction carries to the next collect). The directional cascade refresh limit, the texture streaming transition limits and their frame clock, and the VR desktop pressure hold multiply their per-collect values by it. With render pacing the value is 1.
+
+`get_render_profiler_stats` reports `vulkan.xr_collect_pacing` (paced and render-paced collects, the waits, their time-outs, deactivations, publications with and without an XR frame, and for two-pass eyes `two_pass_paced_collects`, `two_pass_frame_waits` and `two_pass_desktop_due_wakes`), `speculative_view_angle_buckets` (the angle between the head view of the next-frame collect and the predicted view of the frame that receives it), and `frame_lifecycle.phase_totals.render_wait_for_xr_frame`, `collect_wait_for_xr_submit` and `publication_age`.
 
 ## Limits
 

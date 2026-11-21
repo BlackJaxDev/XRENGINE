@@ -255,6 +255,17 @@ struct XRAdvancedShadowRecord
     vec4 momentParameters;
     vec4 depthRangeAndCascade;
     vec4 renderedLightPositionAndFar;
+    vec4 softShadowParameters;
+    vec4 contactParameters;
+    vec4 contactFadeAndTexel;
+    uint softShadowMode;
+    uint filterSamples;
+    uint blockerSamples;
+    uint vogelTapCount;
+    uint contactSamples;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
 };
 
 struct SkinInfluence

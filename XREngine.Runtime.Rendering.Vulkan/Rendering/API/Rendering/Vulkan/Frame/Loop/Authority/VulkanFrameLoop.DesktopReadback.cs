@@ -1,6 +1,7 @@
 using System.Text;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Vulkan.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -27,7 +28,10 @@ internal sealed partial class VulkanFrameLoop
             .Append(" viewport=").Append(key.ViewportIdentity)
             .Append(" logicalView=").Append(key.LogicalViewId)
             .Append(" resourceGeneration=").Append(key.ResourceGeneration)
-            .Append(" outputTarget=").Append(key.OutputTargetIdentity).Append('.');
+            .Append(" outputTarget=").Append(key.OutputTargetIdentity)
+            .Append(" passMetadataKey=").Append(key.PassMetadataSignature);
+        AppendDesktopReadbackMetadataState(message, in requested);
+        message.Append('.');
         int samePipeline = 0;
         int submitted = 0;
         for (int index = 0; index < _desktopReadbackReceipts.Length; index++)
@@ -43,6 +47,8 @@ internal sealed partial class VulkanFrameLoop
             message.Append(" Receipt serial ").Append(receipt.SubmissionSerial).Append(" differs in:");
             VulkanFrameOpPlannerStateKey receiptKey = receipt.Key;
             AppendDesktopReadbackKeyDifferences(message, in key, in receiptKey);
+            message.Append(" passMetadataKey=").Append(receiptKey.PassMetadataSignature);
+            AppendDesktopReadbackMetadataState(message, receipt.Context);
             if (!ReferenceEquals(receipt.Context.ResourceRegistry, requested.ResourceRegistry))
                 message.Append(" resourceRegistry");
             if (!ReferenceEquals(receipt.Context.PipelineInstance, requested.PipelineInstance))
@@ -59,6 +65,22 @@ internal sealed partial class VulkanFrameLoop
                 .Append(submitted).Append(" receipts belong to other pipelines.");
         }
         return message.ToString();
+    }
+
+    private static void AppendDesktopReadbackMetadataState(StringBuilder message, in FrameOpContext context)
+    {
+        var metadata = context.PassMetadata;
+        XRRenderPipelineInstance? pipeline = context.PipelineInstance;
+        message.Append(" passMetadataCurrent=").Append(VulkanFramePlanner.ComputePassMetadataSignature(metadata))
+            .Append(" passMetadataCount=").Append(metadata?.Count ?? 0)
+            .Append(" passMetadataRevision=").Append(VulkanFramePlanner.ComputePassMetadataRevisionStamp(metadata))
+            .Append(" passMetadataIdentity=").Append(metadata is null ? 0 : RuntimeHelpers.GetHashCode(metadata))
+            .Append(" metadataIsPackage=").Append(metadata is not null && ReferenceEquals(
+                metadata, pipeline?.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata))
+            .Append(" metadataIsActiveGeneration=").Append(metadata is not null && ReferenceEquals(
+                metadata, pipeline?.ActiveGeneration?.PassMetadata))
+            .Append(" metadataIsAssignedPipeline=").Append(metadata is not null && ReferenceEquals(
+                metadata, pipeline?.AssignedPipeline?.PassMetadata));
     }
 
     private static void AppendDesktopReadbackKeyDifferences(

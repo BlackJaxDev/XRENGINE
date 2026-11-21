@@ -187,6 +187,14 @@ internal ref struct VulkanFrameAttempt
     /// which is important for ensuring that the overlays are displayed correctly.
     /// </summary>
     public CommandBuffer DynamicTextOverlayCommandBuffer;
+    /// <summary>The scene records into the desktop offscreen color target of this frame slot.</summary>
+    public bool UsesDesktopOffscreenTarget;
+    /// <summary>The offscreen color image that the scene records into.</summary>
+    public Image DesktopOffscreenImage;
+    /// <summary>The copy from the offscreen color image into the acquired image was recorded.</summary>
+    public bool HasDesktopOffscreenCopyCommandBuffer;
+    /// <summary>Copies the offscreen color image into the acquired image after the scene.</summary>
+    public CommandBuffer DesktopOffscreenCopyCommandBuffer;
     /// <summary>
     /// Indicates whether the ImGui overlay command buffer has been recorded for the current frame attempt.
     /// </summary>
@@ -337,6 +345,8 @@ internal ref struct VulkanFrameAttempt
     /// renderer-terminal failure.
     /// </summary>
     public Exception? RejectedFailure;
+    /// <summary>Retains the recording deferral reason for Release telemetry without an exception.</summary>
+    public string? RecordingDeferralDetail;
     /// <summary>An expected pre-acquire retry that rejected this frame without an exception.</summary>
     public VulkanPresentNowReadinessRetry PresentNowReadinessRetry;
     /// <summary>

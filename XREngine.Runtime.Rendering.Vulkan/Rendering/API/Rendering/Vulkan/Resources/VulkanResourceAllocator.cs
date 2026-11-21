@@ -156,6 +156,13 @@ internal sealed class VulkanResourceAllocator
     public bool TryGetBufferAllocation(string resourceName, out VulkanBufferAllocation allocation)
         => _logicalBufferAllocations.TryGetValue(resourceName, out allocation);
 
+    /// <summary>
+    /// Extent that the last <see cref="RebuildPhysicalPlan"/> sized the physical images with, or
+    /// null before the first plan. Planner lookups compare it with the internal size of the key
+    /// that a state is published for.
+    /// </summary>
+    internal VulkanResourceExtentContext? PlannedExtent { get; private set; }
+
     public void RebuildPhysicalPlan(
         VulkanBackendObjectContext backendContext,
         bool supportsTransformFeedback,
@@ -164,6 +171,7 @@ internal sealed class VulkanResourceAllocator
         VulkanResourceExtentContext extentContext,
         RenderResourceRegistry? resourceRegistry = null)
     {
+        PlannedExtent = extentContext;
         DestroyPhysicalImages(backendContext);
         DestroyPhysicalBuffers(backendContext);
 

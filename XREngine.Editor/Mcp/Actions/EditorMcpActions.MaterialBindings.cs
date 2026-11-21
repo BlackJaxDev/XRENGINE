@@ -19,6 +19,17 @@ public sealed partial class EditorMcpActions
     private static readonly ConditionalWeakTable<RuntimeWorld, EditorMcpLiveTextureReceiptStore> s_liveTextureReceipts = new();
 
     /// <summary>Reads model slots and texture sampling metadata without decoding pixels.</summary>
+    /// <summary>Lists the uber feature ids that the material's authored state enables.</summary>
+    private static string[] EnabledUberFeatureIds(XRMaterial material)
+    {
+        UberMaterialFeatureState[] features = material.UberAuthoredState?.Features ?? [];
+        List<string> enabled = [];
+        foreach (UberMaterialFeatureState feature in features)
+            if (feature.Enabled)
+                enabled.Add(feature.Id);
+        return [.. enabled];
+    }
+
     [XRMcp(Name = "get_model_material_bindings", Permission = McpPermissionLevel.ReadOnly)]
     [McpThreadAffinity(McpThreadAffinity.Main)]
     [Description("Read model source slots, assigned materials, legacy and surface texture bindings, source paths, and sampling metadata. Native Uber preflight does not prove GPU execution. Does not decode textures or read GPU pixels.")]
@@ -144,6 +155,7 @@ public sealed partial class EditorMcpActions
                         {
                             id = material.ID, name = material.Name, sourcePath = material.OriginalPath,
                             engineSemantic = material.EngineSemantic.ToString(), nativeUberPreflight, nativeUberReason,
+                            uberEnabledFeatures = EnabledUberFeatureIds(material),
                             conversion = report is null ? null : new
                             {
                                 outcome = report.Outcome.ToString(),

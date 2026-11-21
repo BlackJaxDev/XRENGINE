@@ -77,6 +77,9 @@ internal static class VulkanAdvancedSceneProgramBindingContract
     internal const uint VisibilityIndexedInstanceGroupsBinding = 63u;
     internal const uint VisibilityEarlyIndexedGroupCountsBinding = 64u;
     internal const uint VisibilityLateIndexedGroupCountsBinding = 65u;
+    // Per-view previous/current meshlet visibility bit sets. The early task
+    // variant reads them and the late task variant sets bits for the next frame.
+    internal const uint VisibilityMeshletHistoryBinding = 71u;
     internal const uint VisibilityDepthPyramidSampledBinding = 42u;
 internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint VisibilityDeformationOverlayBinding = 46u;
@@ -121,6 +124,15 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint NativeSelectionMultisampleBinding = 57u;
     internal const uint NativeDepthMultisampleBinding = 58u;
     internal const uint NativeSamplePositionMultisampleBinding = 59u;
+    // RVC telemetry reads every view layer of one family, so it binds
+    // whole-array views next to the per-view canonical tuple. Append-only;
+    // 60..65 are occupied by set-1 visibility storage.
+    internal const uint NativeRvcIdentityArrayBinding = 66u;
+    internal const uint NativeRvcDepthArrayBinding = 67u;
+    internal const uint NativeRvcTelemetryCountersBinding = 68u;
+    // Mesh surface decal buffer: premultiplied albedo/transmittance and roughness/metallic/transmittance.
+    internal const uint NativeDecalBufferAlbedoBinding = 69u;
+    internal const uint NativeDecalBufferSurfaceBinding = 70u;
     internal const uint ExternallyOwnedSetMask =
         (1u << (int)GlobalSetIndex) |
         (1u << (int)VisibilitySetIndex) |
@@ -335,6 +347,7 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
             VisibilityIndexedInstanceGroupsBinding or
             VisibilityEarlyIndexedGroupCountsBinding or
             VisibilityLateIndexedGroupCountsBinding or
+            VisibilityMeshletHistoryBinding or
             VisibilityDeformationOverlayBinding or
             VisibilityCanonicalIndicesBinding or
             VisibilityReconstructionCountersBinding or
@@ -347,14 +360,17 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
             NativeCountersBinding or NativeDispatchArgumentsBinding or
             NativeKernelCountsBinding or NativeFroxelGridBinding or
             NativeLightIndicesBinding or NativeLightingCountersBinding or
-            NativeFroxelDecalGridBinding or NativeDecalIndicesBinding;
+            NativeFroxelDecalGridBinding or NativeDecalIndicesBinding or
+            NativeRvcTelemetryCountersBinding;
 
     private static bool ContainsNativeSampledBinding(uint binding)
         => binding is NativeIdentityBinding or NativeMetadataBinding or NativeDepthBinding or
             NativeAmbientOcclusionSampledBinding or
             NativeIdentityMultisampleBinding or NativeMetadataMultisampleBinding or
             NativeSelectionMultisampleBinding or NativeDepthMultisampleBinding or
-            NativeSamplePositionMultisampleBinding;
+            NativeSamplePositionMultisampleBinding or
+            NativeRvcIdentityArrayBinding or NativeRvcDepthArrayBinding or
+            NativeDecalBufferAlbedoBinding or NativeDecalBufferSurfaceBinding;
 
     private static bool ContainsNativeStorageImageBinding(uint binding)
         => binding is NativeHdrBinding or NativeVelocityBinding or NativeReactiveBinding or

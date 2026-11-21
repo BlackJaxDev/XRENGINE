@@ -26,6 +26,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Renderer Backend Hot Reload](architecture/rendering/renderer-backend-hot-reload.md)
 - [Texture Streaming](architecture/rendering/texture-streaming.md)
 - [Advanced Render Pipeline](architecture/rendering/advanced-render-pipeline.md)
+- [Editor Highlight Module](architecture/rendering/editor-highlight-module.md)
 - [Shadow Atlas](architecture/rendering/shadow-atlas.md)
 - [Transparency And OIT](architecture/rendering/transparency-and-oit.md)
 - [GPU Hi-Z Occlusion Culling](architecture/rendering/gpu-hiz-occlusion-culling.md)
@@ -43,6 +44,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Physics Debug Frame](architecture/physics/physics-debug-frame.md)
 - [Physics Chain World Runtime](architecture/physics/physics-chain-world-runtime.md)
 - [Audio Architecture](architecture/audio/audio-architecture.md)
+- [Cutscene System](architecture/animation/cutscene-system.md)
 - [Networking Overview](architecture/networking/overview.md)
 - [Control Plane Runtime Architecture](architecture/runtime/control-plane.md)
 - [Portable Engine Host](architecture/runtime/portable-engine-host.md)
@@ -64,8 +66,10 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [MCP Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Integration](developer-guides/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
+- [Cutscenes](developer-guides/animation/cutscenes.md)
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
 - [Unity Conversion](developer-guides/assets/unity-conversion-integrations.md): package startup imports, scene and prefab roots, source dependencies, and Poiyomi materials.
+- [Unity Script Host](developer-guides/assets/unity-script-host.md): source inventory, assembly graphs, source compilation, and explicit execution limits.
 - [Editor Notifications](user-guide/editor/notifications.md): asset alerts and panel close controls in the ImGui editor.
 - [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)
 - [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)
@@ -91,6 +95,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
 - [Poiyomi Toon Material Conversion](developer-guides/rendering/poiyomi-toon-material-conversion.md)
 - [Maintaining Poiyomi Toon Support](developer-guides/rendering/poiyomi-toon-maintenance.md)
+- [Gaussian Splat Cutscene Capture](developer-guides/rendering/gaussian-splat-cutscene-capture.md)
 - [Vulkan OBS Hook Compatibility](developer-guides/rendering/vulkan-obs-hook-compatibility.md)
 - [Surface Detail And Forward Shadows](developer-guides/rendering/shadows/surface-detail-forward-shadows.md)
 - [OpenXR Runtime](developer-guides/vr/openxr-runtime.md)

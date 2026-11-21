@@ -26,6 +26,7 @@ internal unsafe partial class VkRenderProgram
     private void BuildProgramInterfaceWithCompilationProtection()
     {
         BuildStageLookup();
+        ValidateAutoUniformBindingOwnership();
         DestroyLayoutsAfterPipelineCompileDrain();
 
         VulkanProgramInterfaceKey key = CaptureProgramInterfaceKey();
@@ -39,6 +40,7 @@ internal unsafe partial class VkRenderProgram
             _descriptorSetLayouts = result.Layouts;
             _programDescriptorBindings.Clear();
             _programDescriptorBindings.AddRange(result.Bindings);
+            InvalidateComputeSchemaBindingHash();
             _hasGlobalTextureArrayOnlySet = entry.HasGlobalTextureArrayOnlySet;
             _canBindGlobalTextureArraySeparately = entry.CanBindGlobalTextureArraySeparately;
             _descriptorSetLayoutsBeforeGlobalMaterial = entry.LayoutsBeforeGlobalMaterial;
@@ -58,6 +60,11 @@ internal unsafe partial class VkRenderProgram
             foreach (AutoUniformBlockInfo block in entry.AutoUniformBlocks)
             {
                 _autoUniformBlocks[block.InstanceName] = block;
+                if (_autoUniformBlocksByBinding.TryGetValue((block.Set, block.Binding), out AutoUniformBlockInfo? existing) &&
+                    (IsGeneratedAutoUniformBlock(existing) || IsGeneratedAutoUniformBlock(block)))
+                    throw new InvalidOperationException(
+                        $"Vulkan program '{Data.Name}' has more than one auto-uniform block at set {block.Set}, binding {block.Binding}.");
+
                 _autoUniformBlocksByBinding[(block.Set, block.Binding)] = block;
             }
 
@@ -80,6 +87,50 @@ internal unsafe partial class VkRenderProgram
             throw;
         }
     }
+
+    /// <summary>
+    /// Rejects a generated GLSL block when another stage uses its descriptor coordinate.
+    /// Vulkan merges stage bindings by set and binding, even when their uniform layouts differ.
+    /// </summary>
+    private void ValidateAutoUniformBindingOwnership()
+    {
+        Dictionary<(uint Set, uint Binding), AutoUniformBlockInfo> owners = [];
+        foreach (VkShader shader in _shaderCache.Values)
+        {
+            foreach (AutoUniformBlockInfo block in shader.AutoUniformBlocks)
+            {
+                if (!IsGeneratedAutoUniformBlock(block))
+                    continue;
+
+                if (owners.TryGetValue((block.Set, block.Binding), out AutoUniformBlockInfo? existing))
+                    throw new InvalidOperationException(
+                        $"Vulkan program '{Data.Name}' has auto-uniform blocks '{existing.BlockName}' and '{block.BlockName}' at set {block.Set}, binding {block.Binding}.");
+
+                owners.Add((block.Set, block.Binding), block);
+            }
+        }
+
+        HashSet<(uint Set, uint Binding)> reflectedOwners = [];
+        foreach (VkShader shader in _shaderCache.Values)
+        {
+            foreach (DescriptorBindingInfo binding in shader.DescriptorBindings)
+            {
+                if (!owners.TryGetValue((binding.Set, binding.Binding), out AutoUniformBlockInfo? owner))
+                    continue;
+
+                if (owner.ShaderType != shader.Data.Type)
+                    throw new InvalidOperationException(
+                        $"Vulkan program '{Data.Name}' has auto-uniform block '{owner.BlockName}' and {shader.Data.Type} descriptor '{binding.Name}' at set {binding.Set}, binding {binding.Binding}.");
+
+                if (!reflectedOwners.Add((binding.Set, binding.Binding)))
+                    throw new InvalidOperationException(
+                        $"Vulkan program '{Data.Name}' has more than one {shader.Data.Type} descriptor at auto-uniform set {binding.Set}, binding {binding.Binding}.");
+            }
+        }
+    }
+
+    private static bool IsGeneratedAutoUniformBlock(AutoUniformBlockInfo block)
+        => block.BlockName.StartsWith("XREngine_AutoUniforms_", StringComparison.Ordinal);
 
     internal VulkanProgramInterfaceEntry CreateProgramInterfaceEntry(
         VulkanProgramInterfaceKey key,
@@ -354,6 +405,7 @@ internal unsafe partial class VkRenderProgram
             BackendContext.Resources.ProgramInterfaces.Release(entry);
 
         _programDescriptorBindings.Clear();
+        InvalidateComputeSchemaBindingHash();
         _autoUniformBlocks.Clear();
         _autoUniformBlocksByBinding.Clear();
         _bindingSchema = null;

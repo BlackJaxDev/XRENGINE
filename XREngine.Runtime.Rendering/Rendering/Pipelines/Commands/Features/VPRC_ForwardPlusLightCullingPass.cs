@@ -80,8 +80,10 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         protected override void Execute()
         {
+            // The VR eye feature profile can turn Forward+ culling off for eye frames; forward
+            // and transparent surfaces then get no local lights in those frames.
             if (RuntimeEngine.Rendering.State.IsShadowPass ||
-                DefaultRenderPipeline.UseOpenXrVulkanDesktopStartupSafePath)
+                !VrEyeFrameRules.AllowsForwardPlusLightCulling())
             {
                 ResetPublishedForwardPlusState();
                 return;
@@ -378,8 +380,6 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private int ResolvePassIndex(string passName)
-            => ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true
-                ? passIndex
-                : int.MinValue;
+            => ResolveActiveRenderGraphPassIndex(passName);
     }
 }

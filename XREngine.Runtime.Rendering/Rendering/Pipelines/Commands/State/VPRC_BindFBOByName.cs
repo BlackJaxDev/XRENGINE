@@ -137,7 +137,7 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private int ResolveClearPassIndex(string frameBufferName, bool clearColor, bool clearDepth, bool clearStencil)
         {
-            if (ParentPipeline?.PassMetadata is not { Count: > 0 } metadata)
+            if (ResolveActiveRenderGraphMetadata() is not { Count: > 0 } metadata)
                 return int.MinValue;
 
             int passIndex = ResolveClearPassIndexForName(metadata, frameBufferName, clearColor, clearDepth, clearStencil);

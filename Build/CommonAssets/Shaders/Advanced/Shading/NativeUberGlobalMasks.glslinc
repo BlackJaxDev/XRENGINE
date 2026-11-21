@@ -1,0 +1,63 @@
+#ifndef XR_NATIVE_UBER_GLOBAL_MASKS_GLSLINC
+#define XR_NATIVE_UBER_GLOBAL_MASKS_GLSLINC
+
+float XR_UBER_GlobalMask(XRUberCoordinates c, int encodedIndex,
+    uvec4 slots, vec3 cameraPosition, vec3 normal, vec3 viewDir, float timeScale)
+{
+    if (encodedIndex <= 0 || !XR_UBER_HasFeature(XR_UBER_FEATURE_GLOBAL_MASKS_THEMES))
+        return 1.0;
+    int zeroBased = clamp(encodedIndex - 1, 0, 15);
+    int textureIndex = zeroBased / 4;
+    int selector;
+    vec4 st;
+    vec2 pan;
+    if (textureIndex == 0)
+    {
+        selector = UBER_I(_GlobalMaskTexture0UV);
+        st = UBER_V(_GlobalMaskTexture0_ST);
+        pan = UBER_V(_GlobalMaskTexture0Pan).xy;
+    }
+    else if (textureIndex == 1)
+    {
+        selector = UBER_I(_GlobalMaskTexture1UV);
+        st = UBER_V(_GlobalMaskTexture1_ST);
+        pan = UBER_V(_GlobalMaskTexture1Pan).xy;
+    }
+    else if (textureIndex == 2)
+    {
+        selector = UBER_I(_GlobalMaskTexture2UV);
+        st = UBER_V(_GlobalMaskTexture2_ST);
+        pan = UBER_V(_GlobalMaskTexture2Pan).xy;
+    }
+    else
+    {
+        selector = UBER_I(_GlobalMaskTexture3UV);
+        st = UBER_V(_GlobalMaskTexture3_ST);
+        pan = UBER_V(_GlobalMaskTexture3Pan).xy;
+    }
+    uint slot = textureIndex == 0 ? slots.x :
+        textureIndex == 1 ? slots.y : textureIndex == 2 ? slots.z : slots.w;
+    vec4 value = XR_UBER_CoverageTexture(slot, selector, st, pan * timeScale, c, vec4(1.0));
+    value = clamp((value - UBER_V(_GlobalMaskMin)) /
+        max(UBER_V(_GlobalMaskMax) - UBER_V(_GlobalMaskMin), vec4(1.0e-6)), 0.0, 1.0);
+    value = mix(value, vec4(1.0) - value, clamp(UBER_V(_GlobalMaskInvert), 0.0, 1.0));
+    float distanceFade = smoothstep(UBER_F(_GlobalMaskDistanceMin),
+        max(UBER_F(_GlobalMaskDistanceMax), UBER_F(_GlobalMaskDistanceMin) + 1.0e-6),
+        length(c.worldPosition - cameraPosition));
+    value *= mix(vec4(1.0), vec4(distanceFade), clamp(UBER_V(_GlobalMaskDistance), 0.0, 1.0));
+    vec4 modifiers = UBER_V(_GlobalMaskModifiers);
+    float vertexModifier = modifiers.x <= 0.0 ? 1.0 : c.color[clamp(int(modifiers.x) - 1, 0, 3)];
+    float backfaceModifier = mix(1.0, c.frontFacing ? 1.0 : 0.0, clamp(modifiers.y, 0.0, 1.0));
+    float mirrorModifier = mix(1.0, step(0.0, viewDir.x), clamp(modifiers.z, 0.0, 1.0));
+    float cameraModifier = mix(1.0, clamp(dot(normal, viewDir), 0.0, 1.0), clamp(modifiers.w, 0.0, 1.0));
+    value *= vertexModifier * backfaceModifier * mirrorModifier * cameraModifier;
+    return value[zeroBased % 4];
+}
+
+float XR_UBER_GlobalMask(XRUberCoordinates c, int encodedIndex,
+    uvec4 slots, vec3 cameraPosition, vec3 normal, vec3 viewDir)
+{
+    return XR_UBER_GlobalMask(c, encodedIndex, slots, cameraPosition, normal, viewDir, 0.05);
+}
+
+#endif

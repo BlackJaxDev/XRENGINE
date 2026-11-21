@@ -75,7 +75,10 @@ internal sealed partial class VulkanPipelineVariantManifest
         ulong planCompatibilitySignature,
         FramePlan? framePlan)
     {
-        var hash = new VulkanStableHash64(1u);
+        // Computed every frame for every draw. A word-wise in-process hash keeps it cheap;
+        // the signature only keys the in-memory manifest cache.
+        FrameOpSignatureHasher hash = new();
+        hash.Add(1u);
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
             ref readonly FrameOperationHeader header = ref ops.GetHeader(opIndex);
@@ -100,7 +103,7 @@ internal sealed partial class VulkanPipelineVariantManifest
                 ops, opIndex, operationPlan, dynamicRendering,
                 planCompatibilitySignature));
         }
-        return hash.Value;
+        return hash.ToHash();
     }
 
     private static VulkanCompiledRenderGraphPlan ResolveOperationPlan(
@@ -121,7 +124,8 @@ internal sealed partial class VulkanPipelineVariantManifest
     {
         ref readonly FrameOperationHeader header = ref ops.GetHeader(opIndex);
         ref readonly FrameOpContext context = ref ops.GetContext(opIndex);
-        var hash = new VulkanStableHash64(2u);
+        FrameOpSignatureHasher hash = new();
+        hash.Add(2u);
         hash.Add(planCompatibilitySignature);
         hash.Add(operationPlan.CompatibilityIdentity);
         hash.Add(header.PassIndex);
@@ -139,12 +143,12 @@ internal sealed partial class VulkanPipelineVariantManifest
             hash.Add(meshTask.ProducerSnapshot.Target?.GetHashCode() ?? 0);
             hash.Add(meshTask.ProducerSnapshot.FixedFunctionState.GetHashCode());
             hash.Add(meshTask.ProducerSnapshot.IndexedViewportScissors.Count);
-            return hash.Value;
+            return hash.ToHash();
         }
 
-        PendingMeshDraw draw = header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
-            ? ops.GetMeshDraw(opIndex).Draw
-            : ops.GetIndirectDraw(opIndex).Draw;
+        ref readonly PendingMeshDraw draw = ref header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
+            ? ref ops.GetMeshDraw(opIndex).Draw
+            : ref ops.GetIndirectDraw(opIndex).Draw;
         hash.Add(draw.PreparationCompatibilitySignature);
         hash.Add(draw.Renderer.BindingId);
         hash.Add(draw.PreparedProgramIdentity);
@@ -172,11 +176,11 @@ internal sealed partial class VulkanPipelineVariantManifest
         hash.Add(draw.ViewportScissorCount);
         hash.Add(draw.MaterialOverride is not null);
         hash.Add(draw.IsStereoPass);
-        return hash.Value;
+        return hash.ToHash();
     }
 
     private static void AddStencilState(
-        ref VulkanStableHash64 hash,
+        ref FrameOpSignatureHasher hash,
         StencilOpState state)
     {
         hash.Add((int)state.FailOp);

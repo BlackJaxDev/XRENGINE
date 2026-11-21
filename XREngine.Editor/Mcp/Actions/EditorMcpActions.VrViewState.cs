@@ -132,7 +132,9 @@ public sealed partial class EditorMcpActions
             return null;
         return new
         {
-            pipelineType = instance.Pipeline?.GetType().Name,
+            // A read-only query: never create a default pipeline here.
+            pipelineType = instance.PipelineIfAssigned?.GetType().Name,
+            pipelineReleasedByOwner = instance.IsPipelineReleasedByOwner,
             activeGenerationPresent = instance.ActiveGeneration is not null,
             ownRenderingCommandCount = instance.MeshRenderCommands.GetRenderingCommandCount(),
             ownRenderingPackage = DescribeFramePackage(instance.MeshRenderCommands.RenderingBackendReadyPackage),

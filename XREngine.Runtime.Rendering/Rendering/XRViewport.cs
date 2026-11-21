@@ -14,6 +14,7 @@ using XREngine.Input;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.OutputDomains;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
@@ -58,6 +59,24 @@ namespace XREngine.Rendering
         /// When set, this takes precedence over the standalone _camera field for determining the ActiveCamera.
         /// </summary>
         private CameraComponent? _cameraComponent = null;
+
+        /// <summary>
+        /// The owners that claimed the camera of this viewport, in claim order. The last entry wins.
+        /// </summary>
+        private readonly List<CameraClaim> _cameraClaims = [];
+
+        /// <summary>
+        /// The camera component that the viewport uses when no claim is left.
+        /// While a claim exists, a write to <see cref="CameraComponent"/> stores its value here.
+        /// </summary>
+        private CameraComponent? _unclaimedCameraComponent;
+
+        private volatile bool _releasingCameraClaim;
+
+        /// <summary>The cameras that hold a record of a pipeline that this viewport kept for them during a claim.</summary>
+        private readonly List<XRCamera> _claimBorrowCameras = [];
+
+        private readonly record struct CameraClaim(object Owner, CameraComponent Camera);
 
         /// <summary>
         /// The local player controller associated with this viewport.
@@ -194,6 +213,15 @@ namespace XREngine.Rendering
 
         private FrameOutputPacingDecision _pendingFrameOutputPacing;
         private FrameOutputPacingDecision _renderingFrameOutputPacing;
+        // Collect frame id for which PrepareFrameOutputAutomatic stored _pendingFrameOutputPacing,
+        // or 0. CollectVisibleAutomatic reuses the stored decision only for this frame id.
+        private ulong _preparedFrameOutputCollectFrameId;
+        // Collect frame id of the last swapped collect whose scene this viewport rendered.
+        private ulong _sceneRenderedCollectFrameId;
+        // Collect frame id whose stored output decision does not render the scene, or 0. Unlike
+        // _preparedFrameOutputCollectFrameId it stays set after the collect, because the lights
+        // can read it after this viewport collected (IsSceneHeldForCollectFrame).
+        private ulong _sceneHeldCollectFrameId;
         private bool _pendingFrameOutputSceneDue = true;
         private ulong _nextExactOutputCollectionGeneration;
         private ulong _pendingExactOutputCollectionGeneration;
@@ -289,6 +317,14 @@ namespace XREngine.Rendering
         public bool RendersToExternalSwapchainTarget { get; set; }
 
         /// <summary>
+        /// Quad-view pair that this OpenXR stereo viewport renders: 0 for the wide pair,
+        /// 1 for the inset pair, or <see cref="RenderFrameViewSetPublication.AllViews"/>
+        /// for every published view. Capture, packages and frame plans read the published
+        /// view set through this pair.
+        /// </summary>
+        public int OpenXrViewPair { get; set; } = RenderFrameViewSetPublication.AllViews;
+
+        /// <summary>
         /// Monotonic sequence for full scene renders issued by this viewport. Render commands use
         /// this output-local counter for temporal model history so an independently scheduled
         /// desktop, mirror, or XR viewport cannot consume another output's previous transform.
@@ -376,6 +412,10 @@ namespace XREngine.Rendering
 
         internal void DiscardUnresolvedDesktopFrameViewHistory(ulong sequence)
             => _frameViewHistoryLedger.DiscardUnresolved(sequence);
+
+        /// <summary>Gets the camera history epoch that the capture of a desktop output sequence recorded.</summary>
+        internal bool TryGetCapturedCameraEpoch(ulong sequence, out ulong epoch)
+            => _frameViewHistoryLedger.TryGetCapturedCameraEpoch(sequence, out epoch);
 
         /// <summary>
         /// Gets a bounded, allocation-free snapshot of this viewport's desktop
@@ -607,7 +647,158 @@ namespace XREngine.Rendering
         public CameraComponent? CameraComponent
         {
             get => _cameraComponent;
-            set => SetField(ref _cameraComponent, value);
+            set
+            {
+                // A claim keeps the viewport camera. The new value becomes the camera that returns when the last claim ends.
+                if (_cameraClaims.Count > 0)
+                {
+                    _unclaimedCameraComponent = value;
+                    ResizeCameraComponentUI();
+                    return;
+                }
+
+                SetField(ref _cameraComponent, value);
+            }
+        }
+
+        /// <summary>True while at least one owner holds a claim on the camera of this viewport.</summary>
+        [YamlIgnore]
+        public bool HasCameraClaim => _cameraClaims.Count > 0;
+
+        /// <summary>
+        /// Makes a camera the camera of this viewport and keeps it there until the owner releases the claim.
+        /// The latest claim wins. A second call from the same owner replaces the camera of that owner and makes it the latest.
+        /// While a claim exists, a write to <see cref="CameraComponent"/> does not change the camera.
+        /// The write is kept and takes effect when the last claim ends.
+        /// </summary>
+        /// <param name="owner">The object that holds the claim. Use the same object to release it.</param>
+        /// <param name="camera">The camera to show.</param>
+        public void ClaimCamera(object owner, CameraComponent camera)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            ArgumentNullException.ThrowIfNull(camera);
+            if (_destroyed)
+                return;
+
+            if (_cameraClaims.Count == 0)
+                _unclaimedCameraComponent = _cameraComponent;
+            else
+                RemoveCameraClaim(owner);
+
+            _cameraClaims.Add(new CameraClaim(owner, camera));
+            MarkClaimBorrowBeforePublish(camera);
+            SetField(ref _cameraComponent, camera, nameof(CameraComponent));
+        }
+
+        /// <summary>
+        /// Removes the claim of an owner. If another claim is left, its camera shows.
+        /// If no claim is left, the camera from before the first claim returns.
+        /// A call for an owner without a claim does nothing.
+        /// </summary>
+        /// <param name="owner">The object that holds the claim.</param>
+        public void ReleaseCameraClaim(object owner)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            // The previous camera of a claim stays active until the next camera is set, and it must not request its own pipeline.
+            bool released = false;
+            XRCamera? claimedCamera = _cameraClaims.Count > 0 ? _cameraComponent?.Camera : null;
+            _releasingCameraClaim = true;
+            try
+            {
+                released = RemoveCameraClaim(owner);
+                if (released)
+                    ApplyCameraAfterClaimRelease();
+            }
+            finally
+            {
+                _releasingCameraClaim = false;
+            }
+
+            // The kept pipeline can belong to a camera of the claim. The camera that returns must use its own pipeline.
+            // If that camera owns the kept pipeline, this call does nothing.
+            if (!released || _cameraClaims.Count != 0)
+                return;
+
+            ResetExposureAfterClaimRelease(claimedCamera);
+
+            if (SetRenderPipelineFromCamera && !_destroyed)
+                SynchronizeRenderPipelineFromActiveCamera();
+
+            // A frame that is in progress can still render the claimed camera, so the record must stay until that frame ends.
+            if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                ClearClaimBorrowsIfUnclaimed();
+            else
+                RuntimeEngine.EnqueueRenderThreadTask(
+                    ClearClaimBorrowsIfUnclaimed,
+                    $"XRViewport.ClearClaimBorrows[{Index}]",
+                    RenderThreadJobKind.RenderPipelineResource);
+        }
+
+        /// <summary>
+        /// The end of the last claim is a cut back to the returning camera. The cameras of the claim drop the exposure resets
+        /// that no frame used, and the returning camera starts from its own metered exposure, not from the exposure that the
+        /// claimed cameras left in this viewport. It does not allocate.
+        /// </summary>
+        private void ResetExposureAfterClaimRelease(XRCamera? claimedCamera)
+        {
+            claimedCamera?.ClearAutoExposureReset();
+            lock (_claimBorrowCameras)
+                for (int i = 0; i < _claimBorrowCameras.Count; i++)
+                    _claimBorrowCameras[i].ClearAutoExposureReset();
+
+            if (ActiveCamera is not { } returning)
+                return;
+
+            returning.ClearAutoExposureReset();
+            returning.ResetAutoExposureHistory();
+        }
+
+        private void ApplyCameraAfterClaimRelease()
+        {
+            // A camera that was destroyed during the claim cannot come back.
+            while (_cameraClaims.Count > 0 && IsCameraDestroyed(_cameraClaims[^1].Camera))
+                _cameraClaims.RemoveAt(_cameraClaims.Count - 1);
+
+            CameraComponent? next;
+            if (_cameraClaims.Count > 0)
+            {
+                next = _cameraClaims[^1].Camera;
+                MarkClaimBorrowBeforePublish(next);
+            }
+            else
+            {
+                next = _unclaimedCameraComponent is { } fallback && !IsCameraDestroyed(fallback) ? fallback : null;
+                _unclaimedCameraComponent = null;
+            }
+            SetField(ref _cameraComponent, next, nameof(CameraComponent));
+        }
+
+        /// <summary>
+        /// The camera component that supplies the screen-space UI of this viewport.
+        /// A claim changes the camera that shows the scene. It does not change the UI,
+        /// so the editor UI and the player HUD stay on the viewport while a claim exists.
+        /// </summary>
+        public CameraComponent? ScreenSpaceUserInterfaceCamera
+            => _cameraClaims.Count > 0 && _unclaimedCameraComponent is { } unclaimed && !IsCameraDestroyed(unclaimed)
+                ? unclaimed
+                : _cameraComponent;
+
+        private bool IsCameraClaimActive
+            => _cameraClaims.Count > 0 || _releasingCameraClaim;
+
+        private static bool IsCameraDestroyed(CameraComponent camera)
+            => camera.IsDestroyed || camera.IsDestroyQueued || camera.SceneNode is not { IsDestroyed: false, IsDestroyQueued: false };
+
+        private bool RemoveCameraClaim(object owner)
+        {
+            for (int i = 0; i < _cameraClaims.Count; i++)
+            {
+                if (!ReferenceEquals(_cameraClaims[i].Owner, owner))
+                    continue;
+                _cameraClaims.RemoveAt(i);
+                return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -709,7 +900,7 @@ namespace XREngine.Rendering
                 if (!SetRenderPipelineFromCamera || ActiveCamera is not { } camera)
                     return _renderPipeline.Pipeline;
 
-                RenderPipeline configuredPipeline = camera.GetOrCreateRenderPipeline();
+                RenderPipeline configuredPipeline = ResolveCameraRenderPipeline(camera);
                 if (!ReferenceEquals(_renderPipeline.AssignedPipeline, configuredPipeline))
                     _renderPipeline.RequestPipelineChange(configuredPipeline, this);
                 return configuredPipeline;
@@ -806,7 +997,66 @@ namespace XREngine.Rendering
         }
 
         private void SynchronizeRenderPipelineFromActiveCamera()
-            => _renderPipeline.RequestPipelineChange(ActiveCamera?.GetOrCreateRenderPipeline(), this);
+            => _renderPipeline.RequestPipelineChange(
+                ActiveCamera is { } camera ? ResolveCameraRenderPipeline(camera) : null,
+                this);
+
+        /// <summary>
+        /// Gets the pipeline that this viewport uses for a camera. A camera that a claim shows, and that has no
+        /// authored pipeline, uses the current pipeline of the viewport if the camera would use the same type.
+        /// This keeps a camera cut cheap. It changes no pipeline of any camera. Without a claim, the camera supplies the pipeline.
+        /// </summary>
+        private RenderPipeline ResolveCameraRenderPipeline(XRCamera camera)
+        {
+            RenderPipeline own = camera.GetOrCreateRenderPipeline();
+            if (!IsCameraClaimActive || camera.AssignedRenderPipeline is not null)
+                return own;
+
+            RenderPipeline? current = _renderPipeline.EffectiveRequestedPipeline;
+            if (current is null || ReferenceEquals(current, own) || current.GetType() != own.GetType())
+                return own;
+
+            NoteClaimBorrow(camera, current);
+            return current;
+        }
+
+        /// <summary>
+        /// Records the kept pipeline on a claimed camera before other threads can see that camera on this viewport.
+        /// A render read then never finds the camera without its record.
+        /// </summary>
+        private void MarkClaimBorrowBeforePublish(CameraComponent camera)
+        {
+            if (SetRenderPipelineFromCamera)
+                ResolveCameraRenderPipeline(camera.Camera);
+        }
+
+        private void NoteClaimBorrow(XRCamera camera, RenderPipeline pipeline)
+        {
+            if (ReferenceEquals(camera.ClaimBorrowedPipeline, pipeline))
+                return;
+
+            camera.NoteClaimBorrowedPipeline(pipeline);
+            lock (_claimBorrowCameras)
+                if (!_claimBorrowCameras.Contains(camera))
+                    _claimBorrowCameras.Add(camera);
+        }
+
+        private void ClearClaimBorrowsIfUnclaimed()
+        {
+            // A new claim can start before this queued call runs. That claim needs the records.
+            if (_cameraClaims.Count == 0)
+                ClearClaimBorrows();
+        }
+
+        private void ClearClaimBorrows()
+        {
+            lock (_claimBorrowCameras)
+            {
+                for (int i = 0; i < _claimBorrowCameras.Count; i++)
+                    _claimBorrowCameras[i].NoteClaimBorrowedPipeline(null);
+                _claimBorrowCameras.Clear();
+            }
+        }
 
         /// <summary>
         /// Completes the viewport-facing half of an applied render-thread pipeline transition.
@@ -1117,6 +1367,9 @@ namespace XREngine.Rendering
             _renderPipeline.RequestTerminalTeardown();
             _frameViewHistoryLedger.Clear();
             AssociatedPlayer = null;
+            _cameraClaims.Clear();
+            _unclaimedCameraComponent = null;
+            ClearClaimBorrows();
             CameraComponent = null;
             ScreenSpaceUserInterfaceOverride = null;
             Camera = null;
@@ -1338,6 +1591,7 @@ namespace XREngine.Rendering
                     return;
 
                 IRuntimeRenderSchedulingServices host = RuntimeRenderingHostServices.Scheduling;
+                host.SubscribeViewportPrepareFrameOutput(PrepareFrameOutputAutomatic);
                 host.SubscribeViewportCollectVisible(CollectVisibleAutomatic);
                 _collectVisibleSubscriptionHost = host;
                 return;
@@ -1348,7 +1602,9 @@ namespace XREngine.Rendering
                 return;
 
             _collectVisibleSubscriptionHost = null;
+            subscribedHost.UnsubscribeViewportPrepareFrameOutput(PrepareFrameOutputAutomatic);
             subscribedHost.UnsubscribeViewportCollectVisible(CollectVisibleAutomatic);
+            _preparedFrameOutputCollectFrameId = 0UL;
         }
 
         #endregion
@@ -1492,7 +1748,7 @@ namespace XREngine.Rendering
 
             VisualScene visualScene = world!.VisualScene!;
             bool stereoFamily =
-                RenderFrameViewSetPublication.TryGet(State.RenderFrameId, out RenderFrameViewSet publishedViews) &&
+                RenderFrameViewSetPublication.TryGet(State.RenderFrameId, OpenXrViewPair, out RenderFrameViewSet publishedViews) &&
                 publishedViews.ViewCount > 1 &&
                 camera.StereoEyeLeft.HasValue;
             XRRenderPipelineInstance.RenderingState visibilityState = _renderPipeline.CollectVisibleState;
@@ -1725,9 +1981,22 @@ namespace XREngine.Rendering
             if (_destroyed)
                 return;
 
-            FrameOutputPacingDecision pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
-            _pendingFrameOutputPacing = pacing;
-            _pendingFrameOutputSceneDue = pacing.IsDue;
+            // The frame output preparation of this collect frame already evaluated the pacing
+            // (and recorded its statistics). Evaluate it here only when no preparation ran.
+            ulong collectFrameId = RuntimeRenderingHostServices.FrameTiming.CollectFrameId;
+            FrameOutputPacingDecision pacing;
+            if (collectFrameId != 0UL && _preparedFrameOutputCollectFrameId == collectFrameId)
+            {
+                pacing = _pendingFrameOutputPacing;
+            }
+            else
+            {
+                pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
+                _pendingFrameOutputPacing = pacing;
+                _pendingFrameOutputSceneDue = pacing.IsDue;
+                _sceneHeldCollectFrameId = pacing.IsDue ? 0UL : collectFrameId;
+            }
+            _preparedFrameOutputCollectFrameId = 0UL;
 
             if (Suppress3DSceneRendering)
             {
@@ -1749,7 +2018,10 @@ namespace XREngine.Rendering
             if (!pacing.IsDue)
             {
                 long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                CollectVisible_ScreenSpaceUI();
+                // With the VR mirror off the window does not show this viewport, so its
+                // screen-space UI has no consumer. The canvas lookup searches the scene.
+                if (pacing.SkipReason != EFrameOutputSkipReason.MirrorOff)
+                    CollectVisible_ScreenSpaceUI();
                 PrepareBackendReadyFramePackage(_renderPipeline.MeshRenderCommands);
                 RecordFrameOutput(
                     EFrameOutputPhase.Collect,
@@ -1915,6 +2187,70 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// True when this viewport has a stored output decision for the collect frame
+        /// <paramref name="collectFrameId"/> and that decision does not render the scene. The
+        /// lights read it on the collect thread to retain the desktop shadow source only in
+        /// frames in which no desktop viewport renders. Without a stored decision for the frame
+        /// it returns false, so the viewport counts as due.
+        /// </summary>
+        internal bool IsSceneHeldForCollectFrame(ulong collectFrameId)
+            => collectFrameId != 0UL && _sceneHeldCollectFrameId == collectFrameId;
+
+        /// <summary>
+        /// Evaluates this viewport's output pacing for the new collect frame, before any collect
+        /// callback runs, and stores it for <see cref="CollectVisibleAutomatic"/> and for the
+        /// lights (<see cref="IsSceneHeldForCollectFrame"/>), so the lights plan the desktop
+        /// shadow source only in frames in which a desktop viewport renders its scene.
+        /// </summary>
+        private void PrepareFrameOutputAutomatic()
+        {
+            if (_destroyed)
+                return;
+
+            FrameOutputPacingDecision pacing = EvaluateFrameOutputPacing(EFrameOutputKind.DesktopScene);
+            _pendingFrameOutputPacing = pacing;
+            _pendingFrameOutputSceneDue = pacing.IsDue;
+            _preparedFrameOutputCollectFrameId = RuntimeRenderingHostServices.FrameTiming.CollectFrameId;
+            _sceneHeldCollectFrameId = pacing.IsDue ? 0UL : _preparedFrameOutputCollectFrameId;
+        }
+
+        /// <summary>
+        /// Counts a desktop scene that the swapped collect made due but that did not render
+        /// before the next swap, in a VR session with an independent desktop window. The render
+        /// of the swapped collect finishes before the next swap, so the check runs at the swap.
+        /// </summary>
+        private void CountDesktopSceneDueNotRendered()
+        {
+            ulong collectFrameId = _renderingFrameOutputPacing.FrameId;
+            if (!_renderingFrameOutputSceneDue ||
+                collectFrameId == 0UL ||
+                _sceneRenderedCollectFrameId == collectFrameId ||
+                Suppress3DSceneRendering ||
+                _renderPipeline.IsShadowPipeline ||
+                !IsDesktopFacingOutput() ||
+                !RuntimeRenderingHostServices.Presentation.IsIndependentDesktopRetentionInScope)
+                return;
+
+            DesktopOutputScheduleTelemetry.Count(EDesktopOutputScheduleCounter.DesktopSceneDueNotRendered);
+        }
+
+        /// <summary>
+        /// Records that this viewport rendered the scene of the swapped collect. When that
+        /// collect retained the desktop shadow source, the render read stale desktop cascades;
+        /// the counter DesktopSceneRenderedWhileRetained records it.
+        /// </summary>
+        private void NoteDesktopSceneRendered()
+        {
+            ulong collectFrameId = _renderingFrameOutputPacing.FrameId;
+            if (collectFrameId == 0UL || !IsDesktopFacingOutput())
+                return;
+
+            _sceneRenderedCollectFrameId = collectFrameId;
+            if (World?.Lights.WasDesktopShadowSourceRetained(collectFrameId) == true)
+                DesktopOutputScheduleTelemetry.Count(EDesktopOutputScheduleCounter.DesktopSceneRenderedWhileRetained);
+        }
+
+        /// <summary>
         /// Internal callback for automatic buffer swapping.
         /// Subscribed to RuntimeEngine.Time.Timer.SwapBuffers when AutomaticallySwapBuffers is true.
         /// Delegates to SwapBuffers() with default parameters, wrapped in a profiler sample.
@@ -1923,6 +2259,8 @@ namespace XREngine.Rendering
         {
             if (_destroyed)
                 return;
+
+            CountDesktopSceneDueNotRendered();
 
             FrameOutputPacingDecision pacing = _pendingFrameOutputPacing.FrameId != 0UL
                 ? _pendingFrameOutputPacing
@@ -1935,6 +2273,9 @@ namespace XREngine.Rendering
                 // so the editor overlay stays responsive.
                 SwapBuffers_ScreenSpaceUI();
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
+                _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
+                _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
+                _renderPipeline.ReleaseLaggingEditorPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -1952,6 +2293,9 @@ namespace XREngine.Rendering
                 long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 SwapBuffers_ScreenSpaceUI();
                 TransferPendingFrameViewHistorySequence(sceneAccepted: false);
+                _renderPipeline.MeshRenderCommands.ReleaseLaggingRenderingCanonicalPin();
+                _renderPipeline.ReleaseLaggingAdvancedPickingRetention();
+                _renderPipeline.ReleaseLaggingEditorPickingRetention();
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -2160,7 +2504,7 @@ namespace XREngine.Rendering
                 {
                     XRViewport registered = window.Viewports[viewportIndex];
                     if (!ReferenceEquals(registered.World, world) ||
-                        registered.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                        registered.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
                         continue;
 
                     bool listed = false;
@@ -2179,7 +2523,7 @@ namespace XREngine.Rendering
             for (int index = 0; index < desktopConsumers.Length; ++index)
             {
                 XRViewport consumer = desktopConsumers[index];
-                if (consumer.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost)
+                if (consumer.RenderPipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true })
                     continue;
 
                 ++ownerCount;
@@ -2403,13 +2747,6 @@ namespace XREngine.Rendering
                 using RuntimeTimerFrame.ScopedRenderDeltaOverride renderDeltaScope =
                     PushSceneRenderDeltaScope(consumeSkippedDelta: IsDesktopFacingOutput() && !shadowPass);
 
-                // Visibility-driven compute deformation (skinning/blendshapes).
-                // This runs on the render thread and uses the swapped (rendering) command buffers.
-                // Skip when 3D scene rendering is suppressed — the stale commands don't need re-skinning.
-                var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-                if (!Suppress3DSceneRendering)
-                    SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
-
                 LastRenderedTargetFBO = targetFbo;
                 _ = Interlocked.Increment(ref _sceneRenderSequenceId);
                 bool tracksDesktopHistory = !Suppress3DSceneRendering && !shadowPass && IsDesktopFacingOutput();
@@ -2478,6 +2815,18 @@ namespace XREngine.Rendering
                     }
                     frozenDesktopView = capturedView;
                 }
+
+                // Visibility-driven compute deformation (skinning/blendshapes) for OpenGL. It runs after
+                // history acceptance so rejected frames do not latch cached deformation outputs. Vulkan
+                // records its deformation producer inside the frame at the first raster consumer.
+                var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+                if (!RuntimeEngine.Rendering.State.IsVulkan &&
+                    !Suppress3DSceneRendering &&
+                    SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
+                {
+                    using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
+                        SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
+                }
                 bool recorded;
                 bool outputCompletionAuthoringStarted;
                 try
@@ -2505,7 +2854,9 @@ namespace XREngine.Rendering
                             consumedCollectGenerationOverride,
                         completionFence: out completionFence,
                         outputCompletionAuthoringStarted:
-                            out outputCompletionAuthoringStarted);
+                            out outputCompletionAuthoringStarted,
+                        suppressDeformationPrepass: Suppress3DSceneRendering,
+                        vrEyeRender: IsVrEyeOutput);
                 }
                 finally
                 {
@@ -2664,6 +3015,20 @@ namespace XREngine.Rendering
             bool uiThroughPipeline = ResolveUiThroughPipeline(out var screenSpaceUI);
             long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
+            // The stereo frame owns its compute deformation. Without this, the eyes
+            // read skinned outputs that only a desktop frame updates, so the avatar
+            // pose in the headset advances at the desktop rate.
+            // The stereo pipeline is installed as the current pipeline while it
+            // dispatches, so that the dispatches use that pipeline's frame snapshot pool
+            // and frame-operation context instead of allocating new snapshots each frame.
+            if (!RuntimeEngine.Rendering.State.IsVulkan &&
+                !Suppress3DSceneRendering &&
+                SkinningPrepassDispatcher.OwnsDeformation(vrEyeRender: true, shadowPass: false))
+            {
+                using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
+                    SkinningPrepassDispatcher.Instance.RunVisible(MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands);
+            }
+
             LastRenderedTargetFBO = targetFbo;
             _ = Interlocked.Increment(ref _sceneRenderSequenceId);
             bool recorded = _renderPipeline.TryRenderWithFrozenDesktopHistory(
@@ -2686,7 +3051,9 @@ namespace XREngine.Rendering
                 outputCompletionCollectGeneration: -1L,
                 consumedCollectGenerationOverride,
                 out _,
-                out _);
+                out _,
+                suppressDeformationPrepass: Suppress3DSceneRendering,
+                vrEyeRender: true);
 
             if (!uiThroughPipeline)
                 RenderScreenSpaceUIOverlay(targetFbo);
@@ -2700,6 +3067,14 @@ namespace XREngine.Rendering
                 elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
             return recorded;
         }
+
+        /// <summary>
+        /// True when this viewport renders its 3D scene in the current render frame: the scene
+        /// is not suppressed and the frame output pacing of the swapped collect made it due.
+        /// The window reads it before the shadow pass to find the views that render.
+        /// </summary>
+        internal bool RendersSceneThisFrame
+            => _renderingFrameOutputSceneDue && !Suppress3DSceneRendering;
 
         /// <summary>True when the XR frame priority held this viewport's scene for the current render.</summary>
         internal bool IsHeldForXrFramePriority
@@ -2732,10 +3107,16 @@ namespace XREngine.Rendering
                 request,
                 pacing.IsDue,
                 deferralReason);
-            // A VR budget hold has its own limit on held frames, and it admits the first frame.
-            // The admission ledger must not force a fresh render and cancel the hold.
-            bool vrBudgetHold = pacing.SkipReason == EFrameOutputSkipReason.Budget && presentation.IsInVR;
-            if (scheduling.Execute && !pacing.IsDue && !vrBudgetHold)
+            // The admission ledger must not force a fresh render over a VR policy skip. A
+            // budget hold has its own limit on held frames, and it admits the first frame.
+            // With the mirror off, or with the window composed from the eye images, no
+            // consumer reads this viewport's scene, so a forced render only adds collect
+            // and record work to the XR frame.
+            bool vrPolicyHold = presentation.IsInVR &&
+                pacing.SkipReason is EFrameOutputSkipReason.Budget
+                    or EFrameOutputSkipReason.MirrorOff
+                    or EFrameOutputSkipReason.HeldLastImage;
+            if (scheduling.Execute && !pacing.IsDue && !vrPolicyHold)
             {
                 pacing = pacing with
                 {
@@ -2826,6 +3207,12 @@ namespace XREngine.Rendering
             return fallback;
         }
 
+        /// <summary>
+        /// True when this viewport renders a VR eye output, in any view render mode.
+        /// </summary>
+        internal bool IsVrEyeOutput
+            => ResolveOutputViewKind() is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye;
+
         private bool IsDesktopFacingOutput()
         {
             // Offscreen products own exact writer receipts and must not acquire
@@ -2877,6 +3264,9 @@ namespace XREngine.Rendering
             // target that can never be presented.
             if (_renderPipeline.IsShadowPipeline)
                 return;
+
+            if (phase == EFrameOutputPhase.Render && sceneRendered)
+                NoteDesktopSceneRendered();
 
             double cpuMs = elapsedTicks <= 0L
                 ? 0.0
@@ -3059,7 +3449,7 @@ namespace XREngine.Rendering
             {
                 if (s_vpResolveUIDiagCount < 5)
                 {
-                    Debug.Rendering($"[VP:ResolveUI] null/inactive: CamComp={CameraComponent?.GetHashCode()} ui={ui?.GetHashCode()} active={ui?.IsActive} VP[{Index}]");
+                    Debug.Rendering($"[VP:ResolveUI] null/inactive: CamComp={ScreenSpaceUserInterfaceCamera?.GetHashCode()} ui={ui?.GetHashCode()} active={ui?.IsActive} VP[{Index}]");
                     s_vpResolveUIDiagCount++;
                 }
                 return null;
@@ -3089,7 +3479,7 @@ namespace XREngine.Rendering
             if (ScreenSpaceUserInterfaceOverride is { } ownedUi)
                 return ownedUi.IsActive && ownedUi.IsScreenSpace ? ownedUi : null;
 
-            var camComp = CameraComponent;
+            var camComp = ScreenSpaceUserInterfaceCamera;
             if (camComp is null)
                 return null;
 
@@ -3154,7 +3544,7 @@ namespace XREngine.Rendering
             out IRuntimeScreenSpaceUserInterface? userInterface)
         {
             userInterface = AllowUIRender
-                ? ScreenSpaceUserInterfaceOverride ?? CameraComponent?.GetUserInterfaceOverlay()
+                ? ScreenSpaceUserInterfaceOverride ?? ScreenSpaceUserInterfaceCamera?.GetUserInterfaceOverlay()
                 : null;
             return userInterface is { IsActive: true, IsScreenSpace: true };
         }
@@ -3426,13 +3816,27 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Reapplies this viewport's aspect ratio when its active camera replaces its lens parameters.
+        /// </summary>
+        internal void SynchronizeAspectRatioFromCamera(XRCamera camera)
+        {
+            if (_destroyed || !ReferenceEquals(ActiveCamera, camera))
+                return;
+
+            if (_region.Width <= 0 || _region.Height <= 0)
+                return;
+
+            SetAspectRatioToCamera();
+        }
+
+        /// <summary>
         /// Updates the selected UI overlay canvas dimensions to match the viewport.
         /// Called internally when the viewport resizes or its UI owner changes.
         /// Ensures screen-space UI elements are correctly positioned and scaled.
         /// </summary>
         private void ResizeCameraComponentUI()
         {
-            var overlay = ScreenSpaceUserInterfaceOverride ?? CameraComponent?.GetUserInterfaceOverlay();
+            var overlay = ScreenSpaceUserInterfaceOverride ?? ScreenSpaceUserInterfaceCamera?.GetUserInterfaceOverlay();
             if (overlay is null)
                 return;
 
@@ -3822,6 +4226,88 @@ namespace XREngine.Rendering
                     completed,
                     out request,
                     out failure);
+        }
+
+        /// <summary>
+        /// Queues one editor identity pixel from the accepted render package.
+        /// The result names the exact collected mesh owner when one exists.
+        /// </summary>
+        public bool TryPickEditorAsync(
+            Vector2 normalizedViewportPosition,
+            uint viewIndex,
+            Action<EditorPickingResult> completed,
+            out EditorPickingRequest? request,
+            out string? failure)
+        {
+            if (!RuntimeEngine.IsRenderThread)
+            {
+                if (_destroyed || RuntimeRenderingHostServices.FrameTiming.IsShuttingDown ||
+                    RuntimeEngine.Windows.Count == 0)
+                {
+                    request = null;
+                    failure = "Editor picking cannot be queued after viewport destruction or during shutdown.";
+                    return false;
+                }
+
+                var queued = RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
+                    () =>
+                    {
+                        bool accepted = TryPickEditorAsync(normalizedViewportPosition,
+                            viewIndex, completed, out EditorPickingRequest? renderRequest,
+                            out string? renderFailure);
+                        return (accepted, renderRequest, renderFailure);
+                    },
+                    "XRViewport.EditorPickingReadback",
+                    RenderThreadJobKind.Readback);
+                request = queued.renderRequest;
+                failure = queued.renderFailure;
+                return queued.accepted;
+            }
+
+            int width = InternalWidth;
+            int height = InternalHeight;
+            if (width <= 0 || height <= 0 ||
+                !float.IsFinite(normalizedViewportPosition.X) ||
+                !float.IsFinite(normalizedViewportPosition.Y) ||
+                normalizedViewportPosition.X < 0.0f ||
+                normalizedViewportPosition.X > 1.0f ||
+                normalizedViewportPosition.Y < 0.0f ||
+                normalizedViewportPosition.Y > 1.0f)
+            {
+                request = null;
+                failure = "The editor picking coordinate is outside the active internal viewport.";
+                return false;
+            }
+
+            AbstractRenderer? renderer = Window?.Renderer ?? AbstractRenderer.Current;
+            if (renderer is null)
+            {
+                request = null;
+                failure = "The viewport has no renderer for editor picking readback.";
+                return false;
+            }
+
+            uint x = (uint)Math.Min(width - 1, (int)(normalizedViewportPosition.X * width));
+            uint y = (uint)Math.Min(height - 1, (int)(normalizedViewportPosition.Y * height));
+            RuntimeGraphicsApiKind backend = renderer.GetAdvancedRenderPipelineCapabilities().Backend;
+            if (backend == RuntimeGraphicsApiKind.Unknown)
+                backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
+            if (backend != RuntimeGraphicsApiKind.Unknown &&
+                RenderClipSpacePolicy.FramebufferTextureYDirection(backend) ==
+                    ERenderClipSpaceYDirection.YDown)
+                y = (uint)(height - 1) - y;
+
+            AdvancedPickingQuery query = new(x, y, viewIndex);
+            if (!TryEnterRenderPipelineReadbackScope(out IDisposable? readbackScope))
+            {
+                request = null;
+                failure = "The viewport's render-resource generation is not available for editor picking readback.";
+                return false;
+            }
+
+            using (readbackScope)
+                return _renderPipeline.TryQueueEditorPicking(renderer, in query,
+                    completed, out request, out failure);
         }
 
         //TODO: provide PickScene with a List<(XRComponent item, object? data)> pool to take from and release to. As few allocations as possible for constant picking every frame.

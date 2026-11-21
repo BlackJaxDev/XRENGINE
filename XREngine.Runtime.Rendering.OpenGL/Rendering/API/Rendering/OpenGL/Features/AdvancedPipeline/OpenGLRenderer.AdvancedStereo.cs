@@ -8,6 +8,7 @@ public partial class OpenGLRenderer
     private XRRenderProgram? _advancedStereoFinalizeGroupsProgram;
     private XRRenderProgram? _advancedStereoRasterProgram;
     private XRRenderProgram? _advancedStereoMaskedRasterProgram;
+    private XRRenderProgram? _advancedStereoFragmentDepthRasterProgram;
     private bool? _advancedMultiviewSupported;
     private bool _advancedStereoReady;
     private string? _advancedStereoProgramFailure;
@@ -44,6 +45,7 @@ public partial class OpenGLRenderer
                 "Advanced/Preparation/FinalizeOpenGlStereoInstanceGroups.comp", mode);
             _advancedStereoRasterProgram ??= CreateAdvancedRasterProgram(mode, stereo: true);
             _advancedStereoMaskedRasterProgram ??= CreateAdvancedRasterProgram(mode, masked: true, stereo: true);
+            _advancedStereoFragmentDepthRasterProgram ??= CreateAdvancedRasterProgram(mode, masked: true, stereo: true, fragmentDepth: true);
         }
         catch (Exception exception)
         {

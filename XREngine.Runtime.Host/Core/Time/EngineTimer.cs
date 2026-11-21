@@ -6,6 +6,7 @@ using XREngine.Data.Core;
 using XREngine.Data.Profiling;
 using XREngine.Data.Runtime.Memory;
 using XREngine.Execution;
+using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Timers
 {
@@ -135,6 +136,12 @@ namespace XREngine.Timers
         /// </summary>
         public XREvent? PreCollectVisible;
         /// <summary>
+        /// Subscribe to this event to decide the output pacing of a viewport for the new collect frame.
+        /// It runs sequentially on the collect visible thread after <see cref="CollectFrameId"/> advances and
+        /// before <see cref="PreCollectVisible"/>, so the lights can read the decisions when they plan shadow work.
+        /// </summary>
+        public XREvent? PrepareFrameOutputs;
+        /// <summary>
         /// Subscribe to this event to execute parallel visibility collection on the collect visible thread.
         /// </summary>
         public XREvent? CollectVisible;
@@ -180,6 +187,24 @@ namespace XREngine.Timers
         /// clears it to measure the time from the render start to that release.
         /// </summary>
         private long _renderUntilCollectReleaseStartTicks;
+        /// <summary>
+        /// Stopwatch timestamp at which the collect of the last published generation started.
+        /// Written by the collect thread before it publishes; the render thread reads it after it
+        /// takes that publication, to record the publication age.
+        /// </summary>
+        private long _publishedCollectStartTimestamp;
+        /// <summary>
+        /// Start and end (stopwatch timestamps) of the XR frame wait that held the last published
+        /// generation (XR collect pacing), or 0 when the publication did not wait. The render
+        /// thread subtracts the overlap with its own publication wait, so that "render waits for
+        /// collect" excludes the time in which it waited for the XR frame.
+        /// </summary>
+        private long _publishedXrFrameWaitStartTimestamp;
+        private long _publishedXrFrameWaitEndTimestamp;
+        /// <summary>Collect-thread state: start of the last paced collect (0 after a render-paced collect).</summary>
+        private long _lastPacedCollectStartTimestamp;
+        /// <summary>Collect-thread state: fraction of a display period carried to the next paced collect.</summary>
+        private double _pacedBudgetPeriodCarry;
         private long _fixedUpdateAccumulatorTicks;
         private long _fixedUpdateClockTimestampTicks;
         private ECollectVisibleLatePolicy _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
@@ -354,13 +379,71 @@ namespace XREngine.Timers
 
         private void WaitUntilNextRenderDispatch()
         {
-            if (_targetRenderPeriodTicks <= 0L)
+            long renderPeriodTicks = ResolveRenderPeriodTicks();
+            if (renderPeriodTicks <= 0L)
             {
+                ServiceAsynchronousRenderWork();
                 Thread.Yield();
                 return;
             }
 
-            WaitUntilTimestamp(Render.LastTimestampTicks + _targetRenderPeriodTicks);
+            long target = Render.LastTimestampTicks + renderPeriodTicks;
+            RuntimeAsynchronousRenderWorkService? service = RuntimeAsynchronousRenderWorkService.Installed;
+            if (service is null || !service.HasUnresolvedWork)
+            {
+                WaitUntilTimestamp(target);
+                return;
+            }
+
+            // Wait in short slices while asynchronous work is unresolved, so completion
+            // and CPU deadlines are serviced. The original target stays the limit.
+            while (IsRunning)
+            {
+                service.Service();
+                long now = TimeTicks();
+                if (now >= target)
+                    return;
+
+                WaitUntilTimestamp(Math.Min(target, now + RuntimeAsynchronousRenderWorkService.ServiceSliceTicks));
+            }
+        }
+
+        private static void ServiceAsynchronousRenderWork()
+            => RuntimeAsynchronousRenderWorkService.Installed?.Service();
+
+        /// <summary>
+        /// Waits for a visibility publication. While asynchronous work is unresolved the
+        /// wait runs in 1 ms slices with a service pass between slices, and the caller's
+        /// absolute limit is kept across slices.
+        /// </summary>
+        private bool WaitForPublicationWithService(int publicationWaitMilliseconds)
+        {
+            RuntimeAsynchronousRenderWorkService? service = RuntimeAsynchronousRenderWorkService.Installed;
+            if (service is null || !service.HasUnresolvedWork)
+                return _visibilityGenerationGate.WaitForPublication(publicationWaitMilliseconds);
+
+            long limit = publicationWaitMilliseconds == Timeout.Infinite
+                ? long.MaxValue
+                : System.Diagnostics.Stopwatch.GetTimestamp() +
+                    publicationWaitMilliseconds * System.Diagnostics.Stopwatch.Frequency / 1000L;
+            while (IsRunning)
+            {
+                service.Service();
+                if (_visibilityGenerationGate.WaitForPublication(1))
+                    return true;
+                if (System.Diagnostics.Stopwatch.GetTimestamp() >= limit)
+                    return false;
+                if (!service.HasUnresolvedWork)
+                {
+                    long remaining = limit == long.MaxValue
+                        ? Timeout.Infinite
+                        : Math.Max(0L, (limit - System.Diagnostics.Stopwatch.GetTimestamp()) * 1000L /
+                            System.Diagnostics.Stopwatch.Frequency);
+                    return _visibilityGenerationGate.WaitForPublication((int)Math.Min(int.MaxValue, remaining));
+                }
+            }
+
+            return false;
         }
 
         public void BlockForRendering(Func<bool> runUntilPredicate)
@@ -413,6 +496,9 @@ namespace XREngine.Timers
         private void RunCollectVisibleIteration()
         {
             long collectGeneration;
+            // XR collect pacing: with a focused OpenXR session that renders eyes, the collect for
+            // the next XR frame starts when the render thread ends the current one.
+            IOpenXrCollectPacing? xrPacing = RuntimeEngine.VRState.OpenXRApi as IOpenXrCollectPacing;
 #if !XRE_PUBLISHED
             long allocStart = 0;
             Engine.AllocationScope allocationScope = default;
@@ -428,9 +514,24 @@ namespace XREngine.Timers
             {
                 using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread", ProfilerScopeKind.AlwaysOnHotPathLoop))
                 {
+                    EOpenXrCollectPacingWait releaseWait = EOpenXrCollectPacingWait.NotPaced;
+                    if (xrPacing is not null)
+                    {
+                        Volatile.Write(ref _collectVisiblePhase, "WaitForXrCollectRelease");
+                        long releaseWaitStart = Stopwatch.GetTimestamp();
+                        releaseWait = xrPacing.WaitForCollectRelease();
+                        if (releaseWait is not (EOpenXrCollectPacingWait.NotPaced or EOpenXrCollectPacingWait.Ready))
+                            RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordCollectWaitForXrSubmit(Stopwatch.GetTimestamp() - releaseWaitStart);
+                        if (!IsRunning)
+                            return;
+                    }
+                    SetCollectBudgetPeriods(releaseWait == EOpenXrCollectPacingWait.NotPaced ? null : xrPacing);
+
+                    long collectStartTimestamp = Stopwatch.GetTimestamp();
                     //Collects visible object and generates render commands for the game's current state
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
+                        XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.CollectStart);
                         Volatile.Write(ref _collectVisiblePhase, "DispatchCollectVisible");
                         if (!TryCollectVisibleGeneration(out collectGeneration))
                         {
@@ -446,7 +547,9 @@ namespace XREngine.Timers
                         // A release that is already set means that the collect phase was the slower side of this frame.
                         XREngine.Rendering.CollectVisibleStageTimings.CountCollectHandoff(_renderDone.IsSet);
                         long waitStartTicks = TimeTicks();
+                        XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.CollectWaitRenderStart);
                         _renderDone.Wait(-1);
+                        XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.CollectWaitRenderEnd);
                         RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordCollectWaitForRender(TimeTicks() - waitStartTicks);
                     }
 
@@ -466,13 +569,19 @@ namespace XREngine.Timers
 
                     // The shared publication path pumps frame-swap jobs, then swaps world and
                     // viewport buffers, and publishes only after every callback succeeds.
-                    if (!TryPublishCollectVisibleGeneration(collectGeneration))
+                    if (!TryPublishCollectVisibleGeneration(collectGeneration, collectStartTimestamp, xrPacing))
                     {
                         Stop();
                         return;
                     }
+                    XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.CollectPublished);
                     // The stage total and the phase total share one end timestamp, so they agree exactly.
+                    // The XR frame wait before the publication is not swap work, so the swap phase
+                    // starts later by that wait.
                     long swapPhaseEndTicks = Stopwatch.GetTimestamp();
+                    long xrFrameWaitTicks = Volatile.Read(ref _publishedXrFrameWaitEndTimestamp) -
+                        Volatile.Read(ref _publishedXrFrameWaitStartTimestamp);
+                    swapPhaseStartTicks += Math.Clamp(xrFrameWaitTicks, 0L, swapPhaseEndTicks - swapPhaseStartTicks);
                     RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordSwapPhase(swapPhaseEndTicks - swapPhaseStartTicks);
                     XREngine.Rendering.CollectVisibleStageTimings.EndSwap(swapPhaseStartTicks, swapPhaseEndTicks);
                 }
@@ -546,11 +655,14 @@ namespace XREngine.Timers
         public void WaitToRender(int publicationWaitMilliseconds = Timeout.Infinite)
         {
             RejectCallerThreadWait();
+            ServiceAsynchronousRenderWork();
             bool reusedPreviousVisibility = false;
             while (IsRunning)
             {
                 if (_visibilityGenerationGate.TryConsumeFresh(out _))
                 {
+                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordPublicationAge(
+                        Stopwatch.GetTimestamp() - Volatile.Read(ref _publishedCollectStartTimestamp));
                     break;
                 }
 
@@ -574,15 +686,20 @@ namespace XREngine.Timers
                     }
                 }
 
-                long waitStartTicks = TimeTicks();
-                bool publicationAvailable = _visibilityGenerationGate.WaitForPublication(publicationWaitMilliseconds);
-                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(TimeTicks() - waitStartTicks);
+                long waitStartTimestamp = Stopwatch.GetTimestamp();
+                XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.RenderWaitCollectStart);
+                bool publicationAvailable = WaitForPublicationWithService(publicationWaitMilliseconds);
+                XREngine.Rendering.FramePacingTimeline.Mark(XREngine.Rendering.EFramePacingMark.RenderWaitCollectEnd);
+                RecordRenderPublicationWait(waitStartTimestamp, Stopwatch.GetTimestamp());
                 if (!publicationAvailable)
                     return;
             }
 
             if (!IsRunning)
+            {
+                ServiceAsynchronousRenderWork();
                 return;
+            }
 
             if (!reusedPreviousVisibility)
             {
@@ -596,6 +713,47 @@ namespace XREngine.Timers
                 return;
 
             MarkRenderFrameReadyForCollect();
+        }
+
+        /// <summary>
+        /// Sets <see cref="XREngine.Rendering.CollectBudgetPeriods"/> for the collect that starts now.
+        /// A render-paced collect is one period. A paced collect stands for the XR display periods
+        /// since the last paced collect; the fraction carries over, so the sum follows real time.
+        /// </summary>
+        private void SetCollectBudgetPeriods(IOpenXrCollectPacing? pacedBy)
+        {
+            long now = Stopwatch.GetTimestamp();
+            long periodTicks = pacedBy?.DisplayPeriodTicks ?? 0L;
+            if (pacedBy is null || periodTicks <= 0L || _lastPacedCollectStartTimestamp == 0L)
+            {
+                _lastPacedCollectStartTimestamp = pacedBy is null ? 0L : now;
+                _pacedBudgetPeriodCarry = 0.0;
+                XREngine.Rendering.CollectBudgetPeriods.Set(1);
+                return;
+            }
+
+            double carry = _pacedBudgetPeriodCarry + (now - _lastPacedCollectStartTimestamp) / (double)periodTicks;
+            int periods = Math.Clamp((int)Math.Floor(carry), 1, XREngine.Rendering.CollectBudgetPeriods.Maximum);
+            _pacedBudgetPeriodCarry = Math.Clamp(carry - periods, -1.0, 1.0);
+            _lastPacedCollectStartTimestamp = now;
+            XREngine.Rendering.CollectBudgetPeriods.Set(periods);
+        }
+
+        /// <summary>
+        /// Splits one render-thread publication wait into the part in which the collect thread held
+        /// the publication for <c>xrWaitFrame</c> (XR collect pacing) and the rest (collect and swap).
+        /// </summary>
+        private void RecordRenderPublicationWait(long waitStartTimestamp, long waitEndTimestamp)
+        {
+            long xrStart = Volatile.Read(ref _publishedXrFrameWaitStartTimestamp);
+            long xrEnd = Volatile.Read(ref _publishedXrFrameWaitEndTimestamp);
+            long total = Math.Max(0L, waitEndTimestamp - waitStartTimestamp);
+            long xrOverlap = xrEnd > xrStart
+                ? Math.Clamp(Math.Min(waitEndTimestamp, xrEnd) - Math.Max(waitStartTimestamp, xrStart), 0L, total)
+                : 0L;
+            if (xrOverlap > 0L)
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForXrFrame(xrOverlap);
+            RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderWaitForCollect(total - xrOverlap);
         }
 
         /// <summary>
@@ -819,7 +977,7 @@ namespace XREngine.Timers
                 timestampTicks - Render.LastTimestampTicks,
                 0L,
                 Stopwatch.Frequency);
-            return elapsedTicks > 0L && elapsedTicks >= _targetRenderPeriodTicks;
+            return elapsedTicks > 0L && elapsedTicks >= ResolveRenderPeriodTicks();
         }
 
         public bool DispatchRender()
@@ -834,7 +992,7 @@ namespace XREngine.Timers
             {
                 long timestampTicks = TimeTicks();
                 long elapsedTicks = Math.Clamp(timestampTicks - Render.LastTimestampTicks, 0L, Stopwatch.Frequency);
-                bool dispatch = elapsedTicks > 0L && elapsedTicks >= _targetRenderPeriodTicks;
+                bool dispatch = elapsedTicks > 0L && elapsedTicks >= ResolveRenderPeriodTicks();
                 if (dispatch)
                 {
                     bool modalResizeDispatch =
@@ -853,7 +1011,9 @@ namespace XREngine.Timers
                     // The first collect release of this frame reads and clears this start.
                     Volatile.Write(ref _renderUntilCollectReleaseStartTicks, renderPhaseStartTicks);
                     DispatchRenderFrame(timestampTicks, elapsedTicks, processMainThreadTasks);
-                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderPhase(Stopwatch.GetTimestamp() - renderPhaseStartTicks);
+                    long renderPhaseTicks = Stopwatch.GetTimestamp() - renderPhaseStartTicks;
+                    Volatile.Write(ref _lastRenderPhaseTicks, renderPhaseTicks);
+                    RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordRenderPhase(renderPhaseTicks);
                     deferredReason = XREngine.Rendering.EInteractiveResizeDispatchReason.None;
                     // Backend/window early-release hooks remain disabled for modal
                     // frames. Release this epoch only after every callback has finished
@@ -895,6 +1055,7 @@ namespace XREngine.Timers
                 }
                 try
                 {
+                    PrepareFrameOutputs?.Invoke();
                     PreCollectVisible?.Invoke();
                     XREngine.Rendering.CollectVisibleStageTimings.Mark(ref stageMark, XREngine.Rendering.ECollectVisibleStage.PreCollectEvent);
                     CollectVisible?.Invoke();
@@ -1039,6 +1200,41 @@ namespace XREngine.Timers
         }
 
         private long _targetRenderPeriodTicks;
+        private long _lastRenderPhaseTicks;
+        private float _maxRenderBusyFraction = 1.0f;
+
+        /// <summary>
+        /// Gets or sets the highest fraction of wall time that the render loop may spend in render dispatches.
+        /// 1 (the default) removes this limit.
+        /// </summary>
+        /// <remarks>
+        /// <para>A frame-rate limit does not limit the GPU load when one frame takes longer than the limit period:
+        /// the GPU then stays busy all the time. This limit waits after each render dispatch for
+        /// <c>renderTime * (1 / fraction - 1)</c>, so the GPU is idle for part of each period. The render dispatch time
+        /// includes the waits for the frame fences of the backend, so it follows the GPU time of a GPU-bound frame.</para>
+        /// <para>Values are clamped to the range 0.05 to 1. The wait is never longer than one second.</para>
+        /// </remarks>
+        public float MaxRenderBusyFraction
+        {
+            get => _maxRenderBusyFraction;
+            set => SetField(ref _maxRenderBusyFraction, float.IsFinite(value) ? Math.Clamp(value, 0.05f, 1.0f) : 1.0f);
+        }
+
+        /// <summary>
+        /// Returns the time between two render dispatch starts: the longer of the target render period and the period
+        /// that <see cref="MaxRenderBusyFraction"/> requires for the duration of the last render dispatch.
+        /// 0 means no limit.
+        /// </summary>
+        private long ResolveRenderPeriodTicks()
+        {
+            long periodTicks = _targetRenderPeriodTicks;
+            float busyFraction = _maxRenderBusyFraction;
+            if (busyFraction >= 1.0f)
+                return periodTicks;
+
+            long busyPeriodTicks = (long)(Volatile.Read(ref _lastRenderPhaseTicks) / (double)busyFraction);
+            return Math.Max(periodTicks, Math.Min(busyPeriodTicks, Stopwatch.Frequency));
+        }
         /// <summary>
         /// Gets or sets a float representing the target render frequency, in hertz.
         /// </summary>

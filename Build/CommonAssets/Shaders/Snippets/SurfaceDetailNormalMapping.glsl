@@ -102,8 +102,12 @@ vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 positionWS, vec3 tangentWS, v
     }
     else
     {
-        vec3 sampledColor = texture(Texture1, uv).rgb;
-        vec3 sampledNormal = sampledColor * 2.0 - 1.0;
+        vec4 sampledColor = texture(Texture1, uv);
+        vec3 sampledNormal = sampledColor.rgb * 2.0 - 1.0;
+        // A BC5 normal map samples with alpha 0 (view swizzle R, G, 0, 0) and stores
+        // only X and Y, so Z is rebuilt from them.
+        if (sampledColor.a < 0.5)
+            sampledNormal.z = sqrt(clamp(1.0 - dot(sampledNormal.xy, sampledNormal.xy), 0.0, 1.0));
         sampledNormal.y = -sampledNormal.y;
         if (!XRENGINE_IsFiniteVec3(sampledNormal) || dot(sampledNormal, sampledNormal) <= 1e-6)
             return N;

@@ -189,8 +189,12 @@ namespace XREngine.Rendering
         }
 
         /// <summary>Returns an independent snapshot of this mipmap's pixels.</summary>
+        /// <exception cref="NotSupportedException">The mipmap holds block-compressed (BC) data, which the engine does not decode on the CPU.</exception>
         public RuntimeImage GetImage()
         {
+            if (TextureBlockFormats.IsBlockCompressed(InternalFormat))
+                throw new NotSupportedException($"Mipmap {Width}x{Height} holds block-compressed {InternalFormat} data, which cannot be read as an image.");
+
             byte[] bytes = Data?.GetBytes()
                 ?? XRTexture.AllocateBytes(Width, Height, PixelFormat, PixelType);
             return new RuntimeImage(Width, Height, PixelFormat, PixelType, bytes);

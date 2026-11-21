@@ -33,6 +33,84 @@ vec4 XR_ADV_StandardTexture(XRAdvancedMaterialRecord material, uint slot,
     return XR_ADV_SampleTexture2DGrad(textureReference, uv, dx, dy);
 }
 
+// Tangent-space normal from a grayscale height or bump map in texture slot 1.
+// Forward differences over one texel, scaled to match the Default Sobel path
+// (Snippets/SurfaceDetailNormalMapping.glsl), which spans two texels per axis.
+// tapCount must come from material data: it keeps the loop rolled, so the large
+// texture-sampling code is emitted once in the native shading kernel.
+// Decodes a tangent-space normal-map sample to [-1, 1]. A BC5 normal map samples with
+// alpha 0 (view swizzle R, G, 0, 0) and stores only X and Y, so Z is rebuilt from them.
+// Other samples keep their stored Z.
+vec3 XR_ADV_DecodeTangentNormal(vec4 packedNormal)
+{
+    vec3 normal = packedNormal.xyz * 2.0 - 1.0;
+    if (packedNormal.a < 0.5)
+        normal.z = sqrt(clamp(1.0 - dot(normal.xy, normal.xy), 0.0, 1.0));
+    return normal;
+}
+
+vec3 XR_ADV_StandardHeightTangentNormal(XRAdvancedMaterialRecord material,
+    vec2 uv, vec2 dx, vec2 dy, float heightScale, uint tapCount)
+{
+    if (1u >= material.textureReferenceCount ||
+        material.textureReferenceOffset >= uint(XR_ADV_MaterialTextureBindings.records.length()) ||
+        1u >= uint(XR_ADV_MaterialTextureBindings.records.length()) - material.textureReferenceOffset)
+        return vec3(0.0, 0.0, 1.0);
+    XRAdvancedEncodedTextureReference textureReference;
+    XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(material, 1u), textureReference);
+    vec2 texel = 1.0 / vec2(max(XR_ADV_Texture2DSize(textureReference), ivec2(1)));
+
+    // Scalars instead of a height array: a dynamically indexed local array goes to
+    // per-invocation local memory (a register spill); scalars stay in registers.
+    float height0 = 0.0, height1 = 0.0, height2 = 0.0;
+    for (uint tap = 0u; tap < min(tapCount, 3u); ++tap)
+    {
+        vec2 offset = tap == 1u ? vec2(texel.x, 0.0) : (tap == 2u ? vec2(0.0, texel.y) : vec2(0.0));
+        float height = XR_ADV_SampleTexture2DGrad(textureReference, uv + offset, dx, dy).r;
+        if (tap == 0u) height0 = height;
+        else if (tap == 1u) height1 = height;
+        else height2 = height;
+    }
+
+    vec2 slope = 2.0 * vec2(height0 - height1, height0 - height2);
+    return normalize(vec3(slope * heightScale, 1.0));
+}
+
+// Roughness (x) and metallic (y) factors from a sample of the Standard RM texture (slot 2).
+// A glTF metallic-roughness texture keeps roughness in green and metallic in blue
+// (XR_ADV_STANDARD_PACKED_METALLIC_ROUGHNESS_FLAG). Other RM textures keep them in red and green.
+vec2 XR_ADV_StandardRoughnessMetallic(uint materialFlags, vec4 texel)
+{
+    return (materialFlags & XR_ADV_STANDARD_PACKED_METALLIC_ROUGHNESS_FLAG) != 0u ? texel.gb : texel.rg;
+}
+
+// Ambient occlusion texture of a Standard material, with glTF semantics:
+// occlusion = 1 + strength * (texel - 1). The controls word selects the channel
+// (XR_ADV_STANDARD_OCCLUSION_CHANNEL_MASK, 0 red to 3 alpha) and the texture-coordinate
+// set (XR_ADV_STANDARD_OCCLUSION_UV1_FLAG). The words follow the original row.
+// Call it only when the material flags word has XR_ADV_STANDARD_OCCLUSION_TEXTURE_FLAG,
+// so a material without the texture takes no extra sample.
+float XR_ADV_StandardOcclusion(
+    XRAdvancedMaterialRecord material,
+    vec2 uv0,
+    vec2 uv0Dx,
+    vec2 uv0Dy,
+    vec2 uv1,
+    vec2 uv1Dx,
+    vec2 uv1Dy)
+{
+    uint controls = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_OCCLUSION_CONTROLS_WORD);
+    float strength = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material,
+        XR_ADV_STANDARD_OCCLUSION_STRENGTH_WORD));
+    bool useUv1 = (controls & XR_ADV_STANDARD_OCCLUSION_UV1_FLAG) != 0u;
+    vec4 texel = XR_ADV_StandardTexture(material, XR_ADV_STANDARD_OCCLUSION_TEXTURE_SLOT,
+        useUv1 ? uv1 : uv0, useUv1 ? uv1Dx : uv0Dx, useUv1 ? uv1Dy : uv0Dy, vec4(1.0));
+    uint channel = controls & XR_ADV_STANDARD_OCCLUSION_CHANNEL_MASK;
+    // Selects instead of texel[channel]: a dynamic component index can go to local memory.
+    float occlusion = channel == 0u ? texel.r : (channel == 1u ? texel.g : (channel == 2u ? texel.b : texel.a));
+    return clamp(1.0 + clamp(strength, 0.0, 1.0) * (occlusion - 1.0), 0.0, 1.0);
+}
+
 vec3 XR_ADV_ResolveStandardEmission(
     XRAdvancedMaterialRecord material,
     vec2 uv0,

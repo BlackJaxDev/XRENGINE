@@ -15,8 +15,8 @@ public enum EVrRenderPipeline
     Default,
 
     /// <summary>
-    /// The Advanced pipeline family. Supported in sequential and parallel
-    /// command-buffer recording view modes.
+    /// The Advanced pipeline family. Supported in every view mode: one layered
+    /// stereo pipeline in single-pass stereo, one mono pipeline per eye otherwise.
     /// </summary>
     Advanced,
 

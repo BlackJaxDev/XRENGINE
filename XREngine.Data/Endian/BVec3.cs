@@ -14,7 +14,7 @@ public struct BVector3(float x, float y, float z)
     public bfloat _z = z;
 
     public override readonly string ToString()
-        => string.Format("({0}, {1}, {2})", (float)_x, (float)_y, (float)_z);
+        => $"({(float)_x}, {(float)_y}, {(float)_z})";
 
     public static implicit operator Vector3(BVector3 v)
         => new(v._x, v._y, v._z);

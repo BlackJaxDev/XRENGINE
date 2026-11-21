@@ -259,8 +259,7 @@ public sealed class SelfIterationWorkspaceManager
         {
             throw new InvalidOperationException(
                 "Tracked source was restored, but the attempt created untracked directories that " +
-                "require manual review before recursive deletion: " +
-                string.Join(", ", newUntrackedDirectories));
+                $"require manual review before recursive deletion: {string.Join(", ", newUntrackedDirectories)}");
         }
     }
 
@@ -492,7 +491,7 @@ public sealed class SelfIterationWorkspaceManager
 
     private static bool IsGeneratedPath(string path)
     {
-        string normalized = "/" + path.Replace('\\', '/').Trim('/') + "/";
+        string normalized = $"/{path.Replace('\\', '/').Trim('/')}/";
         return normalized.Contains("/bin/", StringComparison.OrdinalIgnoreCase) ||
             normalized.Contains("/obj/", StringComparison.OrdinalIgnoreCase) ||
             normalized.Contains("/Build/", StringComparison.OrdinalIgnoreCase) ||

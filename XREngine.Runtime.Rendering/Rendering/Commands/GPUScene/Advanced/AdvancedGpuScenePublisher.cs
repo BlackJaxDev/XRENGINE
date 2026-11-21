@@ -164,12 +164,14 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // publication stops before that point, or when the world swap section
         // is not open on this thread.
         long stageMark = 0L;
+        ulong previousWitnessEpoch = AdvancedSourceWitnessEpoch.Begin();
         try
         {
             PublishCore(scene, frameId, in globalResources, ref stageMark);
         }
         finally
         {
+            AdvancedSourceWitnessEpoch.End(previousWitnessEpoch);
             try
             {
                 ReleasePlannedMirrorSnapshots();
@@ -222,6 +224,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         _lastSourceGroupReuseCount = 0;
         _lastSourceGroupRebuildCount = 0;
         _lastUnchangedRowGateHitCount = 0;
+        // The moved-row list belongs to one gate walk. Clear it here, so a publication that
+        // passes the prepared verdict without a walk never patches rows of an earlier walk.
+        _lastMovedRowPatchCount = 0;
+        _movedRowCount = 0;
         _lastPublicationCommittedRetainedRows = false;
         _publicationStartMembershipGeneration = _registrationMembershipGeneration;
         _useRetainedIdentityGroups = false;
@@ -284,8 +290,20 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     out reusedStaticPlans,
                     out materialResolveAttempts);
                 if (!gateDecided)
+                {
                     rowsUnchanged = TryPassUnchangedRowGate(
-                        scene, frameId, out reusedStaticPlans, out materialResolveAttempts);
+                        scene, frameId, out reusedStaticPlans, out materialResolveAttempts,
+                        out EAdvancedPreparedGateOutcome swapGateMismatch);
+                    // Count the failure reason only in the world swap, the scope of the
+                    // row-gate pass and failure counts of the swap stage timers. A row
+                    // check that fails without a named reason counts as a registration
+                    // change, as in the prepared verdict.
+                    if (!rowsUnchanged && stageMark != 0L)
+                        AdvancedPreparedGateTelemetry.RecordSwapGateFailure(
+                            swapGateMismatch == EAdvancedPreparedGateOutcome.None
+                                ? EAdvancedPreparedGateOutcome.RegistrationChanged
+                                : swapGateMismatch);
+                }
             }
             CollectVisibleStageTimings.MarkAdvancedRowGate(ref stageMark, rowsUnchanged);
             if (rowsUnchanged && TryPublishUnchangedRows(
@@ -295,6 +313,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 return;
             }
         }
+
+        // The full publication splits into plan, apply, and seal stages. The mark
+        // is 0 outside the world swap section, so nothing records there.
+        long fullMark = stageMark != 0L ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
 
         // Plans and submission sources are scratch closures, not publication leases.
         // Release the prior frame's references even if this boundary rejects early.
@@ -339,8 +361,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         }
         bool hasGlobalResources;
         string globalResourceFailure;
+        long globalPreflightStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.GlobalPreflight"))
             hasGlobalResources = TryPreflightGlobalResources(in acceptedGlobalResources, out globalResourceFailure);
+        CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedGlobalPreflight, globalPreflightStart);
         if (!hasGlobalResources)
         {
             RejectPublication(globalResourceFailure);
@@ -349,6 +373,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         bool reusedPublication;
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.ReuseCheck"))
             reusedPublication = TryReuseUnchangedPublication(frameId);
+        // The plan stage also covers a plan that ends in a reuse of the current publication.
+        CollectVisibleStageTimings.Mark(ref fullMark, ECollectVisibleStage.SwapAdvancedPlan);
         if (reusedPublication)
         {
             ClearPublicationFailure();
@@ -451,7 +477,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                         PrimitiveIndex = checked((uint)Math.Max(0, plan.PrimitiveIndex)),
                         PassIndex = plan.Command.RenderPass,
                         InstanceCount = Math.Max(1u, plan.Command.InstanceCount),
-                        Flags = plan.Command.Flags,
+                        Flags = ResolveSubmissionDrawFlags(in plan.Command, plan.MaterialSource),
                         StateClass = plan.Command.StateClassID,
                         CompatibilityReason = plan.CompatibilityReason,
                         TemporalEventReason = plan.TemporalEventReason,
@@ -502,11 +528,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     AdvanceNonZero(ref _lookupGeneration);
             }
 
+            CollectVisibleStageTimings.Mark(ref fullMark, ECollectVisibleStage.SwapAdvancedApply);
             SealAndDeliverPublication(
                 in transaction,
                 frameId,
                 ref provisional,
                 ref publicationCommitted);
+            CollectVisibleStageTimings.Mark(ref fullMark, ECollectVisibleStage.SwapAdvancedSeal);
             CaptureCommittedMaterialPlans();
             _identityDeliveryIncomplete = false;
             ClearPendingIdentityRecipients();
@@ -514,6 +542,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             PromoteOrderedRegistrations();
             ClearPublicationFailure();
             MarkUnchangedRowBaseline(submissionRowsValid: true);
+            ReleaseConsumedPrepackEntries();
         }
         catch (Exception exception)
         {
@@ -598,6 +627,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
         // Command snapshots become consumable only after the exact scene
         // publication has been accepted by the database.
+        long deliveryStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
         using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.IdentityDelivery"))
         {
             CaptureAndClearDirtyOwnerRanges();
@@ -607,6 +637,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 committed.Publication, frameId);
             PublishSourceDrawIdentities(in committed);
         }
+        CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedIdentityDelivery, deliveryStart);
     }
 
     /// <summary>
@@ -1386,7 +1417,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             material = null;
         }
         material = snapshot.MaterialOverride ?? material;
-        renderOptions = snapshot.RenderOptionsOverride ?? material?.RenderOptions;
+        renderOptions = LegacyEditorHighlightRenderingParameters.ResolveAuthoredOptions(
+            snapshot.RenderOptionsOverride) ?? material?.RenderOptions;
     }
 
     /// <summary>Reads the published CPU cull bounds row of one command.</summary>
@@ -1591,6 +1623,33 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         };
     }
 
+    /// <summary>
+    /// Adds the material-derived Advanced routing bits to the draw flags of one submission:
+    /// parallax fragment depth, native Uber coverage discard, and the surface decal lane when the
+    /// backend supports it.
+    /// </summary>
+    /// <remarks>
+    /// A native Uber material in an opaque pass can still remove triangles or fragments, for example
+    /// with vertex-mode UV tile discard. Its material row uses the masked layout, so the draw must also
+    /// use the masked visibility raster. The opaque raster does not run the coverage step, and the
+    /// discarded geometry would stay visible.
+    /// </remarks>
+    private static uint ResolveSubmissionDrawFlags(in DrawMetadata command, XRMaterial? material)
+    {
+        uint flags = command.Flags;
+        if (AdvancedSurfaceDecalLane.UsesDecalLane(material))
+            return flags | (uint)GPUIndirectRenderFlags.SurfaceDecal;
+        if (RequiresFragmentDepth(material))
+            flags |= (uint)GPUIndirectRenderFlags.FragmentDepth;
+        if (material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
+            command.StateClassID != (uint)EGpuMaterialStateClass.AlphaTested &&
+            NativeUberMaterialSourceEncoder.RequiresCoverageDiscard(material))
+        {
+            flags |= (uint)GPUIndirectRenderFlags.CoverageDiscard;
+        }
+        return flags;
+    }
+
     private static AdvancedRenderStateRecord CreateRenderState(
         XRMesh? mesh,
         RenderingParameters? renderOptions,
@@ -1632,7 +1691,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         => flags & ~((uint)GPUIndirectRenderFlags.EditorHighlightMask |
             (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
-            (uint)GPUIndirectRenderFlags.ReceiveShadows);
+            (uint)GPUIndirectRenderFlags.ReceiveShadows |
+            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic);
 
     private static ulong ComputeStructuralSignature(
         in DrawMetadata command,
@@ -1694,7 +1754,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         hash = Mix(hash, command.Flags & ((uint)GPUIndirectRenderFlags.EditorHighlightMask |
             (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
-            (uint)GPUIndirectRenderFlags.ReceiveShadows));
+            (uint)GPUIndirectRenderFlags.ReceiveShadows |
+            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic));
         hash = Mix(hash, command.LayerMask);
         hash = Mix(hash, gpuOwnedBounds ? 1u : 0u);
         hash = Mix(hash, sourceFlatDirectionOct);

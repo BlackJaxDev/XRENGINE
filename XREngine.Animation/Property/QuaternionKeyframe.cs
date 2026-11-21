@@ -25,14 +25,12 @@ namespace XREngine.Animation
             OutValue = outValue;
             InTangent = inTangent;
             OutTangent = outTangent;
+            InterpolationTypeIn = type;
             InterpolationTypeOut = type;
         }
 
-        private delegate Quaternion DelInterpolate(QuaternionKeyframe? key1, QuaternionKeyframe? key2, float time);
-        private DelInterpolate _interpolateOut = Step;
-        private DelInterpolate _interpolateIn = Step;
-        protected ERadialInterpType _interpolationTypeOut;
-        protected ERadialInterpType _interpolationTypeIn;
+        protected ERadialInterpType _interpolationTypeOut = ERadialInterpType.Smooth;
+        protected ERadialInterpType _interpolationTypeIn = ERadialInterpType.Smooth;
         private Quaternion _inValue = Quaternion.Identity;
         private Quaternion _outValue = Quaternion.Identity;
         private Quaternion _inTangent = Quaternion.Identity;
@@ -65,12 +63,10 @@ namespace XREngine.Animation
         public new QuaternionKeyframe? Next
         {
             get => _next as QuaternionKeyframe;
-            set => SetField(ref _next, value);
         }
         public new QuaternionKeyframe? Prev
         {
             get => _prev as QuaternionKeyframe;
-            set => SetField(ref _prev, value);
         }
 
         public float TrackLength => OwningTrack?.LengthInSeconds ?? 0.0f;
@@ -96,35 +92,6 @@ namespace XREngine.Animation
                 case nameof(InTangent):
                 case nameof(OutTangent):
                     OwningTrack?.OnChanged();
-                    break;
-                case nameof(InterpolationTypeIn):
-                    switch (_interpolationTypeIn)
-                    {
-                        case ERadialInterpType.Step:
-                            _interpolateIn = Step;
-                            break;
-                        case ERadialInterpType.Linear:
-                            _interpolateIn = Linear;
-                            break;
-                        case ERadialInterpType.Smooth:
-                            _interpolateIn = CubicBezier;
-                            break;
-                    }
-                    break;
-                case nameof(InterpolationTypeOut):
-
-                    switch (_interpolationTypeOut)
-                    {
-                        case ERadialInterpType.Step:
-                            _interpolateOut = Step;
-                            break;
-                        case ERadialInterpType.Linear:
-                            _interpolateOut = Linear;
-                            break;
-                        case ERadialInterpType.Smooth:
-                            _interpolateOut = CubicBezier;
-                            break;
-                    }
                     break;
             }
         }
@@ -202,12 +169,31 @@ namespace XREngine.Animation
                 return key1.OutValue;
 
             if (key1.InterpolationTypeOut == key2.InterpolationTypeIn)
-                return _interpolateOut(key1, key2, normalizedTime);
+                return Interpolate(key1.InterpolationTypeOut, key1, key2, normalizedTime);
 
-            var outInterp = key1._interpolateOut(key1, key2, normalizedTime);
-            var inInterp = key2._interpolateIn(key1, key2, normalizedTime);
+            var outInterp = Interpolate(key1.InterpolationTypeOut, key1, key2, normalizedTime);
+            var inInterp = Interpolate(key2.InterpolationTypeIn, key1, key2, normalizedTime);
             return Quaternion.Slerp(outInterp, inInterp, normalizedTime);
         }
+
+        /// <summary>
+        /// Corrects a key that older data stored. Older keys hold a Step in type that playback ignored,
+        /// because the constructors set only the out type. A blend with Step would jump at the middle of each span.
+        /// </summary>
+        internal void NormalizeRestoredInterpolation()
+        {
+            if (InterpolationTypeIn == ERadialInterpType.Step && InterpolationTypeOut != ERadialInterpType.Step)
+                InterpolationTypeIn = InterpolationTypeOut;
+        }
+
+        /// <summary>Uses the stored type at each call, so a key gives the same result however its type was set.</summary>
+        private static Quaternion Interpolate(ERadialInterpType type, QuaternionKeyframe? key1, QuaternionKeyframe? key2, float time)
+            => type switch
+            {
+                ERadialInterpType.Step => Step(key1, key2, time),
+                ERadialInterpType.Linear => Linear(key1, key2, time),
+                _ => CubicBezier(key1, key2, time),
+            };
 
         public static Quaternion Step(QuaternionKeyframe? key1, QuaternionKeyframe? key2, float time)
             => time < 0.5f
@@ -229,7 +215,7 @@ namespace XREngine.Animation
                 time);
 
         public override string WriteToString()
-            => string.Format("{0} {1} {2} {3} {4} {5} {6} {7} {8} {9} {10}", Second, InValue.X, InValue.Y, InValue.Z, InValue.W, OutValue.X, OutValue.Y, OutValue.Z, OutValue.W, InterpolationTypeIn, InterpolationTypeOut);
+            => $"{Second} {InValue.X} {InValue.Y} {InValue.Z} {InValue.W} {OutValue.X} {OutValue.Y} {OutValue.Z} {OutValue.W} {InterpolationTypeIn} {InterpolationTypeOut}";
 
         public override void ReadFromString(string str)
         {

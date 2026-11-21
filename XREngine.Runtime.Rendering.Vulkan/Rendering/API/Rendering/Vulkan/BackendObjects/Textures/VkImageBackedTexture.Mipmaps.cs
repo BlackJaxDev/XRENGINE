@@ -39,6 +39,14 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return;
         }
 
+        if (VkFormatConversions.IsBlockCompressed(ResolvedFormat))
+        {
+            // Block-compressed images cannot be blit targets; the texture cook stores their mips.
+            Debug.VulkanWarning($"Texture format '{ResolvedFormat}' is block compressed and cannot generate mipmaps on the GPU; the cooked mips are used instead.");
+            TransitionImageLayout(CurrentImageLayout, ImageLayout.ShaderReadOnlyOptimal);
+            return;
+        }
+
         Api!.GetPhysicalDeviceFormatProperties(PhysicalDevice, ResolvedFormat, out FormatProperties props);
         if ((props.OptimalTilingFeatures & FormatFeatureFlags.SampledImageFilterLinearBit) == 0)
         {

@@ -698,7 +698,7 @@ public static partial class CookedBinarySerializer
             object? value = null;
             try
             {
-                value = member.GetValue(instance);
+                value = member.GetSerializedValue(instance);
             }
             catch (Exception ex)
             {
@@ -1338,7 +1338,9 @@ public static partial class CookedBinarySerializer
         if (!LoggedTypeDeserializationFailures.TryAdd(type, 0))
             return;
 
-        Trace.TraceWarning($"Cooked binary deserialization skipped type '{type}': {ex.Message}");
+        string message = $"Cooked binary deserialization skipped type '{type}': {ex.Message}";
+        Trace.TraceWarning(message);
+        Console.Error.WriteLine(message);
     }
 
     private static void LogMemoryPackSerializationFailure(Type type, Exception ex)
@@ -1355,8 +1357,10 @@ public static partial class CookedBinarySerializer
         if (!LoggedTypeDeserializationFailures.TryAdd(type, 0))
             return;
 
-        Trace.TraceWarning($"[MEMORYPACK DESERIALIZE FAIL] Type '{type.FullName}' failed to deserialize via MemoryPack. " +
-            $"This may cause data loss! Consider adding explicit support in CookedBinarySerializer. Exception: {ex.GetType().Name}: {ex.Message}");
+        string message = $"[MEMORYPACK DESERIALIZE FAIL] Type '{type.FullName}' failed to deserialize via MemoryPack. " +
+            $"This may cause data loss! Consider adding explicit support in CookedBinarySerializer. Exception: {ex}";
+        Trace.TraceWarning(message);
+        Console.Error.WriteLine(message);
     }
 
     private static void LogMemberSerializationFailure(Type ownerType, string memberName, Exception ex)
@@ -2285,7 +2289,7 @@ public static partial class CookedBinarySerializer
                 object? value = null;
                 try
                 {
-                    value = member.GetValue(instance);
+                    value = member.GetSerializedValue(instance);
                 }
                 catch (Exception ex)
                 {
@@ -2420,6 +2424,10 @@ public static partial class CookedBinarySerializer
             Getter = property.GetGetMethod(true);
             Setter = property.GetSetMethod(true);
             IsValid = Getter is not null && Setter is not null;
+            IsAssetOriginalPath = property.DeclaringType == typeof(XRAsset) && property.Name == nameof(XRAsset.OriginalPath);
+            SecretDeclaringType = property.GetCustomAttribute<SecretAttribute>(inherit: true) is not null ? property.DeclaringType : null;
+            if (SecretDeclaringType is not null && MemberType.IsValueType)
+                SecretDefaultValue = Activator.CreateInstance(MemberType);
         }
 
         public MemberMetadata(FieldInfo field)
@@ -2436,10 +2444,34 @@ public static partial class CookedBinarySerializer
         public MethodInfo? Setter { get; }
         public bool IsValid { get; }
 
+        /// <summary>True for <see cref="XRAsset.OriginalPath"/>, whose written value a cook scope projects.</summary>
+        public bool IsAssetOriginalPath { get; }
+
+        /// <summary>The declaring type of a member marked with <see cref="SecretAttribute"/>, or null.</summary>
+        public Type? SecretDeclaringType { get; }
+
+        /// <summary>The default value that a cook scope writes for a secret member.</summary>
+        public object? SecretDefaultValue { get; }
+
         public object? GetValue(object instance)
             => _field is not null
                 ? _field.GetValue(instance)
                 : Getter?.Invoke(instance, null);
+
+        /// <summary>
+        /// Gets the value to write. It is <see cref="GetValue"/>, except that a cook scope projects
+        /// <see cref="XRAsset.OriginalPath"/> to a portable reference and writes a secret member as its default value. The
+        /// size pass and the write pass both call it.
+        /// </summary>
+        public object? GetSerializedValue(object instance)
+        {
+            object? value = GetValue(instance);
+            if (IsAssetOriginalPath)
+                return CookedSourcePathProjection.ProjectOriginalPath(instance, value as string);
+            return SecretDeclaringType is null
+                ? value
+                : CookedSourcePathProjection.ProjectSecretValue(SecretDeclaringType, Name, value, SecretDefaultValue);
+        }
 
         public void SetValue(object instance, object? value)
         {

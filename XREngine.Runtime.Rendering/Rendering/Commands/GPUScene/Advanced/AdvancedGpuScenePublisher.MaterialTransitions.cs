@@ -8,6 +8,19 @@ namespace XREngine.Rendering.Commands;
 
 public sealed partial class AdvancedGpuScenePublisher
 {
+    private readonly Dictionary<XRMaterial, NativeUberLayoutProof> _nativeUberLayoutProofs =
+        new(64, ReferenceEqualityComparer.Instance);
+    private int _nativeUberLayoutFullCheckCount;
+    private int _nativeUberLayoutProofHitCount;
+
+    /// <summary>Gets the full Uber shader checks in the last whole-scene plan.</summary>
+    public int NativeUberLayoutFullCheckCount => _nativeUberLayoutFullCheckCount;
+
+    /// <summary>Gets the retained Uber shader proof hits in the last whole-scene plan.</summary>
+    public int NativeUberLayoutProofHitCount => _nativeUberLayoutProofHitCount;
+
+    /// <summary>Gets the retained Uber material proof count in the last whole-scene plan.</summary>
+    public int NativeUberLayoutProofCount => _nativeUberLayoutProofs.Count;
     private AdvancedGpuSceneCommandTransition[] _plannedCommands = [];
     private AdvancedGpuSceneMaterialTransition[] _plannedMaterials = [];
     private AdvancedGpuMaterialTransitionRequest[] _plannedMaterialRequests = [];
@@ -19,9 +32,11 @@ public sealed partial class AdvancedGpuScenePublisher
     // One reusable role destination for unchanged native Uber source checks.
     private readonly AdvancedGpuResourceBindingSource[] _reuseNativeUberSources =
         new AdvancedGpuResourceBindingSource[NativeUberMaterialSchema.TextureRoleCount];
-    // The legacy four slots and six engine-surface roles share one reuse check.
+    // The standard legacy slots and six engine-surface roles share one reuse check.
     private readonly AdvancedGpuResourceBindingSource[] _reuseStandardLitSources =
-        new AdvancedGpuResourceBindingSource[4 + AdvancedEngineSurfaceRecord.RoleCount];
+        new AdvancedGpuResourceBindingSource[MaterialBindingLayouts.StandardTextureCount + AdvancedEngineSurfaceRecord.RoleCount];
+    // Constant words that the reuse check of a legacy (semantic None) material encodes again.
+    private uint[] _reuseLegacyConstantWords = [];
     private AdvancedMaterialTextureBinding[] _resourceAcquireBindings = [];
     private AdvancedMaterialTextureBinding[] _resourceReleaseBindings = [];
     private int[] _plannedVariantSlots = [];
@@ -231,8 +246,9 @@ public sealed partial class AdvancedGpuScenePublisher
                 out int cachedRegistrationIndex)
                 ? cachedRegistrationIndex
                 : FindRegistration(source, primitiveIndex);
-            bool geometryAlreadyValidated = registrationIndex >= 0 &&
-                HasValidatedCanonicalGeometry(in _registrations[registrationIndex], in plan);
+            bool geometryAlreadyValidated = (registrationIndex >= 0 &&
+                HasValidatedCanonicalGeometry(in _registrations[registrationIndex], in plan)) ||
+                (mesh is not null && Prepack.TryGetReady(mesh, plan.MeshGeometryRevision, out _));
             if (!geometryAlreadyValidated && !TryValidateCanonicalGeometry(
                     mesh,
                     out EAdvancedCanonicalCompatibilityReason geometryReason))
@@ -786,7 +802,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 out MaterialBindingLayout layout,
                 out AdvancedMaterialLayoutTranslation translation,
                 out EAdvancedMaterialRenderStateClass state,
-                out compatibilityReason))
+                out compatibilityReason,
+                this))
             return false;
 
         materialPlanIndex = FindPlannedMaterial(
@@ -1004,6 +1021,114 @@ public sealed partial class AdvancedGpuScenePublisher
     }
 
     /// <summary>
+    /// True for a standard material with a parallax height map (<c>NormalMapMode</c> 1 and a positive
+    /// <c>ParallaxScale</c>). Its visibility raster writes fragment depth.
+    /// </summary>
+    internal static bool RequiresFragmentDepth(XRMaterial? material)
+        => material is not null &&
+           material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 &&
+           material.Parameter<ShaderFloat>("ParallaxScale") is { Value: > 0.0f } &&
+           material.Parameter<ShaderInt>("NormalMapMode") is { Value: 1 };
+
+    /// <summary>Reuses a strict Uber result only inside the current whole-scene plan.</summary>
+    private bool IsNativeUberForCurrentPlan(XRMaterial material)
+    {
+        if (_nativeUberLayoutProofs.TryGetValue(material, out NativeUberLayoutProof cached) &&
+            cached.IsCurrent(material))
+        {
+            ++_nativeUberLayoutProofHitCount;
+            return true;
+        }
+
+        _nativeUberLayoutProofs.Remove(material);
+        NativeUberLayoutProof? candidate = null;
+        XRShader? active = material.GetShader(EShaderType.Fragment);
+        if (active is not null)
+        {
+            bool generated = UberShaderVariantBuilder.IsGeneratedVariant(active);
+            XRShader? canonicalCandidate = active;
+            UberShaderVariantProvenance? provenance = null;
+            bool hasCanonical = !generated ||
+                UberShaderVariantBuilder.TryGetCanonicalShader(active, out canonicalCandidate);
+            bool hasProvenance = !generated ||
+                UberShaderVariantBuilder.TryGetVariantProvenance(active, out provenance);
+            if (hasCanonical && hasProvenance && canonicalCandidate is not null)
+                candidate = NativeUberLayoutProof.Capture(material, active, canonicalCandidate, provenance);
+        }
+
+        ++_nativeUberLayoutFullCheckCount;
+        if (!material.TryGetUberMaterialState(out XRShader? canonical, out _) || canonical is null)
+            return false;
+
+        if (candidate is NativeUberLayoutProof proof &&
+            ReferenceEquals(proof.CanonicalShader, canonical) &&
+            (proof.VariantProvenance is null || proof.VariantProvenance.IsCurrent) &&
+            proof.IsCurrent(material))
+        {
+            _nativeUberLayoutProofs.Add(material, proof);
+        }
+        return true;
+    }
+
+    private readonly record struct NativeUberLayoutProof(
+        XRShader ActiveShader,
+        XRShader CanonicalShader,
+        UberShaderVariantProvenance? VariantProvenance,
+        UberShaderSourceStamp ActiveSource,
+        UberShaderSourceStamp CanonicalSource,
+        ShaderSourceProviderOwner Owner,
+        object? Service,
+        int ServiceVersion,
+        int AssetVersion,
+        long SnippetVersion,
+        long MaterialShaderRevision,
+        long MaterialUberRevision,
+        long ActiveIdentityRevision,
+        long CanonicalIdentityRevision)
+    {
+        internal static NativeUberLayoutProof Capture(
+            XRMaterial material, XRShader active, XRShader canonical, UberShaderVariantProvenance? provenance)
+        {
+            IRuntimeShaderServices? service = RuntimeShaderServices.Current;
+            return new(active, canonical, provenance,
+                UberShaderSourceStamp.Capture(active), UberShaderSourceStamp.Capture(canonical),
+                ShaderSourceResolver.CaptureOwner(), service, RuntimeShaderServices.ServiceVersion,
+                service?.ShaderAssetCacheVersion ?? 0, ShaderSourceResolver.RegisteredSnippetVersion,
+                material.ShaderStateRevision, material.UberStateRevision,
+                active.SourceIdentityRevision, canonical.SourceIdentityRevision);
+        }
+
+        internal bool IsCurrent(XRMaterial material)
+        {
+            if (material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1 ||
+                material.ShaderStateRevision != MaterialShaderRevision ||
+                material.UberStateRevision != MaterialUberRevision ||
+                !ReferenceEquals(material.GetShader(EShaderType.Fragment), ActiveShader) ||
+                !ActiveSource.IsCurrent || !CanonicalSource.IsCurrent ||
+                ActiveShader.SourceIdentityRevision != ActiveIdentityRevision ||
+                CanonicalShader.SourceIdentityRevision != CanonicalIdentityRevision ||
+                !Owner.Equals(ShaderSourceResolver.CaptureOwner()) ||
+                !ReferenceEquals(Service, RuntimeShaderServices.Current) ||
+                ServiceVersion != RuntimeShaderServices.ServiceVersion ||
+                AssetVersion != (RuntimeShaderServices.Current?.ShaderAssetCacheVersion ?? 0) ||
+                SnippetVersion != ShaderSourceResolver.RegisteredSnippetVersion)
+                return false;
+
+            if (!UberShaderVariantBuilder.IsGeneratedVariant(ActiveShader))
+                return ReferenceEquals(ActiveShader, CanonicalShader);
+            return VariantProvenance is not null &&
+                VariantProvenance.Canonical.IsCurrent &&
+                VariantProvenance.Variant.IsCurrent &&
+                VariantProvenance.Owner.Equals(Owner) &&
+                VariantProvenance.SnippetVersion == SnippetVersion &&
+                UberShaderVariantBuilder.TryGetVariantProvenance(ActiveShader, out UberShaderVariantProvenance? provenance) &&
+                ReferenceEquals(provenance, VariantProvenance) &&
+                UberShaderVariantBuilder.TryGetCanonicalShader(ActiveShader, out XRShader? canonical) &&
+                ReferenceEquals(canonical, CanonicalShader);
+        }
+    }
+
+    /// <summary>
     /// Selects the canonical layout, coverage, and state class of one command.
     /// Uses the command row and current material state for both publication
     /// and unchanged-row validation.
@@ -1014,7 +1139,8 @@ public sealed partial class AdvancedGpuScenePublisher
         out MaterialBindingLayout layout,
         out AdvancedMaterialLayoutTranslation translation,
         out EAdvancedMaterialRenderStateClass state,
-        out EAdvancedCanonicalCompatibilityReason compatibilityReason)
+        out EAdvancedCanonicalCompatibilityReason compatibilityReason,
+        AdvancedGpuScenePublisher? planPublisher = null)
     {
         translation = default;
         state = EAdvancedMaterialRenderStateClass.Invalid;
@@ -1054,12 +1180,22 @@ public sealed partial class AdvancedGpuScenePublisher
         }
 
         bool nativeUber = material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 &&
-            material.TryGetUberMaterialState(out _, out _);
+            (planPublisher is null
+                ? material.TryGetUberMaterialState(out _, out _)
+                : planPublisher.IsNativeUberForCurrentPlan(material));
         if (nativeUber)
         {
             bool masked = command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested ||
                 NativeUberMaterialSourceEncoder.RequiresCoverageDiscard(material!);
             layout = masked ? NativeUberMaterialSchema.Masked : NativeUberMaterialSchema.Opaque;
+        }
+        else if (RequiresFragmentDepth(material) &&
+            (ReferenceEquals(layout, MaterialBindingLayouts.OpaqueDeferred) ||
+             ReferenceEquals(layout, MaterialBindingLayouts.ForwardOpaque)))
+        {
+            // Parallax occlusion discards silhouette fragments and writes depth in the
+            // visibility raster, so the material publishes the masked standard row.
+            layout = MaterialBindingLayouts.MaskedForward;
         }
         if (!AdvancedGpuMaterialPublisher.TryTranslateLayout(
                 layout,
@@ -1097,10 +1233,10 @@ public sealed partial class AdvancedGpuScenePublisher
         out EAdvancedCanonicalCompatibilityReason compatibilityReason,
         out string reason)
     {
-        if (destination.Length != 4)
+        if (destination.Length != MaterialBindingLayouts.StandardTextureCount)
         {
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
-            reason = "The bounded material bridge requires exactly four texture slots.";
+            reason = "The bounded material bridge requires one texture slot per standard layout texture.";
             return false;
         }
         if (!AdvancedGpuResourceSourceEncoder.TryEncode(
@@ -1125,6 +1261,18 @@ public sealed partial class AdvancedGpuScenePublisher
                 snapshot.Emissive,
                 EAdvancedResourceFallback.Black,
                 out destination[3],
+                out compatibilityReason,
+                out reason) ||
+            !AdvancedGpuResourceSourceEncoder.TryEncode(
+                snapshot.Opacity,
+                EAdvancedResourceFallback.White,
+                out destination[4],
+                out compatibilityReason,
+                out reason) ||
+            !AdvancedGpuResourceSourceEncoder.TryEncode(
+                snapshot.Occlusion,
+                EAdvancedResourceFallback.White,
+                out destination[5],
                 out compatibilityReason,
                 out reason))
         {
@@ -1223,7 +1371,7 @@ public sealed partial class AdvancedGpuScenePublisher
 
         int companionBindingCount = engineSurface.SchemaVersion == 0 ? 0 : AdvancedEngineSurfaceRecord.RoleCount;
         int uberBindingCount = uberSurface.SchemaVersion == 0 ? 0 : AdvancedUberBaseSurfaceRecord.RoleCount;
-        if (!CommittedMaterialBindingsMatch(material, layout, bindings,
+        if (!WitnessedCommittedMaterialBindingsMatch(registration.Material, material, layout, bindings,
                 in engineSurface, in uberSurface))
         {
             reuseFailure = "MaterialBindingsChanged";
@@ -1278,18 +1426,109 @@ public sealed partial class AdvancedGpuScenePublisher
         return true;
     }
 
-    /// <summary>Limits source reuse to material families with complete source witnesses.</summary>
+    /// <summary>
+    /// Limits source reuse to material families with a complete reuse check: untextured canonical
+    /// materials, native Uber, standard lit textures, and legacy materials without an engine
+    /// semantic (see <see cref="IsLegacyReusableMaterial"/>).
+    /// </summary>
     private static bool CanReuseMaterialSources(XRMaterial? material)
         => IsUntexturedCanonicalMaterial(material) ||
            material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 ||
-           material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1;
+           material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 ||
+           IsLegacyReusableMaterial(material);
+
+    /// <summary>
+    /// True for a material without an engine semantic (for example an imported material with a
+    /// height, specular, alpha mask or emissive map). Its plan reads only the legacy texture slots
+    /// and the packed constant row, so <see cref="CommittedMaterialBindingsMatch"/> can check it
+    /// completely by encoding both again. Projective mirrors and untextured canonical materials keep
+    /// their own paths.
+    /// </summary>
+    private static bool IsLegacyReusableMaterial(XRMaterial? material)
+        => material is not null and not AdvancedProjectiveMirrorMaterial &&
+           material.EngineSemantic == EngineMaterialSemanticIdentity.None &&
+           !IsUntexturedCanonicalMaterial(material);
+
+    /// <summary>
+    /// The reuse check of a legacy material (no engine semantic): no engine-surface or Uber
+    /// companions, the constant row encoded again equals the committed row, and each of the five
+    /// legacy slots encoded again matches its committed binding (texture, content generation,
+    /// lifetime and sampler). These are all inputs of its full plan.
+    /// </summary>
+    private bool LegacyMaterialBindingsMatch(
+        AdvancedGpuHandle handle,
+        XRMaterial material,
+        MaterialBindingLayout layout,
+        ReadOnlySpan<AdvancedMaterialTextureBinding> bindings,
+        in AdvancedEngineSurfaceRecord engineSurface,
+        in AdvancedUberBaseSurfaceRecord uberSurface)
+    {
+        if (engineSurface.SchemaVersion != 0 || uberSurface.SchemaVersion != 0 ||
+            bindings.Length != MaterialBindingLayouts.StandardTextureCount ||
+            layout.Textures.Count != MaterialBindingLayouts.StandardTextureCount ||
+            ReferenceEquals(layout, NativeUberMaterialSchema.Opaque) ||
+            ReferenceEquals(layout, NativeUberMaterialSchema.Masked))
+            return false;
+        if (!Database.Materials.Materials.TryGet(handle, out AdvancedMaterialRecord committed) ||
+            !Database.Materials.TryGetConstantWords(committed, out ReadOnlySpan<uint> committedConstants) ||
+            committedConstants.Length != (int)layout.RowWordCount)
+            return false;
+
+        if (_reuseLegacyConstantWords.Length < committedConstants.Length)
+            _reuseLegacyConstantWords = new uint[committedConstants.Length];
+        Span<uint> constants = _reuseLegacyConstantWords.AsSpan(0, committedConstants.Length);
+        Span<AdvancedGpuResourceBindingSource> sources =
+            _reuseStandardLitSources.AsSpan(0, MaterialBindingLayouts.StandardTextureCount);
+        try
+        {
+            MaterialBindingSourceSnapshot snapshot = MaterialBindingSourceEncoder.Encode(material);
+            if (!MaterialBindingRowPacker.TryWriteOpaqueDeferred(
+                    layout,
+                    snapshot.Entry,
+                    snapshot.EmissionColor,
+                    snapshot.EmissionStrength,
+                    snapshot.EmissionTextureMetadata,
+                    snapshot.EmissionUvScaleOffset,
+                    snapshot.EmissionUvRotation,
+                    constants,
+                    out _) ||
+                !constants.SequenceEqual(committedConstants) ||
+                !TryEncodeMaterialResourceSources(in snapshot, sources, out _, out _))
+                return false;
+
+            for (int index = 0; index < sources.Length; ++index)
+            {
+                ref readonly AdvancedGpuResourceBindingSource source = ref sources[index];
+                // GPU-authored arrays and cubes have no complete content witness.
+                if (source.Texture is not null &&
+                    (source.Texture.IsDestroyed ||
+                     source.Texture is not XRTexture2D &&
+                     (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
+                      source.SourceContentGeneration == 0UL)))
+                    return false;
+                if (!_resourcePublisher.BindingMatches(in bindings[index], in source))
+                    return false;
+            }
+            return true;
+        }
+        finally
+        {
+            Array.Clear(_reuseStandardLitSources);
+            constants.Clear();
+        }
+    }
 
     /// <summary>
     /// Checks supported texture roles against committed logical resources.
     /// Standard lit textures also compare the native companion values that the
     /// full plan encodes. The material revisions cover legacy scalar values.
+    /// A legacy material without an engine semantic also encodes its constant row
+    /// again and compares it with the committed row of <paramref name="handle"/>,
+    /// because a texture property (the emissive format) feeds that row without a
+    /// material version.
     /// </summary>
     private bool CommittedMaterialBindingsMatch(
+        AdvancedGpuHandle handle,
         XRMaterial? material,
         MaterialBindingLayout layout,
         ReadOnlySpan<AdvancedMaterialTextureBinding> bindings,
@@ -1298,16 +1537,16 @@ public sealed partial class AdvancedGpuScenePublisher
     {
         if (material?.EngineSemantic == EngineMaterialSemanticIdentity.StandardLitTextureV1)
         {
-            if (bindings.Length != 4 ||
+            if (bindings.Length != MaterialBindingLayouts.StandardTextureCount ||
                 engineSurface.SchemaVersion != AdvancedEngineSurfaceRecord.CurrentSchemaVersion ||
                 uberSurface.SchemaVersion != 0)
                 return false;
             try
             {
                 Span<AdvancedGpuResourceBindingSource> legacySources =
-                    _reuseStandardLitSources.AsSpan(0, 4);
+                    _reuseStandardLitSources.AsSpan(0, MaterialBindingLayouts.StandardTextureCount);
                 Span<AdvancedGpuResourceBindingSource> companionSources =
-                    _reuseStandardLitSources.AsSpan(4, AdvancedEngineSurfaceRecord.RoleCount);
+                    _reuseStandardLitSources.AsSpan(MaterialBindingLayouts.StandardTextureCount, AdvancedEngineSurfaceRecord.RoleCount);
                 MaterialBindingSourceSnapshot snapshot = MaterialBindingSourceEncoder.Encode(material);
                 if (!TryEncodeMaterialResourceSources(in snapshot, legacySources, out _, out _) ||
                     !AdvancedEngineSurfaceSourceEncoder.TryEncode(material,
@@ -1329,9 +1568,9 @@ public sealed partial class AdvancedGpuScenePublisher
                          (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
                           source.SourceContentGeneration == 0UL)))
                         return false;
-                    AdvancedMaterialTextureBinding binding = index < 4
+                    AdvancedMaterialTextureBinding binding = index < MaterialBindingLayouts.StandardTextureCount
                         ? bindings[index]
-                        : engineSurface.GetRole(index - 4).Binding;
+                        : engineSurface.GetRole(index - MaterialBindingLayouts.StandardTextureCount).Binding;
                     if (!_resourcePublisher.BindingMatches(in binding, in source))
                         return false;
                 }
@@ -1342,6 +1581,9 @@ public sealed partial class AdvancedGpuScenePublisher
                 Array.Clear(_reuseStandardLitSources);
             }
         }
+
+        if (IsLegacyReusableMaterial(material))
+            return LegacyMaterialBindingsMatch(handle, material!, layout, bindings, in engineSurface, in uberSurface);
 
         if (material?.EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1)
         {

@@ -251,9 +251,6 @@ public partial class XRMesh
         bool intVarType = RuntimeRenderingHostServices.Settings.UseIntegerUniformsInShaders;
         int sourceCount = VertexCount;
 
-        BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceCount,
-            intVarType ? EComponentType.Int : EComponentType.Float, 2, false, intVarType);
-
         List<Vector3> deltas = [Vector3.Zero];
         List<IVector4> blendshapeIndices = [];
 
@@ -264,8 +261,7 @@ public partial class XRMesh
         List<BlendshapeVertexDelta> vertexDeltas = [];
         List<IVector4>?[] sparseRecordsByShape = new List<IVector4>?[blendshapeCount];
         int affectedVertexCount = 0;
-        int* countsInt = (int*)BlendshapeCounts.Address;
-        float* countsFloat = (float*)BlendshapeCounts.Address;
+        int[] rawCounts = new int[sourceCount * 2];
 
         for (int i = 0; i < sourceCount; i++)
         {
@@ -274,19 +270,7 @@ public partial class XRMesh
             deltaSource(i, vertexDeltas);
 
             if (vertexDeltas.Count == 0)
-            {
-                if (intVarType)
-                {
-                    *countsInt++ = 0;
-                    *countsInt++ = 0;
-                }
-                else
-                {
-                    *countsFloat++ = 0;
-                    *countsFloat++ = 0;
-                }
                 continue;
-            }
 
             for (int deltaIndex = 0; deltaIndex < vertexDeltas.Count; deltaIndex++)
             {
@@ -333,17 +317,41 @@ public partial class XRMesh
             if (activeBlendshapeCountForThisVertex > 0)
                 affectedVertexCount++;
 
-            if (intVarType)
-            {
-                *countsInt++ = blendshapeDeltaIndicesIndex;
-                *countsInt++ = activeBlendshapeCountForThisVertex;
-            }
-            else
-            {
-                *countsFloat++ = blendshapeDeltaIndicesIndex;
-                *countsFloat++ = activeBlendshapeCountForThisVertex;
-            }
+            int countOffset = i * 2;
+            rawCounts[countOffset] = blendshapeDeltaIndicesIndex;
+            rawCounts[countOffset + 1] = activeBlendshapeCountForThisVertex;
             blendshapeDeltaIndicesIndex += activeBlendshapeCountForThisVertex;
+        }
+
+        if (affectedVertexCount == 0 || blendshapeIndices.Count == 0)
+        {
+            BlendshapeCounts = null;
+            BlendshapeIndices = null;
+            BlendshapeDeltas = null;
+            BlendshapeSparseShapeRanges = null;
+            BlendshapeSparseRecords = null;
+            BlendshapeQuantizedDeltas = null;
+            BlendshapeQuantizationMetadata = null;
+            BlendshapeAffectedVertexCount = 0;
+            BlendshapeSparseRecordCount = 0;
+            BlendshapeShaderVariant = BlendshapeShaderVariant.None;
+            BlendshapeDeltaEncoding = BlendshapeDeltaEncoding.Float32;
+            return;
+        }
+
+        BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceCount,
+            intVarType ? EComponentType.Int : EComponentType.Float, 2, false, intVarType);
+        if (intVarType)
+        {
+            int* countsInt = (int*)BlendshapeCounts.Address;
+            for (int i = 0; i < rawCounts.Length; i++)
+                countsInt[i] = rawCounts[i];
+        }
+        else
+        {
+            float* countsFloat = (float*)BlendshapeCounts.Address;
+            for (int i = 0; i < rawCounts.Length; i++)
+                countsFloat[i] = rawCounts[i];
         }
 
         BlendshapeIndices = new XRDataBuffer($"{ECommonBufferType.BlendshapeIndices}Buffer", EBufferTarget.ShaderStorageBuffer,

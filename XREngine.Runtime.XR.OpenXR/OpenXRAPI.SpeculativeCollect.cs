@@ -66,6 +66,12 @@ public unsafe partial class OpenXRAPI
                 out long buildTicks))
             return false;
 
+        // With quad view, the inset pair publishes its own commands with the same swap.
+        if (!TryRunOpenXrSpeculativeInsetCollect(world, OpenXrSpeculativeCullProjectionScale))
+            return false;
+
+        if (RuntimeEngine.VRState.ViewInformation.HMDNode is { } cullHead)
+            RecordSpeculativeCullHead(cullHead.Transform.RenderMatrix);
         RuntimeEngine.Rendering.Stats.Vr.RecordVrPerViewVisibleCounts((uint)commandsAdded, (uint)commandsAdded);
         RuntimeEngine.Rendering.Stats.Vr.RecordVrPerViewDrawCounts((uint)commandsAdded, (uint)commandsAdded);
         TimeSpan buildTime = TimeSpan.FromSeconds(buildTicks / (double)System.Diagnostics.Stopwatch.Frequency);
@@ -96,5 +102,6 @@ public unsafe partial class OpenXRAPI
 
         Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, 1);
         Volatile.Write(ref _pendingXrFrameCollected, 1);
+        RecordSpeculativeViewAngle();
     }
 }

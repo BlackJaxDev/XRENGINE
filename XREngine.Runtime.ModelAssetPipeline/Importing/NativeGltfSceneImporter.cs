@@ -896,12 +896,17 @@ internal static class NativeGltfSceneImporter
 
         if (material.PbrMetallicRoughness?.MetallicRoughnessTexture is { } metallicRoughnessInfo)
         {
+            // The legacy sampler slots get one grayscale texture per role (blue for metallic, green
+            // for roughness), because the Default shaders read a separate map for each. The surface
+            // bindings point to the packed source texture with its glTF channels, so the Advanced RM
+            // slot and DDGI read both roles from one texture.
+            ResolvedTextureBinding? packedBinding = ResolveTextureBinding(sourceFilePath, document, metallicRoughnessInfo, importOptions, textureCache, TextureType.Unknown, null, 0);
             ResolvedTextureBinding? metallicBinding = ResolveTextureBinding(sourceFilePath, document, metallicRoughnessInfo, importOptions, textureCache, TextureType.Metalness, "metallic", 0);
             if (metallicBinding is not null)
             {
                 textures.Add(metallicBinding.Texture);
                 textureSlots.Add(metallicBinding.Slot);
-                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Metallic, metallicBinding, metallicRoughnessInfo, channel: 2, isSrgb: false));
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Metallic, packedBinding ?? metallicBinding, metallicRoughnessInfo, channel: 2, isSrgb: false));
                 hasMetallicTexture = true;
             }
 
@@ -910,7 +915,7 @@ internal static class NativeGltfSceneImporter
             {
                 textures.Add(roughnessBinding.Texture);
                 textureSlots.Add(roughnessBinding.Slot);
-                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Roughness, roughnessBinding, metallicRoughnessInfo, channel: 1, isSrgb: false));
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Roughness, packedBinding ?? roughnessBinding, metallicRoughnessInfo, channel: 1, isSrgb: false));
                 hasRoughnessTexture = true;
             }
         }
@@ -929,7 +934,12 @@ internal static class NativeGltfSceneImporter
 
         if (material.OcclusionTexture is { } occlusionInfo)
         {
-            ResolveTextureBinding(sourceFilePath, document, occlusionInfo, importOptions, textureCache, TextureType.Unknown, "occlusion", 0);
+            // glTF stores occlusion in the red channel. An ORM texture is the same source texture
+            // as metallic-roughness, so both bindings share one texture object. The binding is
+            // surface-only, like transmission, so the legacy sampler slots do not change.
+            ResolvedTextureBinding? binding = ResolveTextureBinding(sourceFilePath, document, occlusionInfo, importOptions, textureCache, TextureType.Unknown, null, 0);
+            if (binding is not null)
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Occlusion, binding, occlusionInfo, channel: 0, isSrgb: false));
         }
 
         if (TryGetTransmissionTextureInfo(material, out GltfTextureInfo? transmissionInfo) && transmissionInfo is not null)
@@ -1310,6 +1320,7 @@ internal static class NativeGltfSceneImporter
         material.SetFloat("Emission", Math.Max(emissiveColor.X, Math.Max(emissiveColor.Y, emissiveColor.Z)) * emissionStrength);
         material.SurfaceTextureBindings = texturePayload.SurfaceTextureBindings;
         material.NormalScale = gltfMaterial.NormalTexture?.Scale ?? 1.0f;
+        material.OcclusionStrength = gltfMaterial.OcclusionTexture?.Strength ?? 1.0f;
         material.Transmission = GetExtensionFloat(gltfMaterial, "KHR_materials_transmission", "transmissionFactor", 0.0f);
         material.TransmissionColor = GetExtensionColor(gltfMaterial, "KHR_materials_volume", "attenuationColor", Vector3.One);
 

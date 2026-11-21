@@ -793,6 +793,13 @@ function Start-Session {
                 '-p:RestoreIgnoreFailedSources=true',
                 '-p:XREngineUseExistingNativeBridges=true',
                 '-p:UseSharedCompilation=false',
+                # Each session builds into a fresh artifacts folder. Hard links in place of
+                # copies stop every project output from writing its own copy of all upstream
+                # assemblies, which cuts disk writes and the paging burst before launch.
+                # MSBuild copies the file when a link is not possible (for example across volumes).
+                '-p:CreateHardLinksForCopyLocalIfPossible=true',
+                '-p:CreateHardLinksForCopyFilesToOutputDirectoryIfPossible=true',
+                '-p:CreateHardLinksForCopyAdditionalFilesIfPossible=true',
                 '/nodeReuse:false',
                 '/property:GenerateFullPaths=true',
                 '/consoleloggerparameters:NoSummary'
@@ -918,6 +925,44 @@ function Start-Session {
     }
 }
 
+function Request-ProcessWindowsClose([int]$ProcessId) {
+    # Posts WM_CLOSE to each visible top-level window of one process. Returns true when at
+    # least one window received the message.
+    if (-not ('XREngine.SessionWindowClose' -as [type])) {
+        Add-Type -Namespace XREngine -Name SessionWindowClose -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern bool EnumWindows(EnumWindowsProc callback, System.IntPtr lParam);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint processId);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern bool IsWindowVisible(System.IntPtr hWnd);
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+private static extern bool PostMessage(System.IntPtr hWnd, uint msg, System.IntPtr wParam, System.IntPtr lParam);
+private delegate bool EnumWindowsProc(System.IntPtr hWnd, System.IntPtr lParam);
+public static int CloseWindows(uint processId)
+{
+    int posted = 0;
+    EnumWindows((hWnd, _) =>
+    {
+        uint owner;
+        GetWindowThreadProcessId(hWnd, out owner);
+        if (owner == processId && IsWindowVisible(hWnd) && PostMessage(hWnd, 0x0010, System.IntPtr.Zero, System.IntPtr.Zero))
+            posted++;
+        return true;
+    }, System.IntPtr.Zero);
+    return posted;
+}
+'@
+    }
+
+    try {
+        return [XREngine.SessionWindowClose]::CloseWindows([uint32]$ProcessId) -gt 0
+    }
+    catch {
+        return $false
+    }
+}
+
 function Stop-Session {
     Assert-SessionNameRequired
     $manifest = Read-SessionManifest $Name
@@ -946,8 +991,15 @@ function Stop-Session {
         }
     }
 
+    if (-not $Force -and -not $closedMainWindow) {
+        # The apphost often does not publish the GLFW window as MainWindowHandle. Ask every
+        # top-level window of the owned process to close, so the engine shuts down cleanly
+        # and the Vulkan layers can save their caches before the hard kill below.
+        $closedMainWindow = Request-ProcessWindowsClose $process.Id
+    }
+
     if ($closedMainWindow) {
-        [void]$process.WaitForExit($StopTimeoutSeconds * 1000)
+        [void]$process.WaitForExit([Math]::Min($StopTimeoutSeconds, 20) * 1000)
     }
     $process.Refresh()
 

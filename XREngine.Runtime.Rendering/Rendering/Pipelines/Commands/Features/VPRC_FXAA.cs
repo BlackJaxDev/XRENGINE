@@ -297,19 +297,7 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
     }
 
     private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
-    {
-        RenderPipeline? pipeline = ParentPipeline;
-        if (pipeline?.PassMetadata is not { Count: > 0 })
-        {
-            hasRenderGraphMetadata = false;
-            return int.MinValue;
-        }
-
-        hasRenderGraphMetadata = true;
-        return pipeline.TryGetRenderPassIndex(passName, out int passIndex)
-            ? passIndex
-            : int.MinValue;
-    }
+        => ResolveActiveRenderGraphPassIndex(passName, out hasRenderGraphMetadata);
 
     private string GetSourceDisplayName()
         => SourceTextureName ?? SourceFBOName ?? "Output";

@@ -123,6 +123,11 @@ VulkanCpuSpanProfiler.End(_spanToken, endTimestamp, endAllocatedBytes);
             EVulkanCpuStage.CommandCacheScanning or
             EVulkanCpuStage.MeshDrawPublisherState or
             EVulkanCpuStage.MeshDrawArtifactEligibility or
-            EVulkanCpuStage.MeshDrawArtifactLookup;
+            EVulkanCpuStage.MeshDrawArtifactLookup or
+            EVulkanCpuStage.PrewarmProgramActivation or
+            EVulkanCpuStage.PrewarmBufferPreparation or
+            EVulkanCpuStage.PrewarmBindingApplication or
+            EVulkanCpuStage.PrewarmDescriptorSets or
+            EVulkanCpuStage.PrewarmFrameSourceDescriptors;
 
 }

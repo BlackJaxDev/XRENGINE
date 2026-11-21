@@ -33,6 +33,8 @@ internal sealed class VulkanCommandBufferState
     internal Dictionary<ulong, PrimaryCommandArtifactOwner> OpenXrPrimaryOwners { get; } = [];
     internal CommandBuffer[]? DynamicUiSecondaries;
     internal CommandBuffer[]? DynamicUiOverlays;
+    // Copy passes from the desktop offscreen color target into the acquired image.
+    internal CommandBuffer[]? DesktopOffscreenCopies;
     internal int[]? DynamicUiOpCounts;
     internal ulong[]? DynamicUiSignatures;
     internal ulong[]? FrameOpSignatures;
@@ -110,7 +112,7 @@ internal sealed class VulkanCommandBufferState
             return 0;
 
         ulong key = unchecked((ulong)commandBuffer.Handle);
-        lock (BindStateGate)
+        using (VulkanFrameLockScope.Enter(BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             return BindStates.TryGetValue(key, out CommandBufferBindState state)
                 ? state.RecordingGeneration
                 : 0;
@@ -125,7 +127,7 @@ internal sealed class VulkanCommandBufferState
 
         int resolvedImageIndex = unchecked((int)Math.Min(imageIndex, int.MaxValue));
         ulong key = unchecked((ulong)commandBuffer.Handle);
-        lock (BindStateGate)
+        using (VulkanFrameLockScope.Enter(BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             ImageIndices[key] = resolvedImageIndex;
     }
 
@@ -135,7 +137,7 @@ internal sealed class VulkanCommandBufferState
             return -1;
 
         ulong key = unchecked((ulong)commandBuffer.Handle);
-        lock (BindStateGate)
+        using (VulkanFrameLockScope.Enter(BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
             return ImageIndices.TryGetValue(key, out int imageIndex) ? imageIndex : -1;
     }
 
@@ -145,7 +147,7 @@ internal sealed class VulkanCommandBufferState
             return;
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        lock (BindStateGate)
+        using (VulkanFrameLockScope.Enter(BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
         {
             BindStates.Remove(handle);
             ImageIndices.Remove(handle);
@@ -166,7 +168,7 @@ internal sealed class VulkanCommandBufferState
             return;
 
         ulong handle = unchecked((ulong)commandBuffer.Handle);
-        lock (BindStateGate)
+        using (VulkanFrameLockScope.Enter(BindStateGate, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.BindState))
         {
             BindStates.Remove(handle);
             ImageIndices.Remove(handle);

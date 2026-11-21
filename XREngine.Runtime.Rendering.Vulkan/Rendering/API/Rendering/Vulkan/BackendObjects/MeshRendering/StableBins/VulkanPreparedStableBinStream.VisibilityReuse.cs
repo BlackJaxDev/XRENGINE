@@ -128,6 +128,8 @@ internal sealed partial class VulkanPreparedStableBinStream
                 RasterPipeline = default,
                 NativeState = default,
                 ShadowRasterPipeline = default,
+                DecalRasterPipeline = default,
+                DecalNativeState = default,
             };
         }
         _visibilityGeometrySources = sources;

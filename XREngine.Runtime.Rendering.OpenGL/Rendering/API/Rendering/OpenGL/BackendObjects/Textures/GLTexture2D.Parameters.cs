@@ -126,6 +126,30 @@ public partial class GLTexture2D
         Api.TextureParameter(BindingId, TextureMaxAnisotropyExt, anisotropy);
     }
 
+    /// <summary>
+    /// Sets the component swizzle for the storage format. BC4 samples as (R, R, R, 1), so a
+    /// gray texture reads the same RGB as an RGBA8 copy. BC5 samples as (R, G, 0, 0); the
+    /// zero alpha tells the normal-unpack helpers to rebuild Z from X and Y. Other formats
+    /// use the identity swizzle, which also resets a texture whose format changed.
+    /// </summary>
+    private void ApplyBlockFormatSwizzle()
+    {
+        (GLEnum r, GLEnum g, GLEnum b, GLEnum a) = Data.SizedInternalFormat switch
+        {
+            ESizedInternalFormat.Bc4Unorm => (GLEnum.Red, GLEnum.Red, GLEnum.Red, GLEnum.One),
+            ESizedInternalFormat.Bc5Unorm => (GLEnum.Red, GLEnum.Green, GLEnum.Zero, GLEnum.Zero),
+            _ => (GLEnum.Red, GLEnum.Green, GLEnum.Blue, GLEnum.Alpha),
+        };
+        int swizzleR = (int)r;
+        int swizzleG = (int)g;
+        int swizzleB = (int)b;
+        int swizzleA = (int)a;
+        Api.TextureParameterI(BindingId, GLEnum.TextureSwizzleR, in swizzleR);
+        Api.TextureParameterI(BindingId, GLEnum.TextureSwizzleG, in swizzleG);
+        Api.TextureParameterI(BindingId, GLEnum.TextureSwizzleB, in swizzleB);
+        Api.TextureParameterI(BindingId, GLEnum.TextureSwizzleA, in swizzleA);
+    }
+
     protected override void SetParameters()
     {
         // The base implementation defers its own writes, but this override issues
@@ -161,6 +185,8 @@ public partial class GLTexture2D
 
         int vWrap = (int)ToGLEnum(Data.VWrap);
         Api.TextureParameterI(BindingId, GLEnum.TextureWrapT, in vWrap);
+
+        ApplyBlockFormatSwizzle();
 
         // Depth-comparison mode for hardware PCF (sampler2DShadow).
         int compareMode = (int)(Data.EnableComparison ? GLEnum.CompareRefToTexture : GLEnum.None);

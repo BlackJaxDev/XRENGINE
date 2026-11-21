@@ -79,7 +79,7 @@ public static class VrViewRenderModeResolver
             requestedMode,
             requestedMode,
             implementationPath,
-            ResolveTemporalHistoryPolicy(implementationPath, rendersExternalSwapchainTargets),
+            ResolveTemporalHistoryPolicy(implementationPath, rendersExternalSwapchainTargets, backend, requestedPipeline),
             true,
             null,
             requestedPipeline);
@@ -99,10 +99,6 @@ public static class VrViewRenderModeResolver
             (EVrViewRenderMode.SequentialViews, EVrRenderPipeline.Rvc) =>
                 "VR.RenderPipeline=Rvc is not offered for VR.ViewRenderMode=SequentialViews. " +
                 "Select SinglePassStereo or ParallelCommandBufferRecording for RVC, or select the Default or Advanced pipeline.",
-            (EVrViewRenderMode.SinglePassStereo, EVrRenderPipeline.Advanced) =>
-                "VR.RenderPipeline=Advanced is not implemented for VR.ViewRenderMode=SinglePassStereo. " +
-                "The Advanced layered eye resources and swapchain terminal write are not admitted. " +
-                "Select SequentialViews or ParallelCommandBufferRecording for Advanced, or select the Default or Rvc pipeline.",
             _ => string.Empty,
         };
         return diagnostic.Length != 0;
@@ -139,21 +135,34 @@ public static class VrViewRenderModeResolver
         };
 
     /// <summary>
-    /// Resolves the temporal history policy based on the VR view render implementation path and whether external swapchain targets are used.
+    /// Resolves the temporal history policy based on the VR view render implementation path, whether external
+    /// swapchain targets are used, the backend, and the eye pipeline family.
     /// </summary>
     /// <param name="implementationPath">The resolved VR view render implementation path.</param>
     /// <param name="rendersExternalSwapchainTargets">Indicates whether external swapchain targets are used.</param>
+    /// <param name="backend">The rendering backend.</param>
+    /// <param name="requestedPipeline">The VR eye pipeline family.</param>
     /// <returns>The resolved temporal history policy.</returns>
+    /// <remarks>
+    /// On Vulkan, an Advanced eye (also the Advanced stage family of an RVC eye) owns its history per eye:
+    /// each eye has its own viewport and pipeline instance. Its per-eye external swapchain targets
+    /// therefore get <see cref="EVrTemporalHistoryPolicy.PerEye"/>, so TSR and its render scale stay on.
+    /// The Default family and OpenGL per-eye eyes have no per-eye history.
+    /// </remarks>
     private static EVrTemporalHistoryPolicy ResolveTemporalHistoryPolicy(
         EVrViewRenderImplementationPath implementationPath,
-        bool rendersExternalSwapchainTargets)
+        bool rendersExternalSwapchainTargets,
+        ERenderLibrary backend,
+        EVrRenderPipeline requestedPipeline)
         => implementationPath switch
         {
             EVrViewRenderImplementationPath.TrueSinglePassStereo => EVrTemporalHistoryPolicy.StereoArrayLayer,
             EVrViewRenderImplementationPath.SequentialViews or EVrViewRenderImplementationPath.ParallelCommandBufferRecording =>
-                rendersExternalSwapchainTargets
-                    ? EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain
-                    : EVrTemporalHistoryPolicy.DisabledPerEyeSwapchain,
+                !rendersExternalSwapchainTargets
+                    ? EVrTemporalHistoryPolicy.DisabledPerEyeSwapchain
+                    : backend == ERenderLibrary.Vulkan && requestedPipeline is EVrRenderPipeline.Advanced or EVrRenderPipeline.Rvc
+                        ? EVrTemporalHistoryPolicy.PerEye
+                        : EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain,
             _ => EVrTemporalHistoryPolicy.Disabled,
         };
 }

@@ -762,7 +762,9 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
         Attach(host);
         using VulkanOpenXrRuntimeQueueLease lease = GetCommandRuntime(host)
             .EnterSerializedOpenXrCommandSection("xrAcquireSwapchainImage");
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.SwapchainAcquireStart);
         int result = host.GraphicsCalls.AcquireSwapchainImage(swapchain, out imageIndex);
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.SwapchainAcquireEnd);
         if (result == 0)
         {
             lock (_retiredSwapchainsGate)
@@ -774,7 +776,10 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
     public int WaitSwapchainImage(IOpenXrGraphicsHost host, ulong swapchain, long timeoutNs)
     {
         Attach(host);
-        return host.GraphicsCalls.WaitSwapchainImage(swapchain, timeoutNs);
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.SwapchainWaitStart);
+        int result = host.GraphicsCalls.WaitSwapchainImage(swapchain, timeoutNs);
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.SwapchainWaitEnd);
+        return result;
     }
 
     public int ReleaseSwapchainImage(IOpenXrGraphicsHost host, ulong swapchain)
@@ -783,6 +788,7 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
         using VulkanOpenXrRuntimeQueueLease lease = GetCommandRuntime(host)
             .EnterSerializedOpenXrCommandSection("xrReleaseSwapchainImage");
         int result = host.GraphicsCalls.ReleaseSwapchainImage(swapchain);
+        global::XREngine.Rendering.FramePacingTimeline.Mark(global::XREngine.Rendering.EFramePacingMark.SwapchainReleaseEnd);
         if (result == 0)
         {
             lock (_retiredSwapchainsGate)
@@ -810,7 +816,15 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
     public unsafe bool TryRenderViewsBatch(IOpenXrGraphicsHost host, out bool handled)
     {
         Attach(host);
-        return TryRenderVulkanEyesBatch(out handled);
+        _eyeImageReleaseRuntimeLost = false;
+        bool rendered = TryRenderVulkanEyesBatch(out handled);
+        if (!_eyeImageReleaseRuntimeLost)
+            return rendered;
+
+        // The runtime was lost while this frame owned eye images. The lifecycle handles the loss;
+        // the frame submits no projection layers and no sequential retry may acquire images.
+        handled = true;
+        return false;
     }
 
     public bool TryRenderEye(
@@ -866,7 +880,8 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
     {
         Attach(host);
         DestroyVulkanEyeMirrorTargets();
-        DestroyVulkanStereoRenderTarget();
+        DestroyVulkanStereoRenderTarget(_vulkanStereoTargets[0]);
+        DestroyVulkanStereoRenderTarget(_vulkanStereoTargets[1]);
         DestroyOpenXrPreviewTargets();
         DestroyViewportMirrorTargets();
     }

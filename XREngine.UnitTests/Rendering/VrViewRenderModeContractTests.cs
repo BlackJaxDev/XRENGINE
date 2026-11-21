@@ -139,6 +139,23 @@ public sealed class VrViewRenderModeContractTests
     }
 
     [Test]
+    public void ViewRenderModeResolver_GivesVulkanAdvancedAndRvcPerEyeEyesTheirOwnHistory()
+    {
+        VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.SequentialViews,
+                requestedPipeline: EVrRenderPipeline.Advanced)
+            .TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.PerEye);
+        VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.ParallelCommandBufferRecording,
+                requestedPipeline: EVrRenderPipeline.Rvc)
+            .TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.PerEye);
+        VrViewRenderModeResolver.Resolve(ERenderLibrary.Vulkan, EVrViewRenderMode.SequentialViews,
+                requestedPipeline: EVrRenderPipeline.Default)
+            .TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
+        VrViewRenderModeResolver.Resolve(ERenderLibrary.OpenGL, EVrViewRenderMode.SequentialViews,
+                requestedPipeline: EVrRenderPipeline.Advanced)
+            .TemporalHistoryPolicy.ShouldBe(EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain);
+    }
+
+    [Test]
     public void ViewRenderModeResolver_RequiresTrueStereoAndNeverSelectsCompatibilityFallback()
     {
         VrViewRenderModeResolution unavailable = VrViewRenderModeResolver.Resolve(
@@ -1034,8 +1051,8 @@ public sealed class VrViewRenderModeContractTests
         string vulkanOpenXrMirrorRequest = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXrEyeMirrorRenderRequest.cs");
         openXr.ShouldContain("if (!trueSinglePassStereo)");
-        AssertTrueStereoPublishDoesNotFlipY(openXr, "true stereo left eye swapchain image");
-        AssertTrueStereoPublishDoesNotFlipY(openXr, "true stereo right eye swapchain image");
+        AssertTrueStereoPublishDoesNotFlipY(openXr, "GetTrueStereoSwapchainLabel(0, leftImageIndex)");
+        AssertTrueStereoPublishDoesNotFlipY(openXr, "GetTrueStereoSwapchainLabel(1, rightImageIndex)");
         vulkanOpenXr.ShouldContain("TryBlitTextureArrayLayerToOpenXrSwapchainImage");
         vulkanOpenXr.ShouldContain("BaseArrayLayer = sourceLayer");
         vulkanOpenXrMirrorRequest.ShouldContain("bool RendersExternalSwapchainTarget = true");

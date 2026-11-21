@@ -217,13 +217,56 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             out failureReason);
     }
 
+    /// <summary>
+    /// Updates descriptor sets after prevalidation. <paramref name="referenceRetired"/> is true
+    /// when the update was rejected only because a referenced resource is retiring. Nothing was
+    /// written then, so the caller can retry with the current resource.
+    /// </summary>
+    internal bool TryUpdateDescriptorSets(
+        uint descriptorWriteCount,
+        WriteDescriptorSet* descriptorWrites,
+        out string failureReason,
+        out bool referenceRetired)
+    {
+        referenceRetired = false;
+        if (_deviceContext is not { IsOperational: true } device)
+        {
+            failureReason = $"Cannot update Vulkan descriptors while device state is {_deviceContext?.State}.";
+            return false;
+        }
+
+        return ApplyDescriptorWrites(
+            device,
+            descriptorWriteCount,
+            descriptorWrites,
+            prevalidate: true,
+            out failureReason,
+            out referenceRetired);
+    }
+
     private bool ApplyDescriptorWrites(
         VulkanDeviceContext device,
         uint descriptorWriteCount,
         WriteDescriptorSet* descriptorWrites,
         bool prevalidate,
         out string failureReason)
+        => ApplyDescriptorWrites(
+            device,
+            descriptorWriteCount,
+            descriptorWrites,
+            prevalidate,
+            out failureReason,
+            out _);
+
+    private bool ApplyDescriptorWrites(
+        VulkanDeviceContext device,
+        uint descriptorWriteCount,
+        WriteDescriptorSet* descriptorWrites,
+        bool prevalidate,
+        out string failureReason,
+        out bool referenceRetired)
     {
+        referenceRetired = false;
         ulong[]? dependentCommandBuffers;
         int dependentCommandBufferCount;
         bool invalidatesRecordedCommandBuffers;
@@ -240,7 +283,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
                 if (!TryPrevalidateWritesNoLock(
                         descriptorWriteCount,
                         descriptorWrites,
-                        out failureReason))
+                        out failureReason,
+                        out referenceRetired))
                 {
                     if (prevalidate)
                         return false;
@@ -337,8 +381,44 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             return false;
         }
 
-        DescriptorUpdateTemplateEntry[] entries = new DescriptorUpdateTemplateEntry[writes.Length];
-        DescriptorUpdateTemplateSignature[] signature = new DescriptorUpdateTemplateSignature[writes.Length];
+        // Compute descriptor refreshes run every eye frame. Keep the entry and
+        // signature scratch off the heap; only a new cache entry copies the signature.
+        // Compute programs with many storage bindings exceed 16 writes, so the stack
+        // limit covers 64 writes (about 5.6 KB); larger sets rent pooled scratch.
+        const int StackTemplateEntries = 64;
+        DescriptorUpdateTemplateEntry[]? rentedEntries = null;
+        DescriptorUpdateTemplateSignature[]? rentedSignature = null;
+        Span<DescriptorUpdateTemplateEntry> entries = writes.Length <= StackTemplateEntries
+            ? stackalloc DescriptorUpdateTemplateEntry[writes.Length]
+            : (rentedEntries = ArrayPool<DescriptorUpdateTemplateEntry>.Shared.Rent(writes.Length)).AsSpan(0, writes.Length);
+        Span<DescriptorUpdateTemplateSignature> signature = writes.Length <= StackTemplateEntries
+            ? stackalloc DescriptorUpdateTemplateSignature[writes.Length]
+            : (rentedSignature = ArrayPool<DescriptorUpdateTemplateSignature>.Shared.Rent(writes.Length)).AsSpan(0, writes.Length);
+        try
+        {
+            return TryUpdateDescriptorSetWithTemplateCore(
+                device, descriptorSet, descriptorSetLayout, bindPoint, pipelineLayout, setIndex, writes, entries, signature);
+        }
+        finally
+        {
+            if (rentedEntries is not null)
+                ArrayPool<DescriptorUpdateTemplateEntry>.Shared.Return(rentedEntries);
+            if (rentedSignature is not null)
+                ArrayPool<DescriptorUpdateTemplateSignature>.Shared.Return(rentedSignature);
+        }
+    }
+
+    private bool TryUpdateDescriptorSetWithTemplateCore(
+        VulkanDeviceContext device,
+        DescriptorSet descriptorSet,
+        DescriptorSetLayout descriptorSetLayout,
+        PipelineBindPoint bindPoint,
+        PipelineLayout pipelineLayout,
+        uint setIndex,
+        ReadOnlySpan<WriteDescriptorSet> writes,
+        Span<DescriptorUpdateTemplateEntry> entries,
+        Span<DescriptorUpdateTemplateSignature> signature)
+    {
         nuint totalSize = 0;
         for (int index = 0; index < writes.Length; index++)
         {
@@ -413,6 +493,7 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
                             if (!TryPrevalidateWritesNoLock(
                                     unchecked((uint)writes.Length),
                                     writePointer,
+                                    out _,
                                     out _))
                             {
                                 return false;
@@ -1571,8 +1652,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
         PipelineBindPoint bindPoint,
         PipelineLayout pipelineLayout,
         uint setIndex,
-        DescriptorUpdateTemplateEntry[] entries,
-        DescriptorUpdateTemplateSignature[] signature,
+        ReadOnlySpan<DescriptorUpdateTemplateEntry> entries,
+        ReadOnlySpan<DescriptorUpdateTemplateSignature> signature,
         out DescriptorUpdateTemplate updateTemplate)
     {
         updateTemplate = default;
@@ -1621,7 +1702,7 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
             CachedDescriptorUpdateTemplate created = new()
             {
                 Template = updateTemplate,
-                Signature = signature,
+                Signature = signature.ToArray(),
                 Hash = hash,
             };
             if (bucket is null)
@@ -2388,9 +2469,11 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
     private bool TryPrevalidateWritesNoLock(
         uint writeCount,
         WriteDescriptorSet* writes,
-        out string failureReason)
+        out string failureReason,
+        out bool referenceRetired)
     {
         failureReason = string.Empty;
+        referenceRetired = false;
         if (writeCount == 0 || writes is null)
             return true;
 
@@ -2452,6 +2535,7 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
                         write.DescriptorType, write.DstArrayElement + descriptorIndex,
                         out failureReason))
                 {
+                    referenceRetired = true;
                     return false;
                 }
             }
@@ -3223,8 +3307,8 @@ internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
     }
 
     private static bool TemplateSignaturesEqual(
-        DescriptorUpdateTemplateSignature[] left,
-        DescriptorUpdateTemplateSignature[] right)
+        ReadOnlySpan<DescriptorUpdateTemplateSignature> left,
+        ReadOnlySpan<DescriptorUpdateTemplateSignature> right)
     {
         if (left.Length != right.Length)
             return false;

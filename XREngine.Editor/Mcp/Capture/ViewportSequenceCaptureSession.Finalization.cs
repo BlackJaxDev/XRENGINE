@@ -49,18 +49,20 @@ internal sealed partial class ViewportSequenceCaptureSession
         string? finalizationError = null;
         try
         {
+            // A frame sink receives the pixels directly, so its frames have no PNG file to check or analyze.
+            bool framesOnDisk = FrameSink is null;
             ViewportSequenceCaptureFrame[] successfulFrames = finalizedFrames
-                .Where(static frame => frame.Succeeded && File.Exists(frame.Path))
+                .Where(frame => frame.Succeeded && (!framesOnDisk || File.Exists(frame.Path)))
                 .OrderBy(static frame => frame.CaptureIndex)
                 .ToArray();
 
             if (desiredOutcome == ViewportSequenceCaptureState.Completed && successfulFrames.Length == 0)
                 throw new InvalidOperationException("The capture interval ended without producing any frames.");
 
-            if (_options.ComputeFrameDifferences && successfulFrames.Length > 0)
+            if (framesOnDisk && _options.ComputeFrameDifferences && successfulFrames.Length > 0)
                 ViewportSequenceCaptureImageAnalyzer.Analyze(successfulFrames);
 
-            if (_options.CreateContactSheet && successfulFrames.Length > 0)
+            if (framesOnDisk && _options.CreateContactSheet && successfulFrames.Length > 0)
             {
                 string contactSheetPath = Path.Combine(OutputDirectory, "contact-sheet.png");
                 if (!ViewportSequenceCaptureContactSheetWriter.TryWrite(

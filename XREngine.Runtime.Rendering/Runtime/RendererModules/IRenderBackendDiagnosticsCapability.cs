@@ -60,6 +60,13 @@ public interface IRenderBackendDiagnosticsCapability
     object? GetValidationDiagnostics()
         => null;
 
+    /// <summary>
+    /// Describes the backend's delayed GPU diagnostic readback ring (slots by state, oldest
+    /// reservation, dropped and completed reservations), or returns null when it has none.
+    /// </summary>
+    object? GetDiagnosticReadbackDiagnostics()
+        => null;
+
     bool TryCapturePresentNowFailureForFrame(
         long frameAuthorityId,
         out RenderBackendPresentNowFailureSnapshot diagnostic)

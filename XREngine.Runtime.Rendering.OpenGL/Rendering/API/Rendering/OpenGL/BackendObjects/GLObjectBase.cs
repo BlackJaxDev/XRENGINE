@@ -441,6 +441,12 @@ namespace XREngine.Rendering.OpenGL
                     //Stencil
                     ESizedInternalFormat.StencilIndex8 => GLEnum.StencilIndex8,
 
+                    //Block compressed
+                    ESizedInternalFormat.Bc7Unorm => GLEnum.CompressedRgbaBptcUnorm,
+                    ESizedInternalFormat.Bc7Srgb => GLEnum.CompressedSrgbAlphaBptcUnorm,
+                    ESizedInternalFormat.Bc5Unorm => GLEnum.CompressedRGRgtc2,
+                    ESizedInternalFormat.Bc4Unorm => GLEnum.CompressedRedRgtc1,
+
                     _ => throw new ArgumentOutOfRangeException(nameof(sizedInternalFormat), sizedInternalFormat, null),
                 };
 
@@ -691,6 +697,13 @@ namespace XREngine.Rendering.OpenGL
                     ESizedInternalFormat.Depth32fStencil8 => EPixelInternalFormat.DepthStencil,
 
                     ESizedInternalFormat.StencilIndex8 => EPixelInternalFormat.StencilIndex,
+
+                    // A block-compressed format has no uncompressed base format. The upload
+                    // path selects glCompressedTex(Sub)Image from the compressed internal format.
+                    ESizedInternalFormat.Bc7Unorm or
+                    ESizedInternalFormat.Bc7Srgb or
+                    ESizedInternalFormat.Bc5Unorm or
+                    ESizedInternalFormat.Bc4Unorm => TextureBlockFormats.ToPixelInternalFormat(sizedInternalFormat),
 
                     _ => throw new ArgumentOutOfRangeException(nameof(sizedInternalFormat), sizedInternalFormat, null),
                 };

@@ -145,9 +145,20 @@ public partial class OpenGLRenderer
                     // Its complete stream is emitted once; late recovery is GPU-only.
                     if (late && direct)
                         continue;
-                    GLRenderProgram? program = GenericToAPI<GLRenderProgram>(range.Key.Coverage == EAdvancedMaterialCoverageMode.Masked
+                    XRRenderProgram? selected = range.Key.Coverage == EAdvancedMaterialCoverageMode.Masked
                         ? (stereo ? _advancedStereoMaskedRasterProgram : _advancedVisibilityMaskedRasterProgram)
-                        : (stereo ? _advancedStereoRasterProgram : _advancedVisibilityRasterProgram));
+                        : (stereo ? _advancedStereoRasterProgram : _advancedVisibilityRasterProgram);
+                    // Parallax ranges use the depth-writing program once it links. Until then
+                    // the masked program draws them flat, so a pending link never stalls the frame.
+                    if (AdvancedVisibilityRasterStateBits.WritesFragmentDepth(range.Key.RasterStateClass))
+                    {
+                        XRRenderProgram? fragmentDepth = stereo
+                            ? _advancedStereoFragmentDepthRasterProgram
+                            : _advancedVisibilityFragmentDepthRasterProgram;
+                        if (IsLinked(fragmentDepth))
+                            selected = fragmentDepth;
+                    }
+                    GLRenderProgram? program = GenericToAPI<GLRenderProgram>(selected);
                     if (program is null || !program.Use())
                     {
                         reason = "OpenGL Advanced visibility raster program is unavailable.";

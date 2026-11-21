@@ -74,6 +74,50 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     public const uint DefaultMaxShadingKernels = 128u;
 
+    /// <summary>
+    /// Index of the overflow repair command in the classification dispatch arguments, after the
+    /// per-kernel commands of every view. Classification writes the full tile grid of one view
+    /// there when it overflowed and zero work groups otherwise, so a frame without overflow
+    /// launches no repair groups. Each view's shading pass dispatches this command for its view.
+    /// </summary>
+    public static uint OverflowRepairDispatchIndex(uint viewCount)
+        => checked(DefaultMaxShadingKernels * Math.Max(1u, viewCount));
+
+    /// <summary>
+    /// Number of commands in the classification dispatch arguments: one block of per-kernel
+    /// commands for each view, then the overflow repair command. A single view keeps 129 commands.
+    /// </summary>
+    public static uint ClassificationDispatchCommandCount(uint viewCount)
+        => checked(OverflowRepairDispatchIndex(viewCount) + 1u);
+
+    /// <summary>
+    /// Index of the indirect command of <paramref name="kernel"/> for <paramref name="viewIndex"/>.
+    /// The command launches only the memberships that this view's classification added.
+    /// </summary>
+    public static uint KernelDispatchIndex(uint viewIndex, uint kernel)
+        => checked(viewIndex * DefaultMaxShadingKernels + kernel);
+
+    /// <summary>
+    /// Number of words in the kernel count buffer. The first <see cref="DefaultMaxShadingKernels"/>
+    /// words count the memberships of each kernel over the views classified so far. Then one block
+    /// per view holds the count of each kernel after that view, which gives each view its range of
+    /// the kernel's membership list (views classify in order with a barrier between them).
+    /// </summary>
+    public static uint KernelCountWordCount(uint viewCount)
+        => checked(DefaultMaxShadingKernels * (Math.Max(1u, viewCount) + 1u));
+
+    /// <summary>
+    /// Number of per-kernel ranges in the kernel-tile membership buffer. Each range holds one
+    /// record per tile, and kernel k owns range k, so this bounds the dense kernel indices that
+    /// classification can store. The kernel table gives a new kernel the lowest free dense
+    /// index, and at most <see cref="Commands.AdvancedGpuMaterialPublisher.MaxCanonicalKernelKeys"/>
+    /// kernels are live, so the extra ranges cover kernels whose release still waits for the GPU.
+    /// A kernel index past the last range sets the membership overflow flag, and the frame then
+    /// shades every pixel in the overflow repair pass (correct output, more GPU time).
+    /// For a 2688x2688 eye pair this is about 38 MB per frame slot instead of 101 MB.
+    /// </summary>
+    public const uint KernelTileRangeCount = Commands.AdvancedGpuMaterialPublisher.MaxCanonicalKernelKeys + 6u;
+
     private void DeclareClassificationResources(RenderPipelineResourceLayoutBuilder builder)
     {
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
@@ -81,7 +125,7 @@ public partial class AdvancedRenderPipeline
         uint tileCapacity = checked(
             AdvancedClassificationTileDimensions.CalculateTilesX(Math.Max(1u, builder.Profile.InternalWidth)) *
             AdvancedClassificationTileDimensions.CalculateTilesY(Math.Max(1u, builder.Profile.InternalHeight)) * layers);
-        uint membershipCapacity = checked(tileCapacity * DefaultMaxShadingKernels);
+        uint membershipCapacity = checked(tileCapacity * KernelTileRangeCount);
 
         for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; slot++)
         {
@@ -107,11 +151,12 @@ public partial class AdvancedRenderPipeline
                 .DebugLabel($"Advanced kernel-tile memberships slot {slot}")
                 .Add();
 
-            // 3. Indirect Compute Dispatch Arguments
+            // 3. Indirect Compute Dispatch Arguments: one command per shading kernel and view, then
+            // the overflow repair command (OverflowRepairDispatchIndex).
             VisibilityBuffer<AdvancedClassificationDispatchArguments>(
                     builder,
                     AdvancedClassificationResourceNames.DispatchArgs(slot),
-                    DefaultMaxShadingKernels,
+                    ClassificationDispatchCommandCount(layers),
                     EBufferTarget.DispatchIndirectBuffer,
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)
@@ -120,7 +165,7 @@ public partial class AdvancedRenderPipeline
 
             VisibilityBuffer<uint>(builder,
                     AdvancedClassificationResourceNames.KernelCounts(slot),
-                    DefaultMaxShadingKernels,
+                    KernelCountWordCount(layers),
                     EBufferTarget.ShaderStorageBuffer,
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)

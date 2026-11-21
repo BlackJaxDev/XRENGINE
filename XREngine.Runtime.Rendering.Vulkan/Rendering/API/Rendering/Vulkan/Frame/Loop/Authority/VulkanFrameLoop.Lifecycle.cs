@@ -19,6 +19,9 @@ internal sealed partial class VulkanFrameLoop
         _targetDriver.Quiesce();
         VulkanTextureStreamingBackendProvider.Instance.UnbindScheduler(this);
         QuiesceFrameAdmissionAndWait();
+        // A split desktop frame can still hold a worker recording; join and drop it
+        // before the recording workers and the GPU are quiesced.
+        DiscardDesktopWorkerCarry("the renderer is retiring");
         _commandRuntime.QuiesceCommandChainRecordingWorkersForRetirement();
         _resourceRuntime.Uploads.QuiescePreparationForRetirement(
             "Vulkan renderer retirement before GPU idle",
@@ -338,6 +341,7 @@ internal sealed partial class VulkanFrameLoop
         }
 
         RunCleanupStep("auto-exposure compute resources", _resourceRuntime.DestroyAutoExposureComputeResources, failures);
+        RunCleanupStep("OpenXR captured operation pool", () => FrameOp.PublishOpenXrCapturedWorkspace(null), failures);
         RunCleanupStep("fallback texture", _resourceRuntime.FallbackTexture.RetireAll, failures);
         RunCleanupStep("black fallback texture", _resourceRuntime.BlackFallbackTexture.RetireAll, failures);
         if (_imguiOutputPipelineService is not null &&
@@ -609,6 +613,7 @@ internal sealed partial class VulkanFrameLoop
         RuntimeEngine.Rendering.State.IsNVIDIA = properties.VendorID == 0x10DE;
         RuntimeEngine.Rendering.State.IsIntel = properties.VendorID == 0x8086;
         RuntimeEngine.Rendering.State.IsVulkan = true;
+        RuntimeEngine.Rendering.State.HasVulkanMultiviewGeometryShader = false;
         RuntimeEngine.Rendering.State.SupportsOpenGLLayeredFramebuffers = false;
         RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderLayeredRendering = false;
         RuntimeEngine.Rendering.State.SupportsOpenGLVertexShaderLayeredRendering = false;
@@ -731,6 +736,8 @@ internal sealed partial class VulkanFrameLoop
         if (result.Resources.CreatePipelineCache)
             _resourceRuntime.PipelineManager.CreatePipelineCache();
         RuntimeEngine.Rendering.State.HasVulkanMultiView = result.Engine.HasVulkanMultiView;
+        RuntimeEngine.Rendering.State.HasVulkanMultiviewGeometryShader =
+            _deviceContext.AdvancedMultiviewGeometryShaderEnabled;
         RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = result.Engine.HasVulkanDepthClipControl;
         RuntimeEngine.Rendering.State.HasVulkanMemoryDecompression = result.Engine.HasVulkanMemoryDecompression;
         RuntimeEngine.Rendering.State.HasVulkanCopyMemoryIndirect = result.Engine.HasVulkanCopyMemoryIndirect;

@@ -440,8 +440,12 @@ namespace XREngine
         /// Resolves the authority path for a texture asset, which may be the original source file or a cached version depending on cache validity and streaming settings.
         /// </summary>
         /// <param name="filePath">The file path of the texture asset.</param>
+        /// <param name="cacheVariantKey">
+        /// An optional variant below the codec payload key, such as a texture role folder.
+        /// Null uses the default key.
+        /// </param>
         /// <returns>The resolved authority path for the texture asset.</returns>
-        public string ResolveTextureStreamingAuthorityPath(string filePath)
+        public string ResolveTextureStreamingAuthorityPath(string filePath, string? cacheVariantKey = null)
         {
             if (string.IsNullOrWhiteSpace(filePath))
                 return filePath;
@@ -455,19 +459,7 @@ namespace XREngine
             if (!File.Exists(normalizedPath))
                 return normalizedPath;
 
-            IThirdPartyCacheCodec? codec = ThirdPartyCacheCodecRegistry.FindByAuthorityRole(
-                ThirdPartyCacheAuthorityRoles.TextureStreaming);
-            Type? assetType = codec?.AuthorityAssetType;
-            if (assetType is null)
-            {
-                Debug.LogWarning(
-                    $"No cache codec registered for authority role '{ThirdPartyCacheAuthorityRoles.TextureStreaming}' " +
-                    $"while resolving '{normalizedPath}'. Install the Runtime.Rendering asset registrations.");
-                return normalizedPath;
-            }
-
-            string? cacheVariantKey = ResolveDefaultCacheVariantKey(assetType, explicitVariantKey: null);
-            if (!TryResolveCachePath(normalizedPath, assetType, cacheVariantKey, out string cachePath))
+            if (!TryResolveTextureStreamingCachePath(normalizedPath, cacheVariantKey, out Type? assetType, out string? resolvedVariantKey, out string cachePath))
                 return normalizedPath;
 
             if (IsCacheAssetFresh(cachePath, normalizedPath, assetType))
@@ -476,8 +468,61 @@ namespace XREngine
             if (!IsTextureStreamingCacheWarmupEnabled())
                 return normalizedPath;
 
-            QueueFeatureCacheImport(normalizedPath, cachePath, assetType, cacheVariantKey);
+            QueueFeatureCacheImport(normalizedPath, cachePath, assetType, resolvedVariantKey);
             return normalizedPath;
+        }
+
+        /// <summary>
+        /// Returns whether a fresh cooked texture-streaming cache asset exists for a source image.
+        /// A fresh cache was cooked from a successful decode of the current source file, so
+        /// callers can use this to skip a repeated full decode of the same source.
+        /// This check does not queue a cache warm-up.
+        /// </summary>
+        /// <param name="filePath">The path of the source image.</param>
+        public bool HasFreshTextureStreamingCache(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath))
+                return false;
+
+            // Without a synchronous host-file owner there is no cache to inspect.
+            if (!SupportsSynchronousAssetWork)
+                return false;
+
+            string normalizedPath = Path.GetFullPath(filePath);
+            if (!File.Exists(normalizedPath))
+                return false;
+
+            return TryResolveTextureStreamingCachePath(normalizedPath, explicitVariantKey: null, out Type? assetType, out _, out string cachePath)
+                && IsCacheAssetFresh(cachePath, normalizedPath, assetType);
+        }
+
+        /// <summary>
+        /// Resolves the texture-streaming authority asset type, its default cache variant key,
+        /// and the cache path for a normalized source image path.
+        /// </summary>
+        /// <returns><c>false</c> when no texture-streaming codec is registered or no cache path applies.</returns>
+        private bool TryResolveTextureStreamingCachePath(
+            string normalizedPath,
+            string? explicitVariantKey,
+            [NotNullWhen(true)] out Type? assetType,
+            out string? cacheVariantKey,
+            out string cachePath)
+        {
+            cacheVariantKey = null;
+            cachePath = string.Empty;
+            IThirdPartyCacheCodec? codec = ThirdPartyCacheCodecRegistry.FindByAuthorityRole(
+                ThirdPartyCacheAuthorityRoles.TextureStreaming);
+            assetType = codec?.AuthorityAssetType;
+            if (assetType is null)
+            {
+                Debug.LogWarning(
+                    $"No cache codec registered for authority role '{ThirdPartyCacheAuthorityRoles.TextureStreaming}' " +
+                    $"while resolving '{normalizedPath}'. Install the Runtime.Rendering asset registrations.");
+                return false;
+            }
+
+            cacheVariantKey = ResolveDefaultCacheVariantKey(assetType, explicitVariantKey);
+            return TryResolveCachePath(normalizedPath, assetType, cacheVariantKey, out cachePath);
         }
 
         private static bool IsTextureStreamingCacheWarmupEnabled()
@@ -500,7 +545,14 @@ namespace XREngine
             string? cacheVariantKey)
         {
             EnsureHostFileAssetAccess();
-            if (!_pendingFeatureCacheImports.TryAdd(sourcePath, 0))
+            long sourceWriteTicks = GetSourceWriteTicks(sourcePath);
+            if (_failedFeatureCacheImports.TryGetValue(cachePath, out long failedWriteTicks) &&
+                failedWriteTicks == sourceWriteTicks)
+            {
+                return;
+            }
+
+            if (!_pendingFeatureCacheImports.TryAdd(cachePath, 0))
                 return;
 
             _jobManagerProvider().Schedule(
@@ -508,19 +560,36 @@ namespace XREngine
                 error: ex =>
                 {
                     Debug.LogWarning($"Failed to warm the {assetType.FullName} cache for '{sourcePath}'. {ex.Message}");
-                    _pendingFeatureCacheImports.TryRemove(sourcePath, out _);
+                    _failedFeatureCacheImports[cachePath] = sourceWriteTicks;
+                    _pendingFeatureCacheImports.TryRemove(cachePath, out _);
                 },
-                completed: () => _pendingFeatureCacheImports.TryRemove(sourcePath, out _),
-                canceled: () => _pendingFeatureCacheImports.TryRemove(sourcePath, out _),
+                completed: () => _pendingFeatureCacheImports.TryRemove(cachePath, out _),
+                canceled: () => _pendingFeatureCacheImports.TryRemove(cachePath, out _),
                 priority: JobPriority.Low);
 
             IEnumerable CacheImportRoutine()
             {
                 EnsureHostFileAssetAccess();
-                if (!IsCacheAssetFresh(cachePath, sourcePath, assetType))
-                    TryImportThirdPartyCacheAsset(sourcePath, assetType, importOptions: null, cacheVariantKey, cachePath);
+                if (!IsCacheAssetFresh(cachePath, sourcePath, assetType) &&
+                    !TryImportThirdPartyCacheAsset(sourcePath, assetType, importOptions: null, cacheVariantKey, cachePath))
+                {
+                    _failedFeatureCacheImports[cachePath] = sourceWriteTicks;
+                }
 
                 yield break;
+            }
+        }
+
+        /// <summary>Returns the last write time of a source file in ticks, or 0 when it cannot be read.</summary>
+        private static long GetSourceWriteTicks(string sourcePath)
+        {
+            try
+            {
+                return File.GetLastWriteTimeUtc(sourcePath).Ticks;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                return 0L;
             }
         }
 

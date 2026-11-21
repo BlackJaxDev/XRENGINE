@@ -5,6 +5,7 @@ using System.Threading;
 using System.Linq;
 using System.Numerics;
 using XREngine.Components;
+using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
@@ -29,7 +30,7 @@ public static partial class RuntimeEngine
             {
                 public EngineSettings()
                 {
-                    AttachRenderSubSettings(_execution, _openGL, _vulkan, _browserWebGpuQuality);
+                    AttachRenderSubSettings(_execution, _openGL, _vulkan, _browserWebGpuQuality, _vrEyeFeatures);
                     TrackOverrideableSettings();
                 }
 
@@ -69,7 +70,7 @@ public static partial class RuntimeEngine
                     base.OnPropertyChanged(propName, prev, field);
 
                     if (propName == nameof(Execution) || propName == nameof(OpenGL) || propName == nameof(Vulkan) ||
-                        propName == nameof(BrowserWebGpuQuality))
+                        propName == nameof(BrowserWebGpuQuality) || propName == nameof(VrEyeFeatures))
                         RefreshRenderSubSettings(prev, field);
                 }
 
@@ -169,6 +170,7 @@ public static partial class RuntimeEngine
                 private bool _enableGpuMeshBvhPickLogging = false;
                 private bool _enableZeroReadbackMaterialScatter = false;
                 private EZeroReadbackMaterialDrawPath _zeroReadbackMaterialDrawPath = EZeroReadbackMaterialDrawPath.BindlessMaterialTable;
+                private bool _zeroReadbackUberMaterialsUseMaterialTable;
                 private EMeshSubmissionStrategy? _forceMeshSubmissionStrategy = null;
                 private TextureRuntimeLogMode _textureLogMode = TextureRuntimeLogMode.Summary;
                 private double _textureSlowCpuDecodeResizeMilliseconds = 5.0;
@@ -177,6 +179,16 @@ public static partial class RuntimeEngine
                 private double _textureSlowTransitionMilliseconds = 8.0;
                 private double _textureSlowQueueWaitMilliseconds = 100.0;
                 private double _textureUploadFrameBudgetMilliseconds = 2.0;
+                private int _textureStreamingCutsceneMaxTransitionsPerFrame = 6;
+                private int _textureStreamingCutsceneMaxPromotionsPerFrame = 4;
+                private int _textureStreamingCutsceneMaxPromotionMegabytesPerFrame = 96;
+                private int _textureStreamingCutscenePromotionCooldownFrames = 2;
+                private int _textureStreamingCutscenePromotionFadeFrames = 12;
+                private int _textureStreamingBudgetProfileFadeFrames = 30;
+                private int? _textureStreamingDecodeConcurrency;
+                private int? _textureStreamingUploadsPerFrame;
+                private int? _textureStreamingMaxUploadsPerFrame;
+                private double _textureStreamingFrameToleranceMilliseconds = 2.0;
 
                 /// <summary>
                 /// Whether to enable frame logging for performance profiling.
@@ -314,6 +326,129 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Maximum number of texture residency transitions that one frame queues while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: maximum residency transitions (promotions and demotions) queued in one frame. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutsceneMaxTransitionsPerFrame
+                {
+                    get => _textureStreamingCutsceneMaxTransitionsPerFrame;
+                    set => SetField(ref _textureStreamingCutsceneMaxTransitionsPerFrame, Math.Clamp(value, 1, 64));
+                }
+
+                /// <summary>
+                /// Maximum number of texture promotions that one frame queues while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: maximum promotions queued in one frame. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutsceneMaxPromotionsPerFrame
+                {
+                    get => _textureStreamingCutsceneMaxPromotionsPerFrame;
+                    set => SetField(ref _textureStreamingCutsceneMaxPromotionsPerFrame, Math.Clamp(value, 1, 64));
+                }
+
+                /// <summary>
+                /// Maximum megabytes that the promotions of one frame add while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: maximum megabytes that the promotions of one frame add. The VRAM budget fit still applies. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutsceneMaxPromotionMegabytesPerFrame
+                {
+                    get => _textureStreamingCutsceneMaxPromotionMegabytesPerFrame;
+                    set => SetField(ref _textureStreamingCutsceneMaxPromotionMegabytesPerFrame, Math.Clamp(value, 1, 1024));
+                }
+
+                /// <summary>
+                /// Frames after a promotion before a texture that is not visible can promote again, while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: frames after a promotion before a texture that is not visible can promote again. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutscenePromotionCooldownFrames
+                {
+                    get => _textureStreamingCutscenePromotionCooldownFrames;
+                    set => SetField(ref _textureStreamingCutscenePromotionCooldownFrames, Math.Clamp(value, 0, 600));
+                }
+
+                /// <summary>
+                /// Frames over which a promoted texture fades in its new mips while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. A long fade makes a
+                /// texture that loaded for a cutscene jump look late. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: frames over which a promoted texture fades in its new mips. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutscenePromotionFadeFrames
+                {
+                    get => _textureStreamingCutscenePromotionFadeFrames;
+                    set => SetField(ref _textureStreamingCutscenePromotionFadeFrames, Math.Clamp(value, 0, 600));
+                }
+
+                /// <summary>
+                /// Frames over which the texture streaming limits fade from one budget profile to the other.
+                /// Zero changes the limits in one frame.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Frames over which texture streaming limits fade between the Default and Cutscene budget profiles. Zero changes them in one frame.")]
+                public int TextureStreamingBudgetProfileFadeFrames
+                {
+                    get => _textureStreamingBudgetProfileFadeFrames;
+                    set => SetField(ref _textureStreamingBudgetProfileFadeFrames, Math.Clamp(value, 0, 600));
+                }
+
+                /// <summary>
+                /// The number of texture decodes that can run at the same time. Null selects the automatic value: a base from
+                /// the process affinity and the execution topology reservation (at least 2), which frame-time feedback
+                /// raises while decodes wait and lowers only on evidence.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: decodes that can run at the same time. Leave null for the automatic value (topology base of at least 2, adjusted by frame-time feedback); set a value to pin it.")]
+                public int? TextureStreamingDecodeConcurrency
+                {
+                    get => _textureStreamingDecodeConcurrency;
+                    set => SetField(ref _textureStreamingDecodeConcurrency, value is int count ? Math.Clamp(count, 1, 32) : null);
+                }
+
+                /// <summary>
+                /// The number of texture items that each streaming lane does in one render frame. The OpenGL lane counts whole
+                /// resident applies and sparse transitions; the Vulkan lane counts transfer chunks (a mip level or 4 MB of
+                /// rows). Null selects the adaptive limit, which the frame-time feedback controller sets.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: items in one render frame for each lane (OpenGL: resident applies; Vulkan: transfer chunks). Leave null for the adaptive limit from measured cost and frame time; set a value to pin it.")]
+                public int? TextureStreamingUploadsPerFrame
+                {
+                    get => _textureStreamingUploadsPerFrame;
+                    set => SetField(ref _textureStreamingUploadsPerFrame, value is int count ? Math.Clamp(count, 1, 64) : null);
+                }
+
+                /// <summary>
+                /// The highest adaptive number of texture items in one render frame for each lane, at most the built-in bound
+                /// of 16. Null uses the built-in bound.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: the highest adaptive items in one render frame for each lane, 1 to 16 (the built-in bound). Leave null for the built-in bound.")]
+                public int? TextureStreamingMaxUploadsPerFrame
+                {
+                    get => _textureStreamingMaxUploadsPerFrame;
+                    set => SetField(ref _textureStreamingMaxUploadsPerFrame, value is int count ? Math.Clamp(count, 1, 16) : null);
+                }
+
+                /// <summary>
+                /// The time, in milliseconds, that texture streaming work can add to a render frame above the normal
+                /// frame budget. The adaptive upload limits keep frames inside this tolerance.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: milliseconds that streaming work can add to a frame above the normal frame budget. The adaptive upload limits keep frames inside it.")]
+                public double TextureStreamingFrameToleranceMilliseconds
+                {
+                    get => _textureStreamingFrameToleranceMilliseconds;
+                    set => SetField(ref _textureStreamingFrameToleranceMilliseconds, Math.Clamp(value, 0.1, 50.0));
+                }
+
+                /// <summary>
                 /// Whether to enable zero-readback material scatter for GPU-driven rendering.
                 /// When enabled, the GPU scatter shader writes per-material indirect draw commands
                 /// and the CPU never reads GPU buffers during the rendering hot path.
@@ -335,6 +470,21 @@ public static partial class RuntimeEngine
                 {
                     get => _zeroReadbackMaterialDrawPath;
                     set => SetField(ref _zeroReadbackMaterialDrawPath, value);
+                }
+
+                /// <summary>
+                /// When true, zero-readback material-table passes also draw converted uber
+                /// materials through the shared table program. The table shades the base map,
+                /// tint, normal map and emission; uber-only effects such as matcap, rim and
+                /// glitter are not drawn. When false, a scene with any uber material draws every
+                /// material with its own program.
+                /// </summary>
+                [Category("GPU Rendering")]
+                [Description("Draw converted uber materials through the shared zero-readback material table. Faster, but shades only base color, tint, normal map and emission; matcap, rim, glitter and other uber effects are not drawn.")]
+                public bool ZeroReadbackUberMaterialsUseMaterialTable
+                {
+                    get => _zeroReadbackUberMaterialsUseMaterialTable;
+                    set => SetField(ref _zeroReadbackUberMaterialsUseMaterialTable, value);
                 }
 
                 /// <summary>
@@ -453,6 +603,17 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Restricts the process to the cores of the largest L3 cache on CPUs with unequal L3 caches.
+                /// </summary>
+                [Category("Execution")]
+                [Description("Restricts the process to the cores that share the largest L3 cache when the CPU's L3 caches have different sizes. Enabled by default and requires restart.")]
+                public bool PreferLargestCacheCores
+                {
+                    get => Execution.PreferLargestCacheCores;
+                    set => Execution.PreferLargestCacheCores = value;
+                }
+
+                /// <summary>
                 /// Scheduling policy requested for renderer-neutral render-domain workers.
                 /// </summary>
                 [Category("Execution")]
@@ -511,8 +672,8 @@ public static partial class RuntimeEngine
 
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
-                private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Fxaa;
-                private float _tsrRenderScale = 0.67f;
+                private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Tsr;
+                private float _tsrRenderScale = 0.75f;
                 private bool _enableNvidiaDlss = false;
                 private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;
                 private float _dlssCustomScale = 0.77f;
@@ -636,6 +797,7 @@ public static partial class RuntimeEngine
                 private float _vrDesktopEditorTargetRateHz = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrOutputTargetRateHz;
                 private float _vrCyclopeanDesktopTargetRateHz = 60.0f;
                 private bool _vrDesktopAutoSkipWhenOverBudget = true;
+                private EVrDesktopFrameExecutionMode _vrDesktopFrameExecutionMode = EVrDesktopFrameExecutionMode.Inline;
                 private bool _enableVrFoveatedViewSet = false;
                 private EVrFoveationMode _vrFoveationMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationMode;
                 private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
@@ -643,12 +805,16 @@ public static partial class RuntimeEngine
                 private EAdvancedRenderPipelineMode _advancedRenderPipelineMode = EAdvancedRenderPipelineMode.Available;
                 private ERvcPipelineMode _rvcPipelineMode = ERvcPipelineMode.Off;
                 private bool _rvcQuadViewEnabled = false;
+                private float _rvcQuadViewWideResolutionScale = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcQuadViewWideResolutionScale;
+                private bool _rvcQuadViewSharedVisibilityEnabled = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcQuadViewSharedVisibilityEnabled;
                 private bool _rvcStereoReuseEnabled = false;
                 private bool _rvcInsetWideReuseEnabled = true;
                 private bool _rvcTemporalReuseEnabled = false;
                 private bool _rvcPeripheralLightAggregationEnabled = false;
                 private bool _rvcDiagnosticOverlayEnabled = false;
                 private ERvcDebugViewMode _rvcDebugViewMode = ERvcDebugViewMode.Disabled;
+                private bool _rvcShadeletTelemetryEnabled = false;
+                private bool _rvcFoveatedQuadShadingEnabled = false;
                 private ERvcLightGridSpace _rvcLightGridSpace = ERvcLightGridSpace.WorldAlignedCameraRelative;
                 private float _rvcFovealRadiusDegrees = RvcQualitySettings.Defaults.FovealRadiusDegrees;
                 private float _rvcGuardBandDegrees = RvcQualitySettings.Defaults.GuardBandDegrees;
@@ -671,12 +837,14 @@ public static partial class RuntimeEngine
                 private bool _openXrDebugRenderRightThenLeft = false;
                 private bool _openXrPrepareFrameAfterDesktopRender = true;
                 private float _openXrDeadlineSafetyMarginMs = 1.0f;
+                private uint _openXrStereoSubmissionWaitMs = 50u;
                 private float _openXrPoseTimeOffsetMs = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrPoseTimeOffsetMs;
                 private OpenXrCollectVisiblePosePolicy _openXrCollectVisiblePosePolicy = OpenXrCollectVisiblePosePolicy.Predicted;
                 private float _openXrCollectVisibleFrustumPaddingDegrees = 2.0f;
                 private OpenXrTrackingLossPolicy _openXrTrackingLossPolicy = OpenXrTrackingLossPolicy.FreezeLastValid;
                 private OpenXrActionSyncPolicy _openXrActionSyncPolicy = OpenXrActionSyncPolicy.PredictedOnly;
                 private OpenXrRenderPacingMode _openXrRenderPacingMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.OpenXrRenderPacingMode;
+                private bool _openXrCollectPacing = false;
                 private Vector2 _vrFoveationCenterUv = new(0.5f, 0.5f);
                 private float _vrFoveationInnerRadius = 0.35f;
                 private float _vrFoveationOuterRadius = 0.85f;
@@ -684,6 +852,9 @@ public static partial class RuntimeEngine
                 private float _vrFoveationVisibilityMargin = 0.05f;
                 private bool _vrFoveationForceFullResForUiAndNearField = true;
                 private float _vrFoveationFullResNearDistanceMeters = 1.5f;
+                private bool _vrAdvancedEdgeHalfRateShading = false;
+                private float _vrAdvancedEdgeHalfRateRadius = 0.6f;
+                private bool _vrAdvancedEdgeHalfRateDebugTint = false;
                 private bool _populateVertexDataInParallel = true;
                 private bool _processMeshImportsAsynchronously = true;
                 private bool _useInterleavedMeshBuffer = false;
@@ -707,6 +878,13 @@ public static partial class RuntimeEngine
                 private int _maxShadowTilesRenderedPerFrame = 16;
                 private float _maxShadowRenderMilliseconds = 2.0f;
                 private int _maxDirectionalCascadeAtlasStaleFrames = 4;
+                private bool _holdDirectionalCascadesWhileCameraMoves;
+                private int _maxDirectionalCascadeRefreshesPerFrame = 1;
+                private float _directionalCascadeRefitMarginFraction = 0.1f;
+                private bool _directionalShadowStaticCacheEnabled = true;
+                private bool _emulatedVrEyesUseHmdDirectionalCascades;
+                private EDirectionalCascadeFitCentre _desktopDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
+                private EDirectionalCascadeFitCentre _hmdDirectionalCascadeFitCentre = EDirectionalCascadeFitCentre.CameraPosition;
                 private uint _minShadowAtlasTileResolution = 128u;
                 private uint _maxShadowAtlasTileResolution = 4096u;
 
@@ -914,6 +1092,96 @@ public static partial class RuntimeEngine
                 }
 
                 [Category("Shadows")]
+                [Description("Keeps directional cascade tiles while the source camera moves and refreshes them after the camera settles or the stale limit. Shading reprojects held tiles with the matrix they were rendered with. Off by default: cascades refresh every frame, so shadows keep their full resolution and coverage while the camera moves.")]
+                public bool HoldDirectionalCascadesWhileCameraMoves
+                {
+                    get => _holdDirectionalCascadesWhileCameraMoves;
+                    set => SetField(ref _holdDirectionalCascadesWhileCameraMoves, value);
+                }
+
+                [Category("Shadows")]
+                [Description("Maximum number of directional cascades of one light and source that refresh in one frame when only the camera moved. The cascades with the oldest rendered tiles refresh first; the others keep their stale tiles, which shading reprojects with the matrix they were rendered with. A caster change, a cascade without a rendered tile, a large fit jump and a cascade at the stale limit always refresh. 0 removes the limit.")]
+                public int MaxDirectionalCascadeRefreshesPerFrame
+                {
+                    get => Volatile.Read(ref _maxDirectionalCascadeRefreshesPerFrame);
+                    set
+                    {
+                        int clamped = Math.Clamp(value, 0, 8);
+                        if (!SetField(ref _maxDirectionalCascadeRefreshesPerFrame, clamped))
+                            return;
+
+                        Volatile.Write(ref _maxDirectionalCascadeRefreshesPerFrame, clamped);
+                    }
+                }
+
+                [Category("Shadows")]
+                [Description("Margin of a directional cascade fit, as a fraction of the cascade radius. A fit grows by this margin on each side, and the cascade keeps its fit while the camera's slice stays inside it, so a small camera move does not re-render the cascade. A refit happens when the slice leaves the fit, the light rotates, or the fit resolution changes. The texel size grows by the same fraction. 0 turns the margin off and refits in every frame in which the slice moves.")]
+                public float DirectionalCascadeRefitMarginFraction
+                {
+                    get => Volatile.Read(ref _directionalCascadeRefitMarginFraction);
+                    set
+                    {
+                        float clamped = float.IsFinite(value) ? Math.Clamp(value, 0.0f, 0.5f) : 0.0f;
+                        if (!SetField(ref _directionalCascadeRefitMarginFraction, clamped))
+                            return;
+
+                        Volatile.Write(ref _directionalCascadeRefitMarginFraction, clamped);
+                    }
+                }
+
+                [Category("Shadows")]
+                [Description("Caches the static shadow casters of each directional cascade (desktop source) that has dynamic casters in a separate depth tile. A refresh caused only by dynamic casters (skinned meshes and moving objects) copies that tile into the cascade tile and draws only the dynamic casters over it. It works in the Advanced directional shadow lane for CPU-direct and meshlet frames. The environment variable XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0 turns it off for the process.")]
+                public bool DirectionalShadowStaticCacheEnabled
+                {
+                    get => Volatile.Read(ref _directionalShadowStaticCacheEnabled) &&
+                        !s_directionalShadowStaticCacheDisabledByEnvironment;
+                    set
+                    {
+                        if (!SetField(ref _directionalShadowStaticCacheEnabled, value))
+                            return;
+
+                        Volatile.Write(ref _directionalShadowStaticCacheEnabled, value);
+                    }
+                }
+
+                private static readonly bool s_directionalShadowStaticCacheDisabledByEnvironment =
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
+
+                [Category("Shadows")]
+                [Description("Makes the emulated VR eye viewports use the cascaded HMD directional shadow source, as headset eyes do: the HMD cascades fit both eye frusta and the combined eye frustum. Default-pipeline eyes read them. Advanced eyes in SequentialViews still read the desktop cascades, because their views carry the desktop view kind. Use it to test the HMD cascade source (fit, lane groups, static tiles) without a headset. The environment variable XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1 turns it on for the process.")]
+                public bool EmulatedVrEyesUseHmdDirectionalCascades
+                {
+                    get => Volatile.Read(ref _emulatedVrEyesUseHmdDirectionalCascades) ||
+                        s_emulatedVrHmdDirectionalCascadesEnabledByEnvironment;
+                    set
+                    {
+                        if (!SetField(ref _emulatedVrEyesUseHmdDirectionalCascades, value))
+                            return;
+
+                        Volatile.Write(ref _emulatedVrEyesUseHmdDirectionalCascades, value);
+                    }
+                }
+
+                private static readonly bool s_emulatedVrHmdDirectionalCascadesEnabledByEnvironment =
+                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EmulatedVrHmdDirectionalCascades) is "1" or "true" or "True";
+
+                [Category("Shadows")]
+                [Description("Centre of the directional cascade fit for the desktop camera. CameraPosition centres each cascade sphere on the camera, so turning the camera does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the camera: finer texels, but a turn refits the cascades.")]
+                public EDirectionalCascadeFitCentre DesktopDirectionalCascadeFitCentre
+                {
+                    get => _desktopDirectionalCascadeFitCentre;
+                    set => SetField(ref _desktopDirectionalCascadeFitCentre, value);
+                }
+
+                [Category("Shadows")]
+                [Description("Centre of the directional cascade fit for the HMD (both eyes share the cascades). CameraPosition centres each cascade sphere on the head, so head rotation does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the head: finer texels, but every head turn refits the cascades.")]
+                public EDirectionalCascadeFitCentre HmdDirectionalCascadeFitCentre
+                {
+                    get => _hmdDirectionalCascadeFitCentre;
+                    set => SetField(ref _hmdDirectionalCascadeFitCentre, value);
+                }
+
+                [Category("Shadows")]
                 [Description("Minimum dynamic shadow atlas tile resolution in texels.")]
                 public uint MinShadowAtlasTileResolution
                 {
@@ -964,6 +1232,35 @@ public static partial class RuntimeEngine
                     set => SetField(ref _outputHDR, value);
                 }
 
+                private EDesktopPresentPath _desktopPresentPath = EDesktopPresentPath.VulkanSwapchain;
+
+                /// <summary>
+                /// Selects how the Vulkan renderer presents a desktop window on Windows. Windows can
+                /// override this value. The environment variable XRE_DESKTOP_PRESENT_PATH overrides both.
+                /// </summary>
+                [Category("Performance")]
+                [Description("How the Vulkan renderer presents desktop windows on Windows. DxgiFlipModel avoids a high desktop compositor CPU cost on some drivers.")]
+                public EDesktopPresentPath DesktopPresentPath
+                {
+                    get => _desktopPresentPath;
+                    set => SetField(ref _desktopPresentPath, value);
+                }
+
+                private ETextureCookCompression _cookedTextureCompression = ETextureCookCompression.Bcn;
+
+                /// <summary>
+                /// Selects the block compression that the texture cook uses for the streaming cache.
+                /// The environment variable XRE_TEXTURE_COOK_COMPRESSION (None, Bc7, or Bcn) overrides it.
+                /// A change takes effect for textures that are cooked after it; the cache key includes the mode.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Block compression for cooked streaming textures. Bcn selects BC7, BC5 (normal maps), or BC4 (single-channel data) by texture role; Bc7 uses BC7 for every role. BC7 and BC5 use a quarter of the memory of RGBA8, and BC4 an eighth.")]
+                public ETextureCookCompression CookedTextureCompression
+                {
+                    get => _cookedTextureCompression;
+                    set => SetField(ref _cookedTextureCompression, value);
+                }
+
                 /// <summary>
                 /// Number of samples to use when MSAA is enabled (set to 1 to disable).
                 /// </summary>
@@ -977,6 +1274,7 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// Selects which anti-aliasing technique to use, including temporal AA (TAA) and temporal super resolution (TSR).
+                /// The default is TSR at 0.75 internal scale (<see cref="TsrRenderScale"/>).
                 /// </summary>
                 [Category("Performance")]
                 [Description("Selects which anti-aliasing technique to use.")]
@@ -992,6 +1290,9 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// When TSR is enabled, scales the internal render resolution before temporal upscaling.
+                /// The default 0.75 renders each axis at 75 percent of the output size, and TSR upscales
+                /// the result to the output size. At 1.0, TSR renders at full resolution and acts as
+                /// temporal anti-aliasing.
                 /// </summary>
                 [Category("Performance")]
                 [Description("Internal resolution scale used by temporal super-resolution (TSR). Values below 1.0 render below native and upscale temporally.")]
@@ -1748,11 +2049,13 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// When true, non-essential mesh LOD levels stay out of the GPU mesh atlas until the
-                /// GPU LOD-select pass requests them. LOD0 and each command's own mesh always stay resident,
-                /// so selection clamps to the nearest resident level while finer/coarser data streams in.
+                /// GPU LOD-select pass requests them. The lowest LOD and each command's own mesh always stay
+                /// resident, so selection clamps to the nearest resident level while finer data streams in.
+                /// The request drain reads a GPU buffer, so it is a CPU readback. It uploads only levels whose
+                /// CPU mesh is resident; it never loads a LOD payload.
                 /// </summary>
                 [Category("LOD Streaming")]
-                [Description("When true, defers non-essential mesh LOD atlas uploads until the GPU LOD-select pass requests them. LOD0 and each command's own mesh always stay resident.")]
+                [Description("When true, defers non-essential mesh LOD atlas uploads until the GPU LOD-select pass requests them. The lowest LOD and each command's own mesh always stay resident.")]
                 public bool StreamMeshLodsOnDemand
                 {
                     get => _streamMeshLodsOnDemand;
@@ -2164,6 +2467,22 @@ public static partial class RuntimeEngine
                     set => SetField(ref _preferNVStereo, value);
                 }
 
+                private VrEyeFeatureProfile _vrEyeFeatures = new();
+
+                /// <summary>
+                /// Selects the optional rendering features of every VR eye frame (single-pass stereo
+                /// and per-eye, all VR pipelines, OpenXR and OpenVR). Both eyes use this one profile;
+                /// the desktop does not read it. A feature also needs the eye camera's own settings.
+                /// </summary>
+                [Category("VR")]
+                [DisplayName("VR Eye Features")]
+                [Description("Optional rendering features of VR eye frames, shared by both eyes and separate from the desktop. Depth of field and motion blur are off by default for comfort.")]
+                public VrEyeFeatureProfile VrEyeFeatures
+                {
+                    get => _vrEyeFeatures;
+                    set => SetField(ref _vrEyeFeatures, value ?? new VrEyeFeatureProfile());
+                }
+
                 /// <summary>
                 /// Selects the VR view rendering strategy.
                 /// </summary>
@@ -2317,6 +2636,18 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Selects how a recording desktop view executes while VR is active. The
+                /// desktop frame reads it once per attempt.
+                /// </summary>
+                [Category("VR")]
+                [Description("How a recording desktop view executes while VR is active. Inline records on the render thread after the eyes. WorkerRecord records on a background lane and presents one XR frame later. SeparateDomain is reserved.")]
+                public EVrDesktopFrameExecutionMode VrDesktopFrameExecutionMode
+                {
+                    get => _vrDesktopFrameExecutionMode;
+                    set => SetField(ref _vrDesktopFrameExecutionMode, value);
+                }
+
+                /// <summary>
                 /// If true, ViewSet generation adds per-eye foveated views in addition to full-resolution stereo views.
                 /// </summary>
                 [Category("VR")]
@@ -2430,6 +2761,19 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Longest time, in milliseconds, that a Vulkan OpenXR stereo frame waits for a free
+                /// eye submission slot. When the wait ends without a slot, the frame goes to the
+                /// compositor without layers and the headset shows a black frame.
+                /// </summary>
+                [Category("VR")]
+                [Description("Longest time, in milliseconds, that a Vulkan OpenXR stereo frame waits for a free eye submission slot. A frame that gets no slot goes to the compositor without layers (a black frame). Range 1 to 1000.")]
+                public uint OpenXrStereoSubmissionWaitMs
+                {
+                    get => _openXrStereoSubmissionWaitMs;
+                    set => SetField(ref _openXrStereoSubmissionWaitMs, Math.Clamp(value, 1u, 1000u));
+                }
+
+                /// <summary>
                 /// Signed millisecond bias added to OpenXR pose location time.
                 /// </summary>
                 [Category("VR")]
@@ -2495,6 +2839,25 @@ public static partial class RuntimeEngine
                 {
                     get => _openXrRenderPacingMode;
                     set => SetField(ref _openXrRenderPacingMode, value);
+                }
+
+                /// <summary>
+                /// Paces the collect loop to OpenXR frames: one collect and one publication for
+                /// each XR frame. The collect for the next frame starts when the render thread
+                /// enters <c>xrEndFrame</c> for the current frame, so the collect and the swap run
+                /// while the runtime blocks in <c>xrEndFrame</c> or <c>xrWaitFrame</c>. It applies
+                /// only to true single-pass stereo with the dedicated pacing thread, while a focused
+                /// OpenXR session renders eyes. Otherwise the loop collects again after each render
+                /// dispatch (render pacing). Off by default: it raises the XR rate when the render
+                /// thread is the limit, but on Monado it lowered the rate when the eye GPU time was
+                /// more than two display periods. See the VR output pacing documentation.
+                /// </summary>
+                [Category("VR")]
+                [Description("Collects and publishes one visibility generation for each OpenXR frame (true single-pass stereo only). Faster when the render thread is the limit; slower on Monado when the eye GPU time is more than two display periods. Off by default.")]
+                public bool OpenXrCollectPacing
+                {
+                    get => _openXrCollectPacing;
+                    set => SetField(ref _openXrCollectPacing, value);
                 }
 
                 /// <summary>
@@ -2620,6 +2983,97 @@ public static partial class RuntimeEngine
                 }
 
                 /// <summary>
+                /// Makes Advanced eye outputs shade one pixel for each 2x2 block of the same triangle
+                /// outside <see cref="VrAdvancedEdgeHalfRateRadius"/>. A fill pass then copies the
+                /// result to the other pixels of the block. Depth, visibility and shadows stay at full
+                /// resolution. Vulkan eyes without MSAA only; the desktop view is never affected.
+                /// </summary>
+                [Category("VR")]
+                [Description("Makes Advanced eye outputs shade one pixel for each 2x2 block of the same triangle outside the edge radius, and copy it to the rest of the block. Depth, visibility and shadows stay at full resolution. Vulkan eyes without MSAA only; the desktop view is never affected.")]
+                public bool VrAdvancedEdgeHalfRateShading
+                {
+                    get => _vrAdvancedEdgeHalfRateShading;
+                    set => SetField(ref _vrAdvancedEdgeHalfRateShading, value);
+                }
+
+                /// <summary>
+                /// Radius of the full-rate region for <see cref="VrAdvancedEdgeHalfRateShading"/>.
+                /// The region is centered on the lens center of each eye (the point where the view
+                /// direction meets the image), not on the texture center. The value is a fraction of
+                /// the half extent of the eye image on each axis: 1 reaches the image edge on an axis
+                /// of a symmetric eye. The shader uses steps of 0.05.
+                /// </summary>
+                [Category("VR")]
+                [Description("Radius of the full-rate region for Advanced edge half-rate shading, centered on the lens center of each eye. A fraction of the half extent of the eye image on each axis, in steps of 0.05.")]
+                public float VrAdvancedEdgeHalfRateRadius
+                {
+                    get => _vrAdvancedEdgeHalfRateRadius;
+                    set => SetField(ref _vrAdvancedEdgeHalfRateRadius, Math.Clamp(value, 0.05f, 1.55f));
+                }
+
+                /// <summary>
+                /// Tints the 2x2 blocks that <see cref="VrAdvancedEdgeHalfRateShading"/> shades at half
+                /// rate. Pixels in the edge region that shade at full rate, because their block shows
+                /// more than one triangle, keep their normal color. Diagnostic only.
+                /// </summary>
+                [Category("VR")]
+                [Description("Diagnostic: tints the 2x2 blocks that Advanced edge half-rate shading shades at half rate. Pixels at triangle edges keep their normal color.")]
+                public bool VrAdvancedEdgeHalfRateDebugTint
+                {
+                    get => _vrAdvancedEdgeHalfRateDebugTint;
+                    set => SetField(ref _vrAdvancedEdgeHalfRateDebugTint, value);
+                }
+
+                private int _vrAdvancedShadowFilterTaps = 0;
+
+                /// <summary>
+                /// Filter tap count of the headset shadow cascades of the primary directional light
+                /// (the first directional light of the world) in Advanced native shading. The value
+                /// replaces the filter sample count and the Vogel tap count of the light in the headset
+                /// records only. 0 uses the values of the light. The desktop view is never affected.
+                /// </summary>
+                [Category("VR")]
+                [Description("Filter tap count of the headset shadow cascades of the primary directional light in Advanced native shading. 0 uses the values of the light. The desktop view is never affected.")]
+                public int VrAdvancedShadowFilterTaps
+                {
+                    get => _vrAdvancedShadowFilterTaps;
+                    set => SetField(ref _vrAdvancedShadowFilterTaps, Math.Clamp(value, 0, 32));
+                }
+
+                private bool _advancedVirtualGeometry;
+
+                /// <summary>
+                /// Vulkan Advanced visibility (desktop and VR eyes) selects a cluster cut for static
+                /// meshlet draws of models cooked with a cluster hierarchy: the task stage draws
+                /// coarser clusters where their projected error is at or below
+                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. Off draws the level-0
+                /// clusters only. The value is read once, at the first Advanced frame; a change
+                /// takes effect at the next start.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Vulkan Advanced visibility draws a cluster cut of models cooked with a cluster hierarchy. Read once at the first Advanced frame; a change takes effect at the next start.")]
+                public bool AdvancedVirtualGeometry
+                {
+                    get => _advancedVirtualGeometry;
+                    set => SetField(ref _advancedVirtualGeometry, value);
+                }
+
+                private float _advancedVirtualGeometryPixelThreshold = 1.0f;
+
+                /// <summary>
+                /// The cluster cut threshold of <see cref="AdvancedVirtualGeometry"/>, in render
+                /// pixels of projected simplification error (0.25 to 16). A larger value draws
+                /// coarser clusters. Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Cluster cut threshold of Advanced virtual geometry, in render pixels of projected error (0.25 to 16). Read once at the first Advanced frame.")]
+                public float AdvancedVirtualGeometryPixelThreshold
+                {
+                    get => _advancedVirtualGeometryPixelThreshold;
+                    set => SetField(ref _advancedVirtualGeometryPixelThreshold, float.IsFinite(value) ? Math.Clamp(value, 0.25f, 16.0f) : 1.0f);
+                }
+
+                /// <summary>
                 /// Controls disabled, capability-gated, required, and diagnostic selection
                 /// of the advanced render pipeline for desktop and offscreen outputs.
                 /// VR eyes use <see cref="VrRenderPipeline"/> instead.
@@ -2654,6 +3108,31 @@ public static partial class RuntimeEngine
                 {
                     get => _rvcQuadViewEnabled;
                     set => SetField(ref _rvcQuadViewEnabled, value);
+                }
+
+                /// <summary>
+                /// Multiplies the eye resolution of the quad-view wide pair. The inset pair covers the
+                /// center of the view at full resolution, so the wide pair can render at a lower
+                /// resolution. Valid range is 0.1x to 1.0x. A change recreates the OpenXR swapchains.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Multiplies the eye resolution of the quad-view wide pair. The inset pair keeps full resolution. Valid range is 0.1x to 1.0x.")]
+                public float RvcQuadViewWideResolutionScale
+                {
+                    get => _rvcQuadViewWideResolutionScale;
+                    set => SetField(ref _rvcQuadViewWideResolutionScale, Math.Clamp(value, 0.1f, 1.0f));
+                }
+
+                /// <summary>
+                /// If true, the quad-view inset pair draws only the objects that the wide pair drew in
+                /// the same frame, inside the inset frustum, and runs no late visibility of its own.
+                /// </summary>
+                [Category("RVC")]
+                [Description("If true, the quad-view inset pair reuses the wide pair's visibility and runs no late visibility of its own.")]
+                public bool RvcQuadViewSharedVisibilityEnabled
+                {
+                    get => _rvcQuadViewSharedVisibilityEnabled;
+                    set => SetField(ref _rvcQuadViewSharedVisibilityEnabled, value);
                 }
 
                 /// <summary>
@@ -2720,6 +3199,30 @@ public static partial class RuntimeEngine
                 {
                     get => _rvcDebugViewMode;
                     set => SetField(ref _rvcDebugViewMode, value);
+                }
+
+                /// <summary>
+                /// Runs the RVC shadelet telemetry kernel on Vulkan eye outputs and reads its counters back.
+                /// The kernel measures intra-view and cross-eye reuse ceilings and does not change shading.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Runs the RVC shadelet telemetry kernel on Vulkan eye outputs and reads its counters back. It measures intra-view and cross-eye reuse ceilings and does not change shading.")]
+                public bool RvcShadeletTelemetryEnabled
+                {
+                    get => _rvcShadeletTelemetryEnabled;
+                    set => SetField(ref _rvcShadeletTelemetryEnabled, value);
+                }
+
+                /// <summary>
+                /// Makes RVC eyes shade one pixel per peripheral 2x2 or 4x4 block of the same
+                /// triangle and copy it to the rest of the block. Vulkan eyes without MSAA only.
+                /// </summary>
+                [Category("RVC")]
+                [Description("Makes RVC eyes shade one pixel per peripheral 2x2 or 4x4 block of the same triangle and copy it to the rest of the block. Vulkan eyes without MSAA only.")]
+                public bool RvcFoveatedQuadShadingEnabled
+                {
+                    get => _rvcFoveatedQuadShadingEnabled;
+                    set => SetField(ref _rvcFoveatedQuadShadingEnabled, value);
                 }
 
                 /// <summary>

@@ -138,6 +138,18 @@ namespace XREngine.Animation
             return _baked.GetValue(frame.Clamp(0, _baked.Count - 1));
         }
         public Quaternion GetValueKeyframed(float second)
+            => GetValueKeyframed(second, useSampleKeyHint: false);
+
+        /// <summary>
+        /// Gets the same value as <see cref="GetValue"/>, and uses the key hint to start the search.
+        /// </summary>
+        internal Quaternion GetValueWithSampleKeyHint(float second)
+            => IsBaked ? GetValueBakedBySecond(second) : GetValueKeyframed(second, useSampleKeyHint: true);
+
+        private QuaternionKeyframe? GetInterpolationStartKey(float second, bool useSampleKeyHint)
+            => useSampleKeyHint ? GetSampleStartKey(second) : Keyframes.First;
+
+        private Quaternion GetValueKeyframed(float second, bool useSampleKeyHint)
         {
             if (Keyframes.Count == 0)
                 return DefaultValue;
@@ -148,18 +160,18 @@ namespace XREngine.Animation
                     return DefaultValue;
 
                 if (LerpConstrainedFPS)
-                    return LerpKeyedValues(floorSec, ceilSec, frameFraction);
+                    return LerpKeyedValues(floorSec, ceilSec, frameFraction, useSampleKeyHint);
 
                 second = floorSec;
             }
 
-            return Keyframes.First?.Interpolate(second) ?? DefaultValue;
+            return GetInterpolationStartKey(second, useSampleKeyHint)?.Interpolate(second) ?? DefaultValue;
         }
-        private Quaternion LerpKeyedValues(float floorSec, float ceilSec, float time)
+        private Quaternion LerpKeyedValues(float floorSec, float ceilSec, float time, bool useSampleKeyHint)
         {
             QuaternionKeyframe? prevKey = null;
 
-            Quaternion? floorValue = _keyframes.First?.Interpolate(
+            Quaternion? floorValue = GetInterpolationStartKey(floorSec, useSampleKeyHint)?.Interpolate(
                 floorSec,
                 out prevKey,
                 out _,
@@ -187,6 +199,43 @@ namespace XREngine.Animation
                 baked[i] = GetValueKeyframed(i * invFPS);
 
             _baked = EncodeUnmanagedBakedValues(baked);
+        }
+
+        /// <inheritdoc />
+        public override void WriteSampleToStore(float second, AnimationValueStore store, in AnimSlot slot)
+            => store.SetQuaternion(slot.TypeIndex, GetSampleValue(ResolveSampleSecond(second)));
+
+        /// <summary>
+        /// Gets the value that a seek on a new instance gives. Before the first key, a new
+        /// instance has no key to start from, so this path does not use <see cref="GetValue"/>.
+        /// </summary>
+        private Quaternion GetSampleValue(float second)
+        {
+            if (IsBaked)
+                return GetValueBakedBySecond(second);
+
+            if (Keyframes.Count == 0)
+                return DefaultValue;
+
+            // Intended: before the first key, this value differs from GetValue and from a backward seek.
+            QuaternionKeyframe? startKey = FindSampleKey(second);
+            if (ConstrainKeyframedFPS)
+            {
+                if (!TryGetCadenceFrameWindow(second, out _, out _, out float floorSec, out float ceilSec, out float frameFraction))
+                    return DefaultValue;
+
+                if (LerpConstrainedFPS)
+                {
+                    QuaternionKeyframe? floorKey = startKey;
+                    Quaternion floorPosition = startKey?.Interpolate(floorSec, out floorKey, out _, out _) ?? Quaternion.Identity;
+                    Quaternion ceilPosition = floorKey?.Interpolate(ceilSec, out _, out _, out _) ?? Quaternion.Identity;
+                    return Quaternion.Slerp(floorPosition, ceilPosition, frameFraction);
+                }
+
+                second = floorSec;
+            }
+
+            return startKey?.Interpolate(second, out _, out _, out _) ?? DefaultValue;
         }
 
         public event Action<PropAnimQuaternion>? CurrentValueChanged;

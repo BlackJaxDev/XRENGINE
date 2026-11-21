@@ -99,6 +99,187 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
             imageCount,
             _outputRuntime.Desktop.Maintenance1Enabled);
 
+    VulkanDxgiDevice? IVulkanImGuiOutputHost.PlatformDxgiDevice
+        => _outputRuntime.Desktop.DxgiRing is not null &&
+           _outputRuntime.Desktop.DxgiPresenter is { Faulted: false, IsDisposed: false } presenter
+            ? presenter.SharedDevice
+            : null;
+
+    bool IVulkanImGuiOutputHost.TryCreatePlatformDxgiPresenter(
+        VulkanDxgiDevice sharedDevice,
+        nint windowHandle,
+        out VulkanDxgiPresenter? presenter,
+        out string reason)
+        => VulkanDxgiPresenter.TryCreate(Api, _deviceContext, windowHandle, sharedDevice, out presenter, out reason);
+
+    bool IVulkanImGuiOutputHost.TryCreatePlatformDxgiGeneration(
+        VulkanDxgiPresenter presenter,
+        Vector2D<int> framebufferSize,
+        uint viewportId,
+        ulong generationNumber,
+        out VulkanDxgiImageRing? ring,
+        out VulkanImGuiPlatformSwapchainGeneration generation,
+        out string reason)
+    {
+        ring = null;
+        generation = default;
+        uint width = (uint)Math.Max(framebufferSize.X, 1);
+        uint height = (uint)Math.Max(framebufferSize.Y, 1);
+
+        // The ImGui pipeline is built for the desktop format, so the detached window
+        // must use the same format as the desktop DXGI generation.
+        Format requiredFormat = _outputRuntime.Desktop.ImageFormat;
+        ColorSpaceKHR requiredColorSpace = _outputRuntime.Desktop.ImageColorSpace;
+        bool preferHdr = _outputRuntime.Desktop.DxgiRing is { } desktopRing &&
+            desktopRing.SurfaceFormat.VulkanFormat != VulkanDxgiSurfaceFormat.Sdr.VulkanFormat;
+        if (!presenter.TryConfigureBuffers(width, height, preferHdr, out reason))
+            return false;
+        if (presenter.SurfaceFormat.VulkanFormat != requiredFormat ||
+            presenter.SurfaceFormat.VulkanColorSpace != requiredColorSpace)
+        {
+            reason = $"the window format {presenter.SurfaceFormat.Name} does not match the desktop format {requiredFormat}/{requiredColorSpace}";
+            return false;
+        }
+
+        if (!VulkanDxgiImageRing.TryCreate(_deviceContext, presenter, new Extent2D(width, height), generationNumber, out ring, out reason))
+            return false;
+
+        try
+        {
+            ImGuiPlatformWindows.CreateDxgiGeneration(
+                _deviceContext, _commandRuntime, TargetOutputSession, ring!, viewportId, out generation);
+        }
+        catch
+        {
+            ring!.Dispose();
+            ring = null;
+            throw;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    // The DXGI present submission signals the reservation fence, so presentation
+    // release has the same fence proof as a maintenance1 swapchain.
+    VulkanWsiPresentCompletion IVulkanImGuiOutputHost.CreatePlatformDxgiPresentCompletion(int imageCount)
+        => new(Api, _deviceContext.Device, imageCount, maintenanceEnabled: true);
+
+    Result IVulkanImGuiOutputHost.AcquirePlatformDxgiImage(
+        VulkanDxgiImageRing ring,
+        Semaphore imageAvailable,
+        Fence acquireFence,
+        out uint imageIndex)
+    {
+        const string operation = "ImGuiViewport.DxgiAcquire";
+        if (!TargetOutputSession.TryAdmitVulkanDeviceOperation(operation, out _))
+        {
+            imageIndex = 0;
+            return Result.ErrorDeviceLost;
+        }
+
+        // A zero timeout never blocks: a busy slot or a full latency queue skips this
+        // window frame, like a native acquire that returns NOT_READY.
+        Result result = ring.WaitForNextImage(0, out imageIndex);
+        if (result != Result.Success)
+            return result;
+
+        ReaderWriterLockSlim admissionGate =
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate;
+        admissionGate.EnterReadLock();
+        try
+        {
+            using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
+                _commandRuntime.CommandBuffers.OneTimeSubmitGate,
+                _deviceContext.StateMachine,
+                _telemetry);
+            if (!queueOperation.Acquired)
+                return Result.ErrorDeviceLost;
+
+            result = ring.SubmitAcquire(_deviceContext.GraphicsQueue, imageIndex, imageAvailable, acquireFence);
+        }
+        finally
+        {
+            admissionGate.ExitReadLock();
+        }
+
+        _deviceContext.ObserveNativeResult(operation, result);
+        _commandRuntime.Synchronization.RecordQueueOperation(
+            _deviceContext.State,
+            "dxgi-acquire-imgui-viewport",
+            _deviceContext.GraphicsQueue,
+            result,
+            0,
+            nameof(IVulkanImGuiOutputHost.AcquirePlatformDxgiImage));
+        return result;
+    }
+
+    Result IVulkanImGuiOutputHost.PresentPlatformDxgiViewport(
+        VulkanDxgiImageRing ring,
+        uint imageIndex,
+        Semaphore renderFinished,
+        in VulkanWsiPresentReservation reservation)
+    {
+        const string operation = "ImGuiViewport.DxgiPresent";
+        VulkanWsiPresentCompletion completion = reservation.Owner
+            ?? throw new InvalidOperationException("Detached ImGui presentation was not reserved before acquisition.");
+        if (!TargetOutputSession.TryAdmitVulkanDeviceOperation(operation, out _))
+        {
+            completion.Commit(in reservation, false, Result.ErrorDeviceLost);
+            return Result.ErrorDeviceLost;
+        }
+
+        ReaderWriterLockSlim admissionGate =
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate;
+        admissionGate.EnterReadLock();
+        Result result;
+        try
+        {
+            using VulkanQueueOperationLease queueOperation = VulkanQueueOperationLease.TryEnter(
+                _commandRuntime.CommandBuffers.OneTimeSubmitGate,
+                _deviceContext.StateMachine,
+                _telemetry);
+            if (!queueOperation.Acquired)
+            {
+                completion.Commit(in reservation, false, Result.ErrorDeviceLost);
+                return Result.ErrorDeviceLost;
+            }
+
+            completion.RequireReservedForDispatch(in reservation);
+            try
+            {
+                result = ring.Present(
+                    _deviceContext.GraphicsQueue,
+                    imageIndex,
+                    renderFinished,
+                    reservation.Fence,
+                    _outputRuntime.Desktop.DxgiSyncInterval,
+                    _outputRuntime.Desktop.DxgiAllowTearing,
+                    out bool submitted);
+                completion.Commit(in reservation, submitted, result);
+            }
+            catch
+            {
+                completion.Quarantine(in reservation);
+                throw;
+            }
+        }
+        finally
+        {
+            admissionGate.ExitReadLock();
+        }
+
+        _deviceContext.ObserveNativeResult(operation, result);
+        _commandRuntime.Synchronization.RecordQueueOperation(
+            _deviceContext.State,
+            "dxgi-present-imgui-viewport",
+            _deviceContext.GraphicsQueue,
+            result,
+            0,
+            nameof(IVulkanImGuiOutputHost.PresentPlatformDxgiViewport));
+        return result;
+    }
+
     VulkanImGuiPlatformWindowCommandResources IVulkanImGuiOutputHost.CreatePlatformCommandResources(
         int frameCount,
         int imageCount,

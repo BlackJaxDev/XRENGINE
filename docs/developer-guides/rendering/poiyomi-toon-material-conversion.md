@@ -37,6 +37,11 @@ unchanged. Both authored Uber and native Advanced shading combine weighted AO
 channels with the source minimum operation. The converter binds all four
 channel strengths and leaves material AO disabled when all four are zero.
 
+The converter sets the Uber opacity mode after it applies the source pass state.
+It also copies an explicit `_AlphaForceOpaque` value. If the source has no value,
+opaque materials use 1 and other materials use 0. This keeps the shader opacity
+parameters in step with the imported blend, depth, and stencil state.
+
 The glitter color map retains its source color space, UV selection, transform,
 and pan. Its RGB multiplies the source flake color in both authored Uber and
 native Advanced shading. Source 10.0 distance LOD is not implemented; active

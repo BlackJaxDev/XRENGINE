@@ -797,7 +797,7 @@ public sealed class VulkanP0ValidationTests
         string frameOpSemantics = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/FrameOps/VulkanFrameOperationSemantics.cs");
 
         frameOpSemantics.ShouldContain("PublishFrameOpDrawStats(validatedOp);");
-        frameOpSemantics.ShouldContain("PublishFrameDrawStats(draw.Renderer.EstimateFrameDrawStats(draw));");
+        frameOpSemantics.ShouldContain("PublishFrameDrawStats(draw.Renderer.EstimateFrameDrawStats(in draw));");
         frameOpSemantics.ShouldContain("RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls(stats.DrawCalls);");
         frameOpSemantics.ShouldContain("RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls(stats.MultiDrawCalls);");
         frameOpSemantics.ShouldContain("RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered(stats.TrianglesRendered);");

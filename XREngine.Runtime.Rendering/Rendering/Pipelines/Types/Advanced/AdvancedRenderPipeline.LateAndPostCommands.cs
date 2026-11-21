@@ -1,8 +1,10 @@
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Components.Scene.Volumes;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering;
 
@@ -16,9 +18,16 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     private void AppendAdvancedLatePassCommands(ViewportRenderCommandContainer commands)
     {
+        AppendEditorHighlightSeed(commands);
         using (commands.AddUsing<VPRC_BindFBOByName>(x =>
             x.SetOptions(ForwardPassFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+        {
+            VPRC_RenderAdvancedMaterialOutline opaqueOutline =
+                commands.Add<VPRC_RenderAdvancedMaterialOutline>();
+            opaqueOutline.RenderPass = (int)EDefaultRenderPass.OpaqueForward;
+            opaqueOutline.Stereo = Stereo;
             commands.Add<VPRC_RenderAdvancedMaterialOutline>().Stereo = Stereo;
+        }
 
         var late = commands.Add<VPRC_IfElse>();
         late.Label = "AdvancedLateTransparencyAllowed";
@@ -45,10 +54,35 @@ public partial class AdvancedRenderPipeline
             lateCommands.Add<VPRC_ColorMask>().Set(true, true, true, true);
             lateCommands.Add<VPRC_DepthTest>().Enable = true;
             lateCommands.Add<VPRC_DepthWrite>().Allow = false;
-            VPRC_RenderMeshesPass transparentForward = lateCommands.Add<VPRC_RenderMeshesPass>();
-            transparentForward.SetOptions((int)EDefaultRenderPass.TransparentForward, EMeshSubmissionStrategy.CpuDirect);
-            transparentForward.EnforceAdvancedLatePassEligibility = true;
-            transparentForward.SetSampledTextures(AdvancedSceneColorContract.SceneColorSnapshotResourceName);
+            VPRC_SourceOrderedLateStage orderedStage = lateCommands.Add<VPRC_SourceOrderedLateStage>();
+            var orderedCommands = new ViewportRenderCommandContainer(this);
+            VPRC_RenderMeshesPass transparentPrefix = orderedCommands.Add<VPRC_RenderMeshesPass>();
+            transparentPrefix.SetOptions((int)EDefaultRenderPass.TransparentForward, EMeshSubmissionStrategy.CpuDirect);
+            transparentPrefix.RenderGraphPassName = "Advanced.SourceOrderedPrefix";
+            transparentPrefix.SourceOrderedSlice = EAdvancedSourceOrderedSlice.BeforeSceneColor;
+            transparentPrefix.EnforceAdvancedLatePassEligibility = true;
+            transparentPrefix.SetSampledTextures(AdvancedSceneColorContract.SceneColorSnapshotResourceName);
+
+            var sceneColorSuffix = orderedCommands.Add<VPRC_IfElse>();
+            sceneColorSuffix.Label = "SourceSceneColorConsumerPresent";
+            sceneColorSuffix.ConditionEvaluator = HasSourceSceneColorConsumer;
+            var suffixCommands = new ViewportRenderCommandContainer(this);
+            VPRC_RenderQuadToFBO sourceSceneCopy = suffixCommands.Add<VPRC_RenderQuadToFBO>();
+            sourceSceneCopy.RequiredForOutput = true;
+            sourceSceneCopy
+                .SetTargets(SceneCopyFBOName, SourceOrderedSceneCopyFBOName,
+                    matchDestinationRenderArea: true)
+                .SetRenderGraphResources(CreateAdvancedSceneCopyResources());
+            VPRC_RenderMeshesPass transparentSuffix = suffixCommands.Add<VPRC_RenderMeshesPass>();
+            transparentSuffix.SetOptions((int)EDefaultRenderPass.TransparentForward, EMeshSubmissionStrategy.CpuDirect);
+            transparentSuffix.RenderGraphPassName = "Advanced.SourceOrderedSuffix";
+            transparentSuffix.SourceOrderedSlice = EAdvancedSourceOrderedSlice.FromSceneColor;
+            transparentSuffix.EnforceAdvancedLatePassEligibility = true;
+            transparentSuffix.SetSampledTextures(
+                AdvancedSceneColorContract.SceneColorSnapshotResourceName,
+                AdvancedSceneColorContract.SourceOrderedSnapshotResourceName);
+            sceneColorSuffix.TrueCommands = suffixCommands;
+            orderedStage.Commands = orderedCommands;
             lateCommands.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
             VPRC_RenderMeshesPass onTopForward = lateCommands.Add<VPRC_RenderMeshesPass>();
             onTopForward.SetOptions((int)EDefaultRenderPass.OnTopForward, EMeshSubmissionStrategy.CpuDirect);
@@ -66,6 +100,11 @@ public partial class AdvancedRenderPipeline
 
     private static bool HasRenderPassCommands(int renderPass)
         => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.ActiveMeshRenderCommands.HasRenderingCommands(renderPass) == true;
+
+    private bool HasSourceSceneColorConsumer()
+        => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?
+            .ActiveMeshRenderCommands.RenderingBackendReadyPackage
+            .SourceSceneColorFirstCommandIndex >= 0;
 
     private bool HasAnyAdvancedLateConsumers()
         => ShouldRunAdvancedLatePass((int)EDefaultRenderPass.WeightedBlendedOitForward)
@@ -153,6 +192,9 @@ public partial class AdvancedRenderPipeline
             var bloomCommands = new ViewportRenderCommandContainer(this);
             _advancedBloomProvider = bloomCommands.Add<VPRC_BloomPass>();
             _advancedBloomProvider.SetTargetFBONames(ForwardPassFBOName, BloomBlurTextureName, Stereo);
+            // Native renderers read the HDR scene directly in the first downsample, with no
+            // full-resolution copy. The WebGPU bloom programs keep the mip 0 copy.
+            _advancedBloomProvider.FirstDownsampleReadsInput = !Shaders.Compilation.WebPipelineRasterProgram.IsActive;
             bloom.TrueCommands = bloomCommands;
 
             AppendAdvancedPostBloomPass(commands);
@@ -248,14 +290,38 @@ public partial class AdvancedRenderPipeline
         var tsrCommands = new ViewportRenderCommandContainer(this);
         if (!Shaders.Compilation.WebPipelineRasterProgram.IsActive)
         {
+            bool split = TsrResolveForm == EAdvancedTsrResolveForm.EdgeStencilSplit;
+            if (split)
+            {
+                // Edge stencil split. The mask pass classifies each internal pixel once. The
+                // classify pass clears the stencil through its load operation and marks the
+                // output pixels whose source center is an edge. The lean resolve (no coverage
+                // path) draws where the bit is clear, the full resolve where it is set. Both
+                // write the same TSR targets.
+                tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(TsrEdgeMaskQuadFBOName, TsrEdgeMaskFBOName, matchDestinationRenderArea: true)
+                    .SetRenderGraphResources(CreateAdvancedTsrEdgeMaskResources());
+                tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(TsrEdgeClassifyQuadFBOName, TsrUpscaleEdgeFBOName, matchDestinationRenderArea: true)
+                    .SetRenderGraphResources(CreateAdvancedTsrEdgeClassifyResources());
+            }
             tsrCommands.Add<VPRC_RenderQuadToFBO>()
                 .SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true)
-                .SetRenderGraphResources(CreateAdvancedTsrResources());
+                .SetRenderGraphResources(CreateAdvancedTsrResources(split));
+            if (split)
+            {
+                tsrCommands.Add<VPRC_RenderQuadToFBO>()
+                    .SetTargets(TsrUpscaleEdgeFBOName, TsrUpscaleEdgeFBOName, matchDestinationRenderArea: true)
+                    .SetRenderGraphResources(CreateAdvancedTsrResources(split));
+            }
             var captureTsrHistory = tsrCommands.Add<VPRC_TemporalAccumulationPass>();
             captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
+            // The lean resolve (TsrUpscaleFBO) is the history producer. With the split, the full
+            // resolve also reads prior history and writes the same targets, so the copy follows it too.
             captureTsrHistory.ConfigureTsrHistoryTargets(
                 TsrAccumulationFBOName, TsrHistoryColorFBOName, TsrUpscaleFBOName,
-                TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName);
+                TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName,
+                leftHistoryReaderQuadFboName: split ? TsrUpscaleEdgeFBOName : null);
         }
         tsr.TrueCommands = tsrCommands;
         var postAaCommands = new ViewportRenderCommandContainer(this);
@@ -386,7 +452,7 @@ public partial class AdvancedRenderPipeline
 
     private bool ShouldRunAdvancedAtmosphericScattering()
     {
-        if (!AllowsBloomAndDepthOfField || Stereo || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!AllowsBloomAndDepthOfField || Stereo || !VrEyeFrameRules.AllowsFogAndAerialPerspective())
             return false;
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var settings = GetSettings<AtmosphericScatteringSettings>(state) ?? AtmosphericScatteringSettings.Default;
@@ -396,7 +462,7 @@ public partial class AdvancedRenderPipeline
 
     private bool ShouldRunAdvancedVolumetricFog()
     {
-        if (!AllowsBloomAndDepthOfField || Stereo || UseOpenXrVulkanDesktopStartupSafePath)
+        if (!AllowsBloomAndDepthOfField || Stereo || !VrEyeFrameRules.AllowsFogAndAerialPerspective())
             return false;
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var settings = GetSettings<VolumetricFogSettings>(state);
@@ -504,6 +570,20 @@ public partial class AdvancedRenderPipeline
 
     private void AppendAdvancedResolvedOutput(ViewportRenderCommandContainer commands, string sourceFboName, string sourceTextureName)
     {
+        if (EditorHighlightModule is not null)
+        {
+            commands.Add<VPRC_Manual>().ManualAction = ValidateEditorHighlightOutput;
+            VPRC_RenderQuadToFBO composite = commands.Add<VPRC_RenderQuadToFBO>();
+            composite.SetTargets(GetEditorHighlightCompositeFboName(sourceTextureName),
+                    EditorHighlightOutputFBOName, matchDestinationRenderArea: true)
+                .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+                    .SampleTexture(sourceTextureName)
+                    .SampleTexture(EditorHighlightMaskTextureName));
+            composite.RequiredForOutput = true;
+            AppendAdvancedWindowPresent(commands, EditorHighlightOutputFBOName);
+            return;
+        }
+
         var vendorOutput = commands.Add<VPRC_IfElse>();
         vendorOutput.Label = "AdvancedVendorOutput";
         vendorOutput.ConditionEvaluator = () => RuntimeEnableVendorUpscale;
@@ -516,9 +596,29 @@ public partial class AdvancedRenderPipeline
         vendor.MotionTextureName = VelocityTextureName;
         vendor.MotionFrameBufferName = VelocityFBOName;
         vendor.AutoExposureTextureName = AutoExposureTextureName;
-        vendor.FlipSourceYOnVulkanFallback = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
+        if (Stereo)
+        {
+            // Vendor upscalers do not run on stereo views; the command presents its fallback.
+            vendor.FlipSourceYOnVulkanFallback = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
+        }
+        else
+        {
+            // The vendor output goes into a pipeline framebuffer, and the same window present
+            // as the other output branches shows it. Capture, Y flip, sRGB encoding and the
+            // window target are then the same for every branch. The fallback copy into the
+            // framebuffer needs no flip; the present applies it.
+            vendor.DestinationFBOName = VendorOutputFBOName;
+            vendor.FlipSourceYOnVulkanFallback = false;
+            AppendAdvancedWindowPresent(vendorCommands, VendorOutputFBOName);
+        }
         vendorOutput.TrueCommands = vendorCommands;
         vendorOutput.FalseCommands = CreateAdvancedPresentCommands(sourceFboName);
+    }
+
+    private void ValidateEditorHighlightOutput()
+    {
+        if (RuntimeEnableVendorUpscale)
+            throw new NotSupportedException("The editor highlight module requires a resolved scene texture after vendor upscaling.");
     }
 
     private static void AppendAdvancedOffscreenOutputCommands(
@@ -574,7 +674,6 @@ public partial class AdvancedRenderPipeline
             .SampleTexture(HDRSceneTextureName)
             .SampleTextureWhenDeclared(BloomBlurTextureName)
             .SampleTexture(DepthViewTextureName)
-            .SampleTexture(StencilViewTextureName)
             .SampleTextureWhenDeclared(AutoExposureTextureName);
 
         if (!Stereo)
@@ -587,22 +686,49 @@ public partial class AdvancedRenderPipeline
         if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             resources.SampleTexture(WebPostProcessNeutralTextureName);
 
-        return resources.SampleTexture(AdvancedVisibilityResourceNames.Metadata);
+        if (EditorHighlightModule is not null)
+            resources.SampleTexture(EditorHighlightMaskTextureName);
+        return resources;
     }
 
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedFinalPostProcessResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor().SampleTexture(PostProcessOutputTextureName);
 
-    private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrResources()
-        => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+    /// <summary>
+    /// Sampled inputs of every pass built from the TSR shader. The Advanced TSR shader reads the
+    /// editor highlight mask instead of the scene stencil view, so the stencil view is not an input.
+    /// </summary>
+    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrSampledResources()
+    {
+        var resources = new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(FinalPostProcessOutputTextureName)
             .SampleTexture(VelocityTextureName)
             .SampleTexture(DepthViewTextureName)
             .SampleTexture(HistoryDepthViewTextureName)
             .SampleTexture(TsrHistoryColorTextureName)
-            .SampleTexture(StencilViewTextureName)
             .SampleTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
             .SampleTexture(TsrHistoryMetadataTextureName);
+        if (EditorHighlightModule is not null)
+            resources.SampleTexture(EditorHighlightMaskTextureName);
+        return resources;
+    }
+
+    /// <summary>Inputs of a TSR resolve pass. A split resolve also reads the destination edge stencil.</summary>
+    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrResources(bool split)
+    {
+        var resources = CreateAdvancedTsrSampledResources();
+        return split ? resources.UseDestinationStencilAttachment(ERenderGraphAccess.Read) : resources;
+    }
+
+    /// <summary>Inputs of the edge stencil classify pass; it clears and writes the destination stencil.</summary>
+    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrEdgeClassifyResources()
+        => CreateAdvancedTsrSampledResources()
+            .SampleTexture(TsrEdgeMaskTextureName)
+            .UseDestinationStencilAttachment(ERenderGraphAccess.ReadWrite, ERenderPassLoadOp.Clear);
+
+    /// <summary>Sampled inputs of the TSR edge-mask pass: the resolve inputs without the mask.</summary>
+    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedTsrEdgeMaskResources()
+        => CreateAdvancedTsrSampledResources();
 
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedMotionBlurResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor().SampleTexture(MotionBlurTextureName).SampleTexture(VelocityTextureName).SampleTexture(DepthViewTextureName);

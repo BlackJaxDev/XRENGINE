@@ -18,7 +18,8 @@ public static class SerializedModelImporterDocumentParser
         string normalized = Path.GetFullPath(metaPath);
 
         var yaml = new YamlStream();
-        using var reader = new StreamReader(normalized);
+        // Unity writes names such as "Material #356" unquoted; keep the text after " #".
+        using var reader = new StringReader(UnityYamlPlainScalars.QuoteValuesWithHash(File.ReadAllText(normalized)));
         yaml.Load(reader);
         if (yaml.Documents.Count == 0 ||
             yaml.Documents[0].RootNode is not YamlMappingNode root ||
@@ -37,6 +38,7 @@ public static class SerializedModelImporterDocumentParser
             FileIdsGeneration = GetInt(meshes, "fileIdsGeneration") ?? GetInt(importer, "fileIdsGeneration") ?? 2,
             ImportBlendShapes = (GetInt(meshes, "importBlendShapes") ?? GetInt(importer, "importBlendShapes") ?? 1) != 0,
             BlendShapeNormalImportMode = GetInt(tangentSpace, "blendShapeNormalImportMode") ?? 0,
+            TangentImportMode = GetInt(tangentSpace, "tangentImportMode") ?? -1,
             ImportAnimation = (GetInt(animations, "importAnimation") ?? GetInt(importer, "importAnimation") ?? 1) != 0,
             AnimationType = GetInt(importer, "animationType") ?? 0,
             GlobalScale = GetFloat(meshes, "globalScale") ?? GetFloat(importer, "globalScale") ?? 1.0f,

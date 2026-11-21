@@ -286,7 +286,8 @@ float xrSourceWrappedMap(vec3 normal, vec3 light, vec3 rawDirect,
 vec3 xrSourceWrappedDiffuse(vec3 baseColor, vec3 normal, vec3 light,
     vec3 rawDirect, XrSourceShCoefficients sh, vec3 wrappedColor,
     vec3 shadowColor, float wrapAmount, float normalization,
-    float materialAo, float shadowVisibility, float castedShadows,
+    float materialAo, vec3 worldDiffuseOcclusion,
+    float shadowVisibility, float castedShadows,
     float detailShadow, float monochromatic, float shadowStrength,
     float ignoreAmbient, float gradientStart, float gradientEnd,
     float minimumBrightness, float capEnabled, float cap,
@@ -306,6 +307,7 @@ vec3 xrSourceWrappedDiffuse(vec3 baseColor, vec3 normal, vec3 light,
         clamp(monochromatic, 0.0, 1.0));
     indirect = mix(indirect, vec3(xrSourceLuminance(indirect)),
         clamp(monochromatic, 0.0, 1.0));
+    indirect *= worldDiffuseOcclusion;
     float map = xrSourceWrappedMap(normal, light, rawDirect, sh,
         wrapAmount, normalization, materialAo, shadowVisibility,
         castedShadows, detailShadow, monochromatic);
@@ -457,26 +459,50 @@ vec3 xrSourceRimBlend(vec3 baseColor, vec3 rimColor, float amount, int mode)
     return baseColor + rimColor * amount;
 }
 
-vec3 xrSourceAnisoLayer(vec3 tangent, vec3 binormal, vec3 normal,
-    vec3 view, vec3 light, float shadowMask, vec4 layer, vec3 tint)
+void xrSourceRim2Apply(inout vec3 baseColor, inout vec3 emission,
+    vec3 vertexNormal, vec3 pixelNormal, vec3 view, float width,
+    float sharpness, vec4 settings, vec4 colorSettings, vec4 strengths,
+    vec4 themedTint, float mask)
 {
-    vec3 strand = normalize(mix(binormal, tangent, layer.w) + layer.z * normal);
+    float rim = xrSourceRimAmount(vertexNormal, pixelNormal, view,
+        width, sharpness, settings, false);
+    rim *= themedTint.a * themedTint.a * mask;
+    vec3 rimColor = themedTint.rgb *
+        mix(vec3(1.0), baseColor, colorSettings.x) * colorSettings.y;
+    baseColor = xrSourceRimBlend(baseColor, rimColor,
+        rim * strengths.x, int(colorSettings.z + 0.5));
+    emission += rimColor * rim * strengths.y;
+}
+
+float xrSourceAnisoLayerResponse(vec3 tangent, vec3 binormal, vec3 normal,
+    vec3 view, vec3 light, float shadowMask, vec4 layer, float mapAlpha,
+    float offsetMapStrength)
+{
+    float offset = layer.z + offsetMapStrength * mapAlpha;
+    vec3 strand = normalize(mix(binormal, tangent, layer.w) + offset * normal);
     vec3 halfVector = normalize(light + view);
     float tangentHalf = clamp(dot(strand, halfVector), -1.0, 1.0);
     float sine = sqrt(max(0.0, 1.0 - tangentHalf * tangentHalf));
     float response = clamp(smoothstep(-1.0, 0.0, tangentHalf) *
         pow(sine, layer.y * 1000.0) * layer.x, 0.0, 1.0);
-    return response * shadowMask * tint;
+    return response * shadowMask;
 }
 
-void xrSourceApplyAnisotropy(vec3 geometricNormal, vec3 mappedNormal,
-    vec3 tangent, vec3 bitangent, vec3 view, vec3 light, vec3 directColor,
-    float rampedLightMap, vec4 settings, vec4 mixSettings,
-    vec4 layer0, vec4 layer1, vec3 tint0, vec3 tint1,
-    inout vec3 baseColor, inout vec3 lightAdd)
+float xrSourceAnisoStylize(float response, float footprint, vec4 toon)
 {
-    if (settings.x <= 0.5) return;
+    float edgeMin = clamp(toon.y - toon.z * 0.5, 0.0, 1.0);
+    float edgeMax = clamp(toon.y + toon.z * 0.5, 0.0, 1.0);
+    float stylized = clamp((response - edgeMin) /
+        max(edgeMax - edgeMin + footprint, 0.001), 0.0, 1.0);
+    return mix(response, stylized, toon.x);
+}
 
+vec2 xrSourceAnisoResponses(vec3 geometricNormal, vec3 mappedNormal,
+    vec3 tangent, vec3 bitangent, vec3 view, vec3 light,
+    float rampedLightMap, vec4 settings, vec4 mixSettings,
+    vec4 layer0, vec4 layer1, vec2 offsetMapStrength, vec4 specMap,
+    float globalMask, int globalBlend)
+{
     float normalBlend = settings.w;
     vec3 normal = mix(geometricNormal, mappedNormal, normalBlend);
     // The imported coordinate frame reflects the source Z axis. Reverse the
@@ -487,10 +513,29 @@ void xrSourceApplyAnisotropy(vec3 geometricNormal, vec3 mappedNormal,
     vec3 strandBinormal = mix(bitangent, mappedBinormal, normalBlend);
     float shadowMask = mix(1.0, rampedLightMap, mixSettings.z) *
         mix(1.0, dot(normal, light), mixSettings.w);
-    vec3 color0 = xrSourceAnisoLayer(strandTangent, strandBinormal,
-        normal, view, light, shadowMask, layer0, tint0);
-    vec3 color1 = xrSourceAnisoLayer(strandTangent, strandBinormal,
-        normal, view, light, shadowMask, layer1, tint1);
+    if (globalBlend == 0) shadowMask = globalMask;
+    else if (globalBlend == 2) shadowMask *= globalMask;
+    else if (globalBlend == 5) shadowMask = max(shadowMask, globalMask);
+    else if (globalBlend == 6) shadowMask = 1.0 - (1.0 - shadowMask) * (1.0 - globalMask);
+    else if (globalBlend == 7) shadowMask = max(shadowMask - globalMask, 0.0);
+    else if (globalBlend == 8) shadowMask = min(shadowMask + globalMask, 1.0);
+    else if (globalBlend == 9) shadowMask = shadowMask < 0.5
+        ? 2.0 * shadowMask * globalMask
+        : 1.0 - 2.0 * (1.0 - shadowMask) * (1.0 - globalMask);
+    else if (globalBlend == 20) shadowMask += shadowMask * globalMask;
+    return vec2(
+        xrSourceAnisoLayerResponse(strandTangent, strandBinormal,
+            normal, view, light, shadowMask, layer0, specMap.a, offsetMapStrength.x),
+        xrSourceAnisoLayerResponse(strandTangent, strandBinormal,
+            normal, view, light, shadowMask, layer1, specMap.a, offsetMapStrength.y));
+}
+
+void xrSourceApplyAnisotropy(vec2 responses, vec2 footprint, vec3 directColor,
+    vec4 settings, vec4 mixSettings, vec4 toon0, vec4 toon1, vec3 tint0, vec3 tint1,
+    vec3 specMapColor, inout vec3 baseColor, inout vec3 lightAdd)
+{
+    vec3 color0 = xrSourceAnisoStylize(responses.x, footprint.x, toon0) * tint0 * specMapColor;
+    vec3 color1 = xrSourceAnisoStylize(responses.y, footprint.y, toon1) * tint1 * specMapColor;
     vec3 lightColor = mix(vec3(dot(directColor, vec3(0.299, 0.587, 0.114))),
         directColor, mixSettings.y);
     vec3 result = (color0 + color1) *
@@ -635,5 +680,82 @@ vec3 xrSourceMultilayerDiffuse(vec3 base, vec3 direct, vec3 indirect,
         strength *= data.strengthMask;
     shade = mix(direct, shade, strength);
     return base * mix(shade, direct, bands.x);
+}
+// Computes the stylized specular response of one light. The return value is the final
+// specular mask, and highlight receives the tinted highlight color (with the light color
+// when settings.w is 1). The blend mode decides how the two change the surface color.
+float xrSourceStylizedSpecularTerms(vec3 vertexNormal, vec3 mappedNormal,
+    vec3 viewDirection, vec3 lightDirection, vec3 directColor,
+    float rampedLightMap, float attenuation, float shadowVisibility,
+    float occlusion, float specularMask, float specularFootprint,
+    vec3 highColorMap, vec4 tint, vec4 settings, vec4 layers,
+    vec4 maskSettings, vec4 occlusionSettings, out vec3 highlight)
+{
+    vec3 normal = normalize(mix(vertexNormal, mappedNormal, settings.z));
+    vec3 halfDirection = normalize(lightDirection + viewDirection);
+    float specArea = 0.5 * dot(normal, halfDirection) + 0.5;
+    float first, second;
+    if (settings.y > 0.5)
+    {
+        first = pow(specArea, exp2(mix(11.0, 1.0, layers.x))) * layers.y;
+        second = pow(specArea, exp2(mix(11.0, 1.0, layers.z))) * layers.w;
+    }
+    else
+    {
+        float firstBorder = 1.0 - pow(layers.x, 5.0);
+        float secondBorder = 1.0 - pow(layers.z, 5.0);
+        float firstLower = clamp(firstBorder - maskSettings.x * 0.5, 0.0, 1.0);
+        float firstUpper = clamp(firstBorder + maskSettings.x * 0.5, 0.0, 1.0);
+        float secondLower = clamp(secondBorder - maskSettings.y * 0.5, 0.0, 1.0);
+        float secondUpper = clamp(secondBorder + maskSettings.y * 0.5, 0.0, 1.0);
+        first = smoothstep(firstLower - specularFootprint,
+            firstUpper + specularFootprint, specArea) * layers.y;
+        second = smoothstep(secondLower - specularFootprint,
+            secondUpper + specularFootprint, specArea) * layers.w;
+    }
+    float mask = mix(specularMask, 1.0 - specularMask, occlusionSettings.x);
+    mask = clamp(mask + occlusionSettings.y, 0.0, 1.0);
+    float ramp = mix(rampedLightMap, 1.0, occlusionSettings.w);
+    float response = clamp(first + second, 0.0, 1.0) * mask * ramp;
+    float normalAttenuation = mix(max(dot(mappedNormal, lightDirection), 0.0),
+        1.0, occlusionSettings.z);
+    float lightAttenuation = attenuation * shadowVisibility;
+    float finalMask = min(min(response, occlusion),
+        min(normalAttenuation, lightAttenuation)) * maskSettings.z;
+    highlight = highColorMap * tint.rgb * mix(vec3(1.0), directColor, settings.w);
+    return finalMask;
+}
+
+// Returns the additive stylized specular term of one light (blend mode 1, add to light).
+vec3 xrSourceStylizedSpecular(vec3 vertexNormal, vec3 mappedNormal,
+    vec3 viewDirection, vec3 lightDirection, vec3 directColor,
+    float rampedLightMap, float attenuation, float shadowVisibility,
+    float occlusion, float specularMask, float specularFootprint,
+    vec3 highColorMap, vec4 tint, vec4 settings, vec4 layers,
+    vec4 maskSettings, vec4 occlusionSettings)
+{
+    vec3 highlight;
+    float finalMask = xrSourceStylizedSpecularTerms(vertexNormal, mappedNormal,
+        viewDirection, lightDirection, directColor, rampedLightMap, attenuation,
+        shadowVisibility, occlusion, specularMask, specularFootprint, highColorMap,
+        tint, settings, layers, maskSettings, occlusionSettings, highlight);
+    return max(highlight * finalMask, vec3(0.0));
+}
+
+// Applies a stylized specular highlight to the surface color before lighting, for the
+// blend modes that change the base color: 0 replaces it with the highlight, 2 screens
+// the highlight over it, and 3 multiplies it by the highlight. Mode 1 (add to light)
+// leaves the base color unchanged, because its term is added after lighting.
+vec3 xrSourceStylizedSpecularBase(vec3 baseColor, vec3 highlight, float finalMask,
+    int blendMode)
+{
+    if (blendMode == 0)
+        return mix(baseColor, highlight, finalMask);
+    if (blendMode == 2)
+        return mix(baseColor, vec3(1.0) - (vec3(1.0) - baseColor) * (vec3(1.0) - highlight),
+            finalMask);
+    if (blendMode == 3)
+        return mix(baseColor, baseColor * highlight, finalMask);
+    return baseColor;
 }
 #endif

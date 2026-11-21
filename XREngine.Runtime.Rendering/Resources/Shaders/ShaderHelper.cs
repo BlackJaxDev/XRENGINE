@@ -216,10 +216,11 @@ public static class ShaderHelper
         XRShader source;
         if (cache.Tasks.TryGetValue(key, out Task<XRShader>? existingTask))
         {
+            // A caller can hold a job permit. Do not wait for a queued load.
             if (!existingTask.IsCompleted && !services.SupportsSynchronousShaderWork)
                 source = GetCachedShaderOrThrow(cache, key);
             else
-                source = !existingTask.IsCompleted && RuntimeEngine.IsRenderThread
+                source = !existingTask.IsCompleted
                     ? LoadAndCacheEngineShaderInline(cache, key)
                     : existingTask.GetAwaiter().GetResult();
         }
@@ -231,9 +232,7 @@ public static class ShaderHelper
                 cache.Tasks.TryAdd(key, Task.FromResult(source));
             }
             else
-                source = RuntimeEngine.IsRenderThread
-                    ? LoadAndCacheEngineShaderInline(cache, key)
-                    : GetOrCreateEngineShaderTask(cache, key).GetAwaiter().GetResult();
+                source = LoadAndCacheEngineShaderInline(cache, key);
         }
 
         EnsureLiveEngineShader(cache, key, source);
@@ -1021,8 +1020,8 @@ public static class ShaderHelper
                     : string.Empty;
 
                 return string.IsNullOrEmpty(body)
-                    ? header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine
-                    : header + Environment.NewLine + $"#define {defineName}" + Environment.NewLine + Environment.NewLine + body;
+                    ? $"{header}{Environment.NewLine}#define {defineName}{Environment.NewLine}"
+                    : $"{header}{Environment.NewLine}#define {defineName}{Environment.NewLine}{Environment.NewLine}{body}";
             }
 
             if (lineEnd < 0)
@@ -1209,6 +1208,10 @@ void main()
     #endregion
 
     #region Gaussian Splatting Shaders
+
+    /// <summary>Loads the compute shader that clears the visible and overflow counters of gaussian splats.</summary>
+    public static XRShader GaussianSplatResetCountersCompute()
+        => LoadEngineShader(GaussianSplatRenderer.ResetCountersShaderPath, EShaderType.Compute);
 
     /// <summary>Loads the compute shader that writes the depth sort keys of gaussian splats.</summary>
     public static XRShader GaussianSplatKeysCompute()

@@ -9,7 +9,9 @@ namespace XREngine.Execution;
 internal sealed class RenderWorkBatchPool
 {
     private readonly RenderWorkBatch[] _batches;
+    private readonly object _rentalSync = new();
     private int _activeRentOperations;
+    private int _asynchronousRentalCount;
     private int _shutdownState;
 
     internal RenderWorkBatchPool(
@@ -40,17 +42,22 @@ internal sealed class RenderWorkBatchPool
             if (Volatile.Read(ref _shutdownState) != 0)
                 throw new ObjectDisposedException(nameof(RenderWorkBatchPool));
 
-            foreach (RenderWorkBatch batch in _batches)
+            // Every rental takes the rental gate, so the asynchronous capacity rules
+            // below see a consistent count of free blocks.
+            lock (_rentalSync)
             {
-                if (!batch.TryRent(itemCount, dependentCount, out long generation))
-                    continue;
+                foreach (RenderWorkBatch batch in _batches)
+                {
+                    if (!batch.TryRent(itemCount, dependentCount, out long generation))
+                        continue;
 
-                var lease = new RenderWorkBatchLease(batch, generation);
-                if (Volatile.Read(ref _shutdownState) == 0)
-                    return lease;
+                    var lease = new RenderWorkBatchLease(batch, generation);
+                    if (Volatile.Read(ref _shutdownState) == 0)
+                        return lease;
 
-                lease.Dispose();
-                throw new ObjectDisposedException(nameof(RenderWorkBatchPool));
+                    lease.Dispose();
+                    throw new ObjectDisposedException(nameof(RenderWorkBatchPool));
+                }
             }
 
             throw new InvalidOperationException(
@@ -61,6 +68,92 @@ internal sealed class RenderWorkBatchPool
         {
             Interlocked.Decrement(ref _activeRentOperations);
         }
+    }
+
+    /// <summary>
+    /// Maximum concurrent asynchronous rentals: <c>min(2, max(0, capacity - 1))</c>.
+    /// A one-block pool admits none, so synchronous work always keeps a block.
+    /// </summary>
+    internal int AsynchronousRentalLimit => Math.Min(2, Math.Max(0, _batches.Length - 1));
+
+    internal int AsynchronousRentalCount => Volatile.Read(ref _asynchronousRentalCount);
+
+    /// <summary>
+    /// Rents a building lease charged to the asynchronous capacity. The rental fails
+    /// with a reason when the limit is reached, when the executor already holds a
+    /// rental, or when it would take the last free block.
+    /// </summary>
+    internal RenderWorkAdmissionResult TryRentAsynchronous(
+        IRenderWorkExecutor executor,
+        int itemCount,
+        int dependentCount,
+        out RenderWorkBatchLease lease)
+    {
+        lease = default;
+        Interlocked.Increment(ref _activeRentOperations);
+        try
+        {
+            if (Volatile.Read(ref _shutdownState) != 0)
+                return new RenderWorkAdmissionResult(ERenderWorkAdmissionReason.DomainUnavailable);
+
+            int limit = AsynchronousRentalLimit;
+            if (limit == 0)
+                return new RenderWorkAdmissionResult(ERenderWorkAdmissionReason.AsynchronousCapacityDisabled);
+
+            lock (_rentalSync)
+            {
+                if (Volatile.Read(ref _asynchronousRentalCount) >= limit)
+                    return new RenderWorkAdmissionResult(ERenderWorkAdmissionReason.AsynchronousCapacityExhausted);
+
+                int freeCount = 0;
+                foreach (RenderWorkBatch batch in _batches)
+                {
+                    if (ReferenceEquals(batch.AsynchronousExecutor, executor))
+                        return new RenderWorkAdmissionResult(ERenderWorkAdmissionReason.ExecutorBusy);
+                    if (batch.IsIdle)
+                        freeCount++;
+                }
+
+                if (freeCount < 2)
+                    return new RenderWorkAdmissionResult(ERenderWorkAdmissionReason.LastFreeBatch);
+
+                foreach (RenderWorkBatch batch in _batches)
+                {
+                    if (!batch.TryRent(itemCount, dependentCount, out long generation))
+                        continue;
+
+                    batch.BeginAsynchronousRental(generation, executor);
+                    Interlocked.Increment(ref _asynchronousRentalCount);
+                    lease = new RenderWorkBatchLease(batch, generation);
+                    return RenderWorkAdmissionResult.Admitted;
+                }
+
+                return new RenderWorkAdmissionResult(ERenderWorkAdmissionReason.LastFreeBatch);
+            }
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _activeRentOperations);
+        }
+    }
+
+    internal void ReleaseAsynchronousCharge()
+        => Interlocked.Decrement(ref _asynchronousRentalCount);
+
+    internal long GetOldestUnjoinedAsynchronousPublishTicks()
+    {
+        long oldest = 0L;
+        foreach (RenderWorkBatch batch in _batches)
+        {
+            if (!batch.IsAsynchronousSubmitted)
+                continue;
+
+            long published = batch.AsynchronousPublishedTicks;
+            if (published != 0L && (oldest == 0L || published < oldest))
+                oldest = published;
+        }
+
+        return oldest;
     }
 
     internal void Return(RenderWorkBatch batch)
@@ -116,7 +209,7 @@ internal sealed class RenderWorkBatchPool
             batch.FinalizeFaultQuarantine(batch.Generation);
     }
 
-    internal bool HasUnquiescedBatchesExcept(RenderWorkBatch ignoredBatch, long ignoredGeneration)
+    internal bool HasUnquiescedBatchesExcept(RenderWorkBatch? ignoredBatch, long ignoredGeneration)
     {
         foreach (RenderWorkBatch batch in _batches)
         {

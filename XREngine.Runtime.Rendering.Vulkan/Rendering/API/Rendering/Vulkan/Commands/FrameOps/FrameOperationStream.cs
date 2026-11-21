@@ -939,15 +939,19 @@ internal sealed class FrameOperationStream
         in VulkanAdvancedVisibilityStageRequest request,
         in VulkanAdvancedNativeComputeClosure closure,
         DescriptorSet descriptorSet,
-        in VulkanAdvancedNativeComputePipelines pipelines)
+        in VulkanAdvancedNativeComputePipelines pipelines,
+        bool sealedHasUber)
     {
-        if (!closure.IsValid || descriptorSet.Handle == 0 || !pipelines.IsCurrent ||
+        if (!closure.IsValid || descriptorSet.Handle == 0 ||
+            !pipelines.IsCurrentFor(closure.UsesMultisampleVisibility, sealedHasUber) ||
             (uint)index >= (uint)_count ||
             _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
             return false;
         ref readonly FrameOperationHeader header = ref _headers[index];
         VulkanAdvancedVisibilityOperationPayload payload = _payloads.AdvancedVisibilities[header.PayloadIndex];
         if (!payload.Request.Equals(request) ||
+            !payload.SceneState.IsValid ||
+            payload.SceneState.KernelFamilies.HasUber != sealedHasUber ||
             payload.NativeComputeClosure is { } current && current != closure ||
             payload.NativeComputePipelines != default && payload.NativeComputePipelines != pipelines)
             return false;
@@ -974,7 +978,8 @@ internal sealed class FrameOperationStream
         VulkanAdvancedVisibilityOperationPayload payload =
             _payloads.AdvancedVisibilities[header.PayloadIndex];
         if (!payload.Request.Equals(request) || payload.LateTargetClosure is not { } closure ||
-            descriptorSetCount != checked(2 * (int)closure.ViewCount) ||
+            descriptorSetCount != checked(
+                VulkanAdvancedVisibilityLateTargetClosure.DescriptorRolesPerView * (int)closure.ViewCount) ||
             descriptorSets.Length < descriptorSetCount)
             return false;
 
@@ -991,6 +996,52 @@ internal sealed class FrameOperationStream
             },
         };
         return true;
+    }
+
+    /// <summary>
+    /// Copies the sealed late closure of the family's late compute operation
+    /// into its late raster operation. The late meshlet task stage binds the
+    /// per-view late raster tables (role 2) of that closure: they hold this
+    /// view's depth pyramid layer for the Hi-Z test. The late compute operation is
+    /// sealed earlier in the same frame, so the search runs backward from the
+    /// late raster operation. Returns false when no sealed closure exists.
+    /// </summary>
+    internal bool TryAttachAdvancedVisibilityLateRasterClosure(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request)
+    {
+        if ((uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility ||
+            request.Phase != EAdvancedVisibilityStageBackendPhase.LateRaster)
+            return false;
+
+        ref readonly FrameOperationHeader rasterHeader = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload rasterPayload =
+            _payloads.AdvancedVisibilities[rasterHeader.PayloadIndex];
+        if (!rasterPayload.Request.Equals(request))
+            return false;
+
+        for (int candidate = index - 1; candidate >= 0; --candidate)
+        {
+            ref readonly FrameOperationHeader header = ref _headers[candidate];
+            if (header.OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+                continue;
+            VulkanAdvancedVisibilityOperationPayload payload =
+                _payloads.AdvancedVisibilities[header.PayloadIndex];
+            if (payload.Request.Phase != EAdvancedVisibilityStageBackendPhase.LateCompute ||
+                payload.Request.Reservation != request.Reservation ||
+                payload.Request.RenderFrameId != request.RenderFrameId)
+                continue;
+            if (payload.LateTargetClosure is not { IsRecordingReady: true } closure ||
+                closure.ViewCount != (uint)request.Views.ViewCount)
+                return false;
+            _payloads.AdvancedVisibilities[rasterHeader.PayloadIndex] = rasterPayload with
+            {
+                LateTargetClosure = closure,
+            };
+            return true;
+        }
+        return false;
     }
 
     private static VulkanAdvancedVisibilityPipelineReadiness DescribeAdvancedVisibilityPipelineReadiness(
@@ -1059,11 +1110,11 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.Clear: { var p=(ClearOp)op; _payloads.Clears[i]=new(p.ClearColor,p.ClearDepth,p.ClearStencil,p.Color,p.Depth,p.Stencil,p.Rect); break; }
             case EVulkanPrimaryPlanNodeKind.TransformFeedback: { var p=(TransformFeedbackOp)op; _payloads.TransformFeedbacks[i]=new(p.TransformFeedback,p.Operation,p.CounterBuffer,p.FeedbackBufferOffset,p.FeedbackBufferSize,p.CounterBufferOffset,p.CounterOffset,p.VertexStride,p.InstanceCount,p.FirstInstance); break; }
             case EVulkanPrimaryPlanNodeKind.Query: { var p=(QueryOp)op; _payloads.Queries[i]=new(p.Query,p.Descriptor,p.Operation,p.TimestampStage,p.PointIndex,p.SourceHandles,p.ResultDestination,p.ResultDestinationOffset,p.ResultStride,p.IncludeAvailability); break; }
-            case EVulkanPrimaryPlanNodeKind.MeshDraw: _payloads.MeshDraws[i]=new(_payloads.SealDraw(kind, i, ((MeshDrawOp)op).Draw)); break;
+            case EVulkanPrimaryPlanNodeKind.MeshDraw: _payloads.MeshDraws[i]=new(_payloads.SealDraw(kind, i, in ((MeshDrawOp)op).DrawRef)); break;
             case EVulkanPrimaryPlanNodeKind.IndirectDraw:
             {
                 var p = (IndirectDrawOp)op;
-                PendingMeshDraw draw = _payloads.SealDraw(kind, i, p.Draw);
+                PendingMeshDraw draw = _payloads.SealDraw(kind, i, in p.DrawRef);
                 draw.ProgramBindingSnapshot?.SetMaterialTablePublication(p.BindlessMaterialTextures?.Publication);
                 _payloads.IndirectDraws[i] = new(p.IndirectBuffer, p.ParameterBuffer, p.MeshRenderer, draw, p.DrawCount, p.Stride, p.ByteOffset, p.CountByteOffset, p.UseCount, p.BindlessMaterialTextures, p.SecondaryRecordingContract);
                 break;

@@ -29,12 +29,14 @@ Notes:
 | Name | Used by | Owner | License (best-effort) | URL |
 |---|---|---|---|---|
 | CDT | CoACD | artem-ogre | [MPL-2.0](licenses/github/CDT-MPL-2.0.txt) | https://github.com/artem-ogre/CDT |
+| bc7enc_rdo b943862 (bc7enc.cpp and rgbcx.cpp only) | XREngine.Runtime.Imaging.Bc7Enc | Richard Geldreich, Jr. | [MIT OR Unlicense](licenses/nested/bc7enc_rdo%20b943862%20%28bc7enc.cpp%20and%20rgbcx.cpp%20only%29-MIT%20OR%20Unlicense.txt) | https://github.com/richgel999/bc7enc_rdo/tree/b9438627eef73a1157e84201b6fa6eb2ffd6d9f0 |
 | fastgltf v0.9.0 | FastGltfBridge | Sean Apeler | [MIT](licenses/nested/fastgltf v0.9.0-MIT.md) | https://github.com/spnda/fastgltf/tree/v0.9.0 |
+| GLFW 3.4 (Windows active-window fix) | Windows x64 desktop hosts; Tools/Dependencies/Build-Glfw.ps1 | Marcus Geelnard, Camilla Lowy, and GLFW contributors | [Zlib](licenses/nested/GLFW%203.4%20%28Windows%20active-window%20fix%29-Zlib.md) | https://github.com/glfw/glfw/tree/3.4 |
 | Jolt v5.6.0 (browser static source) | Jolt browser native archives | Jorrit Rouwe | [MIT](licenses/nested/Jolt%20v5.6.0%20%28browser%20static%20source%29-MIT.txt) | https://github.com/jrouwe/JoltPhysics/tree/e77f175595e64cb44218cc9d9d56fc365ad0e36a |
 | joltc (browser static source) | Jolt browser native archives | Amer Koleci and Contributors | [MIT](licenses/nested/joltc%20%28browser%20static%20source%29-MIT.txt) | https://github.com/amerkoleci/joltc/tree/886e088675bae3a086f8318c7803f8ee962c2f2c |
 | JoltPhysicsSharp 2.22.0 (browser source) | Jolt browser managed binding | Amer Koleci and Contributors | [MIT](licenses/nested/JoltPhysicsSharp%202.22.0%20%28browser%20source%29-MIT.txt) | https://github.com/amerkoleci/JoltPhysicsSharp/tree/77a5be2dd30d587c1981dfcaf15851f18041b39c |
 | LocalAgentBroker.Orchestration 0.2.0 | XREngine.Editor | BlackJax LLC | [MIT](licenses/nested/LocalAgentBroker.Orchestration%200.2.0-MIT.txt) | https://github.com/BlackJaxDev/local-agent-broker/tree/v0.2.0 |
-| meshoptimizer v1.3 | XREngine.Runtime.MeshProcessing.Meshoptimizer | Arseny Kapoulkine | [MIT](licenses/nested/meshoptimizer%20v1.3-MIT.md) | https://github.com/zeux/meshoptimizer/tree/v1.3 |
+| meshoptimizer v1.3 | XREngine.Runtime.MeshProcessing.Meshoptimizer; XREngine.Runtime.Rendering (MeshletClusterHierarchyBuilder is ported from demo/clusterlod.h) | Arseny Kapoulkine | [MIT](licenses/nested/meshoptimizer%20v1.3-MIT.md) | https://github.com/zeux/meshoptimizer/tree/v1.3 |
 | Playwright 1.63.0 (browser validation tooling) | Tools/BrowserSmoke; development and CI only | Microsoft Corporation | [Apache-2.0](licenses/Playwright-1.63.0.txt) | https://github.com/microsoft/playwright/tree/v1.63.0 |
 | Slang 2026.8 (shader compiler tooling) | Tools/ShaderCooker; cook time only | Slang project contributors | [Apache-2.0 WITH LLVM-exception](licenses/Slang-2026.8.txt) | https://github.com/shader-slang/slang/tree/v2026.8 |
 | simdjson v3.12.3 | FastGltfBridge | simdjson authors | [Apache-2.0](licenses/nested/simdjson v3.12.3-Apache-2.0.txt) | https://github.com/simdjson/simdjson/tree/v3.12.3 |
@@ -81,8 +83,10 @@ Notes:
 | Silk.NET | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Core | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.IO.DirectStorage.csproj, XREngine.Runtime.Rendering.OpenGL.csproj, XREngine.Runtime.Rendering.Vulkan.csproj, XREngine.UnitTests.csproj |
 | Silk.NET.Core.Win32Extras | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Core.Win32Extras-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Rendering.Vulkan.csproj |
+| Silk.NET.Direct3D11 | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Direct3D11-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
 | Silk.NET.DirectStorage | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.DirectStorage-2.23.0-MIT.txt) | XREngine.Runtime.IO.DirectStorage.csproj |
 | Silk.NET.DirectStorage.Native | 1.3.0 | microsoft | [LICENSE.txt](licenses/nuget/Silk.NET.DirectStorage.Native-1.3.0-LICENSE.txt.txt) | XREngine.Runtime.IO.DirectStorage.csproj |
+| Silk.NET.DXGI | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.DXGI-2.23.0-MIT.txt) | XREngine.Runtime.Rendering.Vulkan.csproj |
 | Silk.NET.GLFW | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.GLFW-2.23.0-MIT.txt) | XREngine.Editor.csproj |
 | Silk.NET.Input | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input-2.23.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Input.Silk.csproj, XREngine.Profiler.csproj, XREngine.Runtime.Platform.Desktop.csproj |
 | Silk.NET.Input.Common | 2.23.0 | dotnet | [MIT](licenses/nuget/Silk.NET.Input.Common-2.23.0-MIT.txt) | XREngine.Editor.csproj |

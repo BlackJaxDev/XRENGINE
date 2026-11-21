@@ -91,9 +91,96 @@ namespace XREngine.Rendering.Info
         private Matrix4x4 _cullingMatrix = Matrix4x4.Identity;
         private OctreeNodeBase? _octreeNode;
         private Box? _lastQueuedWorldBounds;
+        // World box of the last shadow caster change that this renderable reported.
+        private Box? _lastShadowCasterBounds;
         private ICommittedWorldBoundsProvider? _committedWorldBoundsProvider;
         internal bool HasCommittedWorldBoundsProvider
             => Volatile.Read(ref _committedWorldBoundsProvider) is not null;
+
+        // Motion classification for the static directional cascade cache. The scene's
+        // classification lock (VisualScene3D.NoteShadowCasterMotion) guards this field.
+        // Stopwatch timestamps of the last reported change and of the moment the caster became
+        // due for demotion (0 when not due), and the content change repeat window.
+        internal long ShadowCasterLastChangeTimestamp;
+        internal long ShadowCasterDueSinceTimestamp;
+        internal long ShadowCasterContentWindowStart;
+        internal int ShadowCasterContentChanges;
+        // True while the scene keeps this caster in its moving-caster list.
+        private volatile bool _shadowCasterMotionDynamic;
+
+        /// <summary>
+        /// True when this shadow caster is drawn in the dynamic overlay of a cached directional
+        /// cascade, not in its static caster tile. A renderable with committed deformation
+        /// bounds (a skinned or deformed mesh) is always dynamic. Another renderable becomes
+        /// dynamic at its first reported change and stays dynamic until the scene demotes it
+        /// (see VisualScene3D.ProcessShadowCasterDemotions). The swap copies this value into
+        /// the draw flags (GPUIndirectRenderFlags.ShadowCasterDynamic).
+        /// </summary>
+        internal bool IsShadowCasterDynamic
+            => HasCommittedWorldBoundsProvider || _shadowCasterMotionDynamic;
+
+        /// <summary>Sets the moving-caster state. Only the scene's classification code calls it, under its lock.</summary>
+        internal void SetShadowCasterMotionDynamic(bool dynamic)
+        {
+            if (_shadowCasterMotionDynamic == dynamic)
+                return;
+            _shadowCasterMotionDynamic = dynamic;
+            // The draw flags of the next swap carry the new set, so the GPU scene must
+            // convert the commands again.
+            InvalidateRenderCommandsForOwnerState();
+        }
+
+        /// <summary>
+        /// True when one enabled render command of this renderable draws in a pass that casts
+        /// shadows (pre-render, opaque deferred, opaque forward, masked forward, post-render),
+        /// the passes of the shadow caster command set. A renderable without such a command
+        /// (a skybox, UI text) is not in the caster record set, so its changes must not mark
+        /// the cascades or their static caster tiles. It allocates nothing for owner-managed
+        /// command lists.
+        /// </summary>
+        private bool HasShadowCasterPassCommand()
+        {
+            var commands = RenderCommands;
+            if (commands.ThreadSafe)
+            {
+                foreach (RenderCommand command in commands)
+                    if (IsShadowCasterPassCommand(command))
+                        return true;
+                return false;
+            }
+
+            for (int i = 0, count = commands.Count; i < count; ++i)
+                if (IsShadowCasterPassCommand(commands[i]))
+                    return true;
+            return false;
+        }
+
+        private static bool IsShadowCasterPassCommand(RenderCommand command)
+            => command.Enabled && command.RenderPass is
+                (int)EDefaultRenderPass.PreRender or
+                (int)EDefaultRenderPass.OpaqueDeferred or
+                (int)EDefaultRenderPass.OpaqueForward or
+                (int)EDefaultRenderPass.MaskedForward or
+                (int)EDefaultRenderPass.PostRender;
+
+        /// <summary>The visual scene that this renderable is registered with, or null.</summary>
+        internal XREngine.Scene.VisualScene3D? RegisteredVisualScene
+            => (_registeredWorldInstance as IRuntimeRenderWorld)?.VisualScene;
+
+        /// <summary>
+        /// Reports a demotion to the static set as a static change. The scene demotes only in a
+        /// plan pass in which every cascade that the box meets draws its static tile anyway, so
+        /// this report adds no static draw of its own.
+        /// </summary>
+        internal void ReportShadowCasterDemotion()
+        {
+            if (!CastsShadows || _registeredWorldInstance is not IRuntimeRenderWorld world ||
+                !HasShadowCasterPassCommand())
+                return;
+            Box? box = ((IOctreeItem)this).WorldCullingVolume;
+            world.VisualScene.RecordShadowCasterChange(box, box, dynamicCaster: false);
+            _lastShadowCasterBounds = box;
+        }
         private bool _receivesShadows = true;
         private bool _castsShadows = true;
         private bool _visibleInLightingProbes = true;
@@ -273,8 +360,18 @@ namespace XREngine.Rendering.Info
                     TryQueueOctreeMove();
                     InvalidateRenderCommandsForOwnerState();
                     break;
-                case nameof(Layer):
                 case nameof(CastsShadows):
+                    // A caster that starts or stops casting changes the cascades that its box
+                    // meets, and the static caster tiles too.
+                    if (_registeredWorldInstance is IRuntimeRenderWorld castWorld && HasShadowCasterPassCommand())
+                    {
+                        Box? box = ((IOctreeItem)this).WorldCullingVolume;
+                        castWorld.VisualScene.RecordShadowCasterChange(box, box, dynamicCaster: false);
+                        _lastShadowCasterBounds = box;
+                    }
+                    InvalidateRenderCommandsForOwnerState();
+                    break;
+                case nameof(Layer):
                 case nameof(ReceivesShadows):
                     InvalidateRenderCommandsForOwnerState();
                     break;
@@ -359,10 +456,11 @@ namespace XREngine.Rendering.Info
 
         private void TryQueueOctreeMove(bool force = false)
         {
+            var worldBounds = ((IOctreeItem)this).WorldCullingVolume;
+            ReportShadowCasterChange(worldBounds, force);
             if (OctreeNode is null)
                 return;
 
-            var worldBounds = ((IOctreeItem)this).WorldCullingVolume;
             if (!force && worldBounds.HasValue &&
                 _lastQueuedWorldBounds.HasValue &&
                 BoxNearlyEqual(_lastQueuedWorldBounds.Value, worldBounds.Value))
@@ -374,6 +472,52 @@ namespace XREngine.Rendering.Info
             _lastQueuedWorldBounds = worldBounds;
             OctreeNode.QueueItemMoved(this);
         }
+
+        /// <summary>
+        /// Reports a change of this shadow caster to its scene, so that the directional
+        /// cascades that its old or new box meets re-render. It reports when the box
+        /// changed, and on every forced notification: a new deformation output (a new
+        /// skinned pose) can keep a conservative box, but the pose still changes the shadow.
+        /// Renderables that cast no shadow, or that are not registered with a world, report
+        /// nothing.
+        /// </summary>
+        private void ReportShadowCasterChange(Box? worldBounds, bool force, bool motion = true)
+        {
+            if (!CastsShadows || _registeredWorldInstance is not IRuntimeRenderWorld world ||
+                !HasShadowCasterPassCommand())
+                return;
+
+            bool changed = !worldBounds.HasValue || !_lastShadowCasterBounds.HasValue ||
+                !BoxNearlyEqual(_lastShadowCasterBounds.Value, worldBounds.Value);
+            if (!force && !changed)
+                return;
+
+            // A change is dynamic only when the caster was dynamic before it and stays
+            // dynamic. A promotion reports a static change: the swap that shows the new pose
+            // can still carry the static flag, so the static tile must re-render.
+            // A transform or bounds change promotes the caster at once. A content change (mesh,
+            // material, instances, enabled state) promotes it only when it repeats (see
+            // VisualScene3D.NoteShadowCasterContentChange).
+            bool wasDynamic = IsShadowCasterDynamic;
+            if (!HasCommittedWorldBoundsProvider)
+            {
+                if (motion)
+                    world.VisualScene.NoteShadowCasterMotion(this);
+                else
+                    world.VisualScene.NoteShadowCasterContentChange(this);
+            }
+            bool dynamicChange = wasDynamic && IsShadowCasterDynamic;
+            world.VisualScene.RecordShadowCasterChange(_lastShadowCasterBounds, worldBounds, dynamicChange);
+            _lastShadowCasterBounds = worldBounds;
+        }
+
+        /// <summary>
+        /// Reports a change of the shadow that this caster casts without a move: a new mesh,
+        /// LOD, material, instance count or enabled state of one of its render commands. The
+        /// directional cascades that its box meets re-render.
+        /// </summary>
+        internal void ReportShadowCasterContentChange()
+            => ReportShadowCasterChange(((IOctreeItem)this).WorldCullingVolume, force: true, motion: false);
 
         private static bool BoxNearlyEqual(in Box a, in Box b, float epsilon = 1e-4f)
         {

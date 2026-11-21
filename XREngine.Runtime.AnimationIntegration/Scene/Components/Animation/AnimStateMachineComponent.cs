@@ -103,6 +103,31 @@ namespace XREngine.Components
             private set => SetField(ref _playbackCapabilityDiagnostic, value);
         }
 
+        private bool _evaluationSuspended;
+        /// <summary>
+        /// True while another owner drives the target. This flag is separate from
+        /// <see cref="SuspendedByClip"/>, because a sibling clip changes that value at its own stop.
+        /// </summary>
+        public bool EvaluationSuspended
+        {
+            get => _evaluationSuspended;
+            private set => SetField(ref _evaluationSuspended, value);
+        }
+
+        /// <summary>Stops or starts the evaluation of this component for another owner of the target.</summary>
+        /// <param name="suspended">True to stop the evaluation.</param>
+        public void SetEvaluationSuspended(bool suspended)
+        {
+            if (EvaluationSuspended == suspended)
+                return;
+
+            EvaluationSuspended = suspended;
+
+            // The owner moved the pose, so the next pose starts new root history.
+            if (!suspended && IsActiveInHierarchy && !SuspendedByClip)
+                BeginRootMotionEpoch(rebaseFromNextPose: true);
+        }
+
         public void SetSuspendedByClip(bool suspended)
         {
             if (SuspendedByClip == suspended)
@@ -191,7 +216,7 @@ namespace XREngine.Components
             UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, EvaluationTick);
             UnregisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
             EndRootMotionEpoch();
-            if (!SuspendedByClip)
+            if (!SuspendedByClip && !EvaluationSuspended)
                 ResetDrivenPose();
             if (_stateMachineInitialized)
             {
@@ -215,7 +240,7 @@ namespace XREngine.Components
         }
         protected internal void EvaluationTick()
         {
-            if (SuspendedByClip || !_playbackCapabilitiesValid)
+            if (SuspendedByClip || EvaluationSuspended || !_playbackCapabilitiesValid)
                 return;
 
             var humanoid = GetHumanoidComponent();
@@ -427,7 +452,7 @@ namespace XREngine.Components
 
         private void PublishRootMotion()
         {
-            if (TransformBase.IsDiagnosticEvaluationActive || !_hasStateMachineRootMotion)
+            if (TransformBase.IsDiagnosticEvaluationActive || !_hasStateMachineRootMotion || EvaluationSuspended)
                 return;
 
             HumanoidComponent? humanoid = GetHumanoidComponent();

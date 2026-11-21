@@ -317,9 +317,69 @@ internal sealed unsafe partial class VulkanPipelineManager
     }
 
     /// <summary>
-    /// Serializes host access to the cache used by a compute-pipeline creation call.
+    /// Creates a compute pipeline with the same driver-cache policy as graphics pipelines.
+    /// A background compile first probes the cache with the fail-on-compile-required flag,
+    /// so telemetry records a persisted hit, a runtime hit, or a miss.
     /// </summary>
     internal Result CreateComputePipelinesSynchronized(
+        PipelineCache pipelineCache,
+        ref ComputePipelineCreateInfo pipelineInfo,
+        out Pipeline pipeline)
+    {
+        long start = global::System.Diagnostics.Stopwatch.GetTimestamp();
+        bool backgroundCompile = pipelineCache.Handle == _backgroundPipelineCache.Handle && pipelineCache.Handle != 0;
+        bool probedCache = backgroundCompile && _supportsPipelineCreationCacheControl;
+        bool compileRequired = false;
+        Result result;
+
+        if (probedCache)
+        {
+            PipelineCreateFlags originalFlags = pipelineInfo.Flags;
+            pipelineInfo.Flags |= (PipelineCreateFlags)VulkanPipelineFailOnCompileRequiredFlag;
+            result = CreateComputePipelinesNative(pipelineCache, ref pipelineInfo, out pipeline);
+            pipelineInfo.Flags = originalFlags;
+            if ((int)result == VulkanPipelineCompileRequiredResult)
+            {
+                compileRequired = true;
+                RecordPipelineCacheProbe(miss: true, failure: false);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+                    EVulkanPipelineTelemetryEvent.CompileRequired,
+                    EVulkanDriverPipelineCacheOutcome.Miss,
+                    backgroundCompile: true);
+                result = CreateComputePipelinesNative(pipelineCache, ref pipelineInfo, out pipeline);
+            }
+            else
+                RecordPipelineCacheProbe(miss: false, failure: result != Result.Success);
+        }
+        else
+        {
+            result = CreateComputePipelinesNative(pipelineCache, ref pipelineInfo, out pipeline);
+        }
+
+        if (result == Result.Success)
+        {
+            EVulkanDriverPipelineCacheOutcome cacheOutcome = compileRequired
+                ? EVulkanDriverPipelineCacheOutcome.Miss
+                : probedCache
+                    ? _pipelineCacheInitialDataBytes > 0
+                        ? EVulkanDriverPipelineCacheOutcome.PersistedHit
+                        : EVulkanDriverPipelineCacheOutcome.RuntimeHit
+                    : EVulkanDriverPipelineCacheOutcome.Unknown;
+            double creationMilliseconds = global::System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+                EVulkanPipelineTelemetryEvent.CreationCompleted,
+                cacheOutcome,
+                backgroundCompile,
+                creationMilliseconds);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanComputePipelineCacheOutcome(cacheOutcome, creationMilliseconds);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Serializes host access to the cache used by a compute-pipeline creation call.
+    /// </summary>
+    private Result CreateComputePipelinesNative(
         PipelineCache pipelineCache,
         ref ComputePipelineCreateInfo pipelineInfo,
         out Pipeline pipeline)

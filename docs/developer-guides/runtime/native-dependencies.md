@@ -30,6 +30,7 @@ That bootstrap flow covers the standard repo bootstrap path, but it should be tr
 ### Usually manual
 
 - building the native meshoptimizer library one time (the build stops with an error that names the script when it is missing)
+- building the patched GLFW 3.4 Windows x64 library one time for desktop hosts
 - installing optional helper tools
 - rebuilding submodule-native binaries
 - supplying proprietary NVIDIA SDK binaries locally
@@ -73,6 +74,35 @@ pwsh Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
 ```
 
 The script skips the build when the output already holds the pinned version. Pass `-ForceBuild` to build again.
+
+### GLFW 3.4 (Windows x64 desktop hosts)
+
+The editor and VR client use the GLFW 3.4 ABI from `Ultz.Native.GLFW`. On Windows x64, their build and publish outputs use a locally built GLFW 3.4 DLL. The one-hunk source patch checks the active HWND against the process's GLFW window list before it reads key state. This prevents a foreign HWND from supplying a foreign GLFW window pointer when Windows input queues are attached.
+
+`ExecTool --bootstrap` runs the GLFW build in its dependency step. To build it separately:
+
+```powershell
+pwsh Tools/Dependencies/Build-Glfw.ps1 -Rid win-x64
+```
+
+The script downloads the official 3.4 source archive, checks its SHA-256 hash from `Tools/Dependencies/Glfw.lock.json`, applies `Tools/Dependencies/Glfw/window-list.patch`, and builds a shared Release DLL with Visual Studio 2022 C++ tools and CMake. It writes the DLL and build witness to the ignored `Build/Dependencies/Glfw/win-x64/` directory. A Windows x64 desktop build that resolves the GLFW package asset stops with an error if this DLL is missing. The build output copy removes the package DLL first, so a NuGet cache hardlink stays unchanged. Publish uses the patched DLL as its input before copy or single-file bundling. Other platforms use the package DLL.
+
+GLFW uses the zlib license in `Tools/Dependencies/Glfw/LICENSE.md`. The source patch marks the changed code. Distributions of the changed source must retain the upstream notice and identify the change.
+
+### bc7enc_rdo (texture block compression)
+
+Used by `XREngine.Runtime.Imaging.Bc7Enc` to encode cooked textures as BC7 (and BC4 and BC5) at cook time. The repository and commit are pinned in `Tools/Dependencies/Bc7Enc.lock.json`. The build compiles only `bc7enc.cpp` and `rgbcx.cpp`, which are MIT or Unlicense, together with the small C shim in `Tools/Dependencies/Bc7Enc/`. It does not compile `bc7e.ispc` (Apache 2.0) or LodePNG.
+
+- Script: `Tools/Dependencies/Build-Bc7Enc.ps1 -Rid win-x64` (also in the `Deps` group of `ExecTool.bat`, so `ExecTool --bootstrap` runs it)
+- Requirements: `git`, `cmake`, and a C++ compiler toolchain
+- Output location: `Build/Dependencies/Bc7Enc/<rid>/` (`xre_bcn.dll` or `libxre_bcn.so`, `xre_bcn.version`, and the upstream license; ignored by Git, never committed)
+- Build behavior: the build does not stop when the library is missing. The texture cook then stores uncompressed RGBA8 and logs the reason.
+
+```powershell
+pwsh Tools/Dependencies/Build-Bc7Enc.ps1 -Rid win-x64
+```
+
+The script skips the build when the output already holds the pinned commit and the current shim. Pass `-ForceBuild` to build again.
 
 ### FastGltfBridge
 

@@ -204,7 +204,8 @@ vec3 loadNormal(uint vertexIndex)
 
 vec3 loadTangent(uint vertexIndex)
 {
-    uint base = vertexIndex * 3u;
+    // Source tangents store XYZ and handedness in four floats per vertex.
+    uint base = vertexIndex * 4u;
     return vec3(TangentsIn[base + 0u], TangentsIn[base + 1u], TangentsIn[base + 2u]);
 }
 
@@ -495,7 +496,7 @@ void main()
         if (hasNormals != 0)
             NormalsOut[idx].xyz = normalize(baseNormal);
         if (hasTangents != 0)
-            TangentsOut[idx].xyz = normalize(baseTangent);
+            TangentsOut[idx] = vec4(normalize(baseTangent), TangentsIn[idx * 4u + 3u]);
     }
 
     if (updateLiveBounds != 0)

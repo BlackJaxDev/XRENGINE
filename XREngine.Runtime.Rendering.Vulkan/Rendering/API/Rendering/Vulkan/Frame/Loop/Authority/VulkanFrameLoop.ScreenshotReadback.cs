@@ -542,26 +542,19 @@ internal sealed partial class VulkanFrameLoop
         return null;
     }
 
+    /// <summary>
+    /// Returns true when the PNG must apply the linear-to-sRGB transfer. A single-layer float
+    /// color target holds linear display values, and the sRGB desktop swapchain applies the
+    /// transfer when it presents them. The readback must apply the same transfer, or the file
+    /// is darker and more saturated than the window. This does not depend on the identity of
+    /// the last presented image: viewport targets, post-process outputs and the present source
+    /// all hold the same linear encoding.
+    /// </summary>
     private bool ShouldEncodeScreenshotForSrgbDisplay(in BlitImageInfo source, bool isComposited)
-    {
-        if (isComposited ||
-            OutputRuntime.Desktop.ImageFormat is not (Format.B8G8R8A8Srgb or Format.R8G8B8A8Srgb) ||
-            source.Format is not (Format.R16G16B16A16Sfloat or Format.R32G32B32A32Sfloat or Format.B10G11R11UfloatPack32) ||
-            source.BaseArrayLayer != 0 || source.MipLevel != 0 || source.LayerCount != 1)
-            return false;
-
-        _outputRuntime.PresentationSource.Submitted.Capture(
-            out VulkanPresentationSourceTuple presented,
-            out VulkanResidentTemplateDependencyLease? lease);
-        return presented.HasLogicalSource && presented.IsComplete &&
-            ResourceRuntime.TryValidateRetainedPresentationSourceForReplay(presented, lease, out _) &&
-            source.Image.Handle == presented.Image.Handle &&
-            source.Format == presented.Format &&
-            source.AspectMask == presented.Aspect &&
-            source.Samples == presented.Samples &&
-            source.Extent.Width == presented.Width &&
-            source.Extent.Height == presented.Height;
-    }
+        => !isComposited &&
+            OutputRuntime.Desktop.ImageFormat is Format.B8G8R8A8Srgb or Format.R8G8B8A8Srgb &&
+            source.Format is Format.R16G16B16A16Sfloat or Format.R32G32B32A32Sfloat or Format.B10G11R11UfloatPack32 &&
+            source.BaseArrayLayer == 0 && source.MipLevel == 0 && source.LayerCount == 1;
 
     private void PrepareScreenshotReadbackRequest(
         VulkanScreenshotReadbackSlot slot,
@@ -576,8 +569,11 @@ internal sealed partial class VulkanFrameLoop
     {
         slot.Callback = callback;
         slot.AdvancedPickingCallback = null;
+        slot.EditorPickingCallback = null;
+        slot.IsEditorPicking = false;
+        slot.EditorPickingToken = 0UL;
         slot.IsAdvancedPicking = false;
-        slot.AdvancedPickingIdentitySource = null;
+        slot.PickingIdentitySource = null;
         slot.AdvancedPickingMetadataSource = null;
         slot.AdvancedPickingSelectionSource = null;
         slot.SourceFormat = sourceFormat;
@@ -925,9 +921,9 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        if (slot.IsAdvancedPicking)
+        if (slot.IsAdvancedPicking || slot.IsEditorPicking)
         {
-            ProcessAdvancedPickingReadback(slot, rawPixels);
+            ProcessPickingReadback(slot, rawPixels);
             return true;
         }
 
@@ -1081,8 +1077,22 @@ internal sealed partial class VulkanFrameLoop
 
         Action<AdvancedVisibilityEncodedSurface>? pickingCallback =
             Interlocked.Exchange(ref slot.AdvancedPickingCallback, null);
+        Action<ulong, EditorPickingEncodedPixel>? editorPickingCallback =
+            Interlocked.Exchange(ref slot.EditorPickingCallback, null);
         Action<ScreenshotReadbackResult>? callback = Interlocked.Exchange(ref slot.Callback, null);
         Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackFailedCount);
+        if (editorPickingCallback is not null)
+        {
+            try
+            {
+                editorPickingCallback(slot.EditorPickingToken, default);
+            }
+            catch (Exception ex)
+            {
+                Debug.VulkanWarning("[Vulkan] Editor picking readback failure callback threw: {0}", ex.Message);
+            }
+            return;
+        }
         if (pickingCallback is not null)
         {
             try
@@ -1145,7 +1155,10 @@ internal sealed partial class VulkanFrameLoop
         ReleaseScreenshotReadbackReservation(slot);
         slot.Callback = null;
         slot.AdvancedPickingCallback = null;
-        slot.AdvancedPickingIdentitySource = null;
+        slot.EditorPickingCallback = null;
+        slot.IsEditorPicking = false;
+        slot.EditorPickingToken = 0UL;
+        slot.PickingIdentitySource = null;
         slot.AdvancedPickingMetadataSource = null;
         slot.AdvancedPickingSelectionSource = null;
 
@@ -1215,8 +1228,11 @@ internal sealed partial class VulkanFrameLoop
     {
         slot.Callback = null;
         slot.AdvancedPickingCallback = null;
+        slot.EditorPickingCallback = null;
+        slot.IsEditorPicking = false;
+        slot.EditorPickingToken = 0UL;
         slot.IsAdvancedPicking = false;
-        slot.AdvancedPickingIdentitySource = null;
+        slot.PickingIdentitySource = null;
         slot.AdvancedPickingMetadataSource = null;
         slot.AdvancedPickingSelectionSource = null;
         slot.RawByteCount = 0;
@@ -1294,7 +1310,10 @@ internal sealed partial class VulkanFrameLoop
 
             slot.Callback = null;
             slot.AdvancedPickingCallback = null;
-            slot.AdvancedPickingIdentitySource = null;
+            slot.EditorPickingCallback = null;
+            slot.IsEditorPicking = false;
+            slot.EditorPickingToken = 0UL;
+            slot.PickingIdentitySource = null;
             slot.AdvancedPickingMetadataSource = null;
             slot.AdvancedPickingSelectionSource = null;
             slot.Fence = default;

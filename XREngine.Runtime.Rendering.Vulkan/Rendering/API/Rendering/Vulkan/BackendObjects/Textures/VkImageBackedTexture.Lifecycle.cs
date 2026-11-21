@@ -124,7 +124,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
 
         // Reset all cached handles and overrides.
-        _view = default;
+        SetCurrentView(default);
         _attachmentViews.Clear();
         _sampler = default;
         _image = default;

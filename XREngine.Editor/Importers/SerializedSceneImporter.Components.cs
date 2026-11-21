@@ -474,7 +474,13 @@ internal static partial class SerializedSceneImporter
 
         bool isNullMaterial = materialReference.FileId == 0 && string.IsNullOrWhiteSpace(materialReference.Guid);
         SortedDictionary<int, int> sourceSlots = GetDrawableSourceMaterialSlots(component.Model);
-        if (!sourceSlots.TryGetValue(materialIndex, out int sourceSlot))
+        if (!isNullMaterial && !sourceSlots.ContainsKey(materialIndex) &&
+            sourceSlots.Count > 0 && materialIndex > sourceSlots.Keys.Max())
+        {
+            ExpandRendererMaterialSlots(component.Model, materialIndex + 1, state);
+            sourceSlots = GetDrawableSourceMaterialSlots(component.Model);
+        }
+        if (!sourceSlots.ContainsKey(materialIndex))
         {
             if (isNullMaterial)
                 return;
@@ -502,10 +508,13 @@ internal static partial class SerializedSceneImporter
                 $"Required prefab material override '{materialReference.Guid}:{materialReference.FileId}' could not be imported.");
         foreach (SubMesh subMesh in component.Model.Meshes)
         {
-            if (subMesh.ImportedSourceMaterialSlot != sourceSlot)
+            if ((subMesh.ImportedRendererMaterialSlot ?? subMesh.ImportedSourceMaterialSlot) != materialIndex)
                 continue;
             foreach (SubMeshLOD lod in subMesh.LODs)
+            {
                 lod.Material = material;
+                LogSourceToonMeshDiagnostics(material, lod.Mesh);
+            }
         }
     }
 
@@ -763,26 +772,26 @@ internal static partial class SerializedSceneImporter
         {
             Model? model = LoadSerializedSourceMeshModel(assetPath, node, hierarchy, materialReferences, skinnedMeshRenderer, state);
             if (model is null && state.Context.AllowPartialImport)
-                ReportSkippedMesh(assetPath, meshReference, state);
+                ReportSkippedMesh(assetPath, node, meshReference, state);
             return model;
         }
 
         if (SupportedExternalModelExtensions.Contains(Path.GetExtension(assetPath)))
         {
-            Model? model = LoadExternalModelForNode(assetPath, node, materialReferences, state);
+            Model? model = LoadExternalModelForNode(assetPath, node, hierarchy, meshReference, materialReferences, skinnedMeshRenderer, state);
             if (model is null && state.Context.AllowPartialImport)
-                ReportSkippedMesh(assetPath, meshReference, state);
+                ReportSkippedMesh(assetPath, node, meshReference, state);
             return model;
         }
 
         if (state.Context.AllowPartialImport)
-            ReportSkippedMesh(assetPath, meshReference, state);
+            ReportSkippedMesh(assetPath, node, meshReference, state);
         return null;
     }
 
-    private static void ReportSkippedMesh(string assetPath, SourceReference meshReference, ImportState state)
+    private static void ReportSkippedMesh(string assetPath, SceneNode node, SourceReference meshReference, ImportState state)
         => state.Context.ReportPartialImport("UNITYPARTIAL0006",
-            $"Unity mesh '{assetPath}' could not produce a model. Its renderer has no mesh.",
+            $"Unity mesh '{assetPath}' (file ID {meshReference.FileId.ToString(CultureInfo.InvariantCulture)}) could not produce a model for renderer node '{node.Name}'. The renderer has no mesh.",
             state.EntryFilePath, "m_Mesh", ToIdentity(meshReference, SourceAssetObjectKind.Mesh));
 
     private static bool TryResolveBuiltInPrimitiveModel(
@@ -799,6 +808,7 @@ internal static partial class SerializedSceneImporter
         {
             10202 => XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f)),
             10207 => XRMesh.Shapes.SolidSphere(Vector3.Zero, 0.5f, 32),
+            10209 => XRMesh.Shapes.SolidPlane(Vector3.Zero, Vector3.UnitY, 10.0f, 10.0f),
             _ => null,
         };
 
@@ -818,13 +828,17 @@ internal static partial class SerializedSceneImporter
         {
             Name = $"UnityBuiltIn_{meshReference.FileId}",
         };
+        ExpandRendererMaterialSlots(model, materialReferences.Count, state, materialReferences);
         return true;
     }
 
     private static Model? LoadExternalModelForNode(
         string assetPath,
         SceneNode targetNode,
+        ImportedHierarchy hierarchy,
+        SourceReference meshReference,
         IReadOnlyList<SourceReference> materialReferences,
+        ParsedSkinnedMeshRenderer? skinnedMeshRenderer,
         ImportState state)
     {
         AssetManager? assets = Engine.Assets;
@@ -844,15 +858,196 @@ internal static partial class SerializedSceneImporter
         if (targetNodeName.Length == 0)
             return null;
 
-        SceneNode? sourceNode = string.Equals(sourceRoot.Name, targetNodeName, StringComparison.Ordinal)
-            ? sourceRoot
-            : sourceRoot.FindDescendantByName(targetNodeName, StringComparison.Ordinal);
+        // The file ID names the mesh exactly, also when the prefab renamed the renderer node, so it comes first.
+        SceneNode? sourceNode = FindSourceModelNodeByUnityFileId(sourceRoot, meshReference.FileId)
+            ?? FindSourceModelNodeByName(sourceRoot, targetNodeName);
+        if (sourceNode is null && skinnedMeshRenderer is not null)
+            sourceNode = FindSourceModelNodeBySkinBones(
+                sourceRoot, targetNode, hierarchy, skinnedMeshRenderer, materialReferences.Count, assetPath, state);
         if (sourceNode?.TryGetComponent<ModelComponent>(out ModelComponent? sourceModelComponent) != true ||
             sourceModelComponent is null ||
             sourceModelComponent.Model is null)
             return null;
 
         return CloneModelForTarget(sourceRoot, sourceNode, sourceModelComponent.Model, targetNode, materialReferences, isFbx, state);
+    }
+
+    /// <summary>
+    /// Finds the source model node whose mesh has a Unity file ID. A model importer whose meta file has no
+    /// <c>internalIDToNameTable</c> entries makes the file ID of each mesh from its name: the signed XxHash64 (seed 0) of
+    /// the UTF-8 text <c>Type:Mesh-&gt;{name}{n}</c>, where <c>n</c> counts the earlier meshes with the same name.
+    /// The method computes this ID for each model node in hierarchy order and returns the match, or null.
+    /// </summary>
+    private static SceneNode? FindSourceModelNodeByUnityFileId(SceneNode sourceRoot, long fileId)
+    {
+        if (fileId == 0)
+            return null;
+
+        Dictionary<string, int> nameCounts = new(StringComparer.Ordinal);
+        SceneNode? match = null;
+        sourceRoot.IterateHierarchy(node =>
+        {
+            if (match is not null ||
+                node.Name is not { Length: > 0 } name ||
+                !node.TryGetComponent<ModelComponent>(out ModelComponent? modelComponent) ||
+                modelComponent?.Model is null)
+            {
+                return;
+            }
+
+            nameCounts.TryGetValue(name, out int index);
+            nameCounts[name] = index + 1;
+            if (ComputeUnityMeshFileId(name, index) == fileId)
+                match = node;
+        });
+        return match;
+    }
+
+    private static long ComputeUnityMeshFileId(string meshName, int index)
+    {
+        byte[] text = System.Text.Encoding.UTF8.GetBytes($"Type:Mesh->{meshName}{index.ToString(CultureInfo.InvariantCulture)}");
+        return unchecked((long)System.IO.Hashing.XxHash64.HashToUInt64(text));
+    }
+
+    /// <summary>
+    /// Finds the source model node that has the same name as the Unity renderer node. When no node has the exact
+    /// name, the method compares names without leading or trailing spaces: Unity YAML readers strip trailing spaces
+    /// from plain scalars, but FBX node names keep them.
+    /// </summary>
+    private static SceneNode? FindSourceModelNodeByName(SceneNode sourceRoot, string targetNodeName)
+    {
+        if (string.Equals(sourceRoot.Name, targetNodeName, StringComparison.Ordinal))
+            return sourceRoot;
+
+        SceneNode? exact = sourceRoot.FindDescendantByName(targetNodeName, StringComparison.Ordinal);
+        if (exact is not null)
+            return exact;
+
+        string trimmedTarget = targetNodeName.Trim();
+        SceneNode? trimmedMatch = null;
+        sourceRoot.IterateHierarchy(node =>
+        {
+            if (trimmedMatch is null &&
+                node.Name is { } name &&
+                string.Equals(name.Trim(), trimmedTarget, StringComparison.Ordinal) &&
+                node.TryGetComponent<ModelComponent>(out ModelComponent? modelComponent) &&
+                modelComponent?.Model is not null)
+            {
+                trimmedMatch = node;
+            }
+        });
+        return trimmedMatch;
+    }
+
+    /// <summary>
+    /// Finds the source model of a renamed skinned renderer. Unity finds an FBX mesh by its file ID, so a prefab can
+    /// rename the renderer GameObject and still show the mesh. This importer finds FBX meshes by node name, so it
+    /// compares skin bones instead: it selects the source model whose skin bone names best match the bones of the
+    /// renderer and whose submesh count equals the renderer material slot count. Source nodes whose name matches
+    /// another node in the target hierarchy are excluded, because that node takes them by name. The match must be
+    /// nearly exact and clearly better than the next candidate; otherwise the method returns null.
+    /// </summary>
+    private static SceneNode? FindSourceModelNodeBySkinBones(
+        SceneNode sourceRoot,
+        SceneNode targetNode,
+        ImportedHierarchy hierarchy,
+        ParsedSkinnedMeshRenderer skinnedMeshRenderer,
+        int materialSlotCount,
+        string assetPath,
+        ImportState state)
+    {
+        const double MinimumBoneMatch = 0.95;
+        const double MinimumLeadOverNext = 0.02;
+
+        HashSet<string> rendererBones = new(StringComparer.Ordinal);
+        foreach (long boneTransformId in skinnedMeshRenderer.BoneTransformFileIds)
+        {
+            if (hierarchy.NodesByTransformId.TryGetValue(boneTransformId, out SceneNode? bone) &&
+                !string.IsNullOrWhiteSpace(bone.Name))
+            {
+                rendererBones.Add(bone.Name);
+            }
+        }
+
+        if (rendererBones.Count == 0)
+            return null;
+
+        HashSet<string> targetNodeNames = new(StringComparer.Ordinal);
+        GetHierarchyRoot(targetNode).IterateHierarchy(node =>
+        {
+            if (!string.IsNullOrWhiteSpace(node.Name))
+                targetNodeNames.Add(node.Name.Trim());
+        });
+
+        SceneNode? best = null;
+        double bestScore = 0.0;
+        double secondScore = 0.0;
+        HashSet<string> modelBones = new(StringComparer.Ordinal);
+        sourceRoot.IterateHierarchy(node =>
+        {
+            if (!node.TryGetComponent<ModelComponent>(out ModelComponent? modelComponent) ||
+                modelComponent?.Model is not { } model ||
+                string.IsNullOrWhiteSpace(node.Name) ||
+                targetNodeNames.Contains(node.Name.Trim()) ||
+                (materialSlotCount > 0 && model.Meshes.Count != materialSlotCount))
+            {
+                return;
+            }
+
+            modelBones.Clear();
+            foreach (SubMesh subMesh in model.Meshes)
+            {
+                foreach (SubMeshLOD lod in subMesh.LODs)
+                {
+                    if (lod.Mesh is not { } mesh)
+                        continue;
+
+                    foreach ((TransformBase boneTransform, Matrix4x4 _) in mesh.UtilizedBones)
+                    {
+                        string? boneName = boneTransform.SceneNode?.Name ?? boneTransform.Name;
+                        if (!string.IsNullOrEmpty(boneName))
+                            modelBones.Add(boneName);
+                    }
+                }
+            }
+
+            if (modelBones.Count == 0)
+                return;
+
+            int shared = 0;
+            foreach (string boneName in modelBones)
+            {
+                if (rendererBones.Contains(boneName))
+                    shared++;
+            }
+
+            double score = shared / (double)(rendererBones.Count + modelBones.Count - shared);
+            if (score > bestScore)
+            {
+                secondScore = bestScore;
+                bestScore = score;
+                best = node;
+            }
+            else if (score > secondScore)
+            {
+                secondScore = score;
+            }
+        });
+
+        if (best is null || bestScore < MinimumBoneMatch || bestScore - secondScore < MinimumLeadOverNext)
+            return null;
+
+        state.Context.AddDiagnostic(
+            "UNITYMESH0010",
+            SourceImportDiagnosticSeverity.Info,
+            SourceImportDiagnosticCategory.PrefabOverride,
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"Renderer node '{targetNode.Name}' has no source node with the same name in '{assetPath}'. " +
+                $"The importer used source model '{best.Name}', whose skin bones match {bestScore:P1} (next best {secondScore:P1})."),
+            state.EntryFilePath,
+            "m_Mesh");
+        return best;
     }
 
     private static Model? LoadSerializedSourceMeshModel(
@@ -903,9 +1098,12 @@ internal static partial class SerializedSceneImporter
             importedSubMeshes.Add(subMesh);
         }
 
-        return importedSubMeshes.Count > 0
-            ? new Model(importedSubMeshes) { Name = meshName }
-            : null;
+        if (importedSubMeshes.Count == 0)
+            return null;
+
+        Model model = new(importedSubMeshes) { Name = meshName };
+        ExpandRendererMaterialSlots(model, materialReferences.Count, state, materialReferences);
+        return model;
     }
 
     private static Model CloneModelForTarget(
@@ -969,10 +1167,12 @@ internal static partial class SerializedSceneImporter
             clonedSubMeshes.Add(clonedSubMesh);
         }
 
-        return new Model(clonedSubMeshes)
+        Model model = new(clonedSubMeshes)
         {
             Name = sourceModel.Name,
         };
+        ExpandRendererMaterialSlots(model, materialReferences.Count, state, materialReferences);
+        return model;
     }
 
     private static void ApplySkinnedRendererBindings(
@@ -1051,10 +1251,32 @@ internal static partial class SerializedSceneImporter
         mesh.ReplaceSkinningBoneBindings(reboundBones);
     }
 
+    /// <summary>
+    /// Finds the transform in <paramref name="targetRoot"/> that corresponds to <paramref name="sourceTransform"/>
+    /// in <paramref name="sourceRoot"/>. Cached FBX meshes store detached carrier transforms whose
+    /// <see cref="TransformBase.SceneNode"/> is null; for those carriers, the method locates the matching node in
+    /// <paramref name="sourceRoot"/> by serialized reference ID and maps its relative path or bone name into
+    /// <paramref name="targetRoot"/>.
+    /// </summary>
     private static TransformBase? MapSourceTransformToTarget(TransformBase? sourceTransform, SceneNode sourceRoot, SceneNode targetRoot)
     {
-        if (sourceTransform?.SceneNode is not SceneNode sourceNode)
-            return sourceTransform;
+        if (sourceTransform is null)
+            return null;
+
+        SceneNode? sourceNode = sourceTransform.SceneNode;
+        if (sourceNode is null && sourceTransform.EffectiveSerializedReferenceId != Guid.Empty)
+            sourceNode = sourceRoot.Transform.FindSelfOrDescendantBySerializedReferenceId(sourceTransform.EffectiveSerializedReferenceId)?.SceneNode;
+
+        if (sourceNode is null)
+        {
+            if (string.IsNullOrWhiteSpace(sourceTransform.Name))
+                return sourceTransform;
+
+            if (string.Equals(sourceTransform.Name, sourceRoot.Name, StringComparison.Ordinal))
+                return targetRoot.Transform;
+
+            return targetRoot.FindDescendantByName(sourceTransform.Name, StringComparison.Ordinal)?.Transform ?? sourceTransform;
+        }
 
         if (ReferenceEquals(sourceNode, sourceRoot))
             return targetRoot.Transform;
@@ -1134,6 +1356,17 @@ internal static partial class SerializedSceneImporter
         if (string.Equals(Path.GetExtension(assetPath), ".mat", StringComparison.OrdinalIgnoreCase))
             return LoadSerializedMaterial(assetPath, state);
 
+        // A reference into a model file (for example a material that Unity made from an FBX) has no material asset that
+        // the engine can load by path. The asset manager would try to import the model file as a material and fail.
+        if (SupportedExternalModelExtensions.Contains(Path.GetExtension(assetPath).ToLowerInvariant()))
+        {
+            if (state.Context.AllowPartialImport)
+                return GetMissingMaterial(materialReference, state);
+            throw new SourceVisualImportException(
+                $"Unity material reference '{materialReference.Guid}:{materialReference.FileId}' points into the model file " +
+                $"'{assetPath}'. Extract the material in Unity, or import with partial import allowed to use a fallback material.");
+        }
+
         AssetManager? assets = Engine.Assets;
         return assets?.Load<XRMaterial>(assetPath);
     }
@@ -1150,6 +1383,12 @@ internal static partial class SerializedSceneImporter
         }
     }
 
+    /// <summary>
+    /// Imports one Unity material file and caches the result for the active project import.
+    /// A material that cannot be imported does not stop the prefab import. The importer replaces it
+    /// with a magenta fallback material in the same renderer slot, records a partial-import warning
+    /// in the import manifest, and writes the error to the log.
+    /// </summary>
     private static XRMaterial? LoadSerializedMaterial(string materialPath, ImportState state)
     {
         return state.Context.GetOrAddCached(
@@ -1161,39 +1400,39 @@ internal static partial class SerializedSceneImporter
                     SerializedMaterialImportResult result = SerializedMaterialImporter.ImportWithReport(materialPath, state.Context);
                     foreach (string warning in result.Warnings)
                         Debug.LogWarning(warning);
-                    return result.Material
-                        ?? throw new SourceVisualImportException($"Unity material importer returned no material for '{materialPath}'.");
+                    if (result.Material is not null)
+                        return result.Material;
+
+                    string failure = result.ConversionReport is { Failures.Count: > 0 } report
+                        ? string.Join("; ", report.Failures)
+                        : $"Unity material importer returned no material for '{materialPath}'.";
+                    throw new SourceVisualImportException(failure);
                 }
-                catch (Exception ex) when (IsRecoverableMaterialImportFailure(ex))
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     string materialName = Path.GetFileNameWithoutExtension(materialPath);
-                    if (state.Context.AllowPartialImport)
-                    {
-                        state.Context.MarkOutcome(materialPath, SourceImportConversionOutcome.Failed);
-                        state.Context.ReportPartialImport("UNITYPARTIAL0003",
-                            $"Material '{materialName}' could not be converted. A fallback material is used: {ex.Message}",
-                            materialPath);
-                        return CreateFallbackSerializedMaterial($"Missing {materialName}", new ColorF4(1f, 0f, 1f, 1f));
-                    }
-
-                    state.Context.AddDiagnostic(
-                        "UNITYMAT0001",
-                        SourceImportDiagnosticSeverity.Error,
-                        SourceImportDiagnosticCategory.MaterialDowngrade,
-                        $"Required Unity material '{materialName}' could not be imported: {ex.Message}",
+                    if (!IsExpectedMaterialImportFailure(ex))
+                        Debug.LogException(ex, $"Unexpected error while importing Unity material '{materialName}'.");
+                    state.Context.MarkOutcome(materialPath, SourceImportConversionOutcome.Failed);
+                    state.Context.ReportPartialImport("UNITYPARTIAL0003",
+                        $"Material '{materialName}' could not be converted. A fallback material is used: {ex.Message}",
                         materialPath);
-                    throw new SourceVisualImportException(
-                        $"Required Unity material '{materialName}' could not be imported: {ex.Message}");
+                    return CreateFallbackSerializedMaterial($"Missing {materialName}", new ColorF4(1f, 0f, 1f, 1f));
                 }
             });
     }
 
-    private static bool IsRecoverableMaterialImportFailure(Exception exception)
+    /// <summary>
+    /// Returns true for material failures that come from the source data, such as unreadable files or
+    /// unsupported source content. Other exceptions are importer defects, so the caller also logs
+    /// their stack trace.
+    /// </summary>
+    private static bool IsExpectedMaterialImportFailure(Exception exception)
         => exception switch
         {
             SourceVisualImportException or InvalidDataException or IOException or UnauthorizedAccessException or NotSupportedException => true,
             AggregateException aggregate => aggregate.InnerExceptions.Count > 0 &&
-                aggregate.InnerExceptions.All(IsRecoverableMaterialImportFailure),
+                aggregate.InnerExceptions.All(IsExpectedMaterialImportFailure),
             _ => false,
         };
 

@@ -85,6 +85,7 @@ public static partial class EditorImGuiUI
         private static bool _showAssetExplorer;
         private static bool _showNetworking;
         private static bool _showAnimationClipEditor;
+        private static bool _showCutsceneSequencer;
         private static UserSettings? _editorSceneHierarchySettingsSource;
         private static string? _ownedImGuiIniFilename;
         private static bool _imguiPanelVisibilityLoaded;
@@ -763,6 +764,9 @@ public static partial class EditorImGuiUI
                 using (Engine.Profiler.Start("UI.DrawAnimationClipEditorPanel"))
                     DrawAnimationClipEditorPanel();
             }
+            // This call also runs when the panel is hidden, because it ends the preview that the panel started.
+            using (Engine.Profiler.Start("UI.DrawCutsceneSequencerPanel"))
+                DrawCutsceneSequencerPanel();
             if (_showRenderPipelineWorkbench)
             {
                 using (Engine.Profiler.Start("UI.DrawRenderPipelineWorkbenchPanel"))
@@ -989,6 +993,12 @@ public static partial class EditorImGuiUI
                 return Engine.WindowCloseRequestResult.Defer;
 
             XRAsset[] dirtyAssets = Engine.Assets?.DirtyAssets.Values.ToArray() ?? [];
+
+            if (dirtyAssets.Length == 0)
+            {
+                FlushImGuiLayoutImmediate();
+                return Engine.WindowCloseRequestResult.Allow;
+            }
 
             BeginClosePrompt(window, dirtyAssets);
             return Engine.WindowCloseRequestResult.Defer;
@@ -1476,6 +1486,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.MenuItem("Networking", null, ref _showNetworking);
                 ImGui.MenuItem("Animation Clip Editor", null, ref _showAnimationClipEditor);
+                ImGui.MenuItem("Cutscene Sequencer", null, ref _showCutsceneSequencer);
                 ImGui.MenuItem("External Texture Browser", null, ref _showExternalTextureBrowser);
                 ImGui.MenuItem("Texture Streaming", null, ref _showTextureStreaming);
                 ImGui.Separator();
@@ -1505,8 +1516,31 @@ public static partial class EditorImGuiUI
                 if (ImGui.MenuItem("Shader Editor"))
                     ShaderEditorWindow.Instance.Open();
 
-                if (ImGui.MenuItem("MCP Assistant"))
+                if (ImGui.MenuItem("Assistant"))
                     McpAssistantWindow.Instance.Open();
+
+                if (ImGui.BeginMenu("Explain a command"))
+                {
+                    if (ImGui.MenuItem("Import External Files"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Import External Files", "Tools menu"));
+                    if (ImGui.MenuItem("Import External Folder"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Import External Folder", "Tools menu"));
+                    if (ImGui.MenuItem("Import Archive"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Import Archive", "Tools menu"));
+                    if (ImGui.MenuItem("Archive Inspector"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Archive Inspector", "Tools menu"));
+                    if (ImGui.MenuItem("External Texture Browser"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "External Texture Browser", "Tools menu"));
+                    if (ImGui.MenuItem("Shader Editor"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Shader Editor", "Tools menu"));
+                    if (ImGui.MenuItem("Assistant"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Assistant", "Tools menu"));
+                    if (ImGui.MenuItem("Shader Graph Builder"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Shader Graph Builder", "Tools menu"));
+                    if (ImGui.MenuItem("Renderer Development"))
+                        AssistantHelpRequests.Publish(new AssistantHelpRequest("command", "Renderer Development", "Tools menu"));
+                    ImGui.EndMenu();
+                }
 
                 if (ImGui.MenuItem("Shader Graph Builder"))
                     _showShaderGraphPanel = true;

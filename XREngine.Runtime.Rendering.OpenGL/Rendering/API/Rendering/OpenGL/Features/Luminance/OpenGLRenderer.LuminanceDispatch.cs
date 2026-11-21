@@ -40,45 +40,10 @@ public partial class OpenGLRenderer
             return false;
         }
 
-        var glExposure = GetOrCreateAPIRenderObject(exposureTex, generateNow: true) as GLTexture2D;
-        if (glExposure is null)
-        {
-            string exposureTextureName = exposureTex.Name ?? "<unnamed>";
-
-            // An invalid image binding causes expensive GL debug-driver error handling
-            // and repeated stalls. Drop back to the CPU exposure path for this session.
-            Debug.OpenGLWarningEvery(
-                $"AutoExposure.InvalidExposure.{exposureTextureName}",
-                TimeSpan.FromSeconds(1),
-                "[AutoExposure] Exposure texture is not ready for image load/store. Texture='{0}', BindingId={1}.",
-                exposureTextureName,
-                glExposure?.BindingId ?? 0);
+        // An invalid image binding causes expensive GL debug-driver error handling
+        // and repeated stalls, so a texture that is not ready skips the GPU update.
+        if (!TryResolveExposureImage(exposureTex, out uint exposureBindingId))
             return false;
-        }
-
-        // Framebuffer-only textures may still only be a generated GL name here.
-        // Bind once to force the driver to materialize the texture object and allocate
-        // immutable storage before we use it as an image.
-        IGLTexture? previousBoundTexture = BoundTexture;
-        glExposure.Bind();
-        if (previousBoundTexture is null || ReferenceEquals(previousBoundTexture, glExposure))
-            glExposure.Unbind();
-        else
-            previousBoundTexture.Bind();
-
-        uint exposureBindingId = glExposure.BindingId;
-        if (exposureBindingId == GLObjectBase.InvalidBindingId || !Api.IsTexture(exposureBindingId))
-        {
-            string exposureTextureName = exposureTex.Name ?? "<unnamed>";
-
-            Debug.OpenGLWarningEvery(
-                $"AutoExposure.InvalidExposure.{exposureTextureName}",
-                TimeSpan.FromSeconds(1),
-                "[AutoExposure] Exposure texture is not ready for image load/store. Texture='{0}', BindingId={1}.",
-                exposureTextureName,
-                exposureBindingId);
-            return false;
-        }
 
         int smallestMip;
         GLRenderProgram? glProgram;
@@ -189,7 +154,7 @@ public partial class OpenGLRenderer
 
         // Calculate time-based lerp factor
         // alpha = 1 - exp(-speed * dt)
-        float alpha = 1.0f - MathF.Exp(-settings.ExposureTransitionSpeed * deltaTime);
+        float alpha = settings.ComputeGpuAutoExposureBlend(deltaTime);
         glProgram.Uniform("ExposureTransitionSpeed", alpha);
 
         if (sourceTex is XRTexture2DArray)

@@ -435,7 +435,16 @@ internal static partial class UberShaderVariantBuilder
     internal static bool HasCurrentProvenance(XRShader variant)
         => ProvenanceByVariant.TryGetValue(variant, out UberShaderVariantProvenance? proof) && proof.IsCurrent;
 
-    internal static bool IsCompatibleInternalReplacement(XRShader previous, XRShader next)
+    /// <summary>Gets the retained variant proof without checking its file dependencies.</summary>
+    internal static bool TryGetVariantProvenance(
+        XRShader variant,
+        [NotNullWhen(true)] out UberShaderVariantProvenance? proof)
+        => ProvenanceByVariant.TryGetValue(variant, out proof);
+
+    internal static bool IsCompatibleInternalReplacement(
+        XRShader previous,
+        XRShader next,
+        EngineMaterialSemanticIdentity semantic = default)
     {
         XRShader previousCanonical = previous;
         if (IsGeneratedVariant(previous))
@@ -444,10 +453,49 @@ internal static partial class UberShaderVariantBuilder
                 return false;
             previousCanonical = canonical;
         }
+        else if (!ReferenceEquals(previous, next) &&
+            IsCookedCanonicalUberCopy(previous, next, semantic == EngineMaterialSemanticIdentity.NativeUberV1))
+        {
+            return true;
+        }
         if (IsGeneratedVariant(next))
             return HasCurrentProvenance(next) && TryGetCanonicalShader(next, out XRShader? canonical) &&
                 ReferenceEquals(previousCanonical, canonical);
         return !ReferenceEquals(previous, previousCanonical) && ReferenceEquals(previousCanonical, next);
+    }
+
+    /// <summary>
+    /// Checks whether <paramref name="previous"/> is a cooked binary copy of the canonical Uber fragment shader
+    /// whose host <c>FilePath</c> was not serialized, and whether <paramref name="next"/> is the host canonical
+    /// <c>UberShader.frag</c>. When <paramref name="allowNativeUberUpgrade"/> is true, a cooked
+    /// <see cref="EngineMaterialSemanticIdentity.NativeUberV1"/> shader can adopt updated host canonical text.
+    /// </summary>
+    private static bool IsCookedCanonicalUberCopy(XRShader previous, XRShader next, bool allowNativeUberUpgrade)
+    {
+        if (IsGeneratedVariant(previous) || IsGeneratedVariant(next))
+            return false;
+        if (previous.Type != next.Type || previous.SourceLanguage != next.SourceLanguage ||
+            previous.GeneratedUberVariantHash != 0 || next.GeneratedUberVariantHash != 0 ||
+            !string.Equals(previous.EntryPoint, "main", StringComparison.Ordinal) ||
+            !string.Equals(next.EntryPoint, "main", StringComparison.Ordinal))
+            return false;
+        if (!string.IsNullOrWhiteSpace(previous.Source?.FilePath) || !string.IsNullOrWhiteSpace(previous.FilePath))
+            return false;
+
+        ReadOnlySpan<char> previousName = Path.GetFileName((previous.Source?.Name ?? previous.Name).AsSpan());
+        if (!previousName.Equals("UberShader.frag", StringComparison.OrdinalIgnoreCase) &&
+            !previousName.Equals("UberShader", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string? nextPath = next.Source?.FilePath ?? next.FilePath;
+        if (!Path.GetFileName(nextPath.AsSpan()).Equals("UberShader.frag", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string? previousText = previous.Source?.Text;
+        string? nextText = next.Source?.Text;
+        return !string.IsNullOrEmpty(previousText) &&
+               !string.IsNullOrEmpty(nextText) &&
+               (allowNativeUberUpgrade || string.Equals(previousText, nextText, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1393,18 +1441,19 @@ internal static partial class UberShaderVariantBuilder
         if (float.IsNaN(value) || float.IsInfinity(value))
             throw new InvalidOperationException($"Uber static literal '{value}' is not a finite float.");
 
+        if (value == 0.0f)
+            return "0.0";
+
         if (TryFormatCommonFloatLiteral(value, out string? literal))
             return literal!;
 
-        string text = value.ToString("0.0################", CultureInfo.InvariantCulture);
-        return text.StartsWith("-0.0", StringComparison.Ordinal) ? "0.0" : text;
+        return value.ToString("0.0################", CultureInfo.InvariantCulture);
     }
 
     private static bool TryFormatCommonFloatLiteral(float value, out string? literal)
     {
         literal = value switch
         {
-            0.0f => "0.0",
             1.0f => "1.0",
             -1.0f => "-1.0",
             0.5f => "0.5",

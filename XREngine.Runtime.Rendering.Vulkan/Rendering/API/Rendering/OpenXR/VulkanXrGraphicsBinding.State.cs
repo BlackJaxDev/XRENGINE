@@ -22,6 +22,13 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private XRViewport? _openXrRightViewport => Context.RightViewport;
     private XRViewport? _openXrStereoViewport => Context.StereoViewport;
 
+    /// <summary>
+    /// Set by the eye batch when an eye image wait or release failed because the OpenXR runtime
+    /// was lost. <see cref="TryRenderViewsBatch"/> then ends the frame without layers instead of
+    /// treating the unreleased images as an ownership failure. Render-thread state.
+    /// </summary>
+    private bool _eyeImageReleaseRuntimeLost;
+
     private int _openXrPendingFrameNumber => Context.PendingFrameNumber;
     private ulong _openXrLastRenderedFrameId => Context.LastRenderedFrameId;
     private OpenXrStrictSpsFailureStage _strictSpsInjectedFailureStage
@@ -48,14 +55,21 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
     private uint _vulkanEyeMirrorWidth;
     private uint _vulkanEyeMirrorHeight;
 
-    private XRTexture2DArray? _vulkanStereoColorArray;
-    private XRTexture2DArray? _vulkanStereoDepthArray;
-    private XRTexture2DArrayView? _vulkanStereoLeftColorView;
-    private XRTexture2DArrayView? _vulkanStereoRightColorView;
-    private XRFrameBuffer? _vulkanStereoFbo;
-    private uint _vulkanStereoWidth;
-    private uint _vulkanStereoHeight;
-    private VkFormat _vulkanStereoColorFormat;
+    /// <summary>Layered stereo render target of one view pair (wide or inset).</summary>
+    private sealed class VulkanStereoTargetSet
+    {
+        public XRTexture2DArray? ColorArray;
+        public XRTexture2DArray? DepthArray;
+        public XRTexture2DArrayView? LeftColorView;
+        public XRTexture2DArrayView? RightColorView;
+        public XRFrameBuffer? Fbo;
+        public uint Width;
+        public uint Height;
+        public VkFormat ColorFormat;
+    }
+
+    // Index 0 is the wide pair (views 0, 1); index 1 is the quad-view inset pair (views 2, 3).
+    private readonly VulkanStereoTargetSet[] _vulkanStereoTargets = [new(), new()];
 
     private XRTexture2D? _previewLeftEyeTexture;
     private XRTexture2D? _previewRightEyeTexture;

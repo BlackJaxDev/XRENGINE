@@ -158,10 +158,9 @@ namespace XREngine.Components.Lights
                 if (!UseShadowAtlas || !RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas)
                     return false;
 
+                // Vulkan uses the atlas for moment encodings too: the Advanced native
+                // receivers read directional shadows only from atlas records.
                 EShadowMapEncoding encoding = ResolveDirectionalSamplingShadowMapFormat().Encoding;
-                if (IsVulkanDirectionalShadowBackend())
-                    return encoding == EShadowMapEncoding.Depth;
-
                 return encoding is
                     EShadowMapEncoding.Depth or
                     EShadowMapEncoding.Variance2 or

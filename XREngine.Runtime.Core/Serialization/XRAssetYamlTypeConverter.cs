@@ -333,8 +333,7 @@ namespace XREngine
                 $"XRAssetDeserializer (unresolvable scalar; file='{AssetDeserializationContext.CurrentFilePath ?? "<unknown>"}')");
             throw BuildUnresolvedScalarException(scalar, expectedType, scalarValue!,
                 $"Scalar value '{scalarValue}' is not a valid {expectedType.Name} reference " +
-                "(expected null/~, a GUID, or an existing absolute/relative asset path)" +
-                (AssetDeserializationContext.CurrentFilePath is { } cf2 ? $" while reading '{cf2}'." : "."));
+                $"(expected null/~, a GUID, or an existing absolute/relative asset path){(AssetDeserializationContext.CurrentFilePath is { } cf2 ? $" while reading '{cf2}'." : ".")}");
         }
 
         private static YamlException BuildUnresolvedScalarException(Scalar scalar, Type expectedType, string scalarValue, string detail)

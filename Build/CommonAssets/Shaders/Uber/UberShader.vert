@@ -65,6 +65,7 @@ layout(location = 22) out float FragViewIndex; // which eye (0/1) for stereo
 // lighting arrays, time, etc.
 #include "uniforms.glsl"
 #include "vertex_effects.glsl"
+uniform int ClipSpaceYDirection;
 
 // ============================================
 // Compute-skinning SSBO overrides
@@ -98,7 +99,7 @@ void main() {
     float tanSign = Tangent.w;
     uberApplyVertexEffects(pos, norm, TexCoord0, Color0, u_CameraPosition, u_ModelMatrix, u_Time);
 
-    uberApplyOutlineLocal(pos, norm, Color0, u_ModelMatrix);
+    uberApplyOutlineLocal(pos, norm, Color0, u_ModelMatrix, TexCoord0, u_CameraPosition);
 
     // ---- Position: object -> world, object -> clip -------------------------
     vec4 worldPosition = u_ModelMatrix * vec4(pos, 1.0);

@@ -14,7 +14,7 @@ internal static partial class ProjectBuilder
     private sealed class BrowserBuildState(BuildContext context)
     {
         private readonly string _stageRoot = Path.Combine(Path.GetDirectoryName(context.BuildRoot)!,
-            "." + Path.GetFileName(context.BuildRoot) + ".browser-stage-" + Guid.NewGuid().ToString("N"));
+            $".{Path.GetFileName(context.BuildRoot)}.browser-stage-{Guid.NewGuid():N}");
         private string? _siteRoot;
         private string? _recipePath;
         private string? _configuration;
@@ -115,6 +115,9 @@ internal static partial class ProjectBuilder
                 string site = _siteRoot ?? throw new InvalidOperationException("Browser application has not been published.");
                 string configuration = _configuration ?? throw new InvalidOperationException("Browser publish configuration was not recorded.");
                 WriteBrowserRuntimeMetadata(configuration, context.IntermediateDirectory, SourceRoot, site);
+                // The package compresses its payloads, so strip the staged sources: cooked payloads, generated shader
+                // text, and the metadata. The staging folder is a copy.
+                StripCopiedDirectory(SourceRoot);
                 BrowserContentPackageBuilder.Build(recipe, Path.Combine(site, "content"), Cancellation);
                 PublishBrowserSharedWorldPackage(_sharedWorldPackage, Path.Combine(site, "content"), Cancellation);
             }
@@ -135,6 +138,9 @@ internal static partial class ProjectBuilder
                 if (_includesDefaultUiFont)
                     InstallDefaultUiFontLicense(site);
                 InstallAuthoredFontLicenses(site, context.AssetsDirectory, _authoredFonts);
+                string licenses = Path.Combine(site, "licenses");
+                if (Directory.Exists(licenses))
+                    StripCopiedDirectory(licenses);
                 byte[] json = JsonSerializer.SerializeToUtf8Bytes(new
                 {
                     schema = 2,
@@ -248,7 +254,7 @@ internal static partial class ProjectBuilder
                 throw new InvalidOperationException("Browser output is incomplete; keeping the previous build.");
             }
             RejectBrowserOutputLinks(context.BuildRoot, Path.GetFullPath(context.Project.BuildDirectory!));
-            string backup = context.BuildRoot + ".browser-backup-" + Guid.NewGuid().ToString("N");
+            string backup = $"{context.BuildRoot}.browser-backup-{Guid.NewGuid():N}";
             bool movedPrevious = false;
             try
             {

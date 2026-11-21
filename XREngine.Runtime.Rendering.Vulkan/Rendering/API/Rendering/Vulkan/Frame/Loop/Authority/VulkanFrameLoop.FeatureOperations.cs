@@ -85,8 +85,11 @@ internal sealed partial class VulkanFrameLoop
             failureReason = "Advanced layered Vulkan requires an enabled multiview device and one or two views.";
             return false;
         }
+        // Layered native stages render view N into layer N of the pipeline's own array
+        // resources. A view's OutputLayer names its layer inside the final OpenXR swapchain
+        // target, which is 0 for every per-eye swapchain, so it is not the render layer.
         for (int view = 0; view < request.Views.ViewCount; view++)
-            if (request.Views.GetView(view).OutputLayer != (uint)view)
+            if (request.Views.GetView(view).ViewId != (uint)view)
             {
                 failureReason = "Advanced layered Vulkan requires unique contiguous output layers in frozen view order.";
                 return false;
@@ -177,6 +180,15 @@ internal sealed partial class VulkanFrameLoop
             RenderTimeSeconds = request.RenderTimeSeconds,
             AmbientOcclusionMultiBounce = request.AmbientOcclusionMultiBounce,
             AmbientOcclusionSpecularUsesVisibility = request.AmbientOcclusionSpecularUsesVisibility,
+            RecordRvcShadeletTelemetry = request.RecordRvcShadeletTelemetry,
+            ShowOcclusionCulledBounds = request.ShowOcclusionCulledBounds,
+            RvcFoveatedQuadShading = request.RvcFoveatedQuadShading,
+            AdvancedEdgeHalfRateShading = request.AdvancedEdgeHalfRateShading,
+            AdvancedEdgeHalfRateRadius = request.AdvancedEdgeHalfRateRadius,
+            AdvancedEdgeHalfRateDebugTint = request.AdvancedEdgeHalfRateDebugTint,
+            HiddenAreaEllipses = request.HiddenAreaEllipses,
+            DecalBufferEnabled = request.DecalBufferEnabled,
+            SkipNeutralAmbientOcclusionFill = request.SkipNeutralAmbientOcclusionFill,
         };
         if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
         {
@@ -199,12 +211,16 @@ internal sealed partial class VulkanFrameLoop
 
         try
         {
+            // Visibility operations can be captured with OpenXR eye work, so they
+            // use the pool that keeps operations for the frames in flight.
             _frameOperationQueue.EnqueuePrepared(
-                new AdvancedVisibilityOp(
+                AdvancedVisibilityOp.Rent(
+                    _openXrCapturedOperationWorkspace,
+                    RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId,
                     passIndex,
-                    vulkanRequest,
+                    in vulkanRequest,
                     inputLease,
-                    context));
+                    in context));
         }
         catch
         {

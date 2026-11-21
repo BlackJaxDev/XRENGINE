@@ -81,7 +81,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 lightSources[lightIndex] is LightComponent browserLight)
                 CaptureBrowserStandaloneShadow(frameId, browserLight, lightIndex, shadowRows);
             else if (lightSources[lightIndex] is DirectionalLightComponent directional)
-                CaptureDirectionalShadows(world.Lights, directional, lightIndex, shadowRows);
+                CaptureDirectionalShadows(world.Lights, directional, lightIndex, lightIndex == 0, shadowRows);
             else if (lightSources[lightIndex] is PointLightComponent point)
                 CapturePointAtlasShadows(world.Lights, point, lightIndex, shadowRows);
             else if (lightSources[lightIndex] is SpotLightComponent spot)
@@ -187,21 +187,31 @@ public readonly record struct AdvancedGlobalResourceCapture(
     private const int DirectionalShadowRecordCapacity = 8;
     private const float DirectionalShadowFilterRadiusTexels = 1.0f;
 
-    private static void CaptureDirectionalShadows(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows)
+    /// <summary>
+    /// Adds the desktop and the headset cascade records of one directional light. The
+    /// primary directional light is the first light of the capture (directional lights are
+    /// captured first); only its headset records get the headset shadow quality setting.
+    /// </summary>
+    private static void CaptureDirectionalShadows(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, bool primary, List<AdvancedShadowCaptureRow> rows)
     {
         int startCount = rows.Count;
         Span<DirectionalShadowGpuRecord> records = stackalloc DirectionalShadowGpuRecord[DirectionalShadowRecordCapacity];
-        CaptureDirectionalSource(lights, light, lightIndex, rows, records, ShadowRequestSource.Desktop, false);
-        CaptureDirectionalSource(lights, light, lightIndex, rows, records, ShadowRequestSource.Hmd, true);
+        CaptureDirectionalSource(lights, light, lightIndex, rows, records, ShadowRequestSource.Desktop, false, false);
+        CaptureDirectionalSource(lights, light, lightIndex, rows, records, ShadowRequestSource.Hmd, true, primary);
         if (rows.Count == startCount && light.CastsShadows)
         {
             AddMissingShadowRow(lightIndex, EAdvancedShadowType.DirectionalCascade, light.ShadowMapEncoding, 1u, rows);
         }
     }
 
-    private static void CaptureDirectionalSource(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows, Span<DirectionalShadowGpuRecord> records, ShadowRequestSource source, bool hmd)
+    private static void CaptureDirectionalSource(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows, Span<DirectionalShadowGpuRecord> records, ShadowRequestSource source, bool hmd, bool headsetQuality)
     {
         light.CopyPublishedDirectionalShadowRecords(source, true, records, out int count);
+        light.ApplyPlannedDirectionalCascadeRefreshes(
+            source,
+            records,
+            count,
+            lights.ShadowAtlas.CanDrawDirectionalCascadeGroupsThisFrame());
         for (int cascade = 0; cascade < count; ++cascade)
         {
             if (!lights.TryGetDirectionalCascadeShadowAtlasAllocation(light, source, cascade, out ShadowAtlasAllocation allocation, out _) ||
@@ -216,7 +226,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 (hmd ? EAdvancedShadowRecordFlags.HmdSource : EAdvancedShadowRecordFlags.None) |
                 (allocation.ActiveFallback == ShadowFallbackMode.StaleTile ? EAdvancedShadowRecordFlags.StaleFallback : EAdvancedShadowRecordFlags.None) |
                 (light.ShadowMapEncoding == EShadowMapEncoding.Depth ? EAdvancedShadowRecordFlags.None : EAdvancedShadowRecordFlags.MomentEncoded);
-            rows.Add(new(lightIndex, new AdvancedShadowRecord
+            AdvancedShadowRecord record = new AdvancedShadowRecord
             {
                 Type = EAdvancedShadowType.DirectionalCascade, Flags = flags,
                 WorldToShadow = published.RenderedWorldToLight,
@@ -227,7 +237,8 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 DepthRangeAndCascade = new(published.AtlasDepthParams.X, published.AtlasDepthParams.Y, published.RenderedSplitBlendBias.X, published.RenderedSplitBlendBias.Y),
                 TextureLayer = checked((uint)Math.Max(0, allocation.PageIndex)), Encoding = (uint)light.ShadowMapEncoding,
                 CascadeCount = (uint)count, LastRenderedFrameLo = (uint)allocation.LastRenderedFrame, LastRenderedFrameHi = (uint)(allocation.LastRenderedFrame >> 32),
-            }, texture));
+            }.WithDirectionalFilter(light, published, cascade);
+            rows.Add(new(lightIndex, headsetQuality ? record.WithHeadsetShadowQuality() : record, texture));
         }
 
         if (count == 0 && source == ShadowRequestSource.Desktop &&
@@ -254,7 +265,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 DepthRangeAndCascade = new(published.AtlasDepthParams.X, published.AtlasDepthParams.Y, published.RenderedSplitBlendBias.X, published.RenderedSplitBlendBias.Y),
                 TextureLayer = checked((uint)Math.Max(0, primaryAlloc.PageIndex)), Encoding = (uint)light.ShadowMapEncoding,
                 CascadeCount = 1u, LastRenderedFrameLo = (uint)primaryAlloc.LastRenderedFrame, LastRenderedFrameHi = (uint)(primaryAlloc.LastRenderedFrame >> 32),
-            }, primaryTexture));
+            }.WithDirectionalFilter(light, published, 0), primaryTexture));
         }
     }
 

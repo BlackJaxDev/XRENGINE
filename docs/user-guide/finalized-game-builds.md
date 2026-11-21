@@ -11,7 +11,7 @@ Use this guide when you want to turn an XR project into a finalized cooked game 
 - cooked project content in `GameContent.pak`
 - cooked startup/config data in `GameConfig.pak`
 - engine common assets in `CommonAssets.pak`
-- either a NativeAOT launcher or an explicitly non-AOT published launcher
+- a NativeAOT launcher (production published builds are always NativeAOT)
 
 This is not the editor workflow. The editor remains the authoring, hot-reload, loose YAML, and dynamic plugin environment.
 
@@ -20,10 +20,10 @@ This is not the editor workflow. The editor remains the authoring, hot-reload, l
 | Mode | Launcher | Defines | Runtime behavior | Use when |
 |---|---|---|---|---|
 | NativeAOT finalized game | `PublishAot=true`, self-contained `win-x64` launcher | `XRE_PUBLISHED;XRE_AOT_RUNTIME` | Loads cooked archives and AOT metadata. Rejects dynamic managed plugins, authoring-time YAML asset loading, and unregistered runtime cooked asset types. | Shipping candidate once analyzer warnings are clean or explicitly accepted. |
-| Non-AOT finalized game | Normal managed launcher build | `XRE_PUBLISHED` | Loads cooked archives as a published game, but still runs on CoreCLR/JIT. | Finalized local/QA builds, or release candidates that still need dynamic-code-compatible runtime paths. |
+| Development launcher that reads archives | Normal managed launcher build, `Debug` or `Development` configuration | `XRE_DEVELOPMENT_ARCHIVES` | Loads the config, content, and common-assets archives (also the `lod/` entries), but stays a development build with reflection paths. | Development and testing of cooked content without NativeAOT. Never a production build. |
 | Development/editor | Editor or loose launcher without `XRE_PUBLISHED` | none | Uses development asset and reflection paths. | Authoring, debugging, hot reload, plugin iteration. |
 
-The important distinction is that "not AOT" does not mean "not cooked." A non-AOT finalized build should still define `XRE_PUBLISHED` so the generated launcher uses the packed config/content archives instead of development asset paths.
+Production published builds must use NativeAOT. A non-AOT launcher that defines `XRE_PUBLISHED` or `XRE_AOT_RUNTIME` fails the build in every configuration. To test cooked archives without NativeAOT, use the [development launcher that reads archives](#development-launcher-that-reads-archives).
 
 ## What Gets Cooked
 
@@ -148,31 +148,26 @@ Then run the generated smoke check:
 
 The `--aot-smoke` path verifies that the published config archive exists, `AotRuntimeMetadata.bin` is loadable, key config assets are runtime-binary cooked, and content/common archives can be opened.
 
-## Non-AOT Finalized Build
+## Development Launcher That Reads Archives
 
-Use this when you want a cooked published game, but you specifically do not want NativeAOT:
+Use this mode to test cooked content, such as split cooked models with separate `lod/` entries, in a non-AOT launcher. It is for development and testing only. Production builds must use NativeAOT.
 
-```powershell
-dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- `
-  --build-project .\Path\To\Game.xrproj `
-  --build-configuration Release `
-  --build-platform Windows64 `
-  --output-subfolder PublishJit `
-  --launcher-name Game.exe `
-  --publish-native-aot false `
-  --validate-aot false `
-  --define-constants XRE_PUBLISHED
-```
+Set `DevelopmentLauncherReadsArchives: true` in the build settings (or pass `--development-archives true` to the headless `--build-project` command), keep `PublishLauncherAsNativeAot: false`, and use the `Debug` or `Development` configuration. The builder then:
 
-The `XRE_PUBLISHED` define is required for a finalized non-AOT launcher. Without it, the generated program configures itself as a development build and does not use the published archive-loading path.
+- cooks the content archive and writes the config archive, as for a NativeAOT build;
+- adds the `XRE_DEVELOPMENT_ARCHIVES` define constant to the generated launcher;
+- does not add `XRE_PUBLISHED` or `XRE_AOT_RUNTIME`.
 
-Do not use `--aot-smoke` for the non-AOT build unless you have intentionally added AOT metadata to its config archive. Run the produced executable normally:
+The generated launcher configures the `EXRRuntimeBuildKind.DevelopmentArchives` build kind. It is not `Published` or `PublishedAot`, so `XRRuntimeEnvironment.IsPublishedBuild` is false and reflective loading stays available. At startup, the launcher writes one line that says it is a development build that reads the archives. A missing config, content, or common-assets archive stops the launcher. Asset loads read the archives through the authoring cooked reader, which also reads the reflective formats of a non-AOT cook. Separate `lod/` entries resolve through `PublishedArchiveRegistry`.
 
-```powershell
-.\Path\To\Project\Build\PublishJit\Binaries\Game.exe
-```
+This mode never uses a loose file in place of an archive entry. When an archive is configured for a request:
 
-Use a different output subfolder, such as `PublishJit`, when keeping AOT and non-AOT builds side by side.
+- An entry that exists but does not read, has a stale contract version, or deserializes to null fails the load with an error that names the asset and the archive. Re-cook the content.
+- A missing entry gives null from the APIs that can return null (`Load`, `LoadAsync`, `LoadGameAsset`, and the `Try` APIs). The load records one missing-asset diagnostic that names the searched archives. It does not read the loose file.
+- `LoadEngineAsset` cannot return null, so a missing entry throws.
+- The launcher throws its own error when the required startup settings do not load from the config archive. The optional user settings can be missing.
+
+A build with this option and the `Release` configuration fails with an error, because the project marks production builds with the `Release` configuration. The same rule applies when `LauncherDefineConstants` lists `XRE_DEVELOPMENT_ARCHIVES` by hand. A NativeAOT launcher ignores the option and never takes the define constant. Do not add `XRE_PUBLISHED` to this mode: a non-AOT launcher with that define fails the build.
 
 ## Build Settings Asset
 
@@ -202,16 +197,18 @@ BinariesOutputFolder: Binaries
 LauncherExecutableName: Game.exe
 ```
 
-Recommended non-AOT finalized differences:
+Settings for a development launcher that reads the archives (development and testing only):
 
 ```yaml
-OutputSubfolder: PublishJit
+Configuration: Development
+OutputSubfolder: DevArchives
 PublishLauncherAsNativeAot: false
 ValidateLauncherAotCompatibility: false
-LauncherDefineConstants: XRE_PUBLISHED
+DevelopmentLauncherReadsArchives: true
+LauncherDefineConstants: ""
 ```
 
-When `PublishLauncherAsNativeAot` is true, the builder forces content cooking and config archive generation even if those settings were disabled. AOT launchers also automatically receive `XRE_PUBLISHED` and `XRE_AOT_RUNTIME`.
+When `PublishLauncherAsNativeAot` is true, the builder forces content cooking and config archive generation even if those settings were disabled. AOT launchers also automatically receive `XRE_PUBLISHED` and `XRE_AOT_RUNTIME`. A non-AOT launcher with `DevelopmentLauncherReadsArchives: true` also forces content cooking and config archive generation, and receives `XRE_DEVELOPMENT_ARCHIVES`.
 
 The headless NativeAOT build path also disables `CopyGameAssemblies` and
 `CopyEngineBinaries`; `dotnet publish` provides the self-contained executable
@@ -221,6 +218,37 @@ for a procedural game that creates every other runtime asset itself; the
 complete shader tree is retained so the render pipeline and shader includes
 remain functional. Both modes create a non-empty `CommonAssets.pak`, and a
 missing archive remains a hard startup error.
+
+A publish removes absolute machine paths (for example a path in a user profile
+folder, or an authoring path in an FBX or EXR file) from the files that it ships:
+cooked assets, files that the content cook copies as they are, and every file of
+`CommonAssets.pak`. It changes only the copy in the build output, never a source
+file. It replaces the folder part of each path with underscores and keeps the
+separators and the file name, so a model can still find its textures by file
+name. It writes one warning that lists each file and each removed path. The same
+list goes to `<project>/Intermediate/Build/Logs/publish-report.txt`, which is not
+part of the build output. The publish fails when a path cannot be removed safely
+or cannot be checked, for example a path inside a compressed PNG text chunk or a
+ZIP or GZIP file, or a 7z file that the publish cannot open. The error names the
+file. See [Cooked Assets, AOT, and IO](../architecture/assets/cooked-asset-aot-and-io.md).
+
+Limits of the path removal:
+
+- In a text file, a comma, a semicolon, or an equals sign in a folder name stops
+  the removal early. The rest of the path stays, without its drive.
+- In a binary file (images, audio, video, models), a drive path with fewer than
+  two folder parts (for example `D:\Art\tex.png`) is not found. Paths in a user
+  profile folder and paths under the asset folders are always found.
+- In a binary file, a drive path that mixes forward slashes and backslashes (for
+  example `C:\proj\assets/textures/wood.png`) is not found. A path in a user
+  profile folder is still found.
+- A ZIP file whose entries use LZMA, BZip2, or Zstandard compression, or
+  encryption, cannot be checked, so the publish fails. Store the files unpacked,
+  or use a ZIP file with normal (deflate) compression.
+- The publish checks at most 2 GiB of inflated data for each compressed item and
+  4 GiB for each file, and spends at most 2 minutes on an item and 10 minutes on
+  a file. A file that goes past a limit fails the publish, and the error names
+  the file and the limit.
 
 The compiled game assembly must contain exactly one public, concrete `IGameLaunchBootstrap` with a public parameterless constructor. The generated launcher constructs it directly, uses it to configure startup, and obtains the initial `GameState`; this is the supported way to root custom worlds and components under NativeAOT.
 
@@ -234,15 +262,7 @@ NativeAOT published sample build:
 dotnet msbuild .\Samples\RollingBall\RollingBall.csproj /t:CookGameExe /p:Configuration="Published Release"
 ```
 
-Explicitly non-AOT published sample build:
-
-```powershell
-dotnet msbuild .\Samples\RollingBall\RollingBall.csproj /t:CookGameExe `
-  /p:Configuration="Published Release" `
-  /p:GamePublishNativeAot=false `
-  /p:GameOutputSubfolder=PublishJit `
-  /p:GameDefineConstants=XRE_PUBLISHED
-```
+The `Published Release` configuration always uses NativeAOT. Do not override it with `/p:GamePublishNativeAot=false`: that build defines `XRE_PUBLISHED` without NativeAOT and fails. For a non-AOT sample build that reads the archives, use the [development launcher that reads archives](#development-launcher-that-reads-archives).
 
 For Rolling Ball, prefer `Tools/Publish-RollingBall.ps1`; it runs the strict script path and creates the distributable ZIP. The direct MSBuild target remains useful for development diagnostics.
 
@@ -305,9 +325,13 @@ The asset is being loaded by a published AOT runtime without an explicit runtime
 
 The cooked blob says `RuntimeBinaryV1`, but the final runtime did not register a matching serializer. Ensure the registration assembly is referenced by the final launcher closure and that the registration runs before asset load.
 
-The non-AOT build starts but does not load cooked archives.
+`The launcher defines XRE_PUBLISHED (build settings '<path>'), but PublishLauncherAsNativeAot is off.`
 
-Confirm the generated launcher was built with `XRE_PUBLISHED`. For the CLI, pass `--define-constants XRE_PUBLISHED`. For build settings, set `LauncherDefineConstants: XRE_PUBLISHED`.
+A non-AOT launcher cannot be a published build. Enable `PublishLauncherAsNativeAot` for a production build. For non-AOT testing of the archives, enable `DevelopmentLauncherReadsArchives` and remove `XRE_PUBLISHED` and `XRE_AOT_RUNTIME` from `LauncherDefineConstants` or `--define-constants`.
+
+`Development archive build: asset '<path>' ...`
+
+A development launcher that reads the archives found an archive entry that does not load, and it does not use the loose file instead. The message names the asset and the archive. Re-cook the content. A missing entry shows as a missing-asset diagnostic that names the searched archives; cook the asset into the archives.
 
 AOT publish stops because the warning report is non-empty.
 

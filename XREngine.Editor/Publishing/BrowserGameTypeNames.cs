@@ -7,7 +7,7 @@ namespace XREngine.Editor.Publishing;
 internal readonly record struct BrowserGameTypeName(string Assembly, string FullName, string? ConstructedName = null)
 {
     internal string SignatureName => ConstructedName ?? FullName;
-    internal string SignatureKey => string.IsNullOrEmpty(Assembly) ? SignatureName : Assembly + ":" + SignatureName;
+    internal string SignatureKey => string.IsNullOrEmpty(Assembly) ? SignatureName : $"{Assembly}:{SignatureName}";
 }
 
 /// <summary>Finds type owners through nested references and constructed generic signatures.</summary>
@@ -28,12 +28,12 @@ internal sealed class BrowserGameTypeNames(MetadataReader metadata, string curre
         if (type.ResolutionScope.Kind == HandleKind.TypeReference)
         {
             BrowserGameTypeName parent = FromReference((TypeReferenceHandle)type.ResolutionScope, depth + 1);
-            return new(parent.Assembly, parent.FullName + "+" + name);
+            return new(parent.Assembly, $"{parent.FullName}+{name}");
         }
         string assembly = type.ResolutionScope.Kind == HandleKind.AssemblyReference
             ? metadata.GetString(metadata.GetAssemblyReference((AssemblyReferenceHandle)type.ResolutionScope).Name)
             : currentAssembly;
-        return new(assembly, string.IsNullOrEmpty(ns) ? name : ns + "." + name);
+        return new(assembly, string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}");
     }
 
     internal BrowserGameTypeName FromDefinition(TypeDefinitionHandle handle) => FromDefinition(handle, 0);
@@ -46,9 +46,9 @@ internal sealed class BrowserGameTypeNames(MetadataReader metadata, string curre
         string name = metadata.GetString(type.Name);
         TypeDefinitionHandle parent = type.GetDeclaringType();
         if (!parent.IsNil)
-            return new(currentAssembly, FromDefinition(parent, depth + 1).FullName + "+" + name);
+            return new(currentAssembly, $"{FromDefinition(parent, depth + 1).FullName}+{name}");
         string ns = metadata.GetString(type.Namespace);
-        return new(currentAssembly, string.IsNullOrEmpty(ns) ? name : ns + "." + name);
+        return new(currentAssembly, string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}");
     }
 
     internal BrowserGameTypeName? FromParent(EntityHandle parent) => parent.Kind switch
@@ -61,29 +61,35 @@ internal sealed class BrowserGameTypeNames(MetadataReader metadata, string curre
 
     public BrowserGameTypeName GetArrayType(BrowserGameTypeName elementType, ArrayShape shape)
     {
-        string suffix = shape.Rank == 1 ? "[*]" : "[" + new string(',', Math.Max(0, shape.Rank - 1)) + "]";
+        string suffix = shape.Rank == 1 ? "[*]" : $"[{new string(',', Math.Max(0, shape.Rank - 1))}]";
         return new(elementType.Assembly, elementType.FullName + suffix, elementType.SignatureName + suffix);
     }
     public BrowserGameTypeName GetByReferenceType(BrowserGameTypeName elementType)
-        => new(elementType.Assembly, elementType.FullName + "&", elementType.SignatureName + "&");
+        => new(elementType.Assembly, $"{elementType.FullName}&", $"{elementType.SignatureName}&");
     public BrowserGameTypeName GetFunctionPointerType(MethodSignature<BrowserGameTypeName> signature)
-        => new("", "fnptr", "fnptr(" + string.Join(",", signature.ParameterTypes.Select(type => type.SignatureKey))
-            + ")->" + signature.ReturnType.SignatureKey);
+    {
+        string parameters = string.Join(",", signature.ParameterTypes.Select(type => type.SignatureKey));
+        return new("", "fnptr", $"fnptr({parameters})->{signature.ReturnType.SignatureKey}");
+    }
     public BrowserGameTypeName GetGenericInstantiation(BrowserGameTypeName genericType, ImmutableArray<BrowserGameTypeName> typeArguments)
-        => new(genericType.Assembly, genericType.FullName,
-            genericType.FullName + "<" + string.Join(",", typeArguments.Select(type => type.SignatureKey)) + ">");
-    public BrowserGameTypeName GetGenericMethodParameter(object? genericContext, int index) => new("", "!!" + index);
-    public BrowserGameTypeName GetGenericTypeParameter(object? genericContext, int index) => new("", "!" + index);
+    {
+        string arguments = string.Join(",", typeArguments.Select(type => type.SignatureKey));
+        return new(genericType.Assembly, genericType.FullName, $"{genericType.FullName}<{arguments}>");
+    }
+    public BrowserGameTypeName GetGenericMethodParameter(object? genericContext, int index) => new("", $"!!{index}");
+    public BrowserGameTypeName GetGenericTypeParameter(object? genericContext, int index) => new("", $"!{index}");
     public BrowserGameTypeName GetModifiedType(BrowserGameTypeName modifier, BrowserGameTypeName unmodifiedType, bool isRequired)
-        => new(unmodifiedType.Assembly, unmodifiedType.FullName,
-            unmodifiedType.SignatureName + (isRequired ? " modreq(" : " modopt(") + modifier.SignatureKey + ")");
+    {
+        string modifierKind = isRequired ? "modreq" : "modopt";
+        return new(unmodifiedType.Assembly, unmodifiedType.FullName, $"{unmodifiedType.SignatureName} {modifierKind}({modifier.SignatureKey})");
+    }
     public BrowserGameTypeName GetPinnedType(BrowserGameTypeName elementType)
-        => new(elementType.Assembly, elementType.FullName, elementType.SignatureName + " pinned");
+        => new(elementType.Assembly, elementType.FullName, $"{elementType.SignatureName} pinned");
     public BrowserGameTypeName GetPointerType(BrowserGameTypeName elementType)
-        => new(elementType.Assembly, elementType.FullName + "*", elementType.SignatureName + "*");
-    public BrowserGameTypeName GetPrimitiveType(PrimitiveTypeCode typeCode) => new("System.Runtime", "primitive:" + typeCode);
+        => new(elementType.Assembly, $"{elementType.FullName}*", $"{elementType.SignatureName}*");
+    public BrowserGameTypeName GetPrimitiveType(PrimitiveTypeCode typeCode) => new("System.Runtime", $"primitive:{typeCode}");
     public BrowserGameTypeName GetSZArrayType(BrowserGameTypeName elementType)
-        => new(elementType.Assembly, elementType.FullName + "[]", elementType.SignatureName + "[]");
+        => new(elementType.Assembly, $"{elementType.FullName}[]", $"{elementType.SignatureName}[]");
     public BrowserGameTypeName GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind) => FromDefinition(handle);
     public BrowserGameTypeName GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind) => FromReference(handle);
     public BrowserGameTypeName GetTypeFromSpecification(MetadataReader reader, object? genericContext, TypeSpecificationHandle handle, byte rawTypeKind)

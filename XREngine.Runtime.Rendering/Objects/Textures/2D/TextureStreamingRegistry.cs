@@ -24,6 +24,10 @@ internal sealed class TextureStreamingRegistry
     public bool IsTracked(XRTexture2D texture)
         => _recordsByTexture.TryGetValue(texture, out _);
 
+    /// <summary>Gets the record of a tracked texture. It does not create a record.</summary>
+    public bool TryGetRecord(XRTexture2D texture, out ImportedTextureStreamingRecord? record)
+        => _recordsByTexture.TryGetValue(texture, out record);
+
     public bool TryGetGenerationState(
         XRTexture2D texture,
         out long publishedGeneration,
@@ -140,13 +144,12 @@ internal sealed class TextureStreamingRegistry
         {
             lock (record.Sync)
             {
-                record.Format = texture.SizedInternalFormat;
                 if (!string.Equals(record.FilePath, filePath, StringComparison.OrdinalIgnoreCase) || record.Source is null)
                 {
                     record.FilePath = filePath;
                     record.Source = deferAuthorityResolution
-                        ? TextureStreamingSourceFactory.CreateDeferred(filePath)
-                        : TextureStreamingSourceFactory.Create(filePath);
+                        ? TextureStreamingSourceFactory.CreateDeferred(filePath, texture)
+                        : TextureStreamingSourceFactory.Create(filePath, texture.ImportedUsage);
                 }
 
                 record.Backend ??= resolvePreviewBackend(record.Format);
@@ -295,6 +298,23 @@ internal sealed class TextureStreamingRegistry
         return snapshots;
     }
 
+
+    /// <summary>
+    /// Returns the fairness group key of a record, computing it again only when
+    /// the file path changes. The caller holds <see cref="ImportedTextureStreamingRecord.Sync"/>.
+    /// </summary>
+    private static string ResolveCachedFairnessGroupKey(ImportedTextureStreamingRecord record)
+    {
+        string? filePath = record.FilePath;
+        if (!ReferenceEquals(record.FairnessGroupKeySourcePath, filePath))
+        {
+            record.FairnessGroupKey = TextureResidencyPolicy.ResolveFairnessGroupKey(filePath);
+            record.FairnessGroupKeySourcePath = filePath;
+        }
+
+        return record.FairnessGroupKey;
+    }
+
     public void CollectSnapshots(
         Func<uint, uint, ESizedInternalFormat, ITextureResidencyBackend> resolveBackend,
         List<ImportedTextureStreamingSnapshot> snapshots)
@@ -336,7 +356,7 @@ internal sealed class TextureStreamingRegistry
                     texture.Name,
                     record.FilePath,
                     texture.SamplerName,
-                    TextureResidencyPolicy.ResolveFairnessGroupKey(record.FilePath),
+                    ResolveCachedFairnessGroupKey(record),
                     record.Format,
                     record.SourceWidth,
                     record.SourceHeight,
@@ -372,7 +392,10 @@ internal sealed class TextureStreamingRegistry
                     texture.LastTextureUploadDurationMilliseconds,
                     record.FailedTransitionCooldownUntilFrameId,
                     record.FailedTransitionTargetMaxDimension,
-                    record.ConsecutiveTransitionFailureCount));
+                    record.ConsecutiveTransitionFailureCount,
+                    record.RequestedMaxDimension,
+                    record.RequestPriority,
+                    record.RequestDeadlineFrameId));
             }
             finally
             {

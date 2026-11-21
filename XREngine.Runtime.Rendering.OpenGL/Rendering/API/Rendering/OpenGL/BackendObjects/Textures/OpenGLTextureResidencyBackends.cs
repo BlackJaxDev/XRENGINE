@@ -7,8 +7,6 @@ namespace XREngine.Rendering;
 
 internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
 {
-    private const int MaxConcurrentStreamingDecodes = 2;
-    private const int MaxRenderThreadApplyResidentDataPerFrame = 1;
 
     private static readonly uint[] ResidentCandidates =
     [
@@ -28,14 +26,13 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         8192u,
     ];
 
-    private static readonly PriorityAsyncSemaphore DecodeGate = new(MaxConcurrentStreamingDecodes);
+    // The decode width follows the CPU capacity of the machine (TextureStreamingCapacity).
+    private static PriorityAsyncSemaphore DecodeGate => TextureStreamingCapacity.DecodeGate;
 
     private static int s_activeDecodeCount;
     private static int s_queuedDecodeCount;
     private static long s_uploadBytesFrameTicks = -1;
     private static long s_uploadBytesScheduledThisFrame;
-    private static long s_applyResidentDataFrameTicks = -1;
-    private static int s_applyResidentDataCountThisFrame;
 
     public string Name => nameof(GLTieredTextureResidencyBackend);
     public uint PreviewMaxDimension => XRTexture2D.ImportedPreviewMaxDimensionInternal;
@@ -284,17 +281,31 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
                     }, ImportedTextureStreamingManager.ResolveUploadPriorityClass(priority));
                 }
 
+                // The apply lane limits the applies of one render frame from their measured cost and the frame time.
+                void ApplyResidentDataOnRenderThreadMeasured()
+                {
+                    TextureStreamingApplyMeasurement applyMeasurement = TextureStreamingCapacity.BeginOpenGlApply();
+                    try
+                    {
+                        ApplyResidentDataOnRenderThreadCore();
+                    }
+                    finally
+                    {
+                        TextureStreamingCapacity.EndOpenGlApply(applyMeasurement);
+                    }
+                }
+
                 bool ApplyResidentDataOnRenderThreadBudgeted()
                 {
-                    if (!TryEnterRenderThreadApplyBudget())
+                    if (!TextureStreamingCapacity.OpenGlResidentApply.TryAcquire())
                         return false;
 
-                    ApplyResidentDataOnRenderThreadCore();
+                    ApplyResidentDataOnRenderThreadMeasured();
                     return true;
                 }
 
-                if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread && TryEnterRenderThreadApplyBudget())
-                    ApplyResidentDataOnRenderThreadCore();
+                if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread && TextureStreamingCapacity.OpenGlResidentApply.TryAcquire())
+                    ApplyResidentDataOnRenderThreadMeasured();
                 else
                     RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
                         ApplyResidentDataOnRenderThreadBudgeted,
@@ -423,24 +434,6 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
         return true;
     }
 
-    private static bool TryEnterRenderThreadApplyBudget()
-    {
-        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
-        long previousFrame = Interlocked.Exchange(ref s_applyResidentDataFrameTicks, currentFrame);
-        if (previousFrame != currentFrame)
-            Interlocked.Exchange(ref s_applyResidentDataCountThisFrame, 0);
-
-        while (true)
-        {
-            int currentCount = Volatile.Read(ref s_applyResidentDataCountThisFrame);
-            if (currentCount >= MaxRenderThreadApplyResidentDataPerFrame)
-                return false;
-
-            if (Interlocked.CompareExchange(ref s_applyResidentDataCountThisFrame, currentCount + 1, currentCount) == currentCount)
-                return true;
-        }
-    }
-
     private static void RecordUploadBytes(long bytes)
     {
         if (bytes <= 0)
@@ -467,9 +460,7 @@ internal sealed class GLTieredTextureResidencyBackend : ITextureResidencyBackend
 
 internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
 {
-    private const int MaxConcurrentStreamingDecodes = 2;
     private const int MaxSharedUploadsInFlight = 1;
-    private const int MaxSparseTransitionSchedulesPerFrame = 1;
     private static readonly uint[] ResidentCandidates =
     [
         1u,
@@ -488,15 +479,14 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
         8192u,
     ];
 
-    private static readonly PriorityAsyncSemaphore DecodeGate = new(MaxConcurrentStreamingDecodes);
+    // The decode width follows the CPU capacity of the machine (TextureStreamingCapacity).
+    private static PriorityAsyncSemaphore DecodeGate => TextureStreamingCapacity.DecodeGate;
 
     private static int s_activeDecodeCount;
     private static int s_queuedDecodeCount;
     private static int s_inFlightUploadCount;
     private static long s_uploadBytesFrameTicks = -1;
     private static long s_uploadBytesScheduledThisFrame;
-    private static long s_sparseTransitionScheduleFrameTicks = -1;
-    private static int s_sparseTransitionScheduleCountThisFrame;
 
     public string Name => nameof(GLSparseTextureResidencyBackend);
     public uint PreviewMaxDimension => XRTexture2D.ImportedPreviewMaxDimensionInternal;
@@ -804,6 +794,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                         if (!TryEnterSparseTransitionScheduleBudget())
                             return false;
 
+                        TextureStreamingApplyMeasurement retryMeasurement = TextureStreamingCapacity.BeginOpenGlApply();
                         Interlocked.Increment(ref s_inFlightUploadCount);
                         try
                         {
@@ -820,6 +811,7 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                         finally
                         {
                             ExitSharedUpload();
+                            TextureStreamingCapacity.EndOpenGlApply(retryMeasurement);
                         }
                     }
 
@@ -874,17 +866,32 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
                     }
                 }
 
+                // The apply lane limits the sparse transitions of one render frame from their measured cost and the
+                // frame time.
+                void ContinueOnRenderThreadMeasured()
+                {
+                    TextureStreamingApplyMeasurement continueMeasurement = TextureStreamingCapacity.BeginOpenGlApply();
+                    try
+                    {
+                        ContinueOnRenderThreadCore();
+                    }
+                    finally
+                    {
+                        TextureStreamingCapacity.EndOpenGlApply(continueMeasurement);
+                    }
+                }
+
                 bool ContinueOnRenderThreadBudgeted()
                 {
                     if (!TryEnterSparseTransitionScheduleBudget())
                         return false;
 
-                    ContinueOnRenderThreadCore();
+                    ContinueOnRenderThreadMeasured();
                     return true;
                 }
 
                 if (RuntimeRenderingHostServices.FrameTiming.IsRenderThread && TryEnterSparseTransitionScheduleBudget())
-                    ContinueOnRenderThreadCore();
+                    ContinueOnRenderThreadMeasured();
                 else
                     RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
                         ContinueOnRenderThreadBudgeted,
@@ -953,28 +960,10 @@ internal sealed class GLSparseTextureResidencyBackend : ITextureResidencyBackend
     }
 
     private static bool TryEnterSparseTransitionScheduleBudget()
-    {
-        long currentFrame = RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks;
-        long previousFrame = Interlocked.Exchange(ref s_sparseTransitionScheduleFrameTicks, currentFrame);
-        if (previousFrame != currentFrame)
-            Interlocked.Exchange(ref s_sparseTransitionScheduleCountThisFrame, 0);
-
-        while (true)
-        {
-            int currentCount = Volatile.Read(ref s_sparseTransitionScheduleCountThisFrame);
-            if (currentCount >= MaxSparseTransitionSchedulesPerFrame)
-                return false;
-
-            if (Interlocked.CompareExchange(ref s_sparseTransitionScheduleCountThisFrame, currentCount + 1, currentCount) == currentCount)
-                return true;
-        }
-    }
+        => TextureStreamingCapacity.OpenGlResidentApply.TryAcquire();
 
     private static void ReleaseSparseTransitionScheduleBudget()
-    {
-        if (Volatile.Read(ref s_sparseTransitionScheduleFrameTicks) == RuntimeRenderingHostServices.FrameTiming.LastRenderTimestampTicks)
-            Interlocked.Decrement(ref s_sparseTransitionScheduleCountThisFrame);
-    }
+        => TextureStreamingCapacity.OpenGlResidentApply.ReturnItems(1);
 
     private static void ExitSharedUpload()
     {

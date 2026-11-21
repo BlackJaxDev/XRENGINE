@@ -31,19 +31,21 @@ uniform float AlphaCutoff = -1.0f;
 // Snippets after uniforms so SurfaceDetailNormalMapping can reference Texture1.
 #pragma snippet "NormalEncoding"
 #pragma snippet "SurfaceDetailNormalMapping"
+#pragma snippet "SurfaceDetailParallax"
 #pragma snippet "DitheredTransparency"
 #pragma snippet "SurfaceEmission"
 
-vec3 getNormalFromMap()
+vec3 getNormalFromMap(vec2 uv)
 {
-    return XRENGINE_GetSurfaceDetailNormal(FragUV0, FragPos, FragTan, FragBinorm, FragNorm);
+    return XRENGINE_GetSurfaceDetailNormal(uv, FragPos, FragTan, FragBinorm, FragNorm);
 }
 
 void main()
 {
-    vec3 normal = getNormalFromMap();
-    vec4 albedoSample = texture(Texture0, FragUV0);
-    float alphaMask = albedoSample.a * texture(Texture3, FragUV0).r;
+    vec2 uv = XRENGINE_BeginSurfaceParallax(FragUV0, FragPos, FragNorm);
+    vec3 normal = getNormalFromMap(uv);
+    vec4 albedoSample = XRENGINE_SampleSurface(Texture0, uv);
+    float alphaMask = albedoSample.a * XRENGINE_SampleSurface(Texture3, uv).r;
 
     XRENGINE_AlphaCutoffAndDither(AlphaCutoff, alphaMask, Opacity, gl_FragCoord.xy);
 
@@ -51,7 +53,8 @@ void main()
     Normal = XRENGINE_EncodeNormal(normal);
     AlbedoOpacity = vec4(albedoSample.rgb * BaseColor, Opacity * alphaMask);
 
-    float specularTex = texture(Texture2, FragUV0).r;
+    float specularTex = XRENGINE_SampleSurface(Texture2, uv).r;
     RMSI = vec4(Roughness, Metallic, Specular * specularTex, Emission);
-    EmissionColor = XRENGINE_ResolveSurfaceEmission(FragUV0, FragUV1, BaseColor, Emission);
+    EmissionColor = XRENGINE_ResolveSurfaceEmission(uv, FragUV1, BaseColor, Emission);
+    XRENGINE_EndSurfaceParallax();
 }

@@ -232,8 +232,7 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
 
         violations.ShouldBeEmpty(
             "New VulkanRenderer partial files must remain behavior-only. " +
-            "Move state to a focused owner type or document an explicit baseline exception.\n" +
-            string.Join(Environment.NewLine, violations));
+            $"Move state to a focused owner type or document an explicit baseline exception.\n{string.Join(Environment.NewLine, violations)}");
     }
 
     [Test]
@@ -266,8 +265,7 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
 
         violations.ShouldBeEmpty(
             "Each Vulkan source file should declare one top-level type. " +
-            "Split the types or document an explicit baseline exception.\n" +
-            string.Join(Environment.NewLine, violations));
+            $"Split the types or document an explicit baseline exception.\n{string.Join(Environment.NewLine, violations)}");
     }
 
     [Test]
@@ -402,7 +400,7 @@ public sealed partial class VulkanSourceArchitectureGuardrailTests
             preparation,
             StringComparison.Ordinal);
         int recording = scheduling.IndexOf(
-            "result = _commandRuntime.RecordPrimary(in input);",
+            "result = RecordDesktopPrimaryForExecutionMode(in input);",
             StringComparison.Ordinal);
 
         // Compute resources are prepared and checked before the primary

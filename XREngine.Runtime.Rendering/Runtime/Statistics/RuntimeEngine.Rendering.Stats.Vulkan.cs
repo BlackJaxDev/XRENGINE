@@ -233,6 +233,10 @@ namespace XREngine
                     private static int _vulkanTrackedDescriptorSetCount;
                     private static int _vulkanLifetimePendingRetirementCount;
                     private static long _vulkanLifetimeOldestPendingRetirementAgeMilliseconds;
+                    private static int _vulkanPendingRetiredCommandBufferCount;
+                    private static long _vulkanRetiredCommandBufferWorkerOwnedDeferralsTotal;
+                    private static long _vulkanPlannerPublicationPendingRetriesTotal;
+                    private static long _vulkanPlannerPublicationPendingFailuresTotal;
                     private static int _vulkanMeshFrameDataArenaChunkCount;
                     private static long _vulkanMeshFrameDataMappedBytes;
                     private static long _vulkanMeshFrameDataReservedBytes;
@@ -267,6 +271,8 @@ namespace XREngine
                     private static int _vulkanQueueSubmitCount;
                     private static int _vulkanPresentAttemptCount;
                     private static int _vulkanPresentAcceptedCount;
+                    // Accepted desktop presents since startup; never reset, so readers can form a rate.
+                    private static long _vulkanPresentAcceptedTotal;
                     private static int _vulkanLastPresentResult;
                     private static int _lastFrameVulkanDeviceLocalAllocationCount;
                     private static long _lastFrameVulkanDeviceLocalAllocatedBytes;
@@ -321,6 +327,7 @@ namespace XREngine
                     private static string _lastFrameVulkanFrameDiagnosticSummary = string.Empty;
                     private static int _vulkanValidationMessageCount;
                     private static int _vulkanValidationErrorCount;
+                    private static long _vulkanValidationLifetimeErrorCount;
                     private static string _vulkanLastValidationMessage = string.Empty;
                     private static int _lastFrameVulkanValidationMessageCount;
                     private static int _lastFrameVulkanValidationErrorCount;
@@ -756,6 +763,32 @@ namespace XREngine
                     public static int VulkanTrackedDescriptorSetCount => Volatile.Read(ref _vulkanTrackedDescriptorSetCount);
                     public static int VulkanLifetimePendingRetirementCount => Volatile.Read(ref _vulkanLifetimePendingRetirementCount);
                     public static long VulkanLifetimeOldestPendingRetirementAgeMilliseconds => Volatile.Read(ref _vulkanLifetimeOldestPendingRetirementAgeMilliseconds);
+
+                    /// <summary>
+                    /// Number of retired command buffers that wait in the retirement
+                    /// queues. Each command buffer drain writes it after its scan.
+                    /// </summary>
+                    public static int VulkanPendingRetiredCommandBufferCount => Volatile.Read(ref _vulkanPendingRetiredCommandBufferCount);
+
+                    /// <summary>
+                    /// Cumulative number of times that render-thread maintenance kept a
+                    /// ready retired command buffer queued, because an in-flight desktop
+                    /// worker batch owned its command pool. One buffer counts once for
+                    /// each drain that skips it. The batch join frees these buffers.
+                    /// </summary>
+                    public static long VulkanRetiredCommandBufferWorkerOwnedDeferralsTotal => Interlocked.Read(ref _vulkanRetiredCommandBufferWorkerOwnedDeferralsTotal);
+
+                    /// <summary>
+                    /// Cumulative desktop frame attempts that retried because the planner state
+                    /// of a changed output (new passes or resource generation) was not published yet.
+                    /// </summary>
+                    public static long VulkanPlannerPublicationPendingRetriesTotal => Interlocked.Read(ref _vulkanPlannerPublicationPendingRetriesTotal);
+
+                    /// <summary>
+                    /// Cumulative desktop frame attempts that failed because such a publication
+                    /// stayed pending past the retry limit.
+                    /// </summary>
+                    public static long VulkanPlannerPublicationPendingFailuresTotal => Interlocked.Read(ref _vulkanPlannerPublicationPendingFailuresTotal);
                     public static int VulkanMeshFrameDataArenaChunkCount => Volatile.Read(ref _vulkanMeshFrameDataArenaChunkCount);
                     public static long VulkanMeshFrameDataMappedBytes => Volatile.Read(ref _vulkanMeshFrameDataMappedBytes);
                     public static long VulkanMeshFrameDataReservedBytes => Volatile.Read(ref _vulkanMeshFrameDataReservedBytes);
@@ -795,6 +828,8 @@ namespace XREngine
                     public static int VulkanQueueSubmitCount => _lastFrameVulkanQueueSubmitCount;
                     public static int VulkanPresentAttemptCount => _lastFrameVulkanPresentAttemptCount;
                     public static int VulkanPresentAcceptedCount => _lastFrameVulkanPresentAcceptedCount;
+                    /// <summary>Accepted desktop presents since startup. The difference between two reads over a known time is the desktop present rate.</summary>
+                    public static long VulkanPresentAcceptedTotal => Volatile.Read(ref _vulkanPresentAcceptedTotal);
                     public static int VulkanLastPresentResult => _lastFrameVulkanLastPresentResult;
                     public static bool VulkanValidationLayersEnabled
                         => RuntimeEngine.Rendering.State.VulkanValidationLayersEnabled;
@@ -824,6 +859,14 @@ namespace XREngine
                     public static string VulkanLastValidationMessage => _lastFrameVulkanLastValidationMessage;
                     public static int VulkanValidationMessageCountCurrentFrame => Volatile.Read(ref _vulkanValidationMessageCount);
                     public static int VulkanValidationErrorCountCurrentFrame => Volatile.Read(ref _vulkanValidationErrorCount);
+
+                    /// <summary>
+                    /// Counts every validation error since the process started. Frame resets and the
+                    /// profiler tracking switch do not change it. Use it for pass or fail checks over a
+                    /// whole run: synchronization validation reports a hazard only a few times before its
+                    /// duplicate limit, so the per-frame count is usually 0 in the frame that is read.
+                    /// </summary>
+                    public static long VulkanValidationLifetimeErrorCount => Interlocked.Read(ref _vulkanValidationLifetimeErrorCount);
                     public static int VulkanDescriptorFallbackSampledImages => _lastFrameVulkanDescriptorFallbackSampledImages;
                     public static int VulkanDescriptorFallbackStorageImages => _lastFrameVulkanDescriptorFallbackStorageImages;
                     public static int VulkanDescriptorFallbackUniformBuffers => _lastFrameVulkanDescriptorFallbackUniformBuffers;
@@ -1019,6 +1062,35 @@ namespace XREngine
                         Volatile.Write(ref _vulkanLifetimeOldestPendingRetirementAgeMilliseconds, Math.Max(oldestPendingRetirementAgeMilliseconds, 0L));
                     }
 
+                    /// <summary>Writes the number of retired command buffers that wait in the retirement queues.</summary>
+                    public static void RecordVulkanPendingRetiredCommandBufferCount(int pendingCount)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Volatile.Write(ref _vulkanPendingRetiredCommandBufferCount, Math.Max(pendingCount, 0));
+                    }
+
+                    /// <summary>
+                    /// Counts one retired command buffer that stayed queued because an
+                    /// in-flight desktop worker batch owned its command pool.
+                    /// </summary>
+                    /// <summary>Counts one desktop attempt that retried for a pending planner publication.</summary>
+                    public static void RecordVulkanPlannerPublicationPendingRetry()
+                        => Interlocked.Increment(ref _vulkanPlannerPublicationPendingRetriesTotal);
+
+                    /// <summary>Counts one desktop attempt that failed for a planner publication past the retry limit.</summary>
+                    public static void RecordVulkanPlannerPublicationPendingFailure()
+                        => Interlocked.Increment(ref _vulkanPlannerPublicationPendingFailuresTotal);
+
+                    public static void RecordVulkanRetiredCommandBufferWorkerOwnedDeferral()
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        Interlocked.Increment(ref _vulkanRetiredCommandBufferWorkerOwnedDeferralsTotal);
+                    }
+
                     public static void RecordVulkanMeshFrameDataGauges(
                         int arenaChunkCount,
                         long mappedBytes,
@@ -1194,7 +1266,10 @@ namespace XREngine
 
                         Interlocked.Increment(ref _vulkanPresentAttemptCount);
                         if (accepted)
+                        {
                             Interlocked.Increment(ref _vulkanPresentAcceptedCount);
+                            Interlocked.Increment(ref _vulkanPresentAcceptedTotal);
+                        }
                         Volatile.Write(ref _vulkanLastPresentResult, result);
                     }
 
@@ -1267,6 +1342,8 @@ namespace XREngine
 
                     public static void RecordVulkanValidationMessage(bool isError, string? message)
                     {
+                        if (isError)
+                            Interlocked.Increment(ref _vulkanValidationLifetimeErrorCount);
                         if (!EnableTracking)
                             return;
 
@@ -2119,6 +2196,51 @@ namespace XREngine
 
                         UpdateHighWater(ref _vulkanPipelineQueueDepthHighWater, Math.Max(queueDepth, 0));
                         UpdateHighWater(ref _vulkanPipelineQueueCapacity, Math.Max(queueCapacity, 0));
+                    }
+
+                    private static long _vulkanComputePipelineCachePersistedHitsTotal;
+                    private static long _vulkanComputePipelineCacheRuntimeHitsTotal;
+                    private static long _vulkanComputePipelineCacheMissesTotal;
+                    private static long _vulkanComputePipelineCacheUnknownTotal;
+                    private static long _vulkanComputePipelineCreationTicksTotal;
+
+                    /// <summary>Compute pipelines created from the persisted driver cache since process start.</summary>
+                    public static long VulkanComputePipelineCachePersistedHitsTotal => Interlocked.Read(ref _vulkanComputePipelineCachePersistedHitsTotal);
+                    /// <summary>Compute pipelines created from driver cache entries made in this process.</summary>
+                    public static long VulkanComputePipelineCacheRuntimeHitsTotal => Interlocked.Read(ref _vulkanComputePipelineCacheRuntimeHitsTotal);
+                    /// <summary>Compute pipelines that the driver had to compile since process start.</summary>
+                    public static long VulkanComputePipelineCacheMissesTotal => Interlocked.Read(ref _vulkanComputePipelineCacheMissesTotal);
+                    /// <summary>Compute pipelines created without a cache probe since process start.</summary>
+                    public static long VulkanComputePipelineCacheUnknownTotal => Interlocked.Read(ref _vulkanComputePipelineCacheUnknownTotal);
+                    /// <summary>Total compute pipeline creation time since process start, in milliseconds.</summary>
+                    public static double VulkanComputePipelineCreationMillisecondsTotal
+                        => TimeSpan.FromTicks(Interlocked.Read(ref _vulkanComputePipelineCreationTicksTotal)).TotalMilliseconds;
+
+                    /// <summary>
+                    /// Adds one created compute pipeline to the cumulative cache-outcome counters.
+                    /// These counters do not reset per frame, so a completed cold or warm start
+                    /// can be read at any later time.
+                    /// </summary>
+                    public static void RecordVulkanComputePipelineCacheOutcome(EVulkanDriverPipelineCacheOutcome cacheOutcome, double creationMilliseconds)
+                    {
+                        switch (cacheOutcome)
+                        {
+                            case EVulkanDriverPipelineCacheOutcome.PersistedHit:
+                                Interlocked.Increment(ref _vulkanComputePipelineCachePersistedHitsTotal);
+                                break;
+                            case EVulkanDriverPipelineCacheOutcome.RuntimeHit:
+                                Interlocked.Increment(ref _vulkanComputePipelineCacheRuntimeHitsTotal);
+                                break;
+                            case EVulkanDriverPipelineCacheOutcome.Miss:
+                                Interlocked.Increment(ref _vulkanComputePipelineCacheMissesTotal);
+                                break;
+                            default:
+                                Interlocked.Increment(ref _vulkanComputePipelineCacheUnknownTotal);
+                                break;
+                        }
+
+                        Interlocked.Add(ref _vulkanComputePipelineCreationTicksTotal,
+                            Math.Max(0L, TimeSpan.FromMilliseconds(Math.Max(0.0, creationMilliseconds)).Ticks));
                     }
 
                     public static void RecordVulkanIndirectEffectiveness(

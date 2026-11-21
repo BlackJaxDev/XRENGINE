@@ -69,6 +69,9 @@ public unsafe partial class OpenXRAPI
         public bool HasAcquiredImage(ulong swapchainHandle)
             => owner.HasAcquiredImage(swapchainHandle);
 
+        public bool IsRuntimeLossPending
+            => owner.IsOpenXrRuntimeLossPending();
+
         public bool AreSwapchainImagesReleased(ReadOnlySpan<ulong> swapchainHandles)
             => owner.AreSwapchainImagesReleased(swapchainHandles);
 
@@ -151,6 +154,16 @@ public unsafe partial class OpenXRAPI
         public XRViewport? LeftViewport => owner._openXrLeftViewport;
         public XRViewport? RightViewport => owner._openXrRightViewport;
         public XRViewport? StereoViewport => owner._openXrStereoViewport;
+
+        /// <summary>Layered stereo viewport of the quad-view inset pair (views 2 and 3).</summary>
+        public XRViewport? InsetStereoViewport => owner._openXrInsetStereoViewport;
+
+        public XRCamera? LeftInsetEyeCamera => owner._openXrLeftInsetEyeCamera;
+
+        public XRCamera? RightInsetEyeCamera => owner._openXrRightInsetEyeCamera;
+
+        /// <summary>True when the quad-view configuration renders a wide and an inset pair.</summary>
+        public bool InsetPairActive => owner.IsOpenXrInsetPairActive;
 
         public int PendingFrameNumber => owner._openXrPendingFrameNumber;
         public ulong PendingFrameId => unchecked((ulong)Math.Max(0, Volatile.Read(ref owner._openXrPendingFrameNumber)));

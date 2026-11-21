@@ -51,6 +51,30 @@ public abstract partial class GenericRenderObject : XRAsset
     public static RenderObjectPublicationScope BeginDeferredPublication()
         => new(CurrentDeferredPublicationScope);
 
+    /// <summary>
+    /// Creates a process-shared render object outside the caller's construction transaction.
+    /// A shared object that a lazy getter creates inside a caller's scope belongs to that
+    /// scope: it stays unpublished until the scope completes, and an aborted scope destroys
+    /// it. Every later user of the shared object then fails.
+    /// </summary>
+    internal static T CreateProcessShared<T>(Func<T> factory)
+        where T : GenericRenderObject
+    {
+        RenderObjectPublicationScope? ambientScope = CurrentDeferredPublicationScope;
+        CurrentDeferredPublicationScope = null;
+        try
+        {
+            using ObjectCachePublicationScope publication = BeginIndependentObjectCachePublication();
+            T value = factory();
+            publication.Complete();
+            return value;
+        }
+        finally
+        {
+            CurrentDeferredPublicationScope = ambientScope;
+        }
+    }
+
     internal static RenderObjectPublicationScope? CurrentDeferredPublicationScope
     {
         get => _currentDeferredPublicationScope;

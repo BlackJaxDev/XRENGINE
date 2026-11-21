@@ -43,8 +43,47 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// <summary>Attenuates specular light with plain AO instead of specular occlusion.</summary>
     internal bool AmbientOcclusionSpecularUsesVisibility { get; init; }
 
+    /// <summary>
+    /// Records the RVC shadelet telemetry kernel after the last native shading view.
+    /// It is a per-frame diagnostic and is not part of the family identity.
+    /// </summary>
+    internal bool RecordRvcShadeletTelemetry { get; init; }
+
+    /// <summary>
+    /// Draws the occlusion-culled bounds overlay after native opaque shading.
+    /// It is a per-frame diagnostic and is not part of the family identity.
+    /// </summary>
+    internal bool ShowOcclusionCulledBounds { get; init; }
+
+    /// <summary>Shades one pixel per peripheral block of the same primitive, then fills the rest.</summary>
+    internal bool RvcFoveatedQuadShading { get; init; }
+
+    /// <summary>Shades one pixel per 2x2 block of the same primitive outside the edge radius of an Advanced eye, then fills the rest.</summary>
+    internal bool AdvancedEdgeHalfRateShading { get; init; }
+
+    /// <summary>Full-rate radius around the lens center, as a fraction of the half extent of the eye image.</summary>
+    internal float AdvancedEdgeHalfRateRadius { get; init; }
+
+    /// <summary>Diagnostic tint of the half-rate blocks.</summary>
+    internal bool AdvancedEdgeHalfRateDebugTint { get; init; }
+
+    /// <summary>Conservative visible ellipses of the OpenXR eye views; a view without one keeps every tile.</summary>
+    internal AdvancedHiddenAreaEllipses HiddenAreaEllipses { get; init; }
+
+    /// <summary>True when the family records the decal buffer phase and native shading reads the decal buffer.</summary>
+    internal bool DecalBufferEnabled { get; init; }
+
+    /// <summary>
+    /// True when the native AO stage records no neutral-fill dispatch, because the AO passes
+    /// overwrite the native AO image before shading. The transitions still run.
+    /// </summary>
+    internal bool SkipNeutralAmbientOcclusionFill { get; init; }
+
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
     internal bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
+
+    /// <summary>True for the mesh surface decal buffer phase, which draws the family's decal bins into the decal buffer.</summary>
+    internal bool IsDecalBufferPhase => Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer;
 
     /// <summary>
     /// Native-compute closure capture is required only by stages that consume
@@ -70,6 +109,8 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
                 EAdvancedVisibilityStageBackendPhase.LateRaster) or
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.MultisampleResolve) or
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.DecalBuffer) or
             (EAdvancedRenderStage.WorkClassification,
                 EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.AmbientOcclusion,
@@ -92,7 +133,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            Target.Height != 0u &&
            !string.IsNullOrWhiteSpace(IdentityTargetName) &&
            !string.IsNullOrWhiteSpace(MetadataTargetName) &&
-           !string.IsNullOrWhiteSpace(SelectionTargetName) &&
+           (MsaaSampleCount <= 1u || !string.IsNullOrWhiteSpace(SelectionTargetName)) &&
            !string.IsNullOrWhiteSpace(DepthTargetName) &&
            !string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName) &&
            (!RequiresNativeComputeClosure ||
@@ -117,6 +158,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            AmbientOcclusionMultiBounce == other.AmbientOcclusionMultiBounce &&
            AmbientOcclusionSpecularUsesVisibility == other.AmbientOcclusionSpecularUsesVisibility &&
            MsaaSampleCount == other.MsaaSampleCount &&
+           DecalBufferEnabled == other.DecalBufferEnabled &&
            HasAuthoredBackground == other.HasAuthoredBackground &&
            IsMinimalVisibilityOutput == other.IsMinimalVisibilityOutput &&
            ShadingDebugView == other.ShadingDebugView &&
@@ -132,12 +174,75 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            string.Equals(AmbientOcclusionTargetName, other.AmbientOcclusionTargetName, StringComparison.Ordinal) &&
            string.Equals(CurrentDepthPyramidTargetName, other.CurrentDepthPyramidTargetName, StringComparison.Ordinal);
 
+    /// <summary>
+    /// Names the first family field that differs from <paramref name="other"/>,
+    /// for a rejected-family diagnostic. Returns "none" for a matching family.
+    /// </summary>
+    internal string DescribeFamilyMismatch(in VulkanAdvancedVisibilityStageRequest other)
+    {
+        if (!Reservation.Equals(other.Reservation))
+            return $"Reservation ({Reservation} vs {other.Reservation})";
+        if (RequireNativeOutput != other.RequireNativeOutput)
+            return nameof(RequireNativeOutput);
+        if (EnableBuiltInAmbientOcclusion != other.EnableBuiltInAmbientOcclusion)
+            return nameof(EnableBuiltInAmbientOcclusion);
+        if (EnableLightProbesAndIbl != other.EnableLightProbesAndIbl)
+            return nameof(EnableLightProbesAndIbl);
+        if (RequiresMaterialSurfaceExports != other.RequiresMaterialSurfaceExports)
+            return nameof(RequiresMaterialSurfaceExports);
+        if (SuppressBaselineDiffuse != other.SuppressBaselineDiffuse)
+            return nameof(SuppressBaselineDiffuse);
+        if (AmbientOcclusionMultiBounce != other.AmbientOcclusionMultiBounce)
+            return nameof(AmbientOcclusionMultiBounce);
+        if (AmbientOcclusionSpecularUsesVisibility != other.AmbientOcclusionSpecularUsesVisibility)
+            return nameof(AmbientOcclusionSpecularUsesVisibility);
+        if (MsaaSampleCount != other.MsaaSampleCount)
+            return $"{nameof(MsaaSampleCount)} ({MsaaSampleCount} vs {other.MsaaSampleCount})";
+        if (HasAuthoredBackground != other.HasAuthoredBackground)
+            return nameof(HasAuthoredBackground);
+        if (DecalBufferEnabled != other.DecalBufferEnabled)
+            return nameof(DecalBufferEnabled);
+        if (IsMinimalVisibilityOutput != other.IsMinimalVisibilityOutput)
+            return nameof(IsMinimalVisibilityOutput);
+        if (ShadingDebugView != other.ShadingDebugView)
+            return nameof(ShadingDebugView);
+        if (!BackendPackage.Equals(other.BackendPackage))
+            return nameof(BackendPackage);
+        if (!Publication.Equals(other.Publication))
+            return $"{nameof(Publication)} ({Publication} vs {other.Publication})";
+        if (VisibilityContentGeneration != other.VisibilityContentGeneration)
+            return $"{nameof(VisibilityContentGeneration)} ({VisibilityContentGeneration} vs {other.VisibilityContentGeneration})";
+        if (!ReferenceEquals(Extractor, other.Extractor))
+            return nameof(Extractor);
+        if (RenderFrameId != other.RenderFrameId)
+            return $"{nameof(RenderFrameId)} ({RenderFrameId} vs {other.RenderFrameId})";
+        if (!Views.Equals(other.Views))
+            return nameof(Views);
+        if (BitConverter.SingleToUInt32Bits(RenderTimeSeconds) != BitConverter.SingleToUInt32Bits(other.RenderTimeSeconds))
+            return $"{nameof(RenderTimeSeconds)} ({RenderTimeSeconds} vs {other.RenderTimeSeconds})";
+        if (!MatchesVisibilityTargets(in other))
+            return $"visibility targets (stage {Stage}/{Phase} vs {other.Stage}/{other.Phase})";
+        if (!string.Equals(AmbientOcclusionTargetName, other.AmbientOcclusionTargetName, StringComparison.Ordinal))
+            return nameof(AmbientOcclusionTargetName);
+        if (!string.Equals(CurrentDepthPyramidTargetName, other.CurrentDepthPyramidTargetName, StringComparison.Ordinal))
+            return nameof(CurrentDepthPyramidTargetName);
+        return "none";
+    }
+
     private bool MatchesVisibilityTargets(in VulkanAdvancedVisibilityStageRequest other)
     {
         // The directional shadow lane targets a light-owned atlas page; it shares
         // the family's publication and views, never its visibility targets.
         if (IsDirectionalShadowStage || other.IsDirectionalShadowStage)
             return true;
+        // The decal buffer targets its own framebuffer. It shares the resolved
+        // visibility depth, and its request carries the resolved target names.
+        if (IsDecalBufferPhase || other.IsDecalBufferPhase)
+        {
+            return IsDecalBufferPhase
+                ? HasExpectedVisibilityTargetNames(raw: false)
+                : other.HasExpectedVisibilityTargetNames(raw: false);
+        }
         bool raw = UsesRawMultisampleTargets;
         bool otherRaw = other.UsesRawMultisampleTargets;
         if (!HasExpectedVisibilityTargetNames(raw) || !other.HasExpectedVisibilityTargetNames(otherRaw))
@@ -157,11 +262,20 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            (Stage is EAdvancedRenderStage.VisibilityPreparation or
                EAdvancedRenderStage.VisibilityRaster ||
             Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility &&
-            Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve);
+            Phase is not (EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
+                EAdvancedVisibilityStageBackendPhase.DecalBuffer));
+
+    /// <summary>
+    /// True when this single-sample visibility target has no selection image (identity,
+    /// metadata and depth-stencil only), as declared for single-sample OpenXR eyes.
+    /// </summary>
+    internal bool OmitsSelectionTarget
+        => MsaaSampleCount <= 1u && string.IsNullOrEmpty(SelectionTargetName);
 
     private bool HasExpectedVisibilityTargetNames(bool raw)
         => string.Equals(IdentityTargetName, raw ? AdvancedVisibilityResourceNames.IdentityMultisample : AdvancedVisibilityResourceNames.Identity, StringComparison.Ordinal) &&
            string.Equals(MetadataTargetName, raw ? AdvancedVisibilityResourceNames.MetadataMultisample : AdvancedVisibilityResourceNames.Metadata, StringComparison.Ordinal) &&
-           string.Equals(SelectionTargetName, raw ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection, StringComparison.Ordinal) &&
+           (string.Equals(SelectionTargetName, raw ? AdvancedVisibilityResourceNames.SelectionMultisample : AdvancedVisibilityResourceNames.Selection, StringComparison.Ordinal) ||
+            !raw && SelectionTargetName.Length == 0) &&
            string.Equals(DepthTargetName, raw ? AdvancedVisibilityResourceNames.DepthStencilMultisample : AdvancedVisibilityResourceNames.DepthStencil, StringComparison.Ordinal);
 }

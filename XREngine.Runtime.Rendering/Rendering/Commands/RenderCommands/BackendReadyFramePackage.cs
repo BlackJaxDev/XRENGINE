@@ -30,6 +30,10 @@ public sealed partial class BackendReadyFramePackage
     /// </summary>
     public bool RequiresForwardContactPrePass { get; private set; }
     public bool NativeAuthoredDecalsEnabled { get; private set; }
+    /// <summary>Gets the first sorted pass-five command that needs the named source scene-color copy.</summary>
+    public int SourceSceneColorFirstCommandIndex { get; private set; } = -1;
+    /// <summary>Identifies the command at <see cref="SourceSceneColorFirstCommandIndex"/>.</summary>
+    public uint SourceSceneColorFirstStableQueryKey { get; private set; }
     public IReadOnlyCollection<RenderPassMetadata>? PassMetadata => _passMetadata;
     public ReadOnlySpan<BackendReadyRenderPass> Passes => _passes.AsSpan(0, _passCount);
 
@@ -105,6 +109,7 @@ public sealed partial class BackendReadyFramePackage
         ShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();
         RequiresForwardContactPrePass = requiresForwardContactPrePass;
         NativeAuthoredDecalsEnabled = nativeAuthoredDecals;
+        CaptureSourceSceneColorBoundary();
         PrepareAuthoredDecalSelection();
         _passMetadata = passMetadata;
         State = EBackendReadyFramePackageState.Prepared;
@@ -125,6 +130,12 @@ public sealed partial class BackendReadyFramePackage
     {
         ResetMeshOrder();
         NativeAuthoredDecalsEnabled = false;
+        SourceSceneColorFirstCommandIndex = -1;
+        SourceSceneColorFirstStableQueryKey = 0u;
+        MissingPrimaryNativeOwnerCount = 0;
+        FirstMissingPrimaryNativePass = -1;
+        FirstMissingPrimaryNativeStableQueryKey = 0u;
+        FirstMissingPrimaryNativeReason = null;
         _authoredDecalCommandCount = 0;
         AuthoredDecalCommandSignature = 0;
         for (int i = 0; i < _passCount; i++)
@@ -171,6 +182,50 @@ public sealed partial class BackendReadyFramePackage
 
         pass = default;
         return false;
+    }
+
+    /// <summary>Freezes the first named source-copy consumer in the sorted late pass.</summary>
+    private void CaptureSourceSceneColorBoundary()
+    {
+        SourceSceneColorFirstCommandIndex = -1;
+        SourceSceneColorFirstStableQueryKey = 0u;
+        if (!TryGetPass((int)EDefaultRenderPass.TransparentForward, out BackendReadyRenderPass pass))
+            return;
+
+        for (int i = 0; i < pass.CommandCount; i++)
+        {
+            RenderCommand command = GetPassCommand(in pass, i);
+            if (!command.Enabled || command is not IRenderCommandMesh mesh)
+                continue;
+            XRMaterial? material = command is RenderCommandMesh3D frozenMesh
+                ? GetFrozenMaterial(frozenMesh)
+                : mesh.MaterialOverride ?? mesh.Mesh?.Material;
+            if (material?.ResolveAdvancedLatePassMetadata() is not
+                { SourceSurfaceContract: EAdvancedSourceSurfaceContract.SceneColorToonV1 } metadata ||
+                !AdvancedLatePassEligibilityValidator.IsVerifiedSourceOrderedBase(
+                    material, pass.PassIndex, metadata))
+                continue;
+
+            SourceSceneColorFirstCommandIndex = i;
+            SourceSceneColorFirstStableQueryKey = command.StableQueryKey;
+            return;
+        }
+    }
+
+    /// <summary>Refreshes draw facts after the command snapshots cross the swap boundary.</summary>
+    internal void RefreshFrozenDrawContractsAfterCommandSwap(bool requiresAdvancedNativePrimary)
+    {
+        CaptureSourceSceneColorBoundary();
+        if (requiresAdvancedNativePrimary)
+            CapturePrimaryNativeCompleteness();
+        else
+            ClearPrimaryNativeCompleteness();
+    }
+
+    private static XRMaterial? GetFrozenMaterial(RenderCommandMesh3D command)
+    {
+        GpuSceneMeshCommandSnapshot snapshot = command.CaptureGpuSceneSnapshot();
+        return snapshot.MaterialOverride ?? snapshot.Renderer?.Material;
     }
 
     private static ulong ComputePassDependencySignature(
@@ -242,7 +297,7 @@ public sealed partial class BackendReadyFramePackage
             hash = AddHash(hash, material.BindingLayoutVersion);
             hash = AddHash(hash, unchecked((ulong)material.ShaderStateRevision));
             hash = AddHash(hash, unchecked((ulong)material.UberStateRevision));
-            AdvancedLatePassMetadata? lateMetadata = material.AdvancedLatePassMetadata;
+            AdvancedLatePassMetadata? lateMetadata = material.ResolveAdvancedLatePassMetadata();
             if (lateMetadata is not null)
             {
                 hash = AddHash(hash, (uint)lateMetadata.Kind);

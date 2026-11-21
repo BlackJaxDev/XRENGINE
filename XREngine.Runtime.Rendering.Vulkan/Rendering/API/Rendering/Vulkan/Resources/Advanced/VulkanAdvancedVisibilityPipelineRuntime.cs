@@ -27,6 +27,20 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private XRRenderProgram? _maskedMultiviewRasterProgram;
     private XRRenderProgram? _opaqueMultiviewMeshRasterProgram;
     private XRRenderProgram? _maskedMultiviewMeshRasterProgram;
+    // Late meshlet raster programs. Their task stage adds the Hi-Z test against
+    // this frame's depth pyramid and writes the meshlet occlusion history.
+    private XRRenderProgram? _opaqueLateMeshRasterProgram;
+    private XRRenderProgram? _maskedLateMeshRasterProgram;
+    private XRRenderProgram? _opaqueMultiviewLateMeshRasterProgram;
+    private XRRenderProgram? _maskedMultiviewLateMeshRasterProgram;
+    // Depth-writing masked raster programs for parallax occlusion ranges. They are not part of the
+    // visibility family readiness: while one compiles, its ranges use the masked program.
+    private XRRenderProgram? _fragmentDepthRasterProgram;
+    private XRRenderProgram? _fragmentDepthMultiviewRasterProgram;
+    // Mesh surface decal buffer programs. They are not part of the visibility family readiness:
+    // while one compiles, the decal buffer pass clears its targets and skips the decal draws.
+    private XRRenderProgram? _decalBufferProgram;
+    private XRRenderProgram? _decalBufferMultiviewProgram;
     private XRRenderProgram? _directionalShadowOpaqueProgram;
     private XRRenderProgram? _directionalShadowMaskedProgram;
     private XRRenderProgram? _directionalShadowCullProgram;
@@ -354,13 +368,14 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         bool meshlet,
         out VkRenderProgram program,
         out string reason,
-        bool multiview = false)
+        bool multiview = false,
+        bool lateMeshletTask = false)
     {
         program = null!;
         VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
             return readiness;
-        XRRenderProgram? source = GetRasterProgramSlot(coverage, meshlet, multiview);
+        XRRenderProgram? source = GetRasterProgramSlot(coverage, meshlet, multiview, lateMeshletTask);
         if (source is null ||
             _resources.WrapperLookup.GetOrCreate(source, generateNow: false) is not VkRenderProgram raster)
         {
@@ -370,6 +385,88 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         program = raster;
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
+
+    /// <summary>
+    /// Returns the depth-writing masked raster program for parallax occlusion ranges. The first call
+    /// creates it and starts its compile. It reports Pending until the program links; callers then
+    /// draw those ranges with the masked program, so this compile never blocks visibility.
+    /// </summary>
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetFragmentDepthRasterProgram(
+        bool multiview,
+        out VkRenderProgram program,
+        out string reason)
+    {
+        program = null!;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        try
+        {
+            ref XRRenderProgram? retainedProgram = ref multiview
+                ? ref _fragmentDepthMultiviewRasterProgram
+                : ref _fragmentDepthRasterProgram;
+            retainedProgram ??= CreateRasterProgram(
+                AdvancedVisibilityShaderLibrary.MaskedFragment,
+                multiview
+                    ? "VulkanAdvancedVisibilityFragmentDepthMultiview"
+                    : "VulkanAdvancedVisibilityFragmentDepth",
+                multiview,
+                "#define XR_ADV_VISIBILITY_FRAGMENT_DEPTH 1\n");
+            return TryPrepareProgram(
+                retainedProgram,
+                out program,
+                out reason,
+                "fragment-depth visibility raster program did not link a Vulkan pipeline layout");
+        }
+        catch (Exception exception)
+        {
+            reason = exception.Message;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+    }
+
+    /// <summary>
+    /// Returns the linked mesh surface decal program. The first call creates it and starts its
+    /// compile; it reports Pending until the program links, and never blocks visibility.
+    /// </summary>
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetDecalBufferProgram(
+        bool multiview,
+        out VkRenderProgram program,
+        out string reason)
+    {
+        program = null!;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        try
+        {
+            ref XRRenderProgram? retainedProgram = ref multiview
+                ? ref _decalBufferMultiviewProgram
+                : ref _decalBufferProgram;
+            retainedProgram ??= CreateRasterProgram(
+                AdvancedVisibilityShaderLibrary.DecalBufferFragment,
+                multiview
+                    ? "VulkanAdvancedDecalBufferMultiview"
+                    : "VulkanAdvancedDecalBuffer",
+                multiview);
+            return TryPrepareProgram(
+                retainedProgram,
+                out program,
+                out reason,
+                "decal buffer program did not link a Vulkan pipeline layout");
+        }
+        catch (Exception exception)
+        {
+            reason = exception.Message;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+    }
+
+    /// <summary>True when <paramref name="program"/> is a depth-writing masked raster program.</summary>
+    internal bool IsFragmentDepthRasterProgram(VkRenderProgram? program)
+        => program is not null &&
+           (ReferenceEquals(program.Data, _fragmentDepthRasterProgram) ||
+            ReferenceEquals(program.Data, _fragmentDepthMultiviewRasterProgram));
 
     /// <summary>
     /// Returns the linked depth-only program the directional shadow lane uses
@@ -450,7 +547,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         bool meshlet,
         out VkRenderProgram program,
         out string reason,
-        bool multiview = false)
+        bool multiview = false,
+        bool lateMeshletTask = false)
     {
         program = null!;
         reason = "Ready";
@@ -481,24 +579,37 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             ref XRRenderProgram? retainedProgram = ref GetRasterProgramSlot(
                 coverage,
                 meshlet,
-                multiview);
+                multiview,
+                lateMeshletTask);
+            bool opaque = coverage == EAdvancedMaterialCoverageMode.Opaque;
+            // The opaque fragment reads only flat identity values. Its vertex and mesh
+            // stages skip the interpolated coverage attributes.
+            string coveragePreamble = opaque ? IdentityOnlyRasterPreamble : string.Empty;
+            bool late = meshlet && lateMeshletTask;
             retainedProgram ??= meshlet
                 ? CreateMeshRasterProgram(
-                    coverage == EAdvancedMaterialCoverageMode.Opaque
+                    opaque
                         ? AdvancedVisibilityShaderLibrary.OpaqueFragment
                         : AdvancedVisibilityShaderLibrary.MaskedFragment,
-                    coverage == EAdvancedMaterialCoverageMode.Opaque
-                        ? "VulkanAdvancedVisibilityMeshOpaque"
-                        : "VulkanAdvancedVisibilityMeshMasked",
-                    multiview)
+                    (opaque, late) switch
+                    {
+                        (true, false) => "VulkanAdvancedVisibilityMeshOpaque",
+                        (false, false) => "VulkanAdvancedVisibilityMeshMasked",
+                        (true, true) => "VulkanAdvancedVisibilityLateMeshOpaque",
+                        (false, true) => "VulkanAdvancedVisibilityLateMeshMasked",
+                    },
+                    multiview,
+                    coveragePreamble,
+                    late ? LateMeshletTaskPreamble : string.Empty)
                 : CreateRasterProgram(
-                coverage == EAdvancedMaterialCoverageMode.Opaque
-                    ? AdvancedVisibilityShaderLibrary.OpaqueFragment
-                    : AdvancedVisibilityShaderLibrary.MaskedFragment,
-                coverage == EAdvancedMaterialCoverageMode.Opaque
-                    ? "VulkanAdvancedVisibilityOpaque"
-                    : "VulkanAdvancedVisibilityMasked",
-                multiview);
+                    opaque
+                        ? AdvancedVisibilityShaderLibrary.OpaqueFragment
+                        : AdvancedVisibilityShaderLibrary.MaskedFragment,
+                    opaque
+                        ? "VulkanAdvancedVisibilityOpaque"
+                        : "VulkanAdvancedVisibilityMasked",
+                    multiview,
+                    coveragePreamble);
             VulkanAdvancedVisibilityPipelineReadiness linkReadiness = TryPrepareProgram(
                 retainedProgram,
                 out VkRenderProgram raster,
@@ -517,11 +628,32 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         }
     }
 
+    /// <summary>
+    /// Selects the identity-only raster interface. The vertex and mesh stages then write only
+    /// the position and the flat identity values that the opaque fragment reads.
+    /// </summary>
+    private const string IdentityOnlyRasterPreamble = "#define XR_ADV_VISIBILITY_IDENTITY_ONLY 1\n";
+
+    /// <summary>
+    /// Selects the late task variant of the meshlet raster. It declares the depth
+    /// pyramid, which is shader-read-only only during the late raster, so the early
+    /// raster must never bind a program built with this define.
+    /// </summary>
+    private const string LateMeshletTaskPreamble = "#define XR_ADV_VISIBILITY_LATE_TASK 1\n";
+
     private ref XRRenderProgram? GetRasterProgramSlot(
         EAdvancedMaterialCoverageMode coverage,
         bool meshlet,
-        bool multiview)
+        bool multiview,
+        bool lateMeshletTask = false)
     {
+        bool opaque = coverage == EAdvancedMaterialCoverageMode.Opaque;
+        if (meshlet && lateMeshletTask)
+        {
+            if (multiview)
+                return ref opaque ? ref _opaqueMultiviewLateMeshRasterProgram : ref _maskedMultiviewLateMeshRasterProgram;
+            return ref opaque ? ref _opaqueLateMeshRasterProgram : ref _maskedLateMeshRasterProgram;
+        }
         if (multiview)
         {
             if (meshlet)
@@ -560,18 +692,20 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return program;
     }
 
-    private XRRenderProgram CreateRasterProgram(string fragmentPath, string name, bool multiview)
+    private XRRenderProgram CreateRasterProgram(string fragmentPath, string name, bool multiview, string additionalPreamble = "")
         => CreateVertexFragmentProgram(
             AdvancedVisibilityShaderLibrary.Vertex,
             fragmentPath,
             name,
-            multiview);
+            multiview,
+            additionalPreamble);
 
     private XRRenderProgram CreateVertexFragmentProgram(
         string vertexPath,
         string fragmentPath,
         string name,
-        bool multiview)
+        bool multiview,
+        string additionalPreamble = "")
     {
         XRShader vertexAsset = XRShader.EngineShader(
             vertexPath,
@@ -579,7 +713,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         XRShader fragmentAsset = XRShader.EngineShader(
             fragmentPath,
             EShaderType.Fragment);
-        string preamble = VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
+        string preamble = additionalPreamble + VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
             _resources.AdvancedSceneResources);
         if (multiview)
             preamble = "#define XR_ADV_MULTIVIEW_RASTER 1\n" + preamble;
@@ -596,21 +730,43 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return program;
     }
 
-    private XRRenderProgram CreateMeshRasterProgram(string fragmentPath, string name, bool multiview)
+    /// <summary>
+    /// Links the task, mesh and fragment stages of one meshlet visibility raster
+    /// program. The indirect arguments launch one task workgroup per 32 meshlets of a
+    /// draw. The task stage culls those meshlets against the view frustum and their
+    /// normal cones and launches one mesh workgroup per surviving meshlet.
+    /// <paramref name="taskPreamble"/> is added to the task stage only: it selects
+    /// the late task variant, which the mesh and fragment stages do not know. The
+    /// cluster cut defines of <see cref="AdvancedVirtualGeometryPolicy.TaskPreamble"/>
+    /// also go to the task stage only; they are empty while the cut is off.
+    /// </summary>
+    private XRRenderProgram CreateMeshRasterProgram(
+        string fragmentPath,
+        string name,
+        bool multiview,
+        string additionalPreamble = "",
+        string taskPreamble = "")
     {
+        XRShader taskAsset = XRShader.EngineShader(
+            AdvancedVisibilityShaderLibrary.Task,
+            EShaderType.Task);
         XRShader meshAsset = XRShader.EngineShader(
             AdvancedVisibilityShaderLibrary.Mesh,
             EShaderType.Mesh);
         XRShader fragmentAsset = XRShader.EngineShader(
             fragmentPath,
             EShaderType.Fragment);
-        string preamble = VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
+        string preamble = additionalPreamble + VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
             _resources.AdvancedSceneResources);
         if (multiview)
             preamble = "#define XR_ADV_MULTIVIEW_RASTER 1\n" + preamble;
         XRRenderProgram program = new(
             linkNow: false,
             separable: false,
+            CreateShaderWithPreamble(
+                taskAsset,
+                AdvancedVirtualGeometryPolicy.TaskPreamble + taskPreamble + preamble,
+                name + ".task"),
             CreateShaderWithPreamble(meshAsset, preamble, name + ".mesh"),
             CreateShaderWithPreamble(fragmentAsset, preamble, name + ".frag"))
         {

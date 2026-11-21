@@ -44,6 +44,7 @@ for recipes, artifacts, comparison rules, and production evidence requirements.
   - [Format Negotiation (HDR/SDR)](#format-negotiation-hdrsdr)
   - [Present Mode Selection](#present-mode-selection)
   - [Swapchain Recreation](#swapchain-recreation)
+  - [Desktop Present Path (DXGI Flip Model)](#desktop-present-path-dxgi-flip-model)
 - [Synchronization Model](#synchronization-model)
 - [Render Object Factory](#render-object-factory)
 - [Backend Wrapper Parity Contract](#backend-wrapper-parity-contract)
@@ -542,6 +543,9 @@ Additional diagnostic flags are:
 | `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |
 | `XRE_VULKAN_COMMAND_CHAIN_BENCHMARK_FORCE_RERECORD=1` | Benchmark-only mode that forces every scheduled mesh-chain secondary to rerecord each frame. Use only for controlled serial/parallel dirty-recording comparisons. |
 | `XRE_VULKAN_COMMAND_CHAIN_MULTI_QUEUE=1` | Builds and validates queue-schedule sidecar metadata; execution still falls back to the graphics queue. |
+| `XRE_DIRECTIONAL_SHADOW_STATIC_CACHE=0` | Turns off the static caster tiles of directional cascades in the Advanced directional shadow lane: every cascade refresh draws all casters (see [shadow atlas](shadow-atlas.md#static-caster-tiles-of-directional-cascades)). |
+| `XRE_VULKAN_DIRECTIONAL_CASCADES=1` or `0` | Decides three Vulkan directional shadow gates with one test: cascade rendering, the cascade shadow atlas, and grouped atlas entries (which the Advanced directional shadow lane needs). `0` turns the three off. `1` turns them on, also on the known Monado OpenXR runtime, which has the three off by default because of earlier OpenXR + Monado hangs. It is not proved that the hang is gone. Use `1` on Monado for validation only, with a guard that stops a session that hangs (see [shadow atlas](shadow-atlas.md)). |
+| `XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1` | Turns on the `EmulatedVrEyesUseHmdDirectionalCascades` engine setting: the HMD cascade source fits the emulated VR eyes, and Default-pipeline eyes read it. Advanced eyes in SequentialViews still read the desktop cascades (see [shadow atlas](shadow-atlas.md)). |
 | `XRE_ADVANCED_DIRECTIONAL_SHADOW_LANE=0` | Keeps directional cascade casters on the generic per-renderer shadow path instead of the Advanced directional shadow raster lane (see [frame loop design](frame-loop-design.md#shadow-casters-are-the-dominant-motion-cost)). |
 
 `XRE_VULKAN_RESIDENT_TEMPLATE_DEVICE_LOSS_INJECT=1` is a destructive,
@@ -736,6 +740,73 @@ The recreation process:
 4. Swapchain-image timeline ownership is resized/reset for the new image set.
 5. Surface loss does not enter this swapchain-only path; it fails visibly so
    the platform/renderer owner can recreate the surface and logical renderer.
+
+### Desktop Present Path (DXGI Flip Model)
+
+`EDesktopPresentPath` selects how the Vulkan renderer shows a desktop window on
+Windows. The value comes from `RuntimeEngine.Rendering.Settings.DesktopPresentPath`,
+`GameWindowStartupSettings.DesktopPresentPath` overrides it per window, and the
+environment variable `XRE_DESKTOP_PRESENT_PATH` (`VulkanSwapchain` or
+`DxgiFlipModel`) overrides both.
+
+| Value | Behavior |
+|---|---|
+| `VulkanSwapchain` (default) | The window presents through its native `VkSwapchainKHR`. |
+| `DxgiFlipModel` | Vulkan renders into images that are shared with Direct3D 11. A DXGI flip-model swapchain (`FLIP_DISCARD`, 3 buffers, frame-latency waitable object) presents them. |
+
+Why the DXGI path exists: on some NVIDIA drivers, the native windowed Vulkan present
+makes the desktop compositor (`dwm.exe`) use a full CPU core, so other applications
+respond slowly although Task Manager shows low CPU and GPU use. A flip-model DXGI
+swapchain avoids that cost without a change to the driver settings. In a measured
+Sponza run, `dwm.exe` used about 100% of one core with the native path and about 28%
+with a layered DXGI present.
+
+How the DXGI path works:
+
+1. The device must have `VK_KHR_external_memory_win32`,
+   `VK_KHR_external_semaphore_win32`, and timeline semaphores. Direct3D 11 runs on
+   the adapter whose LUID matches `VkPhysicalDeviceIDProperties.deviceLUID`.
+2. Each desktop generation owns a ring of three Direct3D 11 textures
+   (`SHARED | SHARED_NTHANDLE`). Vulkan imports them with
+   `VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D11_TEXTURE_BIT` and a dedicated allocation. The
+   frame loop uses these images in place of swapchain images, with the same views,
+   render passes, framebuffers, and present bridges.
+3. Acquire waits until Direct3D has finished its last copy from the selected image,
+   then submits a command that takes the image back from the external queue family
+   and signals the frame's acquire semaphore.
+4. Present submits a command that gives the image to the external queue family in
+   `GENERAL` layout, waits for the frame's render semaphore, and signals a shared fence
+   (imported as a timeline semaphore). Direct3D then waits for that value, copies the
+   image into the back buffer, signals its copy fence, and calls `Present`.
+5. FIFO pacing uses sync interval 1. Other present modes use sync interval 0;
+   Immediate also allows tearing when the display supports it.
+6. A window can have only one flip-model swapchain, so recreation calls
+   `ResizeBuffers` and creates a new image ring. The old ring retires through the
+   normal swapchain retirement flow.
+
+HDR follows `OutputHDR` (the environment variable `XRE_OUTPUT_HDR=1` or `0` overrides
+the window and engine settings) in the same order as the native path: scRGB
+(`R16G16B16A16` float, `EXTENDED_SRGB_LINEAR`), then HDR10 (`A2B10G10R10`, PQ, BT.2020),
+then SDR (`B8G8R8A8` sRGB). The DXGI path uses an HDR format only when
+`IDXGISwapChain3::CheckColorSpaceSupport` accepts its color space.
+
+If the path cannot start (not Windows, a missing extension, no LUID match, NVIDIA
+DLSS frame generation, or a Direct3D or DXGI error), the renderer logs one warning
+with the reason and uses the native Vulkan swapchain. A later Direct3D failure also
+moves the output to the native swapchain at the next recreation. The auxiliary log
+`desktop-present-path.log`, written in every build configuration, records the active
+path, the selected format, and each fallback.
+
+Detached ImGui platform windows follow the desktop window. While the desktop window
+presents through DXGI, each detached window gets its own `VulkanDxgiPresenter` and
+image ring, and all presenters share one Direct3D 11 device (`VulkanDxgiDevice`,
+reference counted, with a multithread-protected immediate context). A detached window
+uses the desktop image format, because the ImGui pipeline is built for it. If the DXGI
+path cannot start for a detached window, the renderer logs one warning for that window
+and uses its native Vulkan swapchain. This matters because a native windowed
+swapchain composes through a GDI copy on the affected drivers: when such a window
+overlaps the desktop window, the desktop window also loses independent flip, and
+`dwm.exe` cost rises again. PresentMon shows the mode in its `PresentMode` column.
 
 `DestroyAllSwapChainObjects()` tears down in reverse dependency order:
 1. Debug triangle resources
@@ -990,6 +1061,14 @@ Multiple files handle descriptor set management:
 - **Per-swapchain descriptor pools/sets** — Allocated in `CreateAllSwapChainObjects()`, rebuilt on swapchain recreation
 
 Compute auto-uniform and unresolved fallback uniform buffers are cached per program/image/set/binding. They are updated in place and destroyed with the program instead of being allocated as one-frame transient buffers.
+
+Generated GLSL auto-uniform blocks use eight bindings per shader stage, starting
+at set 0, binding 256. The rewrite skips explicit bindings inside its stage
+range and fails when the range cannot hold all generated frequency blocks.
+Program linking rejects any other stage descriptor at a generated block's
+binding, even when both descriptors are uniform buffers. Slang resources with
+a shared native ABI retain their explicit binding contract. Shader ABI and
+rewrite identities invalidate cached artifacts when this binding layout changes.
 
 Unannotated supplemental lighting and ambient-occlusion uniforms use `RuntimeCallback` blocks rather
 than material-owned blocks. Explicit shader frequency annotations and core

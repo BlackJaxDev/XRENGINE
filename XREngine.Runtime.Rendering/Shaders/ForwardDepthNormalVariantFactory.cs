@@ -162,7 +162,6 @@ public static class ForwardDepthNormalVariantFactory
 
         XRMaterial variant = new(shaders)
         {
-            Parameters = sourceMaterial.Parameters,
             Textures = sourceMaterial.Textures,
             RenderPass = sourceMaterial.RenderPass,
             BillboardMode = sourceMaterial.BillboardMode,
@@ -171,9 +170,15 @@ public static class ForwardDepthNormalVariantFactory
             TransparentTechniqueOverride = sourceMaterial.TransparentTechniqueOverride,
             TransparentSortPriority = sourceMaterial.TransparentSortPriority,
             RenderOptions = CreateRenderOptions(sourceMaterial.RenderOptions),
+            // An Uber variant material rebuilds its fragment shader from the canonical Uber source with its own
+            // feature state. Without the source state, every default-off feature (such as extended effects, which
+            // holds the UDIM coverage buffer) would be compiled out, while the copied parameters still use it.
+            UberAuthoredState = sourceMaterial.UberAuthoredState,
+            // Attach source parameters after pass setters update their own values.
+            Parameters = sourceMaterial.Parameters,
         };
 
-        variant.SettingUniforms += (_, program) => sourceMaterial.OnSettingUniforms(program);
+        sourceMaterial.ShareUniformSourcesWith(variant);
         return variant;
     }
 

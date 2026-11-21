@@ -47,12 +47,11 @@ namespace XREngine.Rendering.UI
 
         private void StartStreamingPipelineOnMainThread()
         {
-            Debug.UI($"Streaming pipeline starting: url='{StreamUrl}'");
+            // A component with no URL has nothing to stream. It can still show frames that another owner supplies, for
+            // example a cutscene video track (IVideoFrameTarget), so this is not a warning.
             if (string.IsNullOrWhiteSpace(StreamUrl))
-            {
-                Debug.UIWarning("Streaming playback requires a valid StreamUrl.");
                 return;
-            }
+            Debug.UI($"Streaming pipeline starting: url='{StreamUrl}'");
 
             // Avoid redundant opens for the same URL.
             if (_streamingSession != null && string.Equals(_streamingCurrentUrl, StreamUrl, StringComparison.OrdinalIgnoreCase))

@@ -118,14 +118,32 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
         _sceneArena?.TryBind(out _);
     }
 
+    /// <summary>
+    /// Sets every reconstruction counter to 0. The counter buffer at
+    /// <see cref="AdvancedReconstructionShaderBindings.Counters"/> holds one
+    /// <see cref="AdvancedReconstructionGpuCounters"/> record, and the reconstruction shaders add
+    /// to it with atomics. Visibility preparation calls this once per family, so the counters
+    /// describe one family only.
+    /// </summary>
+    internal void ClearReconstructionCounters()
+    {
+        uint zero = 0u;
+        _renderer.RawGL.ClearNamedBufferData(
+            _buffers[AdvancedReconstructionShaderBindings.Counters],
+            SizedInternalFormat.R32ui,
+            PixelFormat.RedInteger,
+            PixelType.UnsignedInt,
+            &zero);
+    }
+
     /// <summary>Writes the eleven sealed logical-handle lookup segments into
-    /// every 38-word visibility counter record.</summary>
+    /// every 40-word visibility counter record.</summary>
     internal bool TryInitializeVisibilityCounters(
         Span<uint> counters,
         uint viewCount,
         out string reason)
     {
-        const int counterWordsPerView = 38;
+        const int counterWordsPerView = (int)OpenGLAdvancedVisibilityInputStorage.CounterWordsPerView;
         const int segmentWordOffset = 16;
         if (!_lease.IsValid || viewCount == 0u ||
             counters.Length < checked((int)viewCount * counterWordsPerView))
@@ -256,6 +274,14 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
             uint zero = 0u;
             _renderer.RawGL.NamedBufferData(buffer, sizeof(uint), &zero, GLEnum.DynamicDraw);
         }
+        // The reconstruction counters are one fixed-size record that the shaders write with
+        // atomics. Give the buffer the full record size; the other buffers grow on upload.
+        AdvancedReconstructionGpuCounters counters = default;
+        _renderer.RawGL.NamedBufferData(
+            _buffers[AdvancedReconstructionShaderBindings.Counters],
+            (nuint)sizeof(AdvancedReconstructionGpuCounters),
+            &counters,
+            GLEnum.DynamicDraw);
         _maxBindings = checked((uint)maxBindings);
         _initialized = true;
         reason = "Ready";

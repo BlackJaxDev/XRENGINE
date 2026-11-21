@@ -1,6 +1,7 @@
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.Compute;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -38,6 +39,9 @@ internal sealed class VulkanAcceptedFramePlan
         new VulkanFrameDependencyTicket[DependencyCapacity];
     private readonly VulkanTimelineGpuFence?[] _submissionMarkers =
         new VulkanTimelineGpuFence?[StaticCapacity + UiCapacity + UploadCapacity];
+    private readonly SkinningPrepassDispatcher.VulkanOutputReceipt?[] _deformationReadLeases =
+        new SkinningPrepassDispatcher.VulkanOutputReceipt?[
+            SkinningPrepassDispatcher.VulkanReceiptPoolCapacity];
     private readonly int[] _dependencyIndex = new int[DependencyIndexCapacity];
     private readonly int[] _dependencyIndexSlots = new int[DependencyCapacity];
     private readonly RenderFrameViewHistoryBackendReservation[] _frameViewHistory =
@@ -58,6 +62,8 @@ internal sealed class VulkanAcceptedFramePlan
     private int _dependencyIndexSlotCount;
     private int _submissionMarkerCount;
     private bool _submissionMarkerOwnershipTransferred;
+    private int _deformationReadLeaseCount;
+    private bool _nativeSubmissionAcceptedWithoutLifetimePins;
     private VulkanDescriptorManager? _bindlessReceiptLeaseOwner;
     private int _bindlessReceiptCount;
     private int _bindlessDescriptorReferenceCount;
@@ -98,6 +104,30 @@ internal sealed class VulkanAcceptedFramePlan
 
     internal FrameOp[] StaticOperations => _staticOperations;
     internal FrameOp[] DynamicUiOperations => _dynamicUiOperations;
+
+    /// <summary>
+    /// Returns true when a transferred operation targets an OpenXR eye or the
+    /// OpenXR mirror. Only such a plan depends on the captured OpenXR view set.
+    /// </summary>
+    internal bool HasOpenXrTargetOperations()
+        => HasOpenXrTarget(_staticOperations.AsSpan(0, StaticOperationCount)) ||
+           HasOpenXrTarget(_dynamicUiOperations.AsSpan(0, DynamicUiOperationCount));
+
+    private static bool HasOpenXrTarget(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+        {
+            // A submission marker only reports when earlier work was submitted. It
+            // reads no view, so its context does not make the plan depend on the view set.
+            if (operations[index] is SubmissionMarkerOp)
+                continue;
+            if (operations[index].ContextReference.ContextKind is
+                EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror)
+                return true;
+        }
+        return false;
+    }
+
     internal FrameOp[] TextureUploadOperations => _textureUploadOperations;
     internal Span<FrameOp> AuthoredOperations
         => _authoredOperations.AsSpan(0, _authoredOperationCount);
@@ -843,6 +873,9 @@ internal sealed class VulkanAcceptedFramePlan
                 _authoredTextureUploadOperationCount + textureUploadOperations.Length);
         }
 
+        CaptureDeformationReadLeases(operations);
+        CaptureDeformationReadLeases(textureUploadOperations);
+
         operations.CopyTo(
             _authoredOperations.AsSpan(_authoredOperationCount));
         _authoredOperationCount += operations.Length;
@@ -883,6 +916,10 @@ internal sealed class VulkanAcceptedFramePlan
         if (IsSealed)
             throw new InvalidOperationException("The accepted frame plan is already sealed.");
 
+        CaptureDeformationReadLeases(staticOperations);
+        CaptureDeformationReadLeases(dynamicUiOperations);
+        CaptureDeformationReadLeases(textureUploadOperations);
+
         int terminalOperationCount = 0;
         int mainSceneOperationCount = 0;
         int shadowOperationCount = 0;
@@ -920,15 +957,18 @@ internal sealed class VulkanAcceptedFramePlan
                 EVulkanAcceptedFrameLane.Ui,
                 _dynamicUiOperations.Length,
                 dynamicUiOperations.Length);
-        dynamicUiOperations.CopyTo(_dynamicUiOperations);
-        DynamicUiOperationCount = dynamicUiOperations.Length;
-
         if (textureUploadOperations.Length > _textureUploadOperations.Length)
             throw new VulkanAcceptedFramePlanCapacityException(
                 EVulkanAcceptedFrameLane.Upload,
                 _textureUploadOperations.Length,
                 textureUploadOperations.Length);
 
+        UnpinCapturedOperations();
+        PinOperations(staticOperations);
+        PinOperations(dynamicUiOperations);
+        PinOperations(textureUploadOperations);
+        dynamicUiOperations.CopyTo(_dynamicUiOperations);
+        DynamicUiOperationCount = dynamicUiOperations.Length;
             staticOperations.CopyTo(_staticOperations);
             StaticOperationCount = staticOperations.Length;
             TerminalOperationCount = terminalOperationCount;
@@ -1564,7 +1604,12 @@ internal sealed class VulkanAcceptedFramePlan
     /// </summary>
     internal void ResetAuthoredOperations()
     {
+        if (_nativeSubmissionAcceptedWithoutLifetimePins)
+            throw new InvalidOperationException(
+                "Accepted deformation reads cannot release before native lifetime pins exist.");
+
         SettleUnsubmittedSubmissionMarkers();
+        ReleaseDeformationReadLeases();
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
             _authoredOperations.AsSpan(0, _authoredOperationCount));
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
@@ -1577,6 +1622,53 @@ internal sealed class VulkanAcceptedFramePlan
             _authoredTextureUploadOperationCount).Clear();
         _authoredOperationCount = 0;
         _authoredTextureUploadOperationCount = 0;
+    }
+
+    internal void ReleaseDeformationReadLeasesAfterLifetimePinsTransferred()
+    {
+        ReleaseDeformationReadLeases();
+        PreparedMeshIngress.ReleaseTransientReadResources();
+    }
+
+    internal void MarkNativeSubmissionAcceptedWithoutLifetimePins()
+        => _nativeSubmissionAcceptedWithoutLifetimePins = true;
+
+    private void CaptureDeformationReadLeases(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations[index].TransientReadResource is
+                SkinningPrepassDispatcher.VulkanOutputReceipt receipt)
+            {
+                RetainDeformationReadLease(receipt);
+                operations[index].ReleaseTransientReadResource();
+            }
+    }
+
+    private void RetainDeformationReadLease(
+        SkinningPrepassDispatcher.VulkanOutputReceipt receipt)
+    {
+        for (int index = 0; index < _deformationReadLeaseCount; index++)
+            if (ReferenceEquals(_deformationReadLeases[index], receipt))
+                return;
+        if (_deformationReadLeaseCount >= _deformationReadLeases.Length)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.MainScene,
+                _deformationReadLeases.Length,
+                _deformationReadLeaseCount + 1,
+                "Accepted frame exceeded its deformation receipt lease capacity.");
+
+        receipt.RetainAuthoringUse();
+        _deformationReadLeases[_deformationReadLeaseCount++] = receipt;
+    }
+
+    private void ReleaseDeformationReadLeases()
+    {
+        for (int index = 0; index < _deformationReadLeaseCount; index++)
+        {
+            _deformationReadLeases[index]?.ReleaseAuthoringUse();
+            _deformationReadLeases[index] = null;
+        }
+        _deformationReadLeaseCount = 0;
     }
 
     internal bool TryGetFailedDependency(
@@ -1599,8 +1691,58 @@ internal sealed class VulkanAcceptedFramePlan
         return false;
     }
 
+    /// <summary>
+    /// Pins the visibility operations that this plan references. Lowering releases
+    /// their input leases before this plan drops them, and the plan can release them
+    /// again later. The pin keeps the workspace from giving such an operation a new
+    /// lease until then, so that late release cannot drop another frame's lease.
+    /// </summary>
+    private static void PinOperations(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations[index] is AdvancedVisibilityOp visibility)
+                visibility.PinForAcceptedPlan();
+    }
+
+    private static void UnpinOperations(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations[index] is AdvancedVisibilityOp visibility)
+                visibility.UnpinFromAcceptedPlan();
+    }
+
+    /// <summary>Ends the pins of every captured operation that the plan still references.</summary>
+    private void UnpinCapturedOperations()
+    {
+        UnpinOperations(_staticOperations.AsSpan(0, StaticOperationCount));
+        UnpinOperations(_dynamicUiOperations.AsSpan(0, DynamicUiOperationCount));
+        UnpinOperations(_textureUploadOperations.AsSpan(0, TextureUploadOperationCount));
+    }
+
+    /// <summary>
+    /// Drops the references to the accepted static, dynamic-UI and texture-upload
+    /// operations without releasing them. A split worker frame releases their
+    /// visibility input leases itself after the worker recorded them; the workspace
+    /// can then reuse those operations, so a later <see cref="Reset"/> must not
+    /// release them again for their new owner.
+    /// </summary>
+    internal void DetachReleasedOperations()
+    {
+        UnpinCapturedOperations();
+        _staticOperations.AsSpan(0, StaticOperationCount).Clear();
+        _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
+        _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();
+        StaticOperationCount = 0;
+        DynamicUiOperationCount = 0;
+        TextureUploadOperationCount = 0;
+    }
+
     internal void Reset()
     {
+        if (_nativeSubmissionAcceptedWithoutLifetimePins)
+            throw new InvalidOperationException(
+                "The accepted frame plan cannot reset after queue acceptance without native lifetime pins.");
+
         _recordedAdvancedPickingPipelines.AsSpan(
             0,
             _recordedAdvancedPickingSourceCount).Clear();
@@ -1646,6 +1788,7 @@ internal sealed class VulkanAcceptedFramePlan
             _textureUploadOperations.AsSpan(
                 0,
                 TextureUploadOperationCount));
+        UnpinCapturedOperations();
         _staticOperations.AsSpan(0, StaticOperationCount).Clear();
         _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
         _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();

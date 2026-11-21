@@ -381,7 +381,7 @@ namespace XREngine.Rendering.UI
 
                 if (count == 0)
                     Debug.UIWarning("[AV Audio] 0 active listeners — audio will not play until an " +
-                                    "AudioListenerComponent is in range.\n" + stateMsg);
+                                    $"AudioListenerComponent is in range.\n{stateMsg}");
                 else
                     Debug.UI(stateMsg);
             }

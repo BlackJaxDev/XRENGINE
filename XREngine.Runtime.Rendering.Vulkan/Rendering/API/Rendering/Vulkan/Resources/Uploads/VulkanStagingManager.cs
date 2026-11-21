@@ -549,6 +549,15 @@ internal sealed class VulkanStagingManager
             usage,
             properties,
             owner: "VulkanStagingManager");
+        // A transfer-only staging or readback buffer is never bound, so its pool recycling
+        // must not invalidate the caches that depend on bound buffer identity.
+        const BufferUsageFlags transferOnlyUsage =
+            BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit;
+        if ((usage & ~transferOnlyUsage) == 0)
+        {
+            context.Resources.Lifetime.Tracker.ExcludeFromNativeBufferBindingRevision(
+                new VulkanResourceLifetimeKey(ObjectType.Buffer, buffer.Handle));
+        }
         ulong allocationGeneration = context.Resources.GetPublishedGeneration(
             ObjectType.Buffer,
             buffer.Handle);

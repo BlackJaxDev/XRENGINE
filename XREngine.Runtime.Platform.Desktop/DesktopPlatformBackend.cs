@@ -26,12 +26,15 @@ public static class DesktopPlatformBackend
         InputPlatformServices.ReadCapsLockState = static () =>
             NativeMethods.TryDetermineSystemCapsLockState(out bool enabled) ? enabled : null;
         RenderWorkerPlatformServices.HighPriorityInitializer = WindowsThreadQos.ApplyHighRenderPriority;
+        ProcessorCacheAffinity.ProcessAffinityApplier = WindowsProcessorCacheAffinity.Apply;
+        DisplayRefreshRateServices.PrimaryRefreshRateReader = WindowsDisplayRefreshRate.Read;
         XREngine.Data.FileMappingServices.Backend = new DesktopFileMappingBackend();
         XRBufferSpillStorageServices.Current = BufferSpillStorage;
         XREngine.Data.HostAssetFileOutputServices.Current = new DesktopHostAssetFileOutput();
         XREngine.Data.RuntimePlatformPaths.Current = new DesktopPlatformPaths();
         XREngine.Data.RuntimeProcessServices.Current = new DesktopProcessRunner();
         XREngine.Data.RuntimeProcessMemoryServices.WorkingSetBytesReader = DesktopProcessDiagnostics.ReadWorkingSetBytes;
+        XREngine.Data.RuntimeProcessorServices.EffectiveProcessorCountReader = DesktopProcessDiagnostics.ReadEffectiveProcessorCount;
         XREngine.Data.RuntimeAssemblyLoadingServices.Current = new DesktopRuntimeAssemblyLoader();
         XREngine.Core.Files.AssetFileSystemServices.Current = new DesktopAssetFileSystem();
         ShaderSourceFileBackendServices.Current = new DesktopShaderSourceFileBackend();

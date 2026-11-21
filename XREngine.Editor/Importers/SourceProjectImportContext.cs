@@ -1,6 +1,7 @@
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Scene.Prefabs;
+using XREngine.UnityScriptHost.Contracts;
 
 namespace XREngine.Scene.Importers;
 
@@ -21,6 +22,8 @@ public sealed class SourceProjectImportContext
     private readonly Dictionary<SerializedAvatarAnimationGraphRecord, SceneNode> _avatarAnimationGraphOwners = [];
     private readonly HashSet<string> _reportedIndexDiagnostics = new(StringComparer.Ordinal);
     private bool _recoveredPartialContent;
+    private readonly UnityConversionCoverageBuilder _conversionCoverage =
+        new(UnityConversionAssessmentStage.NativeConversion);
 
     public SourceProjectImportContext(
         string entrySourcePath,
@@ -59,6 +62,8 @@ public sealed class SourceProjectImportContext
     public List<SerializedAnimatorRecord> Animators { get; } = [];
     public List<SerializedAvatarAnimationGraphRecord> AvatarAnimationGraphs { get; } = [];
     public List<UnsupportedSourceBehaviourMetadata> UnsupportedBehaviours { get; } = [];
+    /// <summary>Gets a partial snapshot of the native conversion observations made by this import.</summary>
+    public UnityConversionCoverageReport ConversionCoverage => _conversionCoverage.Build();
     public HashSet<string> ActiveImports { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<SourceAssetIdentity, object> ImportCache { get; } = [];
     /// <summary>Parsed source data for the active root import. Returned documents are read-only.</summary>
@@ -169,19 +174,79 @@ public sealed class SourceProjectImportContext
 
         SourceDependencyEdge[] requiredMissing =
         [
-            .. graph.UnresolvedEdges.Where(static edge => edge.Kind == SourceImportDependencyKind.RequiredVisual),
+            .. graph.UnresolvedEdges.Where(static edge =>
+                edge.Kind == SourceImportDependencyKind.RequiredVisual &&
+                !edge.DeferredPrefabMaterialValidation &&
+                !edge.DeferredShaderConversionValidation),
         ];
-        if (requiredMissing.Length > 0 && !AllowPartialImport)
-        {
-            string summary = string.Join(
-                "; ",
-                requiredMissing.Select(static edge =>
-                    $"{Path.GetFileName(edge.SourcePath)}:{edge.ReferringPropertyPath} -> {edge.TargetGuid}/{edge.TargetFileId}"));
-            throw new SourceVisualImportException(
-                $"Unity prefab import cannot continue because required visual dependencies are missing: {summary}");
-        }
+        ThrowIfRequiredDependenciesMissing(requiredMissing);
 
         return graph;
+    }
+
+    internal void ValidateComposedDependencies()
+    {
+        if (DependencyGraph is not SourceDependencyGraph graph)
+            return;
+
+        // Report a deferred edge that composition did not classify as live or stale.
+        foreach (SourceDependencyEdge edge in graph.UnresolvedEdges)
+        {
+            if (!edge.DeferredPrefabMaterialValidation && !edge.DeferredShaderConversionValidation)
+                continue;
+
+            edge.DeferredPrefabMaterialValidation = false;
+            edge.DeferredShaderConversionValidation = false;
+            SourceDependencyGraphBuilder.AddMissingDiagnostic(this, edge);
+        }
+
+        SourceDependencyEdge[] requiredMissing =
+        [
+            .. graph.UnresolvedEdges.Where(static edge => edge.Kind == SourceImportDependencyKind.RequiredVisual),
+        ];
+        ThrowIfRequiredDependenciesMissing(requiredMissing);
+    }
+
+    /// <summary>Clears a missing shader reference after the material converts to native Uber.</summary>
+    internal void ResolveConvertedShader(string materialPath, string shaderGuid)
+    {
+        if (DependencyGraph is not SourceDependencyGraph graph)
+            return;
+
+        string normalizedPath = Path.GetFullPath(materialPath);
+        if (!graph.Nodes.TryGetValue(normalizedPath, out SourceDependencyNode? materialNode))
+            return;
+
+        foreach (SourceDependencyEdge edge in graph.UnresolvedEdges.ToArray())
+        {
+            if (!edge.DeferredShaderConversionValidation ||
+                !string.Equals(edge.SourcePath, normalizedPath, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(edge.TargetGuid, shaderGuid, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            materialNode.OutgoingEdges.Remove(edge);
+            graph.UnresolvedEdges.Remove(edge);
+            AddDiagnostic(
+                "UNITYDEP0006",
+                SourceImportDiagnosticSeverity.Info,
+                SourceImportDiagnosticCategory.GuidResolution,
+                $"Missing shader '{edge.TargetGuid}/{edge.TargetFileId}' for '{Path.GetFileName(normalizedPath)}' was resolved by native Uber conversion using same-project shader identity evidence.",
+                normalizedPath,
+                "m_Shader");
+        }
+    }
+
+    private void ThrowIfRequiredDependenciesMissing(SourceDependencyEdge[] requiredMissing)
+    {
+        if (requiredMissing.Length == 0 || AllowPartialImport)
+            return;
+
+        string summary = string.Join(
+            "; ",
+            requiredMissing.Select(static edge =>
+                $"{Path.GetFileName(edge.SourcePath)}:{edge.ReferringPropertyPath} -> {edge.TargetGuid}/{edge.TargetFileId}"));
+        throw new SourceVisualImportException(
+            $"Unity prefab import cannot continue because required visual dependencies are missing: {summary}");
     }
 
     /// <summary>Records omitted or replaced source content without claiming complete conversion.</summary>
@@ -191,6 +256,16 @@ public sealed class SourceProjectImportContext
         _recoveredPartialContent = true;
         AddDiagnostic(code, SourceImportDiagnosticSeverity.Warning,
             SourceImportDiagnosticCategory.MaterialDowngrade, message, sourcePath, propertyPath, identity);
+        Debug.MeshesWarning(message);
+    }
+
+    /// <summary>Records a visual source component that this importer cannot draw.</summary>
+    internal void ReportUnsupportedVisual(string code, string message, string? sourcePath = null,
+        string? propertyPath = null)
+    {
+        _recoveredPartialContent = true;
+        AddDiagnostic(code, SourceImportDiagnosticSeverity.Warning,
+            SourceImportDiagnosticCategory.OptionalUnsupported, message, sourcePath, propertyPath);
         Debug.MeshesWarning(message);
     }
 
@@ -224,10 +299,43 @@ public sealed class SourceProjectImportContext
         node.OutputAssetPath = outputAssetPath;
     }
 
-    internal void IgnoreStalePrefabModification(string sourcePath, long referringObjectFileId)
+    /// <summary>Records one observed source feature without changing its native conversion result.</summary>
+    internal void RecordConversionFeature(UnityConversionFeature feature)
+        => _conversionCoverage.Add(feature);
+
+    internal void ValidatePrefabModificationDependencies(
+        string sourcePath,
+        long prefabInstanceFileId,
+        long referringObjectFileId)
+    {
+        if (DependencyGraph is not SourceDependencyGraph graph)
+            return;
+
+        foreach (SourceDependencyEdge edge in graph.ResolvePrefabModificationEdges(
+            sourcePath, prefabInstanceFileId, referringObjectFileId))
+            SourceDependencyGraphBuilder.AddMissingDiagnostic(this, edge);
+    }
+
+    internal void IgnoreStalePrefabModification(
+        string sourcePath,
+        long prefabInstanceFileId,
+        long referringObjectFileId)
         => DependencyGraph?.RemovePrefabModificationEdges(
             sourcePath,
+            prefabInstanceFileId,
             referringObjectFileId,
+            EntrySourcePath);
+
+    internal void IgnorePrefabMaterialOverridesOutsideArraySize(
+        string sourcePath,
+        long prefabInstanceFileId,
+        long referringObjectFileId,
+        int arraySize)
+        => DependencyGraph?.RemovePrefabMaterialEdgesOutsideArraySize(
+            sourcePath,
+            prefabInstanceFileId,
+            referringObjectFileId,
+            arraySize,
             EntrySourcePath);
 
     public void AddDiagnostic(
@@ -293,6 +401,7 @@ public sealed class SourceProjectImportContext
             Animators = [.. Animators],
             AvatarAnimationGraphs = [.. AvatarAnimationGraphs],
             UnsupportedBehaviours = [.. UnsupportedBehaviours],
+            ConversionCoverage = ConversionCoverage,
         };
 
         if (DependencyGraph is null)

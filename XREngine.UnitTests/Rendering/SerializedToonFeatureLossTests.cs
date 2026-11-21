@@ -65,10 +65,7 @@ public sealed class SerializedToonFeatureLossTests
             new SourceToonShaderMatchInput
             {
                 ShaderPath = path,
-                ShaderSource =
-                    $"Shader \"{shaderName}\" {{ // Poiyomi {version} " +
-                    (locked ? "OPTIMIZER_ENABLED" : string.Empty) +
-                    " }",
+                ShaderSource = $"Shader \"{shaderName}\" {{ // Poiyomi {version} {(locked ? "OPTIMIZER_ENABLED" : string.Empty)} }}",
                 PropertyNames = properties,
                 OverrideTags = locked
                     ? new Dictionary<string, string>(StringComparer.Ordinal)

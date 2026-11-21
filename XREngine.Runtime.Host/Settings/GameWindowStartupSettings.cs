@@ -147,5 +147,20 @@ namespace XREngine
             get => _visible;
             set => SetField(ref _visible, value);
         }
+
+        // Keep this member last. MemoryPack reads older data only when new members are appended.
+        private EDesktopPresentPath? _desktopPresentPath;
+
+        /// <summary>
+        /// Overrides the global desktop present path for this window when set. Null inherits the engine default.
+        /// </summary>
+        [Category("Display")]
+        [DisplayName("Desktop Present Path")]
+        [Description("Overrides the global desktop present path for this window. Null inherits the engine default.")]
+        public EDesktopPresentPath? DesktopPresentPath
+        {
+            get => _desktopPresentPath;
+            set => SetField(ref _desktopPresentPath, value);
+        }
     }
 }

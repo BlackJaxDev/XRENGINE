@@ -252,6 +252,8 @@ public sealed class SelfIterationEditorSessionController : IAsyncDisposable
                     measurement.DiagnosticGpuTimestampDense ? "1" : "0",
                 ["XRE_VULKAN_COMMAND_BUFFER_LABELS"] =
                     measurement.DiagnosticVulkanCommandBufferLabels ? "1" : "0",
+                // Pin the first-person desktop view so desktop output stays comparable across runs.
+                ["XRE_UNIT_TEST_VR_DESKTOP_VIEW"] = "FirstPerson",
             };
         SetConfigured(
             environment,

@@ -26,6 +26,32 @@ redundant compute dispatches while preserving authored deformation quality.
   when possible; stale cooked payloads are rejected so source assets or caches
   are recooked instead of silently falling back to a legacy path.
 
+## Compute Or Vertex Path
+
+`MeshDeformationBackendPolicy` makes one decision per mesh for the vertex
+program generator, the renderer buffer set, and the skinning prepass. All three
+must agree, or a draw reads compute outputs that the prepass never writes.
+
+- When `CalculateSkinningInComputeShader` or `CalculateBlendshapesInComputeShader`
+  is on, OpenGL and Vulkan both use the compute path. The prepass skins each
+  visible mesh one time per frame, and every pass (shadow cascades, eyes,
+  desktop) reads the skinned outputs.
+- A mesh with blendshapes needs the sparse blendshape buffers
+  (`SparseShapeRanges`, `SparseRecords`, `QuantizedDeltas`,
+  `QuantizationMetadata`). A mesh that has only the dense per-vertex layout keeps
+  the vertex-shader path for skinning too, because blendshapes apply before
+  skinning. The prepass logs a warning for such a mesh.
+- Set `XRE_VULKAN_COMPUTE_DEFORMATION=0` to keep Vulkan on the vertex-shader path.
+- Blendshape precombine stays off on Vulkan.
+- The compute output streams use SSBO bindings 39 to 45
+  (`MeshDeformationBindingLayout`). Do not put other graphics-program SSBOs in
+  that range.
+- On OpenGL, the Advanced reconstruction tables use SSBO bindings 30 to 34
+  (`AdvancedReconstructionShaderBindings`). OpenGL has one binding namespace, and
+  the Advanced pipeline binds these tables once per frame, at visibility
+  preparation. A draw that changes a binding in 30 to 34 makes native shading read
+  the wrong table. Do not use that range for other SSBOs.
+
 ## Payloads And Shader Variants
 
 - Cooked skinning payloads use version `3`; stale cooked meshes under `Cache/`
@@ -78,6 +104,49 @@ The invalidation model covers animator pose writes, IK writes, GPU physics
 chain writes, blendshape weight changes, mesh rebuilds, LOD swaps, world matrix
 changes for non-pretransformed skinning paths, skin palette precision/layout
 switches, and shader variant changes.
+
+## Prepass Skip For Arena Consumers
+
+The skinning prepass (`SkinningPrepassDispatcher`) writes per-renderer skinned
+outputs. Only traditional draws read them: CPU-pass draws of the renderer or of
+a renderer that deforms from it (`DeformMeshRenderer`), traditional shadow
+views, captures, and the live skinned-bounds readers. The Advanced canonical
+path, its directional cascade lane and the Advanced visibility producers read
+the aggregate deformation arena (`AggregateDeformation.comp`), which prepares
+its own palette and morph inputs.
+
+The owner view's `RunVisible` therefore dispatches a renderer only when a
+consumer reads its output (`SkinningPrepassDemand`):
+
+1. One of its commands in the owner collection is not owned by the canonical
+   GPU path (`BackendReadyFramePackage.IsTraditionalGpuOwned` is false), so a
+   CPU pass of the owner view draws it in this frame.
+2. A traditional view or capture draw read its output in the current render
+   frame or in the last three frames, or a traditional shadow draw read it in
+   the last 120 frames. The shadow atlas renders a tile only when its schedule
+   and budget allow, so shadow reads can be several frames apart and need the
+   longer window. Every CPU draw registers this demand
+   (`XRMeshRenderer.NoteSkinningPrepassOutputRead`, called from
+   `BaseVersion.Render` and `BaseVersion.RenderIndexedIndirect`).
+3. `CalculateSkinnedBoundsInComputeShader` is on.
+
+Otherwise the renderer is skipped. Order: the owner collection is complete
+before the owner view renders, so rule 1 covers every same-frame draw of the
+owner view. Shadow views render before the views and always read the previous
+frame's output; the desktop view and captures render after the owner. When one
+of these consumers starts to draw a skipped renderer, its first draws read the
+last dispatched output. These reads are not hidden: they are counted, with a
+throttled `[SkinningPrepass]` warning that names the renderer and the consumer
+kind. A read counts when the latest owner decision for the renderer was a skip
+in the same frame or the frame before it. A renderer that the owner view does
+not see is neither run nor skipped there; its older output is not counted.
+Frame ids are compared in both directions, because shadow views can carry the
+next frame's id.
+
+Counters (cumulative): `SkinningPrepassDemand.SkippedDispatches`,
+`StaleViewReads` and `StaleShadowReads`. MCP `invoke_method` with type
+`XREngine.Rendering.Compute.SkinningPrepassDemand` and method `Describe`
+returns them as one line.
 
 ## Skinning LOD
 

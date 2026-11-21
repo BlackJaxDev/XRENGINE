@@ -436,6 +436,10 @@ public static class AdvancedGpuResourceSourceEncoder
             ESizedInternalFormat.Depth24Stencil8 => EAdvancedTextureFormatClass.Depth24Stencil8,
             ESizedInternalFormat.Depth32fStencil8 => EAdvancedTextureFormatClass.Depth32FloatStencil8,
             ESizedInternalFormat.StencilIndex8 => EAdvancedTextureFormatClass.Stencil8,
+            ESizedInternalFormat.Bc7Unorm => EAdvancedTextureFormatClass.Bc7Unorm,
+            ESizedInternalFormat.Bc7Srgb => EAdvancedTextureFormatClass.Bc7Srgb,
+            ESizedInternalFormat.Bc5Unorm => EAdvancedTextureFormatClass.Bc5Unorm,
+            ESizedInternalFormat.Bc4Unorm => EAdvancedTextureFormatClass.Bc4Unorm,
             _ => EAdvancedTextureFormatClass.Unknown,
         };
         isDepth = format is ESizedInternalFormat.DepthComponent16 or

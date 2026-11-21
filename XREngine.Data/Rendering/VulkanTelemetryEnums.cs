@@ -98,6 +98,11 @@ public enum EVulkanCpuStage
     CommandBufferEnd,
     SecondaryExecution,
     ComponentFrame,
+    PrewarmProgramActivation,
+    PrewarmBufferPreparation,
+    PrewarmBindingApplication,
+    PrewarmDescriptorSets,
+    PrewarmFrameSourceDescriptors,
     Count,
 }
 
