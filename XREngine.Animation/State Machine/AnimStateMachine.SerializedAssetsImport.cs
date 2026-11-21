@@ -115,6 +115,10 @@ public partial class AnimStateMachine
                         return false;
                 }
                 break;
+
+            case MotionBricksLocomotionMotion:
+                requiresHumanoidAvatar = true;
+                break;
         }
 
         diagnostic = string.Empty;

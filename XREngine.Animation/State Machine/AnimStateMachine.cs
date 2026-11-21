@@ -223,6 +223,9 @@ namespace XREngine.Animation
                         PropagateLayoutToMotion(child.Motion, layout, slotsByPath);
                     btd.PrepareRuntimeEvaluation(layout);
                     break;
+                case MotionBricksLocomotionMotion motionBricks:
+                    motionBricks.CacheResolvedMuscleSlots();
+                    break;
             }
         }
 

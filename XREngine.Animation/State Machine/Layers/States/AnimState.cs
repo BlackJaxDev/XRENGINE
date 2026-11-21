@@ -149,6 +149,9 @@ namespace XREngine.Animation
         /// <param name="variables"></param>
         public void Tick(float delta, IDictionary<string, AnimVar> variables)
         {
+            if (Motion is MotionBricksLocomotionMotion motionBricks)
+                motionBricks.AccumulateTickDelta(delta);
+
             AdvanceNormalizedPlayback(delta, variables);
             CollectImportedAnimationEvents(variables, includePrevious: false);
 
@@ -159,6 +162,9 @@ namespace XREngine.Animation
         public void Tick(long deltaTicks, IDictionary<string, AnimVar> variables)
         {
             float delta = deltaTicks == 0L ? 0.0f : (float)(deltaTicks / (double)Stopwatch.Frequency);
+            if (Motion is MotionBricksLocomotionMotion motionBricks)
+                motionBricks.AccumulateTickDelta(delta);
+
             AdvanceNormalizedPlayback(delta, variables);
             CollectImportedAnimationEvents(variables, includePrevious: false);
             foreach (var component in Components)
@@ -171,6 +177,9 @@ namespace XREngine.Animation
                 return;
 
             _isEntered = true;
+            if (Motion is MotionBricksLocomotionMotion motionBricks)
+                motionBricks.NotifyStateEntered();
+
             foreach (var component in Components)
                 component.StateEntered(this, variables);
         }
@@ -181,6 +190,9 @@ namespace XREngine.Animation
                 return;
 
             _isEntered = false;
+            if (Motion is MotionBricksLocomotionMotion motionBricks)
+                motionBricks.NotifyStateExited();
+
             foreach (var component in Components)
                 component.StateExited(this, variables);
         }

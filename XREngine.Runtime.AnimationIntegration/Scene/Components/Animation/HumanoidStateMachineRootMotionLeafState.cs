@@ -17,6 +17,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
     private readonly float[] _mirrorScratch = new float[(int)EHumanoidValue.RightHandThumb3Stretched + 1];
 
     private AnimationClip? _clip;
+    private IHumanoidProceduralRootMotionSource? _proceduralSource;
     private CompiledHumanoidAvatarDefinition? _compiledAvatar;
     private ImportedHumanoidRootMotionPolicy _policy;
     private HumanoidImportedBodySample _canonicalBody = HumanoidImportedBodySample.Neutral;
@@ -61,10 +62,15 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
     {
         if (!humanoid.TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled))
             return false;
+
+        if (contribution.ProceduralSource is not null)
+            return TryPrepareProcedural(contribution, humanoid, compiled);
+
         bool identityChanged = !_isAssigned
             || !ReferenceEquals(_compiledAvatar, compiled)
             || OccurrenceId != contribution.OccurrenceId
             || !ReferenceEquals(_clip, contribution.Clip)
+            || _proceduralSource is not null
             || _policy != contribution.Policy
             || ContributionType != contribution.ContributionType;
         if (identityChanged)
@@ -72,6 +78,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
             _isAssigned = true;
             OccurrenceId = contribution.OccurrenceId;
             _clip = contribution.Clip;
+            _proceduralSource = null;
             _compiledAvatar = compiled;
             _policy = contribution.Policy;
             ContributionType = contribution.ContributionType;
@@ -120,6 +127,76 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
             : HumanoidLoopPoseCorrection.Identity;
         return true;
     }
+
+    private bool TryPrepareProcedural(
+        in HumanoidMotionContribution contribution,
+        HumanoidComponent humanoid,
+        CompiledHumanoidAvatarDefinition compiled)
+    {
+        IHumanoidProceduralRootMotionSource source = contribution.ProceduralSource!;
+        bool identityChanged = !_isAssigned
+            || !ReferenceEquals(_compiledAvatar, compiled)
+            || OccurrenceId != contribution.OccurrenceId
+            || !ReferenceEquals(_proceduralSource, source)
+            || _clip is not null
+            || _policy != contribution.Policy
+            || ContributionType != contribution.ContributionType;
+        if (identityChanged)
+        {
+            _isAssigned = true;
+            OccurrenceId = contribution.OccurrenceId;
+            _clip = null;
+            _proceduralSource = source;
+            _compiledAvatar = compiled;
+            _policy = contribution.Policy;
+            ContributionType = contribution.ContributionType;
+            CopyPolicyToSettings(_policy, _effectiveSettings);
+            _loopGenerator = HumanoidProjectedRootPose.Identity;
+            _loopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
+            _hasLoopGenerator = false;
+            _hasCanonicalFeetY = false;
+            _cacheValid = true;
+        }
+
+        if (_lifecycleGeneration != contribution.LifecycleGeneration)
+        {
+            _lifecycleGeneration = contribution.LifecycleGeneration;
+            _hasCanonicalFeetY = false;
+        }
+
+        Weight = contribution.Weight;
+        SourceLoopCycle = contribution.SourceLoopCycle;
+        ContributionType = contribution.ContributionType;
+        if (!source.TryGetBodySamples(
+            out Vector3 canonicalPosition,
+            out Quaternion canonicalRotation,
+            out Vector3 currentPosition,
+            out Quaternion currentRotation))
+            return false;
+
+        // HumanoidComponent expects imported Body positions in (semanticX, semanticZ, semanticY)
+        // layout matching ImportedAnimationCoordinateContract.HumanoidBodyPositionRule.
+        _canonicalBody = CreateImportedBodySample(ToImportedBodyPositionLayout(canonicalPosition), canonicalRotation);
+        CurrentBody = CreateImportedBodySample(ToImportedBodyPositionLayout(currentPosition), currentRotation);
+        _currentProjectionPose.Clear();
+        source.CopyProjectionMuscles(_currentProjectionPose.MuscleValues);
+        _canonicalProjectionPose.Clear();
+        source.CopyProjectionMuscles(_canonicalProjectionPose.MuscleValues);
+
+        HumanoidProjectedRootPose projected = humanoid.CalculateProjectedRootPose(
+            CurrentBody,
+            _canonicalBody,
+            1.0f,
+            _effectiveSettings,
+            _currentProjectionPose.MuscleValues);
+        BodyAllocationProjectedRootPose = projected;
+        UnwrappedProjectedRootPose = projected;
+        CurrentLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
+        return true;
+    }
+
+    private static Vector3 ToImportedBodyPositionLayout(Vector3 semanticPosition)
+        => new(semanticPosition.X, semanticPosition.Z, semanticPosition.Y);
 
     public void AddProjectedFeetDelta(float deltaY)
     {

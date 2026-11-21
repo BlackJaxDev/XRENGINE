@@ -7,7 +7,7 @@ namespace XREngine.Animation;
 /// value store until the target-avatar evaluator can project Unity Body motion.
 /// </summary>
 public readonly record struct HumanoidMotionContribution(
-    AnimationClip Clip,
+    AnimationClip? Clip,
     ImportedHumanoidRootMotionPolicy Policy,
     ulong OccurrenceId,
     ulong LifecycleGeneration,
@@ -16,7 +16,8 @@ public readonly record struct HumanoidMotionContribution(
     float SamplePhase,
     long PlaybackLoopCycle,
     long SourceLoopCycle,
-    EHumanoidMotionContributionType ContributionType)
+    EHumanoidMotionContributionType ContributionType,
+    IHumanoidProceduralRootMotionSource? ProceduralSource = null)
 {
     public HumanoidMotionContribution WithWeightAndType(
         float weight,
@@ -31,5 +32,6 @@ public readonly record struct HumanoidMotionContribution(
             SamplePhase,
             PlaybackLoopCycle,
             SourceLoopCycle,
-            contributionType);
+            contributionType,
+            ProceduralSource);
 }

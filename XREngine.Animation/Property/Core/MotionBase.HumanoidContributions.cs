@@ -55,6 +55,16 @@ public abstract partial class MotionBase
                     lifecycleGeneration,
                     mirror);
                 break;
+            case MotionBricksLocomotionMotion motionBricks:
+                if (motionBricks.TryCreateProceduralHumanoidContribution(
+                    weight,
+                    CombineOccurrenceId(occurrenceId, motionBricks.ID),
+                    lifecycleGeneration,
+                    out HumanoidMotionContribution proceduralContribution))
+                {
+                    destination.TryAdd(proceduralContribution);
+                }
+                break;
         }
     }
 
