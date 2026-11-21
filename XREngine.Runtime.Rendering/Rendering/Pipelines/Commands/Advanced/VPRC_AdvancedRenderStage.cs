@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Dispatches the native visibility and opaque compute stages through the backend's
 /// immutable frame family. Late/post commands follow their contract markers.
 /// </summary>
-public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
+public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
 {
     /// <summary>Frozen registry-resolved GI selection for this native stage family.</summary>
     [YamlIgnore]
@@ -116,6 +116,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             EAdvancedVisibilityStageBackendPhase.Complete,
             EAdvancedProfileStageDiagnosticState.RejectedAdmission,
             reason);
+        ReportStageRejectionToReadinessLog(
+            "UnexpectedFailure", EAdvancedVisibilityStageBackendPhase.Complete, reason, retryable: false);
     }
 
     private void ExecuteStage()
@@ -760,6 +762,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             EAdvancedVisibilityStageBackendPhase.Complete,
             EAdvancedProfileStageDiagnosticState.RejectedPrerequisite,
             reason);
+        ReportStageRejectionToReadinessLog("Prerequisite", EAdvancedVisibilityStageBackendPhase.Complete, reason, retryable);
         Debug.RenderingWarningEvery(
             $"AdvancedVisibility.Prerequisite.{Stage}.{reason}",
             TimeSpan.FromSeconds(30),
@@ -775,6 +778,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             EAdvancedVisibilityStageBackendPhase.Complete,
             EAdvancedProfileStageDiagnosticState.RejectedAdmission,
             reason);
+        ReportStageRejectionToReadinessLog("Admission", EAdvancedVisibilityStageBackendPhase.Complete, reason, retryable);
         Debug.RenderingWarningEvery(
             $"AdvancedVisibility.Admission.{Stage}.{reason}",
             TimeSpan.FromSeconds(30),
@@ -793,6 +797,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 ? EAdvancedProfileStageDiagnosticState.RejectedAdmission
                 : EAdvancedProfileStageDiagnosticState.RejectedCapability,
             reason);
+        ReportStageRejectionToReadinessLog(
+            "StageCapability", EAdvancedVisibilityStageBackendPhase.Complete, reason, retryable);
         Debug.RenderingWarningEvery(
             $"AdvancedVisibility.StageCapability.{Stage}",
             TimeSpan.FromSeconds(30),
@@ -811,6 +817,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             phase,
             EAdvancedProfileStageDiagnosticState.BackendEnqueueRejected,
             failureReason);
+        ReportStageRejectionToReadinessLog("PhaseRejection", phase, failureReason, retryable: true);
         Debug.RenderingWarningEvery(
             $"AdvancedVisibility.PhaseRejection.{Stage}.{phase}",
             TimeSpan.FromSeconds(5),
