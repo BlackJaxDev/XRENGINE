@@ -34,17 +34,33 @@ public sealed partial class AdvancedGpuScenePublisher
             Interlocked.Read(ref _materialSourceWitnessValidationFailures),
             Interlocked.Read(ref _materialSourceWitnessConcurrentChanges));
 
+    // True while CommittedMaterialBindingsMatch runs for the swap-time row gate. A binding
+    // whose texture object only got a new record (for example after a streamed upload) then
+    // stages an in-place refresh of that record instead of failing the check.
+    private bool _stageTextureRefreshes;
+
+    // Set when the current check accepted at least one binding through a staged refresh.
+    private bool _textureRefreshStagedInCheck;
+
     /// <summary>
     /// Returns <see cref="CommittedMaterialBindingsMatch"/> for the material, and
     /// skips the full check when the material's witness is unchanged.
     /// </summary>
+    /// <param name="stageTextureRefreshes">
+    /// True only for the swap-time row gate, which runs at the publication boundary. A binding
+    /// that differs only in the record of the same texture object then stages an in-place
+    /// texture refresh (<see cref="AdvancedGpuResourcePublisher.TryStageTextureRefresh"/>) and
+    /// counts as a match. The retained-row commit applies the refresh. The collect-thread
+    /// prepare and the full plan pass false.
+    /// </param>
     private bool WitnessedCommittedMaterialBindingsMatch(
         AdvancedGpuHandle handle,
         XRMaterial? material,
         MaterialBindingLayout layout,
         ReadOnlySpan<AdvancedMaterialTextureBinding> bindings,
         in AdvancedEngineSurfaceRecord engineSurface,
-        in AdvancedUberBaseSurfaceRecord uberSurface)
+        in AdvancedUberBaseSurfaceRecord uberSurface,
+        bool stageTextureRefreshes = false)
     {
         // Read the witness before the check, so a change during the check makes
         // the stored witness differ next time.
@@ -79,16 +95,47 @@ public sealed partial class AdvancedGpuScenePublisher
         }
 
         Interlocked.Increment(ref _materialSourceWitnessMisses);
-        if (!CommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface))
+        bool matches;
+        _stageTextureRefreshes = stageTextureRefreshes;
+        _textureRefreshStagedInCheck = false;
+        try
+        {
+            matches = CommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface);
+        }
+        finally
+        {
+            _stageTextureRefreshes = false;
+        }
+        if (!matches)
         {
             _materialSourceWitnesses.Remove(handle);
             return false;
         }
 
-        if (hasWitness)
+        // A staged refresh reaches the texture table only when this publication commits.
+        // Keep no witness for the material, so that after a rejected publication the next
+        // check encodes the material again and finds the old record.
+        if (hasWitness && !_textureRefreshStagedInCheck)
             _materialSourceWitnesses[handle] = witness;
         else
             _materialSourceWitnesses.Remove(handle);
+        return true;
+    }
+
+    /// <summary>
+    /// Compares one committed binding with its freshly encoded source. In the swap-time row
+    /// gate, a binding whose only difference is a new record of the same texture object stages
+    /// an in-place refresh of that record and counts as a match.
+    /// </summary>
+    private bool CommittedBindingMatches(
+        in AdvancedMaterialTextureBinding binding,
+        in AdvancedGpuResourceBindingSource source)
+    {
+        if (_resourcePublisher.BindingMatches(in binding, in source))
+            return true;
+        if (!_stageTextureRefreshes || !_resourcePublisher.TryStageTextureRefresh(in binding, in source))
+            return false;
+        _textureRefreshStagedInCheck = true;
         return true;
     }
 

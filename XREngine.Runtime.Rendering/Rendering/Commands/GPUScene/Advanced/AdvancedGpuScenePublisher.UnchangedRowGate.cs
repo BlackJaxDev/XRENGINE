@@ -121,6 +121,8 @@ public sealed partial class AdvancedGpuScenePublisher
         UnchangedRowGateScratch scratch = default;
         scratch.AcceptMovedRows = true;
         _movedRowCount = 0;
+        // Refreshes that an earlier walk staged belong to that walk.
+        _resourcePublisher.ClearStagedTextureRefreshes();
         int rowCount = _plannedCommandCount;
         bool rowsUnchanged = true;
         int commandIndex = 0;
@@ -796,7 +798,10 @@ public sealed partial class AdvancedGpuScenePublisher
             return true;
         }
 
-        if (!WitnessedCommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface))
+        // Only the swap-time pass may stage texture refreshes: it runs at the publication
+        // boundary, and the retained-row commit that follows applies them.
+        if (!WitnessedCommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface,
+                stageTextureRefreshes: !preparing))
             return false;
 
         if (preparing && epoch != 0UL)
@@ -922,7 +927,15 @@ public sealed partial class AdvancedGpuScenePublisher
             hasGlobalResources = TryPreflightGlobalResources(in globalResources, out globalResourceFailure);
         CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedGlobalPreflight, globalPreflightStart);
         bool resourceMutation = hasGlobalResources && HasPlannedResourceMutation();
-        bool requiresCommit = resourceMutation || !publicationRetained;
+        // Texture records that the gate refreshes in place need a new publication, because
+        // the retained publication holds the old records. A frame that also changes global
+        // resource ownership takes the full plan, so the texture table capacity check below
+        // covers every write of the commit.
+        bool textureRefresh = _resourcePublisher.StagedTextureRefreshCount != 0;
+        if (textureRefresh && hasGlobalResources &&
+            (resourceMutation || !_resourcePublisher.CanApplyStagedTextureRefreshes()))
+            return false;
+        bool requiresCommit = resourceMutation || textureRefresh || !publicationRetained;
         // The full plan repeats the global preflight; it has no other effect.
         if (hasGlobalResources && requiresCommit && !_committedSubmissionRowsValid)
             return false;
@@ -1046,6 +1059,9 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.ApplyTransitions"))
             {
+                // Texture records that the gate staged keep their handles, so no
+                // material record or row changes for them.
+                _resourcePublisher.ApplyStagedTextureRefreshes();
                 // With no planned material, these steps apply only the global
                 // resource acquisitions, rows, and releases.
                 ApplyPreflightedMaterialTransitions();

@@ -577,7 +577,8 @@ witness (`AdvancedMaterialSourceWitness`) holds:
   array, the layer content witness; for a CPU-backed cube, the cube source
   generation;
 - the resource publisher `CommitGeneration`, which advances on each texture or
-  sampler record write or release;
+  sampler record add, release, or plan replacement (an in-place texture refresh,
+  below, does not advance it);
 - the material database generations;
 - a hash of the committed bindings and surface records that the check compared.
 
@@ -594,6 +595,37 @@ it is not lost. Set `XRE_ADVANCED_PUBLISHER_WITNESS_VALIDATE=1` to run the full
 check also when the witness is unchanged. A mismatch logs a warning and returns
 the full-check result. A hit that a concurrent texture write changed during the
 check is counted separately and is not a failure.
+
+#### In-place texture refresh
+
+A streamed upload replaces the record of a texture that the scene already
+publishes: its size, mip count, and content generation change. The texture object,
+its fallback, and its sampler stay the same. The logical texture entry of
+`AdvancedGpuResourcePublisher` is found by the texture object, and a record
+replacement keeps its handle, so the committed material bindings (texture handle
+and sampler handle) stay correct. Without a refresh path, each such upload failed
+the committed-binding check and sent the frame to the whole-scene plan.
+
+In the swap-time gate pass (not the collect-thread prepare and not the full plan),
+a binding that fails `BindingMatches` calls
+`AdvancedGpuResourcePublisher.TryStageTextureRefresh`. The call accepts the binding
+only when the entry under the bound texture handle holds the same texture object,
+the fallback and the sampler record are equal, and the new record is valid. It
+stages the new record one time for each texture; two different records for one
+texture in one pass fail the gate. The material keeps no witness for that pass, so
+a rejected publication cannot hide the old record.
+
+When the gate passes with staged refreshes, `TryPublishUnchangedRows` always
+commits the retained rows (a reuse would keep the old records). A frame that also
+changes global resource ownership, or whose texture table cannot accept the
+replacements, takes the full plan. `CommitRetainedRows` applies the staged records
+inside the open publication transaction through
+`AdvancedGlobalResourceDatabase.TryReplaceTexture`, with the default sampler of the
+entry. No material record, row, or draw handle changes. The refresh does not
+advance `CommitGeneration`: no handle or binding changes, and the witness of each
+material that binds the refreshed texture already changed through the texture
+source version. A gate failure or a full plan discards the staged refreshes; the
+full plan replaces the records through its own preflight.
 
 When the gate passes and no global resource changed, the publisher reuses the
 current publication and delivers the identities again, as the full reuse path

@@ -1522,7 +1522,7 @@ public sealed partial class AdvancedGpuScenePublisher
                      (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
                       source.SourceContentGeneration == 0UL)))
                     return false;
-                if (!_resourcePublisher.BindingMatches(in bindings[index], in source))
+                if (!CommittedBindingMatches(in bindings[index], in source))
                     return false;
             }
             return true;
@@ -1587,7 +1587,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     AdvancedMaterialTextureBinding binding = index < MaterialBindingLayouts.StandardTextureCount
                         ? bindings[index]
                         : engineSurface.GetRole(index - MaterialBindingLayouts.StandardTextureCount).Binding;
-                    if (!_resourcePublisher.BindingMatches(in binding, in source))
+                    if (!CommittedBindingMatches(in binding, in source))
                         return false;
                 }
                 return true;
@@ -1627,7 +1627,7 @@ public sealed partial class AdvancedGpuScenePublisher
                          (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
                           source.SourceContentGeneration == 0UL)))
                         return false;
-                    if (!_resourcePublisher.BindingMatches(in bindings[role], in source))
+                    if (!CommittedBindingMatches(in bindings[role], in source))
                         return false;
                 }
                 return true;
