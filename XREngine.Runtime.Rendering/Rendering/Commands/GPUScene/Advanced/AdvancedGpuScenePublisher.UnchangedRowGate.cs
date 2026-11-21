@@ -624,8 +624,10 @@ public sealed partial class AdvancedGpuScenePublisher
         ref UnchangedRowGateScratch scratch)
     {
         int registrationIndex = identity.RegistrationIndex;
-        // Only rows that reused the committed material plan prove that the
-        // committed material row is current for these material inputs.
+        // Only rows that reused the committed material plan, or whose resolved
+        // material plan a successful publication committed (see
+        // CaptureCommittedMaterialPlans), prove that the committed material row
+        // is current for these material inputs.
         if (!plan.ReusedCommittedMaterial ||
             registrationIndex < 0 ||
             registrationIndex != plan.RegistrationIndex ||

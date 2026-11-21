@@ -563,12 +563,22 @@ public sealed partial class AdvancedGpuScenePublisher
            left.ColorWriteMask == right.ColorWriteMask &&
            left.Flags == right.Flags;
 
-    /// <summary>Stores source identity only after the canonical publication succeeds.</summary>
+    /// <summary>
+    /// Stores source identity only after the canonical publication succeeds. Each
+    /// supported row with a registration gets the committed material plan of this
+    /// publication. A row whose plan resolved its material again (for example after
+    /// a streamed texture changed its bindings) is then marked as reused, because the
+    /// committed material row now describes exactly the material inputs of the plan.
+    /// Without the mark, the next frame fails the unchanged-row gate with
+    /// <c>CommittedMaterialPlanNotReused</c> and runs a second full plan that only
+    /// proves the same result. A rejected or discarded publication does not reach
+    /// this method, so its rows stay on the full plan.
+    /// </summary>
     private void CaptureCommittedMaterialPlans()
     {
         for (int commandIndex = 0; commandIndex < _plannedCommandCount; ++commandIndex)
         {
-            ref readonly AdvancedGpuSceneCommandTransition plan =
+            ref AdvancedGpuSceneCommandTransition plan =
                 ref _plannedCommands[commandIndex];
             if (!plan.Supported || plan.Source is null)
                 continue;
@@ -614,6 +624,11 @@ public sealed partial class AdvancedGpuScenePublisher
                 MaterialUberStateRevision = plan.MaterialUberStateRevision,
                 Valid = true,
             };
+            // The gate compares the row with this registration index. A row that got
+            // its registration in this publication keeps the full plan for one more
+            // frame, which records the new index.
+            if (plan.RegistrationIndex == registrationIndex)
+                plan.ReusedCommittedMaterial = true;
         }
         _committedMaterialPlanCacheValid = true;
     }
