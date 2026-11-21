@@ -69,6 +69,7 @@ namespace XREngine
                 {
                     YamlDefaultTypeContext.ResetReadState();
                     YamlTransformReferenceContext.ResetReadState();
+                    TypeMismatchRecordingValueDeserializer.Reset();
                 }
 
                 return innerDeserializer.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
@@ -92,10 +93,13 @@ namespace XREngine
                 Mark startMark = current?.Start ?? ex.Start;
                 Mark endMark = current?.End ?? ex.End;
                 string expectedTypeName = expectedType.FullName ?? expectedType.Name;
+                string mismatch = TypeMismatchRecordingValueDeserializer.LastMismatch is { } lastMismatch
+                    ? $", LastTypeMismatch={lastMismatch}"
+                    : string.Empty;
                 throw new YamlException(
                     startMark,
                     endMark,
-                    $"{ex.Message} {AnnotationMarker}[ExpectedType={expectedTypeName}, ParserEvent={parserDetail}, Depth={_depth}, Mark={startMark.Line}:{startMark.Column}]",
+                    $"{ex.Message} {AnnotationMarker}[ExpectedType={expectedTypeName}, ParserEvent={parserDetail}, Depth={_depth}, Mark={startMark.Line}:{startMark.Column}{mismatch}]",
                     ex);
             }
             finally

@@ -135,7 +135,11 @@ namespace XREngine
 
             builder.WithTypeConverter(new XRAssetYamlConverter());
 
-            return builder.Build();
+            // Converters write child values through nested serialize calls. Keep anchor names unique
+            // across those calls, so that each alias resolves to the object it was written for.
+            DocumentUniqueAnchorAssigner.Register(builder);
+
+            return new DocumentScopedYamlSerializer(builder.Build());
         }
 
         private static IReadOnlyList<IYamlTypeConverter> LoadYamlTypeConvertersFromMetadata()
@@ -192,7 +196,8 @@ namespace XREngine
             // Must run after XRAssetDeserializer is registered (XRAssetDeserializer ignores non-XRAsset types).
             builder.WithNodeDeserializer(new PolymorphicYamlNodeDeserializer(), w => w.OnTop());
 
-            return builder.Build();
+            // Wraps the root value deserializer so a failed read can name a value that came back with the wrong type.
+            return global::YamlDotNet.Serialization.Deserializer.FromValueDeserializer(new TypeMismatchRecordingValueDeserializer(builder.BuildValueDeserializer()));
         }
 #endif
 
