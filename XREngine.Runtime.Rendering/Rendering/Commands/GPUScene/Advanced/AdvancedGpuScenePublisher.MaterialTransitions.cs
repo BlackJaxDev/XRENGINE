@@ -162,6 +162,7 @@ public sealed partial class AdvancedGpuScenePublisher
         _resourceAcquireCount = 0;
         _resourceReleaseCount = 0;
         _planBoundsEpochCaptured = false;
+        ResetErrorMaterialRows();
         BeginStampedPlan(ref _plannedVariantSlotGeneration, _plannedVariantSlotStamps);
         BeginStampedPlan(ref _plannedCommandSlotGeneration, _plannedCommandSlotStamps);
         BeginStampedPlan(ref _plannedReleaseSlotGeneration, _plannedReleaseSlotStamps);
@@ -302,7 +303,21 @@ public sealed partial class AdvancedGpuScenePublisher
                 plan.CompatibilityReason = compatibilityReason;
                 if (fatal)
                     return false;
-                continue;
+                string materialReason = reason;
+                if (!TrySubstituteErrorMaterial(
+                        ref plan,
+                        in command,
+                        registrationIndex,
+                        compatibilityReason,
+                        materialReason,
+                        out materialPlanIndex,
+                        out fatal,
+                        out reason))
+                {
+                    if (fatal)
+                        return false;
+                    continue;
+                }
             }
 
             plan.Supported = true;
@@ -386,6 +401,7 @@ public sealed partial class AdvancedGpuScenePublisher
             return false;
 
         _materialPublisher.RetainPreflightedStrictUberValidation(requests);
+        ReportErrorMaterialRows();
         reason = string.Empty;
         return true;
     }
