@@ -539,6 +539,12 @@ largest projected error, in render pixels, that a drawn cluster may have.
   geometry holds the covers. Draws that another path reads keep `L = 0`:
   transparent, fragment-depth, decal, wireframe, editor-highlighted and
   non-canonical raster draws.
+  The choice runs on both deformation preparation policies: the packed
+  aggregate inputs and the authored-vertex inputs of the Vulkan route. The
+  authored-vertex route keeps its visibility candidate bounds and reads only the
+  posed instance bounds of the publication for the choice. The
+  `XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS` `SUMMARY` line counts the choices
+  (`gate.<outcome>`, `level<n>`) and the deformed and full vertex counts.
 
 Measured with New Sponza and the prefab avatar at 2688x2688 (RVC, true single
 pass stereo): at the atrium the early raster goes from 5.9 to 3.6 ms and the
