@@ -178,7 +178,13 @@ successor asset.
   recording writes to the same log: `OpenXrParallelEyeRecord` for each failed eye (eye, frame,
   swapchain image, render lane, managed thread, and the exception type and message) and
   `OpenXrParallelEyeBatch` for each batch that ended with an exception, whose frame ends
-  without projection layers.
+  without projection layers. A rejected backend-ready frame package writes
+  `FramePackageRejected`, at most once per 5 seconds for each pipeline instance. A rejected
+  package makes the pipeline draw only the screen-space UI, so a rejection that repeats every
+  frame stops all scene output. The line has the validator failure, or for the Advanced
+  pipeline the first enabled primary draw without an exact canonical submission (pass, stable
+  key, reason, and the publication sequence of its draw identity). It also has the frame and
+  collect generations and the canonical publication of the package and of the scene.
 - A retired generation stays alive until its completion receipt signals. The
   retired-generation count limit is soft. Unsignaled generations are kept, and
   the instance drains them after they signal.
