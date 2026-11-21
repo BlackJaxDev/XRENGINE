@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{7E294C18-5631-428D-8D84-6A4B35B41C09}</ProjectGuid>
+    <RootNamespace>MotionBricksBridge</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="Shared" />
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <RepoRoot>$(MSBuildThisFileDirectory)..\..\..\</RepoRoot>
+    <OutDir>$(RepoRoot)Build\_AgentValidation\00000000-000000-shared\tools\$(Configuration)\MotionBricksBridge\</OutDir>
+    <IntDir>$(RepoRoot)Build\_AgentValidation\00000000-000000-shared\tools\obj\MotionBricksBridge\$(Configuration)\</IntDir>
+    <TargetName>MotionBricksBridge.Native</TargetName>
+    <TensorRtRoot Condition="'$(TensorRtRoot)'=='' and '$(TENSORRT_ROOT_DIR)'!=''">$(TENSORRT_ROOT_DIR)</TensorRtRoot>
+    <TensorRtRoot Condition="'$(TensorRtRoot)'=='' and Exists('$(RepoRoot)Build\Dependencies\TensorRT\TensorRT-10.13.3.9\include\NvInfer.h')">$(RepoRoot)Build\Dependencies\TensorRT\TensorRT-10.13.3.9</TensorRtRoot>
+    <CudaRoot Condition="'$(CudaRoot)'=='' and '$(CUDA_PATH)'!=''">$(CUDA_PATH)</CudaRoot>
+    <HasTensorRtSdk Condition="'$(TensorRtRoot)'!='' and Exists('$(TensorRtRoot)\include\NvInfer.h') and Exists('$(TensorRtRoot)\lib\nvinfer_10.lib') and Exists('$(TensorRtRoot)\lib\nvonnxparser_10.lib')">true</HasTensorRtSdk>
+    <HasCudaSdk Condition="'$(CudaRoot)'!='' and Exists('$(CudaRoot)\include\cuda_runtime_api.h') and Exists('$(CudaRoot)\lib\x64\cudart.lib')">true</HasCudaSdk>
+    <UseTensorRt Condition="'$(HasTensorRtSdk)'=='true' and '$(HasCudaSdk)'=='true'">true</UseTensorRt>
+    <UseTensorRt Condition="'$(UseTensorRt)'==''">false</UseTensorRt>
+    <TensorRtIncludeDirs Condition="'$(UseTensorRt)'=='true'">$(TensorRtRoot)\include;$(CudaRoot)\include;</TensorRtIncludeDirs>
+    <TensorRtDefines Condition="'$(UseTensorRt)'=='true'">MOTIONBRICKS_BRIDGE_USE_TENSORRT;</TensorRtDefines>
+    <TensorRtLibraryDirs Condition="'$(UseTensorRt)'=='true'">$(TensorRtRoot)\lib;$(CudaRoot)\lib\x64;</TensorRtLibraryDirs>
+    <TensorRtDependencies Condition="'$(UseTensorRt)'=='true'">nvinfer_10.lib;nvonnxparser_10.lib;cudart.lib;</TensorRtDependencies>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_WINDOWS;_USRDLL;MOTIONBRICKSBRIDGE_EXPORTS;$(TensorRtDefines)%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(TensorRtIncludeDirs)%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <AdditionalLibraryDirectories>$(TensorRtLibraryDirs)%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(TensorRtDependencies)%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <PostBuildEvent>
+      <Command>if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_10.dll" "$(OutDir)" &amp; if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvonnxparser_10.dll" "$(OutDir)" &amp; if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_builder_resource_10.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_WINDOWS;_USRDLL;MOTIONBRICKSBRIDGE_EXPORTS;$(TensorRtDefines)%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(TensorRtIncludeDirs)%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalLibraryDirectories>$(TensorRtLibraryDirs)%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>$(TensorRtDependencies)%(AdditionalDependencies)</AdditionalDependencies>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <PostBuildEvent>
+      <Command>if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_10.dll" "$(OutDir)" &amp; if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvonnxparser_10.dll" "$(OutDir)" &amp; if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_builder_resource_10.dll" "$(OutDir)"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClInclude Include="MotionBricksBridge.h" />
+    <ClCompile Include="MotionBricksBridge.cpp" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

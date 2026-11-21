@@ -32,6 +32,7 @@
     <ProjectReference Include="..\XREngine.Runtime.MeshProcessing.Meshoptimizer\XREngine.Runtime.MeshProcessing.Meshoptimizer.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Imaging.Magick\XREngine.Runtime.Imaging.Magick.csproj" />
     <ProjectReference Include="..\XREngine.Audio.Audio2Face\XREngine.Audio.Audio2Face.csproj" />
+    <ProjectReference Include="..\XREngine.Animation.MotionBricks\XREngine.Animation.MotionBricks.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Net.Osc\XREngine.Runtime.Net.Osc.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.XR.OpenVR\XREngine.Runtime.XR.OpenVR.csproj" />
   </ItemGroup>
