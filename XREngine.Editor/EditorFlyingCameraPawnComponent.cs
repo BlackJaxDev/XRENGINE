@@ -735,9 +735,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     /// <summary>
     /// Cached cursor position from the last pick dispatch.
-    /// Used to skip raycasts when the cursor hasn't moved.
+    /// Used with the cached camera view state to skip picks when neither the pointer nor
+    /// the camera view changed.
     /// </summary>
     private Vector2 _lastPickCursorPosition = new(float.NaN, float.NaN);
+    private bool _hasLastPickViewState;
+    private Vector3 _lastPickCameraPosition;
+    private Quaternion _lastPickCameraRotation = Quaternion.Identity;
+    private Vector3 _lastPickRayStart;
+    private Vector3 _lastPickRayEnd;
+
+    private const float PickViewPositionEpsilonSquared = 1e-10f;
+    private const float PickViewRotationDotThreshold = 1.0f - 1e-7f;
 
     /// <summary>
     /// Accumulates elapsed time between pick dispatches for throttling.
@@ -761,7 +770,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     private readonly Lock _pickDispatchLock = new();
     private bool _octreePickInFlight;
     private bool _pendingPickAfterCurrent;
-    private Vector2 _lastObservedWorldPickCursorPosition = new(float.NaN, float.NaN);
     private int _worldPickInputRevision;
     private int _activeWorldPickInputRevision;
     private int _worldPickInputAllowed;
@@ -1337,7 +1345,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (vp is null)
         {
-            UpdateWorldPickInputState(new(float.NaN, float.NaN), false);
+            UpdateWorldPickInputState(false);
             ClearLastViewportMouseSegment();
             return;
         }
@@ -1345,7 +1353,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var cam = this.GetCamera();
         if (cam is null)
         {
-            UpdateWorldPickInputState(new(float.NaN, float.NaN), false);
+            UpdateWorldPickInputState(false);
             ClearLastViewportMouseSegment();
             return;
         }
@@ -1353,7 +1361,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         Vector2 rawP = GetUnclampedNormalizedCursorPosition(vp);
         bool cursorInViewport = IsNormalizedViewportPointInside(rawP);
         bool worldPickInputAllowed = AllowWorldPicking && IsWorldPickInputAllowed(vp, cursorInViewport);
-        UpdateWorldPickInputState(rawP, worldPickInputAllowed);
+        UpdateWorldPickInputState(worldPickInputAllowed);
         Vector2 p = ClampNormalizedViewport(rawP);
         ApplyTransformations(vp);
 
@@ -1384,20 +1392,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     /// <summary>
-    /// Invalidates pending hover results whenever the pointer moves or scene input ownership
-    /// changes. A click selection already dispatched remains valid, but an undispatched click
-    /// is cancelled when the scene no longer owns the pointer.
+    /// Tracks whether the editor viewport owns pointer input for world picking.
+    /// Increments the input-ownership revision only when ownership changes, so normal
+    /// cursor motion inside the viewport does not discard in-flight hover results.
     /// </summary>
-    private void UpdateWorldPickInputState(Vector2 normalizedCursorPosition, bool inputAllowed)
+    private void UpdateWorldPickInputState(bool inputAllowed)
     {
         bool wasInputAllowed = Volatile.Read(ref _worldPickInputAllowed) != 0;
-        bool cursorChanged = float.IsNaN(normalizedCursorPosition.X)
-            ? !float.IsNaN(_lastObservedWorldPickCursorPosition.X)
-            : normalizedCursorPosition != _lastObservedWorldPickCursorPosition;
-        if (!cursorChanged && inputAllowed == wasInputAllowed)
+        if (inputAllowed == wasInputAllowed)
             return;
 
-        _lastObservedWorldPickCursorPosition = normalizedCursorPosition;
         Volatile.Write(ref _worldPickInputAllowed, inputAllowed ? 1 : 0);
         Interlocked.Increment(ref _worldPickInputRevision);
 
@@ -1406,11 +1410,59 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         ClearHoverHighlight();
         ClearMeshHitVisualization();
-        _lastPickCursorPosition = new(float.NaN, float.NaN);
+        ResetLastPickTargetState();
         _forceRepick = false;
         _selectAfterForcedPick = false;
         using (_pickDispatchLock.EnterScope())
             _pendingPickAfterCurrent = false;
+    }
+
+    private void ResetLastPickTargetState()
+    {
+        _lastPickCursorPosition = new(float.NaN, float.NaN);
+        _hasLastPickViewState = false;
+    }
+
+    private bool HasPickViewChanged(XRViewport vp, in Segment currentRay)
+    {
+        if (!_hasLastPickViewState)
+            return true;
+
+        if (Vector3.DistanceSquared(currentRay.Start, _lastPickRayStart) > PickViewPositionEpsilonSquared ||
+            Vector3.DistanceSquared(currentRay.End, _lastPickRayEnd) > PickViewPositionEpsilonSquared)
+        {
+            return true;
+        }
+
+        Transform? cameraTransform = vp.CameraComponent?.TransformAs<Transform>();
+        if (cameraTransform is null)
+            return false;
+
+        if (Vector3.DistanceSquared(cameraTransform.WorldTranslation, _lastPickCameraPosition) > PickViewPositionEpsilonSquared)
+            return true;
+
+        float rotationDot = MathF.Abs(Quaternion.Dot(cameraTransform.WorldRotation, _lastPickCameraRotation));
+        return rotationDot < PickViewRotationDotThreshold;
+    }
+
+    private void RecordLastPickViewState(XRViewport vp, in Segment currentRay)
+    {
+        _lastPickRayStart = currentRay.Start;
+        _lastPickRayEnd = currentRay.End;
+
+        Transform? cameraTransform = vp.CameraComponent?.TransformAs<Transform>();
+        if (cameraTransform is not null)
+        {
+            _lastPickCameraPosition = cameraTransform.WorldTranslation;
+            _lastPickCameraRotation = cameraTransform.WorldRotation;
+        }
+        else
+        {
+            _lastPickCameraPosition = currentRay.Start;
+            _lastPickCameraRotation = Quaternion.Identity;
+        }
+
+        _hasLastPickViewState = true;
     }
 
     private bool CanApplyCurrentWorldPickHover()
@@ -1418,8 +1470,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
            Volatile.Read(ref _activeWorldPickInputRevision) == Volatile.Read(ref _worldPickInputRevision);
 
     /// <summary>
-    /// Dispatches octree + physics raycasts only when the cursor has moved, is inside the
-    /// viewport, and the throttle interval has elapsed — or when a repick is forced (e.g. click).
+    /// Dispatches world picks when the pointer or camera view changed while the cursor is
+    /// inside the viewport and the throttle interval elapsed, or when a click forces a repick.
     /// </summary>
     private void DispatchWorldPickIfNeeded(XRViewport vp, Vector2 normalizedCursorPos)
     {
@@ -1450,7 +1502,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 lock (_editorPickDeliverySync)
                     _activeEditorPickRequest = null;
                 CompleteWorldPickDispatch();
-                _lastPickCursorPosition = new(float.NaN, float.NaN);
+                ResetLastPickTargetState();
             }
         }
         if (vp.RenderPipelineInstance.UsesAdvancedScenePicking &&
@@ -1459,7 +1511,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             _forceRepick = false;
             _selectAfterForcedPick = false;
             _editorPickRetrySelectionPending = false;
-            _lastPickCursorPosition = new(float.NaN, float.NaN);
+            ResetLastPickTargetState();
             ClearHoverHighlight();
             return;
         }
@@ -1475,7 +1527,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             if (!float.IsNaN(_lastPickCursorPosition.X))
             {
                 ClearHoverHighlight();
-                _lastPickCursorPosition = new(float.NaN, float.NaN);
+                ResetLastPickTargetState();
             }
 
             using (_pickDispatchLock.EnterScope())
@@ -1483,14 +1535,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
         }
 
-        // Cursor-dirty check: skip if the cursor hasn't moved since the last dispatch.
+        // Dirty check: repick when the cursor moves or when the camera view moves under a stationary cursor.
         bool cursorMoved = normalizedCursorPos != _lastPickCursorPosition;
+        bool viewChanged = HasPickViewChanged(vp, in _lastRaycastSegment);
+        bool pickTargetChanged = cursorMoved || viewChanged;
 
         // Throttle: accumulate time and only dispatch at the configured rate.
         _pickAccumulator += Engine.Delta;
         float interval = 1.0f / _maxPicksPerSecond;
 
-        bool shouldPick = _forceRepick || (cursorMoved && _pickAccumulator >= interval);
+        bool shouldPick = _forceRepick || (pickTargetChanged && _pickAccumulator >= interval);
         if (!shouldPick)
             return;
 
@@ -1511,6 +1565,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         _pickAccumulator = 0f;
         _lastPickCursorPosition = normalizedCursorPos;
+        RecordLastPickViewState(vp, in _lastRaycastSegment);
         _forceRepick = false;
         Volatile.Write(ref _activeWorldPickInputRevision, Volatile.Read(ref _worldPickInputRevision));
         bool selectOnCompletion = _selectAfterForcedPick;
@@ -1586,7 +1641,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             selectOnCompletion = _editorPickDispatchSelection;
             failure = _editorPickDispatchFailure;
         }
-        _lastPickCursorPosition = new(float.NaN, float.NaN);
+        ResetLastPickTargetState();
         if (selectOnCompletion && CanApplyCurrentWorldPickHover())
         {
             _selectAfterForcedPick = true;
