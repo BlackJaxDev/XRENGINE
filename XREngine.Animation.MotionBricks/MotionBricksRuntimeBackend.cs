@@ -24,7 +24,7 @@ public static class MotionBricksRuntimeBackend
         public IMotionBricksLocomotionDriver CreateDriver(MotionBricksLocomotionMotion motion)
         {
             if (configResolver is null)
-                return new SomaFixedTargetLocomotionDriver(inferenceSession: null);
+                return new MotionBricksAsyncLocomotionDriver(inferenceSession: null);
 
             MotionBricksSessionConfig config = configResolver(motion);
             if (!backend.TryCreateSession(config, out IMotionBricksInferenceSession? session, out string? error) || session is null)
@@ -36,7 +36,7 @@ public static class MotionBricksRuntimeBackend
                 return new UnavailableMotionBricksDriver(buildError ?? $"{backend.Name} backend failed to build or load the SOMA engine.");
             }
 
-            return new SomaFixedTargetLocomotionDriver(session, ownsSession: true);
+            return new MotionBricksAsyncLocomotionDriver(session, ownsSession: true);
         }
     }
 
