@@ -186,6 +186,8 @@ float2 SceneSourceUv(float2 uv)
   return uv;
 }
 
+#include "ToneMapping.slang"
+
 float3 SampleHDR(float2 uv)
 {
   float2 duv = SceneSourceUv(uv);
