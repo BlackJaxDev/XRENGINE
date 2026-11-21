@@ -727,6 +727,32 @@ world-swap publication whose swap-time gate failed, by the reason of the first
 row or check that failed. Each of these publications plans and commits the whole
 scene, so these reasons name what keeps the scene off the unchanged-row path.
 
+### Error material rows
+
+The Advanced pipeline accepts a frame package only when each enabled primary
+draw has an exact canonical submission. A row without a submission would
+therefore stop all scene output. When the whole-scene plan rejects the material
+of a row without a fatal error (a compatibility reason such as
+`UnsupportedResourceBinding`), `AdvancedGpuScenePublisher.TrySubstituteErrorMaterial`
+plans the row again with one shared canonical error material: a standard
+deferred color material in flat magenta, without textures. The row keeps the
+command, geometry, bounds and render options of its source, so it draws in all
+passes and the frame package stays complete. The registration stores the error
+material. The unchanged-row check therefore sees a different material on each
+later plan, plans the row again, and tries the source material first, so a
+material that becomes supported replaces the error material on the next plan.
+While an error row exists, each publication therefore plans the whole scene
+and leaves the unchanged-row path, and it repeats the source material check.
+Error rows are a fault state for a material to fix, not a steady-state route.
+
+Each plan with error rows writes one `CanonicalErrorMaterial` line to the
+render-readiness failure log, at most once per 5 seconds. The line has the row
+count and the source material, mesh, compatibility reason and encoder text of
+the first error row. Release builds also write this log.
+`AdvancedGpuScenePublisher.LastErrorMaterialRowCount` gives the count of the last
+plan. A row whose geometry the plan rejects (`UnsupportedGeometryTopology`,
+`InvalidGeometrySource`) has no error material path and stays without a row.
+
 ### Deformation source identity
 
 `AdvancedPreparationExtractor` keeps an `AdvancedDeformationSourceSet` for each
