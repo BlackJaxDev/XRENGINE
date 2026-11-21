@@ -227,7 +227,7 @@ internal sealed partial class VulkanFrameLoop
     // Required material textures of the captured OpenXR eye mesh requests and their upload
     // manifest. Both are reused every eye frame, so the readiness check does not allocate.
     private readonly VulkanRequiredTextureReferenceSet _openXrEyeRequiredTextures =
-        new(VulkanAcceptedFramePlan.UploadCapacity);
+        new(VulkanAcceptedFramePlan.RequiredTextureCapacity);
     private readonly VulkanTextureUploadManifest _openXrEyeRequiredUploads = new();
 
     // True when the next eye frame must declare its material textures as required uploads. A new

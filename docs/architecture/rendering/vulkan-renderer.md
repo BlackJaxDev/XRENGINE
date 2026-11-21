@@ -1012,6 +1012,16 @@ cold-work allowance. A persistent no-progress watchdog reports stalled requests
 instead of retrying indefinitely. This budget does not bound every other stage
 of scene publication or command recording.
 
+Each accepted desktop PresentNow frame records the distinct textures that it requires, with the
+streaming generation of each (`VulkanRequiredTextureReferenceSet`). The required-upload manifest
+is built from this set. Both hold at most `VulkanAcceptedFramePlan.RequiredTextureCapacity`
+(65,536) textures, separately from the 4,096 upload operations of `UploadCapacity`. An Advanced
+frame requires every texture of its canonical scene publication, so a crowd of imported avatars
+can require more than 10,000 textures. A hash index finds a texture that is already in the set,
+so the cost of each texture does not grow with the texture count. A frame that requires more
+textures fails with `FramePlanCapacityExceeded lane=Upload`, and `vulkan-present-now.log` shows
+the stall.
+
 Set `XRE_VULKAN_VALIDATE_SPIRV=1` to validate generated and cached modules with
 `spirv-val --target-env vulkan1.4`; a missing validator fails the compile or cache
 read visibly. Set `XRE_VULKAN_SHADER_DIAGNOSTICS_DIR` to retain hash-named GLSL

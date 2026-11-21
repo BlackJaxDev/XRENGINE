@@ -1,3 +1,6 @@
+using System.Numerics;
+using System.Runtime.CompilerServices;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -7,11 +10,34 @@ namespace XREngine.Rendering.Vulkan;
 /// uploaded (for example, after a renderer restart) and to request their restoration.
 /// The desktop accepted frame plan and the OpenXR eye path both fill a set, so they apply the same
 /// generation and duplicate rules. All storage is allocated once; adding and clearing do not allocate.
+/// A hash index finds a texture that is already in the set in constant time, so a frame with
+/// thousands of textures (for example, a crowd of imported avatars) does not compare each new
+/// texture with every earlier one.
 /// </summary>
-internal sealed class VulkanRequiredTextureReferenceSet(int capacity)
+internal sealed class VulkanRequiredTextureReferenceSet
 {
-    private readonly XRTexture?[] _textures = new XRTexture?[capacity];
-    private readonly long[] _generations = new long[capacity];
+    private readonly XRTexture?[] _textures;
+    private readonly long[] _generations;
+
+    /// <summary>
+    /// Open-addressing hash index over <see cref="_textures"/>. Each slot holds the texture index
+    /// plus 1, or 0 when the slot is empty. The length is a power of two and at least twice the
+    /// capacity, so a probe always finds an empty slot.
+    /// </summary>
+    private readonly int[] _index;
+
+    /// <summary>The index slots that <see cref="Add"/> filled, so <see cref="Clear"/> empties only those.</summary>
+    private readonly int[] _usedIndexSlots;
+
+    /// <summary>Creates a set that holds at most <paramref name="capacity"/> distinct textures.</summary>
+    internal VulkanRequiredTextureReferenceSet(int capacity)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(capacity, 1);
+        _textures = new XRTexture?[capacity];
+        _generations = new long[capacity];
+        _index = new int[(int)BitOperations.RoundUpToPowerOf2((uint)checked(capacity * 2))];
+        _usedIndexSlots = new int[capacity];
+    }
 
     /// <summary>Number of distinct textures in the set.</summary>
     internal int Count { get; private set; }
@@ -25,6 +51,8 @@ internal sealed class VulkanRequiredTextureReferenceSet(int capacity)
     /// <summary>Removes every texture and generation.</summary>
     internal void Clear()
     {
+        for (int index = 0; index < Count; index++)
+            _index[_usedIndexSlots[index]] = 0;
         _textures.AsSpan(0, Count).Clear();
         _generations.AsSpan(0, Count).Clear();
         Count = 0;
@@ -92,13 +120,21 @@ internal sealed class VulkanRequiredTextureReferenceSet(int capacity)
                 : publishedGeneration;
         }
 
-        for (int index = 0; index < Count; index++)
+        int mask = _index.Length - 1;
+        int slot = RuntimeHelpers.GetHashCode(texture) & mask;
+        while (true)
         {
-            if (!ReferenceEquals(_textures[index], texture))
-                continue;
-            if (requiredGeneration > 0L)
-                _generations[index] = Math.Max(_generations[index], requiredGeneration);
-            return;
+            int stored = _index[slot];
+            if (stored == 0)
+                break;
+            int existing = stored - 1;
+            if (ReferenceEquals(_textures[existing], texture))
+            {
+                if (requiredGeneration > 0L)
+                    _generations[existing] = Math.Max(_generations[existing], requiredGeneration);
+                return;
+            }
+            slot = (slot + 1) & mask;
         }
 
         if (Count >= _textures.Length)
@@ -106,11 +142,14 @@ internal sealed class VulkanRequiredTextureReferenceSet(int capacity)
             throw new VulkanAcceptedFramePlanCapacityException(
                 EVulkanAcceptedFrameLane.Upload,
                 _textures.Length,
-                Count + 1);
+                Count + 1,
+                "The frame references more distinct textures than the required-texture set holds.");
         }
 
         _textures[Count] = texture;
         _generations[Count] = requiredGeneration;
+        _index[slot] = Count + 1;
+        _usedIndexSlots[Count] = slot;
         Count++;
     }
 }
