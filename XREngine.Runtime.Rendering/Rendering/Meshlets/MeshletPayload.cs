@@ -331,6 +331,30 @@ public sealed class MeshletPayload
             ValidationRevision = Interlocked.Increment(ref s_nextValidationRevision);
     }
 
+    /// <summary>
+    /// Creates a copy of this payload that belongs to <paramref name="owner"/>, a mesh that uses the
+    /// same geometry objects as <paramref name="source"/>. One payload object stores the geometry
+    /// revision of one owner mesh, so two meshes cannot use one payload object. The copy uses the
+    /// same immutable meshlet streams and the same owner validation token, and it gets the current
+    /// geometry revision of <paramref name="owner"/>. A later geometry change on the owner advances its
+    /// revision, and the copy is then no longer valid for it.
+    /// </summary>
+    /// <param name="source">The mesh that this payload is currently valid for.</param>
+    /// <param name="owner">The mesh that uses the geometry objects of <paramref name="source"/>.</param>
+    /// <exception cref="InvalidOperationException">This payload is not valid for <paramref name="source"/>.</exception>
+    internal MeshletPayload CreateCopyForSharedGeometryOwner(XRMesh source, XRMesh owner)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(owner);
+        if (!IsValidatedFor(source))
+            throw new InvalidOperationException("Only a meshlet payload that is valid for its source mesh can be copied to a mesh that shares the source geometry.");
+
+        MeshletPayload copy = (MeshletPayload)MemberwiseClone();
+        copy.ValidationRevision = Interlocked.Increment(ref s_nextValidationRevision);
+        copy.OwnerGeometryRevision = owner.GeometryRevision;
+        return copy;
+    }
+
     /// <summary>Validates all portable CPU payload ranges before persistence or GPU registration.</summary>
     public void ValidatePortablePayload()
     {

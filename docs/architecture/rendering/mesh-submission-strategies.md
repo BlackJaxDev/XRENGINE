@@ -351,6 +351,16 @@ renderer does not.
   an immutable validated payload and a revision token.
   `XRMesh.GetOrCreateMeshletPayload` must not become a disk-cache API that
   rendering calls.
+- A payload object stores the owner binding of one mesh
+  (`OwnerGeometryRevision`). `RenderableMesh` replaces a skinned mesh with a
+  runtime transform rebind clone when the serialized bone references point
+  outside the component hierarchy (for example, a cloned crowd avatar). The
+  clone uses the source buffers and topology lists and changes only bone
+  references. `XRMesh.TryAttachSharedGeometryMeshletPayload` gives the clone
+  its own payload copy, bound to the clone's geometry revision, after it checks
+  that both meshes use the same geometry objects. The copy shares the immutable
+  meshlet streams and needs no source hashing. Without the copy, the clone has
+  no meshlets and skips the meshlet and cluster level-of-detail routes.
 - Runtime format compatibility is separate from cook provenance. A runtime
   without the meshoptimizer cooker accepts a compatible baked payload. A newer
   cooker version invalidates derived data during import or cache validation,

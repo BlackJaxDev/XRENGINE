@@ -131,6 +131,11 @@ namespace XREngine.Components.Scene.Mesh
                     ReleaseOwnedRuntimeMesh(reboundMesh);
                     return sourceMesh;
                 }
+
+                // The rebind changes only bone references. The clone uses the source geometry objects,
+                // so it gets its own copy of the source meshlets and keeps the meshlet and cluster
+                // level-of-detail routes (for example, cloned crowd avatars).
+                reboundMesh.TryAttachSharedGeometryMeshletPayload(sourceMesh);
                 return reboundMesh;
             }
             catch (Exception bindingFailure)
