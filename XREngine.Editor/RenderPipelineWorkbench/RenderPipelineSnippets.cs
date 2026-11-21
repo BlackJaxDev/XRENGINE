@@ -106,14 +106,16 @@ public static class RenderPipelineSnippets
     private static List<ViewportRenderCommand> BuildBindAndClear(RenderPipelineDraftState state)
     {
         EnsureHdrTarget(state);
+        // The bind clears the target itself. Its clear is part of the render target declaration, so the
+        // render graph orders it. A separate VPRC_Clear declares no pass and Vulkan would not order it.
         VPRC_BindFBOByName bind = new()
         {
             FrameBufferName = HdrFrameBuffer,
-            ClearColor = false,
-            ClearDepth = false,
-            ClearStencil = false,
+            ClearColor = true,
+            ClearDepth = true,
+            ClearStencil = true,
         };
-        return [bind, new VPRC_Clear { Color = true, Depth = true, Stencil = true }, bind.PopCommand];
+        return [bind, bind.PopCommand];
     }
 
     private static List<ViewportRenderCommand> BuildScenePass(RenderPipelineDraftState state)
