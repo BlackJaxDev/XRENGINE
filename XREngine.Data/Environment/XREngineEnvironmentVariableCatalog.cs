@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Runtime;
+using XREngine.Data.Rendering;
 
 namespace XREngine;
 
@@ -8,6 +10,182 @@ namespace XREngine;
 /// </summary>
 public static class XREngineEnvironmentVariableCatalog
 {
+    private readonly record struct EnumValueSpec(
+        string[] AllowedValues,
+        string[]? AcceptedAliases = null,
+        bool AcceptsNumericEnumValues = false);
+
+    private static readonly Dictionary<string, EnumValueSpec> EnumValueSpecs = new(StringComparer.Ordinal)
+    {
+        [nameof(XREngineEnvironmentVariables.DesktopPresentPath)] = new(
+            ["VulkanSwapchain", "DxgiFlipModel"]),
+        [nameof(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath)] = new(
+            Enum.GetNames<EZeroReadbackMaterialDrawPath>(),
+            ["FullBucketScan", "ActiveBucketList"]),
+        [nameof(XREngineEnvironmentVariables.AdvancedRenderPipelineMode)] = new(
+            Enum.GetNames<EAdvancedRenderPipelineMode>()),
+        [nameof(XREngineEnvironmentVariables.AdvancedShadingDebugView)] = new(
+            [
+                "Disabled",
+                "DirectDiffuse",
+                "DirectSpecular",
+                "Emissive",
+                "FroxelOccupancy",
+                "ShadowMask",
+                "ReconstructedNormals",
+                "Roughness",
+                "Metallic",
+                "ShadowFallbackReason",
+                "AmbientOcclusion",
+                "MeshletId",
+            ],
+            AcceptsNumericEnumValues: true),
+        [nameof(XREngineEnvironmentVariables.CollectVisibleLatePolicy)] = new(
+            ["BlockUntilFresh", "ReusePreviousVisibility"],
+            ["block", "fresh", "reuse", "stale"]),
+        [nameof(XREngineEnvironmentVariables.CpuSceneCullingStructure)] = new(
+            Enum.GetNames<ECpuSceneCullingStructure>()),
+        [nameof(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy)] = new(
+            Enum.GetNames<EMeshSubmissionStrategy>()),
+        [nameof(XREngineEnvironmentVariables.FpsTextBatchedDebugMode)] = new(
+            [
+                "None",
+                "SolidGlyphQuads",
+                "AtlasUv",
+                "HardClipSpaceQuad",
+                "AtlasCoverage",
+                "InstanceColor",
+                "InstanceAlpha",
+            ],
+            AcceptsNumericEnumValues: true),
+        [nameof(XREngineEnvironmentVariables.GcLatencyMode)] = new(
+            Enum.GetNames<GCLatencyMode>()),
+        [nameof(XREngineEnvironmentVariables.InteractiveResizeStrategy)] = new(
+            [
+                "Default",
+                "GlfwRefreshCallback",
+                "GlfwResizeCallbackRender",
+                "SdlBackend",
+                "Win32ModalLoopTimer",
+                "EngineBorderlessResize",
+            ],
+            [
+                "glfw-refresh",
+                "glfwrefresh",
+                "glfw-resize",
+                "glfwresize",
+                "glfwresizecallback",
+                "sdl",
+                "win32",
+                "win32-timer",
+                "win32timer",
+                "borderless",
+                "engineborderless",
+            ]),
+        [nameof(XREngineEnvironmentVariables.MemoryProfile)] = new(
+            Enum.GetNames<EngineMemoryProfile>()),
+        [nameof(XREngineEnvironmentVariables.MeshletStandaloneCookedCacheMode)] = new(
+            ["Load", "Publish"]),
+        [nameof(XREngineEnvironmentVariables.NetMode)] = new(
+            ["Server", "Client", "Local"]),
+        [nameof(XREngineEnvironmentVariables.NetworkingPoseRole)] = new(
+            ["Server", "SendingClient", "ReceivingClient"],
+            ["sender", "sending", "receiver", "receiving"]),
+        [nameof(XREngineEnvironmentVariables.OcclusionCullingMode)] = new(
+            Enum.GetNames<EOcclusionCullingMode>()),
+        [nameof(XREngineEnvironmentVariables.OpenXrEyeResolutionPreset)] = new(
+            ["RuntimeRecommended", "ValveIndex", "QuestPro", "BigscreenBeyond2", "Custom"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionPreset)] = new(
+            ["RuntimeRecommended", "ValveIndex", "QuestPro", "BigscreenBeyond2", "Custom"]),
+        [nameof(XREngineEnvironmentVariables.OpenXrMeshCohort)] = new(
+            ["1", "0", "witness"]),
+        [nameof(XREngineEnvironmentVariables.OpenXrRenderPacingMode)] = new(
+            ["InRenderCallback", "PostRenderCallback", "DedicatedThread", "CollectVisibleThread"]),
+        [nameof(XREngineEnvironmentVariables.OpenXrSmokeLifecycleFaultStage)] = new(
+            ["RetiredGenerationCapacity", "PostDetachReplacementFailure", "LossPending"]),
+        [nameof(XREngineEnvironmentVariables.OpenXrStrictSpsFailureStage)] = new(
+            ["None", "Capability", "Target", "Recording", "LifetimeValidation", "Submit", "Publish"]),
+        [nameof(XREngineEnvironmentVariables.PhysicsDebugPreset)] = new(
+            ["Disabled", "Shapes", "Contacts", "Joints", "Simulation", "All"],
+            ["shapes-only", "simulation-meshes"]),
+        [nameof(XREngineEnvironmentVariables.ProfileMode)] = new(
+            ["Diagnostics", "DevelopmentProfile", "CleanProfile", "ReleaseBenchmark"]),
+        [nameof(XREngineEnvironmentVariables.ProfileCacheMode)] = new(
+            ["Cold", "Warm"]),
+        [nameof(XREngineEnvironmentVariables.ShaderCacheMode)] = new(
+            ["Cold", "Warm"]),
+        [nameof(XREngineEnvironmentVariables.TextureCacheMode)] = new(
+            ["Cold", "Warm"]),
+        [nameof(XREngineEnvironmentVariables.RenderWorkerQos)] = new(
+            Enum.GetNames<ERenderWorkerQos>()),
+        [nameof(XREngineEnvironmentVariables.TextureCookCompression)] = new(
+            ["None", "Bc7", "Bcn"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestRenderApi)] = new(
+            Enum.GetNames<ERenderLibrary>()),
+        [nameof(XREngineEnvironmentVariables.UnitTestRenderPipeline)] = new(
+            ["DefaultRenderPipeline", "AdvancedRenderPipeline", "DebugOpaqueRenderPipeline", "CustomRenderPipeline"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode)] = new(
+            ["Inline", "WorkerRecord", "SeparateDomain"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestVrDesktopView)] = new(
+            ["FirstPerson", "Spectator", "EditorCamera", "TextureOutput"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestVrFoveationMode)] = new(
+            ["Off", "Fixed", "EyeTracked", "RuntimePreferred"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestVrFoveationQualityPreset)] = new(
+            ["Conservative", "Balanced", "Aggressive"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestVrMirrorMode)] = new(
+            ["Off", "BlitSubmittedEye", "CyclopeanReconstruct", "LowRatePreview", "FullIndependentRender"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestVrMode)] = new(
+            ["Desktop", "Emulated", "MonadoOpenXR", "OpenVR", "OpenXR"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestVrRenderPipeline)] = new(
+            ["Default", "Advanced", "Rvc"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestVrRvcPipelineMode)] = new(
+            ["Off", "ForwardPlusOracle", "VisibilityOnlyDebug", "MaterialCache"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestVrViewRenderMode)] = new(
+            ["SequentialViews", "SinglePassStereo", "ParallelCommandBufferRecording"]),
+        [nameof(XREngineEnvironmentVariables.UnitTestWorldKind)] = new(
+            ["Default", "AudioTesting", "MathIntersections", "MeshEditing", "UberShader", "PhysicsTesting", "NetworkingPose"],
+            ["PhysxTesting"]),
+        [nameof(XREngineEnvironmentVariables.VkCapabilityTier)] = new(
+            ["Vulkan13Production", "Vulkan14Production", "Vulkan14Experimental"],
+            ["Vulkan14OptInBaseline"]),
+        [nameof(XREngineEnvironmentVariables.VkDescriptorBackend)] = new(
+            ["DescriptorSets", "DescriptorIndexing", "DescriptorHeap"]),
+        [nameof(XREngineEnvironmentVariables.VkFoveationBackend)] = new(
+            ["Off", "FragmentShadingRate", "FragmentDensityMap"]),
+        [nameof(XREngineEnvironmentVariables.VkObsHook)] = new(
+            ["Auto", "Disable", "Require"],
+            ["default", "1", "true", "on", "enable", "enabled", "disabled", "0", "false", "off", "required", "strict"]),
+        [nameof(XREngineEnvironmentVariables.VkProgramBindingBackend)] = new(
+            ["PipelineObjects", "ShaderObjects"]),
+        [nameof(XREngineEnvironmentVariables.VkRayTracingBackend)] = new(
+            ["Off", "RayTracingPipeline", "RayQuery"]),
+        [nameof(XREngineEnvironmentVariables.VkRenderTargetMode)] = new(
+            Enum.GetNames<EVulkanRenderTargetMode>(),
+            ["dynamic", "dynamic-rendering", "legacy", "renderpass", "render-pass", "legacy-render-pass"]),
+        [nameof(XREngineEnvironmentVariables.VulkanBindlessMaterialMode)] = new(
+            ["Auto", "Disabled", "Required", "Diagnostics"]),
+        [nameof(XREngineEnvironmentVariables.VulkanDescriptorSignatureEpoch)] = new(
+            ["0", "1", "witness"]),
+        [nameof(XREngineEnvironmentVariables.VulkanDiagnosticPreset)] = new(
+            ["Off", "StandardValidation", "SyncValidation", "GpuAssisted", "BestPractices", "CrashDiagnostics", "RenderDocFriendly"]),
+        [nameof(XREngineEnvironmentVariables.VulkanPresentationProfile)] = new(
+            ["Stable", "LowLatency", "Uncapped", "FrameGeneration"]),
+        [nameof(XREngineEnvironmentVariables.VulkanTransientAttachmentMode)] = new(
+            ["Baseline", "Analyze", "ProofGated"]),
+        [nameof(XREngineEnvironmentVariables.VkNativeShadingRoot)] = new(
+            ["Immediate", "BufferDeviceAddress"]),
+        [nameof(XREngineEnvironmentVariables.WorldMode)] = new(
+            ["Default", "UnitTesting"]),
+        [nameof(XREngineEnvironmentVariables.WindowPumpHost)] = new(
+            ["off", "sdl-prototype"],
+            ["0", "false", "disabled", "1", "sdl"]),
+        [nameof(XREngineEnvironmentVariables.AotParity)] = new(
+            ["off", "warn", "error"],
+            ["0", "1", "warning", "2", "throw"]),
+        [nameof(XREngineEnvironmentVariables.FbxLog)] = new(
+            ["off", "errors", "warnings", "info", "verbose"],
+            ["0", "false", "none", "error", "warn", "warning", "1", "on", "true", "trace", "debug", "all"]),
+    };
     private static readonly HashSet<string> SensitiveFields =
     [
         nameof(XREngineEnvironmentVariables.OpenAiApiKey),
@@ -85,7 +263,8 @@ public static class XREngineEnvironmentVariableCatalog
         RuntimeEnvironmentCategory category = ResolveCategory(fieldName, name);
         bool diagnostic = IsDiagnosticOrValidation(fieldName, category);
         bool downgrade = IsDowngradeOverride(fieldName);
-        RuntimeEnvironmentValueKind valueKind = ResolveValueKind(fieldName, name);
+        EnumValueSpecs.TryGetValue(fieldName, out EnumValueSpec enumSpec);
+        RuntimeEnvironmentValueKind valueKind = ResolveValueKind(fieldName, name, enumSpec.AllowedValues is not null);
         RuntimeEnvironmentApplyMode applyMode = ResolveApplyMode(fieldName, category, diagnostic);
         string defaultBehavior = ResolveDefaultBehavior(fieldName, diagnostic, downgrade);
         return new(
@@ -96,13 +275,17 @@ public static class XREngineEnvironmentVariableCatalog
             applyMode,
             diagnostic,
             downgrade,
-            defaultBehavior);
+            defaultBehavior,
+            enumSpec.AllowedValues,
+            enumSpec.AcceptedAliases,
+            enumSpec.AcceptsNumericEnumValues);
     }
 
     private static RuntimeEnvironmentCategory ResolveCategory(string fieldName, string name)
     {
         if (fieldName is nameof(XREngineEnvironmentVariables.Path) or
-            nameof(XREngineEnvironmentVariables.ContinuousIntegration) ||
+            nameof(XREngineEnvironmentVariables.ContinuousIntegration) or
+            nameof(XREngineEnvironmentVariables.BrowserPublishSingleMsBuildNode) ||
             fieldName.StartsWith("Dotnet", StringComparison.Ordinal) ||
             fieldName.StartsWith("MsBuild", StringComparison.Ordinal))
         {
@@ -203,16 +386,48 @@ public static class XREngineEnvironmentVariableCatalog
         return RuntimeEnvironmentCategory.Rendering;
     }
 
-    private static RuntimeEnvironmentValueKind ResolveValueKind(string fieldName, string name)
+    private static RuntimeEnvironmentValueKind ResolveValueKind(
+        string fieldName,
+        string name,
+        bool hasAllowedValues)
     {
         if (SensitiveFields.Contains(fieldName))
             return RuntimeEnvironmentValueKind.Secret;
 
-        if (fieldName is nameof(XREngineEnvironmentVariables.VulkanRenderBenchGpuCalibration) or
-            nameof(XREngineEnvironmentVariables.VulkanRenderBenchPerformanceQuery))
+        if (hasAllowedValues)
+            return RuntimeEnvironmentValueKind.Enum;
+
+        if (fieldName is nameof(XREngineEnvironmentVariables.VulkanRenderBenchUnifiedImageLayouts) or
+            nameof(XREngineEnvironmentVariables.VulkanRenderBenchGpuCalibration) or
+            nameof(XREngineEnvironmentVariables.VulkanRenderBenchPerformanceQuery) or
+            nameof(XREngineEnvironmentVariables.DesktopRenderUncapped) or
+            nameof(XREngineEnvironmentVariables.EditorNormalGpuPriority) or
+            nameof(XREngineEnvironmentVariables.SlangPilots) or
+            nameof(XREngineEnvironmentVariables.BrowserPublishSingleMsBuildNode) or
+            nameof(XREngineEnvironmentVariables.ManagedClientConfigDeleteAfterRead) or
+            nameof(XREngineEnvironmentVariables.ModelMeshletCache) or
+            nameof(XREngineEnvironmentVariables.PhysicsChainTestVertexEffects) or
+            nameof(XREngineEnvironmentVariables.ValidateGpuRecordLayouts) or
+            nameof(XREngineEnvironmentVariables.AdvancedGeometryPrepack) or
+            nameof(XREngineEnvironmentVariables.AdvancedPreparedGate) or
+            nameof(XREngineEnvironmentVariables.AdvancedPreparedGateVerify) or
+            nameof(XREngineEnvironmentVariables.AdvancedTypedPostProcessPublishers) or
+            nameof(XREngineEnvironmentVariables.S13aPublicationTelemetry) or
+            nameof(XREngineEnvironmentVariables.UnitTestVrPawn) or
+            nameof(XREngineEnvironmentVariables.UnitTestUseOpenXr) or
+            nameof(XREngineEnvironmentVariables.UnitTestSceneOnlyVrPawn) or
+            nameof(XREngineEnvironmentVariables.UnitTestPreviewVrStereoViews) or
+            nameof(XREngineEnvironmentVariables.UnitTestAllowDesktopEditingInVr) or
+            nameof(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr) or
+            nameof(XREngineEnvironmentVariables.UnitTestVrRvcQuadView) or
+            nameof(XREngineEnvironmentVariables.UnitTestVrFoveationRequireRequested))
             return RuntimeEnvironmentValueKind.Boolean;
 
-        if (fieldName is nameof(XREngineEnvironmentVariables.Path) ||
+        if (fieldName is nameof(XREngineEnvironmentVariables.S13aTraceCommandId))
+            return RuntimeEnvironmentValueKind.Integer;
+
+        if (fieldName is nameof(XREngineEnvironmentVariables.Path) or
+            nameof(XREngineEnvironmentVariables.VulkanSdk) ||
             fieldName.EndsWith("Path", StringComparison.Ordinal) ||
             fieldName.EndsWith("Root", StringComparison.Ordinal) ||
             fieldName.EndsWith("Directory", StringComparison.Ordinal) ||
@@ -329,6 +544,9 @@ public static class XREngineEnvironmentVariableCatalog
         RuntimeEnvironmentCategory category,
         bool diagnostic)
     {
+        if (fieldName is nameof(XREngineEnvironmentVariables.DesktopRenderUncapped))
+            return RuntimeEnvironmentApplyMode.Immediate;
+
         if (category == RuntimeEnvironmentCategory.System ||
             category == RuntimeEnvironmentCategory.Startup ||
             fieldName.Contains("EditorSession", StringComparison.Ordinal) ||
@@ -338,6 +556,7 @@ public static class XREngineEnvironmentVariableCatalog
             fieldName.Contains("WorkerThread", StringComparison.Ordinal) ||
             fieldName is nameof(XREngineEnvironmentVariables.ReservedForegroundThreads) or
                 nameof(XREngineEnvironmentVariables.AllowCpuOversubscription) or
+                nameof(XREngineEnvironmentVariables.EditorNormalGpuPriority) or
                 nameof(XREngineEnvironmentVariables.PreferLargestCacheCores) or
                 nameof(XREngineEnvironmentVariables.RenderWorkerQos) ||
             fieldName is nameof(XREngineEnvironmentVariables.VulkanCommandChainWorkerCount) ||
@@ -359,7 +578,8 @@ public static class XREngineEnvironmentVariableCatalog
              fieldName.Contains("RayTracingBackend", StringComparison.Ordinal) ||
              fieldName.Contains("FoveationBackend", StringComparison.Ordinal) ||
              fieldName.Contains("ObsHook", StringComparison.Ordinal) ||
-             fieldName is nameof(XREngineEnvironmentVariables.VulkanRenderBenchGpuCalibration) or
+             fieldName is nameof(XREngineEnvironmentVariables.VulkanRenderBenchUnifiedImageLayouts) or
+                 nameof(XREngineEnvironmentVariables.VulkanRenderBenchGpuCalibration) or
                  nameof(XREngineEnvironmentVariables.VulkanRenderBenchPerformanceQuery)))
         {
             return RuntimeEnvironmentApplyMode.RendererRestart;

@@ -7,10 +7,14 @@ namespace XREngine;
 public static class XREngineEnvironmentVariables
 {
     public const string VulkanAdvancedValidationForceUnavailable = "XRE_VK_ADVANCED_FORCE_UNAVAILABLE";
+    public const string VulkanRenderBenchUnifiedImageLayouts = "XRE_VK_RENDER_BENCH_UNIFIED_IMAGE_LAYOUTS";
     public const string VulkanRenderBenchGpuCalibration = "XRE_VK_RENDER_BENCH_GPU_CALIBRATION";
     public const string VulkanRenderBenchPerformanceQuery = "XRE_VK_RENDER_BENCH_PERFORMANCE_QUERY";
     public const string Path = "PATH";
     public const string ContinuousIntegration = "CI";
+    public const string VulkanSdk = "VULKAN_SDK";
+    public const string SlangcPath = "XRE_SLANGC";
+    public const string SlangPilots = "XRE_SLANG_PILOTS";
     public const string MsBuildSdksPath = "MSBuildSDKsPath";
     public const string MsBuildExePath = "MSBUILD_EXE_PATH";
     public const string MsBuildExtensionsPath = "MSBuildExtensionsPath";
@@ -18,6 +22,7 @@ public static class XREngineEnvironmentVariables
     public const string MsBuildToolsPath = "MSBuildToolsPath";
     public const string DotnetRoot = "DOTNET_ROOT";
     public const string DotnetSdkVersion = "DOTNET_SDK_VERSION";
+    public const string BrowserPublishSingleMsBuildNode = "XRE_BROWSER_PUBLISH_SINGLE_MSBUILD_NODE";
 
     public const string OpenAiApiKey = "OPENAI_API_KEY";
     public const string AnthropicApiKey = "ANTHROPIC_API_KEY";
@@ -62,6 +67,9 @@ public static class XREngineEnvironmentVariables
     public const string SessionToken = "XRE_SESSION_TOKEN";
     public const string ManagedWorkerConfigFile = "XRE_MANAGED_WORKER_CONFIG_FILE";
     public const string ManagedClientConfigFile = "XRE_MANAGED_CLIENT_CONFIG_FILE";
+    public const string ManagedClientConfigDeleteAfterRead = "XRE_MANAGED_CLIENT_CONFIG_DELETE_AFTER_READ";
+    public const string DevelopmentTlsSpkiSha256 = "XRE_DEVELOPMENT_TLS_SPKI_SHA256";
+    public const string McpRequestTrace = "XRE_MCP_REQUEST_TRACE";
     public const string UdpAdvertisedPort = "XRE_UDP_ADVERTISED_PORT";
     public const string UdpBindPort = "XRE_UDP_BIND_PORT";
     public const string UdpClientReceivePort = "XRE_UDP_CLIENT_RECEIVE_PORT";
@@ -166,6 +174,12 @@ public static class XREngineEnvironmentVariables
     public const string CookCommonAssetsArchive = "XRE_COOK_COMMONASSETS_ARCHIVE";
     public const string PhysicsDebugPreset = "XRE_PHYSICS_DEBUG_PRESET";
     public const string PhysicsChainBenchmarkRunRoot = "XRE_PHYSICS_CHAIN_BENCHMARK_RUN_ROOT";
+    public const string PhysicsChainTestVertexEffects = "XRE_PHYSICS_CHAIN_TEST_VERTEX_EFFECTS";
+    public const string MeshletStandaloneCookedCacheMode = "XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE";
+    public const string MeshletStandaloneCookedCacheRoot = "XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT";
+    public const string ModelMeshletCache = "XRE_MODEL_MESHLET_CACHE";
+    public const string ValidateGpuRecordLayouts = "XRE_VALIDATE_GPU_RECORD_LAYOUTS";
+    public const string RenderResourceMaterializationFailOnce = "XRE_RENDER_RESOURCE_MATERIALIZATION_FAIL_ONCE";
     public const string OpenXrSmokeFrames = "XRE_SMOKE_FRAMES";
     public const string OpenXrSmokeWarmupFrames = "XRE_SMOKE_WARMUP_FRAMES";
     public const string OpenXrSmokeTimeoutSeconds = "XRE_SMOKE_TIMEOUT_SECONDS";
@@ -244,6 +258,16 @@ public static class XREngineEnvironmentVariables
     public const string CpuSoftwareOcclusion = "XRE_CPU_SOC_OCCLUSION";
 
     public const string AdvancedRenderPipelineMode = "XRE_ADVANCED_RENDER_PIPELINE_MODE";
+    public const string AdvancedGeometryPrepack = "XRE_ADVANCED_GEOMETRY_PREPACK";
+    public const string AdvancedPreparedGate = "XRE_ADVANCED_PREPARED_GATE";
+    public const string AdvancedPreparedGateVerify = "XRE_ADVANCED_PREPARED_GATE_VERIFY";
+    public const string AdvancedScenePublicationDiagnostics = "XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS";
+    public const string S13aPublicationTelemetry = "XRE_S13A_PUBLICATION_TELEMETRY";
+    public const string S13aPublicationTrace = "XRE_S13A_PUBLICATION_TRACE";
+    public const string S13aTraceCommandId = "XRE_S13A_TRACE_COMMAND_ID";
+    public const string HizStageLogging = "XRE_HIZ_STAGE_LOGGING";
+    public const string VkNativeShadingRoot = "XRE_VK_NATIVE_SHADING_ROOT";
+    public const string VulkanBufferRetirementDiagnostics = "XRE_VULKAN_BUFFER_RETIREMENT_DIAGNOSTICS";
     /// <summary>Set to 1 to time the parts of Advanced preparation extraction for each row.</summary>
     public const string AdvancedExtractionSubStageTimers = "XRE_ADVANCED_EXTRACTION_SUBSTAGE_TIMERS";
     /// <summary>Set to 1 to run the full committed-binding check also when the material source witness is unchanged, and to log each mismatch.</summary>

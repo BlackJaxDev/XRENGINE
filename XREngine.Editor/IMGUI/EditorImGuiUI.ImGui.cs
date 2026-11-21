@@ -73,6 +73,7 @@ public static partial class EditorImGuiUI
         private static bool _showEditorPreferencesOverrides;
         private static bool _showUserSettings;
         private static bool _showBuildSettings;
+        private static bool _showRuntimeEnvironment;
         private static bool _showStatePanel;
         private static bool _showPlayerCameras;
         private static bool _showRenderPipelineGraph;
@@ -752,6 +753,11 @@ public static partial class EditorImGuiUI
                 using (Engine.Profiler.Start("UI.DrawBuildSettingsPanel"))
                     DrawBuildSettingsPanel();
             }
+            if (_showRuntimeEnvironment)
+            {
+                using (Engine.Profiler.Start("UI.DrawRuntimeEnvironmentPanel"))
+                    DrawRuntimeEnvironmentPanel();
+            }
             if (_showNetworking)
             {
                 using (Engine.Profiler.Start("UI.DrawNetworkingPanel"))
@@ -951,7 +957,7 @@ public static partial class EditorImGuiUI
             // process and requests a normal window close after the capture, so allow
             // that request to proceed through the regular disposal path.
             if (string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCapture),
+                XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileCapture),
                 "1",
                 StringComparison.OrdinalIgnoreCase))
             {
@@ -1481,6 +1487,7 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Animation Clip Editor", null, ref _showAnimationClipEditor);
                 ImGui.MenuItem("External Texture Browser", null, ref _showExternalTextureBrowser);
                 ImGui.MenuItem("Texture Streaming", null, ref _showTextureStreaming);
+                ImGui.MenuItem("Runtime Environment", null, ref _showRuntimeEnvironment);
                 ImGui.Separator();
                 if (ImGui.MenuItem("Reset Layout"))
                     ResetDockingLayout();
@@ -1560,6 +1567,9 @@ public static partial class EditorImGuiUI
 
             if (ImGui.MenuItem("Effective Settings"))
                 OpenEffectiveSettingsInInspector();
+
+            if (ImGui.MenuItem("Runtime Environment", null, _showRuntimeEnvironment))
+                _showRuntimeEnvironment = !_showRuntimeEnvironment;
 
             ImGui.Separator();
 
