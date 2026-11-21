@@ -68,7 +68,7 @@ public sealed partial class XRRenderPipelineInstance
             $"firstMissingIdentitySequence={package.FirstMissingPrimaryNativeIdentitySequence} " +
             $"firstMissingPrimitive={package.FirstMissingPrimaryNativePrimitiveIndex} " +
             $"firstMissingMesh='{package.FirstMissingPrimaryNativeMeshName ?? "<unnamed>"}' " +
-            $"firstMissingMaterial='{package.FirstMissingPrimaryNativeMaterialName ?? "<unnamed>"}' " +
+            $"firstMissingMaterial='{package.FirstMissingPrimaryNativeMaterial?.Name ?? "<unnamed>"}' " +
             $"canonicalFrame={canonicalFrame.FrameId} " +
             $"canonicalDependencyMatches={canonicalFrame.DependencySignature == package.DependencySignature} " +
             $"packagePublication={package.CanonicalScenePublication.Sequence} {sceneText}",
@@ -93,11 +93,33 @@ public sealed partial class XRRenderPipelineInstance
                 command,
                 package.FirstMissingPrimaryNativePrimitiveIndex,
                 out EAdvancedCanonicalCompatibilityReason reason);
-            return reason.ToString();
+            return reason == EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding &&
+                package.FirstMissingPrimaryNativeMaterial is { } material
+                    ? $"{reason} incompatibility='{DescribeNativeUberIncompatibility(material)}'"
+                    : reason.ToString();
         }
         catch (Exception ex)
         {
             return $"<lookup failed: {ex.GetType().Name}>";
         }
+    }
+
+    /// <summary>
+    /// Encodes a native Uber material again into temporary storage and returns the text reason
+    /// of the encoder. The scene publisher keeps only the compatibility reason code of an
+    /// unsupported draw, and that code (<c>UnsupportedResourceBinding</c>) covers many causes:
+    /// an unknown feature, an unsupported mode or modifier, a parameter value, or a duplicate
+    /// sampler. This method allocates, so call it only from a rate-limited cold report.
+    /// </summary>
+    private static string DescribeNativeUberIncompatibility(XRMaterial material)
+    {
+        if (material.EngineSemantic != EngineMaterialSemanticIdentity.NativeUberV1)
+            return $"not a native Uber material (semantic {material.EngineSemantic})";
+        uint[] words = new uint[NativeUberMaterialSchema.Opaque.RowWordCount];
+        AdvancedGpuResourceBindingSource[] resources =
+            new AdvancedGpuResourceBindingSource[NativeUberMaterialSchema.TextureRoleCount];
+        return NativeUberMaterialSourceEncoder.TryEncode(material, words, resources, out _, out string reason)
+            ? "<encodes now>"
+            : reason;
     }
 }

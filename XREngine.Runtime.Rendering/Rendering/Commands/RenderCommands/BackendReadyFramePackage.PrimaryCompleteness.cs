@@ -36,8 +36,12 @@ public sealed partial class BackendReadyFramePackage
     /// <summary>Gets the mesh name of the first missing primary draw, or null when the mesh has no name.</summary>
     public string? FirstMissingPrimaryNativeMeshName { get; private set; }
 
-    /// <summary>Gets the material name of the first missing primary draw, or null when the material has no name.</summary>
-    public string? FirstMissingPrimaryNativeMaterialName { get; private set; }
+    /// <summary>
+    /// Gets the material of the first missing primary draw, or null when no draw is missing or
+    /// the draw has no material. A diagnostic reader uses it to name the material and to
+    /// encode it again for the exact incompatibility text.
+    /// </summary>
+    public XRMaterial? FirstMissingPrimaryNativeMaterial { get; private set; }
 
     private void ClearPrimaryNativeCompleteness()
     {
@@ -51,7 +55,7 @@ public sealed partial class BackendReadyFramePackage
         FirstMissingPrimaryNativeCommand = null;
         FirstMissingPrimaryNativePrimitiveIndex = -1;
         FirstMissingPrimaryNativeMeshName = null;
-        FirstMissingPrimaryNativeMaterialName = null;
+        FirstMissingPrimaryNativeMaterial = null;
     }
 
     /// <summary>
@@ -150,7 +154,7 @@ public sealed partial class BackendReadyFramePackage
                     FirstMissingPrimaryNativeCommand = mesh;
                     FirstMissingPrimaryNativePrimitiveIndex = primitiveIndex;
                     FirstMissingPrimaryNativeMeshName = firstRenderer?.Mesh?.Name ?? firstRenderer?.Name;
-                    FirstMissingPrimaryNativeMaterialName = material?.Name;
+                    FirstMissingPrimaryNativeMaterial = material;
                 }
             }
         }
