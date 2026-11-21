@@ -67,6 +67,14 @@ namespace XREngine.Components
         // Cursor visibility
         private bool _shouldHideCursor = true;
 
+        // Third-person root-motion steering state
+        private bool _useRootMotionSteering;
+        private bool _strafeMode;
+        private float _keyboardWalkMagnitude = 0.6f;
+        private ThirdPersonSteeringSnapshot _lastThirdPersonSteering;
+
+        public event Action<ThirdPersonSteeringSnapshot>? RootMotionSteeringUpdated;
+
         // Network state tracking (edge-triggered flags reset after capture)
         private bool _networkJumpPressed;
         private bool _networkJumpHeld;
@@ -389,12 +397,110 @@ namespace XREngine.Components
         }
 
         /// <summary>
+        /// When true, grounded WASD and gamepad left-stick inputs publish camera-relative
+        /// steering snapshots for root-motion animation controllers (such as MotionBricks)
+        /// instead of driving horizontal velocity directly on <see cref="CharacterMovement3DComponent"/>.
+        /// Airborne input still forwards to the movement component for air control.
+        /// </summary>
+        public bool UseRootMotionSteering
+        {
+            get => _useRootMotionSteering;
+            set => SetField(ref _useRootMotionSteering, value);
+        }
+
+        /// <summary>
+        /// Enables camera-facing directional strafing when <see cref="UseRootMotionSteering"/> is active.
+        /// </summary>
+        public bool StrafeMode
+        {
+            get => _strafeMode;
+            set => SetField(ref _strafeMode, value);
+        }
+
+        /// <summary>
+        /// Normalized speed magnitude (0..1) emitted for keyboard WASD input when not holding Run.
+        /// </summary>
+        public float KeyboardWalkMagnitude
+        {
+            get => _keyboardWalkMagnitude;
+            set => SetField(ref _keyboardWalkMagnitude, Math.Clamp(value, 0.1f, 1.0f));
+        }
+
+        public ThirdPersonSteeringSnapshot LastThirdPersonSteering => _lastThirdPersonSteering;
+
+        /// <summary>
+        /// Computes camera-relative planar steering (preserving analog thumbstick magnitude)
+        /// from the provided view basis vectors.
+        /// </summary>
+        public ThirdPersonSteeringSnapshot ComputeCameraRelativeSteering(Vector3 forward, Vector3 right)
+        {
+            Vector3 desiredWorld = Vector3.Zero;
+
+            bool keyboardActive = _keyboardMovementInput.X != 0.0f || _keyboardMovementInput.Y != 0.0f;
+            if (keyboardActive)
+            {
+                Vector3 kbDir = forward * _keyboardMovementInput.Y + right * _keyboardMovementInput.X;
+                if (kbDir.LengthSquared() > 1.0e-8f)
+                {
+                    float kbMag = Movement.IsRunning ? 1.0f : _keyboardWalkMagnitude;
+                    desiredWorld += Vector3.Normalize(kbDir) * kbMag;
+                }
+            }
+
+            float stickLenSq = _gamepadMovementInput.LengthSquared();
+            if (stickLenSq > 1.0e-8f)
+            {
+                float stickMag = MathF.Min(1.0f, MathF.Sqrt(stickLenSq));
+                Vector2 stickDir = _gamepadMovementInput / MathF.Sqrt(stickLenSq);
+                Vector3 gpDir = forward * stickDir.Y + right * stickDir.X;
+                if (gpDir.LengthSquared() > 1.0e-8f)
+                    desiredWorld += Vector3.Normalize(gpDir) * stickMag;
+            }
+
+            var worldXZ = new Vector2(desiredWorld.X, desiredWorld.Z);
+            float worldLenSq = worldXZ.LengthSquared();
+            if (worldLenSq > 1.0f)
+                worldXZ /= MathF.Sqrt(worldLenSq);
+
+            float cameraYaw = forward.LengthSquared() > 1.0e-8f
+                ? MathF.Atan2(forward.X, forward.Z)
+                : 0.0f;
+            bool isGrounded = Movement.CharacterController?.IsGrounded
+                ?? (Movement.MovementMode == CharacterMovement3DComponent.EMovementMode.Walking);
+
+            return new ThirdPersonSteeringSnapshot(
+                worldXZ,
+                cameraYaw,
+                _strafeMode,
+                Movement.IsRunning,
+                isGrounded);
+        }
+
+        /// <summary>
         /// Converts accumulated input into movement commands sent to the movement component.
         /// </summary>
         /// <param name="forward">The forward direction on the XZ plane.</param>
         /// <param name="right">The right direction on the XZ plane.</param>
         private void AddMovement(Vector3 forward, Vector3 right)
         {
+            if (_useRootMotionSteering)
+            {
+                ThirdPersonSteeringSnapshot steering = ComputeCameraRelativeSteering(forward, right);
+                _lastThirdPersonSteering = steering;
+                RootMotionSteeringUpdated?.Invoke(steering);
+
+                // Grounded translation is owned by animation root motion; keep direct input for airborne control.
+                if (steering.IsGrounded)
+                {
+                    Movement.SetMovementInput(Vector3.Zero);
+                    return;
+                }
+
+                var airInput = new Vector3(steering.DesiredWorldMoveXZ.X, 0.0f, steering.DesiredWorldMoveXZ.Y);
+                Movement.SetMovementInput(airInput * GamePadMovementInputMultiplier);
+                return;
+            }
+
             bool keyboardMovement = _keyboardMovementInput.X != 0.0f || _keyboardMovementInput.Y != 0.0f;
             bool gamepadMovement = _gamepadMovementInput.X != 0.0f || _gamepadMovementInput.Y != 0.0f;
 

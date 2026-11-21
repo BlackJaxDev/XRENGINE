@@ -15,6 +15,7 @@ namespace XREngine.Components.Movement.Modules
     [MemoryPackUnion(0, typeof(ArcadeMovementModule))]
     [MemoryPackUnion(1, typeof(ModernMovementModule))]
     [MemoryPackUnion(2, typeof(PhysicalMovementModule))]
+    [MemoryPackUnion(3, typeof(RootMotionMovementModule))]
     public abstract partial class MovementModule : XRAsset
     {
         [MemoryPackConstructor]

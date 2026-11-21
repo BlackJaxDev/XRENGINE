@@ -26,6 +26,11 @@ namespace XREngine.Components.Movement
         //    => SceneNode.GetTransformAs<Transform>(true)!;
 
         public event Action? Teleported;
+        public event Action<CharacterMovementPhysicsStepReport>? PhysicsStepCompleted;
+
+        private Vector3 _previousPhysicsFootPosition;
+        private bool _hasPreviousPhysicsFootPosition;
+        private Vector3 _lastSubmittedPlanarVelocity;
 
         private float _maxJumpHeight = 10.0f;
         private Func<Vector3, Vector3>? _subUpdateTick;
@@ -874,6 +879,63 @@ namespace XREngine.Components.Movement
 
             // Drive the transform update via the engine's standard rigid-body sync path.
             RigidBodyTransform.OnPhysicsStepped();
+
+            float stepDt = RuntimePhysicsServices.Current.FixedDeltaSeconds;
+            PublishPhysicsStepFeedback(controller, stepDt > 0.0f ? stepDt : (1.0f / 60.0f));
+        }
+
+        /// <summary>
+        /// Evaluates actual vs requested horizontal displacement for the current physics step
+        /// and notifies root-motion subscribers (such as MotionBricks reconciliation).
+        /// </summary>
+        public CharacterMovementPhysicsStepReport PublishPhysicsStepFeedback(
+            IAbstractCharacterController controller,
+            float deltaTime)
+        {
+            Vector3 up = NormalizedUpDirection;
+            Vector3 footPosition = controller.FootPosition;
+            Vector3 actualDisplacement = _hasPreviousPhysicsFootPosition
+                ? footPosition - _previousPhysicsFootPosition
+                : Vector3.Zero;
+            _previousPhysicsFootPosition = footPosition;
+            _hasPreviousPhysicsFootPosition = true;
+
+            Vector3 actualPlanar = ProjectOntoPlane(actualDisplacement, up);
+            Vector3 requestedPlanar = _movementModule is RootMotionMovementModule rootMotionModule
+                ? rootMotionModule.LastRequestedHorizontalDisplacement
+                : ProjectOntoPlane(_lastSubmittedPlanarVelocity * deltaTime, up);
+
+            float requestedDist = requestedPlanar.Length();
+            float blockedRatio = 0.0f;
+            Vector3 wallNormal = Vector3.Zero;
+            if (requestedDist > 1.0e-4f)
+            {
+                Vector3 requestedDir = requestedPlanar / requestedDist;
+                float progressed = Vector3.Dot(actualPlanar, requestedDir);
+                blockedRatio = 1.0f - Math.Clamp(progressed / requestedDist, 0.0f, 1.0f);
+                if (controller.CollidingSides || blockedRatio > 0.35f)
+                {
+                    Vector3 lost = requestedPlanar - actualPlanar;
+                    if (lost.LengthSquared() > 1.0e-8f)
+                        wallNormal = -Vector3.Normalize(lost);
+                }
+            }
+
+            bool isBlocked = (controller.CollidingSides && blockedRatio > 0.15f) || blockedRatio > 0.35f;
+            Vector3 actualPlanarVelocity = deltaTime > 1.0e-6f ? actualPlanar / deltaTime : Vector3.Zero;
+            var report = new CharacterMovementPhysicsStepReport(
+                footPosition,
+                actualDisplacement,
+                requestedPlanar,
+                actualPlanarVelocity,
+                wallNormal,
+                blockedRatio,
+                isBlocked,
+                controller.IsGrounded,
+                deltaTime);
+
+            PhysicsStepCompleted?.Invoke(report);
+            return report;
         }
 
         private void ResetControllerIfBelowPhysicsPlane(IAbstractCharacterController controller)
@@ -905,6 +967,10 @@ namespace XREngine.Components.Movement
             Velocity = Vector3.Zero;
             LastVelocity = Vector3.Zero;
             Acceleration = Vector3.Zero;
+            _hasPreviousPhysicsFootPosition = false;
+            _lastSubmittedPlanarVelocity = Vector3.Zero;
+            if (_movementModule is RootMotionMovementModule rootMotionModule)
+                rootMotionModule.ClearPendingRootMotion();
             MovementMode = EMovementMode.Falling;
             _jumpElapsed = 0.0f;
             _coyoteTimer = 0.0f;
@@ -937,6 +1003,7 @@ namespace XREngine.Components.Movement
             Vector3 commandValue = MotionInputModel == CharacterMotionInputModel.Velocity
                 ? requestedVelocity
                 : requestedVelocity * dt;
+            _lastSubmittedPlanarVelocity = ProjectOntoPlane(requestedVelocity, NormalizedUpDirection);
             ActiveController.SubmitMotion(new CharacterMotionCommand(
                 commandValue,
                 MotionInputModel,

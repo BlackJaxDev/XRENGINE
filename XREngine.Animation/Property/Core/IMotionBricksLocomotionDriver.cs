@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace XREngine.Animation;
 
 /// <summary>
@@ -38,4 +40,16 @@ public interface IMotionBricksLocomotionDriver : IDisposable
     /// and writes the interpolated humanoid muscles and Body pose into <paramref name="destination"/>.
     /// </summary>
     void AdvanceAndEvaluate(in MotionBricksSteeringInput input, MotionBricksEvaluatedPose destination);
+
+    /// <summary>
+    /// Feeds resolved physics capsule position and wall-blocking feedback back into the
+    /// locomotion runtime so animation root context stays anchored to physical collisions.
+    /// </summary>
+    void ApplyPhysicsRootReconciliation(
+        Vector3 actualFootPosition,
+        Vector3 actualPlanarVelocity,
+        Vector3 wallNormal,
+        bool isBlocked)
+    {
+    }
 }
