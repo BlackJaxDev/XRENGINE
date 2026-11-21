@@ -450,9 +450,15 @@ summary line for each model to `meshlet-cache.log`.
 The Advanced canonical geometry publisher publishes the full hierarchy
 (`AdvancedPublishedMeshletLayout`): the descriptors and vertex indices of every
 level, and in the triangle-word stream of the geometry, after the packed
-triangle words, one cluster record per meshlet (2 words: group, refined group)
-and then one group record per group (8 words: sphere, error, depth, two
-reserved words; floats as bits). The geometry record keeps its GPU layout:
+triangle words, one skin header word, one cluster record per meshlet (2 words:
+group, refined group) and then one group record per group (8 words: sphere,
+error, depth, bone list offset, bone count; floats as bits). The skin header
+holds the offset of the skin tables (relative to the first cluster record), or
+zero for a geometry without them. A skinned payload adds the skin tables of
+`AdvancedClusterSkinTables` after the group records: one cluster skin record
+per meshlet (2 words: bone list offset, bone count) and the bone words (0-based
+utilized-bone indices). A group's bone list is the union of the bones of its
+clusters and of their refined groups, built once per payload. The geometry record keeps its GPU layout:
 `ReservedLayout0` holds the level-0 count (`ClusterLevel0Count`; zero without a
 hierarchy) and `ReservedLayout1` the word offset of the cluster records,
 relative to the geometry's `MeshletTriangleWords` reference, so arena
@@ -476,10 +482,11 @@ largest projected error, in render pixels, that a drawn cluster may have.
   run could draw every level at once.
 - The preparation extractor gives a static draw of a hierarchy geometry the
   full meshlet range (`MeshletCount`). A skinned draw gets it too while
-  `AdvancedSkinnedVirtualGeometry` (`Rendering.SkinnedVirtualGeometry`, off by
-  default, read with the other two settings) is on. It is off by default because
-  layered clothing (stockings over skin) can show the layer under it when the
-  meshes simplify independently. Other skinned draws and
+  `AdvancedSkinnedVirtualGeometry` (`Rendering.SkinnedVirtualGeometry`, on by
+  default, read with the other two settings) is on. The skinned cook locks the
+  vertices where clothing layers touch other skinned meshes, so layered clothing
+  (stockings over skin) does not show the layer under it. A capped A/B on one
+  avatar showed no GPU cost and no visible loss. Other skinned draws and
   every draw while the setting is off keep `DrawMeshletCount`. Other backends never enable the policy, so the OpenGL
   and WebGPU paths keep level 0.
 - The meshlet task stage is compiled with `XR_ADV_CLUSTER_LOD_CUT` (and the
@@ -502,8 +509,28 @@ largest projected error, in render pixels, that a drawn cluster may have.
   against this frame's depth pyramid. Every cluster keeps its own sphere and
   cone for culling; the group sphere is used only for the error test.
 - Directional shadow casters still draw the full-detail canonical index buffer.
-- Skinned draws (`XR_ADV_CLUSTER_LOD_CUT_SKINNED`): the cooked group spheres are
-  bind pose, so every group of a skinned draw uses one distance for the whole
+- Posed bounds are on while `AdvancedSkinnedPosedClusterBounds`
+  (`Rendering.SkinnedPosedClusterBounds`, on by default, read with the other
+  settings) is on; the task stage then also compiles
+  `XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED`. Off makes every skinned draw use one
+  distance and culls no skinned cluster, which is useful to compare or to rule
+  out the posed bounds.
+- Skinned draws (`XR_ADV_CLUSTER_LOD_CUT_SKINNED`) with posed bounds: the cooked
+  group spheres are bind pose. When the GPU deformed the draw this frame (its
+  prepared deformation is active) and the geometry has skin tables, each group
+  uses a posed box: its bind sphere, grown by the blendshape margin, moved by
+  each bone of its bone list (the world-space skin palette rows at
+  `payload.paletteOffset`, visibility set binding 72), with the box around the
+  moved spheres. A linearly blended vertex lies in the convex hull of its bones'
+  moved positions, which the box holds. The projected error uses the distance
+  from the nearer eye to the box and the largest bone scale. A group's bone list
+  holds the lists of the groups below it and the cooked spheres grow from child
+  to parent, so a parent box holds each child box and the cut stays crack free.
+  A posed skinned cluster in the cut also gets the frustum test with the sphere
+  around its own posed box (its own bones). Posed skinned clusters still skip
+  the cone, history and Hi-Z tests.
+- Other skinned draws (no GPU deformation this frame, or no skin tables) use
+  one distance for the whole
   draw: from the nearer eye to the nearer of the draw's two posed bounding
   spheres (the instance record sphere, which the publisher updates when the CPU
   posed bounds change, and visibility candidate words 4 to 7, which
@@ -516,8 +543,14 @@ largest projected error, in render pixels, that a drawn cluster may have.
   distance with errors that grow from child to parent keeps the cut crack free.
   The bound is per draw, so the whole draw refines as its nearest part does.
   The task stage applies the skinned cut only when the payload range holds every
-  level, and an unusable candidate gives level 0. Skinned clusters still skip
-  the frustum, cone, history and Hi-Z tests. Turn the setting off to compare
+  level, and an unusable candidate gives level 0.
+- Clothing layers: the skinned hierarchy cook locks every vertex that lies within
+  4 mm (bind space) of a triangle of another skinned mesh of the same model
+  (`SkinnedLayerContactLocks`, both sides of the layer), so a stocking and the
+  skin under it keep their full detail and the layer order does not change. On
+  the prefab avatar this locks about a third of the skinned vertices and keeps
+  4 to 19 percent of the triangle reduction from 1 to 12 m. Skinned clusters without
+  posed bounds still skip the frustum, cone, history and Hi-Z tests. Turn the setting off to compare
   with full-detail skinned draws while static draws keep the cut.
 - Skinned deformation level of detail (`AdvancedSkinnedDeformationLod`,
   `Rendering.SkinnedDeformationLod`, off by default, read with the other

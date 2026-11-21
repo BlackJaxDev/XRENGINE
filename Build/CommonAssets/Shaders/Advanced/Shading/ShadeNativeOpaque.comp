@@ -128,8 +128,9 @@ void main()
     if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount) return;
 
 #if defined(XR_ADV_NATIVE_SHADING_FAMILY)
-    // A family kernel writes only the pixels of its own family. The standard kernel
-    // also owns uncovered and unresolved pixels. The ownership test comes before the
+    // A family kernel writes only the pixels of its own family. Uncovered and unresolved
+    // pixels belong to the standard family, whose repair dispatch writes them in an overflow
+    // frame; otherwise the background pass owns them. The ownership test comes before the
     // first store, so the standard and Uber passes never overwrite each other.
     uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
     bool covered = identity.x != 0u && identity.x != XR_ADV_VIS_INVALID;
@@ -145,21 +146,20 @@ void main()
         ? XR_ADV_KernelShadesMaterialFamily(materialDense)
         : XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_STANDARD;
     if (!owned) return;
-    // Only an uncovered pixel gets the neutral surface inputs. A covered pixel gets its full
-    // store from the one dispatch that shades it. A tile is in the lists of several kernels,
-    // and those dispatches run without a barrier between them, so a neutral store here for a
-    // pixel of another kernel could overwrite that kernel's surface inputs.
     if (!covered)
     {
-        XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
+        // See the ownership rule below: the repair dispatch is the only writer of its pixels.
+        if (repair)
+            XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
         return;
     }
 #else
     uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
     if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID)
     {
-        // See the family branch: only an uncovered pixel gets the neutral surface inputs.
-        XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
+        // See the ownership rule below: the repair dispatch is the only writer of its pixels.
+        if (repair)
+            XR_ADV_StoreNeutralMaterialSurfaceInputs(pixel, viewIndex);
         return;
     }
 
@@ -167,6 +167,18 @@ void main()
     uint materialDense, kernelDense;
     bool resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
 #endif
+    // Per-texel ownership. The kernel dispatches of one pass run without a barrier between
+    // them, and a tile is in the lists of several kernels (or twice in one kernel's list, with
+    // and without analytical derivatives), so every pixel must have exactly one writer:
+    // - An uncovered pixel: ShadeBackground.comp, which runs before this pass behind a
+    //   barrier, stores its background color and neutral surface inputs. No kernel writes it.
+    // - A covered pixel whose material does not resolve: ShadeBackground.comp stores the
+    //   result that every kernel computed for it (magenta, opacity 1, reactive 1, neutral
+    //   surface inputs, diagnostics "material not resident"). No kernel writes it.
+    // - A covered pixel with a resolved material: only the dispatch of its own kernel, and
+    //   only the membership whose analytical-derivative flag matches that kernel.
+    // The repair dispatch covers the screen once per family, so it keeps every case.
+    if (!repair && !resolved) return;
     if (!repair && resolved && kernelDense != u_Push.kernelIndex) return;
     if (!repair && resolved)
     {

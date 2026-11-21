@@ -49,7 +49,8 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
     uint IndirectArgumentCapacity,
     AdvancedVisibilityFamilyReservation Reservation = default,
     VkBufferHandle MeshletHistoryBuffer = default,
-    ulong MeshletHistoryByteLength = 0u)
+    ulong MeshletHistoryByteLength = 0u,
+    VulkanNativeBufferRange SkinPalettes = default)
 {
     /// <summary>Byte length of one <c>VkDrawIndexedIndirectCommand</c> in the argument streams.</summary>
     internal const uint IndexedIndirectArgumentByteLength = 20u;

@@ -22,6 +22,7 @@ public static class AdvancedVirtualGeometryPolicy
     private static bool _enabled;
     private static bool _skinnedEnabled;
     private static bool _deformationLodEnabled;
+    private static bool _skinnedPosedBounds;
     private static float _pixelThreshold = 1.0f;
 
     /// <summary>
@@ -41,8 +42,8 @@ public static class AdvancedVirtualGeometryPolicy
     /// <summary>
     /// True when skinned meshlet draws also get the cluster cut: <see cref="Enabled"/> and the
     /// skinned setting are both on. The extractor then gives a skinned draw of a cluster hierarchy
-    /// geometry the full meshlet range, and the task stage compiles the skinned cut. The cut of a
-    /// skinned draw uses one distance for every cluster, from the draw's posed bounds.
+    /// geometry the full meshlet range, and the task stage compiles the skinned cut. See
+    /// <see cref="SkinnedPosedBoundsEnabled"/> for how that cut measures distance.
     /// </summary>
     public static bool SkinnedEnabled
     {
@@ -72,6 +73,22 @@ public static class AdvancedVirtualGeometryPolicy
         }
     }
 
+    /// <summary>
+    /// True when <see cref="SkinnedEnabled"/> and the posed-bounds setting are both on. The task
+    /// stage then bounds each cluster group of a GPU-deformed skinned draw by its posed bone box and
+    /// frustum-culls skinned clusters. False: the skinned cut uses one distance per draw, from the
+    /// draw's posed bounds, and culls no skinned cluster.
+    /// </summary>
+    public static bool SkinnedPosedBoundsEnabled
+    {
+        get
+        {
+            if (!_latched)
+                Latch();
+            return SkinnedEnabled && _skinnedPosedBounds;
+        }
+    }
+
     /// <summary>The latched cut threshold, in render pixels of projected error.</summary>
     public static float PixelThreshold
     {
@@ -86,13 +103,15 @@ public static class AdvancedVirtualGeometryPolicy
     /// <summary>
     /// Defines that select the cut variant of the meshlet task stage, or an empty string when the
     /// cut is off. The off variant therefore compiles from the same source text as before.
-    /// <c>XR_ADV_CLUSTER_LOD_CUT_SKINNED</c> extends the cut to skinned meshlet draws.
+    /// <c>XR_ADV_CLUSTER_LOD_CUT_SKINNED</c> extends the cut to skinned meshlet draws, and
+    /// <c>XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED</c> gives that cut posed bone boxes.
     /// </summary>
     public static string TaskPreamble
         => Enabled
             ? "#define XR_ADV_CLUSTER_LOD_CUT 1\n#define XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD " +
               PixelThreshold.ToString("0.0###", CultureInfo.InvariantCulture) + "\n" +
-              (SkinnedEnabled ? "#define XR_ADV_CLUSTER_LOD_CUT_SKINNED 1\n" : string.Empty)
+              (SkinnedEnabled ? "#define XR_ADV_CLUSTER_LOD_CUT_SKINNED 1\n" : string.Empty) +
+              (SkinnedPosedBoundsEnabled ? "#define XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED 1\n" : string.Empty)
             : string.Empty;
 
     private static void Latch()
@@ -107,10 +126,11 @@ public static class AdvancedVirtualGeometryPolicy
             _enabled = RuntimeEngine.Rendering.Settings.AdvancedVirtualGeometry;
             _skinnedEnabled = RuntimeEngine.Rendering.Settings.AdvancedSkinnedVirtualGeometry;
             _deformationLodEnabled = RuntimeEngine.Rendering.Settings.AdvancedSkinnedDeformationLod;
+            _skinnedPosedBounds = RuntimeEngine.Rendering.Settings.AdvancedSkinnedPosedClusterBounds;
             _pixelThreshold = RuntimeEngine.Rendering.Settings.AdvancedVirtualGeometryPixelThreshold;
             _latched = true;
             XREngine.Debug.Rendering(
-                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, skinned {(_enabled && _skinnedEnabled ? "on" : "off")}, skinned deformation level of detail {(_enabled && _skinnedEnabled && _deformationLodEnabled ? "on" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
+                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, skinned {(_enabled && _skinnedEnabled ? "on" : "off")}, skinned posed bounds {(_enabled && _skinnedEnabled && _skinnedPosedBounds ? "on" : "off")}, skinned deformation level of detail {(_enabled && _skinnedEnabled && _deformationLodEnabled ? "on" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
         }
     }
 }

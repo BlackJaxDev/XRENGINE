@@ -698,9 +698,10 @@ public static class MeshletPayloadUtility
     // carries an ownership-validated meshlet payload.
     private const int SharedMeshletCodecVersion = 4;
     // Version 1: a skinned sub-mesh with meshlets gets a cluster hierarchy by default (with its
-    // skinning tables). Part of the cook provenance, so model caches and payload caches that were
+    // skinning tables). Version 2: the cook locks the vertices of skinned meshes that lie on a
+    // clothing layer. Part of the cook provenance, so model caches and payload caches that were
     // cooked before this policy recook once.
-    private const int SkinnedClusterHierarchyPolicyVersion = 1;
+    private const int SkinnedClusterHierarchyPolicyVersion = 2;
 
     /// <summary>Import/cache provenance; runtime compatibility is deliberately separate.</summary>
     public static string CurrentCookProvenanceKey

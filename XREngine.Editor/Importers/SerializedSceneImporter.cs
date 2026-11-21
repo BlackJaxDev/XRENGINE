@@ -34,7 +34,9 @@ internal static partial class SerializedSceneImporter
         sourceDocuments.Clear();
         context.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Converted);
         ValidateComposedModelAnimations(state);
-        return [.. hierarchy.RootEntries.Select(static entry => entry.Node)];
+        SceneNode[] roots = [.. hierarchy.RootEntries.Select(static entry => entry.Node)];
+        AssignConstraintExecutionOrders(roots, state);
+        return roots;
     }
 
     public static SceneNode ImportPrefab(
@@ -163,6 +165,7 @@ internal static partial class SerializedSceneImporter
 
         context.MarkOutcome(normalizedPath, SourceImportConversionOutcome.Converted);
         ValidateComposedModelAnimations(state);
+        AssignConstraintExecutionOrders([rootNode], state);
         rootNode = SelectSerializedSceneRoot(rootNode, sceneRootName);
         AssignFinalMeshletEntityIdentities(rootNode);
         string meshletCookIdentity = ModelCacheSourceIdentityResolver.Resolve(
@@ -940,6 +943,7 @@ internal static partial class SerializedSceneImporter
         var skinnedMeshRenderersByGameObjectId = new Dictionary<long, ParsedSkinnedMeshRenderer>();
         var componentsByFileId = new Dictionary<long, ParsedSourceComponent>();
         var monoBehaviours = new List<ParsedMonoBehaviour>();
+        var nativeConstraints = new List<ParsedNativeConstraint>();
         var prefabInstances = new List<ParsedPrefabInstance>();
         var sceneRootReferences = new List<long>();
         var strippedProxies = new Dictionary<long, ParsedStrippedProxy>();
@@ -970,6 +974,7 @@ internal static partial class SerializedSceneImporter
                 skinnedMeshRenderersByGameObjectId,
                 componentsByFileId,
                 monoBehaviours,
+                nativeConstraints,
                 prefabInstances,
                 sceneRootReferences,
                 strippedProxies);
@@ -1010,6 +1015,7 @@ internal static partial class SerializedSceneImporter
             skinnedMeshRenderersByGameObjectId,
             componentsByFileId,
             monoBehaviours,
+            nativeConstraints,
             prefabInstances,
             sceneRootReferences,
             strippedProxies);
@@ -1030,6 +1036,7 @@ internal static partial class SerializedSceneImporter
         Dictionary<long, ParsedSkinnedMeshRenderer> skinnedMeshRenderersByGameObjectId,
         Dictionary<long, ParsedSourceComponent> componentsByFileId,
         List<ParsedMonoBehaviour> monoBehaviours,
+        List<ParsedNativeConstraint> nativeConstraints,
         List<ParsedPrefabInstance> prefabInstances,
         List<long> sceneRootReferences,
         Dictionary<long, ParsedStrippedProxy> strippedProxies)
@@ -1092,6 +1099,16 @@ internal static partial class SerializedSceneImporter
                 ParsedMonoBehaviour monoBehaviour = ParseMonoBehaviour(fileId, documentMapping, body, documentOrder, isStripped);
                 monoBehaviours.Add(monoBehaviour);
                 componentsByFileId[fileId] = monoBehaviour;
+                break;
+            case "PositionConstraint":
+            case "RotationConstraint":
+            case "ScaleConstraint":
+            case "ParentConstraint":
+            case "AimConstraint":
+            case "LookAtConstraint":
+                ParsedNativeConstraint nativeConstraint = ParseNativeConstraint(fileId, documentType, documentMapping, documentOrder, isStripped);
+                nativeConstraints.Add(nativeConstraint);
+                componentsByFileId[fileId] = nativeConstraint;
                 break;
             case "PrefabInstance":
                 prefabInstances.Add(ParsePrefabInstance(fileId, documentMapping, documentOrder));
@@ -1569,6 +1586,7 @@ internal static partial class SerializedSceneImporter
         Dictionary<long, ParsedSkinnedMeshRenderer> SkinnedMeshRenderersByGameObjectId,
         Dictionary<long, ParsedSourceComponent> ComponentsByFileId,
         List<ParsedMonoBehaviour> MonoBehaviours,
+        List<ParsedNativeConstraint> NativeConstraints,
         List<ParsedPrefabInstance> PrefabInstances,
         List<long> SceneRootReferences,
         Dictionary<long, ParsedStrippedProxy> StrippedProxies);
@@ -1668,6 +1686,20 @@ internal static partial class SerializedSceneImporter
         SourceReference Script,
         YamlMappingNode SerializedFields,
         string SerializedYaml,
+        bool IsStripped,
+        int DocumentOrder)
+        : ParsedSourceComponent(FileId, GameObjectFileId, Enabled, DocumentOrder);
+
+    /// <summary>
+    /// A native (built-in) constraint component (Position, Rotation, Scale, Parent, Aim, or LookAt constraint).
+    /// The fields stay as YAML until the hierarchy exists, because the source references resolve then.
+    /// </summary>
+    private sealed record ParsedNativeConstraint(
+        long FileId,
+        long GameObjectFileId,
+        bool Enabled,
+        string TypeName,
+        YamlMappingNode Fields,
         bool IsStripped,
         int DocumentOrder)
         : ParsedSourceComponent(FileId, GameObjectFileId, Enabled, DocumentOrder);

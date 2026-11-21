@@ -2907,20 +2907,19 @@ public static partial class RuntimeEngine
                     set => SetField(ref _advancedVirtualGeometry, value);
                 }
 
-                private bool _advancedSkinnedVirtualGeometry;
+                private bool _advancedSkinnedVirtualGeometry = true;
 
                 /// <summary>
                 /// With <see cref="AdvancedVirtualGeometry"/> on, skinned meshlet draws of models cooked
                 /// with a cluster hierarchy also get the cluster cut, with the same
-                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. Until posed cluster bounds exist,
-                /// every cluster of a skinned draw uses one distance, from the draw's posed bounds. Off
-                /// (the default) keeps skinned draws at level 0 while static draws keep the cut. It is off
-                /// by default because layered clothing (for example stockings over skin) can show the
-                /// layer under it when the two meshes simplify independently. Read once with
+                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. On by default. The skinned cook
+                /// locks vertices where clothing layers touch other skinned meshes, so a layer (for
+                /// example stockings over skin) keeps its shape against the mesh under it. Off keeps
+                /// skinned draws at level 0 while static draws keep the cut. Read once with
                 /// <see cref="AdvancedVirtualGeometry"/>.
                 /// </summary>
                 [Category("Advanced")]
-                [Description("With Advanced virtual geometry on, skinned meshlet draws also get the cluster cut (one distance per draw). Off by default. Read once at the first Advanced frame.")]
+                [Description("With Advanced virtual geometry on, skinned meshlet draws also get the cluster cut. On by default. Read once at the first Advanced frame.")]
                 public bool AdvancedSkinnedVirtualGeometry
                 {
                     get => _advancedSkinnedVirtualGeometry;
@@ -2944,6 +2943,26 @@ public static partial class RuntimeEngine
                 {
                     get => _advancedSkinnedDeformationLod;
                     set => SetField(ref _advancedSkinnedDeformationLod, value);
+                }
+
+                private bool _advancedSkinnedPosedClusterBounds = true;
+
+                /// <summary>
+                /// With <see cref="AdvancedSkinnedVirtualGeometry"/> on, chooses how the cluster cut
+                /// of a skinned draw measures distance. On (the default): each cluster group of a
+                /// skinned draw that the GPU deformed this frame is bounded by its own posed box, made
+                /// from its bones' current matrices, so distant parts of the draw get coarser clusters
+                /// and clusters outside the view are culled. Off: every cluster of a skinned draw uses
+                /// one distance, from the nearest point of the draw's bounds, and no skinned cluster is
+                /// culled. Use off to compare or to rule out the posed bounds. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With skinned virtual geometry on, bound each skinned cluster group by its posed bone box (finer distance and frustum culling per cluster). Off uses one distance per skinned draw. On by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedPosedClusterBounds
+                {
+                    get => _advancedSkinnedPosedClusterBounds;
+                    set => SetField(ref _advancedSkinnedPosedClusterBounds, value);
                 }
 
                 private float _advancedVirtualGeometryPixelThreshold = 1.0f;

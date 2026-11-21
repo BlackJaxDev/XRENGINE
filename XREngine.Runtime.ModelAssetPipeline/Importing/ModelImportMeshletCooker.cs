@@ -52,6 +52,8 @@ public static class ModelImportMeshletCooker
         int payloadCount = 0;
         int generatedLodCount = 0;
         ClusterHierarchyTotals hierarchyTotals = default;
+        // Clothing-layer locks of the skinned meshes, computed once on the first skinned cook miss.
+        Dictionary<XRMesh, byte[]>? contactLocks = null;
 
         for (int subMeshIndex = 0; subMeshIndex < ordered.Count; subMeshIndex++)
         {
@@ -86,11 +88,16 @@ public static class ModelImportMeshletCooker
                 ImportedEntityKey entityKey = new(
                     $"{ownerIdentity}/lod:{lodIndex}",
                     isStable: subMesh.ImportedEntityIdentityIsStable);
-                cache?.TryAttach(
+                bool attached = cache?.TryAttach(
                     mesh,
                     entityKey.Value,
                     subMesh.MeshOptimizer.Meshlets,
-                    subMesh.MeshOptimizer.Lods);
+                    subMesh.MeshOptimizer.Lods) ?? false;
+                if (!attached && mesh.HasSkinning && subMesh.MeshOptimizer.Meshlets is { Enabled: true, BuildClusterHierarchy: true })
+                {
+                    contactLocks ??= SkinnedLayerContactLocks.Compute(CollectSkinnedMeshes(ordered));
+                    mesh.SetClusterHierarchyContactLocks(contactLocks.TryGetValue(mesh, out byte[]? locks) ? locks : null);
+                }
                 long cookCountBefore = MeshOptimizerIntegration.MeshletBuildInvocationCount;
                 MeshletPayload payload = mesh.GetOrCreateMeshletPayload(
                     subMesh.MeshOptimizer.Meshlets,
@@ -109,8 +116,10 @@ public static class ModelImportMeshletCooker
                         hierarchyTotals.SkinnedVertices += MeshOptimizerIntegration.LastClusterHierarchyStats.SkinnedVertexCount;
                         hierarchyTotals.MorphLockedVertices += MeshOptimizerIntegration.LastClusterHierarchyStats.MorphLockedVertexCount;
                         hierarchyTotals.NonFiniteCentroids += MeshOptimizerIntegration.LastClusterHierarchyStats.NonFiniteCentroidCount;
+                        hierarchyTotals.ContactLockedVertices += MeshOptimizerIntegration.LastClusterHierarchyStats.ContactLockedVertexCount;
                     }
                 }
+                mesh.SetClusterHierarchyContactLocks(null);
                 lodIndex++;
             }
         }
@@ -148,6 +157,7 @@ public static class ModelImportMeshletCooker
         public long MorphClusters;
         public long SkinnedVertices;
         public long MorphLockedVertices;
+        public long ContactLockedVertices;
         public long NonFiniteCentroids;
         /// <summary>Triangles of the skinned payloads by hierarchy level (index 0 = original geometry).</summary>
         public long[]? SkinnedLevelTriangles;
@@ -243,6 +253,7 @@ public static class ModelImportMeshletCooker
                 $"maxClusterBones={totals.MaxClusterBones} morphClusters={totals.MorphClusters} " +
                 $"skinnedVertices={totals.SkinnedVertices} morphLockedVertices={totals.MorphLockedVertices} " +
                 $"lockedShare={(totals.SkinnedVertices == 0 ? 0.0 : (double)totals.MorphLockedVertices / totals.SkinnedVertices):P1} " +
+                $"contactLockedVertices={totals.ContactLockedVertices} " +
                 $"nonFiniteCentroids={totals.NonFiniteCentroids} levelTriangles={levelTriangles} (vertex counts only for payloads cooked in this process)");
 
             // The share of the skinned source vertices that an instance clamped at each level deforms.
@@ -297,6 +308,21 @@ public static class ModelImportMeshletCooker
             "meshlet-cache.log",
             $"[MeshletCache] file={Path.GetFileName(cache.FilePath)} stored={cache.StoredCount} hits={cache.HitCount} " +
             $"misses={cache.MissCount} rejected={cache.RejectedCount} written={written}{(failure is null ? string.Empty : $" writeFailure={failure}")}");
+    }
+
+    /// <summary>
+    /// Returns the distinct meshes of every LOD of the skinned sub-meshes, the surfaces that
+    /// <see cref="SkinnedLayerContactLocks"/> compares for clothing layers.
+    /// </summary>
+    private static List<XRMesh> CollectSkinnedMeshes(List<SubMesh> subMeshes)
+    {
+        var meshes = new List<XRMesh>();
+        var seen = new HashSet<XRMesh>(ReferenceEqualityComparer.Instance);
+        foreach (SubMesh subMesh in subMeshes)
+            foreach (SubMeshLOD lod in subMesh.LODs)
+                if (lod.Mesh is { HasSkinning: true } mesh && seen.Add(mesh))
+                    meshes.Add(mesh);
+        return meshes;
     }
 
     /// <summary>
