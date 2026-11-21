@@ -260,7 +260,11 @@ that started it), a recovered renderer (`RendererRecovered`), or a terminal paus
 (`TerminalTransition`). When no desktop frame completes for 2 seconds, the
 frame loop also writes `PresentStalled` (at most every 5 seconds) with the
 reason, failure stage, recording deferral, and readiness retry of the latest
-attempt, and `PresentResumed` when a frame completes again. A frame that is
+attempt, and `PresentResumed` when a frame completes again. When the stall
+comes from a desktop frame that recorded no terminal swapchain write, a
+`missingTerminalWrite:` line follows. It has the operation, draw, blit, deferred,
+and dropped counts, the first recording failure, and the last eight operations of
+the first such frame in this stall. A frame that is
 retried each callback raises no failure, so these lines are the only Release
 record of such a stall. These are cold-path records. Use the file to find the
 failed stage when a Release session stops presenting.

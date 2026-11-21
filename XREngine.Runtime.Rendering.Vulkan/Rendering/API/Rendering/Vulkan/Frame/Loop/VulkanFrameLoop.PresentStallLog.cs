@@ -28,7 +28,9 @@ internal sealed partial class VulkanFrameLoop
     /// that is rejected and retried each callback (for example a readiness retry or a deferred
     /// recording) never raises a failure, so without this record a Release session that stops
     /// presenting shows no cause. The line names the reason, failure stage, and readiness retry
-    /// of the latest attempt. A completed frame after a stall writes <c>PresentResumed</c>.
+    /// of the latest attempt. When the stall comes from a frame that recorded no terminal write,
+    /// the line also has the operation summary that <see cref="VulkanCommandRuntime"/> captured
+    /// for this stall. A completed frame after a stall writes <c>PresentResumed</c>.
     /// </summary>
     /// <remarks>
     /// The per-attempt cost is one timestamp read and a few field writes. Strings are formatted
@@ -50,6 +52,8 @@ internal sealed partial class VulkanFrameLoop
                     $"attemptsWithoutPresent={_desktopAttemptsWithoutPresent} " +
                     $"stalledMs={PresentStallMilliseconds(_lastCompletedDesktopFrameTimestamp, now):F0}");
             }
+            if (_lastPresentStallReportTimestamp != 0)
+                VulkanCommandRuntime.RearmMissingTerminalWriteCapture();
             _lastCompletedDesktopFrameTimestamp = now;
             _lastPresentStallReportTimestamp = 0;
             _desktopAttemptsWithoutPresent = 0;
@@ -65,6 +69,13 @@ internal sealed partial class VulkanFrameLoop
             now - _lastPresentStallReportTimestamp < PresentStallRepeatTicks)
             return;
 
+        // The terminal write summary is captured once per rearm. When the stored summary is
+        // older than this stall, rearm the capture so that the next stall line has current data.
+        string? terminalWrite = VulkanCommandRuntime.GetMissingTerminalWriteCapturedSince(
+            _lastCompletedDesktopFrameTimestamp);
+        if (_lastPresentStallReportTimestamp == 0 && terminalWrite is null)
+            VulkanCommandRuntime.RearmMissingTerminalWriteCapture();
+
         _lastPresentStallReportTimestamp = now;
         VulkanPresentNowReadinessRetry retry = attempt.PresentNowReadinessRetry;
         string retryText = retry.IsValid
@@ -78,7 +89,8 @@ internal sealed partial class VulkanFrameLoop
             $"outcome={outcome} reason={attempt.Reason} failureKind={failure.Kind} " +
             $"failureStage={failure.Stage} native={failure.NativeResult} " +
             $"exception={failure.ExceptionType ?? "<none>"} detail={failure.Detail ?? "<none>"} " +
-            $"recordingDeferral={attempt.RecordingDeferralDetail ?? "<none>"} {retryText}");
+            $"recordingDeferral={attempt.RecordingDeferralDetail ?? "<none>"} {retryText}" +
+            (terminalWrite is null ? string.Empty : $"{Environment.NewLine}  missingTerminalWrite: {terminalWrite}"));
     }
 
     private static double PresentStallMilliseconds(long startTimestamp, long endTimestamp)
