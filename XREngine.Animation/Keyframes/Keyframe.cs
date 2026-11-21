@@ -53,6 +53,9 @@ namespace XREngine.Animation
             set => _authoredFrameIndex = value < 0 ? -1 : value;
         }
 
+        // Next and Prev are read-only in every keyframe type. Only the track changes the links, through UpdateLink.
+        // The reflection and YAML serializers write every property that has a setter. A Next or Prev setter makes them
+        // write the whole list with each key, and the read sets links on keys that are only partly read.
         public Keyframe? Next => _next;
         public Keyframe? Prev => _prev;
         public bool IsFirst => _prev is null;

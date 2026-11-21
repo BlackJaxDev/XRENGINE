@@ -4,16 +4,8 @@
     {
         public string? Value { get; set; }
         public override Type ValueType => typeof(string);
-        public new StringKeyframe? Next
-        {
-            get => _next as StringKeyframe;
-            set => SetField(ref _next, value);
-        }
-        public new StringKeyframe? Prev
-        {
-            get => _prev as StringKeyframe;
-            set => SetField(ref _prev, value);
-        }
+        public new StringKeyframe? Next => _next as StringKeyframe;
+        public new StringKeyframe? Prev => _prev as StringKeyframe;
 
         public override void ReadFromString(string str)
         {
