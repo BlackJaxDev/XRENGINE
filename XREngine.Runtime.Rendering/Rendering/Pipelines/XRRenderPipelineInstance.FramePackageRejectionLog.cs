@@ -51,7 +51,8 @@ public sealed partial class XRRenderPipelineInstance
         BackendReadyFramePackageIdentity identity = package.Identity;
         BackendReadyCanonicalFrameRecord canonicalFrame = package.CanonicalFrame;
         string sceneText = RenderState.WorldSnapshot is RenderWorldSnapshot world
-            ? $"scenePublication={world.GpuScene.AdvancedScenePublication.Sequence} " +
+            ? $"compatibilityReason={DescribeFirstMissingCompatibility(world.GpuScene, package)} " +
+              $"scenePublication={world.GpuScene.AdvancedScenePublication.Sequence} " +
               $"scenePublicationValid={world.GpuScene.AdvancedScenePublication.IsValid} " +
               $"scenePublicationRejected={world.GpuScene.AdvancedPublicationRejected} " +
               $"scenePublicationFaulted={world.GpuScene.AdvancedPublicationFaulted} " +
@@ -65,9 +66,38 @@ public sealed partial class XRRenderPipelineInstance
             $"consumedCollect={consumedCollectGeneration} requiredCollect={requiredCollectGeneration} " +
             $"missingPrimary={package.MissingPrimaryNativeOwnerCount} " +
             $"firstMissingIdentitySequence={package.FirstMissingPrimaryNativeIdentitySequence} " +
+            $"firstMissingPrimitive={package.FirstMissingPrimaryNativePrimitiveIndex} " +
+            $"firstMissingMesh='{package.FirstMissingPrimaryNativeMeshName ?? "<unnamed>"}' " +
+            $"firstMissingMaterial='{package.FirstMissingPrimaryNativeMaterialName ?? "<unnamed>"}' " +
             $"canonicalFrame={canonicalFrame.FrameId} " +
             $"canonicalDependencyMatches={canonicalFrame.DependencySignature == package.DependencySignature} " +
             $"packagePublication={package.CanonicalScenePublication.Sequence} {sceneText}",
             failureReason ?? "<none>");
+    }
+
+    /// <summary>
+    /// Reads the canonical compatibility result that the last whole-scene plan kept for the
+    /// first missing primary draw. <c>MissingCanonicalSource</c> means the plan did not contain
+    /// the command. <c>None</c> means the plan accepted the geometry and the material, so the
+    /// draw is missing for a different reason. The collect thread writes the plan, so the
+    /// result can come from a newer plan than the package. An exception from that race is
+    /// reported as text, because this report must not stop the frame.
+    /// </summary>
+    private static string DescribeFirstMissingCompatibility(GPUScene scene, BackendReadyFramePackage package)
+    {
+        if (package.FirstMissingPrimaryNativeCommand is not { } command)
+            return "<no missing command>";
+        try
+        {
+            scene.TryGetCanonicalCompatibilityReason(
+                command,
+                package.FirstMissingPrimaryNativePrimitiveIndex,
+                out EAdvancedCanonicalCompatibilityReason reason);
+            return reason.ToString();
+        }
+        catch (Exception ex)
+        {
+            return $"<lookup failed: {ex.GetType().Name}>";
+        }
     }
 }
