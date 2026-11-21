@@ -183,7 +183,10 @@ successor asset.
   package makes the pipeline draw only the screen-space UI, so a rejection that repeats every
   frame stops all scene output. The line has the validator failure, or for the Advanced
   pipeline the first enabled primary draw without an exact canonical submission (pass, stable
-  key, reason, and the publication sequence of its draw identity). It also has the frame and
+  key, reason, submesh index, mesh and material names, and the publication sequence of its draw
+  identity). It also has the compatibility reason that the last whole-scene plan kept for that
+  draw. `MissingCanonicalSource` means that the plan did not contain the command, and `None`
+  means that the plan accepted its geometry and material. The line also has the frame and
   collect generations and the canonical publication of the package and of the scene.
 - A retired generation stays alive until its completion receipt signals. The
   retired-generation count limit is soft. Unsignaled generations are kept, and
