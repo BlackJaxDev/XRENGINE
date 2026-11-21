@@ -1797,7 +1797,7 @@ namespace XREngine
                 new ShaderInt(0, "_MainHueShiftColorSpace"),
                 new ShaderFloat(0.0f, "_MainHueShiftReplace"),
 
-                // Generic model imports use Realistic lighting. Only Poiyomi conversions keep the
+                // Generic model imports use Realistic lighting. Only source toon conversions keep the
                 // lighting mode of the source material (see SourceToonEnumMapper.LightingMode).
                 new ShaderInt(ImportedUberLightingMode, "_LightingMode"),
                 new ShaderInt(0, "_LightingColorMode"),

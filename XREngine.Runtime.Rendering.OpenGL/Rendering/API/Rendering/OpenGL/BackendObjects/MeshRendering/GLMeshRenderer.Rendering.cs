@@ -660,7 +660,7 @@ namespace XREngine.Rendering.OpenGL
                     material.SetUniforms(mat);
                     if (uniformSourceMaterial is not null)
                     {
-                        // Keep Poiyomi vertex-effect parameters out of the lightweight
+                        // Keep source toon vertex-effect parameters out of the lightweight
                         // fallback program. Only the source render state and the fragment
                         // inputs needed for a stable textured preview are transferred.
                         Renderer.ApplyRenderParameters(bindingMaterial.Data.RenderOptions);
