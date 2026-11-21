@@ -544,6 +544,16 @@ still invalidating when source text, path, includes, or snippets change.
 `ShaderUiManifest` is parsed once, then the builder caches derived data in a
 `ConditionalWeakTable<ShaderUiManifest, ManifestDerivedData>`.
 
+`XRShader.TryGetUiManifest` keeps the parsed manifest with the file and
+directory dependencies of the resolved source. A cache hit does not read these
+dependencies from disk again while two conditions are true: no shader source
+notification (`ShaderSourceDependencyIndex.NotificationsPublished`: hot reload,
+a watched file change, or a snippet change) arrived after the last disk check,
+and the last disk check is less than one second old. The Advanced scene
+publisher calls this method for each Uber material of a full plan, so the disk
+checks were a large part of the plan time. A file edit that no watcher reports
+is found at the next call after one second.
+
 Cached data includes:
 
 - known conditional macros from pipeline axes and feature guards

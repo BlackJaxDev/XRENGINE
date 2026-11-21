@@ -41,6 +41,19 @@ namespace XREngine.Rendering
         private string? _uiManifestCacheText;
         private long _uiManifestSnippetVersion;
         private bool _uiManifestHostFileAccess;
+        // The shader-source notification count and the Stopwatch timestamp of the last time the cached
+        // manifest dependencies were read from disk. TryGetUiManifest reads the disk again only when a
+        // notification arrived after that, or when UiManifestDependencyRecheckTicks passed.
+        private long _uiManifestVerifiedNotifications;
+        private long _uiManifestVerifiedTimestamp;
+
+        /// <summary>
+        /// The longest time that TryGetUiManifest returns a cached manifest without reading its file
+        /// dependencies from disk again (one second). A shader source notification (hot reload, a watched
+        /// file change, or a snippet change) makes the next call read the disk at once. This interval
+        /// covers a file edit that no watcher reports.
+        /// </summary>
+        private static readonly long UiManifestDependencyRecheckTicks = System.Diagnostics.Stopwatch.Frequency;
         private long _optimizedSourceSnippetVersion;
         private bool _optimizedSourceHostFileAccess;
         private long _sourceRevision;
@@ -437,6 +450,8 @@ namespace XREngine.Rendering
             ShaderSourceFileDependency[]? cachedDependencies = null;
             ShaderSourceDirectoryDependency[]? cachedDirectoryDependencies = null;
             ShaderSourceProviderOwner cachedOwner = default;
+            long notifications = ShaderSourceDependencyIndex.NotificationsPublished;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
             lock (_resolvedSourceCacheLock)
             {
                 if (_uiManifestCache is not null &&
@@ -446,6 +461,18 @@ namespace XREngine.Rendering
                     _uiManifestHostFileAccess == hostFileAccess &&
                     _uiManifestOwner.Equals(owner))
                 {
+                    // The cached dependencies were read from disk a short time ago, and no shader source
+                    // notification arrived after that. A disk read now gives the same result, so return the
+                    // cached manifest. The Advanced scene publisher calls this method for each Uber material
+                    // of a full plan, and the file system calls were most of the plan time.
+                    if (_uiManifestVerifiedNotifications == notifications &&
+                        now - _uiManifestVerifiedTimestamp < UiManifestDependencyRecheckTicks &&
+                        ShaderSourceResolver.IsOwnerCurrent(owner))
+                    {
+                        manifest = _uiManifestCache;
+                        return true;
+                    }
+
                     cachedManifest = _uiManifestCache;
                     cachedDependencies = _uiManifestDependencies;
                     cachedDirectoryDependencies = _uiManifestDirectoryDependencies;
@@ -466,6 +493,8 @@ namespace XREngine.Rendering
                         _uiManifestSnippetVersion == snippetVersion &&
                         _uiManifestHostFileAccess == hostFileAccess)
                     {
+                        _uiManifestVerifiedNotifications = notifications;
+                        _uiManifestVerifiedTimestamp = now;
                         manifest = cachedManifest;
                         return true;
                     }
@@ -492,6 +521,8 @@ namespace XREngine.Rendering
                     _uiManifestOwner = owner;
                     _uiManifestDependencies = resolvedPayload.FileDependencies;
                     _uiManifestDirectoryDependencies = resolvedPayload.SearchRootDependencies;
+                    _uiManifestVerifiedNotifications = notifications;
+                    _uiManifestVerifiedTimestamp = now;
                 }
             }
 
