@@ -906,7 +906,7 @@ public class GpuRenderingBacklogTests
         pipelineSource.ShouldContain("protected void InitializeCommandChain()");
         pipelineSource.ShouldContain("protected void RebuildCommandChain()");
         pipelineSource.ShouldContain("using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())");
-        pipelineSource.ShouldContain("CommandChain = GenerateCommandChain();");
+        pipelineSource.ShouldContain("CommandChain = GenerateChainWithOverlays();");
         pipelineSource.ShouldContain("NotifyCommandChainStructureChanged();");
 
         string pipelineDirectory = Path.Combine(
@@ -917,7 +917,7 @@ public class GpuRenderingBacklogTests
         string[] directAssignments = Directory
             .GetFiles(pipelineDirectory, "*.cs", SearchOption.AllDirectories)
             .Where(static path => !path.EndsWith("XRRenderPipeline.cs", StringComparison.Ordinal))
-            .Where(static path => File.ReadAllText(path).Contains("CommandChain = GenerateCommandChain();", StringComparison.Ordinal))
+            .Where(static path => File.ReadAllText(path).Contains("CommandChain = Generate", StringComparison.Ordinal))
             .ToArray();
 
         directAssignments.ShouldBeEmpty();
