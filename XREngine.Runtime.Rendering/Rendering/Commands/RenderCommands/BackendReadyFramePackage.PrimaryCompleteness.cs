@@ -23,6 +23,22 @@ public sealed partial class BackendReadyFramePackage
     /// </summary>
     public ulong FirstMissingPrimaryNativeIdentitySequence { get; private set; }
 
+    /// <summary>
+    /// Gets the command of the first missing primary draw, or null when no draw is missing.
+    /// A diagnostic reader passes it to <see cref="GPUScene.TryGetCanonicalCompatibilityReason"/>
+    /// to learn why the canonical scene did not publish the draw.
+    /// </summary>
+    public IRenderCommandMesh? FirstMissingPrimaryNativeCommand { get; private set; }
+
+    /// <summary>Gets the submesh index of the first missing primary draw, or -1 when no draw is missing.</summary>
+    public int FirstMissingPrimaryNativePrimitiveIndex { get; private set; } = -1;
+
+    /// <summary>Gets the mesh name of the first missing primary draw, or null when the mesh has no name.</summary>
+    public string? FirstMissingPrimaryNativeMeshName { get; private set; }
+
+    /// <summary>Gets the material name of the first missing primary draw, or null when the material has no name.</summary>
+    public string? FirstMissingPrimaryNativeMaterialName { get; private set; }
+
     private void ClearPrimaryNativeCompleteness()
     {
         _primaryNativeSubmissions.Clear();
@@ -32,6 +48,10 @@ public sealed partial class BackendReadyFramePackage
         FirstMissingPrimaryNativeStableQueryKey = 0u;
         FirstMissingPrimaryNativeReason = null;
         FirstMissingPrimaryNativeIdentitySequence = 0UL;
+        FirstMissingPrimaryNativeCommand = null;
+        FirstMissingPrimaryNativePrimitiveIndex = -1;
+        FirstMissingPrimaryNativeMeshName = null;
+        FirstMissingPrimaryNativeMaterialName = null;
     }
 
     /// <summary>
@@ -126,6 +146,11 @@ public sealed partial class BackendReadyFramePackage
                         identities.TryGetPrimitive(primitiveIndex, out AdvancedGpuSceneDrawIdentity firstIdentity)
                             ? firstIdentity.Publication.Sequence
                             : 0UL;
+                    XRMeshRenderer? firstRenderer = frozen?.Renderer ?? mesh.Mesh;
+                    FirstMissingPrimaryNativeCommand = mesh;
+                    FirstMissingPrimaryNativePrimitiveIndex = primitiveIndex;
+                    FirstMissingPrimaryNativeMeshName = firstRenderer?.Mesh?.Name ?? firstRenderer?.Name;
+                    FirstMissingPrimaryNativeMaterialName = material?.Name;
                 }
             }
         }
