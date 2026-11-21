@@ -537,8 +537,10 @@ largest projected error, in render pixels, that a drawn cluster may have.
   deformed vertices; the Vulkan stable bins accept such a range through
   `AdvancedGeometryRecord.IsDrawIndexRange`. A draw gets `L > 0` only when its
   geometry holds the covers. Draws that another path reads keep `L = 0`:
-  transparent, fragment-depth, decal, wireframe, editor-highlighted and
-  non-canonical raster draws.
+  transparent, fragment-depth, decal, wireframe, editor-highlighted and CPU
+  fallback draws, and draws that cull front faces or all faces. A double-sided
+  draw can get `L > 0`: its payload carries the cull mode, and the raster draws
+  it through the same cluster cut and index range.
   The choice runs on both deformation preparation policies: the packed
   aggregate inputs and the authored-vertex inputs of the Vulkan route. The
   authored-vertex route keeps its visibility candidate bounds and reads only the

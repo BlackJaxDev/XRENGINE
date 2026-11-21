@@ -842,7 +842,8 @@ The `SUMMARY` line also shows the latched virtual geometry settings (`vg`, `skin
 `deformationLod`) and these counts of its 5-second window: `deformedVertices` and `fullVertices`
 (the vertices that the deformation jobs deformed, and the vertex counts of the same skinned draws),
 `gate.<outcome>` for each skinned cluster cut draw (`EAdvancedDeformationLevelGate`: the first check
-that kept the draw at level 0, or `Chosen`), and `level<n>` for each chosen level above 0. When
+that kept the draw at level 0, or `Chosen`; an `Excluded<flag>` outcome names the draw flag that
+stopped the draw, and `NoMeshlets` counts meshes without a meshlet payload), and `level<n>` for each chosen level above 0. When
 `deformedVertices` equals `fullVertices` in a deformation level of detail session, the `gate.` counts
 show why no draw got a coarser level.
 

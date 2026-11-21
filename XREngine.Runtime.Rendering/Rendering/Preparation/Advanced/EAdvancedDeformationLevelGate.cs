@@ -12,10 +12,24 @@ public enum EAdvancedDeformationLevelGate
 {
     /// <summary>Deformation level of detail is off, or the build has no usable view set.</summary>
     NoViews,
-    /// <summary>The draw has a flag of a path that reads deformed vertices without the clamped cut (for example transparency).</summary>
-    ExcludedDrawFlags,
+    /// <summary>The draw is transparent. The transparent pass reads the deformed vertices without the clamped cut.</summary>
+    ExcludedTransparent,
+    /// <summary>The draw writes fragment depth (parallax), so it uses the depth-writing masked raster.</summary>
+    ExcludedFragmentDepth,
+    /// <summary>The draw uses the mesh surface decal lane.</summary>
+    ExcludedSurfaceDecal,
+    /// <summary>The draw is hovered or selected in the editor and has a highlight stencil draw.</summary>
+    ExcludedEditorHighlight,
+    /// <summary>The draw uses the wireframe raster.</summary>
+    ExcludedWireframe,
+    /// <summary>The draw culls front faces or all faces. Double-sided draws do not stop here.</summary>
+    ExcludedCullState,
+    /// <summary>The draw uses only the CPU fallback path.</summary>
+    ExcludedCpuFallback,
     /// <summary>The canonical geometry is not resident.</summary>
     GeometryNotResident,
+    /// <summary>The canonical geometry has no meshlets, because the mesh has no meshlet payload.</summary>
+    NoMeshlets,
     /// <summary>The canonical geometry has no cluster hierarchy.</summary>
     NoClusterHierarchy,
     /// <summary>The geometry has no meshlets above the draw range, so no coarser level exists.</summary>
