@@ -69,6 +69,27 @@ public sealed partial class AdvancedGpuResourcePublisher
     }
 
     /// <summary>
+    /// Returns true when <paramref name="binding"/> names a logical texture entry of the same
+    /// texture object as <paramref name="source"/>, with the same fallback, and the new source
+    /// is valid. A binding that fails <see cref="TryStageTextureRefresh"/> but passes this check
+    /// differs in a resource that only a material binding rebind can apply, for example a new
+    /// sampler record after the full-size upload of a streamed texture.
+    /// </summary>
+    internal bool IsSameTextureSource(
+        in AdvancedMaterialTextureBinding binding,
+        in AdvancedGpuResourceBindingSource source)
+    {
+        if (source.Texture is null ||
+            !binding.Texture.Handle.IsValid ||
+            binding.Texture.Fallback != source.Fallback)
+            return false;
+        int textureIndex = FindTextureByHandle(binding.Texture.Handle);
+        return textureIndex >= 0 &&
+            ReferenceEquals(_textures[textureIndex].Source, source.Texture) &&
+            ValidateSource(in source, out _);
+    }
+
+    /// <summary>
     /// Returns true when the canonical texture table can accept every staged refresh as a
     /// record replacement in the next publication.
     /// </summary>

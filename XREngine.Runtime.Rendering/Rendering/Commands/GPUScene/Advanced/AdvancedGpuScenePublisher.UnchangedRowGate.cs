@@ -121,8 +121,9 @@ public sealed partial class AdvancedGpuScenePublisher
         UnchangedRowGateScratch scratch = default;
         scratch.AcceptMovedRows = true;
         _movedRowCount = 0;
-        // Refreshes that an earlier walk staged belong to that walk.
+        // Refreshes and rebinds that an earlier walk recorded belong to that walk.
         _resourcePublisher.ClearStagedTextureRefreshes();
+        ClearMaterialRebinds();
         int rowCount = _plannedCommandCount;
         bool rowsUnchanged = true;
         int commandIndex = 0;
@@ -758,6 +759,8 @@ public sealed partial class AdvancedGpuScenePublisher
                     cache.State,
                     bindings))
                 return FailRow(ref scratch, EAdvancedPreparedGateOutcome.MaterialChanged);
+            if (!preparing && _lastCheckRequestedMaterialRebind)
+                RecordMaterialRebind(commandIndex, registration.Material);
             scratch.CheckedHeaderMaterial = material;
             scratch.CheckedHeaderHandle = registration.Material;
         }
@@ -917,11 +920,17 @@ public sealed partial class AdvancedGpuScenePublisher
             return false;
         }
 
-        // No row changes material or resource ownership in this publication.
+        // No row changes material ownership in this publication. A material rebind keeps
+        // its handle and only plans a resource change of that material.
         _plannedMaterialCount = 0;
         _plannedMaterialReleaseCount = 0;
         _resourceAcquireCount = 0;
         _resourceReleaseCount = 0;
+        // A frame with both kinds of in-place change takes the full plan, so the texture
+        // table capacity check of the texture refreshes covers every write of the commit.
+        if (_materialRebindCount != 0 &&
+            (_resourcePublisher.StagedTextureRefreshCount != 0 || !TryPlanMaterialRebinds()))
+            return false;
         bool hasGlobalResources;
         string globalResourceFailure;
         long globalPreflightStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
@@ -1064,8 +1073,8 @@ public sealed partial class AdvancedGpuScenePublisher
                 // Texture records that the gate staged keep their handles, so no
                 // material record or row changes for them.
                 _resourcePublisher.ApplyStagedTextureRefreshes();
-                // With no planned material, these steps apply only the global
-                // resource acquisitions, rows, and releases.
+                // These steps apply the planned material rebinds (if any), the
+                // global resource acquisitions, the rows, and the releases.
                 ApplyPreflightedMaterialTransitions();
                 ApplyPreflightedGlobalResources();
                 ApplyMovedRowPatches();

@@ -91,6 +91,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     "but the committed bindings no longer match. A texture input change did not advance its source version.");
                 return false;
             }
+            _lastCheckRequestedMaterialRebind = false;
             return true;
         }
 
@@ -98,6 +99,7 @@ public sealed partial class AdvancedGpuScenePublisher
         bool matches;
         _stageTextureRefreshes = stageTextureRefreshes;
         _textureRefreshStagedInCheck = false;
+        _materialRebindInCheck = false;
         try
         {
             matches = CommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface);
@@ -106,16 +108,17 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             _stageTextureRefreshes = false;
         }
+        _lastCheckRequestedMaterialRebind = matches && _materialRebindInCheck;
         if (!matches)
         {
             _materialSourceWitnesses.Remove(handle);
             return false;
         }
 
-        // A staged refresh reaches the texture table only when this publication commits.
-        // Keep no witness for the material, so that after a rejected publication the next
-        // check encodes the material again and finds the old record.
-        if (hasWitness && !_textureRefreshStagedInCheck)
+        // A staged refresh or rebind reaches the database only when this publication
+        // commits. Keep no witness for the material, so that after a rejected publication
+        // the next check encodes the material again and finds the old record.
+        if (hasWitness && !_textureRefreshStagedInCheck && !_materialRebindInCheck)
             _materialSourceWitnesses[handle] = witness;
         else
             _materialSourceWitnesses.Remove(handle);
@@ -125,7 +128,8 @@ public sealed partial class AdvancedGpuScenePublisher
     /// <summary>
     /// Compares one committed binding with its freshly encoded source. In the swap-time row
     /// gate, a binding whose only difference is a new record of the same texture object stages
-    /// an in-place refresh of that record and counts as a match.
+    /// an in-place refresh of that record and counts as a match. A binding of the same texture
+    /// object that needs a new sampler requests a material rebind and also counts as a match.
     /// </summary>
     private bool CommittedBindingMatches(
         in AdvancedMaterialTextureBinding binding,
@@ -133,9 +137,18 @@ public sealed partial class AdvancedGpuScenePublisher
     {
         if (_resourcePublisher.BindingMatches(in binding, in source))
             return true;
-        if (!_stageTextureRefreshes || !_resourcePublisher.TryStageTextureRefresh(in binding, in source))
+        if (!_stageTextureRefreshes)
             return false;
-        _textureRefreshStagedInCheck = true;
+        if (_resourcePublisher.TryStageTextureRefresh(in binding, in source))
+        {
+            _textureRefreshStagedInCheck = true;
+            return true;
+        }
+        // The same texture object needs another resource, for example a new sampler. The
+        // gate records a material rebind, which the retained-row commit applies.
+        if (!_resourcePublisher.IsSameTextureSource(in binding, in source))
+            return false;
+        _materialRebindInCheck = true;
         return true;
     }
 

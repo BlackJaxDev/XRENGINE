@@ -627,6 +627,35 @@ material that binds the refreshed texture already changed through the texture
 source version. A gate failure or a full plan discards the staged refreshes; the
 full plan replaces the records through its own preflight.
 
+#### Material sampler rebind
+
+The full-size upload of a streamed texture can also change its sampler record,
+for example when the mip count grows from one level to a full chain. The texture
+refresh cannot apply that change: the material needs a new sampler handle. In the
+swap-time gate pass, a binding that fails both `BindingMatches` and
+`TryStageTextureRefresh`, but still names the same texture object with the same
+fallback and a valid new source (`IsSameTextureSource`), counts as a match. The
+gate records a rebind for the material, one time for each material handle, and
+the material keeps no witness for that pass.
+
+`TryPublishUnchangedRows` then plans one existing-material transition for each
+recorded material with the full-plan material resolve (`TryPlanMaterialRebinds`).
+The resolve must return the same material handle with changed resources;
+otherwise the frame takes the full plan. The transition keeps its handle and adds
+no draw owner. Its resource acquisitions and releases stay in the shared resource
+plan, so the global resource preflight checks them with the global resources.
+`CommitRetainedRows` applies the transition inside the open publication
+transaction: it acquires the new bindings, rewrites the binding span of the
+material record, and releases the old bindings after the rows. A frame that has
+both staged texture refreshes and material rebinds takes the full plan. A gate
+failure or a full plan discards the recorded rebinds.
+
+After a full plan that resolved a material again, `CaptureCommittedMaterialPlans`
+marks each such row as reused (`ReusedCommittedMaterial`) after the publication
+seals, because the committed material plan now matches the plan inputs. The next
+frame can then pass the gate. A row that got its registration in that publication
+keeps the full plan for one more frame, and a rejected publication marks no row.
+
 When the gate passes and no global resource changed, the publisher reuses the
 current publication and delivers the identities again, as the full reuse path
 does. The reuse applies the same lease rule as the full reuse path, so the
