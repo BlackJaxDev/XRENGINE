@@ -478,8 +478,8 @@ public sealed partial class AdvancedGpuScenePublisher
     /// Only <see cref="EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding"/>
     /// takes this path. The native Uber encoder gives it from the engine semantic (which
     /// advances the shader state revision), the Uber authored state (Uber state revision), the
-    /// alpha-to-coverage option (render options), the parameter values (value version), and the
-    /// texture list and sampler names (layout and resource versions); the remaining case is a
+    /// alpha-to-coverage option without a cutoff test (render options and value version), the
+    /// parameter values (value version), and the texture list and sampler names (layout and resource versions); the remaining case is a
     /// fixed schema size. The texture-state reasons of the resource encoder, such as an empty
     /// texture, also depend on texture contents that no material version tracks, so they keep
     /// the stage comparison. A false result only sends the row to that comparison.
