@@ -167,6 +167,15 @@ remain explicit unsupported operations in native visibility. The forward Vulkan
 path preserves the material alpha-to-coverage state for both single-sample and
 multisample targets. A single sample can still reject a fragment with zero alpha;
 the sample count must not silently disable the authored coverage state.
+Native coverage applies the surface-extension alpha dither with the same 8x8
+table as the forward shader. The raster passes use the fragment position, and
+native shading uses the pixel center, so both passes make the same decision.
+Dither with `_AlphaClipAllModes` routes an opaque draw to masked publication.
+Per-splat Gaussian shading uses the splat index in place of the pixel, so the
+dither keeps or drops whole splats.
+Distance fade, fresnel alpha, angular alpha, and depth alpha need view, model,
+and scene-depth data that native coverage does not have. The native encoder
+refuses those materials with a diagnostic reason.
 A view stores frozen render-time bits
 at byte offset 940 without changing its 944-byte stride.
 

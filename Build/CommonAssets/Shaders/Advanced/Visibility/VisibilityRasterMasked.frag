@@ -116,6 +116,7 @@ void main()
         coordinates.localPosition = VisibilityCoverageLocalPosition;
         coordinates.color = VisibilityCoverageColor;
         coordinates.frontFacing = gl_FrontFacing;
+        coordinates.pixel = gl_FragCoord.xy;
         coordinates.time = uintBitsToFloat(
             XR_ADV_LoadView(VisibilityViewIndex).renderTimeBits);
         vec4 baseColor;

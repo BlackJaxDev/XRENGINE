@@ -75,6 +75,7 @@ void main()
         coords.color = unpackUnorm4x8(FragMaterialAndColor.y);
         coords.frontFacing = !backFacing;
         coords.time = EngineTime;
+        coords.pixel = gl_FragCoord.xy;
 
         vec4 baseCoverage;
         vec3 emissionCoverage;

@@ -50,6 +50,12 @@ public static class NativeUberMaterialSourceEncoder
         }
         if (material.IsUberFeatureEnabled("dissolve", false))
             return true;
+        // Alpha dithering lowers alpha by an ordered threshold. With the all-modes alpha clip, the clip test
+        // then removes a pattern of pixels, so the opaque draw must use the masked raster.
+        if (material.IsUberFeatureEnabled("surface-extensions", false) &&
+            material.Parameter<ShaderFloat>("_AlphaDither") is { Value: > 0.5f } &&
+            material.Parameter<ShaderFloat>("_AlphaClipAllModes") is { Value: > 0.5f })
+            return true;
         return material.Parameter<ShaderInt>("_Mode") is { Value: 1 };
     }
 
@@ -400,10 +406,9 @@ public static class NativeUberMaterialSourceEncoder
         }
         if (material.IsUberFeatureEnabled("surface-extensions", false) &&
             (IsNonZero(material, "_DistanceFade") || IsNonZero(material, "_AlphaFresnel") ||
-             IsNonZero(material, "_AlphaAngular") || IsNonZero(material, "_AlphaDither") ||
-             IsNonZero(material, "_DepthAlphaEnabled")))
+             IsNonZero(material, "_AlphaAngular") || IsNonZero(material, "_DepthAlphaEnabled")))
         {
-            reason = "Native Uber distance, angle, dither, or depth alpha has no matching coverage operation.";
+            reason = "Native Uber distance, fresnel, angle, or depth alpha has no matching coverage operation.";
             return false;
         }
         if (material.IsUberFeatureEnabled("layered-matcap-rim", false) && IsNonZero(material, "_DepthRimStrength"))

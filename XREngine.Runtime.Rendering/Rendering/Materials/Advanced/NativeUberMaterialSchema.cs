@@ -195,6 +195,9 @@ public static class NativeUberMaterialSchema
             Add("_AnisotropyTint" + index);
             Add("_AnisotropyToon" + index);
         }
+        Add("_AlphaDither");
+        Add("_AlphaDitherGradient");
+        Add("_AlphaDitherBias");
         return [.. names];
 
         void Add(string name) { if (seen.Add(name)) names.Add(name); }

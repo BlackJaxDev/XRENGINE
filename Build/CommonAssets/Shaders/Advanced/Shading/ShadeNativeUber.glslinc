@@ -108,6 +108,7 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     c.color = surface.color0;
     c.frontFacing = (surface.flags & XR_ADV_SURFACE_BACK_FACING) == 0u;
     c.time = uintBitsToFloat(view.renderTimeBits);
+    c.pixel = vec2(pixel) + 0.5;
     vec4 base;
     vec3 emission;
     if (!XR_UBER_ApplyCoverage(c, base, emission))
