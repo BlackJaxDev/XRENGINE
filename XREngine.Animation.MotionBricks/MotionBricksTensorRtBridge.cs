@@ -130,11 +130,12 @@ public static partial class MotionBricksTensorRtBridge
 
             if (_libraryHandle == nint.Zero)
             {
-                if (!NativeLibrary.TryLoad(LibraryFileName, out _libraryHandle)
-                    && !NativeLibrary.TryLoad("MotionBricksBridge.Native", out _libraryHandle))
+                if (!TryLoadNativeBridge(out _libraryHandle))
                 {
-                    _loadError = $"{LibraryFileName} was not found. Build Build/Native/MotionBricksBridge/MotionBricksBridge.vcxproj "
-                        + "and place the resulting DLL beside the executable to enable TensorRT MotionBricks inference.";
+                    _loadError = $"{LibraryFileName} was not found or failed to load TensorRT/CUDA dependencies. "
+                        + "Stage TensorRT with Tools/Dependencies/Get-TensorRT.ps1, build "
+                        + "Build/Native/MotionBricksBridge/MotionBricksBridge.vcxproj, and ensure the native DLLs "
+                        + "sit beside the executable.";
                     error = _loadError;
                     return false;
                 }
@@ -152,6 +153,69 @@ public static partial class MotionBricksTensorRtBridge
             error = null;
             return true;
         }
+    }
+
+    private static bool TryLoadNativeBridge(out nint handle)
+    {
+        string? envPath = Environment.GetEnvironmentVariable("MOTIONBRICKS_BRIDGE_PATH");
+        if (!string.IsNullOrWhiteSpace(envPath) && TryLoadCandidateFile(envPath, out handle))
+            return true;
+
+        string baseDir = AppContext.BaseDirectory;
+        if (TryLoadCandidateFile(Path.Combine(baseDir, LibraryFileName), out handle))
+            return true;
+        if (TryLoadCandidateFile(Path.Combine(baseDir, "runtimes", "win-x64", "native", LibraryFileName), out handle))
+            return true;
+
+        // Walk upward from AppContext.BaseDirectory to find the local repository native build output.
+        DirectoryInfo? current = new DirectoryInfo(baseDir);
+        for (int depth = 0; depth < 8 && current is not null; depth++, current = current.Parent)
+        {
+            string sharedTools = Path.Combine(
+                current.FullName,
+                "Build",
+                "_AgentValidation",
+                "00000000-000000-shared",
+                "tools");
+            if (TryLoadCandidateFile(Path.Combine(sharedTools, "Release", "MotionBricksBridge", LibraryFileName), out handle))
+                return true;
+            if (TryLoadCandidateFile(Path.Combine(sharedTools, "Debug", "MotionBricksBridge", LibraryFileName), out handle))
+                return true;
+        }
+
+        return NativeLibrary.TryLoad(LibraryFileName, out handle)
+            || NativeLibrary.TryLoad("MotionBricksBridge.Native", out handle);
+    }
+
+    private static bool TryLoadCandidateFile(string fullPath, out nint handle)
+    {
+        handle = nint.Zero;
+        if (!File.Exists(fullPath))
+            return false;
+
+        string? directory = Path.GetDirectoryName(fullPath);
+        if (OperatingSystem.IsWindows() && !string.IsNullOrEmpty(directory))
+        {
+            // Preload co-located CUDA/TensorRT runtime DLLs before loading the bridge so Windows
+            // resolves dependent imports without modifying the global process PATH.
+            PreloadOptionalDependency(directory, "cudart64_12.dll");
+            PreloadOptionalDependency(directory, "cublasLt64_12.dll");
+            PreloadOptionalDependency(directory, "cublas64_12.dll");
+            PreloadOptionalDependency(directory, "nvrtc-builtins64_129.dll");
+            PreloadOptionalDependency(directory, "nvrtc64_120_0.dll");
+            PreloadOptionalDependency(directory, "nvinfer_10.dll");
+            PreloadOptionalDependency(directory, "nvinfer_builder_resource_10.dll");
+            PreloadOptionalDependency(directory, "nvonnxparser_10.dll");
+        }
+
+        return NativeLibrary.TryLoad(fullPath, out handle);
+    }
+
+    private static void PreloadOptionalDependency(string directory, string fileName)
+    {
+        string path = Path.Combine(directory, fileName);
+        if (File.Exists(path))
+            NativeLibrary.TryLoad(path, out _);
     }
 
     internal static string GetLastError(nint sessionHandle, string fallback)

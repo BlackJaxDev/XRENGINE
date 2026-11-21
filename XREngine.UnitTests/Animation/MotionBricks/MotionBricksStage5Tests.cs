@@ -291,6 +291,113 @@ public sealed class MotionBricksStage5Tests
         allocatedBytes.ShouldBe(0L, $"MotionBricks hot path allocated {allocatedBytes} bytes over 120 frames.");
     }
 
+    [Test]
+    [Explicit("Runs live NVIDIA TensorRT SOMA inference on the local CUDA GPU with staged ONNX weights.")]
+    public void LiveTensorRtGpu_BuildsCachedSomaPlanAndDrivesMotionBricksInference()
+    {
+        bool available = MotionBricksTensorRtBackend.Instance.IsAvailable(out string? availError);
+        available.ShouldBeTrue(availError ?? "TensorRT native bridge is unavailable.");
+
+        int trtVersion = MotionBricksTensorRtBridge.GetTensorRtVersion();
+        trtVersion.ShouldBeGreaterThanOrEqualTo(100000);
+
+        string onnxPath = FindRepoRelativeFile(Path.Combine("Build", "Dependencies", "MotionBricks", "soma", "mmm_v6_soma_fp16.onnx"));
+        File.Exists(onnxPath).ShouldBeTrue($"Missing staged SOMA weights at {onnxPath}");
+        string cacheDir = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(onnxPath)!)!, "cache");
+
+        var config = new MotionBricksSessionConfig
+        {
+            OnnxModelPath = onnxPath,
+            PlanCacheDirectory = cacheDir,
+            EnableFp16 = true,
+            EnableTf32 = true,
+            BuilderOptimizationLevel = 3,
+        };
+
+        MotionBricksTensorRtBackend.Instance.TryCreateSession(config, out IMotionBricksInferenceSession? session, out string? createError)
+            .ShouldBeTrue(createError ?? "Failed to create TensorRT session.");
+        session.ShouldNotBeNull();
+
+        using (session)
+        {
+            var buildSw = Stopwatch.StartNew();
+            session!.TryBuildOrLoadEngine(out bool loadedFromCache, out string? buildError)
+                .ShouldBeTrue(buildError ?? "Failed to build or load SOMA TensorRT plan.");
+            buildSw.Stop();
+
+            TestContext.Progress.WriteLine(
+                $"[LiveTensorRtGpu] TensorRT={trtVersion}, LoadedFromCache={loadedFromCache}, BuildOrLoadMs={buildSw.Elapsed.TotalMilliseconds:F1}");
+
+            using var driver = new MotionBricksAsyncLocomotionDriver(
+                session,
+                ownsSession: false,
+                useBackgroundThread: false);
+
+            var evaluatedPose = new MotionBricksEvaluatedPose();
+            const float dt = 1.0f / 60.0f;
+            float maxLegMuscle = 0.0f;
+            double totalInferenceMs = 0.0;
+            int replanSamples = 0;
+
+            for (int frame = 0; frame < 60; frame++)
+            {
+                long prevReplans = driver.CompletedReplanCount;
+                var steering = new MotionBricksSteeringInput(
+                    MoveInput: new Vector2(0.0f, 0.85f),
+                    DesiredFacingYawRadians: 0.0f,
+                    StrafeMode: false,
+                    StyleIndex: 0,
+                    IsGrounded: true,
+                    WalkSpeedMetersPerSecond: 1.5f,
+                    RunSpeedMetersPerSecond: 4.2f,
+                    ReplanIntervalSeconds: 4.0f / 30.0f,
+                    InputReplanThreshold: 0.15f,
+                    DeltaSeconds: dt);
+
+                driver.AdvanceAndEvaluate(steering, evaluatedPose);
+                evaluatedPose.HasValidPose.ShouldBeTrue(driver.DiagnosticStatus);
+
+                maxLegMuscle = MathF.Max(
+                    maxLegMuscle,
+                    MathF.Max(
+                        MathF.Abs(evaluatedPose.MuscleValues[(int)EHumanoidValue.LeftUpperLegFrontBack]),
+                        MathF.Abs(evaluatedPose.MuscleValues[(int)EHumanoidValue.RightUpperLegFrontBack])));
+
+                if (driver.CompletedReplanCount > prevReplans)
+                {
+                    totalInferenceMs += driver.LastInferenceMilliseconds;
+                    replanSamples++;
+                }
+            }
+
+            double avgInferenceMs = replanSamples > 0 ? totalInferenceMs / replanSamples : driver.LastInferenceMilliseconds;
+            Vector3 displacement = evaluatedPose.CurrentBodyPosition - evaluatedPose.CanonicalBodyPosition;
+            TestContext.Progress.WriteLine(
+                $"[LiveTensorRtGpu] Replans={driver.CompletedReplanCount}, AvgInferenceMs={avgInferenceMs:F2}, LastDecodedFrames={driver.LastDecodedFrameCount}, BodyDisplacement=({displacement.X:F3}, {displacement.Y:F3}, {displacement.Z:F3}), MaxLegMuscle={maxLegMuscle:F3}");
+
+            driver.CompletedReplanCount.ShouldBeGreaterThanOrEqualTo(2L);
+            driver.LastDecodedFrameCount.ShouldBeGreaterThanOrEqualTo(
+                SomaModelContract.ValidFrameCount(SomaModelContract.MinTokenCount));
+            float.IsFinite(evaluatedPose.CurrentBodyPosition.X).ShouldBeTrue();
+            float.IsFinite(evaluatedPose.CurrentBodyPosition.Y).ShouldBeTrue();
+            float.IsFinite(evaluatedPose.CurrentBodyPosition.Z).ShouldBeTrue();
+            maxLegMuscle.ShouldBeGreaterThan(0.05f);
+        }
+    }
+
+    private static string FindRepoRelativeFile(string relativePath)
+    {
+        DirectoryInfo? current = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && current is not null; i++, current = current.Parent)
+        {
+            string candidate = Path.Combine(current.FullName, relativePath);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return Path.GetFullPath(relativePath);
+    }
+
     private static void RunHotPathIteration(
         MotionBricksAsyncLocomotionDriver driver,
         MotionBricksEvaluatedPose evaluatedPose,

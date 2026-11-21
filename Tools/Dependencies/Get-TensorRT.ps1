@@ -108,16 +108,16 @@ function Resolve-KnownTensorRtDownload {
             return [pscustomobject]@{
                 Version = "10.13.3.9"
                 ArchiveName = "TensorRT-10.13.3.9.Windows.win10.cuda-12.9.zip"
-                DownloadUrl = "https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.13.3.9/TensorRT-10.13.3.9.Windows.win10.cuda-12.9.zip"
-                Notes = "Requires an authenticated NVIDIA Developer session if the direct file is gated."
+                DownloadUrl = "https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.13.3/zip/TensorRT-10.13.3.9.Windows.win10.cuda-12.9.zip"
+                Notes = "Public NVIDIA TensorRT 10.13.3.9 Windows CUDA 12.9 archive."
             }
         }
         "10.13.3.9" {
             return [pscustomobject]@{
                 Version = "10.13.3.9"
                 ArchiveName = "TensorRT-10.13.3.9.Windows.win10.cuda-12.9.zip"
-                DownloadUrl = "https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.13.3.9/TensorRT-10.13.3.9.Windows.win10.cuda-12.9.zip"
-                Notes = "Requires an authenticated NVIDIA Developer session if the direct file is gated."
+                DownloadUrl = "https://developer.nvidia.com/downloads/compute/machine-learning/tensorrt/10.13.3/zip/TensorRT-10.13.3.9.Windows.win10.cuda-12.9.zip"
+                Notes = "Public NVIDIA TensorRT 10.13.3.9 Windows CUDA 12.9 archive."
             }
         }
         default {
@@ -247,16 +247,14 @@ if (Test-Path -LiteralPath $tempExtract) {
     Remove-Item -LiteralPath $tempExtract -Recurse -Force
 }
 
-$requiredPaths = @(
-    "include\NvInfer.h",
-    "lib\nvinfer.lib"
-)
+$requiredHeader = Join-Path $OutputDir "include\NvInfer.h"
+if (-not (Test-Path -LiteralPath $requiredHeader)) {
+    throw "TensorRT extract is missing an expected file: include\NvInfer.h"
+}
 
-foreach ($relativePath in $requiredPaths) {
-    $fullPath = Join-Path $OutputDir $relativePath
-    if (-not (Test-Path -LiteralPath $fullPath)) {
-        throw "TensorRT extract is missing an expected file: $relativePath"
-    }
+$hasInferLib = (Test-Path -LiteralPath (Join-Path $OutputDir "lib\nvinfer_10.lib")) -or (Test-Path -LiteralPath (Join-Path $OutputDir "lib\nvinfer.lib"))
+if (-not $hasInferLib) {
+    throw "TensorRT extract is missing an expected library: lib\nvinfer_10.lib or lib\nvinfer.lib"
 }
 
 if ($SetProcessEnvironment) {

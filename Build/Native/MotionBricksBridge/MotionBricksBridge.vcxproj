@@ -49,6 +49,7 @@
     <TensorRtRoot Condition="'$(TensorRtRoot)'=='' and '$(TENSORRT_ROOT_DIR)'!=''">$(TENSORRT_ROOT_DIR)</TensorRtRoot>
     <TensorRtRoot Condition="'$(TensorRtRoot)'=='' and Exists('$(RepoRoot)Build\Dependencies\TensorRT\TensorRT-10.13.3.9\include\NvInfer.h')">$(RepoRoot)Build\Dependencies\TensorRT\TensorRT-10.13.3.9</TensorRtRoot>
     <CudaRoot Condition="'$(CudaRoot)'=='' and '$(CUDA_PATH)'!=''">$(CUDA_PATH)</CudaRoot>
+    <CudaRoot Condition="'$(CudaRoot)'=='' and Exists('$(RepoRoot)Build\Dependencies\CUDA\12.9\include\cuda_runtime_api.h')">$(RepoRoot)Build\Dependencies\CUDA\12.9</CudaRoot>
     <HasTensorRtSdk Condition="'$(TensorRtRoot)'!='' and Exists('$(TensorRtRoot)\include\NvInfer.h') and Exists('$(TensorRtRoot)\lib\nvinfer_10.lib') and Exists('$(TensorRtRoot)\lib\nvonnxparser_10.lib')">true</HasTensorRtSdk>
     <HasCudaSdk Condition="'$(CudaRoot)'!='' and Exists('$(CudaRoot)\include\cuda_runtime_api.h') and Exists('$(CudaRoot)\lib\x64\cudart.lib')">true</HasCudaSdk>
     <UseTensorRt Condition="'$(HasTensorRtSdk)'=='true' and '$(HasCudaSdk)'=='true'">true</UseTensorRt>
@@ -74,7 +75,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PostBuildEvent>
-      <Command>if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_10.dll" "$(OutDir)" &amp; if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvonnxparser_10.dll" "$(OutDir)" &amp; if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_builder_resource_10.dll" "$(OutDir)"</Command>
+      <Command>if "$(UseTensorRt)"=="true" (xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_10.dll" "$(OutDir)" &amp; xcopy /y /d /i "$(TensorRtRoot)\lib\nvonnxparser_10.dll" "$(OutDir)" &amp; xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_builder_resource_10.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\cudart64_12.dll" xcopy /y /d /i "$(CudaRoot)\bin\cudart64_12.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\cublas64_12.dll" xcopy /y /d /i "$(CudaRoot)\bin\cublas64_12.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\cublasLt64_12.dll" xcopy /y /d /i "$(CudaRoot)\bin\cublasLt64_12.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\nvrtc64_120_0.dll" xcopy /y /d /i "$(CudaRoot)\bin\nvrtc64_120_0.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\nvrtc-builtins64_129.dll" xcopy /y /d /i "$(CudaRoot)\bin\nvrtc-builtins64_129.dll" "$(OutDir)")</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -97,7 +98,7 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
     <PostBuildEvent>
-      <Command>if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_10.dll" "$(OutDir)" &amp; if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvonnxparser_10.dll" "$(OutDir)" &amp; if "$(UseTensorRt)"=="true" xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_builder_resource_10.dll" "$(OutDir)"</Command>
+      <Command>if "$(UseTensorRt)"=="true" (xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_10.dll" "$(OutDir)" &amp; xcopy /y /d /i "$(TensorRtRoot)\lib\nvonnxparser_10.dll" "$(OutDir)" &amp; xcopy /y /d /i "$(TensorRtRoot)\lib\nvinfer_builder_resource_10.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\cudart64_12.dll" xcopy /y /d /i "$(CudaRoot)\bin\cudart64_12.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\cublas64_12.dll" xcopy /y /d /i "$(CudaRoot)\bin\cublas64_12.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\cublasLt64_12.dll" xcopy /y /d /i "$(CudaRoot)\bin\cublasLt64_12.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\nvrtc64_120_0.dll" xcopy /y /d /i "$(CudaRoot)\bin\nvrtc64_120_0.dll" "$(OutDir)" &amp; if exist "$(CudaRoot)\bin\nvrtc-builtins64_129.dll" xcopy /y /d /i "$(CudaRoot)\bin\nvrtc-builtins64_129.dll" "$(OutDir)")</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
