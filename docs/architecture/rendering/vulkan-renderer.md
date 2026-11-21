@@ -257,7 +257,12 @@ builds. Each line has a local timestamp and records one state change: a pause
 that waits for a recovery edge (`RecoveryPending`, with the stage, ticket,
 dependency chain, and detail), a recovery probe (`RecoveryProbe`, with the edge
 that started it), a recovered renderer (`RendererRecovered`), or a terminal pause
-(`TerminalTransition`). These are cold-path records. Use the file to find the
+(`TerminalTransition`). When no desktop frame completes for 2 seconds, the
+frame loop also writes `PresentStalled` (at most every 5 seconds) with the
+reason, failure stage, recording deferral, and readiness retry of the latest
+attempt, and `PresentResumed` when a frame completes again. A frame that is
+retried each callback raises no failure, so these lines are the only Release
+record of such a stall. These are cold-path records. Use the file to find the
 failed stage when a Release session stops presenting.
 Routine `[Vulkan][FrameTree]` and `[Vulkan][PresentNow] readiness=ready` messages
 require `XRE_VULKAN_RECORDING_DIAG`, `XRE_VK_TRACE_DRAW`, or

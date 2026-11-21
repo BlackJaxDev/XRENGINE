@@ -690,6 +690,7 @@ internal sealed partial class VulkanFrameLoop
                 terminalFailure.ExceptionType,
                 terminalFailure.Detail,
                 ownershipSettled));
+        TrackDesktopPresentStall(ref attempt, outcome, in terminalFailure);
 
         if (outcome == EVulkanFrameOutcome.Failed)
             ReportDesktopFrameTerminalFailure(ref attempt, in terminalFailure);
