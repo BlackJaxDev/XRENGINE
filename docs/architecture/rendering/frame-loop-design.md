@@ -694,7 +694,9 @@ Open work that affects this design:
 
 - the directional caster lane is limited to desktop depth pages and CpuDirect;
   other shadow sources and submission strategies retain generic recording;
-- the canonical publisher drops unsupported commands without a diagnostic;
+- the canonical publisher drops commands with unsupported geometry without a
+  diagnostic. A command with an unsupported material draws the canonical error
+  material and writes a `CanonicalErrorMaterial` report;
 - OpenGL Advanced retains strict texture admission because bindless handles
   freeze sampling state. An explicitly authored placeholder policy would need
   its own material publication and lifetime contract;
