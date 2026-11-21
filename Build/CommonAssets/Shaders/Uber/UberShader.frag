@@ -555,7 +555,7 @@ vec3 applyColorAdjustments(vec3 color, ToonMesh mesh) {
     if (_MainGamma != 1.0)
         color = mix(color, sign(color) * pow(abs(color), vec3(_MainGamma)), adjustMask.a);
 
-    color = mix(color, vec3(dot(color, vec3(0.3, 0.59, 0.11))), -_Saturation * adjustMask.b);
+    color = mix(color, vec3(dot(color, vec3(0.3, 0.59, 0.11))), -(_Saturation * adjustMask.b));
 
     if (_MainChromatize != 0.0)
         color = saturate(uberChromatize(color, _MainChromatize * adjustMask.r));
