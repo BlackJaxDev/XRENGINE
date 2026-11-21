@@ -238,6 +238,12 @@ namespace XREngine.Scene.Prefabs
         /// loading keeps its loading placeholder. Shared textures also keep the clone fast and small,
         /// because no pixel data is serialized. Changes to a shared texture show on every copy.
         /// </param>
+        /// <remarks>
+        /// The serialize and deserialize steps run in a <see cref="TransientSerializationScope"/>,
+        /// so meshes store their streams raw. Without the scope, the serializer compresses large
+        /// streams with LZMA for every clone, which takes most of the clone time for an avatar
+        /// with many blendshapes.
+        /// </remarks>
         public static SceneNode CloneHierarchy(SceneNode template, bool shareTextures)
         {
             ArgumentNullException.ThrowIfNull(template);
@@ -246,6 +252,7 @@ namespace XREngine.Scene.Prefabs
                 return CloneHierarchyBounded(template);
 
             SceneNode clone;
+            using (TransientSerializationScope.Begin())
             using (shareTextures ? SharedAssetCloneScope.Begin() : null)
             {
                 string serialized = AssetManager.Serializer.Serialize(template);

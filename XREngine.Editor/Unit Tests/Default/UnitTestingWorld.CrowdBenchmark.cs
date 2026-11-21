@@ -111,8 +111,8 @@ public static partial class EditorUnitTests
         /// <summary>
         /// Builds the crowd on a long-running worker thread and then calls <paramref name="onAppThread"/>
         /// on the app thread with the avatars and their detached slot nodes. Each clone is a full
-        /// serializer copy of the avatar and can take more than a minute for a large avatar. On the app
-        /// thread, twelve clones stop scene updates for many minutes and the desktop frame stops presenting.
+        /// serializer copy of the avatar and can take many seconds for a large avatar. On the app
+        /// thread, twelve clones would stop scene updates and the desktop frame would stop presenting.
         /// The template and the clones are not attached to a scene or world while the worker runs, so no
         /// other thread reads or changes them. The callback attaches the slot nodes.
         /// </summary>
