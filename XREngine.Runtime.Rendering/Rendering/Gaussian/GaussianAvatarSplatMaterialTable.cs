@@ -475,10 +475,6 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         Span<uint> globalMaskMax = words.AsSpan(
             NativeUberMaterialSchema.ParameterWordOffset(NativeUberMaterialSchema.ParameterIndex("_GlobalMaskMax")), 4);
         globalMaskMax.Fill(BitConverter.SingleToUInt32Bits(1.0f));
-        _ = TryWriteGlslLiteralWords(
-            "vec4",
-            "vec4(0.0, 1.0, 1.0, 1.0)",
-            words.AsSpan(NativeUberMaterialSchema.ParameterWordOffset(NativeUberMaterialSchema.ParameterIndex("_SourcePostProcess")), 4));
     }
 
     private InternedMaterialEntry EncodeUberMaterial(XRMaterial material)
