@@ -79,6 +79,16 @@ namespace XREngine.Animation
         private readonly HumanoidMotionContributionBuffer _importedHumanoidContributions = new();
 
         [MemoryPackIgnore]
+        private HumanoidPoseHistoryBuffer? _liveHumanoidPoseHistory;
+
+        /// <summary>
+        /// Returns the shared 30 Hz humanoid pose history buffer when this state machine
+        /// contains any <see cref="MotionBricksLocomotionMotion"/>, or null otherwise.
+        /// </summary>
+        public HumanoidPoseHistoryBuffer? GetLiveHumanoidPoseHistory()
+            => _liveHumanoidPoseHistory;
+
+        [MemoryPackIgnore]
         private ulong _humanoidMotionContinuityVersion;
 
         [MemoryPackIgnore]
@@ -184,7 +194,7 @@ namespace XREngine.Animation
             _importedHumanoidContributions.EnsureCapacity(stateMachineContributionCapacity);
         }
 
-        private static void PropagateLayoutToMotion(
+        private void PropagateLayoutToMotion(
             MotionBase? motion,
             AnimationSlotLayout layout,
             IReadOnlyDictionary<string, AnimSlot> slotsByPath)
@@ -225,6 +235,8 @@ namespace XREngine.Animation
                     break;
                 case MotionBricksLocomotionMotion motionBricks:
                     motionBricks.CacheResolvedMuscleSlots();
+                    _liveHumanoidPoseHistory ??= new HumanoidPoseHistoryBuffer();
+                    motionBricks.AttachPoseHistoryBuffer(_liveHumanoidPoseHistory);
                     break;
             }
         }
@@ -368,6 +380,8 @@ namespace XREngine.Animation
             _animatedMembersArray = [];
             _animatedCurves.Clear();
             _importedHumanoidContributions.Clear();
+            _liveHumanoidPoseHistory?.Clear();
+            _liveHumanoidPoseHistory = null;
         }
 
         internal void NotifyHumanoidMotionContinuityChanged(EAnimMotionContinuityChange change)
@@ -483,6 +497,11 @@ namespace XREngine.Animation
                 ? Math.Clamp(layer.Weight, 0.0f, 1.0f)
                 : 0.0f;
             if (layerWeight <= 0.0f)
+                return;
+
+            // Upper-body or partial override layers without Body/root tracks must not attenuate
+            // root motion authored by lower layers.
+            if (layer.HumanoidContributions.Count == 0 && !layer.HumanoidContributions.Overflowed)
                 return;
 
             if (layer.ApplyType == EApplyType.Additive)

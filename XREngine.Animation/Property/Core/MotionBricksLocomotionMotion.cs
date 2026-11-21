@@ -122,6 +122,18 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
     private bool _ownsRuntimeDriver;
 
     [MemoryPackIgnore]
+    private readonly HumanoidPoseHistoryFrame[] _seedFrameScratch =
+    [
+        new HumanoidPoseHistoryFrame(),
+        new HumanoidPoseHistoryFrame(),
+        new HumanoidPoseHistoryFrame(),
+        new HumanoidPoseHistoryFrame(),
+    ];
+
+    [MemoryPackIgnore]
+    private HumanoidPoseHistoryBuffer? _poseHistoryBuffer;
+
+    [MemoryPackIgnore]
     private float _pendingDeltaSeconds;
 
     [MemoryPackIgnore]
@@ -325,10 +337,14 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
         }
     }
 
+    internal void AttachPoseHistoryBuffer(HumanoidPoseHistoryBuffer? buffer)
+        => _poseHistoryBuffer = buffer;
+
     internal void ReleaseRuntimeDriver()
     {
         ReleaseOwnedDriver();
         _runtimeDriver = null;
+        _poseHistoryBuffer = null;
         _evaluatedPose.Clear();
         _pendingDeltaSeconds = 0.0f;
         _hasPendingTick = false;
@@ -456,7 +472,17 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
     {
         _pendingDeltaSeconds = 0.0f;
         _hasPendingTick = false;
-        _runtimeDriver?.ResetPlayback();
+        if (_runtimeDriver is null)
+            return;
+
+        _runtimeDriver.ResetPlayback();
+        if (_poseHistoryBuffer is not null
+            && _poseHistoryBuffer.TrySampleFourContextFrames(_seedFrameScratch))
+        {
+            _runtimeDriver.SeedContextFromHumanoidHistory(_seedFrameScratch);
+        }
+
+        _runtimeDriver.OnStateEntered();
     }
 
     internal void StopMotionBricksPlayback()

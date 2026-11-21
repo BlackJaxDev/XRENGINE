@@ -52,4 +52,13 @@ public interface IMotionBricksLocomotionDriver : IDisposable
         bool isBlocked)
     {
     }
+
+    /// <summary>
+    /// Seeds the four 30 Hz locomotion context frames from the live humanoid pose history
+    /// when entering a <see cref="MotionBricksLocomotionMotion"/> state from a traditional
+    /// animation clip or blend tree.
+    /// </summary>
+    void SeedContextFromHumanoidHistory(ReadOnlySpan<HumanoidPoseHistoryFrame> fourContextFrames)
+    {
+    }
 }

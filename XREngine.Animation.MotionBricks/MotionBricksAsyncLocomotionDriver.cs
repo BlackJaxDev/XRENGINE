@@ -20,7 +20,10 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
     private readonly SomaSmartLocomotionSettings _settings;
     private readonly SomaSmartLocomotionPlanner _planner;
     private readonly SomaToHumanoidMuscleConverter _converter;
+    private readonly HumanoidToSomaPoseSampler _poseSampler;
     private readonly SomaContextHistoryBuffer _history = new();
+    private readonly SomaPoseTransform[] _seedSomaPoses =
+        new SomaPoseTransform[SomaModelContract.ContextPoseCount * JointCount];
 
     private readonly SomaPoseTransform[] _displayedPose = new SomaPoseTransform[JointCount];
     private Vector4 _displayedFootContacts;
@@ -64,6 +67,8 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
     private Quaternion _canonicalBodyRotation = Quaternion.Identity;
     private long _nextSequence;
     private long _completedReplanCount;
+    private long _contextSeedCount;
+    private int _lastDecodedFrameCount;
     private double _lastInferenceMs;
     private volatile string _diagnosticStatus;
 
@@ -83,6 +88,7 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         _settings = settings ?? SomaSmartLocomotionSettings.Default;
         _planner = new SomaSmartLocomotionPlanner(_settings, poseBank ?? new SomaLocomotionPoseBank(_calibration));
         _converter = new SomaToHumanoidMuscleConverter(_calibration);
+        _poseSampler = new HumanoidToSomaPoseSampler(_calibration);
         _avatarLegScale = float.IsFinite(avatarLegScale) && avatarLegScale > 0.01f ? avatarLegScale : 1.0f;
 
         SeedNeutralState();
@@ -117,6 +123,8 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
     public bool IsReady => !_disposed && _inferenceSession is { IsEngineReady: true };
     public string DiagnosticStatus => _diagnosticStatus;
     public long CompletedReplanCount => Volatile.Read(ref _completedReplanCount);
+    public long ContextSeedCount => Volatile.Read(ref _contextSeedCount);
+    public int LastDecodedFrameCount => Volatile.Read(ref _lastDecodedFrameCount);
     public double LastInferenceMilliseconds => Volatile.Read(ref _lastInferenceMs);
     public int ActiveBufferHeadroomFrames => _activeBuffer.RemainingFrames;
     public SomaSmartLocomotionPlanner Planner => _planner;
@@ -165,6 +173,24 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         newest.CopyTo(_displayedPose);
         _hasDisplayedPose = true;
         _planner.Reset(facingYawRadians);
+        Interlocked.Increment(ref _contextSeedCount);
+    }
+
+    /// <summary>
+    /// Converts four 30 Hz live humanoid pose history frames into SOMA context poses without
+    /// heap allocation and seeds the driver before its first replan.
+    /// </summary>
+    public void SeedContextFromHumanoidHistory(ReadOnlySpan<HumanoidPoseHistoryFrame> fourContextFrames)
+    {
+        if (fourContextFrames.Length < SomaModelContract.ContextPoseCount)
+            return;
+
+        _poseSampler.SampleFourContextPoses(fourContextFrames, _avatarLegScale, _seedSomaPoses);
+        Quaternion newestRootRot = _seedSomaPoses[(SomaModelContract.ContextPoseCount - 1) * JointCount].Rotation;
+        Vector3 forward = Vector3.Transform(Vector3.UnitZ, newestRootRot);
+        float lenSq = forward.X * forward.X + forward.Z * forward.Z;
+        float facingYaw = lenSq > 1.0e-8f ? MathF.Atan2(forward.X, forward.Z) : 0.0f;
+        SeedContextPoses(_seedSomaPoses, facingYaw);
     }
 
     /// <summary>
@@ -400,7 +426,10 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
             _stagedSequence = requestSequence;
         }
 
+        Volatile.Write(ref _lastDecodedFrameCount, validFrames);
         Interlocked.Increment(ref _completedReplanCount);
-        _diagnosticStatus = $"Ready ({validFrames} frames at 30 Hz, {elapsedMs:F2} ms).";
+        _diagnosticStatus = _useBackgroundThread
+            ? "Ready (Async TensorRT worker active)."
+            : "Ready (Synchronous TensorRT mode).";
     }
 }

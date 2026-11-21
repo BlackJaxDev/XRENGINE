@@ -740,6 +740,24 @@ namespace XREngine.Components.Animation
             }
         }
 
+        /// <summary>
+        /// Copies the latest evaluated canonical humanoid muscle values into
+        /// <paramref name="destination"/> without heap allocation.
+        /// </summary>
+        public void CopyCurrentMuscleValues(Span<float> destination)
+        {
+            destination.Clear();
+            lock (_muscleValuesLock)
+            {
+                foreach (KeyValuePair<EHumanoidValue, float> pair in _muscleValues)
+                {
+                    int index = (int)pair.Key;
+                    if ((uint)index < (uint)destination.Length)
+                        destination[index] = pair.Value;
+                }
+            }
+        }
+
         private bool TryCaptureMuscleSnapshot(float[] destination)
         {
             lock (_muscleValuesLock)

@@ -64,6 +64,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Assistant](developer-guides/ai/mcp-assistant.md)
 - [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
+- [MotionBricks Procedural Locomotion](developer-guides/animation/motionbricks-locomotion.md): SOMA TensorRT locomotion inside `AnimStateMachine`, live pose seeding, and Jolt root motion.
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
 - [Unity Conversion](developer-guides/assets/unity-conversion-integrations.md): package startup imports, scene and prefab roots, source dependencies, and Poiyomi materials.
 - [Unity Script Host](developer-guides/assets/unity-script-host.md): source inventory, assembly graphs, source compilation, and explicit execution limits.

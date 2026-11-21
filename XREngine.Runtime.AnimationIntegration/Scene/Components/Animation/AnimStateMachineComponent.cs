@@ -22,6 +22,7 @@ namespace XREngine.Components
         private int _lastSentSchemaVersion = -1;
         private bool _stateMachineInitialized;
         private bool _playbackCapabilitiesValid;
+        private float[]? _livePoseMuscleScratch;
         private HumanoidProjectedRootPose _appliedRootMotionPose = HumanoidProjectedRootPose.Identity;
         private HumanoidProjectedRootPose _previousAppliedRootMotionPose = HumanoidProjectedRootPose.Identity;
         private HumanoidProjectedRootPose _rootMotionEpochReferencePose = HumanoidProjectedRootPose.Identity;
@@ -377,6 +378,7 @@ namespace XREngine.Components
                 }
 
                 StateMachine.ApplyAnimationValues();
+                RecordLiveHumanoidPoseHistory(humanoid, deltaTicks);
                 ikSolver?.CompleteAnimationDrivenGoalFrame();
 
                 if (ownsImportedBodySampleTransaction)
@@ -408,6 +410,27 @@ namespace XREngine.Components
             ReplicateParameterSchema(force: false);
             ReplicateModifiedVariables();
             _changedLastEval.Clear();
+        }
+
+        private void RecordLiveHumanoidPoseHistory(HumanoidComponent? humanoid, long deltaTicks)
+        {
+            HumanoidPoseHistoryBuffer? poseHistory = StateMachine.GetLiveHumanoidPoseHistory();
+            if (poseHistory is null || humanoid is null)
+                return;
+
+            _livePoseMuscleScratch ??= new float[MotionBricksEvaluatedPose.MuscleChannelCount];
+            humanoid.CopyCurrentMuscleValues(_livePoseMuscleScratch);
+
+            Vector3 worldPos = SceneNode.Transform.WorldTranslation;
+            Vector3 rawBodyPos = humanoid.CurrentRawBodyPosition;
+            float bodyY = float.IsFinite(rawBodyPos.Z) && rawBodyPos.Z > 0.1f ? rawBodyPos.Z : worldPos.Y;
+            var bodyPosition = new Vector3(worldPos.X, bodyY, worldPos.Z);
+            Quaternion bodyRotation = SceneNode.Transform.WorldRotation;
+
+            float deltaSeconds = deltaTicks > 0L
+                ? (float)((double)deltaTicks / System.Diagnostics.Stopwatch.Frequency)
+                : 0.0f;
+            poseHistory.RecordFrame(bodyPosition, bodyRotation, _livePoseMuscleScratch, deltaSeconds);
         }
 
         private static long ScalePlaybackTicks(long ticks, float speed)

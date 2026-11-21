@@ -14,36 +14,36 @@ public sealed class SomaToHumanoidMuscleConverter
     private const float RadiansToDegrees = 180.0f / MathF.PI;
 
     // Canonical default muscle degree ranges matching HumanoidSettings.cs.
-    private static readonly Vector2 SpineRange = new(-40.0f, 40.0f);
-    private static readonly Vector2 NeckHeadRange = new(-40.0f, 40.0f);
-    private static readonly Vector2 ShoulderDownUpRange = new(15.0f, -30.0f);
-    private static readonly Vector2 ShoulderFrontBackRange = new(15.0f, -15.0f);
-    private static readonly Vector2 ArmTwistRange = new(-90.0f, 90.0f);
-    private static readonly Vector2 ArmDownUpRange = new(60.0f, -100.0f);
-    private static readonly Vector2 ArmFrontBackRange = new(100.0f, -100.0f);
-    private static readonly Vector2 ForearmTwistRange = new(-90.0f, 90.0f);
-    private static readonly Vector2 ForearmStretchRange = new(-80.0f, 80.0f);
-    private static readonly Vector2 HandDownUpRange = new(80.0f, -80.0f);
-    private static readonly Vector2 HandInOutRange = new(40.0f, -40.0f);
-    private static readonly Vector2 UpperLegTwistRange = new(-60.0f, 60.0f);
-    private static readonly Vector2 RightUpperLegTwistRange = new(60.0f, -60.0f);
-    private static readonly Vector2 UpperLegFrontBackRange = new(90.0f, -50.0f);
-    private static readonly Vector2 UpperLegInOutRange = new(60.0f, -60.0f);
-    private static readonly Vector2 LowerLegTwistRange = new(-90.0f, 90.0f);
-    private static readonly Vector2 RightLowerLegTwistRange = new(90.0f, -90.0f);
-    private static readonly Vector2 LowerLegStretchRange = new(-80.0f, 80.0f);
-    private static readonly Vector2 FootTwistRange = new(30.0f, -30.0f);
-    private static readonly Vector2 FootUpDownRange = new(50.0f, -50.0f);
-    private static readonly Vector2 ToesUpDownRange = new(50.0f, -50.0f);
+    internal static readonly Vector2 SpineRange = new(-40.0f, 40.0f);
+    internal static readonly Vector2 NeckHeadRange = new(-40.0f, 40.0f);
+    internal static readonly Vector2 ShoulderDownUpRange = new(15.0f, -30.0f);
+    internal static readonly Vector2 ShoulderFrontBackRange = new(15.0f, -15.0f);
+    internal static readonly Vector2 ArmTwistRange = new(-90.0f, 90.0f);
+    internal static readonly Vector2 ArmDownUpRange = new(60.0f, -100.0f);
+    internal static readonly Vector2 ArmFrontBackRange = new(100.0f, -100.0f);
+    internal static readonly Vector2 ForearmTwistRange = new(-90.0f, 90.0f);
+    internal static readonly Vector2 ForearmStretchRange = new(-80.0f, 80.0f);
+    internal static readonly Vector2 HandDownUpRange = new(80.0f, -80.0f);
+    internal static readonly Vector2 HandInOutRange = new(40.0f, -40.0f);
+    internal static readonly Vector2 UpperLegTwistRange = new(-60.0f, 60.0f);
+    internal static readonly Vector2 RightUpperLegTwistRange = new(60.0f, -60.0f);
+    internal static readonly Vector2 UpperLegFrontBackRange = new(90.0f, -50.0f);
+    internal static readonly Vector2 UpperLegInOutRange = new(60.0f, -60.0f);
+    internal static readonly Vector2 LowerLegTwistRange = new(-90.0f, 90.0f);
+    internal static readonly Vector2 RightLowerLegTwistRange = new(90.0f, -90.0f);
+    internal static readonly Vector2 LowerLegStretchRange = new(-80.0f, 80.0f);
+    internal static readonly Vector2 FootTwistRange = new(30.0f, -30.0f);
+    internal static readonly Vector2 FootUpDownRange = new(50.0f, -50.0f);
+    internal static readonly Vector2 ToesUpDownRange = new(50.0f, -50.0f);
 
     // Precomputed basis rotations that map canonical character axes into each joint's
     // (X = frontBack, Y = twist, Z = leftRight) decomposition frame.
-    private static readonly Quaternion VerticalJointBasis = Quaternion.Identity;
-    private static readonly Quaternion LeftArmBasis = CreateBasisRotation(
+    internal static readonly Quaternion VerticalJointBasis = Quaternion.Identity;
+    internal static readonly Quaternion LeftArmBasis = CreateBasisRotation(
         frontBackAxis: Vector3.UnitY,
         twistAxis: Vector3.UnitX,
         leftRightAxis: -Vector3.UnitZ);
-    private static readonly Quaternion RightArmBasis = CreateBasisRotation(
+    internal static readonly Quaternion RightArmBasis = CreateBasisRotation(
         frontBackAxis: Vector3.UnitY,
         twistAxis: -Vector3.UnitX,
         leftRightAxis: Vector3.UnitZ);
