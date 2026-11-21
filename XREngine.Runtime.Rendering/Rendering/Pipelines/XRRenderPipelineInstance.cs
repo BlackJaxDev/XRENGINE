@@ -1164,6 +1164,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             primaryOwnerFailure =
                 $"The Advanced frame package has {package.MissingPrimaryNativeOwnerCount} enabled primary meshes without exact native submissions. First pass={package.FirstMissingPrimaryNativePass}, key={package.FirstMissingPrimaryNativeStableQueryKey}, reason={package.FirstMissingPrimaryNativeReason}.";
         }
+        failureReason = accepted ? null : primaryOwnerFailure ?? result.Failure.ToString();
+        TrackFramePackageValidation(
+            accepted,
+            failureReason,
+            package,
+            context.ConsumedCollectGeneration,
+            requiredGeneration);
         if (!accepted && Debug.ShouldLogEvery(
                 "RenderFramePackage.ValidationMismatch",
                 TimeSpan.FromMilliseconds(250)))
@@ -1185,9 +1192,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 activeRegistry?.LastDescriptorMutationRevision ?? 0,
                 activeRegistry?.LastDescriptorMutationOperation ?? "<none>",
                 activeRegistry?.LastDescriptorMutationResourceName ?? "<none>",
-                result.Failure);
+                failureReason!);
         }
-        failureReason = accepted ? null : primaryOwnerFailure ?? result.Failure.ToString();
         RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageValidation(
             System.Diagnostics.Stopwatch.GetTimestamp() - started,
             accepted,
