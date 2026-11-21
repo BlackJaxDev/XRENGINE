@@ -191,6 +191,13 @@ successor asset.
   `incompatibility`, for example the name of an unknown feature or an unsupported mode. The
   line also has the frame and collect generations and the canonical publication of the package
   and of the scene.
+- A rejected native Advanced stage (`VPRC_AdvancedRenderStage`) writes a line with the category
+  `AdvancedStageRejected`, at most once per 5 seconds for each stage command. The stage throws
+  after the rejection, so the frame keeps only the operations that were authored before it, and
+  the desktop output can stall with no scene draw. The line names the stage, the backend phase,
+  the rejection kind (`Prerequisite`, `Admission`, `StageCapability`, `PhaseRejection` or
+  `UnexpectedFailure`), whether the stage retries on a later frame, the rejection count and the
+  reason.
 - A retired generation stays alive until its completion receipt signals. The
   retired-generation count limit is soft. Unsignaled generations are kept, and
   the instance drains them after they signal.
