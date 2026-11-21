@@ -152,6 +152,19 @@ order: hue shift, then saturation, then brightness. Brightness scales the color
 by `1 + _MainBrightness` and clamps it to 0 through 1. The adjustment texture
 masks each step (R hue, G brightness, B saturation).
 
+## Post-Processing Stage
+
+The source post-processing section converts to `_PostProcessSettings`
+(enabled, brightness, contrast, saturation) and `_PostProcessHue` (hue,
+lightness, HDR, hue color space). The forward and native Uber shaders apply it
+to the lit color before emission is added, in the source order: hue shift,
+saturation, sRGB-to-linear HDR curve, contrast around mid gray, brightness
+multiply, and lightness add. Splats use the native path. A locked source shader
+decides the section with its `#define POSTPROCESS` line, because the material
+toggle can be stale; otherwise `_PostProcess` or the `POSTPROCESS` keyword
+decides. The post-processing mask and posterization have no Uber equivalent;
+the importer reports a warning and converts the rest.
+
 ## Locked Shader Reconciliation And Cooked Textures
 
 A locked source toon shader renames each animated property with the tag mode

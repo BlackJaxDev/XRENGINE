@@ -143,7 +143,7 @@ public static class MaterialConversionReportBuilder
 
     /// <summary>The report family name of a Pro toon material that is converted with a lossy downgrade.</summary>
     public const string ProToonFamilyName = "Pro toon (lossy downgrade input)";
-    public const string ConverterVersion = "1.12.0";
+    public const string ConverterVersion = "1.13.0";
     public const int SourceDescriptorVersion = 1;
 
     private static readonly Lazy<IReadOnlySet<string>> PreservedRuntimeProperties =

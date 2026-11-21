@@ -3015,6 +3015,8 @@ void main() {
 
     // Final composite: emission is always added on top of lit color so it
     // remains bright through tonemap and bloom.
+    // The post-processing stage adjusts the lit color only. Emission is added after it.
+    fragData.finalColor = uberApplyPostProcess(fragData.finalColor);
     fragData.finalColor += fragData.emission * fragData.emissionScale;
     fragData.finalColor = uberApplyPostEffects(mesh, fragData.finalColor);
     fragData.alpha = uberApplyDepthIntersectionAlpha(fragData.alpha, mesh);

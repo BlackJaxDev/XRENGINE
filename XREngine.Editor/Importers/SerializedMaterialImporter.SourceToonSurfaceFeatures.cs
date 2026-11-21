@@ -71,6 +71,7 @@ public static partial class SerializedMaterialImporter
             () => SetFloat(material, "_SpecularStrength", 0.0f),
             warnings,
             diagnostics);
+        BindSourcePostProcess(material, document, resolver, warnings);
         BindSourceLightingParameters(material, document, diagnostics, warnings);
         BindSourceClearCoatParameters(material, document, diagnostics, warnings);
         BindSurfaceFeatureTextures(material, document, resolver, diagnostics, warnings, sourceVersion);
