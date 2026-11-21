@@ -202,7 +202,7 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
                 return false;
 
             return IsOpenXrRuntimeRequestedOrInitialized() && !IsTruthyEnvironmentValue(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrAllowOpenVrRenderModelFallback));
+                XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrAllowOpenVrRenderModelFallback));
         }
 
         private static bool IsOpenXrRuntimeRequestedOrInitialized()
@@ -215,10 +215,10 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
                 return true;
             }
 
-            string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+            string? unitTestVrMode = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrMode);
             return string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase) ||
-                   IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
+                   IsTruthyEnvironmentValue(XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestUseOpenXr));
         }
 
         private void LogOpenVrFallbackDisabledDuringOpenXr()

@@ -45,7 +45,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
 
     private static bool VulkanCaptureEyeOutputs
         => string.Equals(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCaptureEyeOutputs),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanCaptureEyeOutputs),
             "1",
             StringComparison.Ordinal);
 

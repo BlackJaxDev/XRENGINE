@@ -16,7 +16,7 @@ namespace XREngine.Rendering.Commands;
 public sealed partial class AdvancedGpuScenePublisher
 {
     private static readonly bool s_validateMaterialSourceWitness =
-        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AdvancedPublisherWitnessValidate) == "1";
+        XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedPublisherWitnessValidate) == "1";
 
     private readonly Dictionary<AdvancedGpuHandle, AdvancedMaterialSourceWitness> _materialSourceWitnesses = [];
     private long _materialSourceWitnessHits;

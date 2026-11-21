@@ -109,7 +109,7 @@ public static partial class EditorUnitTests
             s.VrMirrorMode = XREngine.Runtime.Bootstrap.BootstrapRenderSettings.ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow);
         s.VrCopyEyePreviewTextures = previewVrStereoViews;
         if (Enum.TryParse(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
+                XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
                 ignoreCase: true,
                 out EVrDesktopFrameExecutionMode desktopExecutionMode))
         {
@@ -228,7 +228,7 @@ public static partial class EditorUnitTests
 
     private static void ApplyPhysicsDebugBenchmarkPreset(PhysicsVisualizeSettings settings)
     {
-        string? preset = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.PhysicsDebugPreset);
+        string? preset = XREnvironment.GetValue(XREngineEnvironmentVariables.PhysicsDebugPreset);
         if (string.IsNullOrWhiteSpace(preset))
             return;
 

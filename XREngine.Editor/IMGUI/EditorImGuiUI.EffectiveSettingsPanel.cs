@@ -411,7 +411,7 @@ public static partial class EditorImGuiUI
     private static bool TryResolveEnvironmentPresence(string variableName, out string source)
     {
         source = string.Empty;
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(variableName)))
+        if (string.IsNullOrWhiteSpace(XREnvironment.GetValue(variableName)))
             return false;
 
         source = "Environment";
@@ -421,7 +421,7 @@ public static partial class EditorImGuiUI
     private static bool TryResolveMeshSubmissionStrategyEnvironmentSource(out string source)
     {
         source = string.Empty;
-        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy);
+        string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy);
         if (!EMeshSubmissionStrategyExtensions.TryParseMeshSubmissionStrategy(raw, out _, out _))
             return false;
 
@@ -433,7 +433,7 @@ public static partial class EditorImGuiUI
         where TEnum : struct, Enum
     {
         source = string.Empty;
-        string? raw = Environment.GetEnvironmentVariable(variableName);
+        string? raw = XREnvironment.GetValue(variableName);
         if (string.IsNullOrWhiteSpace(raw) ||
             !Enum.TryParse(raw.Trim(), ignoreCase: true, out TEnum _))
         {

@@ -48,7 +48,7 @@ internal partial class CodeManager
     }
 
     private static bool UseSingleNodeBrowserPublish()
-        => string.Equals(Environment.GetEnvironmentVariable("XRE_BROWSER_PUBLISH_SINGLE_MSBUILD_NODE"),
+        => string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.BrowserPublishSingleMsBuildNode),
             "1", StringComparison.Ordinal);
 
     /// <summary>Publishes the browser application with the existing child-MSBuild logging path.</summary>

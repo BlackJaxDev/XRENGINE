@@ -3255,7 +3255,7 @@ namespace XREngine.Rendering
                 // frame timings. Preserve the full exception on this cold path so a circuit-breaker
                 // render stop remains diagnosable after the harness terminates the process.
                 if (string.Equals(
-                        Environment.GetEnvironmentVariable("XRE_PROFILE_CAPTURE"),
+                        XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileCapture),
                         "1",
                         StringComparison.Ordinal))
                 {

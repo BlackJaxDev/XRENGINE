@@ -153,7 +153,7 @@ internal sealed class VulkanTransientAttachmentPlan
 
     private static EVulkanTransientAttachmentMode ResolveMode()
     {
-        string? configured = Environment.GetEnvironmentVariable(
+        string? configured = XREnvironment.GetValue(
             XREngineEnvironmentVariables.VulkanTransientAttachmentMode);
         if (string.IsNullOrWhiteSpace(configured))
             return EVulkanTransientAttachmentMode.Baseline;

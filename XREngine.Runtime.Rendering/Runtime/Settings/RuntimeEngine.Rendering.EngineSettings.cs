@@ -1011,7 +1011,7 @@ public static partial class RuntimeEngine
                 }
 
                 private static readonly bool s_directionalShadowStaticCacheDisabledByEnvironment =
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
 
                 [Category("Shadows")]
                 [Description("Makes the emulated VR eye viewports use the cascaded HMD directional shadow source, as headset eyes do: the HMD cascades fit both eye frusta and the combined eye frustum. Default-pipeline eyes read them. Advanced eyes in SequentialViews still read the desktop cascades, because their views carry the desktop view kind. Use it to test the HMD cascade source (fit, lane groups, static tiles) without a headset. The environment variable XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1 turns it on for the process.")]
@@ -1029,7 +1029,7 @@ public static partial class RuntimeEngine
                 }
 
                 private static readonly bool s_emulatedVrHmdDirectionalCascadesEnabledByEnvironment =
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EmulatedVrHmdDirectionalCascades) is "1" or "true" or "True";
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.EmulatedVrHmdDirectionalCascades) is "1" or "true" or "True";
 
                 [Category("Shadows")]
                 [Description("Centre of the directional cascade fit for the desktop camera. CameraPosition centres each cascade sphere on the camera, so turning the camera does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the camera: finer texels, but a turn refits the cascades.")]

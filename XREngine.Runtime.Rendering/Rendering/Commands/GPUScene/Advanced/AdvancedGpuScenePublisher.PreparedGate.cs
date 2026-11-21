@@ -69,7 +69,7 @@ public sealed partial class AdvancedGpuScenePublisher
     /// publication runs the swap-time gate.
     /// </summary>
     internal static bool PreparedGateEnabled { get; } = !string.Equals(
-        Environment.GetEnvironmentVariable("XRE_ADVANCED_PREPARED_GATE"),
+        XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedPreparedGate),
         "0",
         StringComparison.Ordinal);
 
@@ -79,7 +79,7 @@ public sealed partial class AdvancedGpuScenePublisher
     /// publication then uses the swap-time result and counts each disagreement.
     /// </summary>
     internal static bool PreparedGateVerifyEnabled { get; } = string.Equals(
-        Environment.GetEnvironmentVariable("XRE_ADVANCED_PREPARED_GATE_VERIFY"),
+        XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedPreparedGateVerify),
         "1",
         StringComparison.Ordinal);
 

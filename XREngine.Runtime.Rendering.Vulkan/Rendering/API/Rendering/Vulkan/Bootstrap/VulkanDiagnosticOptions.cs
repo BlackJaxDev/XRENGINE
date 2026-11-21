@@ -180,7 +180,7 @@ internal readonly record struct VulkanDiagnosticOptions
         int maximumValue,
         StringBuilder sources)
     {
-        string? raw = Environment.GetEnvironmentVariable(variableName);
+        string? raw = XREnvironment.GetValue(variableName);
         if (string.IsNullOrWhiteSpace(raw))
             return defaultValue;
 
@@ -238,7 +238,7 @@ internal readonly record struct VulkanDiagnosticOptions
         ref EVulkanDiagnosticFlags flags,
         StringBuilder sources)
     {
-        string? raw = Environment.GetEnvironmentVariable(global::XREngine.XREngineEnvironmentVariables.VulkanDiagnosticPreset);
+        string? raw = XREnvironment.GetValue(global::XREngine.XREngineEnvironmentVariables.VulkanDiagnosticPreset);
         if (string.IsNullOrWhiteSpace(raw))
             return;
 
@@ -262,7 +262,7 @@ internal readonly record struct VulkanDiagnosticOptions
 
     private static void ApplyFlagsEnvOverride(ref EVulkanDiagnosticFlags flags, StringBuilder sources)
     {
-        string? raw = Environment.GetEnvironmentVariable(global::XREngine.XREngineEnvironmentVariables.VulkanDiagnosticFlags);
+        string? raw = XREnvironment.GetValue(global::XREngine.XREngineEnvironmentVariables.VulkanDiagnosticFlags);
         if (string.IsNullOrWhiteSpace(raw))
             return;
 
@@ -312,7 +312,7 @@ internal readonly record struct VulkanDiagnosticOptions
         StringBuilder sources)
     {
         // Check for the presence of the specified environment variable and retrieve its value.
-        string? raw = Environment.GetEnvironmentVariable(variableName);
+        string? raw = XREnvironment.GetValue(variableName);
         if (string.IsNullOrWhiteSpace(raw))
             return;
 

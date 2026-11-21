@@ -679,7 +679,7 @@ internal sealed unsafe partial class VulkanPipelineManager
 
     private static int ResolveVulkanPipelineCompileWorkerCount()
     {
-        string? configured = Environment.GetEnvironmentVariable(VulkanPipelineCompileWorkersEnvVar);
+        string? configured = XREnvironment.GetValue(VulkanPipelineCompileWorkersEnvVar);
         if (int.TryParse(configured, out int envWorkers) && envWorkers > 0)
             return Math.Clamp(envWorkers, 1, 16);
 

@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Commands;
 public sealed partial class AdvancedGpuScenePublisher
 {
     private static readonly bool s_scenePublicationDiagnostics =
-        Environment.GetEnvironmentVariable("XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS") == "1";
+        XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedScenePublicationDiagnostics) == "1";
 
     /// <summary>
     /// Gets whether XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS=1 enables the sampled lines of

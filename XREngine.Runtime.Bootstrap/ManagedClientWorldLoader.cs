@@ -10,9 +10,9 @@ public static class ManagedClientWorldLoader
 {
     public const string ConfigurationEnvironmentVariable = XREngineEnvironmentVariables.ManagedClientConfigFile;
     /// <summary>Marks a launcher-owned configuration file for deletion after it has been consumed.</summary>
-    public const string DeleteConfigurationAfterReadEnvironmentVariable = "XRE_MANAGED_CLIENT_CONFIG_DELETE_AFTER_READ";
+    public const string DeleteConfigurationAfterReadEnvironmentVariable = XREngineEnvironmentVariables.ManagedClientConfigDeleteAfterRead;
 
-    public static bool IsConfigured => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(ConfigurationEnvironmentVariable));
+    public static bool IsConfigured => !string.IsNullOrWhiteSpace(XREnvironment.GetValue(ConfigurationEnvironmentVariable));
     public static bool WasApplied { get; private set; }
 
     public static XRWorld? TryLoadFromEnvironment(GameStartupSettings settings)
@@ -24,13 +24,13 @@ public static class ManagedClientWorldLoader
         CancellationToken cancellationToken,
         IProgress<WorldPackageStagingProgress>? progress)
     {
-        string? path = Environment.GetEnvironmentVariable(ConfigurationEnvironmentVariable);
+        string? path = XREnvironment.GetValue(ConfigurationEnvironmentVariable);
         if (string.IsNullOrWhiteSpace(path))
             return null;
 
         string fullPath = Path.GetFullPath(path);
         bool deleteAfterRead = string.Equals(
-            Environment.GetEnvironmentVariable(DeleteConfigurationAfterReadEnvironmentVariable),
+            XREnvironment.GetValue(DeleteConfigurationAfterReadEnvironmentVariable),
             "1",
             StringComparison.Ordinal);
         ManagedClientLaunch launch;

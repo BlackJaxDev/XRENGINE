@@ -30,9 +30,9 @@ namespace XREngine.Rendering.Commands
 
         internal static Action? ResetCountersHook { get; set; }
         private static bool VulkanCounterDiagnosticsEnabled =>
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCounterDiagnostics), "1", StringComparison.OrdinalIgnoreCase);
+            string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanCounterDiagnostics), "1", StringComparison.OrdinalIgnoreCase);
         private static bool VulkanDelayedCounterDiagnosticsEnabled =>
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanIndirectTrace), "1", StringComparison.OrdinalIgnoreCase);
+            string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanIndirectTrace), "1", StringComparison.OrdinalIgnoreCase);
         private int _resolveMaterialLogBudget = 16;
         private readonly HashSet<uint> _lastMaterialTableIds = [];
         private readonly HashSet<uint> _currentMaterialTableIdsScratch = [];

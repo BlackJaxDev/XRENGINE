@@ -246,7 +246,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         private static string GetConfiguredDefaultStreamUrl()
         {
-            string? configured = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.StreamUrl);
+            string? configured = XREnvironment.GetValue(XREngineEnvironmentVariables.StreamUrl);
             return string.IsNullOrWhiteSpace(configured) ? DefaultStreamUrl : configured.Trim();
         }
 

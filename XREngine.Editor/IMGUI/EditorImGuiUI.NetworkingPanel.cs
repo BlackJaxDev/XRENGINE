@@ -706,14 +706,14 @@ public static partial class EditorImGuiUI
         {
             _controlPlaneOriginalWorldEnvironment ??= _controlPlaneWorldEnvironmentNames.ToDictionary(
                 static name => name,
-                static name => Environment.GetEnvironmentVariable(name),
+                static name => XREnvironment.GetValue(name),
                 StringComparer.Ordinal);
 
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldId, asset.WorldId);
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldRevision, asset.RevisionId);
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldContentHash, asset.ContentHash);
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldAssetSchemaVersion, asset.AssetSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.WorldRequiredBuildVersion, asset.RequiredBuildVersion);
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.WorldId, asset.WorldId);
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.WorldRevision, asset.RevisionId);
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.WorldContentHash, asset.ContentHash);
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.WorldAssetSchemaVersion, asset.AssetSchemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.WorldRequiredBuildVersion, asset.RequiredBuildVersion);
         }
 
         private static void RestoreWorldAssetEnvironment()
@@ -722,7 +722,7 @@ public static partial class EditorImGuiUI
                 return;
 
             foreach (var entry in _controlPlaneOriginalWorldEnvironment)
-                Environment.SetEnvironmentVariable(entry.Key, entry.Value);
+                XREnvironment.SetProcessValue(entry.Key, entry.Value);
 
             _controlPlaneOriginalWorldEnvironment = null;
         }

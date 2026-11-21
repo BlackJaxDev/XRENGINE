@@ -23,7 +23,7 @@ public static class BootstrapRenderSettings
             return EVrMirrorMode.FullIndependentRender;
 
         return Enum.TryParse(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMirrorMode),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrMirrorMode),
             ignoreCase: true,
             out EVrMirrorMode mode)
             ? mode
@@ -107,7 +107,7 @@ public static class BootstrapRenderSettings
             renderSettings.VrMirrorMode = ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow);
         renderSettings.VrCopyEyePreviewTextures = settings.PreviewVRStereoViews;
         if (Enum.TryParse(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
+                XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
                 ignoreCase: true,
                 out EVrDesktopFrameExecutionMode desktopExecutionMode))
         {

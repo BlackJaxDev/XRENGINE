@@ -411,7 +411,7 @@ public unsafe partial class OpenXRAPI
     private static bool OpenXrDebugLifecycle => RuntimeEngine.Rendering.Settings.OpenXrDebugLifecycle;
     private static bool OpenXrDebugRenderRightThenLeft => RuntimeEngine.Rendering.Settings.OpenXrDebugRenderRightThenLeft;
     private static bool VulkanCaptureEyeOutputs =>
-        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCaptureEyeOutputs), "1", StringComparison.Ordinal);
+        string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanCaptureEyeOutputs), "1", StringComparison.Ordinal);
     private static bool OpenXrPrepareFrameAfterDesktopRender => RuntimeEngine.Rendering.Settings.OpenXrPrepareFrameAfterDesktopRender;
     private static float OpenXrDeadlineSafetyMarginMs => RuntimeEngine.Rendering.Settings.OpenXrDeadlineSafetyMarginMs;
     private static float OpenXrPoseTimeOffsetMs => RuntimeEngine.Rendering.Settings.OpenXrPoseTimeOffsetMs;

@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Compute;
 public static class MeshDeformationBackendPolicy
 {
     private static readonly bool s_vulkanComputeDeformationDisabled =
-        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanComputeDeformation) == "0";
+        XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanComputeDeformation) == "0";
 
     /// <summary>Gets whether the active backend may run compute mesh deformation.</summary>
     public static bool AllowsComputeDeformation

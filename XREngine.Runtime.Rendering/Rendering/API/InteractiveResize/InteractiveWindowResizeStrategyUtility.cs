@@ -57,7 +57,7 @@ public static class InteractiveWindowResizeStrategyUtility
         };
 
     public static string ResolveEnvironmentValue()
-        => Environment.GetEnvironmentVariable(EnvironmentVariableName) ?? string.Empty;
+        => XREnvironment.GetValue(EnvironmentVariableName) ?? string.Empty;
 
     private static string Normalize(string value)
     {

@@ -419,7 +419,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             $"v{VulkanPipelinePrewarmDatabase.CurrentVersion}_{properties.VendorID:X8}_{properties.DeviceID:X8}_{properties.DriverVersion:X8}_{properties.ApiVersion:X8}_{VulkanFeatureProfile.ActiveProfile}";
         string filePath = Path.Combine(cacheDir, $"prewarm_{deviceProfile}.json");
         bool captureEnabled = !string.Equals(
-            Environment.GetEnvironmentVariable(PipelinePrewarmCaptureEnvVar),
+            XREnvironment.GetValue(PipelinePrewarmCaptureEnvVar),
             "0",
             StringComparison.OrdinalIgnoreCase);
         VulkanPipelinePrewarmDatabase database =

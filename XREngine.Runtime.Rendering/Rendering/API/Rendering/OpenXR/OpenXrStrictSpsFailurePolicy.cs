@@ -33,7 +33,7 @@ public static class OpenXrStrictSpsFailurePolicy
 
     internal static OpenXrStrictSpsFailureStage ResolveInjectedStage()
     {
-        string? configured = Environment.GetEnvironmentVariable(
+        string? configured = XREnvironment.GetValue(
             XREngineEnvironmentVariables.OpenXrStrictSpsFailureStage);
         return Enum.TryParse(configured, ignoreCase: true, out OpenXrStrictSpsFailureStage stage)
             ? stage
@@ -42,7 +42,7 @@ public static class OpenXrStrictSpsFailurePolicy
 
     internal static long ResolveInjectedFailureWarmupFrameCount()
     {
-        string? configured = Environment.GetEnvironmentVariable(
+        string? configured = XREnvironment.GetValue(
             XREngineEnvironmentVariables.OpenXrSmokeWarmupFrames);
         return long.TryParse(configured, out long warmupFrameCount)
             ? Math.Max(0L, warmupFrameCount)

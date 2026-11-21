@@ -71,12 +71,12 @@ internal static class RenderBenchPipelineScenario
         RenderBenchScenarioResult result = CreateIdentity(options);
         try
         {
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPipelineCacheRoot, options.ScenarioCacheRoot);
-            Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture, "1");
-            Environment.SetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY", "GpuIndirectZeroReadback");
-            Environment.SetEnvironmentVariable("XRE_ENGINE_ASSETS_PATH", Path.Combine(Environment.CurrentDirectory, "Build", "CommonAssets"));
-            Environment.SetEnvironmentVariable("XRE_GPU_HIZ_COARSE_TILES", "1");
-            Environment.SetEnvironmentVariable("XRE_GPU_HIZ_COARSE_TILES_CULL", "1");
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.VulkanPipelineCacheRoot, options.ScenarioCacheRoot);
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture, "1");
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy, "GpuIndirectZeroReadback");
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.EngineAssetsPath, Path.Combine(Environment.CurrentDirectory, "Build", "CommonAssets"));
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.GpuHizCoarseTiles, "1");
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.GpuHizCoarseTilesCull, "1");
             using RenderBenchProductionScene scene = new(options, EOcclusionCullingMode.GpuHiZ);
             if (RuntimeEngine.Windows.Count != 0 || scene.Host.PresentationUsesDesktopCompositor)
                 throw new InvalidOperationException("Pipeline cohorts must remain presentationless.");

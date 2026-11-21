@@ -57,7 +57,7 @@ internal sealed partial class ManagedServerWorker : IDisposable
 
     public static ManagedServerWorker? TryLoadFromEnvironment()
     {
-        string? path = Environment.GetEnvironmentVariable(ConfigurationEnvironmentVariable);
+        string? path = XREnvironment.GetValue(ConfigurationEnvironmentVariable);
         if (string.IsNullOrWhiteSpace(path))
             return null;
 

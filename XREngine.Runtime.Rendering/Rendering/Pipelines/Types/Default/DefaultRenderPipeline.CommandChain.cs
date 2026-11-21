@@ -1404,7 +1404,7 @@ public partial class DefaultRenderPipeline
 
     private static int ResolveDefaultPipelineCaptureSkipFrames()
     {
-        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CaptureDefaultPipelineSkipFrames);
+        string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.CaptureDefaultPipelineSkipFrames);
         return int.TryParse(raw, out int skipFrames) ? Math.Max(0, skipFrames) : 120;
     }
 
@@ -1429,7 +1429,7 @@ public partial class DefaultRenderPipeline
 
     private static bool IsPhase524bValidationEnabled()
     {
-        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPhase524bValidation);
+        string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanPhase524bValidation);
         return string.Equals(raw, "1", StringComparison.Ordinal) ||
             string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(raw, "yes", StringComparison.OrdinalIgnoreCase);
@@ -1437,7 +1437,7 @@ public partial class DefaultRenderPipeline
 
     private static bool ShouldCaptureDefaultPipelineFbos()
     {
-        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CaptureDefaultPipelineFbo);
+        string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.CaptureDefaultPipelineFbo);
         return !string.IsNullOrWhiteSpace(raw) &&
             !string.Equals(raw, "0", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) &&

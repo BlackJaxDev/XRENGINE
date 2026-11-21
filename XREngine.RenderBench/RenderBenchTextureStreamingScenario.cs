@@ -55,8 +55,8 @@ internal static class RenderBenchTextureStreamingScenario
         VulkanTextureStreamingTicketSnapshot[] statuses = [];
         try
         {
-            Environment.SetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY", "GpuIndirectZeroReadback");
-            Environment.SetEnvironmentVariable("XRE_ENGINE_ASSETS_PATH", Path.Combine(Environment.CurrentDirectory, "Build", "CommonAssets"));
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy, "GpuIndirectZeroReadback");
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.EngineAssetsPath, Path.Combine(Environment.CurrentDirectory, "Build", "CommonAssets"));
             // Fixtures outlive scene disposal: upload workers retain the immutable payload.
             using RenderBenchTextureStreamingFixture large = new(4096, 17);
             using RenderBenchTextureStreamingFixture second = new(2048, 29);

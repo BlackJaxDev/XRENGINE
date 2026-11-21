@@ -83,7 +83,7 @@ internal sealed class VulkanTextureDescriptorSignaturePlan
     private static long s_witnessCheckCount;
 
     private static EEpochMode ResolveEpochMode()
-        => Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDescriptorSignatureEpoch)?.Trim() switch
+        => XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanDescriptorSignatureEpoch)?.Trim() switch
         {
             "1" => EEpochMode.On,
             "witness" => EEpochMode.Witness,

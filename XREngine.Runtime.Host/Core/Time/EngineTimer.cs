@@ -323,7 +323,7 @@ namespace XREngine.Timers
 
         private static ECollectVisibleLatePolicy ReadCollectVisibleLatePolicyFromEnvironment()
         {
-            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CollectVisibleLatePolicy);
+            string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.CollectVisibleLatePolicy);
             if (string.IsNullOrWhiteSpace(raw))
                 return ECollectVisibleLatePolicy.BlockUntilFresh;
 

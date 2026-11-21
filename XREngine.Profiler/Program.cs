@@ -13,7 +13,7 @@ internal static class Program
         // Allow overriding the listen port via command-line or environment.
         if (args.Length > 0 && int.TryParse(args[0], out int argPort))
             port = argPort;
-        else if (Environment.GetEnvironmentVariable(Data.Profiling.ProfilerProtocol.PortEnvVar) is string envPort
+        else if (XREnvironment.GetValue(Data.Profiling.ProfilerProtocol.PortEnvVar) is string envPort
                  && int.TryParse(envPort, out int envParsed))
             port = envParsed;
 

@@ -181,7 +181,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static double ResolveWorkerCompletionHardAbandonMilliseconds()
             {
-                string? configured = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SharedContextLinkTimeoutMs);
+                string? configured = XREnvironment.GetValue(XREngineEnvironmentVariables.SharedContextLinkTimeoutMs);
                 if (double.TryParse(configured, NumberStyles.Float, CultureInfo.InvariantCulture, out double milliseconds) &&
                     milliseconds >= WorkerCompletionStuckFlushMilliseconds)
                 {

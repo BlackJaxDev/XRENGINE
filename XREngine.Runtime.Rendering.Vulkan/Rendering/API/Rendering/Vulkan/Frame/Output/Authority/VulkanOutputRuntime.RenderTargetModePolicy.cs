@@ -7,7 +7,7 @@ internal sealed partial class VulkanOutputRuntime
 
     internal static EVulkanRenderTargetMode ResolveRequestedRenderTargetMode()
     {
-        string? value = Environment.GetEnvironmentVariable(
+        string? value = XREnvironment.GetValue(
             VulkanRenderTargetModeEnvironmentVariable);
         if (string.IsNullOrWhiteSpace(value))
             return RuntimeEngine.EffectiveSettings.VulkanRenderTargetMode;

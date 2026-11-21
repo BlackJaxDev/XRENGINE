@@ -1205,7 +1205,7 @@ public static partial class EditorUnitTests
     /// declares neutral vertex-effect parameters. Validation tools can then
     /// change them through material uniform tools.
     /// </summary>
-    private const string PhysicsChainVertexEffectParametersVariable = "XRE_PHYSICS_CHAIN_TEST_VERTEX_EFFECTS";
+    private const string PhysicsChainVertexEffectParametersVariable = XREngineEnvironmentVariables.PhysicsChainTestVertexEffects;
 
     private static ShaderVar[] CreateNeutralVertexEffectParameters()
         =>
@@ -1233,7 +1233,7 @@ public static partial class EditorUnitTests
         XRMesh mesh = CreatePhysicsChainSkinnedPrismMesh(testTransform, chainBones, meshVariant);
         XRMaterial material = XRMaterial.CreateLitColorMaterial(color);
         material.RenderPass = (int)EDefaultRenderPass.OpaqueDeferred;
-        if (Environment.GetEnvironmentVariable(PhysicsChainVertexEffectParametersVariable) == "1")
+        if (XREnvironment.GetValue(PhysicsChainVertexEffectParametersVariable) == "1")
             material.Parameters = [.. material.Parameters, .. CreateNeutralVertexEffectParameters()];
 
         var modelComponent = visualNode.AddComponent<ModelComponent>()!;

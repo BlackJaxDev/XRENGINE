@@ -74,7 +74,7 @@ namespace XREngine.Rendering.Vulkan
         {
             get
             {
-                string? raw = Environment.GetEnvironmentVariable(
+                string? raw = XREnvironment.GetValue(
                     XREngineEnvironmentVariables.VulkanFrameOpSignatureDiffLimit);
                 return int.TryParse(raw, out int value) && value >= 0 ? value : 48;
             }

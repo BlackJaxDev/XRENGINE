@@ -2460,7 +2460,7 @@ public sealed class ShaderEditorWindow
         if (!string.IsNullOrWhiteSpace(preferenceKey))
             return preferenceKey;
 
-        return Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenAiApiKey) ?? string.Empty;
+        return XREnvironment.GetValue(XREngineEnvironmentVariables.OpenAiApiKey) ?? string.Empty;
     }
 
     private static Vector4 GetDiagnosticColor(ShaderEditorDiagnosticSeverity severity)

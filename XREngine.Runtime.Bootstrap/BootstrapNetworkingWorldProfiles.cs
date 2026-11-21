@@ -53,7 +53,7 @@ public static partial class BootstrapNetworkingWorldProfiles
 
     private static ENetworkingPoseRole ResolveNetworkingPoseRole()
     {
-        string? explicitRole = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.NetworkingPoseRole);
+        string? explicitRole = XREnvironment.GetValue(XREngineEnvironmentVariables.NetworkingPoseRole);
         if (!string.IsNullOrWhiteSpace(explicitRole))
         {
             if (string.Equals(explicitRole, "server", StringComparison.OrdinalIgnoreCase))
@@ -68,7 +68,7 @@ public static partial class BootstrapNetworkingWorldProfiles
                 return ENetworkingPoseRole.ReceivingClient;
         }
 
-        string? netMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.NetMode);
+        string? netMode = XREnvironment.GetValue(XREngineEnvironmentVariables.NetMode);
         if (string.Equals(netMode, "Server", StringComparison.OrdinalIgnoreCase))
             return ENetworkingPoseRole.Server;
 
@@ -81,7 +81,7 @@ public static partial class BootstrapNetworkingWorldProfiles
     private static bool TryGetBoolEnv(string name, out bool value)
     {
         value = default;
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 

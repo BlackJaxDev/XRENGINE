@@ -214,7 +214,7 @@ public sealed class BakeSplatPreviewOptions
 
     private static string ResolveDefaultFfmpegPath()
     {
-        string? environmentPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.FfmpegPath);
+        string? environmentPath = XREnvironment.GetValue(XREngineEnvironmentVariables.FfmpegPath);
         return string.IsNullOrWhiteSpace(environmentPath) ? DefaultFfmpegCommand : environmentPath;
     }
 

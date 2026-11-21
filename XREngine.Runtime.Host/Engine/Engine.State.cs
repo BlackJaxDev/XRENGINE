@@ -91,7 +91,7 @@ namespace XREngine
                 return requestedRenderWorkers;
 
             EVrDesktopFrameExecutionMode mode = Enum.TryParse(
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
                     ignoreCase: true,
                     out EVrDesktopFrameExecutionMode environmentMode)
                 ? environmentMode
@@ -133,7 +133,7 @@ namespace XREngine
                 return requestedRenderWorkers;
 
             EVrViewRenderMode mode = Enum.TryParse(
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrViewRenderMode),
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrViewRenderMode),
                     ignoreCase: true,
                     out EVrViewRenderMode environmentMode)
                 ? environmentMode
@@ -249,7 +249,7 @@ namespace XREngine
             const int defaultVulkanCommandChainWorkers = 4;
             const int maximumVulkanCommandChainWorkers = 8;
             int vulkanCommandChainWorkers = defaultVulkanCommandChainWorkers;
-            string? configuredWorkers = Environment.GetEnvironmentVariable(
+            string? configuredWorkers = XREnvironment.GetValue(
                 XREngineEnvironmentVariables.VulkanCommandChainWorkerCount);
             if (!string.IsNullOrWhiteSpace(configuredWorkers) &&
                 int.TryParse(configuredWorkers.Trim(), out int parsedWorkers))
@@ -293,7 +293,7 @@ namespace XREngine
             EEngineExecutionSettingSource fallbackSource,
             out EEngineExecutionSettingSource source)
         {
-            string? raw = Environment.GetEnvironmentVariable(variableName);
+            string? raw = XREnvironment.GetValue(variableName);
             if (string.IsNullOrWhiteSpace(raw))
             {
                 source = fallbackSource;
@@ -340,7 +340,7 @@ namespace XREngine
             EEngineExecutionSettingSource fallbackSource,
             out EEngineExecutionSettingSource source)
         {
-            string? raw = Environment.GetEnvironmentVariable(variableName);
+            string? raw = XREnvironment.GetValue(variableName);
             if (string.IsNullOrWhiteSpace(raw))
             {
                 source = fallbackSource;
@@ -368,7 +368,7 @@ namespace XREngine
             out EEngineExecutionSettingSource source)
             where TEnum : struct, Enum
         {
-            string? raw = Environment.GetEnvironmentVariable(variableName);
+            string? raw = XREnvironment.GetValue(variableName);
             if (string.IsNullOrWhiteSpace(raw))
             {
                 source = fallbackSource;

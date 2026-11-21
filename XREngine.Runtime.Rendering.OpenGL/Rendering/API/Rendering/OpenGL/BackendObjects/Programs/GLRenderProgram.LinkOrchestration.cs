@@ -1375,7 +1375,7 @@ namespace XREngine.Rendering.OpenGL
                     // Set XRE_SYNCSRC_HAZARD_DISABLE_PARALLEL=1 to opt back in to the
                     // suppression if the wedge ever surfaces on the render thread.
                     bool hazardSyncDisableParallel = string.Equals(
-                        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SyncSrcHazardDisableParallel),
+                        XREnvironment.GetValue(XREngineEnvironmentVariables.SyncSrcHazardDisableParallel),
                         "1",
                         StringComparison.Ordinal);
                     bool hazardSyncLink = hazardSyncDisableParallel

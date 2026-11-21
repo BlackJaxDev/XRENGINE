@@ -30,7 +30,7 @@ public sealed class NativeDebugLogBackend : IRuntimeDebugLogBackend
             if (_logsRootDirectory is not null)
                 return _logsRootDirectory;
 
-            string? editorSessionRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot);
+            string? editorSessionRoot = XREnvironment.GetValue(XREngineEnvironmentVariables.EditorSessionRoot);
             string preferred = string.IsNullOrWhiteSpace(editorSessionRoot)
                 ? Path.Combine(FindRepositoryRoot() ?? AppContext.BaseDirectory, "Build", "Logs")
                 : Path.Combine(Path.GetFullPath(editorSessionRoot), "logs");

@@ -527,7 +527,7 @@ namespace XREngine
 
         private static bool IsTextureStreamingCacheWarmupEnabled()
         {
-            string? value = Environment.GetEnvironmentVariable(
+            string? value = XREnvironment.GetValue(
                 XREngineEnvironmentVariables.TextureStreamingCacheWarmupEnabled);
             return string.IsNullOrWhiteSpace(value) ||
                 value.Trim() is not ("0" or "false" or "False" or "FALSE" or "off" or "Off" or "OFF");

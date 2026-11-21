@@ -36,7 +36,7 @@ internal sealed class EngineRuntimeWindowApplicationServices : IRuntimeWindowApp
 
     private static RuntimeWindowPumpHostMode ResolveRequestedMode()
     {
-        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WindowPumpHost)?.Trim();
+        string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.WindowPumpHost)?.Trim();
         if (string.IsNullOrWhiteSpace(value)
             || value.Equals("0", StringComparison.OrdinalIgnoreCase)
             || value.Equals("false", StringComparison.OrdinalIgnoreCase)

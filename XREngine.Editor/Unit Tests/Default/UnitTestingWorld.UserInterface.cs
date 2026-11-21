@@ -564,7 +564,7 @@ public static partial class EditorUnitTests
         {
             if (RuntimeEngine.VRState.IsOpenXRActive)
             {
-                string? runtimeManifest = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+                string? runtimeManifest = XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson);
                 return !string.IsNullOrWhiteSpace(runtimeManifest) &&
                     runtimeManifest.Contains("monado", StringComparison.OrdinalIgnoreCase)
                         ? "OpenXR/Monado"
@@ -937,7 +937,7 @@ public static partial class EditorUnitTests
 
         private static EBatchedTextDebugMode ResolveFpsTextDebugMode()
         {
-            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.FpsTextBatchedDebugMode);
+            string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.FpsTextBatchedDebugMode);
             if (string.IsNullOrWhiteSpace(value))
                 return EBatchedTextDebugMode.None;
 

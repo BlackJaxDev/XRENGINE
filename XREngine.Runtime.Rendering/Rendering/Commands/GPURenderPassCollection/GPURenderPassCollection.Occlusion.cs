@@ -47,7 +47,7 @@ namespace XREngine.Rendering.Commands
             private static string? _logPath;
 
             public static bool IsEnabled()
-                => XREnvironment.IsEnabled("XRE_HIZ_STAGE_LOGGING");
+                => XREnvironment.IsEnabled(XREngineEnvironmentVariables.HizStageLogging);
 
             public static void Record(string stage, double ms)
             {

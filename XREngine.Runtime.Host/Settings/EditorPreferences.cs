@@ -442,7 +442,7 @@ namespace XREngine
         {
             get => string.IsNullOrEmpty(_mcpServerAuthTokenEnvVar)
                 ? _mcpServerAuthToken
-                : System.Environment.GetEnvironmentVariable(_mcpServerAuthTokenEnvVar) ?? string.Empty;
+                : XREnvironment.GetValue(_mcpServerAuthTokenEnvVar) ?? string.Empty;
             set => SetField(ref _mcpServerAuthToken, value ?? string.Empty);
         }
 
@@ -663,7 +663,7 @@ namespace XREngine
         {
             get => string.IsNullOrEmpty(_mcpAssistantOpenAiApiKeyEnvVar)
                 ? _mcpAssistantOpenAiApiKey
-                : System.Environment.GetEnvironmentVariable(_mcpAssistantOpenAiApiKeyEnvVar) ?? string.Empty;
+                : XREnvironment.GetValue(_mcpAssistantOpenAiApiKeyEnvVar) ?? string.Empty;
             set => SetField(ref _mcpAssistantOpenAiApiKey, value ?? string.Empty);
         }
 
@@ -679,7 +679,7 @@ namespace XREngine
         {
             get => string.IsNullOrEmpty(_mcpAssistantAnthropicApiKeyEnvVar)
                 ? _mcpAssistantAnthropicApiKey
-                : System.Environment.GetEnvironmentVariable(_mcpAssistantAnthropicApiKeyEnvVar) ?? string.Empty;
+                : XREnvironment.GetValue(_mcpAssistantAnthropicApiKeyEnvVar) ?? string.Empty;
             set => SetField(ref _mcpAssistantAnthropicApiKey, value ?? string.Empty);
         }
 
@@ -865,7 +865,7 @@ namespace XREngine
         {
             get => string.IsNullOrEmpty(_mcpAssistantGeminiApiKeyEnvVar)
                 ? _mcpAssistantGeminiApiKey
-                : System.Environment.GetEnvironmentVariable(_mcpAssistantGeminiApiKeyEnvVar) ?? string.Empty;
+                : XREnvironment.GetValue(_mcpAssistantGeminiApiKeyEnvVar) ?? string.Empty;
             set => SetField(ref _mcpAssistantGeminiApiKey, value ?? string.Empty);
         }
 
@@ -894,7 +894,7 @@ namespace XREngine
         {
             get => string.IsNullOrEmpty(_mcpAssistantGitHubModelsTokenEnvVar)
                 ? _mcpAssistantGitHubModelsToken
-                : System.Environment.GetEnvironmentVariable(_mcpAssistantGitHubModelsTokenEnvVar) ?? string.Empty;
+                : XREnvironment.GetValue(_mcpAssistantGitHubModelsTokenEnvVar) ?? string.Empty;
             set => SetField(ref _mcpAssistantGitHubModelsToken, value ?? string.Empty);
         }
 

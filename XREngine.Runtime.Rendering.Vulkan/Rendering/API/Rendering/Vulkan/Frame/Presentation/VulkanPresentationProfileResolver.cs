@@ -130,7 +130,7 @@ internal static class VulkanPresentationProfileResolver
 
         EVulkanPresentationProfile requested =
             RuntimeRenderingHostServices.Settings.VulkanPresentationProfile;
-        string? raw = Environment.GetEnvironmentVariable(
+        string? raw = XREnvironment.GetValue(
             XREngineEnvironmentVariables.VulkanPresentationProfile);
         if (string.IsNullOrWhiteSpace(raw))
             return requested;
@@ -151,7 +151,7 @@ internal static class VulkanPresentationProfileResolver
     {
         float refreshHz = RuntimeRenderingHostServices.Settings
             .VulkanPresentationTargetRefreshHz;
-        string? raw = Environment.GetEnvironmentVariable(
+        string? raw = XREnvironment.GetValue(
             XREngineEnvironmentVariables.TargetRefreshHz);
         if (!string.IsNullOrWhiteSpace(raw))
         {

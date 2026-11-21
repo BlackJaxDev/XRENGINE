@@ -15,7 +15,7 @@ internal sealed class EditorSecretCipherServices : ISecretCipherServices
         if (string.IsNullOrEmpty(serialized))
             return string.Empty;
         if (IsEnvironmentReference(serialized, out string environmentVariableName))
-            return Environment.GetEnvironmentVariable(environmentVariableName) ?? string.Empty;
+            return XREnvironment.GetValue(environmentVariableName) ?? string.Empty;
 
         if (serialized.StartsWith(SecretCipherServices.DpapiPrefix, StringComparison.Ordinal))
         {

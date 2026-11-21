@@ -25,7 +25,7 @@ internal sealed partial class VulkanOutputRuntime
         _obsHookPolicy = ResolveObsHookPolicy();
 
         if (_obsHookPolicy == EVulkanObsHookPolicy.Disable)
-            Environment.SetEnvironmentVariable(ObsHookDisableEnvVar, "1");
+            XREnvironment.SetProcessValue(ObsHookDisableEnvVar, "1");
 
         _obsHookDisabledForProcess = IsEnvironmentFlagEnabled(ObsHookDisableEnvVar);
         _obsHookDisabledByLoader = LoaderDisableEnvMentionsObsHook();
@@ -213,7 +213,7 @@ internal sealed partial class VulkanOutputRuntime
 
     private static EVulkanObsHookPolicy ResolveObsHookPolicy()
     {
-        string? raw = Environment.GetEnvironmentVariable(ObsHookPolicyEnvVar);
+        string? raw = XREnvironment.GetValue(ObsHookPolicyEnvVar);
         if (string.IsNullOrWhiteSpace(raw))
             return EVulkanObsHookPolicy.Auto;
 
@@ -236,7 +236,7 @@ internal sealed partial class VulkanOutputRuntime
 
     private static bool LoaderDisableEnvMentionsObsHook()
     {
-        string? raw = Environment.GetEnvironmentVariable(VulkanLoaderLayersDisableEnvVar);
+        string? raw = XREnvironment.GetValue(VulkanLoaderLayersDisableEnvVar);
         return string.IsNullOrWhiteSpace(raw)
             ? false
             : raw.Contains(ObsHookLayerName, StringComparison.OrdinalIgnoreCase) ||
@@ -247,7 +247,7 @@ internal sealed partial class VulkanOutputRuntime
 
     private static bool IsEnvironmentFlagEnabled(string name)
     {
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         return !string.IsNullOrWhiteSpace(raw) && !StringEqualsAny(raw.Trim(), "0", "false", "off", "no");
     }
 

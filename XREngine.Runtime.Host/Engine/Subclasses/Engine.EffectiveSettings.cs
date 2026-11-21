@@ -330,7 +330,7 @@ namespace XREngine
 
             private static EVulkanDiagnosticPreset ResolveVulkanDiagnosticPreset()
             {
-                string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset);
+                string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanDiagnosticPreset);
                 if (!string.IsNullOrWhiteSpace(raw) &&
                     Enum.TryParse(raw.Trim(), ignoreCase: true, out EVulkanDiagnosticPreset parsed))
                 {

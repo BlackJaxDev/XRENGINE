@@ -14,7 +14,7 @@ internal sealed class McpRequestMilestoneTrace
     private static int s_count;
 
     internal static bool Enabled { get; } =
-        string.Equals(Environment.GetEnvironmentVariable("XRE_MCP_REQUEST_TRACE"), "1", StringComparison.Ordinal);
+        string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.McpRequestTrace), "1", StringComparison.Ordinal);
 
     private readonly long _requestId;
     private readonly long _startedAt;

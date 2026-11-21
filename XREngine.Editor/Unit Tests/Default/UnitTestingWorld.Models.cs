@@ -854,14 +854,14 @@ public static partial class EditorUnitTests
             root = null;
             error = null;
             if (!string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE"),
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.MeshletStandaloneCookedCacheMode),
                     "Load",
                     StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
 
-            string? cacheRoot = Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT");
+            string? cacheRoot = XREnvironment.GetValue(XREngineEnvironmentVariables.MeshletStandaloneCookedCacheRoot);
             if (string.IsNullOrWhiteSpace(cacheRoot))
             {
                 error = "Standalone cooked-mesh warm load was requested without a cache root.";
@@ -973,14 +973,14 @@ public static partial class EditorUnitTests
             SceneNode importedRoot)
         {
             if (!string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE"),
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.MeshletStandaloneCookedCacheMode),
                     "Publish",
                     StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
 
-            string? cacheRoot = Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT");
+            string? cacheRoot = XREnvironment.GetValue(XREngineEnvironmentVariables.MeshletStandaloneCookedCacheRoot);
             if (string.IsNullOrWhiteSpace(cacheRoot))
                 return;
 

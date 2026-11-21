@@ -170,7 +170,7 @@ public static class FbxTrace
 
     private static FbxLogVerbosity ReadVerbosityFromEnvironment()
     {
-        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.FbxLog);
+        string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.FbxLog);
         if (string.IsNullOrWhiteSpace(value))
             return FbxLogVerbosity.Off;
 

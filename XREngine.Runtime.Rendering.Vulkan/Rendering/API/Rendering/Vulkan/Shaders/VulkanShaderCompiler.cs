@@ -380,7 +380,7 @@ internal static partial class VulkanShaderCompiler
     internal static void ValidateModuleWhenRequested(string shaderName, byte[] spirv)
     {
         if (!string.Equals(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanValidateSpirv),
+                XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanValidateSpirv),
                 "1",
                 StringComparison.Ordinal))
             return;
@@ -437,7 +437,7 @@ internal static partial class VulkanShaderCompiler
     /// <summary>Opt-in retained compile inputs and validated modules for native compiler diagnosis.</summary>
     private static string? GetShaderDiagnosticBasePath(string shaderName, byte[] content)
     {
-        string? directory = Environment.GetEnvironmentVariable(
+        string? directory = XREnvironment.GetValue(
             XREngineEnvironmentVariables.VulkanShaderDiagnosticsDirectory);
         if (string.IsNullOrWhiteSpace(directory))
             return null;

@@ -205,7 +205,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
         }
 
-        string? unitTestRenderApi = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi);
+        string? unitTestRenderApi = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestRenderApi);
         return string.Equals(unitTestRenderApi, "Vulkan", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1794,7 +1794,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         _offscreenProfile = offscreenProfile;
         _stageFamilyExecutionProfile = stageFamilyProfile;
         _forwardDepthPrePassEnabled = !string.Equals(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileDisableForwardDepthPrePass),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileDisableForwardDepthPrePass),
             "1",
             StringComparison.OrdinalIgnoreCase);
         // Honor the deferred-debug pref (seeded from XRE_DEFERRED_DEBUG, also settable from the

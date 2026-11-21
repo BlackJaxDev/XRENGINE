@@ -33,7 +33,7 @@ public sealed class LocalApiUser
         
         ArgumentException.ThrowIfNullOrWhiteSpace(TokenEnvironmentVariable);
 
-        string? token = Environment.GetEnvironmentVariable(TokenEnvironmentVariable);
+        string? token = XREnvironment.GetValue(TokenEnvironmentVariable);
         if (string.IsNullOrWhiteSpace(token) || token.Length < 32)
             throw new InvalidOperationException($"User '{UserId}' requires a token of at least 32 characters in its configured environment variable.");
         
@@ -71,6 +71,6 @@ public sealed class LocalApiUser
     /// </summary>
     /// <returns>The bearer credential for the agent, retrieved from the configured environment variable.</returns>
     internal string AgentBearerCredential()
-        => Environment.GetEnvironmentVariable(TokenEnvironmentVariable)
+        => XREnvironment.GetValue(TokenEnvironmentVariable)
             ?? throw new InvalidOperationException("Backend identity credential is unavailable.");
 }

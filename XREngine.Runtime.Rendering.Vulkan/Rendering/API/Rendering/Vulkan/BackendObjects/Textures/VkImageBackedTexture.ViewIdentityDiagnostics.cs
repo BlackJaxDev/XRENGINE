@@ -7,7 +7,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> where TTex
 {
     private static readonly bool ViewIdentityDiagnosticsEnabled =
         string.Equals(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingDiag),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanRecordingDiag),
             "1",
             StringComparison.Ordinal);
     private static int _viewCreationDiagnosticCount;
