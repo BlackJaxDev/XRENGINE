@@ -106,6 +106,54 @@ public static partial class EditorUnitTests
             return avatars;
         }
 
+        /// <summary>
+        /// Builds the crowd on a long-running worker thread and then calls <paramref name="onAppThread"/>
+        /// on the app thread with the avatars and their detached slot nodes. Each clone is a full
+        /// serializer copy of the avatar and can take more than a minute for a large avatar. On the app
+        /// thread, twelve clones stop scene updates for many minutes and the desktop frame stops presenting.
+        /// The template and the clones are not attached to a scene or world while the worker runs, so no
+        /// other thread reads or changes them. The callback attaches the slot nodes.
+        /// </summary>
+        /// <param name="template">The detached imported hierarchy root.</param>
+        /// <param name="templateAvatarRoot">The avatar root inside <paramref name="template"/>.</param>
+        /// <param name="templateTakesFirstSlot">True when the template is not the player avatar.</param>
+        /// <param name="appThreadReason">The reason text for the app-thread invoke.</param>
+        /// <param name="onAppThread">
+        /// Receives the created avatars and the slot nodes. Both lists are empty when the clone failed;
+        /// the template is then detached again and keeps no slot parent.
+        /// </param>
+        private static void CreateCrowdOffAppThread(
+            SceneNode template,
+            SceneNode templateAvatarRoot,
+            bool templateTakesFirstSlot,
+            string appThreadReason,
+            Action<List<CrowdAvatar>, List<SceneNode>> onAppThread)
+        {
+            _ = Task.Factory.StartNew(
+                () =>
+                {
+                    List<SceneNode> slotRoots = [];
+                    List<CrowdAvatar> avatars;
+                    try
+                    {
+                        avatars = CreateCrowd(template, templateAvatarRoot, slotParent: null, templateTakesFirstSlot, slotRoots);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogCrowdWarning($"[CrowdBenchmark] Cloning '{template.Name}' failed. The crowd is not created. {ex.GetType().Name}: {ex.Message}");
+                        if (template.Parent is { } slot && slotRoots.Contains(slot))
+                            template.Parent = null;
+                        avatars = [];
+                        slotRoots = [];
+                    }
+
+                    _ = Engine.InvokeOnAppThread(() => onAppThread(avatars, slotRoots), appThreadReason, executeNowIfAlreadyAppThread: true);
+                },
+                CancellationToken.None,
+                TaskCreationOptions.LongRunning,
+                TaskScheduler.Default);
+        }
+
         /// <summary>The auxiliary log file that gets the crowd benchmark lines.</summary>
         private const string CrowdBenchmarkLogFileName = "crowd-benchmark.log";
 

@@ -488,7 +488,27 @@ public static partial class EditorUnitTests
                         model,
                         onFinished: result =>
                         {
-                            _ = Engine.InvokeOnAppThread(() =>
+                            if (model.Kind is UnitTestModelImportKind.Animated && TryClaimCrowdBenchmark(model))
+                            {
+                                // Clone the crowd on a worker thread before the models are suspended,
+                                // so each clone has active models to suspend and stage.
+                                CreateCrowdOffAppThread(
+                                    result.RootNode,
+                                    result.AvatarRoot,
+                                    templateTakesFirstSlot: true,
+                                    $"UnitTestingWorld: Finish Unity prefab crowd '{Path.GetFileName(resolvedPath)}'",
+                                    FinishSerializedImport);
+                                return;
+                            }
+
+                            _ = Engine.InvokeOnAppThread(
+                                () => FinishSerializedImport([], []),
+                                $"UnitTestingWorld: Finish Unity prefab import '{Path.GetFileName(resolvedPath)}'",
+                                executeNowIfAlreadyAppThread: true);
+
+                            // Publishes the imported scene. createdCrowd and createdSlotRoots are empty
+                            // when there is no crowd.
+                            void FinishSerializedImport(List<CrowdAvatar> createdCrowd, List<SceneNode> createdSlotRoots)
                             {
                                 try
                                 {
@@ -503,15 +523,11 @@ public static partial class EditorUnitTests
                                     List<List<ModelComponent>>? crowdSuspendedModels = null;
                                     if (model.Kind is UnitTestModelImportKind.Animated)
                                     {
-                                        // Clone the crowd before the models are suspended, so each
-                                        // clone has active models to suspend and stage.
-                                        List<SceneNode> slotRoots = [];
-                                        if (TryClaimCrowdBenchmark(model) &&
-                                            CreateCrowd(importedRoot, result.AvatarRoot, slotParent: null, templateTakesFirstSlot: true, slotRoots) is { Count: > 0 } created)
+                                        if (createdCrowd.Count > 0)
                                         {
-                                            crowd = created;
+                                            crowd = createdCrowd;
                                             importedScene.RootNodes.Remove(importedRoot);
-                                            importedScene.RootNodes.AddRange(slotRoots);
+                                            importedScene.RootNodes.AddRange(createdSlotRoots);
                                             crowdSuspendedModels = new(crowd.Count);
                                             foreach (CrowdAvatar avatar in crowd)
                                                 crowdSuspendedModels.Add(SuspendSerializedPrefabModelPublication(avatar.Root));
@@ -586,7 +602,7 @@ public static partial class EditorUnitTests
                                         finally { onSerializedImportCompleted?.Invoke(); }
                                     }
                                 }
-                            }, $"UnitTestingWorld: Finish Unity prefab import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
+                            }
                         },
                         onError: ex =>
                         {
@@ -616,32 +632,51 @@ public static partial class EditorUnitTests
                             onFinished: result =>
                             {
                                 string? sourceContentSha256 = TryComputeSourceModelContentSha256(resolvedPath);
-                                _ = Engine.InvokeOnAppThread(() =>
+                                SceneNode? importedNode = result.RootNode;
+
+                                // The crowd clones the detached avatar on a worker thread, before its
+                                // humanoid setup. A player avatar stays on the pawn, and the crowd gets
+                                // clones only.
+                                if (importedNode is not null && TryClaimCrowdBenchmark(model))
                                 {
-                                    SceneNode? importedNode = result.RootNode;
-                                    if (characterParentNode != null && importedNode != null && importedNode.Transform.Parent != characterParentNode.Transform)
-                                        characterParentNode.Transform.AddChild(importedNode.Transform, false, EParentAssignmentMode.Immediate);
+                                    CreateCrowdOffAppThread(
+                                        importedNode,
+                                        importedNode,
+                                        templateTakesFirstSlot: characterParentNode is null,
+                                        $"UnitTestingWorld: Finish animated avatar crowd '{Path.GetFileName(resolvedPath)}'",
+                                        FinishAnimatedImport);
+                                    return;
+                                }
 
-                                    // The crowd clones the avatar before its humanoid setup. A player
-                                    // avatar stays on the pawn, and the crowd gets clones only.
-                                    List<CrowdAvatar>? crowd = null;
-                                    if (importedNode is not null && TryClaimCrowdBenchmark(model))
+                                _ = Engine.InvokeOnAppThread(
+                                    () => FinishAnimatedImport([], []),
+                                    $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'",
+                                    executeNowIfAlreadyAppThread: true);
+
+                                // Attaches the avatar and the crowd slots, and runs the humanoid setup.
+                                // crowd and slotRoots are empty when there is no crowd.
+                                void FinishAnimatedImport(List<CrowdAvatar> crowd, List<SceneNode> slotRoots)
+                                {
+                                    try
                                     {
-                                        bool playerAvatar = characterParentNode is not null;
-                                        List<CrowdAvatar> created = CreateCrowd(importedNode, importedNode, rootNode, templateTakesFirstSlot: !playerAvatar, slotRoots: []);
-                                        crowd = created.Count > 0 ? created : null;
-                                    }
+                                        if (characterParentNode != null && importedNode != null && importedNode.Transform.Parent != characterParentNode.Transform)
+                                            characterParentNode.Transform.AddChild(importedNode.Transform, false, EParentAssignmentMode.Immediate);
+                                        foreach (SceneNode slot in slotRoots)
+                                            SceneNodePrefabUtility.AttachInstance(slot, rootNode.World, rootNode);
 
-                                    if (crowd is null || characterParentNode is not null)
-                                        OnFinishedImportingAvatar(
-                                            importedNode,
-                                            characterParentNode,
-                                            sourceContentSha256);
-                                    if (crowd is not null)
+                                        if (crowd.Count == 0 || characterParentNode is not null)
+                                            OnFinishedImportingAvatar(
+                                                importedNode,
+                                                characterParentNode,
+                                                sourceContentSha256);
                                         foreach (CrowdAvatar avatar in crowd)
                                             OnFinishedImportingAvatar(avatar.AvatarRoot, null, sourceContentSha256);
-                                    CompleteAllModelImportSlot();
-                                }, $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
+                                    }
+                                    finally
+                                    {
+                                        CompleteAllModelImportSlot();
+                                    }
+                                }
                             },
                             onError: ex =>
                             {

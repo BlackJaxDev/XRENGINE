@@ -23,6 +23,13 @@ internal sealed partial class VulkanFrameLoop
     private int _presentNowRecoveryProbeActive;
 
     /// <summary>
+    /// The auxiliary log that gets the PresentNow pause, probe, recovery, and terminal lines.
+    /// The Vulkan category log is compiled out of Release builds, so without this file a
+    /// Release session that stops presenting leaves no record of the failed stage.
+    /// </summary>
+    private const string PresentNowAuxiliaryLogFileName = "vulkan-present-now.log";
+
+    /// <summary>
     /// Publishes a cold-path recovery edge for a failure explicitly classified as
     /// recoverable. Hard capacity, invariant, memory, and device failures retain
     /// their terminal latch and ignore these requests.
@@ -1366,6 +1373,11 @@ internal sealed partial class VulkanFrameLoop
             failure.Stage,
             !failedProbe,
             failure.Message);
+        WritePresentNowAuxiliaryLog(
+            $"RecoveryPending frame={failure.FrameId} stage={failure.Stage} " +
+            $"ticket='{failure.ActiveTicket}' dependency='{failure.DependencyChain}' " +
+            $"automaticProbe={!failedProbe} elapsedMs={failure.Elapsed.TotalMilliseconds:F1} " +
+            $"detail={failure.Message}");
     }
 
     private bool TryBeginPresentNowRecoveryProbe(
@@ -1417,6 +1429,11 @@ internal sealed partial class VulkanFrameLoop
             previousCompileActivityGeneration,
             compileActivityGeneration,
             Volatile.Read(ref _presentNowRecoveryRequestReason));
+        WritePresentNowAuxiliaryLog(
+            $"RecoveryProbe frame={attempt.FrameNumber} sourceFrame={recoverableFailure.FrameId} " +
+            $"stage={recoverableFailure.Stage} automatic={automaticProbe} explicit={explicitRequest} " +
+            $"pipelineCompletion={pipelineCompletionProbe} " +
+            $"reason={Volatile.Read(ref _presentNowRecoveryRequestReason)}");
         return true;
     }
 
@@ -1469,6 +1486,9 @@ internal sealed partial class VulkanFrameLoop
             source?.FrameId ?? 0UL,
             source?.Stage.ToString() ?? "<unknown>",
             recoveryAttempts);
+        WritePresentNowAuxiliaryLog(
+            $"RendererRecovered frame={attempt.FrameNumber} sourceFrame={source?.FrameId ?? 0UL} " +
+            $"stage={source?.Stage.ToString() ?? "<unknown>"} attempts={recoveryAttempts}");
     }
 
     private static bool IsSuccessfulPresentNowRecoveryFrame(
@@ -1598,6 +1618,12 @@ internal sealed partial class VulkanFrameLoop
             transition.BackgroundResumeCount,
             transition.FailureType,
             transition.Detail);
+        WritePresentNowAuxiliaryLog(
+            $"TerminalTransition id={transition.TransitionId} frame={transition.FrameId} " +
+            $"stage={transition.ReadinessStage} ticket='{transition.ActiveTicket}' " +
+            $"dependency='{transition.DependencyChain}' disposition={transition.Disposition} " +
+            $"elapsedMs={transition.Elapsed.TotalMilliseconds:F1} failureType={transition.FailureType} " +
+            $"detail={transition.Detail}");
         Debug.Vulkan(
             "[Vulkan][PresentNow][ReproductionRecord] transition={0} " +
             "backend=Vulkan policy=BlockForExact workClass=PresentNow " +
@@ -1619,6 +1645,16 @@ internal sealed partial class VulkanFrameLoop
             transition.ActiveTicket,
             transition.DependencyChain);
     }
+
+    /// <summary>
+    /// Writes one PresentNow state change, with a local timestamp, to
+    /// <see cref="PresentNowAuxiliaryLogFileName"/>. Callers are cold paths that run once per
+    /// failure, probe, or recovery, so the formatted string does not allocate per frame.
+    /// </summary>
+    private static void WritePresentNowAuxiliaryLog(string message)
+        => Debug.WriteAuxiliaryLog(
+            PresentNowAuxiliaryLogFileName,
+            $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff} {message}");
 
     private void ResetIncompleteAcceptedPresentNowPlan(
         ref VulkanFrameAttempt attempt)
