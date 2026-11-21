@@ -1171,6 +1171,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             in gpuMeshSlice,
             deformationLevel,
             out bool deformationOrdered);
+        NoteDeformedVertexCount(deformedVertexCount, mesh.VertexCount);
         if (!_deformedArena.RecordDeformedVertexCount(outputHandle, deformedVertexCount) &&
             slice.HasValidVelocity)
             slice = slice with { VelocityValidity = EAdvancedVelocityValidityReason.VertexCountChanged };

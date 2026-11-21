@@ -838,6 +838,14 @@ the deferral text), and the `SUMMARY` line adds `lastPrepDeferral` and `prep.<re
 Rejected packages and reused deferred frames do not run a build, so the `SUMMARY` `deferred` count
 does not include them; the `prep.` totals do.
 
+The `SUMMARY` line also shows the latched virtual geometry settings (`vg`, `skinnedCut`,
+`deformationLod`) and these counts of its 5-second window: `deformedVertices` and `fullVertices`
+(the vertices that the deformation jobs deformed, and the vertex counts of the same skinned draws),
+`gate.<outcome>` for each skinned cluster cut draw (`EAdvancedDeformationLevelGate`: the first check
+that kept the draw at level 0, or `Chosen`), and `level<n>` for each chosen level above 0. When
+`deformedVertices` equals `fullVertices` in a deformation level of detail session, the `gate.` counts
+show why no draw got a coarser level.
+
 ### Extraction lookups
 
 `AdvancedPreparationExtractor.Build` reads each skinned draw's mesh preparation

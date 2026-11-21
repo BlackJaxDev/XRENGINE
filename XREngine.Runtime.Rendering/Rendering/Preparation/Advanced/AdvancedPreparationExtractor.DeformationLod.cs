@@ -74,23 +74,33 @@ public sealed partial class AdvancedPreparationExtractor
         bool physicsStateCaptured,
         in PhysicsChainGpuRendererOutputState physicsState)
     {
-        if (_deformationLodEyeCount == 0 ||
-            (command.Flags & (uint)ExcludedDeformationLodFlags) != 0u ||
-            !geometry.IsResident ||
-            !geometry.HasClusterHierarchy ||
-            geometry.MeshletCount <= geometry.DrawMeshletCount ||
-            !geometry.MeshletDescriptors.IsValid ||
+        // The view check comes after the geometry checks, so that the diagnostics also show the
+        // geometry state of a cluster cut session without deformation level of detail.
+        if ((command.Flags & (uint)ExcludedDeformationLodFlags) != 0u)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.ExcludedDrawFlags);
+        if (!geometry.IsResident)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.GeometryNotResident);
+        if (!geometry.HasClusterHierarchy)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoClusterHierarchy);
+        if (geometry.MeshletCount <= geometry.DrawMeshletCount)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoCoarserLevels);
+        if (!geometry.MeshletDescriptors.IsValid ||
             !geometry.MeshletVertexIndices.IsValid ||
-            !geometry.MeshletTriangleWords.IsValid ||
-            mesh.MeshletPayload is not { HasDeformationOrder: true } payload ||
-            payload.DeformationVertexOrder.Length != mesh.VertexCount ||
-            !publication.Transforms.TryGet(draw.CurrentTransform, out AdvancedTransformRecord transform))
-            return 0u;
+            !geometry.MeshletTriangleWords.IsValid)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.MeshletBuffersInvalid);
+        if (mesh.MeshletPayload is not { HasDeformationOrder: true } payload)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoDeformationOrder);
+        if (payload.DeformationVertexOrder.Length != mesh.VertexCount)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.DeformationOrderMismatch);
+        if (_deformationLodEyeCount == 0)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoViews);
+        if (!publication.Transforms.TryGet(draw.CurrentTransform, out AdvancedTransformRecord transform))
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoTransform);
 
         // A GPU physics draw needs the committed proxy box that contains its patched sphere.
         bool physicsBoundsUsable = hasPhysicsBounds && physicsStateCaptured && physicsState.CpuSpatialBoundsValid;
         if (hasPhysicsBounds && !physicsBoundsUsable)
-            return 0u;
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.PhysicsBoundsUnusable);
 
         float maxScale = AdvancedDeformationLevelSelector.MaxAxisScale(in transform.World);
         float distance = AdvancedDeformationLevelSelector.DrawDistance(
@@ -108,11 +118,13 @@ public sealed partial class AdvancedPreparationExtractor
             maxScale,
             _deformationLodPixelScale,
             AdvancedVirtualGeometryPolicy.PixelThreshold);
-        return level != 0u &&
-            payload.DeformationPrefixCounts[(int)level] != 0u &&
-            HasPublishedLevelCover(in geometry, payload, level)
-                ? level
-                : 0u;
+        if (level == 0u)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.SelectedLevelZero);
+        if (payload.DeformationPrefixCounts[(int)level] == 0u ||
+            !HasPublishedLevelCover(in geometry, payload, level))
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoPrefixOrCover);
+        NoteDeformationLevelGate(EAdvancedDeformationLevelGate.Chosen, level);
+        return level;
     }
 
     /// <summary>
