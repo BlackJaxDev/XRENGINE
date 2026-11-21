@@ -81,9 +81,11 @@ public static partial class EditorUnitTests
                 }
                 else
                 {
+                    // The clones share the template textures. A copied texture keeps the loading
+                    // placeholder that it had at clone time and never streams.
                     root = slotParent is null
-                        ? SceneNodePrefabUtility.CloneHierarchy(template)
-                        : SceneNodePrefabUtility.CloneHierarchyAttached(template, slot);
+                        ? SceneNodePrefabUtility.CloneHierarchy(template, shareTextures: true)
+                        : SceneNodePrefabUtility.CloneHierarchyAttached(template, slot, shareTextures: true);
                     root.Name = $"{template.Name} Crowd {index + 1}";
                     if (slotParent is null)
                         root.Parent = slot;

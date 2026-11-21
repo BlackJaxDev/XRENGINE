@@ -747,7 +747,13 @@ namespace XREngine
 
         private static XRAsset? ResolveExternalReference(Guid guid, Type expectedType, string? portableReference = null)
         {
-            // First prefer already-loaded assets.
+            // A clone that shares assets with its source reads back the source instance. This path
+            // reads references for members with an abstract declared type (for example XRTexture),
+            // which the concrete asset converters do not see.
+            if (SharedAssetCloneScope.TryResolve(guid, out XRAsset? shared) && expectedType.IsInstanceOfType(shared))
+                return shared;
+
+            // Then prefer already-loaded assets.
             if (AssetSerializationServices.Current.TryGetAssetById(guid, out XRAsset? asset) && asset is not null)
                 return asset;
 
