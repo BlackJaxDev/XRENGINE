@@ -142,6 +142,16 @@ for this case and does not evaluate `smoothstep` with equal limits.
 An absent source outline mask binds white. The outline texture remains a
 separate color and alpha sampler.
 
+The browser outline companion uses `WebGPU/UberOutline.slang`. Each cooked
+variant name lists its active coverage features in this order: alpha masks,
+dissolve, and source flipbook alpha. A source texture-array flipbook in
+final-alpha mode changes the outline coverage alpha, so that variant binds
+`_FlipbookTexArray` and `_FlipbookMask` and runs the alpha path of
+`source_flipbook.glsl`. The other flipbook modes change only color and
+emission, and the outline output does not read them. The outline cook keeps
+each source texture array and its layer settings in
+`PublishedTextureArrayProfile`.
+
 `ShadeNativeUber.glslinc` supplies the shared native evaluator for mono, MSAA,
 and overflow repair. It implements the supported toon lighting, normals, material
 AO, specular controls, cubemap reflections, layered matcaps, rim, emission,
