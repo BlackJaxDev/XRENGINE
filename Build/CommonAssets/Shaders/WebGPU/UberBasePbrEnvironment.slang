@@ -224,7 +224,8 @@ float3 XRENGINE_CalculateAmbientPbr(float3 normal, float3 fragPos, float3 albedo
     float NoV = max(dot(normal, viewDir), 0.0);
     float3 F0 = lerp(float3(0.04), albedo, metallic);
     float3 kS = XRENGINE_SpecF_SchlickRoughnessApprox(NoV, F0, roughness) * specularIntensity;
-    float3 kD = (1.0 - kS) * (1.0 - metallic);
+    float3 diffuseFresnel = F0 + (float3(1.0) - F0) * pow(1.0 - NoV, 5.0);
+    float3 kD = (float3(1.0) - diffuseFresnel) * (1.0 - metallic);
     float3 diffuseAO = (lighting.ambientOcclusionControls.z > 0.5)
         ? XRENGINE_MultiBounceAO(ambientOcclusion, albedo)
         : float3(ambientOcclusion);
@@ -303,7 +304,8 @@ float3 XRENGINE_CalculateAmbientPbr(float3 normal, float3 fragPos, float3 albedo
 
     // The shared BRDF producer owns one linearly sampled mip with anisotropy one.
     float2 brdfValue = BRDF.SampleLevel(BRDFSampler, float2(NoV, roughness), 0.0).rg;
-    float3 diffuse = lighting.globalAmbient.xyz * irradianceColor * albedo;
+    // Convolution stores irradiance divided by PI, independent of world ambient.
+    float3 diffuse = irradianceColor * albedo;
     float3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
     return kD * diffuse * diffuseAO + specular * specularOcclusion;
 #endif
