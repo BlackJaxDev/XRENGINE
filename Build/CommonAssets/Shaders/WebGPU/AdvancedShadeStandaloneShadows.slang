@@ -54,8 +54,9 @@ bool XR_WEB_ReconstructShadowHelper(XRAdvancedSurface surface, float2 pixel,
     {
         uint word,features,pipeline;
         if(!XR_ADV_TryLoadUberBase(material,word,features,pipeline))return false;
-        UberBaseMesh mesh=XR_ADV_UberMesh(helper);
-        // Canonical Uber receiver shadows use the geometric vertex normal.
+        UberBaseMesh mesh=XR_ADV_UberMesh(helper,XR_ADV_UberParameters(word));
+        // Canonical Uber receiver shadows use the geometric vertex normal with
+        // the material back-face rule.
         normal=mesh.vertexNormal;
     }
     else if (XR_ADV_IsEngineSurfaceMaterial(material))

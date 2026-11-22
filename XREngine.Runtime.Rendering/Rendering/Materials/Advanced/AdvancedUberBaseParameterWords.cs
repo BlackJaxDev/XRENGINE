@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering;
 
-/// <summary>Inline, bit-preserving image of the canonical 352-byte Uber numeric block.</summary>
+/// <summary>Inline, bit-preserving image of the canonical Uber numeric block (<see cref="UberBaseParameterSchema.ByteSize"/> bytes).</summary>
 [InlineArray(UberBaseParameterSchema.ByteSize / sizeof(uint))]
 public struct AdvancedUberBaseParameterWords
 {

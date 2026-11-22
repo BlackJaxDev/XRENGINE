@@ -25,7 +25,7 @@ float4 uberBaseFragment(UberBaseVertexOutput input, bool frontFace : SV_IsFrontF
 #endif
 {
     UberBaseMaterialParameters material = uberBaseResolveMaterial();
-    UberBaseMesh mesh = uberBaseMesh(input, frontFace);
+    UberBaseMesh mesh = uberBaseMesh(material, input, frontFace);
     float4 base = uberBaseSampleColor(material, mesh, uberBaseTime());
     float alpha = uberBaseSampleAlpha(material, mesh, base.a, XRE_UBER_BASE_FEATURES, uberBaseTime());
     if (!uberBaseCovered(material, alpha)) discard;

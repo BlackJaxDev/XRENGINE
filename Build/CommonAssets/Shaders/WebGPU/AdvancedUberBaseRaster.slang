@@ -159,10 +159,12 @@ UberNativeVertex advancedUberVertex(uint vertexIndex:SV_VertexID,uint instanceIn
     if((flags&5u)==5u&&dot(tangent.xyz,tangent.xyz)>0.0){result.tangent=normalize(CofactorDirection(model,tangent.xyz));result.bitangent=normalize(CofactorDirection(model,cross(normal,tangent.xyz)*tangent.w));}
     result.uv01=SceneVector(attributes);result.uv23=SceneVector(attributes+4u);result.color=SceneVector(attributes+8u);return result;
 }
+// The material facing rules select the back-face normal and tangent-frame signs.
 UberBaseMesh FragmentMesh(UberNativeVertex input,bool front)
 {
-    UberBaseMesh mesh;mesh.worldPosition=input.world;mesh.localPosition=input.local;mesh.vertexNormal=normalize(input.normal)*(front?1.0:-1.0);
-    mesh.worldNormal=mesh.vertexNormal;mesh.viewDirection=normalize(Parameters.cameraPosition-input.world);mesh.tangent=input.tangent;mesh.bitangent=input.bitangent;
+    float frameFacing=uberBaseFrameFacing(UberMaterial,front);
+    UberBaseMesh mesh;mesh.worldPosition=input.world;mesh.localPosition=input.local;mesh.vertexNormal=normalize(input.normal)*uberBaseNormalFacing(UberMaterial,front);
+    mesh.worldNormal=mesh.vertexNormal;mesh.viewDirection=normalize(Parameters.cameraPosition-input.world);mesh.tangent=input.tangent*frameFacing;mesh.bitangent=input.bitangent*frameFacing;
     mesh.vertexColor=input.color;mesh.uv0=input.uv01.xy;mesh.uv1=input.uv01.zw;mesh.uv2=input.uv23.xy;mesh.uv3=input.uv23.zw;return mesh;
 }
 float4 EvaluateCoverage(UberNativeVertex input,bool front,out UberBaseMesh mesh,out float time)
@@ -211,9 +213,10 @@ void advancedUberSurface(UberNativeVertex input,bool front:SV_IsFrontFace
 )
 {
     UberBaseMesh mesh;float time;float4 base=EvaluateCoverage(input,front,mesh,time);
-    float3 rms=uberBaseSampleRms(UberMaterial,mesh,Parameters.uberFeatures,time);
+    UberBaseSpecular specular=uberBaseSampleSpecular(UberMaterial,mesh,Parameters.uberFeatures,time);
+    float3 rms=specular.rms;
     float3 emission=uberBaseSampleEmission(UberMaterial,mesh,Parameters.uberFeatures,time);
-    float3 lit=uberBaseForwardLighting(mesh,base.rgb,rms,input.position.xy,Parameters.pipelineFlags);
+    float3 lit=uberBaseForwardLighting(UberMaterial,Parameters.uberFeatures,mesh,base.rgb,specular,input.position.xy,Parameters.pipelineFlags);
     uint2 pixel=uint2(input.position.xy);uint layer=0u;uint2 identity;uint metadata;
 #if defined(XR_ADV_UBER_MULTISAMPLE)
     uint4 packed=WinnerIdentity.Load(pixel,sampleIndex),packedMetadata=WinnerMetadata.Load(pixel,sampleIndex);

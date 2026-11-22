@@ -19,7 +19,7 @@
     "maxVertexBufferArrayStride": 72,
     "maxBindGroups": 3,
     "maxBindingsPerBindGroup": 6,
-    "maxUniformBufferBindingSize": 592,
+    "maxUniformBufferBindingSize": 656,
     "maxDynamicUniformBuffersPerPipelineLayout": 3,
     "maxUniformBuffersPerShaderStage": 3,
     "maxSampledTexturesPerShaderStage": 3,
@@ -174,7 +174,7 @@
         ],
         "owner": "Material",
         "frequency": "Material",
-        "bytes": 592,
+        "bytes": 656,
         "dynamic": true,
         "members": [
           {
@@ -687,6 +687,62 @@
             "offset": 588,
             "bytes": 4,
             "type": "f32"
+          },
+          {
+            "name": "U_SourceDissolveParams_0",
+            "provider": "_SourceDissolveParams",
+            "offset": 592,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_DissolveTextureColor_0",
+            "provider": "_DissolveTextureColor",
+            "offset": 608,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "U_SourceAlphaClip_0",
+            "provider": "_SourceAlphaClip",
+            "offset": 624,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "U_SourceBackfaceNormals_0",
+            "provider": "_SourceBackfaceNormals",
+            "offset": 628,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_FlipBackfaceNormals_0",
+            "provider": "_FlipBackfaceNormals",
+            "offset": 632,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "U_SourceOutlineBasic_0",
+            "provider": "_SourceOutlineBasic",
+            "offset": 636,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_OutlinesMaxDistance_0",
+            "provider": "_OutlinesMaxDistance",
+            "offset": 640,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_OutlineFixWidth_0",
+            "provider": "_OutlineFixWidth",
+            "offset": 644,
+            "bytes": 4,
+            "type": "f32"
           }
         ]
       },
@@ -757,6 +813,7 @@
         "binding": 4,
         "kind": "texture-2d-float",
         "visibility": [
+          "vertex",
           "fragment"
         ],
         "owner": "Material",
@@ -772,6 +829,7 @@
         "binding": 5,
         "kind": "filtering-sampler",
         "visibility": [
+          "vertex",
           "fragment"
         ],
         "owner": "Material",

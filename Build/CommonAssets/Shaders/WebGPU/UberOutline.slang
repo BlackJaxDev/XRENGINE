@@ -91,6 +91,16 @@ struct OutlineMaterialUniforms
     float2 _DissolveEdgeTexturePan;
     int _DissolveEdgeTextureUV;
     float _DissolveCutoff;
+    float4 _SourceDissolveParams;
+    float4 _DissolveTextureColor;
+    // Imported source controls. An absent animated control reads zero, as an
+    // unset desktop uniform reads zero.
+    float _SourceAlphaClip;
+    int _SourceBackfaceNormals;
+    int _FlipBackfaceNormals;
+    int _SourceOutlineBasic;
+    float _OutlinesMaxDistance;
+    float _OutlineFixWidth;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<OutlineViewUniforms> view;
@@ -100,6 +110,7 @@ struct OutlineMaterialUniforms
 [[vk::binding(1, 2)]] SamplerState _MainTexSampler;
 [[vk::binding(2, 2)]] Texture2D<float4> _OutlineTexture;
 [[vk::binding(3, 2)]] SamplerState _OutlineTextureSampler;
+// The basic source outline also reads this mask in the vertex stage.
 [[vk::binding(4, 2)]] Texture2D<float4> _OutlineMask;
 [[vk::binding(5, 2)]] SamplerState _OutlineMaskSampler;
 #ifdef XRE_OUTLINE_ALPHA_MASKS
@@ -162,32 +173,51 @@ OutlineVertexOutput uberOutlineVertex(OutlineVertexInput input)
 {
     float3 position = input.position;
     float3 normal = input.normal;
-    float vertexWidth = lerp(1.0, max(input.color0.a, 0.0), saturate(material._OutlineUseVertexColors));
-    float width = material._OutlineWidth * 0.01 * vertexWidth;
-    float3 direction = normal;
-    if (material._OutlineExpansionMode == 1)
-        direction = normalize(position + normal * 0.001);
-    else if (material._OutlineExpansionMode == 2)
-        direction = normalize(material._OutlinePersonaDirection);
-    else if (material._OutlineExpansionMode == 3)
-        direction = normalize(material._OutlineDropShadowOffset);
-
-    if (material._OutlineExpansionMode == 3)
-        position += material._OutlineDropShadowOffset * width;
-    else if (material._OutlineSpace == 1)
+    bool basic = material._SourceOutlineBasic != 0;
+    if (basic)
     {
-        float3 worldDirection = normalize(transformOutlineNormal(direction));
-        // NormalMatrix is the full transpose of inverse(ModelMatrix), so its
-        // transpose supplies the canonical world-to-local displacement.
-        position += mul(transpose(object.normalMatrix), float4(worldDirection * width, 0.0)).xyz;
+        // The basic source outline moves along the unnormalized normal by the
+        // mask at the raw first UV. Fixed size scales the width by the camera
+        // distance, up to the maximum distance.
+        float mask = _OutlineMask.SampleLevel(_OutlineMaskSampler, input.uv0, 0.0).r;
+        float distanceFactor = 1.0;
+        if (material._OutlineFixedSize > 0.5)
+        {
+            float3 worldPosition = mul(object.modelMatrix, float4(position, 1.0)).xyz;
+            float cameraDistance = length(view.cameraPosition.xyz - worldPosition);
+            distanceFactor = lerp(1.0, clamp(cameraDistance, 0.0, material._OutlinesMaxDistance), material._OutlineFixWidth);
+        }
+        position += normal * (material._OutlineWidth * 0.01 * mask * distanceFactor);
     }
-    else if (material._OutlineSpace != 2)
-        position += normalize(direction) * width;
+    else
+    {
+        float vertexWidth = lerp(1.0, max(input.color0.a, 0.0), saturate(material._OutlineUseVertexColors));
+        float width = material._OutlineWidth * 0.01 * vertexWidth;
+        float3 direction = normal;
+        if (material._OutlineExpansionMode == 1)
+            direction = normalize(position + normal * 0.001);
+        else if (material._OutlineExpansionMode == 2)
+            direction = normalize(material._OutlinePersonaDirection);
+        else if (material._OutlineExpansionMode == 3)
+            direction = normalize(material._OutlineDropShadowOffset);
+
+        if (material._OutlineExpansionMode == 3)
+            position += material._OutlineDropShadowOffset * width;
+        else if (material._OutlineSpace == 1)
+        {
+            float3 worldDirection = normalize(transformOutlineNormal(direction));
+            // NormalMatrix is the full transpose of inverse(ModelMatrix), so its
+            // transpose supplies the canonical world-to-local displacement.
+            position += mul(transpose(object.normalMatrix), float4(worldDirection * width, 0.0)).xyz;
+        }
+        else if (material._OutlineSpace != 2)
+            position += normalize(direction) * width;
+    }
 
     OutlineVertexOutput output;
     float4 worldPosition = mul(object.modelMatrix, float4(position, 1.0));
     output.position = mul(view.viewProjection, worldPosition);
-    if (material._OutlineSpace == 2 || material._OutlineFixedSize > 0.5)
+    if (!basic && (material._OutlineSpace == 2 || material._OutlineFixedSize > 0.5))
     {
         float2 screen = max(view.u_ScreenParams.xy, float2(1.0));
         float2 clipNormal = normalize(mul(view.viewProjection, mul(object.modelMatrix, float4(normal, 0.0))).xy);
@@ -300,14 +330,68 @@ float calculateAlpha(float4 baseColor, OutlineVertexOutput input, float3 normal,
     }
 #endif
     alpha = saturate(alpha + material._AlphaMod);
-    if (material._AlphaForceOpaque > 0.5)
+    // A source alpha clip keeps the authored alpha. Its force-opaque control
+    // changes only the coverage alpha.
+    if (material._SourceAlphaClip <= 0.5 && material._AlphaForceOpaque > 0.5)
         alpha = 1.0;
     return alpha;
 }
 
 #ifdef XRE_OUTLINE_DISSOLVE
-bool applyDissolve(OutlineVertexOutput input, float3 normal, float3 viewDirection, inout float3 color, inout float3 emission)
+// Returns the dissolved fraction, the edge amount, and the edge blend for the
+// source basic dissolve. Port of Uber/source_dissolve.glsl.
+float3 sourceBasicDissolve(float noise, float detail, float mask, float amount, float width,
+    float detailStrength, float invertNoise, float4 parameters, float time)
 {
+    float progress = saturate(amount);
+    if (parameters.w != 0.0)
+        progress = sin(time * 0.05 * parameters.w) * 0.5 + 0.5;
+    float threshold = lerp(-width, 1.0, progress * mask);
+    float strength = saturate(detailStrength);
+    strength *= (1.0 - smoothstep(0.99, 1.0, threshold)) *
+        lerp(1.0, smoothstep(0.0, lerp(0.01, 0.1, strength), threshold), parameters.z);
+    if (invertNoise > 0.5) noise = 1.0 - noise;
+    if (parameters.y > 0.5) detail = 1.0 - detail;
+    noise = saturate(noise - detail * strength) * 0.998 + 0.001;
+    float dissolved = step(noise, threshold);
+    float edge = width > 0.0 ? saturate((threshold + width - noise) / width) * (1.0 - dissolved) : 0.0;
+    float hardness = saturate(parameters.x);
+    float blend = hardness >= 1.0 ? (edge > 0.0 ? 1.0 : 0.0) : smoothstep(0.0, 1.0 - hardness, edge);
+    return float3(dissolved, edge, blend);
+}
+
+// Returns true when the dissolve rejects the fragment. The source basic type
+// changes the color and alpha and never rejects. The outline output does not
+// read emission, so this lowering omits the dissolve emission terms.
+bool applyDissolve(OutlineVertexOutput input, float3 normal, float3 viewDirection, inout float3 color, inout float alpha)
+{
+    if (int(material._DissolveType) == 5)
+    {
+        float sourceTime = view.u_Time * 0.05;
+        float2 basicNoiseUV = getUV(material._DissolveNoiseTextureUV, input, normal, viewDirection)
+            * material._DissolveNoiseTexture_ST.xy + material._DissolveNoiseTexture_ST.zw + material._DissolveNoiseTexturePan * sourceTime;
+        float noise = _DissolveNoiseTexture.Sample(_DissolveNoiseTextureSampler, basicNoiseUV).r;
+        float2 basicDetailUV = getUV(material._DissolveDetailNoiseUV, input, normal, viewDirection)
+            * material._DissolveDetailNoise_ST.xy + material._DissolveDetailNoise_ST.zw + material._DissolveDetailNoisePan * sourceTime;
+        float detail = _DissolveDetailNoise.Sample(_DissolveDetailNoiseSampler, basicDetailUV).r;
+        float2 basicMaskUV = getUV(material._DissolveMaskUV, input, normal, viewDirection)
+            * material._DissolveMask_ST.xy + material._DissolveMask_ST.zw + material._DissolveMaskPan * sourceTime;
+        float basicMask = _DissolveMask.Sample(_DissolveMaskSampler, basicMaskUV).r;
+        if (material._DissolveMaskInvert > 0.5)
+            basicMask = 1.0 - basicMask;
+        float3 result = sourceBasicDissolve(noise, detail, basicMask, material._DissolveProgress,
+            material._DissolveEdgeWidth, material._DissolveDetailStrength, material._DissolveInvert,
+            material._SourceDissolveParams, view.u_Time);
+        float2 dissolvedUV = getUV(material._DissolveEdgeTextureUV, input, normal, viewDirection)
+            * material._DissolveEdgeTexture_ST.xy + material._DissolveEdgeTexture_ST.zw + material._DissolveEdgeTexturePan * sourceTime;
+        float4 dissolvedColor = _DissolveEdgeTexture.Sample(_DissolveEdgeTextureSampler, dissolvedUV) * material._DissolveTextureColor;
+        color = lerp(color, dissolvedColor.rgb, result.x * 0.999999);
+        alpha = lerp(alpha, dissolvedColor.a, result.x * 0.999999);
+        float2 basicGradientUV = float2(result.y, result.y) * material._DissolveEdgeGradient_ST.xy + material._DissolveEdgeGradient_ST.zw;
+        float3 edge = _DissolveEdgeGradient.Sample(_DissolveEdgeGradientSampler, basicGradientUV).rgb * material._DissolveEdgeColor.rgb;
+        color = lerp(color, edge, result.z);
+        return false;
+    }
     float2 noiseBaseUV = getUV(material._DissolveNoiseTextureUV, input, normal, viewDirection);
     float2 noiseUV = textureUV(noiseBaseUV, material._DissolveNoiseTexture_ST, material._DissolveNoiseTexturePan);
     float baseNoise = _DissolveNoiseTexture.Sample(_DissolveNoiseTextureSampler, noiseUV).r;
@@ -380,7 +464,6 @@ bool applyDissolve(OutlineVertexOutput input, float3 normal, float3 viewDirectio
     {
         float3 edgeColor = hueShift(material._DissolveEdgeColor.rgb, material._DissolveHueShift) * gradient * edgeTexture;
         color = lerp(color, edgeColor, edgeFactor * material._DissolveEdgeColor.a);
-        emission += edgeColor * edgeFactor * material._DissolveEdgeEmission;
     }
     // The canonical dissolve branch leaves fragment alpha unchanged.
     return dissolveAlpha < material._DissolveCutoff;
@@ -391,20 +474,30 @@ bool applyDissolve(OutlineVertexOutput input, float3 normal, float3 viewDirectio
 float4 uberOutlineFragment(OutlineVertexOutput input, bool frontFacing : SV_IsFrontFace) : SV_Target0
 {
     float3 viewDirection = normalize(view.cameraPosition.xyz - input.worldPosition);
-    float3 normal = normalize(input.worldNormal) * (frontFacing ? 1.0 : -1.0);
+    // An imported source with back-face normals keeps the front normal on back
+    // faces unless it also asks for a flip. The rim and UV modes 4 and 6 read it.
+    float facing = frontFacing ? 1.0 : -1.0;
+    float normalFacing = material._SourceBackfaceNormals == 0 || material._FlipBackfaceNormals != 0 ? facing : 1.0;
+    float3 normal = normalize(input.worldNormal) * normalFacing;
     float4 baseColor = calculateBaseColor(input, normal, viewDirection);
     float alpha = calculateAlpha(baseColor, input, normal, viewDirection);
     bool dissolveDiscard = false;
 #ifdef XRE_OUTLINE_DISSOLVE
-    float3 emission = float3(0.0);
     if ((material.OutlineFeatures & 2u) != 0u)
-        dissolveDiscard = applyDissolve(input, normal, viewDirection, baseColor.rgb, emission);
+        dissolveDiscard = applyDissolve(input, normal, viewDirection, baseColor.rgb, alpha);
 #endif
+    // The coverage test runs after the dissolve. A forced-opaque source alpha
+    // clip passes the test and keeps full outline coverage.
+    float coverageAlpha = material._SourceAlphaClip > 0.5 && material._AlphaForceOpaque > 0.5 ? 1.0 : alpha;
+    bool coverageDiscard = (material._Mode == 1 || material._SourceAlphaClip > 0.5) && coverageAlpha < material._Cutoff;
 
+    bool basic = material._SourceOutlineBasic != 0;
     float2 uv = textureUV(getUV(material._OutlineTextureUV, input, normal, viewDirection), material._OutlineTexture_ST, material._OutlineTexturePan);
     float2 maskUV = textureUV(getUV(material._OutlineMaskUV, input, normal, viewDirection), material._OutlineMask_ST, material._OutlineMaskPan);
     float4 textureColor = _OutlineTexture.Sample(_OutlineTextureSampler, uv);
-    float mask = _OutlineMask.Sample(_OutlineMaskSampler, maskUV).r;
+    float mask = basic ? _OutlineMask.SampleLevel(_OutlineMaskSampler, maskUV, 0.0).r : _OutlineMask.Sample(_OutlineMaskSampler, maskUV).r;
+    // The basic source outline drops fragments where the mask removes the width.
+    bool basicDiscard = basic && mask * material._OutlineWidth < 0.001;
     float4 color = material._OutlineColor;
     color.rgb = hueShift(color.rgb * textureColor.rgb, material._OutlineHueShift + material._OutlineHueShiftSpeed * view.u_Time);
     color.rgb = lerp(color.rgb, color.rgb * baseColor.rgb, saturate(material._OutlineTextureTint));
@@ -412,13 +505,17 @@ float4 uberOutlineFragment(OutlineVertexOutput input, bool frontFacing : SV_IsFr
     float rim = pow(1.0 - saturate(dot(normal, viewDirection)), 2.0);
     color.rgb *= lerp(float3(1.0), float3(lerp(1.0 - material._OutlineShadowStrength, 1.0, rim)), saturate(material._OutlineLit));
     color.rgb += color.rgb * material._OutlineEmission;
-    float distanceFade = 1.0 - smoothstep(min(material._OutlineDistanceFadeStart, material._OutlineDistanceFadeEnd),
-        max(material._OutlineDistanceFadeStart, material._OutlineDistanceFadeEnd), length(input.worldPosition - view.cameraPosition.xyz));
-    color.a *= alpha * textureColor.a * mask * distanceFade;
+    // A fade range of zero width keeps the full outline.
+    float fadeStart = min(material._OutlineDistanceFadeStart, material._OutlineDistanceFadeEnd);
+    float fadeEnd = max(material._OutlineDistanceFadeStart, material._OutlineDistanceFadeEnd);
+    float distanceFade = 1.0;
+    if (fadeEnd > fadeStart)
+        distanceFade = 1.0 - smoothstep(fadeStart, fadeEnd, length(input.worldPosition - view.cameraPosition.xyz));
+    color.a *= coverageAlpha * textureColor.a * (basic ? 1.0 : mask) * distanceFade;
     // Defer coverage rejection until every implicit texture read has executed.
-    // The canonical ordering of cutout, dissolve and outline alpha tests is
-    // preserved in the predicate; no discarded fragment reaches the output.
-    if ((material._Mode == 1 && alpha < material._Cutoff) || dissolveDiscard || color.a <= 0.0001)
+    // The canonical ordering of dissolve, cutout, basic mask, and outline alpha
+    // tests is preserved in the predicate; no discarded fragment reaches the output.
+    if (dissolveDiscard || coverageDiscard || basicDiscard || color.a <= 0.0001)
         discard;
     // The source exits here before ordinary opacity forcing or emission output.
     return color;
