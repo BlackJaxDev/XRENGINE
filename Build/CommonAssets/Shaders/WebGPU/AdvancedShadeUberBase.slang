@@ -7,6 +7,11 @@
 #endif
 #include "UberBaseSurface.slang"
 #define XR_ADV_UBER_SOURCE 10u
+// AdvancedUberBaseSurfaceRecord word layout: four header words, the 124-word
+// Uber parameter block, seven 8-word role bindings, and eight sampling keys.
+static const uint XR_ADV_UBER_RECORD_WORDS=192u;
+static const uint XR_ADV_UBER_BINDING_WORD=128u;
+static const uint XR_ADV_UBER_SAMPLING_WORD=184u;
 
 bool XR_ADV_IsUberBaseMaterial(XRAdvancedMaterialRecord material) { return material.reserved == XR_ADV_UBER_SOURCE; }
 float4 XR_ADV_UberVector(uint word) { return asfloat(uint4(SceneArena[word], SceneArena[word+1u], SceneArena[word+2u], SceneArena[word+3u])); }
@@ -15,13 +20,13 @@ bool XR_ADV_TryLoadUberBase(XRAdvancedMaterialRecord material, out uint word, ou
     word=0u; features=0u; pipeline=0u;
     uint count, stride; SceneArena.GetDimensions(count,stride);
     const uint header=34u*8u;
-    if (!XR_ADV_IsUberBaseMaterial(material) | count < 36u*8u | SceneArena[header+2u]!=156u |
+    if (!XR_ADV_IsUberBaseMaterial(material) | count < 36u*8u | SceneArena[header+2u]!=XR_ADV_UBER_RECORD_WORDS |
         SceneArena[header+5u]!=1u | SceneArena[header+6u]!=36u | material.stableRowId==0u |
         material.stableRowId>=SceneArena[header+1u]) return false;
     uint offset=SceneArena[header];
-    if (offset < 36u*8u | offset>count | material.stableRowId>=(count-offset)/156u) return false;
-    word=offset+material.stableRowId*156u;
-    if (SceneArena[word]!=material.generation | SceneArena[word+1u]!=1u | SceneArena[word+155u]!=0u) return false;
+    if (offset < 36u*8u | offset>count | material.stableRowId>=(count-offset)/XR_ADV_UBER_RECORD_WORDS) return false;
+    word=offset+material.stableRowId*XR_ADV_UBER_RECORD_WORDS;
+    if (SceneArena[word]!=material.generation | SceneArena[word+1u]!=1u | SceneArena[word+XR_ADV_UBER_RECORD_WORDS-1u]!=0u) return false;
     features=SceneArena[word+2u]; pipeline=SceneArena[word+3u];
     return (features & ~31u)==0u & (pipeline & ~15u)==0u;
 }
@@ -80,6 +85,24 @@ UberBaseMaterialParameters XR_ADV_UberParameters(uint word)
     material._EmissionScrollingSpeed=asfloat(uint2(SceneArena[p+84u],SceneArena[p+85u]));
     material._EmissionScrollingEnabled=asfloat(SceneArena[p+86u]);
     material._EmissionScrollingVertexColor=asfloat(SceneArena[p+87u]);
+    material._SourceBackfaceNormals=asint(SceneArena[p+88u]);
+    material._FlipBackfaceNormals=asint(SceneArena[p+89u]);
+    material._SourceAlphaClip=asfloat(SceneArena[p+90u]);
+    material._WorldAmbientOcclusionStrength=asfloat(SceneArena[p+91u]);
+    material._BumpMapFlipGreen=asint(SceneArena[p+92u]);
+    material._SourceLightMode=asint(SceneArena[p+93u]);
+    material._PBRMochiePackedMasksEnabled=asint(SceneArena[p+94u]);
+    material._PBRMetallicMapsReflectionMaskChannel=asint(SceneArena[p+95u]);
+    material._PBRMetallicMapsSpecularMaskChannel=asint(SceneArena[p+96u]);
+    material._PBRReflectionStrength=asfloat(SceneArena[p+97u]);
+    material._PBRReflectionMaskInvert=asfloat(SceneArena[p+98u]);
+    material._PBRSpecularMaskInvert=asfloat(SceneArena[p+99u]);
+    material._SourceMochieSettings=XR_ADV_UberVector(p+100u);
+    material._SourceMochieSecond=XR_ADV_UberVector(p+104u);
+    material._SourceMochieReflection=XR_ADV_UberVector(p+108u);
+    material._SourceMochieReflectionTint=XR_ADV_UberVector(p+112u);
+    material._SourceAdditiveSettings=XR_ADV_UberVector(p+116u);
+    material._SourceAdditiveColor=XR_ADV_UberVector(p+120u);
     return material;
 }
 struct XRAdvancedUberAttributes { float2 uv0; float2 uv1; float2 uv2; float2 uv3; float4 color; };
@@ -111,13 +134,15 @@ bool XR_ADV_TryLoadUberAttributes(uint drawDense,uint drawIdentity,XRAdvancedDra
     c=XR_ADV_ReadUberAttributes(offset+sourceVertices.z*12u);
     return true;
 }
-UberBaseMesh XR_ADV_UberMesh(XRAdvancedSurface surface)
+UberBaseMesh XR_ADV_UberMesh(XRAdvancedSurface surface,UberBaseMaterialParameters material)
 {
     UberBaseMesh mesh;
+    bool front=((surface.visibilityMetadata>>5u)&1u)!=0u;
+    float frameFacing=uberBaseFrameFacing(material,front);
     mesh.worldPosition=surface.interpolatedWorldPosition; mesh.localPosition=surface.uberLocalPosition;
-    mesh.vertexNormal=normalize(surface.shadingNormal)*(((surface.visibilityMetadata>>5u)&1u)!=0u?1.0:-1.0);
+    mesh.vertexNormal=normalize(surface.shadingNormal)*uberBaseNormalFacing(material,front);
     mesh.worldNormal=mesh.vertexNormal; mesh.viewDirection=normalize(FrozenView.cameraPositionAndNear.xyz-mesh.worldPosition);
-    mesh.tangent=surface.tangent; mesh.bitangent=surface.bitangent; mesh.vertexColor=surface.color0;
+    mesh.tangent=surface.tangent*frameFacing; mesh.bitangent=surface.bitangent*frameFacing; mesh.vertexColor=surface.color0;
     mesh.uv0=surface.texCoord0; mesh.uv1=surface.texCoord1; mesh.uv2=surface.uberTexCoord2; mesh.uv3=surface.uberTexCoord3;
     return mesh;
 }
@@ -135,10 +160,10 @@ float2 XR_ADV_UberGradient(XRAdvancedSurface surface,int mode,bool horizontal)
 }
 float4 XR_ADV_SampleUberRole(uint word,uint role,float2 uv,float2 dx,float2 dy)
 {
-    XRAdvancedMaterialTextureBinding binding=ReadXRAdvancedMaterialTextureBinding(word+92u+role*8u);
+    XRAdvancedMaterialTextureBinding binding=ReadXRAdvancedMaterialTextureBinding(word+XR_ADV_UBER_BINDING_WORD+role*8u);
     XRAdvancedTextureRecord record; XRAdvancedEncodedTextureReference reference;
     ResolveTexturePairWithSampling(binding.textureReference.handle,binding.samplerReference.handle,
-        binding.textureReference.fallback,SceneArena[word+148u+role],record,reference);
+        binding.textureReference.fallback,SceneArena[word+XR_ADV_UBER_SAMPLING_WORD+role],record,reference);
     return XR_ADV_SampleTexture2DGrad(reference,uv,dx,dy);
 }
 float4 XR_ADV_SampleUberUv(uint word,uint role,int selector,float4 st,float2 pan,float time,UberBaseMesh mesh,XRAdvancedSurface surface)
@@ -156,9 +181,9 @@ float3 XR_ADV_UberNormal(uint word,UberBaseMaterialParameters material,UberBaseM
     float3 tangentNormal;
     if(material.NormalMapMode==1)
     {
-        XRAdvancedMaterialTextureBinding binding=ReadXRAdvancedMaterialTextureBinding(word+100u);
+        XRAdvancedMaterialTextureBinding binding=ReadXRAdvancedMaterialTextureBinding(word+XR_ADV_UBER_BINDING_WORD+8u);
         XRAdvancedTextureRecord record; XRAdvancedEncodedTextureReference reference;
-        ResolveTexturePairWithSampling(binding.textureReference.handle,binding.samplerReference.handle,binding.textureReference.fallback,SceneArena[word+149u],record,reference);
+        ResolveTexturePairWithSampling(binding.textureReference.handle,binding.samplerReference.handle,binding.textureReference.fallback,SceneArena[word+XR_ADV_UBER_SAMPLING_WORD+1u],record,reference);
         float2 texel=1.0/float2(XR_ADV_Texture2DDimensions(reference));
         float scale=(abs(material.HeightMapScale)>1e-6?material.HeightMapScale:1.0)*material._BumpScale;
         tangentNormal=uberBaseSobelNormal(
@@ -171,7 +196,7 @@ float3 XR_ADV_UberNormal(uint word,UberBaseMaterialParameters material,UberBaseM
             XR_ADV_SampleUberRole(word,1u,uv+float2(0.0,texel.y),dx,dy).r,
             XR_ADV_SampleUberRole(word,1u,uv+float2(texel.x,texel.y),dx,dy).r,scale);
     }
-    else tangentNormal=uberBaseUnpackNormal(XR_ADV_SampleUberRole(word,1u,uv,dx,dy),material._BumpScale);
+    else tangentNormal=uberBaseUnpackMaterialNormal(material,XR_ADV_SampleUberRole(word,1u,uv,dx,dy));
     return uberBaseMappedNormal(tangentNormal,frame);
 }
 #if defined(XR_ADV_UBER_RASTER_SURFACE_SCHEMA_VERSION)
@@ -194,7 +219,7 @@ bool XR_ADV_TryEvaluateUberBase(XRAdvancedMaterialRecord source,XRAdvancedSurfac
     return XR_ADV_IsFinite(base)&&XR_ADV_IsFinite(rmse)&&XR_ADV_IsFinite(normal)&&XR_ADV_IsFinite(emission)&&XR_ADV_IsFinite(XR_ADV_UberRasterLighting);
 #else
     UberBaseMaterialParameters material=XR_ADV_UberParameters(word);
-    UberBaseMesh mesh=XR_ADV_UberMesh(surface);
+    UberBaseMesh mesh=XR_ADV_UberMesh(surface,material);
     float time=(features&UberBaseRenderTime)!=0u?asfloat(Parameters.renderTimeBits):0.0;
     if((features&UberBaseNormalMap)!=0u) mesh.worldNormal=XR_ADV_UberNormal(word,material,mesh,surface,time);
     normal=mesh.worldNormal;
@@ -211,7 +236,7 @@ bool XR_ADV_TryEvaluateUberBase(XRAdvancedMaterialRecord source,XRAdvancedSurfac
         smoothness=XR_ADV_SampleUberUv(word,4u,material._PBRSmoothnessMapsUV,material._PBRSmoothnessMaps_ST,material._PBRSmoothnessMapsPan,time,mesh,surface);
         specular=XR_ADV_SampleUberUv(word,5u,0,material._SpecularMap_ST,float2(0.0),time,mesh,surface);
     }
-    rmse=float4(uberBaseRms(material,features,metallic,smoothness,specular),0.0);
+    rmse=float4(uberBaseSpecular(material,features,metallic,smoothness,specular).rms,0.0);
     if((features&UberBaseEmission)!=0u)
     {
         float2 dx=XR_ADV_UberGradient(surface,material._EmissionMapUV,true)*material._EmissionMap_ST.xy;

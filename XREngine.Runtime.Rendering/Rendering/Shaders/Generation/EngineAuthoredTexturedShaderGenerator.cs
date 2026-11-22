@@ -40,8 +40,8 @@ public static class EngineAuthoredTexturedShaderGenerator
         new("AuthoredTexturedLocalShadows.slang", "9b85e67842a8a8cf21b81ce94e32680d0cb67cd80213c4ec3b73591f8f7629eb"),
         new("StandardLitColorDirectionalShadow.slang", "eb50a3041d0ebfc17f8ed75d3e15b3196926df32d5cf5d4bf0e81d040c9b07fe"),
         new("LocalShadowSampling.slang", "1d8aa4707225ae90e3a156369c6ac11c5e313de88892f00736857505fc9b32fc"),
-        new("AuthoredTexturedSampling.slang", "413b6e6677fc6bd92ed5dea00913173ad684ffaff50f325f69dcd53ec647edb2"),
-        new("AuthoredTexturedNormalMapping.slang", "596b49170acfe319a84e1765b450b900ed8be7d9cda283f873e3cf2dd0a0c224"),
+        new("AuthoredTexturedSampling.slang", "f12cab0eecdc065d071e3fb05a285782a446e5c47e5b4aced1ee124b7b71ffb5"),
+        new("AuthoredTexturedNormalMapping.slang", "638305760f2320bf78cfca562c86cffdb7bbcbda2269bde7d103bfcf38aad860"),
         new("AuthoredTexturedVertex.slang", "ac588df177fc394f898d90220bedbdf5e184141d6b5860ea79253bd8b9180db6"),
     ];
 
@@ -58,15 +58,17 @@ public static class EngineAuthoredTexturedShaderGenerator
     [
         new("Snippets/ExactTransparencyPpll.glsl", "0a11e1086909cd3476a5f400c64b79d586ebc49b9bd324280bd0376192757f58"),
         new("Snippets/ExactTransparencyDepthPeel.glsl", "a2bad4809a51dc086c33444e22e9992f6bc3da2fa8d38ebb21205fbb37babdaa"),
-        new("Snippets/ForwardLighting.glsl", "639636a250a335b0c960618783135d9c3404366c0f005426128dfabe28f741f4"),
+        new("Snippets/ForwardLighting.glsl", "94f86fe827191a35e177341da091e5cc9ed60cf1153c805cf785dda49b2f281a"),
+        new("Snippets/ForwardShadowSampling.glsl", "08d0fa0becb05662315d51c95bd14fb7065305f6ac9cbdeb92a4f4a535dc0801"),
         new("Snippets/LightStructs.glsl", "fb66908be5d31f18fa636b6a4dd53e4025cd149113c89f58edc3b85f83d9b954"),
         new("Snippets/LightAttenuation.glsl", "dad7a438f800f40f7cadf28099c0d9559c0632314364eeed4e270d0d683287ba"),
-        new("Snippets/ShadowSampling.glsl", "f404d3585da7d87332a019d9190c56b7c8aeb82d61679fa40d2aa742d876e726"),
-        new("Snippets/ShadowMomentEncoding.glsl", "b0ad566842e7e9ea654685bcadba629cf2000c88088251cffc5792a9ddf1b17b"),
+        new("Snippets/ShadowSampling.glsl", "469b17fc321f873fe6d934fe591af6af4ed8c66f726c117b7bcabebf95e07d9c"),
+        new("Snippets/ShadowFilterBodies.glsl", "97b0f087cb67c5a649f247134f0edfaef90ff7e439313169443184d667a390fc"),
+        new("Snippets/ShadowMomentEncoding.glsl", "05ec8ee6984c20bf213c40e9308f44b762674ed4864eb3964a971140d3944f23"),
         new("Snippets/AmbientOcclusionSampling.glsl", "6dcc0b3ba5a7f19d97425a1888b1afce3da420473d0bafbcd9aff85f31c079ab"),
         new("Snippets/NormalEncoding.glsl", "926f6f879f1cebbbdbe7eb911d0ccfe3e57a2353345cffb69508ddf7ab90e7e9"),
     ];
-    private static readonly EngineLitMaterialShaderSource DesktopNormal = new("Snippets/SurfaceDetailNormalMapping.glsl", "1f35d80a2c3fecef7d7d3257a481baa2262a59620031f7801608ef3d52a30b02");
+    private static readonly EngineLitMaterialShaderSource DesktopNormal = new("Snippets/SurfaceDetailNormalMapping.glsl", "49927761bbe7931aab168b489c60302468fd52dd8dc283c96795d6b88bead7d5");
     private static readonly ImmutableArray<EngineLitMaterialShaderSource>[] DesktopClosures = CreateDesktopClosures();
     private static readonly EngineMaterialVariantKey[,] CompanionKeys = CreateCompanionKeys();
 

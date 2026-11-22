@@ -22,7 +22,8 @@ public sealed class UberBaseSurfaceBinding
     private ShaderVar[]? _parameters;
     private ShaderVar?[] _parameterReferences = [];
     private string?[] _parameterNames = [];
-    private ulong _staticMask;
+    // One bit per schema member. The schema has more than 64 members.
+    private UInt128 _staticMask;
     private ulong _valueVersion;
 
     private UberBaseSurfaceBinding(XRMaterial source, UberBaseMaterialProfile profile)
@@ -69,7 +70,7 @@ public sealed class UberBaseSurfaceBinding
             int index = UberBaseParameterSchema.IndexOf(entry[..separator]);
             if (index < 0 || !UberBaseParameterSchema.IsActive(index, Features)) continue;
             ShaderAbiMemberContract member = schema[index];
-            ulong bit = 1UL << index;
+            UInt128 bit = UInt128.One << index;
             if ((_staticMask & bit) != 0 || !UberBaseStaticLiteral.TryWrite(member.PhysicalType, entry[(separator + 1)..],
                 _staticValues.AsSpan(checked((int)member.Offset), checked((int)member.Size))))
             {
@@ -81,7 +82,7 @@ public sealed class UberBaseSurfaceBinding
         foreach (string name in _animatedProperties)
         {
             int index = UberBaseParameterSchema.IndexOf(name);
-            if (index >= 0 && (_staticMask & (1UL << index)) != 0)
+            if (index >= 0 && (_staticMask & (UInt128.One << index)) != UInt128.Zero)
             {
                 reason = $"UberBase.PropertyModeConflict: '{name}' cannot be both static and animated in one prepared variant.";
                 return false;
@@ -94,7 +95,8 @@ public sealed class UberBaseSurfaceBinding
     /// <summary>Copies effective values when an owner explicitly needs a new GPU parameter publication.</summary>
     public bool TryWrite(Span<byte> destination, out string? reason)
     {
-        if (destination.Length != UberBaseParameterSchema.ByteSize) throw new ArgumentException("Uber base parameters require 352 bytes.", nameof(destination));
+        if (destination.Length != UberBaseParameterSchema.ByteSize)
+            throw new ArgumentException($"Uber base parameters require {UberBaseParameterSchema.ByteSize} bytes.", nameof(destination));
         if (!TryGetValues(out ReadOnlySpan<byte> values, out reason)) return false;
         values.CopyTo(destination);
         return true;
@@ -116,7 +118,9 @@ public sealed class UberBaseSurfaceBinding
         ReadOnlySpan<ShaderAbiMemberContract> schema = UberBaseParameterSchema.Members;
         for (int index = 0; index < schema.Length; index++)
         {
-            if (!UberBaseParameterSchema.IsActive(index, Features) || (_staticMask & (1UL << index)) != 0) continue;
+            if (!UberBaseParameterSchema.IsActive(index, Features) || (_staticMask & (UInt128.One << index)) != UInt128.Zero) continue;
+            // An absent source control keeps the zero bytes copied from the static image.
+            if (_members[index] is null && UberBaseParameterSchema.ReadsZeroWhenAbsent(index)) continue;
             ShaderAbiMemberContract member = schema[index];
             if (!TryWriteParameter(_members[index], member.PhysicalType,
                 destination.Slice(checked((int)member.Offset), checked((int)member.Size))))

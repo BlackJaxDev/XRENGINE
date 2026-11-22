@@ -6,8 +6,16 @@ namespace XREngine.Rendering;
 /// <summary>Cold-path admission for the exact verified canonical outline program and its complete reflected ABI.</summary>
 public static class UberOutlineProgramContract
 {
-    public const uint MaterialByteSize = 592;
-    public const int SourceMemberCount = 72;
+    public const uint MaterialByteSize = 656;
+    public const int SourceMemberCount = 80;
+
+    /// <summary>
+    /// Source index of the first member added for imported sources. An absent
+    /// parameter at or after this index reads zero, as an unset desktop uniform
+    /// reads zero. The binding still requires the source dissolve inputs when
+    /// the material selects the source basic dissolve type.
+    /// </summary>
+    public const int FirstSourceControlIndex = 72;
     private static readonly ShaderAbiMemberContract[] Members =
     [
         new("OutlineFeatures_0", "OutlineFeatures", 0, 4, "u32"),
@@ -83,6 +91,14 @@ public static class UberOutlineProgramContract
         new("_DissolveEdgeTexturePan_0", "_DissolveEdgeTexturePan", 576, 8, "vec2<f32>"),
         new("_DissolveEdgeTextureUV_0", "_DissolveEdgeTextureUV", 584, 4, "i32"),
         new("_DissolveCutoff_0", "_DissolveCutoff", 588, 4, "f32"),
+        new("U_SourceDissolveParams_0", "_SourceDissolveParams", 592, 16, "vec4<f32>"),
+        new("_DissolveTextureColor_0", "_DissolveTextureColor", 608, 16, "vec4<f32>"),
+        new("U_SourceAlphaClip_0", "_SourceAlphaClip", 624, 4, "f32"),
+        new("U_SourceBackfaceNormals_0", "_SourceBackfaceNormals", 628, 4, "i32"),
+        new("_FlipBackfaceNormals_0", "_FlipBackfaceNormals", 632, 4, "i32"),
+        new("U_SourceOutlineBasic_0", "_SourceOutlineBasic", 636, 4, "i32"),
+        new("_OutlinesMaxDistance_0", "_OutlinesMaxDistance", 640, 4, "f32"),
+        new("_OutlineFixWidth_0", "_OutlineFixWidth", 644, 4, "f32"),
     ];
     private static readonly ShaderAbiMemberContract[] ViewMembers =
     [
@@ -109,12 +125,21 @@ public static class UberOutlineProgramContract
 
     /// <summary>Returns whether a source field is required by the selected authored coverage closure.</summary>
     public static bool IsSourceMemberActive(int sourceIndex, uint features)
-    {
-        int memberIndex = sourceIndex + 1;
-        return memberIndex is >= 1 and <= 72 &&
-            (memberIndex is < 9 or > 15 || (features & UberOutlineMaterialProfile.AlphaMasks) != 0) &&
-            (memberIndex < 44 || (features & UberOutlineMaterialProfile.Dissolve) != 0);
-    }
+        => (sourceIndex + 1) switch
+        {
+            < 1 or > SourceMemberCount => false,
+            >= 9 and <= 15 => (features & UberOutlineMaterialProfile.AlphaMasks) != 0,
+            >= 44 and <= 74 => (features & UberOutlineMaterialProfile.Dissolve) != 0,
+            _ => true,
+        };
+
+    /// <summary>Returns true when an absent material parameter for this source field reads as zero.</summary>
+    public static bool ReadsZeroWhenAbsent(int sourceIndex)
+        => sourceIndex is >= FirstSourceControlIndex and < SourceMemberCount;
+
+    /// <summary>Returns true for the inputs that only the source basic dissolve type reads.</summary>
+    public static bool IsSourceBasicDissolveInput(int sourceIndex)
+        => sourceIndex is FirstSourceControlIndex or FirstSourceControlIndex + 1;
 
     public static EngineMaterialVariantKey Key(uint features)
     {
@@ -183,8 +208,12 @@ public static class UberOutlineProgramContract
             string samplerName = UberOutlineMaterialProfile.RequiredSamplerName(features, index);
             uint binding = checked((uint)(index < 3 || (features & 1) != 0 && index == 3 ? index * 2 :
                 8 + (index - 3 - ((features & 1) != 0 ? 1 : 0)) * 2));
-            Sampled(artifact, binding, samplerName, false);
-            Sampled(artifact, binding + 1, samplerName, true);
+            // The basic source outline also reads the mask in the vertex stage.
+            ShaderStageVisibility visibility = index == 2
+                ? ShaderStageVisibility.Vertex | ShaderStageVisibility.Fragment
+                : ShaderStageVisibility.Fragment;
+            Sampled(artifact, binding, samplerName, false, visibility);
+            Sampled(artifact, binding + 1, samplerName, true, visibility);
         }
         Limit(artifact, "maxVertexAttributes", 7);
         Limit(artifact, "maxVertexBuffers", 7);
@@ -214,12 +243,13 @@ public static class UberOutlineProgramContract
             if (contract.Members[index] != members[index]) throw Invalid();
     }
 
-    private static void Sampled(ShaderProgramArtifact artifact, uint binding, string name, bool sampler)
+    private static void Sampled(ShaderProgramArtifact artifact, uint binding, string name, bool sampler,
+        ShaderStageVisibility visibility)
     {
         ShaderStageResourceLayout resource = Binding(artifact, 2, binding);
         ShaderAbiResourceContract contract = resource.Contract;
         if (resource.BindingType != (sampler ? "filtering-sampler" : "texture-2d-float") ||
-            resource.DynamicOffset || resource.RuntimeArray || resource.Visibility != ShaderStageVisibility.Fragment ||
+            resource.DynamicOffset || resource.RuntimeArray || resource.Visibility != visibility ||
             contract.Name != name || contract.PhysicalName != (sampler ? name + "Sampler_0" : name + "_0") ||
             contract.Kind != (sampler ? ShaderAbiResourceKind.Sampler : ShaderAbiResourceKind.SampledImage) ||
             contract.Owner != ShaderAbiResourceOwner.Material || contract.Frequency != ShaderAbiFrequency.Material ||

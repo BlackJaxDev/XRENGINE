@@ -15,14 +15,20 @@ internal sealed partial class BrowserMaterialCookProjection
     private readonly Dictionary<string, string> _outlineCanonicalSources = new(StringComparer.Ordinal);
     private static readonly (string File, string Hash)[] OutlineSources =
     [
-        ("UberShader.frag", "ac53058b54e0f906861f24cdd48440b6d2a4d6222c8188b0ccb8d0d1eb807967"),
-        ("UberShader.vert", "0a304c2b877f9011cd976081f51ae8bfaae03f325609889c1fbac14749af8ff8"),
-        ("uniforms.glsl", "6a40c01dac8ad25b4a3f446e94980ed494dc84f63d9d4cd4ec0d560c438cde96"),
-        ("vertex_effects.glsl", "c35bed02889627b905c7d7328f455c7960268632bfb28b7f268c0548777a2a76"),
+        ("UberShader.frag", "b5cd48ef5474f1752cddfcf620a9ef3a3388a1dbbdf683251b8f1a8313b64a0a"),
+        ("UberShader.vert", "e7e8e992c5d53ceae3f0e5b6277da12541c78f0e7e045c3cf3ae2827230c1f7b"),
+        ("uniforms.glsl", "370ce76029c98410f815e06b7007eba1ff3d89875cee31b8e2ae270bdbf73aab"),
+        ("vertex_effects.glsl", "4d615ebe2ff7234d50f1fffa73c0e3fcf496d26b0fb8c6d59094be73743bdd87"),
         ("common.glsl", "98756dfd4a3370919006101de98c1adb99efabc6aac6c126a1476bd817281446"),
-        ("dissolve.glsl", "dae8e92050de22e2be55e2b19b50000eb92fb8e259c0e4230bfbe9fd9d9b5d65"),
-        ("surface_extensions.glsl", "f200b1689b41197f7d8648c9a9eb0691e60691da9cfe025f5807565773ac8e52"),
-        ("extended_effects.glsl", "0abe0079db05c10c38a83b99cf991b1b0a673e73ed2205b3b1c9c97ea92307b4"),
+        ("dissolve.glsl", "aee16f86a38bad4dbe4b555b3b3c8ef3b670319521b8ee51082f0818580e8394"),
+        ("surface_extensions.glsl", "fe454d4ef65050ca90e03e7573f2d8395407d82f98ad5850452ae830c5ae7c1b"),
+        ("extended_effects.glsl", "08af279fa5313cb78bf2cdb6c7480a273a4818d8408c8bb7ffb5fb0b88720b01"),
+        ("source_shading.glsl", "bf2dd18b6a72694132f340a4cfb7db443389bce475c3611187e7ff74224fb251"),
+        ("vertex_manipulation.glsl", "673cddc426f27cb41600e77f582bc69cb597f21a222e19c126ac380b74cb9a55"),
+        ("source_dissolve.glsl", "7cc289de892eb719495c1baa49c6e3cae73eb635f555e3422e58251223696cf8"),
+        ("source_glitter.glsl", "59dc797e5259e83bc89714c1f3dd05293508434f7e8112a256c52a5c6b847799"),
+        ("source_flipbook.glsl", "b283a308738fb555550db767daf4f9f5eb8b7457bf1122a35f7c4760d4438b06"),
+        ("procedural_eye.glsl", "42992e818a6bd699bfed345bea76813310424b097525e7355aa7df3c823221cb"),
     ];
 
     private XRMaterial ProjectOutlineSource(XRMaterial source, MaterialPassDefinition outline)

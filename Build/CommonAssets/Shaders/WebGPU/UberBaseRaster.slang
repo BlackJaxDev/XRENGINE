@@ -97,16 +97,19 @@ UberBaseVertexOutput uberBaseVertexCore(UberBaseVertexInput input)
     return output;
 }
 
-UberBaseMesh uberBaseMesh(UberBaseVertexOutput input, bool frontFace)
+// Builds the fragment mesh. The material facing rules select the back-face
+// signs, so color, depth-normal, and shadow-bias normals use one rule.
+UberBaseMesh uberBaseMesh(UberBaseMaterialParameters material, UberBaseVertexOutput input, bool frontFace)
 {
     UberBaseMesh mesh;
+    float frameFacing = uberBaseFrameFacing(material, frontFace);
     mesh.worldPosition = input.worldPosition;
     mesh.localPosition = input.localPosition;
-    mesh.vertexNormal = normalize(input.worldNormal) * (frontFace ? 1.0 : -1.0);
+    mesh.vertexNormal = normalize(input.worldNormal) * uberBaseNormalFacing(material, frontFace);
     mesh.worldNormal = mesh.vertexNormal;
     mesh.viewDirection = normalize(view.cameraPosition.xyz - input.worldPosition);
-    mesh.tangent = input.worldTangent;
-    mesh.bitangent = input.worldBitangent;
+    mesh.tangent = input.worldTangent * frameFacing;
+    mesh.bitangent = input.worldBitangent * frameFacing;
     mesh.vertexColor = input.color0;
     mesh.uv0 = input.uv0;
     mesh.uv1 = input.uv1;

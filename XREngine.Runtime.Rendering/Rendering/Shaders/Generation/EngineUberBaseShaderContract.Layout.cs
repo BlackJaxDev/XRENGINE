@@ -82,7 +82,7 @@ public static partial class EngineUberBaseShaderContract
             {
                 ["maxVertexAttributes"] = 8, ["maxVertexBuffers"] = 8, ["maxVertexBufferArrayStride"] = 88,
                 ["maxBindGroups"] = forward ? 4 : 2, ["maxBindingsPerBindGroup"] = Math.Max(textureCount * 2 + 1, forward ? 15 : 3),
-                ["maxUniformBufferBindingSize"] = forward ? 1088 : 352,
+                ["maxUniformBufferBindingSize"] = forward ? Math.Max(1088, UberBaseParameterSchema.ByteSize) : UberBaseParameterSchema.ByteSize,
                 ["maxDynamicUniformBuffersPerPipelineLayout"] = forward ? (orderGate ? 8 : 7) : pass == "point-shadow-depth" ? 4 : 3,
                 ["maxUniformBuffersPerShaderStage"] = forward ? 6 : pass == "point-shadow-depth" ? 3 : 2,
                 ["maxSampledTexturesPerShaderStage"] = textureCount + (forward ? 7 : 0),

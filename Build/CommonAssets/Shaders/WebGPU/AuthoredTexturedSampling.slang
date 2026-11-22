@@ -53,7 +53,7 @@ float3 authoredTexturedSurfaceNormal(float2 uv, float3 position, float3 normal,
             authoredControls.textureFlagsCutoffNormalModeHeightScale.w);
     }
     else
-        sampledNormal = authoredTexturedRgbNormal(normalTexture.Sample(normalSampler, uv).rgb);
+        sampledNormal = authoredTexturedRgbNormal(normalTexture.Sample(normalSampler, uv));
     return authoredTexturedMappedNormal(sampledNormal, normal, tangent, bitangent,
         positionDx, positionDy, uvDx, uvDy);
 }

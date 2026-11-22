@@ -85,7 +85,7 @@ The editor and VR client use the GLFW 3.4 ABI from `Ultz.Native.GLFW`. On Window
 pwsh Tools/Dependencies/Build-Glfw.ps1 -Rid win-x64
 ```
 
-The script downloads the official 3.4 source archive, checks its SHA-256 hash from `Tools/Dependencies/Glfw.lock.json`, applies `Tools/Dependencies/Glfw/window-list.patch`, and builds a shared Release DLL with Visual Studio 2022 C++ tools and CMake. It writes the DLL and build witness to the ignored `Build/Dependencies/Glfw/win-x64/` directory. A Windows x64 desktop build that resolves the GLFW package asset stops with an error if this DLL is missing. The build output copy removes the package DLL first, so a NuGet cache hardlink stays unchanged. Publish uses the patched DLL as its input before copy or single-file bundling. Other platforms use the package DLL.
+The script downloads the official 3.4 source archive, checks its SHA-256 hash from `Tools/Dependencies/Glfw.lock.json`, applies `Tools/Dependencies/Glfw/window-list.patch`, and builds a shared Release DLL with CMake and the newest installed Visual Studio C++ tools (2022 or 2026). It writes the DLL and build witness to the ignored `Build/Dependencies/Glfw/win-x64/` directory. A Windows x64 desktop build that resolves the GLFW package asset stops with an error if this DLL is missing. The build output copy removes the package DLL first, so a NuGet cache hardlink stays unchanged. Publish uses the patched DLL as its input before copy or single-file bundling. Other platforms use the package DLL.
 
 GLFW uses the zlib license in `Tools/Dependencies/Glfw/LICENSE.md`. The source patch marks the changed code. Distributions of the changed source must retain the upstream notice and identify the change.
 
