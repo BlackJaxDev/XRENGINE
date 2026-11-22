@@ -559,6 +559,59 @@ compaction keeps it valid. `MeshletCount` counts every level, and
 payloads, deformation ranges and deformation witnesses use `DrawMeshletCount`,
 so a draw renders only level 0 unless the cluster cut below is on.
 
+### Cluster streaming pages
+
+`MeshletGenerationSettings.BuildStreamingPages` (off by default; the
+unit-testing world sets it for each model with `GenerateStreamingPages`, which
+needs `GenerateClusterHierarchy`) packs the clusters of a cluster hierarchy
+payload into fixed-size geometry pages for geometry streaming.
+`MeshletPageBuilder` runs after the hierarchy cook. It does not change the
+payload, and the payload hashes do not include the setting.
+
+- A page is 128 KiB (`MeshletPageFormat.PageBytes`) and holds at most 256
+  clusters. It holds one or more whole groups of one mesh, so a group never
+  crosses a page. The root groups (`SimplifiedError == float.MaxValue`) of every
+  level go to root pages of their own. The other groups of each level are sorted
+  by the Morton code of their sphere center and fill pages in that order. A page
+  holds groups of one level only. The root pages are the first pages.
+- The page tables (`MeshletPageTable`) hold the clusters in page order
+  (`ClusterOrder` maps each one back to its payload meshlet), the cluster records,
+  the group records with the page of each group in `Reserved0`, one
+  `MeshletPageRecord` per page (first cluster, cluster count, dependency range)
+  and the dependency table. A page depends on the pages that hold a parent of one
+  of its groups (the group of any cluster whose refined group is in the page).
+  Every dependency is a page of a coarser level or a root page.
+- A page image (`MeshletPageFormat`) starts with a 32-byte `MeshletPageHeader`,
+  then the `AdvancedMeshletDescriptor` of each cluster (with offsets local to the
+  page), the vertex indices, the triangle bytes and, for a static page, the
+  page-local `AdvancedDeformedVertex` copies of the vertices that its clusters
+  use. A skinned payload gets skinned topology pages: their vertex indices are
+  source vertex indices, and they hold no vertices. Each section is 16-byte
+  aligned.
+- `MeshletPageBuilder.Validate` checks every page set before the cook keeps it:
+  the cluster order is a permutation, every group is in exactly one page with its
+  clusters together, root and level rules, the exact dependency lists, the image
+  offsets, and that every decoded triangle names the same source vertices as the
+  payload triangle.
+- With the portable meshlet limits (64 vertices and 124 triangles for each
+  cluster) and at most about 21 clusters in a group, a static group needs at
+  most about 99 KiB, so every group of a runtime-compatible payload fits in a
+  page. A mesh that does not fit is logged (`[ClusterPages] ... notPaged`) and
+  keeps only its payload.
+
+`ModelImportMeshletPageCache` stores the pages of one model in
+`model-meshlets/<hash>.xrpages`, next to the `<hash>.xrmeshlets` payload file.
+The file has a header, an index (protected by a 64-bit xxHash) with one entry
+for each paged mesh, and the page blobs at 4 KiB-aligned offsets. Each blob is
+the Brotli-compressed page image, or the raw image when compression does not
+make it smaller, with a 32-bit xxHash of the image. An entry is used only when
+the payload freshness hash and the hash of the packed vertex data match, so a
+change to any vertex attribute cooks the pages again. The cook writes one
+`[ClusterPagesMesh]` line for each cooked mesh and one `[ClusterPages]` line for
+each model to `meshlet-cache.log`, with the page count, the root page bytes and
+the average page fill. The renderer does not read the pages yet; it draws the
+payload as described below.
+
 ### Cluster cut (Advanced virtual geometry)
 
 The engine setting `AdvancedVirtualGeometry` (off by default; the unit-testing
