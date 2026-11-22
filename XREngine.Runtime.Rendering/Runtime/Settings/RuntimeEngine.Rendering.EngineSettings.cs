@@ -3116,6 +3116,27 @@ public static partial class RuntimeEngine
                     set => SetField(ref _advancedSkinnedPosedClusterBounds, value);
                 }
 
+                private bool _advancedGeometryPages;
+
+                /// <summary>
+                /// With <see cref="AdvancedVirtualGeometry"/> on, cluster hierarchy geometry that was
+                /// imported with geometry pages (the <c>BuildStreamingPages</c> meshlet setting) draws
+                /// its clusters from the pages: the import attaches the cooked pages to the meshlet
+                /// payload, the publisher uploads them with the geometry, and the meshlet task and
+                /// mesh stages and the surface reconstruction read the cluster descriptors, triangles
+                /// and static vertices from the pages. Every page stays resident, so this tests the
+                /// page format and the shader paths; it does not save memory yet. Off by default.
+                /// Read once with <see cref="AdvancedVirtualGeometry"/>; the import reads it when it
+                /// attaches the pages.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With Advanced virtual geometry on, cluster hierarchy models imported with geometry pages draw their clusters from the pages. Every page stays resident. Off by default. Read once at the first Advanced frame.")]
+                public bool AdvancedGeometryPages
+                {
+                    get => _advancedGeometryPages;
+                    set => SetField(ref _advancedGeometryPages, value);
+                }
+
                 private float _advancedVirtualGeometryPixelThreshold = 1.0f;
 
                 /// <summary>

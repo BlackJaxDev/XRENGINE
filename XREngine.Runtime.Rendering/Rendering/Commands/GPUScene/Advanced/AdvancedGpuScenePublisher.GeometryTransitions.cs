@@ -119,6 +119,8 @@ public sealed partial class AdvancedGpuScenePublisher
         public int TriangleWordCount;
         public uint ClusterHierarchyWordOffset;
         public uint ClusterLevel0Count;
+        /// <summary>The geometry flags of the layout, such as geometry pages.</summary>
+        public EAdvancedGeometryFlags GeometryFlags;
     }
 
     /// <summary>
@@ -219,6 +221,7 @@ public sealed partial class AdvancedGpuScenePublisher
             ClusterLevel0Count = staged.ClusterLevel0Count,
             ClusterHierarchyWordOffset = staged.ClusterHierarchyWordOffset,
             LevelCoverIndexCount = checked((uint)staged.CoverIndexCount),
+            GeometryFlags = staged.GeometryFlags,
         };
         return Database.Scene.Geometry.TryAddMeshletLocal(
             vertexBytes,
@@ -304,7 +307,10 @@ public sealed partial class AdvancedGpuScenePublisher
                     return false;
                 }
 
-                if (prepacked && prepack.UseMeshlets == useMeshlets)
+                // A worker entry packed before geometry pages were attached has a shorter
+                // triangle-word stream; it is packed again here.
+                if (prepacked && prepack.UseMeshlets == useMeshlets &&
+                    (!useMeshlets || prepack.MeshletTriangleWords.Length == triangleWordCount))
                 {
                     prepack.Vertices.AsSpan(0, vertexCount).CopyTo(
                         _packedGeometryVertices.AsSpan(vertexCursor, vertexCount));
@@ -384,6 +390,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     TriangleWordCount = triangleWordCount,
                     ClusterHierarchyWordOffset = layout.ClusterHierarchyWordOffset,
                     ClusterLevel0Count = layout.ClusterLevel0Count,
+                    GeometryFlags = layout.GeometryFlags,
                 };
                 vertexCursor += vertexCount;
                 indexCursor += indexCount + coverIndexCount;

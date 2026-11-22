@@ -258,6 +258,38 @@ public sealed class MeshletPayload
     /// </summary>
     public ImmutableArray<uint> LevelCoverIndexCount { get; init; } = [];
 
+    private MeshletPageSet? _streamingPages;
+
+    /// <summary>
+    /// Nonserialized geometry pages of this cluster hierarchy payload (see
+    /// <see cref="MeshletPageBuilder"/>), or null. The model import attaches them when it cooks or
+    /// reads the page file and geometry pages are on; the Advanced publisher then publishes them with
+    /// the geometry (see <c>AdvancedPublishedMeshletLayout</c>). A copy for a mesh that shares the
+    /// geometry keeps the same pages.
+    /// </summary>
+    public MeshletPageSet? StreamingPages => Volatile.Read(ref _streamingPages);
+
+    /// <summary>
+    /// Attaches the geometry pages of this payload. Attach them before the mesh is published, because
+    /// the published layout of a geometry includes its pages.
+    /// </summary>
+    /// <exception cref="InvalidDataException">
+    /// The pages do not have one cluster record per meshlet, one group record per group, or the page
+    /// kind of this payload (skinned topology for a skinned hierarchy).
+    /// </exception>
+    public void AttachStreamingPages(MeshletPageSet pages)
+    {
+        ArgumentNullException.ThrowIfNull(pages);
+        bool skinnedTopology = (pages.Table.Kind & EMeshletPageFlags.SkinnedTopology) != 0;
+        if (!HasClusterHierarchy ||
+            pages.Table.ClusterCount != ClusterLods.Length ||
+            pages.Table.Groups.Length != LodGroups.Length ||
+            pages.PageImages.Length != pages.Table.PageCount ||
+            skinnedTopology != HasClusterSkinning)
+            throw new InvalidDataException("The geometry pages do not match the cluster hierarchy of this payload.");
+        Volatile.Write(ref _streamingPages, pages);
+    }
+
     public bool HasMeshlets => State == MeshletPayloadState.Present && Meshlets.Length > 0;
 
     /// <summary>True when the payload holds a cluster hierarchy (version 5).</summary>

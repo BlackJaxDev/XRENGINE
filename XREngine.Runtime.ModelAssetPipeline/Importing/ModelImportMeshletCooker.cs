@@ -297,6 +297,8 @@ public static class ModelImportMeshletCooker
         public int Cooked;
         public int Failed;
         public int Skipped;
+        /// <summary>Meshes whose pages were attached to the payload, for drawing from pages.</summary>
+        public int Attached;
         public MeshletPageSetStats Stats;
     }
 
@@ -305,7 +307,9 @@ public static class ModelImportMeshletCooker
     /// its vertices first, because its pages hold page-local copies of them; the hash of the packed
     /// vertices makes stored pages stale when any vertex attribute changes. A skinned mesh gets
     /// topology pages without vertices. A mesh whose groups do not fit in pages is logged and keeps
-    /// the unpaged payload.
+    /// the unpaged payload. While the <c>AdvancedGeometryPages</c> engine setting is on, the cooked or
+    /// stored pages are also attached to the payload, so the Advanced renderer draws the mesh from
+    /// them.
     /// </summary>
     private static void CookStreamingPages(
         ModelImportMeshletPayloadCache? payloadCache,
@@ -334,9 +338,12 @@ public static class ModelImportMeshletCooker
         if (packed.Length > 0)
             AdvancedPackedVertexCodec.Pack(mesh, 0u, packed, 0u);
         ulong vertexHash = packed.Length == 0 ? 0UL : XxHash64.HashToUInt64(MemoryMarshal.AsBytes(packed.AsSpan()));
+        bool attach = RuntimeEngine.Rendering.Settings.AdvancedGeometryPages;
         if (pageCache.TryUse(sourceMeshIdentity, payload.FreshnessHash, vertexHash, out _))
         {
             totals.Hits++;
+            if (attach)
+                AttachStoredPages(pageCache, payload, sourceMeshIdentity, ref totals);
             return;
         }
 
@@ -353,6 +360,11 @@ public static class ModelImportMeshletCooker
         }
 
         pageCache.Record(sourceMeshIdentity, payload.FreshnessHash, vertexHash, set);
+        if (attach)
+        {
+            payload.AttachStreamingPages(set);
+            totals.Attached++;
+        }
         totals.Cooked++;
         totals.Stats += set.Stats;
         MeshletPageSetStats stats = set.Stats;
@@ -364,6 +376,29 @@ public static class ModelImportMeshletCooker
             $"rootShare={(stats.PageBytes == 0 ? 0.0 : (double)stats.RootPageBytes / stats.PageBytes):P1} " +
             $"fill={stats.AverageFill:P1} pageVertices={stats.PageVertexCount} sourceVertices={mesh.VertexCount} " +
             $"dependencies={stats.DependencyCount} maxDependencies={stats.MaxDependencies}");
+    }
+
+    /// <summary>
+    /// Reads the stored pages of a mesh from the page file and attaches them to its payload, so the
+    /// Advanced publisher can draw the mesh from its pages. A damaged blob leaves the payload without
+    /// pages; the mesh then draws from its meshlet tables.
+    /// </summary>
+    private static void AttachStoredPages(
+        ModelImportMeshletPageCache pageCache,
+        MeshletPayload payload,
+        string sourceMeshIdentity,
+        ref StreamingPageTotals totals)
+    {
+        try
+        {
+            payload.AttachStreamingPages(pageCache.ReadPageSet(sourceMeshIdentity));
+            totals.Attached++;
+        }
+        catch (InvalidDataException exception)
+        {
+            totals.Failed++;
+            Debug.WriteAuxiliaryLog("meshlet-cache.log", $"[ClusterPages] mesh={sourceMeshIdentity} notAttached reason={exception.Message}");
+        }
     }
 
     /// <summary>
@@ -390,7 +425,7 @@ public static class ModelImportMeshletCooker
         Debug.WriteAuxiliaryLog(
             "meshlet-cache.log",
             $"[ClusterPages] model={modelIdentity} formatVersion={MeshletPageFormat.Version} cookVersion={MeshletPageBuilder.CookVersion} " +
-            $"meshes={totals.Meshes} stored={totals.Hits} cooked={totals.Cooked} failed={totals.Failed} skipped={totals.Skipped} " +
+            $"meshes={totals.Meshes} stored={totals.Hits} cooked={totals.Cooked} failed={totals.Failed} skipped={totals.Skipped} attached={totals.Attached} " +
             $"cookedPages={stats.PageCount} cookedRootPages={stats.RootPageCount} cookedPageBytes={stats.PageBytes} " +
             $"cookedRootPageBytes={stats.RootPageBytes} fill={stats.AverageFill:P1} maxDependencies={stats.MaxDependencies} " +
             $"file={Path.GetFileName(pageCache.FilePath)} fileBytes={fileBytes} written={written}" +

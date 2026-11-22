@@ -704,6 +704,7 @@ public sealed class AdvancedGeometryDatabase
             Residency = EAdvancedGeometryResidency.Resident,
             MissingBehavior = EAdvancedMissingGeometryBehavior.SkipDraw,
             CookedLayoutVersion = registration.CookedLayoutVersion,
+            Flags = (uint)registration.GeometryFlags,
         };
 
     /// <summary>
@@ -715,7 +716,15 @@ public sealed class AdvancedGeometryDatabase
     private static bool ValidateClusterHierarchy(in AdvancedGeometryRegistration registration, int triangleWordCount)
     {
         if (registration.ClusterLevel0Count == 0u)
-            return registration.ClusterHierarchyWordOffset == 0u;
+            return registration.ClusterHierarchyWordOffset == 0u &&
+                (registration.GeometryFlags & EAdvancedGeometryFlags.StreamedPages) == 0;
+
+        // A geometry with geometry pages has the stream header and the skin header before its
+        // cluster records.
+        if ((registration.GeometryFlags & EAdvancedGeometryFlags.StreamedPages) != 0 &&
+            registration.ClusterHierarchyWordOffset <
+                AdvancedPublishedMeshletLayout.StreamHeaderWords + AdvancedPublishedMeshletLayout.SkinHeaderWords)
+            return false;
 
         return registration.ClusterLevel0Count <= registration.MeshletCount &&
             (ulong)registration.ClusterHierarchyWordOffset +

@@ -9,6 +9,8 @@
 // XR_ADV_TASK_MESHLETS_PER_GROUP is defined in VisibilityInterface.glslinc,
 // because the preparation shaders also use it.
 
+#include "Advanced/Visibility/VisibilityStreamedGeometry.glslinc"
+
 // Task-to-mesh payload: the visibility payload row and the surviving global
 // meshlet indices in lane order. 132 bytes.
 struct XRAdvancedVisibilityTaskPayload
@@ -139,6 +141,30 @@ uint XR_ADV_ClassifyVisibilityMeshlet(
         }
     }
     return XR_ADV_MESHLET_CULL_NONE;
+}
+
+// Loads the descriptor of one meshlet of a draw. A geometry with geometry pages
+// reads it from the page of the cluster; another geometry reads the meshlet
+// descriptor table. The caller has checked that meshletIndex is inside the
+// draw's meshlet range and the descriptor table. Returns false when the page
+// data is not readable.
+bool XR_ADV_LoadDrawMeshlet(
+    XRAdvancedGeometryRecord geometry,
+    XRAdvancedStreamedGeometry streamed,
+    uint meshletIndex,
+    out XRAdvancedVisibilityMeshletDescriptor meshlet)
+{
+    if (!streamed.valid)
+    {
+        meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
+        return true;
+    }
+    XRAdvancedStreamedCluster cluster;
+    bool loaded = XR_ADV_LoadStreamedCluster(
+        streamed, meshletIndex - min(meshletIndex, geometry.meshletFirst), cluster) &&
+        meshletIndex >= geometry.meshletFirst;
+    meshlet = cluster.descriptor;
+    return loaded;
 }
 
 // The meshlet history of a view is trusted only while the view has temporal
@@ -328,13 +354,15 @@ uint XR_ADV_ClusterCutPartnerView(uint viewIndex, uint viewFlags)
     return viewIndex;
 }
 
-// Builds the cut state of one draw. The cut is active only for a static
-// meshlet draw (or, with XR_ADV_CLUSTER_LOD_CUT_SKINNED, a skinned meshlet
-// draw) of a hierarchy geometry whose tables fit in the triangle-word table.
-// Without it the draw keeps every meshlet of its payload range. A skinned draw
-// also needs XR_ADV_ClusterCutUseDrawBound.
-XRAdvancedClusterCutState XR_ADV_ClusterCutState(
-    XRAdvancedGpuHandle geometryHandle,
+// Builds the cut state of one draw from its geometry record. The cut is active
+// only for a static meshlet draw (or, with XR_ADV_CLUSTER_LOD_CUT_SKINNED, a
+// skinned meshlet draw) of a hierarchy geometry whose tables fit in the
+// triangle-word table. Without it the draw keeps every meshlet of its payload
+// range. A skinned draw also needs XR_ADV_ClusterCutUseDrawBound.
+// geometryValid is false when the draw's geometry handle did not resolve.
+XRAdvancedClusterCutState XR_ADV_ClusterCutStateForGeometry(
+    XRAdvancedGeometryRecord geometry,
+    bool geometryValid,
     uint producer,
     uint viewIndex,
     XRAdvancedViewRecord view)
@@ -364,11 +392,8 @@ XRAdvancedClusterCutState XR_ADV_ClusterCutState(
     if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET)
         return cut;
 #endif
-    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
-        geometryHandle, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
-    if (geometryDense == XR_ADV_INVALID_DENSE_INDEX)
+    if (!geometryValid)
         return cut;
-    XRAdvancedGeometryRecord geometry = XR_ADV_LoadGeometry(geometryDense);
     if (geometry.reservedLayout0 == 0u || geometry.reservedLayout0 > geometry.meshletCount)
         return cut;
     uint clusterWordBase = geometry.meshletTriangleWords.elementOffset + geometry.reservedLayout1;
@@ -388,6 +413,23 @@ XRAdvancedClusterCutState XR_ADV_ClusterCutState(
     cut.eye1 = XR_ADV_Views.records[partner].cameraPositionAndNear.xyz;
     cut.pixelScale = max(XR_ADV_ClusterCutPixelScale(viewIndex), XR_ADV_ClusterCutPixelScale(partner));
     return cut;
+}
+
+// Builds the cut state of one draw from its geometry handle. See
+// XR_ADV_ClusterCutStateForGeometry.
+XRAdvancedClusterCutState XR_ADV_ClusterCutState(
+    XRAdvancedGpuHandle geometryHandle,
+    uint producer,
+    uint viewIndex,
+    XRAdvancedViewRecord view)
+{
+    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+        geometryHandle, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
+    bool geometryValid = geometryDense != XR_ADV_INVALID_DENSE_INDEX;
+    XRAdvancedGeometryRecord geometry;
+    if (geometryValid)
+        geometry = XR_ADV_LoadGeometry(geometryDense);
+    return XR_ADV_ClusterCutStateForGeometry(geometry, geometryValid, producer, viewIndex, view);
 }
 
 #if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)

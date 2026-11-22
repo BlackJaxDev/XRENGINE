@@ -138,6 +138,7 @@ public static partial class EditorUnitTests
             s.AdvancedSkinnedDeformationLod = runtimeSettings.Rendering.SkinnedDeformationLod;
             s.AdvancedSkinnedPosedClusterBounds = runtimeSettings.Rendering.SkinnedPosedClusterBounds;
             s.AdvancedVirtualGeometryPixelThreshold = runtimeSettings.Rendering.VirtualGeometryPixelThreshold;
+            s.AdvancedGeometryPages = runtimeSettings.Rendering.GeometryPages;
         }
         else if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
         {

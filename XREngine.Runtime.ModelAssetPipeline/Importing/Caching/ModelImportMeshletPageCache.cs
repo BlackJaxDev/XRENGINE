@@ -151,6 +151,26 @@ internal sealed class ModelImportMeshletPageCache
     }
 
     /// <summary>
+    /// Reads and decodes every page of a stored mesh, and returns them with the stored tables as a
+    /// page set. Call it only after <see cref="TryUse"/> returned true for the mesh.
+    /// </summary>
+    /// <exception cref="KeyNotFoundException">The file holds no entry for the mesh.</exception>
+    /// <exception cref="InvalidDataException">A blob is damaged.</exception>
+    public MeshletPageSet ReadPageSet(string sourceMeshIdentity)
+    {
+        MeshletPageTable table = _stored[sourceMeshIdentity].Table;
+        byte[] buffer = new byte[MeshletPageFormat.PageBytes];
+        byte[][] images = new byte[table.PageCount][];
+        for (int page = 0; page < images.Length; page++)
+        {
+            int bytes = ReadPage(sourceMeshIdentity, page, buffer);
+            images[page] = buffer.AsSpan(0, bytes).ToArray();
+        }
+
+        return new MeshletPageSet(table, images, MeshletPageSetStats.Measure(table, images));
+    }
+
+    /// <summary>
     /// Writes the recorded meshes when they differ from the file: pages were cooked, or the file
     /// held entries that this import did not use. Stored blobs of reused entries are copied from
     /// the old file without decoding.

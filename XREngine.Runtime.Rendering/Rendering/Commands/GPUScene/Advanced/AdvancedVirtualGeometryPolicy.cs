@@ -24,6 +24,7 @@ public static class AdvancedVirtualGeometryPolicy
     private static bool _deformationLodEnabled;
     private static bool _skinnedPosedBounds;
     private static float _pixelThreshold = 1.0f;
+    private static bool _geometryPages;
 
     /// <summary>
     /// True when the Vulkan Advanced path selects a cluster cut for static meshlet draws of cluster
@@ -89,6 +90,24 @@ public static class AdvancedVirtualGeometryPolicy
         }
     }
 
+    /// <summary>
+    /// True when <see cref="Enabled"/> and the geometry pages setting are both on. The publisher then
+    /// adds the cooked geometry pages of a cluster hierarchy payload
+    /// (<see cref="Meshlets.MeshletPayload.StreamingPages"/>) to its triangle-word stream, and the
+    /// meshlet task and mesh stages and the surface reconstruction read the clusters of that
+    /// geometry from its pages. The value is latched with the other settings, because the
+    /// published layout and the shaders must agree in every frame.
+    /// </summary>
+    public static bool GeometryPagesEnabled
+    {
+        get
+        {
+            if (!_latched)
+                Latch();
+            return _latched && _enabled && _geometryPages;
+        }
+    }
+
     /// <summary>The latched cut threshold, in render pixels of projected error.</summary>
     public static float PixelThreshold
     {
@@ -128,9 +147,10 @@ public static class AdvancedVirtualGeometryPolicy
             _deformationLodEnabled = RuntimeEngine.Rendering.Settings.AdvancedSkinnedDeformationLod;
             _skinnedPosedBounds = RuntimeEngine.Rendering.Settings.AdvancedSkinnedPosedClusterBounds;
             _pixelThreshold = RuntimeEngine.Rendering.Settings.AdvancedVirtualGeometryPixelThreshold;
+            _geometryPages = RuntimeEngine.Rendering.Settings.AdvancedGeometryPages;
             _latched = true;
             XREngine.Debug.Rendering(
-                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, skinned {(_enabled && _skinnedEnabled ? "on" : "off")}, skinned posed bounds {(_enabled && _skinnedEnabled && _skinnedPosedBounds ? "on" : "off")}, skinned deformation level of detail {(_enabled && _skinnedEnabled && _deformationLodEnabled ? "on" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
+                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, skinned {(_enabled && _skinnedEnabled ? "on" : "off")}, skinned posed bounds {(_enabled && _skinnedEnabled && _skinnedPosedBounds ? "on" : "off")}, skinned deformation level of detail {(_enabled && _skinnedEnabled && _deformationLodEnabled ? "on" : "off")}, geometry pages {(_enabled && _geometryPages ? "on" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
         }
     }
 }

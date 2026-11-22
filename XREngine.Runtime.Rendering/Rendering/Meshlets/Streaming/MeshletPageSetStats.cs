@@ -25,6 +25,40 @@ public readonly record struct MeshletPageSetStats(
     public double AverageFill
         => PageCount == 0 ? 0.0 : (double)PageBytes / ((long)PageCount * MeshletPageFormat.PageBytes);
 
+    /// <summary>
+    /// Measures the totals of a page set from its tables and page images, for a set that was read
+    /// back from a page file instead of cooked.
+    /// </summary>
+    public static MeshletPageSetStats Measure(MeshletPageTable table, byte[][] pageImages)
+    {
+        ArgumentNullException.ThrowIfNull(table);
+        ArgumentNullException.ThrowIfNull(pageImages);
+        long pageVertices = 0L;
+        long pageBytes = 0L;
+        long rootPageBytes = 0L;
+        int maxDependencies = 0;
+        for (int page = 0; page < pageImages.Length; page++)
+        {
+            byte[] image = pageImages[page];
+            pageVertices += MeshletPageHeader.Read(image).VertexCount;
+            pageBytes += image.Length;
+            if (table.IsRootPage(page))
+                rootPageBytes += image.Length;
+            maxDependencies = Math.Max(maxDependencies, (int)table.Pages[page].DependencyCount);
+        }
+
+        return new MeshletPageSetStats(
+            table.PageCount,
+            table.RootPageCount,
+            table.ClusterCount,
+            table.Groups.Length,
+            pageVertices,
+            pageBytes,
+            rootPageBytes,
+            table.Dependencies.Length,
+            maxDependencies);
+    }
+
     /// <summary>Adds the totals of two page cooks. <see cref="MaxDependencies"/> takes the larger value.</summary>
     public static MeshletPageSetStats operator +(MeshletPageSetStats a, MeshletPageSetStats b)
         => new(

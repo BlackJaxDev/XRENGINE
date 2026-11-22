@@ -609,8 +609,44 @@ the payload freshness hash and the hash of the packed vertex data match, so a
 change to any vertex attribute cooks the pages again. The cook writes one
 `[ClusterPagesMesh]` line for each cooked mesh and one `[ClusterPages]` line for
 each model to `meshlet-cache.log`, with the page count, the root page bytes and
-the average page fill. The renderer does not read the pages yet; it draws the
-payload as described below.
+the average page fill.
+
+#### Drawing from geometry pages
+
+The engine setting `AdvancedGeometryPages` (off by default; the unit-testing
+world sets it with `Rendering.GeometryPages`) makes the Vulkan Advanced path draw
+cluster hierarchy geometry from its pages. It needs `AdvancedVirtualGeometry`, and
+`AdvancedVirtualGeometryPolicy.GeometryPagesEnabled` latches it with the other
+virtual geometry settings. Every page stays resident, so this mode tests the
+page format and the shader paths. It does not save memory yet: the geometry
+also keeps its meshlet tables and its canonical vertex and index streams, which
+the shadow, decal and fallback paths read.
+
+- The import attaches the cooked or stored pages of a mesh to its payload
+  (`MeshletPayload.AttachStreamingPages`) while the setting is on. The
+  `[ClusterPages]` line counts them as `attached`.
+- `AdvancedPublishedMeshletLayout` adds a page block after the hierarchy tables
+  of the triangle-word stream. The stream header, two words before the cluster
+  records, holds the word offset of the page block relative to the first cluster
+  record (zero without pages); the skin header stays one word before the
+  cluster records. The page block holds the page count, the cluster count, the
+  word offset of each page image, one word for each cluster in published meshlet
+  order (`(page << 8) | page-local cluster`), and then the page images. The
+  geometry record gets `EAdvancedGeometryFlags.StreamedPages`.
+- `VisibilityStreamedGeometry.glslinc` reads these tables. The meshlet task stage
+  tests the cluster cut from the cluster and group records, and then loads the
+  descriptor of a cluster in the cut from its page. Every hierarchy draw now
+  loads its descriptor after the cut test. The mesh stage reads the vertex
+  indices, the triangle bytes and, for a static page, the page-local vertices
+  from the page. A deformed draw reads the deformation output at the source
+  vertex. `PrimitiveAccess.glslinc` decodes the triangle from the same page and
+  returns its source vertices, so shading reads the canonical vertices of the
+  triangle that the raster drew. `OcclusionCulledBounds.comp` also reads the
+  descriptor from the page.
+- The visibility ID, the producers and the meshlet history keep the global
+  meshlet index, because the geometry keeps its meshlet range. A page pool with
+  slots, a page table, the streamed producers and history by slot come with
+  residency, when pages can move.
 
 ### Cluster cut (Advanced virtual geometry)
 

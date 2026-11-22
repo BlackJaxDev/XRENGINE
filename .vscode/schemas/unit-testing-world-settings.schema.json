@@ -821,6 +821,10 @@
           "type": "number",
           "description": "Generated from VirtualGeometryPixelThreshold on UnitTestingRenderSettings."
         },
+        "GeometryPages": {
+          "type": "boolean",
+          "description": "Enables or disables GeometryPages."
+        },
         "OpenGL": {
           "$ref": "#/definitions/UnitTestingOpenGLRenderSettings",
           "description": "Generated from OpenGL on UnitTestingRenderSettings."
