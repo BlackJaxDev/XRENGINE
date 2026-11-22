@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Components.Animation;
 
 namespace XREngine.Animation.MotionBricks;
 
@@ -28,6 +29,17 @@ public sealed class SomaLocomotionPoseBank
     {
         SomaRestSkeletonCalibration cal = calibration ?? SomaRestSkeletonCalibration.CanonicalDefault;
         BuildDefaultTemplates(cal);
+    }
+
+    /// <summary>
+    /// Copies frame 0 of the upright relaxed idle template into <paramref name="destination"/>.
+    /// </summary>
+    public void CopyIdlePose(Span<SomaPoseTransform> destination)
+    {
+        if (destination.Length < JointCount)
+            throw new ArgumentException($"Destination span must hold at least {JointCount} joints.", nameof(destination));
+
+        _idleTemplate.AsSpan(0, JointCount).CopyTo(destination);
     }
 
     /// <summary>
@@ -155,7 +167,10 @@ public sealed class SomaLocomotionPoseBank
         float armSwing,
         float strafeSign)
     {
-        SomaPoseTransform[] rest = calibration.ReferenceLocalPoses;
+        var sampler = new HumanoidToSomaPoseSampler(calibration);
+        float[] muscles = new float[MotionBricksEvaluatedPose.MuscleChannelCount];
+        float baseHipsY = calibration.HipsHeightMeters - 0.02f;
+
         for (int frame = 0; frame < TemplateFrames; frame++)
         {
             float phase = frame * (MathF.PI * 0.22f);
@@ -163,47 +178,42 @@ public sealed class SomaLocomotionPoseBank
             float cosPhase = MathF.Cos(phase);
             int frameBase = frame * JointCount;
 
-            for (int joint = 0; joint < JointCount; joint++)
-                destination[frameBase + joint] = rest[joint];
+            Array.Clear(muscles);
 
-            // Subtle root vertical bob and forward spine lean.
-            float bob = -hipDrop + MathF.Abs(sinPhase) * hipDrop * 0.5f;
-            destination[frameBase + 0] = new SomaPoseTransform(
-                new Vector3(0.0f, rest[0].Position.Y + bob, 0.0f),
-                Quaternion.Identity);
-            destination[frameBase + 1] = new SomaPoseTransform(
-                rest[1].Position,
-                Quaternion.CreateFromAxisAngle(Vector3.UnitX, spineLean));
+            // Subtle forward spine lean during locomotion.
+            muscles[(int)EHumanoidValue.SpineFrontBack] = -Math.Clamp(spineLean, -0.5f, 0.5f);
 
-            // Counter-phase leg and arm swing.
-            float leftLegPitch = sinPhase * strideSwing;
-            float rightLegPitch = -sinPhase * strideSwing;
+            bool mecanimNeutral = calibration.UseMecanimNeutralPostureOffsets;
+            float baseArmDownUp = mecanimNeutral ? -0.65f : -0.85f;
+            float baseForearmStretch = mecanimNeutral ? 0.72f : 0.30f;
+            float baseUpperLegFrontBack = mecanimNeutral ? 0.58f : 0.0f;
+            float baseLowerLegStretch = mecanimNeutral ? 0.90f : -0.08f;
+
+            // Natural relaxed standing arms at the sides with slight elbow flexion and counter-phase swing.
+            muscles[(int)EHumanoidValue.LeftArmDownUp] = baseArmDownUp;
+            muscles[(int)EHumanoidValue.RightArmDownUp] = baseArmDownUp;
+            muscles[(int)EHumanoidValue.LeftForearmStretch] = baseForearmStretch;
+            muscles[(int)EHumanoidValue.RightForearmStretch] = baseForearmStretch;
+            muscles[(int)EHumanoidValue.LeftArmFrontBack] = Math.Clamp(0.05f - sinPhase * armSwing * 0.45f, -0.8f, 0.8f);
+            muscles[(int)EHumanoidValue.RightArmFrontBack] = Math.Clamp(0.05f + sinPhase * armSwing * 0.45f, -0.8f, 0.8f);
+
+            // Counter-phase leg stride, knee flexion, and subtle strafe abduction.
             float legRoll = strafeSign * (0.14f + 0.08f * cosPhase);
+            muscles[(int)EHumanoidValue.LeftUpperLegFrontBack] = Math.Clamp(baseUpperLegFrontBack + sinPhase * strideSwing * 0.6f, -0.9f, 0.95f);
+            muscles[(int)EHumanoidValue.RightUpperLegFrontBack] = Math.Clamp(baseUpperLegFrontBack - sinPhase * strideSwing * 0.6f, -0.9f, 0.95f);
+            muscles[(int)EHumanoidValue.LeftUpperLegInOut] = Math.Clamp(0.05f + legRoll, -0.6f, 0.6f);
+            muscles[(int)EHumanoidValue.RightUpperLegInOut] = Math.Clamp(0.05f - legRoll, -0.6f, 0.6f);
+            muscles[(int)EHumanoidValue.LeftLowerLegStretch] = Math.Clamp(baseLowerLegStretch - MathF.Max(0.0f, cosPhase) * kneeBend * 0.7f, -0.9f, 1.0f);
+            muscles[(int)EHumanoidValue.RightLowerLegStretch] = Math.Clamp(baseLowerLegStretch - MathF.Max(0.0f, -cosPhase) * kneeBend * 0.7f, -0.9f, 1.0f);
 
-            destination[frameBase + 22] = new SomaPoseTransform(
-                rest[22].Position,
-                SomaPoseTransform.NormalizeOrIdentity(
-                    Quaternion.CreateFromAxisAngle(Vector3.UnitX, leftLegPitch)
-                    * Quaternion.CreateFromAxisAngle(Vector3.UnitZ, legRoll)));
-            destination[frameBase + 23] = new SomaPoseTransform(
-                rest[23].Position,
-                Quaternion.CreateFromAxisAngle(Vector3.UnitX, -MathF.Max(0.0f, cosPhase) * kneeBend));
-
-            destination[frameBase + 26] = new SomaPoseTransform(
-                rest[26].Position,
-                SomaPoseTransform.NormalizeOrIdentity(
-                    Quaternion.CreateFromAxisAngle(Vector3.UnitX, rightLegPitch)
-                    * Quaternion.CreateFromAxisAngle(Vector3.UnitZ, -legRoll)));
-            destination[frameBase + 27] = new SomaPoseTransform(
-                rest[27].Position,
-                Quaternion.CreateFromAxisAngle(Vector3.UnitX, -MathF.Max(0.0f, -cosPhase) * kneeBend));
-
-            destination[frameBase + 11] = new SomaPoseTransform(
-                rest[11].Position,
-                Quaternion.CreateFromAxisAngle(Vector3.UnitY, -sinPhase * armSwing));
-            destination[frameBase + 17] = new SomaPoseTransform(
-                rest[17].Position,
-                Quaternion.CreateFromAxisAngle(Vector3.UnitY, sinPhase * armSwing));
+            float bob = -hipDrop + MathF.Abs(sinPhase) * hipDrop * 0.5f;
+            var bodyPos = new Vector3(0.0f, baseHipsY + bob, 0.0f);
+            sampler.SampleSomaPose(
+                bodyPos,
+                Quaternion.Identity,
+                muscles,
+                avatarLegScale: 1.0f,
+                destination.AsSpan(frameBase, JointCount));
         }
     }
 }

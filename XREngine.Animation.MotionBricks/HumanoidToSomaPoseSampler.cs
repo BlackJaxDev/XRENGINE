@@ -159,6 +159,19 @@ public sealed class HumanoidToSomaPoseSampler
         float twistDegrees,
         float leftRightDegrees,
         Quaternion jointBasis)
+        => ComposeSwingTwistQuaternion(
+            frontBackDegrees,
+            twistDegrees,
+            leftRightDegrees,
+            jointBasis,
+            Quaternion.Identity);
+
+    internal static Quaternion ComposeSwingTwistQuaternion(
+        float frontBackDegrees,
+        float twistDegrees,
+        float leftRightDegrees,
+        Quaternion jointBasis,
+        Quaternion neutralOffsetInBasis)
     {
         float twistHalf = 0.5f * twistDegrees * DegreesToRadians;
         var twist = new Quaternion(0.0f, MathF.Sin(twistHalf), 0.0f, MathF.Cos(twistHalf));
@@ -181,7 +194,8 @@ public sealed class HumanoidToSomaPoseSampler
             swing = Quaternion.Identity;
         }
 
-        Quaternion q = SomaPoseTransform.NormalizeOrIdentity(swing * twist);
+        Quaternion q = SomaPoseTransform.NormalizeOrIdentity(
+            SomaPoseTransform.NormalizeOrIdentity(neutralOffsetInBasis) * swing * twist);
         Quaternion basisNorm = SomaPoseTransform.NormalizeOrIdentity(jointBasis);
         return SomaPoseTransform.NormalizeOrIdentity(basisNorm * q * Quaternion.Inverse(basisNorm));
     }
@@ -208,9 +222,16 @@ public sealed class HumanoidToSomaPoseSampler
         ReadOnlySpan<float> muscles)
     {
         float side = isLeft ? 1.0f : -1.0f;
-        Quaternion basis = isLeft
-            ? SomaToHumanoidMuscleConverter.LeftArmBasis
-            : SomaToHumanoidMuscleConverter.RightArmBasis;
+        bool mecanim = _calibration.UseMecanimNeutralPostureOffsets;
+        Quaternion basis = mecanim
+            ? (isLeft ? SomaToHumanoidMuscleConverter.LeftArmMecanimBasis : SomaToHumanoidMuscleConverter.RightArmMecanimBasis)
+            : (isLeft ? SomaToHumanoidMuscleConverter.LeftArmBasis : SomaToHumanoidMuscleConverter.RightArmBasis);
+        Quaternion upperArmNeutral = mecanim
+            ? (isLeft ? SomaToHumanoidMuscleConverter.LeftUpperArmNeutralOffset : SomaToHumanoidMuscleConverter.RightUpperArmNeutralOffset)
+            : Quaternion.Identity;
+        Quaternion lowerArmNeutral = mecanim
+            ? (isLeft ? SomaToHumanoidMuscleConverter.LeftLowerArmNeutralOffset : SomaToHumanoidMuscleConverter.RightLowerArmNeutralOffset)
+            : Quaternion.Identity;
 
         float shFrontBack = side * NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftShoulderFrontBack : EHumanoidValue.RightShoulderFrontBack)],
@@ -229,7 +250,7 @@ public sealed class HumanoidToSomaPoseSampler
         float armLeftRight = NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftArmDownUp : EHumanoidValue.RightArmDownUp)],
             SomaToHumanoidMuscleConverter.ArmDownUpRange);
-        _canonicalLocalDeltas[armIdx] = ComposeSwingTwistQuaternion(armFrontBack, armTwist, armLeftRight, basis);
+        _canonicalLocalDeltas[armIdx] = ComposeSwingTwistQuaternion(armFrontBack, armTwist, armLeftRight, basis, upperArmNeutral);
 
         float foreTwist = side * NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftForearmTwistInOut : EHumanoidValue.RightForearmTwistInOut)],
@@ -237,7 +258,7 @@ public sealed class HumanoidToSomaPoseSampler
         float foreFrontBack = -side * NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftForearmStretch : EHumanoidValue.RightForearmStretch)],
             SomaToHumanoidMuscleConverter.ForearmStretchRange);
-        _canonicalLocalDeltas[foreArmIdx] = ComposeSwingTwistQuaternion(foreFrontBack, foreTwist, 0.0f, basis);
+        _canonicalLocalDeltas[foreArmIdx] = ComposeSwingTwistQuaternion(foreFrontBack, foreTwist, 0.0f, basis, lowerArmNeutral);
 
         float handFrontBack = side * NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftHandInOut : EHumanoidValue.RightHandInOut)],
@@ -257,7 +278,10 @@ public sealed class HumanoidToSomaPoseSampler
         ReadOnlySpan<float> muscles)
     {
         float side = isLeft ? 1.0f : -1.0f;
+        bool mecanim = _calibration.UseMecanimNeutralPostureOffsets;
         Quaternion basis = SomaToHumanoidMuscleConverter.VerticalJointBasis;
+        Quaternion upperLegNeutral = mecanim ? SomaToHumanoidMuscleConverter.UpperLegNeutralOffset : Quaternion.Identity;
+        Quaternion lowerLegNeutral = mecanim ? SomaToHumanoidMuscleConverter.LowerLegNeutralOffset : Quaternion.Identity;
 
         float upTwist = NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftUpperLegTwistInOut : EHumanoidValue.RightUpperLegTwistInOut)],
@@ -268,7 +292,7 @@ public sealed class HumanoidToSomaPoseSampler
         float upLeftRight = -side * NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftUpperLegInOut : EHumanoidValue.RightUpperLegInOut)],
             SomaToHumanoidMuscleConverter.UpperLegInOutRange);
-        _canonicalLocalDeltas[legIdx] = ComposeSwingTwistQuaternion(upFrontBack, upTwist, upLeftRight, basis);
+        _canonicalLocalDeltas[legIdx] = ComposeSwingTwistQuaternion(upFrontBack, upTwist, upLeftRight, basis, upperLegNeutral);
 
         float lowTwist = NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftLowerLegTwistInOut : EHumanoidValue.RightLowerLegTwistInOut)],
@@ -276,7 +300,7 @@ public sealed class HumanoidToSomaPoseSampler
         float lowFrontBack = -NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftLowerLegStretch : EHumanoidValue.RightLowerLegStretch)],
             SomaToHumanoidMuscleConverter.LowerLegStretchRange);
-        _canonicalLocalDeltas[shinIdx] = ComposeSwingTwistQuaternion(lowFrontBack, lowTwist, 0.0f, basis);
+        _canonicalLocalDeltas[shinIdx] = ComposeSwingTwistQuaternion(lowFrontBack, lowTwist, 0.0f, basis, lowerLegNeutral);
 
         float footTwist = side * NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftFootTwistInOut : EHumanoidValue.RightFootTwistInOut)],

@@ -25,6 +25,9 @@ public partial class RootMotionMovementModule : MovementModule
     [MemoryPackIgnore]
     private Vector3 _lastRequestedHorizontalDisplacement;
 
+    [MemoryPackIgnore]
+    private Vector3 _requestedHorizontalDisplacementSincePhysicsStep;
+
     private float _airControlFactor = 0.65f;
     private float _airMinSpeedFactor = 0.4f;
     private float _rootMotionScale = 1.0f;
@@ -115,6 +118,20 @@ public partial class RootMotionMovementModule : MovementModule
     }
 
     /// <summary>
+    /// Consumes the cumulative planar root-motion displacement requested across all update ticks
+    /// since the previous physics feedback step.
+    /// </summary>
+    public Vector3 ConsumeRequestedHorizontalDisplacementSincePhysicsStep()
+    {
+        lock (_accumulatorSync)
+        {
+            Vector3 requested = _requestedHorizontalDisplacementSincePhysicsStep;
+            _requestedHorizontalDisplacementSincePhysicsStep = Vector3.Zero;
+            return requested;
+        }
+    }
+
+    /// <summary>
     /// Discards any unconsumed root-motion deltas (for example after a teleport or mode reset).
     /// </summary>
     public void ClearPendingRootMotion()
@@ -124,6 +141,7 @@ public partial class RootMotionMovementModule : MovementModule
             _pendingWorldTranslationDelta = Vector3.Zero;
             _pendingYawDelta = Quaternion.Identity;
             _lastRequestedHorizontalDisplacement = Vector3.Zero;
+            _requestedHorizontalDisplacementSincePhysicsStep = Vector3.Zero;
         }
     }
 
@@ -156,7 +174,10 @@ public partial class RootMotionMovementModule : MovementModule
         }
 
         lock (_accumulatorSync)
+        {
             _lastRequestedHorizontalDisplacement = horizontalDelta;
+            _requestedHorizontalDisplacementSincePhysicsStep += horizontalDelta;
+        }
 
         return MovementResult.FromHorizontalAndVertical(
             horizontalVelocity,
@@ -171,6 +192,7 @@ public partial class RootMotionMovementModule : MovementModule
         {
             _pendingWorldTranslationDelta = Vector3.Zero;
             _lastRequestedHorizontalDisplacement = Vector3.Zero;
+            _requestedHorizontalDisplacementSincePhysicsStep = Vector3.Zero;
         }
 
         Vector3 horizontal = context.HorizontalVelocity;

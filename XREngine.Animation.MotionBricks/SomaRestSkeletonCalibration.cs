@@ -21,6 +21,13 @@ public sealed class SomaRestSkeletonCalibration
     public static SomaRestSkeletonCalibration CanonicalDefault { get; } = CreateCanonicalDefault();
 
     /// <summary>
+    /// Official NVIDIA SOMA N1 30-joint rig calibration derived from the SOMA BVH hierarchy,
+    /// where bone-local X runs along each segment (e.g., spine +X = world +Y, left leg +X =
+    /// world -Y, right leg -X = world -Y). Use this calibration with real SOMA ONNX/TensorRT weights.
+    /// </summary>
+    public static SomaRestSkeletonCalibration SomaN1Default { get; } = CreateSomaN1Default();
+
+    /// <summary>
     /// Local reference transforms for all 30 SOMA joints in meters.
     /// </summary>
     public SomaPoseTransform[] ReferenceLocalPoses { get; }
@@ -41,10 +48,19 @@ public sealed class SomaRestSkeletonCalibration
     /// </summary>
     public float HipsHeightMeters { get; }
 
+    /// <summary>
+    /// When true, <see cref="SomaToHumanoidMuscleConverter"/> and <see cref="HumanoidToSomaPoseSampler"/>
+    /// account for XRENGINE's Mecanim zero-muscle neutral posture offsets (30 deg thigh pitch,
+    /// 80 deg knee/elbow flexion, 40 deg arm drop, 30 deg arm forward) so straight limbs map to
+    /// their exact Mecanim muscle values (such as +1.0 for straight knees and elbows).
+    /// </summary>
+    public bool UseMecanimNeutralPostureOffsets { get; }
+
     public SomaRestSkeletonCalibration(
         SomaPoseTransform[] referenceLocalPoses,
         Quaternion[] restWorldRotations,
-        float hipsHeightMeters = ReferenceHipsHeightMeters)
+        float hipsHeightMeters = ReferenceHipsHeightMeters,
+        bool useMecanimNeutralPostureOffsets = false)
     {
         if (referenceLocalPoses.Length != SomaModelContract.JointCount)
             throw new ArgumentException($"Expected {SomaModelContract.JointCount} reference local poses.", nameof(referenceLocalPoses));
@@ -60,6 +76,7 @@ public sealed class SomaRestSkeletonCalibration
         HipsHeightMeters = float.IsFinite(hipsHeightMeters) && hipsHeightMeters > 0.1f
             ? hipsHeightMeters
             : ReferenceHipsHeightMeters;
+        UseMecanimNeutralPostureOffsets = useMecanimNeutralPostureOffsets;
     }
 
     private static SomaRestSkeletonCalibration CreateCanonicalDefault()
@@ -109,5 +126,94 @@ public sealed class SomaRestSkeletonCalibration
         localPoses[29] = new SomaPoseTransform(new Vector3(0.0f, -0.09f, 0.14f), Quaternion.Identity);   // RightToeBase
 
         return new SomaRestSkeletonCalibration(localPoses, worldRotations, ReferenceHipsHeightMeters);
+    }
+
+    private static SomaRestSkeletonCalibration CreateSomaN1Default()
+    {
+        // T-pose rest world orientations for the official NVIDIA SOMA N1 rig (+X left, +Y up, +Z forward).
+        Quaternion spineRest = CreateBasisQuaternion(Vector3.UnitY, Vector3.UnitZ, Vector3.UnitX);
+        Quaternion leftArmRest = CreateBasisQuaternion(Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitY);
+        Quaternion rightArmRest = CreateBasisQuaternion(Vector3.UnitX, -Vector3.UnitZ, Vector3.UnitY);
+        Quaternion leftLegRest = CreateBasisQuaternion(-Vector3.UnitY, -Vector3.UnitZ, Vector3.UnitX);
+        Quaternion leftFootRest = CreateBasisQuaternion(Vector3.UnitZ, -Vector3.UnitY, Vector3.UnitX);
+        Quaternion rightLegRest = CreateBasisQuaternion(Vector3.UnitY, Vector3.UnitZ, Vector3.UnitX);
+        Quaternion rightFootRest = CreateBasisQuaternion(-Vector3.UnitZ, Vector3.UnitY, Vector3.UnitX);
+
+        var worldRotations = new Quaternion[SomaModelContract.JointCount];
+        for (int i = 0; i <= 9; i++)
+            worldRotations[i] = spineRest;
+        for (int i = 10; i <= 15; i++)
+            worldRotations[i] = leftArmRest;
+        for (int i = 16; i <= 21; i++)
+            worldRotations[i] = rightArmRest;
+        worldRotations[22] = leftLegRest;
+        worldRotations[23] = leftLegRest;
+        worldRotations[24] = leftFootRest;
+        worldRotations[25] = leftFootRest;
+        worldRotations[26] = rightLegRest;
+        worldRotations[27] = rightLegRest;
+        worldRotations[28] = rightFootRest;
+        worldRotations[29] = rightFootRest;
+
+        // Bone-local segment offsets in meters from the SOMA N1 BVH skeleton hierarchy.
+        Vector3[] localOffsets =
+        [
+            new(0.0f, 1.012816f, 0.0f),              // 0  Hips
+            new(0.050039f, -0.000371f, -0.000137f),  // 1  Spine1
+            new(0.071254f, 0.0f, 0.0f),              // 2  Spine2
+            new(0.075940f, 0.0f, 0.0f),              // 3  Chest
+            new(0.263131f, -0.004603f, -0.001817f),  // 4  Neck1
+            new(0.080459f, 0.0f, 0.0f),              // 5  Neck2
+            new(0.064328f, 0.0f, 0.0f),              // 6  Head
+            new(0.001087f, 0.031294f, 0.000026f),    // 7  Jaw
+            new(0.044517f, 0.081664f, 0.032064f),    // 8  LeftEye
+            new(0.044369f, 0.081358f, -0.032224f),   // 9  RightEye
+            new(0.232189f, 0.051956f, 0.016217f),    // 10 LeftShoulder
+            new(0.159021f, 0.0f, 0.0f),              // 11 LeftArm
+            new(0.287393f, 0.0f, 0.0f),              // 12 LeftForeArm
+            new(0.270940f, 0.0f, 0.0f),              // 13 LeftHand
+            new(0.129614f, 0.033803f, 0.008338f),    // 14 LeftHandThumbEnd
+            new(0.191158f, 0.009450f, -0.004061f),   // 15 LeftHandMiddleEnd
+            new(0.231617f, 0.052961f, -0.013801f),   // 16 RightShoulder
+            new(-0.160272f, 0.0f, 0.0f),             // 17 RightArm
+            new(-0.287366f, 0.0f, 0.0f),             // 18 RightForeArm
+            new(-0.271336f, 0.0f, 0.0f),             // 19 RightHand
+            new(-0.129567f, -0.033510f, -0.008307f), // 20 RightHandThumbEnd
+            new(-0.191053f, -0.009448f, 0.004118f),  // 21 RightHandMiddleEnd
+            new(-0.084431f, 0.025676f, 0.100432f),   // 22 LeftLeg
+            new(0.432292f, 0.0f, 0.0f),              // 23 LeftShin
+            new(0.422986f, 0.0f, 0.0f),              // 24 LeftFoot
+            new(0.141659f, 0.0f, 0.0f),              // 25 LeftToeBase
+            new(-0.083039f, 0.025927f, -0.100473f),  // 26 RightLeg
+            new(-0.433697f, 0.0f, 0.0f),             // 27 RightShin
+            new(-0.422608f, 0.0f, 0.0f),             // 28 RightFoot
+            new(-0.142222f, 0.0f, 0.0f),             // 29 RightToeBase
+        ];
+
+        int[] parents = SomaModelContract.ParentIndices;
+        var localPoses = new SomaPoseTransform[SomaModelContract.JointCount];
+        localPoses[0] = new SomaPoseTransform(localOffsets[0], worldRotations[0]);
+        for (int i = 1; i < SomaModelContract.JointCount; i++)
+        {
+            Quaternion localRot = SomaPoseTransform.NormalizeOrIdentity(
+                Quaternion.Inverse(worldRotations[parents[i]]) * worldRotations[i]);
+            localPoses[i] = new SomaPoseTransform(localOffsets[i], localRot);
+        }
+
+        return new SomaRestSkeletonCalibration(
+            localPoses,
+            worldRotations,
+            ReferenceHipsHeightMeters,
+            useMecanimNeutralPostureOffsets: true);
+    }
+
+    private static Quaternion CreateBasisQuaternion(Vector3 xAxis, Vector3 yAxis, Vector3 zAxis)
+    {
+        var matrix = new Matrix4x4(
+            xAxis.X, xAxis.Y, xAxis.Z, 0.0f,
+            yAxis.X, yAxis.Y, yAxis.Z, 0.0f,
+            zAxis.X, zAxis.Y, zAxis.Z, 0.0f,
+            0.0f,    0.0f,    0.0f,    1.0f);
+        return SomaPoseTransform.NormalizeOrIdentity(Quaternion.CreateFromRotationMatrix(matrix));
     }
 }

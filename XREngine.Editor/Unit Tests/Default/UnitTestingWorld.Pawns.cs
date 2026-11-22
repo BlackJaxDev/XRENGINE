@@ -1,9 +1,11 @@
 using MagicPhysX;
 using System.Numerics;
+using XREngine.Animation;
 using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
+using XREngine.Components.Movement.Modules;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
@@ -508,6 +510,8 @@ public static partial class EditorUnitTests
 
             var movementComp = characterNode.AddComponent<CharacterMovement3DComponent>()!;
             InitMovement(movementComp);
+            if (Toggles.MotionBricksLocomotion)
+                movementComp.MovementModule = new RootMotionMovementModule("MotionBricks Root Motion");
 
             float spawnY = Toggles.CharacterControllerCapsuleTranslationY ?? (movementComp.HalfHeight + 0.01f);
             characterTfm.SetPositionAndRotation(new Vector3(0.0f, spawnY, 0.0f), Quaternion.Identity);
@@ -528,7 +532,7 @@ public static partial class EditorUnitTests
             {
                 //Create camera boom with sphere shapecast
                 cameraParentNode = cameraOffsetNode.NewChildWithTransform<BoomTransform>(out var boomTfm, "3rd Person Camera Boom");
-                boomTfm.MaxLength = 10.0f;
+                boomTfm.MaxLength = Toggles.MotionBricksLocomotion ? 3.5f : 10.0f;
                 boomTfm.ZoomOutSpeed = 5.0f;
             }
             else
@@ -546,6 +550,8 @@ public static partial class EditorUnitTests
             characterComp.CameraComponent = camComp;
             characterComp.InputOrientationTransform = cameraNode.Transform;
             characterComp.ViewRotationTransform = cameraOffsetTfm;
+            if (Toggles.MotionBricksLocomotion)
+                characterComp.UseRootMotionSteering = true;
 
             if (camComp is not null && setUI)
             {
@@ -850,6 +856,83 @@ public static partial class EditorUnitTests
                     }
                     faceModel.ModelChanged += FaceModel_ModelChanged;
                 }
+
+                if (Toggles.MotionBricksLocomotion)
+                    ConfigureDesktopMotionBricksLocomotion(rootNode, rigidBodyNode, humanComp);
+            }
+        }
+
+        private static void ConfigureDesktopMotionBricksLocomotion(
+            SceneNode avatarRootNode,
+            SceneNode rigidBodyNode,
+            HumanoidComponent humanComp)
+        {
+            AnimStateMachineComponent? animator = avatarRootNode.GetComponent<AnimStateMachineComponent>()
+                ?? avatarRootNode.AddComponent<AnimStateMachineComponent>();
+            if (animator is null)
+            {
+                Debug.LogWarning($"[UnitTestingWorld] Could not attach AnimStateMachineComponent for MotionBricks on '{avatarRootNode.Name}'.");
+                return;
+            }
+
+            var motion = new MotionBricksLocomotionMotion
+            {
+                Name = "MotionBricksLocomotion",
+            };
+            var locomotionState = new AnimState(motion, "MotionBricksLocomotion");
+            var baseLayer = new AnimLayer(locomotionState)
+            {
+                InitialStateIndex = 0,
+            };
+            var stateMachine = new AnimStateMachine
+            {
+                Layers = [baseLayer],
+            };
+            stateMachine.Variables[motion.MoveXParameter] = new AnimFloat(motion.MoveXParameter, 0.0f);
+            stateMachine.Variables[motion.MoveYParameter] = new AnimFloat(motion.MoveYParameter, 0.0f);
+            stateMachine.Variables[motion.DesiredFacingYawParameter] = new AnimFloat(motion.DesiredFacingYawParameter, 0.0f);
+            stateMachine.Variables[motion.StrafeModeParameter] = new AnimBool(motion.StrafeModeParameter, false);
+            stateMachine.Variables[motion.StyleParameter] = new AnimInt(motion.StyleParameter, 0);
+            stateMachine.Variables[motion.IsGroundedParameter] = new AnimBool(motion.IsGroundedParameter, true);
+
+            // Cycle activation so the replacement graph binds every humanoid slot, loads the cached
+            // TensorRT SOMA plan, and establishes a fresh root-motion baseline.
+            animator.IsActive = false;
+            animator.StateMachine = stateMachine;
+            animator.Humanoid = humanComp;
+            animator.RootMotionApplicationMode = EHumanoidRootMotionApplicationMode.ExternalConsumer;
+            animator.SetSuspendedByClip(false);
+            animator.IsActive = true;
+
+            CharacterMovement3DComponent? movementComp = rigidBodyNode.GetComponent<CharacterMovement3DComponent>();
+            if (movementComp is not null && movementComp.MovementModule is not RootMotionMovementModule)
+                movementComp.MovementModule = new RootMotionMovementModule("MotionBricks Root Motion");
+
+            ThirdPersonRootMotionBridgeComponent bridge = rigidBodyNode.GetComponent<ThirdPersonRootMotionBridgeComponent>()
+                ?? rigidBodyNode.AddComponent<ThirdPersonRootMotionBridgeComponent>("MotionBricks Third-Person Bridge")!;
+            bridge.Animator = animator;
+            bridge.CharacterMovement = movementComp;
+            bridge.AvatarFacingTransform = avatarRootNode.GetTransformAs<Transform>(true);
+            bridge.BindEndpoints();
+
+            CharacterPawnComponent? pawnComp = rigidBodyNode.GetComponent<CharacterPawnComponent>();
+            if (pawnComp is not null)
+            {
+                pawnComp.UseRootMotionSteering = true;
+                pawnComp.RootMotionSteeringUpdated -= bridge.ApplySteeringSnapshot;
+                pawnComp.RootMotionSteeringUpdated += bridge.ApplySteeringSnapshot;
+            }
+
+            string runtimeStatus = motion.RuntimeDiagnosticStatus;
+            if (motion.ActiveDriver is { IsReady: true })
+            {
+                Debug.Out($"[UnitTestingWorld] MotionBricks third-person locomotion active on '{avatarRootNode.Name}': {runtimeStatus}");
+            }
+            else
+            {
+                Debug.LogWarning(
+                    $"[UnitTestingWorld] MotionBricks third-person locomotion on '{avatarRootNode.Name}' is not ready: "
+                    + $"{runtimeStatus} (PlaybackDiagnostic='{animator.PlaybackCapabilityDiagnostic}')");
             }
         }
     }

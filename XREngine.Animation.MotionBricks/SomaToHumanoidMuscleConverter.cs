@@ -48,6 +48,30 @@ public sealed class SomaToHumanoidMuscleConverter
         twistAxis: -Vector3.UnitX,
         leftRightAxis: Vector3.UnitZ);
 
+    // Mecanim-authored arm bases (matching HumanoidCanonicalPoseAuthoring with handedness = -1).
+    internal static readonly Quaternion LeftArmMecanimBasis = CreateBasisRotation(
+        frontBackAxis: -Vector3.UnitY,
+        twistAxis: -Vector3.UnitX,
+        leftRightAxis: -Vector3.UnitZ);
+    internal static readonly Quaternion RightArmMecanimBasis = CreateBasisRotation(
+        frontBackAxis: -Vector3.UnitY,
+        twistAxis: Vector3.UnitX,
+        leftRightAxis: Vector3.UnitZ);
+
+    // Mecanim zero-muscle neutral posture offsets (matching HumanoidCanonicalPoseAuthoring.GetNeutralTangent).
+    internal static readonly Quaternion UpperLegNeutralOffset =
+        SomaPoseTransform.NormalizeOrIdentity(new Quaternion(-0.268f, 0.0f, 0.0f, 1.0f));
+    internal static readonly Quaternion LowerLegNeutralOffset =
+        SomaPoseTransform.NormalizeOrIdentity(new Quaternion(0.839f, 0.0f, 0.0f, 1.0f));
+    internal static readonly Quaternion LeftUpperArmNeutralOffset =
+        SomaPoseTransform.NormalizeOrIdentity(new Quaternion(0.268f, 0.0f, 0.364f, 1.0f));
+    internal static readonly Quaternion RightUpperArmNeutralOffset =
+        SomaPoseTransform.NormalizeOrIdentity(new Quaternion(-0.268f, 0.0f, 0.364f, 1.0f));
+    internal static readonly Quaternion LeftLowerArmNeutralOffset =
+        SomaPoseTransform.NormalizeOrIdentity(new Quaternion(0.839f, 0.0f, 0.0f, 1.0f));
+    internal static readonly Quaternion RightLowerArmNeutralOffset =
+        SomaPoseTransform.NormalizeOrIdentity(new Quaternion(-0.839f, 0.0f, 0.0f, 1.0f));
+
     private readonly SomaRestSkeletonCalibration _calibration;
     private readonly Quaternion[] _worldRotations = new Quaternion[SomaModelContract.JointCount];
     private readonly Quaternion[] _worldDeltas = new Quaternion[SomaModelContract.JointCount];
@@ -170,11 +194,28 @@ public sealed class SomaToHumanoidMuscleConverter
         out float frontBackDegrees,
         out float twistDegrees,
         out float leftRightDegrees)
+        => DecomposeSwingTwistDegrees(
+            canonicalDelta,
+            jointBasis,
+            Quaternion.Identity,
+            out frontBackDegrees,
+            out twistDegrees,
+            out leftRightDegrees);
+
+    internal static void DecomposeSwingTwistDegrees(
+        Quaternion canonicalDelta,
+        Quaternion jointBasis,
+        Quaternion neutralOffsetInBasis,
+        out float frontBackDegrees,
+        out float twistDegrees,
+        out float leftRightDegrees)
     {
-        // Express canonicalDelta in the joint's (X=frontBack, Y=twist, Z=leftRight) frame.
+        // Express canonicalDelta in the joint's (X=frontBack, Y=twist, Z=leftRight) frame
+        // and remove any baked Mecanim neutral posture offset before swing-twist extraction.
         Quaternion basisNorm = SomaPoseTransform.NormalizeOrIdentity(jointBasis);
+        Quaternion neutralInv = Quaternion.Inverse(SomaPoseTransform.NormalizeOrIdentity(neutralOffsetInBasis));
         Quaternion q = SomaPoseTransform.NormalizeOrIdentity(
-            Quaternion.Inverse(basisNorm) * SomaPoseTransform.NormalizeOrIdentity(canonicalDelta) * basisNorm);
+            neutralInv * Quaternion.Inverse(basisNorm) * SomaPoseTransform.NormalizeOrIdentity(canonicalDelta) * basisNorm);
         if (q.W < 0.0f)
             q = new Quaternion(-q.X, -q.Y, -q.Z, -q.W);
 
@@ -231,7 +272,16 @@ public sealed class SomaToHumanoidMuscleConverter
         Span<float> muscles)
     {
         float side = isLeft ? 1.0f : -1.0f;
-        Quaternion basis = isLeft ? LeftArmBasis : RightArmBasis;
+        bool mecanim = _calibration.UseMecanimNeutralPostureOffsets;
+        Quaternion basis = mecanim
+            ? (isLeft ? LeftArmMecanimBasis : RightArmMecanimBasis)
+            : (isLeft ? LeftArmBasis : RightArmBasis);
+        Quaternion upperArmNeutral = mecanim
+            ? (isLeft ? LeftUpperArmNeutralOffset : RightUpperArmNeutralOffset)
+            : Quaternion.Identity;
+        Quaternion lowerArmNeutral = mecanim
+            ? (isLeft ? LeftLowerArmNeutralOffset : RightLowerArmNeutralOffset)
+            : Quaternion.Identity;
 
         DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(shoulderIdx, 3), basis, out float shFrontBack, out _, out float shLeftRight);
         muscles[(int)(isLeft ? EHumanoidValue.LeftShoulderFrontBack : EHumanoidValue.RightShoulderFrontBack)] =
@@ -239,7 +289,7 @@ public sealed class SomaToHumanoidMuscleConverter
         muscles[(int)(isLeft ? EHumanoidValue.LeftShoulderDownUp : EHumanoidValue.RightShoulderDownUp)] =
             DegreesToNormalizedMuscle(shLeftRight, ShoulderDownUpRange);
 
-        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(armIdx, shoulderIdx), basis, out float armFrontBack, out float armTwist, out float armLeftRight);
+        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(armIdx, shoulderIdx), basis, upperArmNeutral, out float armFrontBack, out float armTwist, out float armLeftRight);
         muscles[(int)(isLeft ? EHumanoidValue.LeftArmTwistInOut : EHumanoidValue.RightArmTwistInOut)] =
             DegreesToNormalizedMuscle(side * armTwist, ArmTwistRange);
         muscles[(int)(isLeft ? EHumanoidValue.LeftArmFrontBack : EHumanoidValue.RightArmFrontBack)] =
@@ -247,7 +297,7 @@ public sealed class SomaToHumanoidMuscleConverter
         muscles[(int)(isLeft ? EHumanoidValue.LeftArmDownUp : EHumanoidValue.RightArmDownUp)] =
             DegreesToNormalizedMuscle(armLeftRight, ArmDownUpRange);
 
-        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(foreArmIdx, armIdx), basis, out float foreFrontBack, out float foreTwist, out _);
+        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(foreArmIdx, armIdx), basis, lowerArmNeutral, out float foreFrontBack, out float foreTwist, out _);
         muscles[(int)(isLeft ? EHumanoidValue.LeftForearmTwistInOut : EHumanoidValue.RightForearmTwistInOut)] =
             DegreesToNormalizedMuscle(side * foreTwist, ForearmTwistRange);
         muscles[(int)(isLeft ? EHumanoidValue.LeftForearmStretch : EHumanoidValue.RightForearmStretch)] =
@@ -269,8 +319,11 @@ public sealed class SomaToHumanoidMuscleConverter
         Span<float> muscles)
     {
         float side = isLeft ? 1.0f : -1.0f;
+        bool mecanim = _calibration.UseMecanimNeutralPostureOffsets;
+        Quaternion upperLegNeutral = mecanim ? UpperLegNeutralOffset : Quaternion.Identity;
+        Quaternion lowerLegNeutral = mecanim ? LowerLegNeutralOffset : Quaternion.Identity;
 
-        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(legIdx, 0), VerticalJointBasis, out float upFrontBack, out float upTwist, out float upLeftRight);
+        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(legIdx, 0), VerticalJointBasis, upperLegNeutral, out float upFrontBack, out float upTwist, out float upLeftRight);
         muscles[(int)(isLeft ? EHumanoidValue.LeftUpperLegTwistInOut : EHumanoidValue.RightUpperLegTwistInOut)] =
             DegreesToNormalizedMuscle(upTwist, isLeft ? UpperLegTwistRange : RightUpperLegTwistRange);
         muscles[(int)(isLeft ? EHumanoidValue.LeftUpperLegFrontBack : EHumanoidValue.RightUpperLegFrontBack)] =
@@ -278,7 +331,7 @@ public sealed class SomaToHumanoidMuscleConverter
         muscles[(int)(isLeft ? EHumanoidValue.LeftUpperLegInOut : EHumanoidValue.RightUpperLegInOut)] =
             DegreesToNormalizedMuscle(-side * upLeftRight, UpperLegInOutRange);
 
-        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(shinIdx, legIdx), VerticalJointBasis, out float lowFrontBack, out float lowTwist, out _);
+        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(shinIdx, legIdx), VerticalJointBasis, lowerLegNeutral, out float lowFrontBack, out float lowTwist, out _);
         muscles[(int)(isLeft ? EHumanoidValue.LeftLowerLegTwistInOut : EHumanoidValue.RightLowerLegTwistInOut)] =
             DegreesToNormalizedMuscle(lowTwist, isLeft ? LowerLegTwistRange : RightLowerLegTwistRange);
         muscles[(int)(isLeft ? EHumanoidValue.LeftLowerLegStretch : EHumanoidValue.RightLowerLegStretch)] =

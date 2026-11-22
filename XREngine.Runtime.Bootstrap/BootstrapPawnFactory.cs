@@ -4,6 +4,7 @@ using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
+using XREngine.Components.Movement.Modules;
 using XREngine.Components.Lights;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Transforms;
@@ -550,6 +551,8 @@ public static class BootstrapPawnFactory
 
         var movementComp = characterNode.AddComponent<CharacterMovement3DComponent>()!;
         InitMovement(movementComp);
+        if (settings.MotionBricksLocomotion)
+            movementComp.MovementModule = new RootMotionMovementModule("MotionBricks Root Motion");
 
         float spawnY = settings.CharacterControllerCapsuleTranslationY ?? (movementComp.HalfHeight + 0.01f);
         characterTfm.SetPositionAndRotation(new Vector3(0.0f, spawnY, 0.0f), Quaternion.Identity);
@@ -562,12 +565,14 @@ public static class BootstrapPawnFactory
         SceneNode cameraOffsetNode = new(footNode, "Camera Offset");
         var cameraOffsetTfm = cameraOffsetNode.SetTransform<Transform>();
         cameraOffsetTfm.Translation = new Vector3(0.0f, movementComp.HalfHeight * 1.8f, 0.0f);
+        if (settings.MotionBricksLocomotion && settings.ThirdPersonPawn)
+            cameraOffsetTfm.Rotation = Quaternion.CreateFromYawPitchRoll(MathF.PI * 0.5f, -10.0f * (MathF.PI / 180.0f), 0.0f);
 
         SceneNode cameraParentNode;
         if (settings.ThirdPersonPawn)
         {
             cameraParentNode = cameraOffsetNode.NewChildWithTransform<BoomTransform>(out var boomTfm, "3rd Person Camera Boom");
-            boomTfm.MaxLength = 10.0f;
+            boomTfm.MaxLength = settings.MotionBricksLocomotion ? 3.2f : 10.0f;
             boomTfm.ZoomOutSpeed = 5.0f;
         }
         else
@@ -585,6 +590,8 @@ public static class BootstrapPawnFactory
         characterComp.CameraComponent = camComp;
         characterComp.InputOrientationTransform = cameraNode.Transform;
         characterComp.ViewRotationTransform = cameraOffsetTfm;
+        if (settings.MotionBricksLocomotion)
+            characterComp.UseRootMotionSteering = true;
 
         if (setUI && camComp is not null)
             BootstrapEditorBridge.Current?.CreateEditorUi(rootNode, camComp, characterComp);

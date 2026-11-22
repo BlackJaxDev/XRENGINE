@@ -232,6 +232,7 @@ public static partial class EditorUnitTests
         public bool SceneOnlyVRPawn = false; //Legacy flat compatibility flag derived from VR.Mode.
         public bool Locomotion = true; //Enables the player to physically locomote in the world. Requires a physical floor.
         public bool ThirdPersonPawn = false; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
+        public bool MotionBricksLocomotion = false; //Drives the desktop third-person avatar with NVIDIA MotionBricks SOMA procedural locomotion and Jolt root motion.
 
         /// <summary>
         /// World-space Y translation to apply to the character controller capsule/root on spawn.

@@ -165,6 +165,13 @@ public sealed class ThirdPersonRootMotionBridgeComponent : XRComponent
             animator.SetBool(_isGroundedParameter, steering.IsGrounded);
     }
 
+    /// <summary>
+    /// Value-parameter overload suitable for direct subscription to
+    /// <c>CharacterPawnComponent.RootMotionSteeringUpdated</c>.
+    /// </summary>
+    public void ApplySteeringSnapshot(ThirdPersonSteeringSnapshot steering)
+        => ApplySteering(in steering);
+
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();

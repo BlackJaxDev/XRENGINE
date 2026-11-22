@@ -101,6 +101,7 @@ public partial class UnitTestingWorldSettings
     public bool SceneOnlyVRPawn = false;
     public bool Locomotion = true;
     public bool ThirdPersonPawn = false;
+    public bool MotionBricksLocomotion = false;
 
     public float? CharacterControllerCapsuleTranslationY { get; set; }
 

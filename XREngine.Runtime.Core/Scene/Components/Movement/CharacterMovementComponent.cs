@@ -606,10 +606,9 @@ namespace XREngine.Components.Movement
                     ActiveController?.UpDirection = UpDirection;
                     break;
                 case nameof(CollisionGroup):
+                case nameof(GroupsMask):
                     if (ActiveController is ICharacterControllerCollisionSettings collisionSettings)
-                        collisionSettings.CollisionLayerMask = CollisionGroup == 0
-                            ? new LayerMask(1)
-                            : new LayerMask(1 << CollisionGroup);
+                        collisionSettings.CollisionLayerMask = ResolveControllerCollisionLayerMask();
                     break;
             }
         }
@@ -731,9 +730,7 @@ namespace XREngine.Components.Movement
                     _materialDefinition)
                 {
                     MotionInputModel = MotionInputModel,
-                    CollisionLayerMask = CollisionGroup == 0
-                        ? new LayerMask(1)
-                        : new LayerMask(1 << CollisionGroup),
+                    CollisionLayerMask = ResolveControllerCollisionLayerMask(),
                     PredictiveContactDistance = PredictiveContactDistance,
                     CollisionTolerance = CollisionTolerance,
                     StickToFloorDistance = StickToFloorDistance,
@@ -825,9 +822,7 @@ namespace XREngine.Components.Movement
             controller.MotionInputModel = MotionInputModel;
             if (controller is ICharacterControllerCollisionSettings collisionSettings)
             {
-                collisionSettings.CollisionLayerMask = CollisionGroup == 0
-                    ? new LayerMask(1)
-                    : new LayerMask(1 << CollisionGroup);
+                collisionSettings.CollisionLayerMask = ResolveControllerCollisionLayerMask();
                 collisionSettings.SlideOnSteepSlopes = SlideOnSteepSlopes;
             }
             if (controller is not IAdvancedCharacterControllerSettings advanced)
@@ -838,6 +833,18 @@ namespace XREngine.Components.Movement
             advanced.StickToFloorDistance = StickToFloorDistance;
             advanced.StepDownExtra = StepDownExtra;
             advanced.MaxStrength = MaxStrength;
+        }
+
+        private LayerMask ResolveControllerCollisionLayerMask()
+        {
+            // Match Jolt rigid body filtering: an empty GroupsMask collides with all groups by default
+            // when CollisionGroup is 0, while an explicit GroupsMask or nonzero group isolates collisions.
+            if (GroupsMask.Word0 != 0)
+                return new LayerMask(unchecked((int)GroupsMask.Word0));
+
+            return CollisionGroup == 0
+                ? LayerMask.Everything
+                : new LayerMask(1 << CollisionGroup);
         }
 
         protected override void OnComponentDeactivated()
@@ -902,18 +909,21 @@ namespace XREngine.Components.Movement
 
             Vector3 actualPlanar = ProjectOntoPlane(actualDisplacement, up);
             Vector3 requestedPlanar = _movementModule is RootMotionMovementModule rootMotionModule
-                ? rootMotionModule.LastRequestedHorizontalDisplacement
+                ? rootMotionModule.ConsumeRequestedHorizontalDisplacementSincePhysicsStep()
                 : ProjectOntoPlane(_lastSubmittedPlanarVelocity * deltaTime, up);
 
             float requestedDist = requestedPlanar.Length();
             float blockedRatio = 0.0f;
             Vector3 wallNormal = Vector3.Zero;
-            if (requestedDist > 1.0e-4f)
+            const float SideContactMinRequestedMeters = 0.005f;
+            const float FreeSpaceMinRequestedMeters = 0.015f;
+            if (requestedDist > SideContactMinRequestedMeters)
             {
                 Vector3 requestedDir = requestedPlanar / requestedDist;
                 float progressed = Vector3.Dot(actualPlanar, requestedDir);
                 blockedRatio = 1.0f - Math.Clamp(progressed / requestedDist, 0.0f, 1.0f);
-                if (controller.CollidingSides || blockedRatio > 0.35f)
+                if ((controller.CollidingSides && blockedRatio > 0.15f)
+                    || (requestedDist > FreeSpaceMinRequestedMeters && blockedRatio > 0.50f))
                 {
                     Vector3 lost = requestedPlanar - actualPlanar;
                     if (lost.LengthSquared() > 1.0e-8f)
@@ -921,7 +931,8 @@ namespace XREngine.Components.Movement
                 }
             }
 
-            bool isBlocked = (controller.CollidingSides && blockedRatio > 0.15f) || blockedRatio > 0.35f;
+            bool isBlocked = (controller.CollidingSides && requestedDist > SideContactMinRequestedMeters && blockedRatio > 0.15f)
+                || (requestedDist > FreeSpaceMinRequestedMeters && blockedRatio > 0.50f);
             Vector3 actualPlanarVelocity = deltaTime > 1.0e-6f ? actualPlanar / deltaTime : Vector3.Zero;
             var report = new CharacterMovementPhysicsStepReport(
                 footPosition,

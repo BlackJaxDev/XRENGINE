@@ -18,6 +18,7 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
     private readonly bool _useBackgroundThread;
     private readonly SomaRestSkeletonCalibration _calibration;
     private readonly SomaSmartLocomotionSettings _settings;
+    private readonly SomaLocomotionPoseBank _poseBank;
     private readonly SomaSmartLocomotionPlanner _planner;
     private readonly SomaToHumanoidMuscleConverter _converter;
     private readonly HumanoidToSomaPoseSampler _poseSampler;
@@ -86,7 +87,8 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         _useBackgroundThread = useBackgroundThread;
         _calibration = calibration ?? SomaRestSkeletonCalibration.CanonicalDefault;
         _settings = settings ?? SomaSmartLocomotionSettings.Default;
-        _planner = new SomaSmartLocomotionPlanner(_settings, poseBank ?? new SomaLocomotionPoseBank(_calibration));
+        _poseBank = poseBank ?? new SomaLocomotionPoseBank(_calibration);
+        _planner = new SomaSmartLocomotionPlanner(_settings, _poseBank);
         _converter = new SomaToHumanoidMuscleConverter(_calibration);
         _poseSampler = new HumanoidToSomaPoseSampler(_calibration);
         _avatarLegScale = float.IsFinite(avatarLegScale) && avatarLegScale > 0.01f ? avatarLegScale : 1.0f;
@@ -193,9 +195,16 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         SeedContextPoses(_seedSomaPoses, facingYaw);
     }
 
+    private readonly object _reconciliationSync = new();
+    private bool _hasPendingReconciliation;
+    private Vector3 _pendingPhysicsFootPosition;
+    private Vector3 _pendingActualPlanarVelocity;
+    private Vector3 _pendingWallNormal;
+    private bool _pendingIsBlocked;
+
     /// <summary>
-    /// Reconciles Jolt physics capsule position and wall-blocking feedback into the active
-    /// trajectory, history buffer, and Smart Locomotion planner.
+    /// Records Jolt physics capsule position and wall-blocking feedback from the physics thread
+    /// so the animation thread applies reconciliation safely without data races or free-walk jitter.
     /// </summary>
     public void ApplyPhysicsRootReconciliation(
         Vector3 actualFootPosition,
@@ -203,6 +212,38 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         Vector3 wallNormal,
         bool isBlocked)
     {
+        lock (_reconciliationSync)
+        {
+            _pendingPhysicsFootPosition = actualFootPosition;
+            _pendingActualPlanarVelocity = actualPlanarVelocity;
+            _pendingWallNormal = wallNormal;
+            _pendingIsBlocked = _pendingIsBlocked || isBlocked;
+            _hasPendingReconciliation = true;
+        }
+    }
+
+    private void ApplyPendingPhysicsReconciliationOnAnimationThread()
+    {
+        bool hasPending;
+        Vector3 actualFootPosition;
+        Vector3 actualPlanarVelocity;
+        Vector3 wallNormal;
+        bool isBlocked;
+
+        lock (_reconciliationSync)
+        {
+            hasPending = _hasPendingReconciliation;
+            if (!hasPending)
+                return;
+
+            actualFootPosition = _pendingPhysicsFootPosition;
+            actualPlanarVelocity = _pendingActualPlanarVelocity;
+            wallNormal = _pendingWallNormal;
+            isBlocked = _pendingIsBlocked;
+            _hasPendingReconciliation = false;
+            _pendingIsBlocked = false;
+        }
+
         if (_hasDisplayedPose)
         {
             Vector3 currentRoot = _displayedPose[0].Position;
@@ -210,7 +251,10 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
                 actualFootPosition.X - currentRoot.X,
                 0.0f,
                 actualFootPosition.Z - currentRoot.Z);
-            if (planarCorrection.LengthSquared() > 1.0e-8f)
+            float driftSq = planarCorrection.LengthSquared();
+            // Snap the trajectory root immediately on wall collisions, or when drift exceeds the
+            // normal 1-step render-to-physics phase offset (0.20 m).
+            if ((isBlocked && driftSq > 1.0e-6f) || driftSq > 0.04f)
             {
                 _displayedPose[0] = new SomaPoseTransform(currentRoot + planarCorrection, _displayedPose[0].Rotation);
                 _history.ApplyRootTranslationOffset(planarCorrection);
@@ -230,6 +274,7 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
             return;
         }
 
+        ApplyPendingPhysicsReconciliationOnAnimationThread();
         _planner.UpdateSteering(input);
 
         // Adopt any completed trajectory produced by the background worker.
@@ -301,11 +346,10 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
 
     private void SeedNeutralState()
     {
-        SomaPoseTransform[] rest = _calibration.ReferenceLocalPoses;
-        rest.CopyTo(_displayedPose, 0);
+        _poseBank.CopyIdlePose(_displayedPose);
         _displayedFootContacts = new Vector4(1.0f, 1.0f, 1.0f, 1.0f);
         _hasDisplayedPose = true;
-        _history.SeedFromPose(rest);
+        _history.SeedFromPose(_displayedPose);
     }
 
     private void EnqueueReplan(in MotionBricksSteeringInput input, bool isUrgent)

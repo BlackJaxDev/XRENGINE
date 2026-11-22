@@ -513,6 +513,26 @@ public static partial class EditorUnitTests
                                 try
                                 {
                                     SceneNode importedRoot = result.RootNode;
+                                    bool mountPrefabOnDesktopPawn = model.Kind is UnitTestModelImportKind.Animated
+                                        && createdCrowd.Count == 0
+                                        && characterParentNode is not null
+                                        && Toggles.Locomotion
+                                        && Toggles.MotionBricksLocomotion
+                                        && !Toggles.VRPawn
+                                        && result.AvatarRoot is not null;
+                                    if (mountPrefabOnDesktopPawn)
+                                    {
+                                        SceneNode avatarRoot = result.AvatarRoot!;
+                                        List<ModelComponent> pawnSuspendedModels = SuspendSerializedPrefabModelPublication(avatarRoot);
+                                        characterParentNode!.Transform.AddChild(avatarRoot.Transform, childPreservesWorldTransform: false, EParentAssignmentMode.Immediate);
+                                        OnFinishedImportingAvatar(avatarRoot, characterParentNode, result.SourceContentSha256);
+                                        StageSerializedPrefabModelPublication(avatarRoot, pawnSuspendedModels);
+                                        Debug.Meshes(
+                                            $"[UnityPrefab] Mounted '{resolvedPath}' onto '{characterParentNode.Name}' for desktop MotionBricks locomotion " +
+                                            $"({result.ModelCount} models, {result.MaterialCount} materials).");
+                                        return;
+                                    }
+
                                     var importedScene = new XRScene(Path.GetFileName(resolvedPath), importedRoot)
                                     {
                                         IsVisible = !IsSerializedPrefabPath(resolvedPath) ||
@@ -1616,10 +1636,16 @@ public static partial class EditorUnitTests
 
                         ConfigureAvatarPostSetupFeatures(rootNode, humanComp);
 
-                        if (startupClips is not null)
-                            AttachAvatarStartupClips(rootNode, humanComp, startupClips);
-                        else
-                            QueueAvatarStartupClipAttachment(rootNode);
+                        // Skip startup override clips when desktop MotionBricks locomotion owns the state machine,
+                        // because AnimationClipComponent suspends AnimStateMachineComponent playback.
+                        bool skipStartupClips = bindToStartupPawn && Toggles.Locomotion && Toggles.MotionBricksLocomotion && !Toggles.VRPawn;
+                        if (!skipStartupClips)
+                        {
+                            if (startupClips is not null)
+                                AttachAvatarStartupClips(rootNode, humanComp, startupClips);
+                            else
+                                QueueAvatarStartupClipAttachment(rootNode);
+                        }
 
                         return true;
 
