@@ -2481,6 +2481,52 @@ namespace XREngine.Rendering.Commands
         internal bool TryGetPublishedPassCommandsUnderReadLock(int renderPass, out ICollection<RenderCommand> commands)
             => TryGetPublishedPassCommandsNoLock(renderPass, out commands);
 
+        /// <summary>
+        /// Returns true when the published pass contains at least one primary mesh command with
+        /// active editor hover or selection bits.
+        /// </summary>
+        internal bool HasHighlightedMeshCommands(int renderPass)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
+                return false;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (GetCommandAt(list, i) is RenderCommandMesh3D meshCommand &&
+                    meshCommand.RenderEditorHighlightBits != 0u &&
+                    meshCommand.RenderSupplementalMaterialPass is null)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Renders every published primary mesh command in the pass that has active editor
+        /// hover or selection bits, using the supplied override material and its render options.
+        /// </summary>
+        internal void RenderHighlightedMeshCommands(int renderPass, XRMaterial material)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
+                return;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (GetCommandAt(list, i) is RenderCommandMesh3D meshCommand &&
+                    meshCommand.RenderEditorHighlightBits != 0u &&
+                    meshCommand.RenderSupplementalMaterialPass is null)
+                {
+                    meshCommand.RenderWithMaterialOverride(material);
+                }
+            }
+        }
+
         private static void RenderWithOptionalCpuSocMeasurement(RenderCommand command, bool measureCpuSocSubmission)
         {
             using var requiredScope = RequiredMeshSubmissionScope.EnterIf(

@@ -175,7 +175,7 @@ namespace XREngine
         /// </summary>
         private static bool? ResolveEnvironmentOutputHdr()
         {
-            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OutputHdr);
+            string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.OutputHdr);
             if (string.IsNullOrWhiteSpace(raw))
                 return null;
 

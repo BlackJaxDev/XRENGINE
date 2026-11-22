@@ -44,6 +44,74 @@ internal static class AdvancedTextureResidencyDrift
             : EAdvancedTextureDriftKind.Exact;
     }
 
+    /// <summary>
+    /// Classifies like <see cref="Classify(XRTexture, ulong, ulong)"/>, and also accepts one change
+    /// that has no content generation: a change of the visible mip range only. The encoder reads
+    /// the mip count and the sampler LOD clamps from the upload state
+    /// (<see cref="XRTexture2D.RuntimeManagedProgressiveUploadActive"/>,
+    /// <see cref="XRTexture.SmallestAllowedMipmapLevel"/>, <see cref="XRTexture.MinLOD"/> and
+    /// <see cref="XRTexture.MaxLOD"/>). A progressive upload changes that state as levels arrive,
+    /// without a new content generation. The image content is the same, so a change of only the mip
+    /// count and the LOD clamps is <see cref="EAdvancedTextureDriftKind.Residency"/>. A change of any
+    /// other field with the same generation stays <see cref="EAdvancedTextureDriftKind.Exact"/>.
+    /// </summary>
+    internal static EAdvancedTextureDriftKind Classify(
+        XRTexture source,
+        ulong capturedGeneration,
+        ulong currentGeneration,
+        in AdvancedTextureRecord current,
+        in AdvancedTextureRecord published,
+        in AdvancedSamplerRecord currentSampler,
+        in AdvancedSamplerRecord publishedSampler)
+    {
+        if (currentGeneration != capturedGeneration)
+            return Classify(source, capturedGeneration, currentGeneration);
+        bool visibleMipRangeOnly =
+            source is XRTexture2D &&
+            (current.MipCount != published.MipCount ||
+             !SamplerEquals(EAdvancedTextureDriftKind.Exact, currentSampler, publishedSampler)) &&
+            current.Dimension == published.Dimension &&
+            current.Flags == published.Flags &&
+            current.Width == published.Width &&
+            current.Height == published.Height &&
+            current.DepthOrLayers == published.DepthOrLayers &&
+            current.FormatClass == published.FormatClass &&
+            current.UvScaleBias == published.UvScaleBias &&
+            SamplerShapeEquals(currentSampler, publishedSampler);
+        return visibleMipRangeOnly
+            ? EAdvancedTextureDriftKind.Residency
+            : EAdvancedTextureDriftKind.Exact;
+    }
+
+    /// <summary>
+    /// Removes a streaming promotion-fade LOD bias change from <paramref name="current"/>. After a
+    /// mip promotion, <see cref="ImportedTextureStreamingManager"/> adds a fade bias to the base
+    /// bias of the texture and lowers it to 0 over some frames, without a new content generation.
+    /// When the streaming record explains both values (current = base + current fade, and
+    /// published = base + an earlier fade, which is never below the base), this method copies the
+    /// published bias into <paramref name="current"/>, so the comparison sees no change. Any other
+    /// bias change stays in <paramref name="current"/> and fails the comparison.
+    /// </summary>
+    internal static void NormalizeStreamingLodBias(
+        XRTexture source,
+        ref AdvancedSamplerRecord current,
+        in AdvancedSamplerRecord published)
+    {
+        float currentBias = current.LodBiasMinMaxAnisotropy.X;
+        float publishedBias = published.LodBiasMinMaxAnisotropy.X;
+        if (FloatBitsEqual(currentBias, publishedBias) ||
+            source is not XRTexture2D texture2D ||
+            !ImportedTextureStreamingManager.Instance.TryGetStreamingLodBias(
+                texture2D, out float baseBias, out float streamingBias))
+            return;
+        const float Epsilon = 0.001f;
+        bool currentIsFade = MathF.Abs(currentBias - (baseBias + Math.Max(0.0f, streamingBias))) <= Epsilon;
+        bool publishedIsFade = publishedBias >= baseBias - Epsilon;
+        if (!currentIsFade || !publishedIsFade)
+            return;
+        current.LodBiasMinMaxAnisotropy.X = publishedBias;
+    }
+
     /// <summary>True when every change after publication was a dense streaming resident commit.</summary>
     internal static bool IsResidencyOnlyChange(XRTexture source, ulong capturedGeneration, ulong currentGeneration)
         => Classify(source, capturedGeneration, currentGeneration) == EAdvancedTextureDriftKind.Residency;
@@ -181,6 +249,25 @@ internal static class AdvancedTextureResidencyDrift
         row.DepthOrLayers = current.DepthOrLayers;
         row.UvScaleBias = current.UvScaleBias;
     }
+
+    /// <summary>
+    /// Lists every texture record field as current/published, for the rejection reason of a source
+    /// check. The text names the field that changed after publication. Call it only on a
+    /// rejection: the interpolated string allocates.
+    /// </summary>
+    internal static string DescribeTextureStateMismatch(
+        in AdvancedTextureRecord current,
+        in AdvancedTextureRecord published)
+        => $"dimension={current.Dimension}/{published.Dimension}, flags={current.Flags}/{published.Flags}, extent={current.Width}x{current.Height}x{current.DepthOrLayers}/{published.Width}x{published.Height}x{published.DepthOrLayers}, mips={current.MipCount}/{published.MipCount}, format={current.FormatClass}/{published.FormatClass}, uv={current.UvScaleBias}/{published.UvScaleBias}";
+
+    /// <summary>
+    /// Lists every sampler record field as current/published, for the rejection reason of a
+    /// source check. Call it only on a rejection: the interpolated string allocates.
+    /// </summary>
+    internal static string DescribeSamplerStateMismatch(
+        in AdvancedSamplerRecord current,
+        in AdvancedSamplerRecord published)
+        => $"filter={current.Filter}/{published.Filter}, flags={current.Flags}/{published.Flags}, address={current.AddressU},{current.AddressV},{current.AddressW}/{published.AddressU},{published.AddressV},{published.AddressW}, compare={current.CompareOperation}/{published.CompareOperation}, lod={current.LodBiasMinMaxAnisotropy}/{published.LodBiasMinMaxAnisotropy}, border={current.BorderColor}/{published.BorderColor}";
 
     /// <summary>Writes the residency fields (width, height, mip count, format class) of <paramref name="current"/>.</summary>
     internal static void ApplyResidency(ref AdvancedTextureRecord row, in AdvancedTextureRecord current)

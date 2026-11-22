@@ -34,8 +34,8 @@ public static class Program
         // This is intentionally process-local and is set before the production
         // Vulkan host creates its logical device. The default layout policy is
         // untouched; GENERAL is an explicit paired-benchmark variant only.
-        Environment.SetEnvironmentVariable(
-            "XRE_VK_RENDER_BENCH_UNIFIED_IMAGE_LAYOUTS",
+        XREnvironment.SetProcessValue(
+            XREngineEnvironmentVariables.VulkanRenderBenchUnifiedImageLayouts,
             options.LayoutPolicy == "general" ? "1" : null);
         if (options.Scenario == "phase53-pipelines")
             return await RenderBenchPipelineScenario.RunAsync(options).ConfigureAwait(false);

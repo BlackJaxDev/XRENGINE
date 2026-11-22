@@ -1093,7 +1093,11 @@ namespace XREngine.Rendering
                 if (!interactiveResize)
                 {
                     ApplyBaseInternalResolutionPolicy();
-                    _renderPipeline.ApplyAutomaticInternalResolutionPolicy(this);
+                    // A transition to no pipeline (for example, an OpenXR per-eye viewport that
+                    // its owner released while true single-pass stereo renders) has no pipeline
+                    // AA or upscale policy. The viewport keeps its base internal size.
+                    if (pipeline is not null)
+                        _renderPipeline.ApplyAutomaticInternalResolutionPolicy(this);
                 }
 
                 MarkExtentProfileDirty(

@@ -9,7 +9,7 @@ internal sealed partial class VulkanResourceRuntime
 {
     private static readonly bool ViewRetirementDiagnosticsEnabled =
         string.Equals(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanRecordingDiag),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanRecordingDiag),
             "1",
             StringComparison.Ordinal);
     private int _viewRetirementDiagnosticCount;

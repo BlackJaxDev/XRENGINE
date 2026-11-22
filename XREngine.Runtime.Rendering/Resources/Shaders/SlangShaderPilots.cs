@@ -7,7 +7,7 @@ internal static class SlangShaderPilots
 {
     internal static string ResolvePath(string relativePath)
     {
-        if (Environment.GetEnvironmentVariable("XRE_SLANG_PILOTS") != "1")
+        if (XREnvironment.GetValue(XREngineEnvironmentVariables.SlangPilots) != "1")
             return relativePath;
         return relativePath.Replace('\\', '/') switch
         {

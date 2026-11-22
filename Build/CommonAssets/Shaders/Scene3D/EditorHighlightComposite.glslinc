@@ -5,23 +5,33 @@ layout(location = 0) out vec4 OutColor;
 #ifdef XR_EDITOR_HIGHLIGHT_STEREO
 uniform sampler2DArray SceneColorTexture;
 uniform sampler2DArray EditorHighlightMask;
+uniform sampler2DArray EditorHighlightSilhouetteMask;
+uniform vec2 CurrentJitterUvRight; // XRENGINE_FREQUENCY(View)
 #define XR_EDITOR_UV(uv) vec3(uv, gl_ViewID_OVR)
 #else
 uniform sampler2D SceneColorTexture;
 uniform sampler2D EditorHighlightMask;
+uniform sampler2D EditorHighlightSilhouetteMask;
 #define XR_EDITOR_UV(uv) uv
 #endif
 uniform vec3 HoverOutlineColor; // XRENGINE_FREQUENCY(View)
 uniform vec3 SelectionOutlineColor; // XRENGINE_FREQUENCY(View)
 uniform bool HoverOutlineEnabled; // XRENGINE_FREQUENCY(View)
 uniform bool SelectionOutlineEnabled; // XRENGINE_FREQUENCY(View)
+uniform vec2 CurrentJitterUv; // XRENGINE_FREQUENCY(View)
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
 
-vec2 SampleHighlight(vec2 outputUv)
+vec2 SampleSilhouetteMask(vec2 outputUv)
 {
     vec2 sourceUv = clamp(ApplyLensDistortionByMode(outputUv), vec2(0.0), vec2(1.0));
+    return step(vec2(0.5), texture(EditorHighlightSilhouetteMask, XR_EDITOR_UV(sourceUv)).rg);
+}
+
+vec2 SampleVisibleMask(vec2 outputUv, vec2 currentJitter)
+{
+    vec2 sourceUv = clamp(ApplyLensDistortionByMode(outputUv) + currentJitter, vec2(0.0), vec2(1.0));
     return step(vec2(0.5), texture(EditorHighlightMask, XR_EDITOR_UV(sourceUv)).rg);
 }
 
@@ -29,22 +39,87 @@ void main()
 {
     if (FragPos.x > 1.0 || FragPos.y > 1.0)
         discard;
+
     vec2 size = max(vec2(ScreenWidth, ScreenHeight), vec2(1.0));
     vec2 uv = clamp(XRENGINE_FramebufferUV(gl_FragCoord.xy, ScreenOrigin, size), vec2(0.0), vec2(1.0));
     vec4 scene = texture(SceneColorTexture, XR_EDITOR_UV(uv));
-    vec2 current = SampleHighlight(uv);
-    vec2 neighbor = vec2(0.0);
-    // Measure the outline in output pixels after anti-aliasing and scaling.
-    for (int offset = 1; offset <= 3; ++offset)
+
+    if (!HoverOutlineEnabled && !SelectionOutlineEnabled)
     {
-        vec2 stepUv = float(offset) / size;
-        neighbor = max(neighbor, SampleHighlight(uv + vec2(stepUv.x, 0.0)));
-        neighbor = max(neighbor, SampleHighlight(uv - vec2(stepUv.x, 0.0)));
-        neighbor = max(neighbor, SampleHighlight(uv + vec2(0.0, stepUv.y)));
-        neighbor = max(neighbor, SampleHighlight(uv - vec2(0.0, stepUv.y)));
+        OutColor = scene;
+        return;
     }
-    vec2 outline = neighbor * (vec2(1.0) - current);
+
+    vec2 currentAny = SampleSilhouetteMask(uv);
+    if (currentAny.x > 0.5 && currentAny.y > 0.5)
+    {
+        OutColor = scene;
+        return;
+    }
+
+    vec2 rawJitterUv = CurrentJitterUv;
+#ifdef XR_EDITOR_HIGHLIGHT_STEREO
+    if (gl_ViewID_OVR != 0u)
+        rawJitterUv = CurrentJitterUvRight;
+#endif
+    vec2 currentJitter = vec2(
+        rawJitterUv.x,
+        FramebufferTextureYDirection == 1 ? -rawJitterUv.y : rawJitterUv.y);
+
+    vec2 invSize = 1.0 / size;
+    vec2 neighborAny = vec2(0.0);
+    vec2 neighborVis = vec2(0.0);
+    vec2 gradHover = vec2(0.0);
+    vec2 gradSelect = vec2(0.0);
+
+    // Sample a 3-pixel circular neighborhood in output pixels so silhouettes keep
+    // uniform thickness and occluded edges stay dotted without interior cut lines.
+    for (int dy = -3; dy <= 3; ++dy)
+    {
+        for (int dx = -3; dx <= 3; ++dx)
+        {
+            int distSq = dx * dx + dy * dy;
+            if (distSq == 0 || distSq > 9)
+                continue;
+
+            vec2 offset = vec2(float(dx), float(dy));
+            vec2 sampleUv = uv + offset * invSize;
+            vec2 anyHit = SampleSilhouetteMask(sampleUv);
+            if (anyHit.x > 0.5 || anyHit.y > 0.5)
+            {
+                neighborAny = max(neighborAny, anyHit);
+                vec2 visHit = SampleVisibleMask(sampleUv, currentJitter);
+                // Probe one pixel further inward when still inside the silhouette so
+                // reduced-scale nearest visible-mask jitter cannot flip solid edges to dotted.
+                vec2 inwardUv = sampleUv + normalize(offset) * invSize;
+                vec2 inwardAny = SampleSilhouetteMask(inwardUv);
+                visHit = max(visHit, inwardAny * SampleVisibleMask(inwardUv, currentJitter));
+                neighborVis = max(neighborVis, anyHit * visHit);
+                gradHover += offset * anyHit.x;
+                gradSelect += offset * anyHit.y;
+            }
+        }
+    }
+
+    vec2 outline = neighborAny * (vec2(1.0) - currentAny);
     outline *= vec2(HoverOutlineEnabled ? 1.0 : 0.0, SelectionOutlineEnabled ? 1.0 : 0.0);
-    vec3 color = mix(SelectionOutlineColor, HoverOutlineColor, outline.x);
-    OutColor = vec4(mix(scene.rgb, color, max(outline.x, outline.y)), scene.a);
+
+    bool useHover = outline.x > 0.5;
+    bool useSelect = !useHover && outline.y > 0.5;
+    if (!useHover && !useSelect)
+    {
+        OutColor = scene;
+        return;
+    }
+
+    float isVisible = useHover ? neighborVis.x : neighborVis.y;
+    vec2 grad = useHover ? gradHover : gradSelect;
+    vec2 tangent = vec2(-grad.y, grad.x);
+    // Advance dots along the dominant tangent axis so spacing stays even on
+    // horizontal, vertical, diagonal, and curved silhouettes.
+    float dashCoord = abs(tangent.x) >= abs(tangent.y) ? gl_FragCoord.x : gl_FragCoord.y;
+    float dotPattern = step(fract(dashCoord / 8.0), 0.5);
+    float alpha = isVisible > 0.5 ? 1.0 : dotPattern * 0.85;
+    vec3 color = useHover ? HoverOutlineColor : SelectionOutlineColor;
+    OutColor = vec4(mix(scene.rgb, color, alpha), scene.a);
 }

@@ -821,6 +821,15 @@ public static partial class EditorImGuiUI
 
             if (open)
             {
+                if (value is EditorRuntimeEnvironmentPreferences runtimeEnvironment)
+                {
+                    DrawRuntimeEnvironmentPreferences(runtimeEnvironment, standaloneWindow: false);
+                    ImGui.TreePop();
+                    ImGui.PopID();
+                    visited.Remove(value);
+                    return;
+                }
+
                 bool handledByAssetInspector = false;
                 if (value is XRAsset asset)
                 {
@@ -4793,6 +4802,15 @@ public static partial class EditorImGuiUI
 
             if (open)
             {
+                if (value is EditorRuntimeEnvironmentPreferences runtimeEnvironment)
+                {
+                    DrawRuntimeEnvironmentPreferences(runtimeEnvironment, standaloneWindow: false);
+                    ImGui.TreePop();
+                    ImGui.PopID();
+                    visited.Remove(value);
+                    return;
+                }
+
                 // Struct (value type) fields need special handling: edits to sub-properties
                 // must re-set the entire struct back on the parent so the change propagates.
                 Type fieldType = field.FieldType;

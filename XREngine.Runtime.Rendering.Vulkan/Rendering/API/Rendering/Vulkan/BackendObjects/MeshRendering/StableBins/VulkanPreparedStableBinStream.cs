@@ -425,8 +425,9 @@ internal sealed partial class VulkanPreparedStableBinStream
                 geometry.IndexData.IsValid &&
                 geometry.CurrentVertexData.ElementStride == 64u &&
                 geometry.IndexData.ElementStride == sizeof(uint) &&
-                payload.FirstIndex == geometry.IndexBase &&
-                payload.IndexCount == geometry.IndexCount &&
+                // The payload draws the canonical index list or, for a skinned draw that
+                // deformed only a coarse vertex prefix, a level cover after it.
+                geometry.IsDrawIndexRange(payload.FirstIndex, payload.IndexCount) &&
                 payload.VertexCount == geometry.VertexCount &&
                 (payload.Skinned ||
                  payload.GeometryOffsets.VertexOffset == geometry.VertexBase);

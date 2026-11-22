@@ -3,6 +3,19 @@
 
 const float PI = 3.141592653589793;
 
+// Geometric and normal-map specular anti-aliasing (Tokuyoshi & Kaplanyan / Toksvig).
+// Widens GGX roughness where the shading normal bends across a pixel or a mipmapped
+// normal map shrinks in length, reducing distant specular sparkling without softening flat surfaces.
+float XR_ADV_SpecularAntiAliasing(float roughness, vec3 normalDx, vec3 normalDy, float normalMapLength)
+{
+    float roughness2 = roughness * roughness;
+    float normalVariance = dot(normalDx, normalDx) + dot(normalDy, normalDy);
+    float geometricVariance = min(0.5 * normalVariance, 0.18);
+    float safeLength = clamp(normalMapLength, 0.05, 1.0);
+    float normalMapVariance = min((1.0 - safeLength) / safeLength * 0.5, 0.18);
+    return sqrt(clamp(roughness2 + geometricVariance + normalMapVariance, 0.04 * 0.04, 1.0));
+}
+
 float XR_ADV_DistributionGGX(vec3 N, vec3 H, float roughness)
 {
     float a = roughness * roughness;

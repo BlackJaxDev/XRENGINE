@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using MemoryPack;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Meshlets;
 using YamlDotNet.Serialization;
 
@@ -34,6 +35,50 @@ public partial class XRMesh
         payload.ValidateForMesh(this, payload.SourceMeshIdentity);
         MeshletPayload = payload;
         RuntimeEngine.Rendering.Stats.GpuMeshlets.RecordMeshletWarmPayloadHydration();
+    }
+
+    /// <summary>
+    /// Attaches a copy of the meshlet payload of <paramref name="source"/> to this mesh when this mesh
+    /// uses the same geometry objects as the source. The runtime transform rebind clone is such a
+    /// mesh: it uses the source buffers and topology lists and changes only bone references. Without
+    /// this copy, the clone has no meshlets, so the meshlet and cluster level-of-detail routes skip it.
+    /// </summary>
+    /// <param name="source">The mesh whose geometry objects this mesh uses.</param>
+    /// <returns>
+    /// True when the copy is attached. False when the source has no payload that is valid for it, or
+    /// when this mesh does not use the same geometry objects.
+    /// </returns>
+    internal bool TryAttachSharedGeometryMeshletPayload(XRMesh source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (source.MeshletPayload is not { } payload || !payload.IsValidatedFor(source))
+            return false;
+        if (!UsesSameGeometryAs(source))
+            return false;
+
+        MeshletPayload = payload.CreateCopyForSharedGeometryOwner(source, this);
+        return true;
+    }
+
+    /// <summary>
+    /// Checks that this mesh and <paramref name="source"/> use the same geometry objects: the same vertex
+    /// count and primitive type, the same triangle list, and the same position, normal, tangent and
+    /// interleaved vertex buffers. A meshlet payload that is valid for the source is then valid for
+    /// this mesh, because it describes exactly these objects.
+    /// </summary>
+    private bool UsesSameGeometryAs(XRMesh source)
+        => VertexCount == source.VertexCount
+           && Type == source.Type
+           && ReferenceEquals(_triangles, source._triangles)
+           && UsesSameBuffer(source, ECommonBufferType.Position)
+           && UsesSameBuffer(source, ECommonBufferType.Normal)
+           && UsesSameBuffer(source, ECommonBufferType.Tangent)
+           && UsesSameBuffer(source, ECommonBufferType.InterleavedVertex);
+
+    private bool UsesSameBuffer(XRMesh source, ECommonBufferType bufferType)
+    {
+        string key = bufferType.ToString();
+        return ReferenceEquals(Buffers.GetValueOrDefault(key), source.Buffers.GetValueOrDefault(key));
     }
 
     public MeshletPayload GetOrCreateMeshletPayload(

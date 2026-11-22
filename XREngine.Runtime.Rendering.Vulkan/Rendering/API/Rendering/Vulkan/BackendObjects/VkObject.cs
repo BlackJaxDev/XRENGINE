@@ -29,7 +29,7 @@ internal abstract class VkObject<T> : VkObjectBase
         => WrapperLookup.GetOrCreate(data, generateNow);
 
     public void RemoveCachedObject(uint id)
-        => BackendContext.Resources.BackendObjects.Remove<T>(id);
+        => BackendContext.Resources.BackendObjects.Remove(id, this);
 
     /// <summary>
     /// Creates a context-owned wrapper. The backend context is both the native
@@ -138,8 +138,9 @@ internal abstract class VkObject<T> : VkObjectBase
 
     protected internal override void PostDeleted()
     {
-        BackendContext.Resources.BackendObjects.Remove(Data);
-        BackendContext.Resources.BackendObjects.Remove<T>(BindingId);
+        BackendContext.Resources.BackendObjects.RemoveIdentity(Data, this);
+        if (_bindingId is { } bindingId && bindingId != InvalidBindingId)
+            BackendContext.Resources.BackendObjects.Remove(bindingId, this);
         base.PostDeleted();
     }
 }

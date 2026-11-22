@@ -17,8 +17,6 @@ internal static partial class SerializedSceneImporter
     private const string AvatarDynamicsScriptGuid = "2a2c05204084d904aa4945ccff20d8e5";
     private const long AvatarDynamicsColliderScriptFileId = -1631200402;
     private const long AvatarDynamicsChainScriptFileId = 1661641543;
-    private const string AvatarConstraintScriptGuid = "58e2f01a24261a14cb82e6d3399e8b16";
-    private const long AvatarConstraintScriptFileId = 1116338486;
     private const string AvatarPresentationScriptGuid = "67cc4cb7839cd3741b63733d5adf0442";
     private const long AvatarPresentationScriptFileId = 542108242;
     private const string UploadPipelineMetadataScriptGuid = "4ecd63eff847044b68db9453ce219299";
@@ -44,6 +42,13 @@ internal static partial class SerializedSceneImporter
 
         foreach (ParsedMonoBehaviour behaviour in behaviours.Where(IsAvatarConstraint))
             AttachAvatarConstraint(behaviour, hierarchy, state);
+
+        foreach (ParsedNativeConstraint constraint in parsed.NativeConstraints
+                     .Where(static constraint => !constraint.IsStripped)
+                     .OrderBy(static constraint => constraint.DocumentOrder))
+        {
+            AttachNativeConstraint(constraint, hierarchy, state);
+        }
 
         foreach (ParsedMonoBehaviour behaviour in behaviours.Where(IsAvatarPresentationDescriptor))
             AttachAvatarPresentation(behaviour, hierarchy, state);
@@ -286,57 +291,6 @@ internal static partial class SerializedSceneImporter
             "UNITYVRC0003",
             approximated.Count == 0 ? SourceImportDiagnosticSeverity.Info : SourceImportDiagnosticSeverity.Warning,
             mappedSummary + approximationSummary);
-    }
-
-    private static void AttachAvatarConstraint(
-        ParsedMonoBehaviour behaviour,
-        ImportedHierarchy hierarchy,
-        ImportState state)
-    {
-        if (!TryResolveBehaviourNode(behaviour, hierarchy, state, out SceneNode? node) || node is null)
-            return;
-
-        YamlMappingNode fields = behaviour.SerializedFields;
-        WeightedTransformConstraintComponent? component = node.AddComponent<WeightedTransformConstraintComponent>();
-        if (component is null)
-        {
-            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.constraint",
-                UnityConversionFeatureStatus.Unknown, "Weighted transform constraint",
-                "The native component could not be attached; conversion did not complete.");
-            return;
-        }
-
-        component.TargetTransform = ResolveTransformReference(GetNode(fields, "TargetTransform"), hierarchy, node.Transform);
-        component.Sources = ParseConstraintSources(fields, hierarchy);
-        component.Weight = Clamp01(GetScalarFloat(fields, "GlobalWeight") ?? 1.0f);
-        component.SolveInLocalSpace = (GetScalarInt(fields, "SolveInLocalSpace") ?? 0) != 0;
-        component.Locked = (GetScalarInt(fields, "Locked") ?? 0) != 0;
-        component.Channels = ParseConstraintChannels(fields);
-        ApplyConstraintOffsetsAndRestPose(component, fields);
-        component.FreezeToWorld = (GetScalarInt(fields, "FreezeToWorld") ?? 0) != 0;
-        component.IsActive = behaviour.Enabled && (GetScalarInt(fields, "IsActive") ?? 1) != 0;
-
-        hierarchy.ComponentsByFileId[behaviour.FileId] = component;
-        MarkAdaptedScriptDependency(behaviour, state);
-        RecordAvatarFeature(state, behaviour, hierarchy, "avatar.constraint",
-            UnityConversionFeatureStatus.Converted, "Weighted transform constraint",
-            "The importer attached a native weighted transform constraint and mapped its supported fields.",
-            nativeTarget: typeof(WeightedTransformConstraintComponent).FullName);
-
-        if ((GetScalarInt(fields, "RebakeOffsetsWhenUnfrozen") ?? 0) != 0)
-        {
-            RecordAvatarFeature(state, behaviour, hierarchy, "avatar.constraint.freeze-rebake",
-                UnityConversionFeatureStatus.Unknown, "Constraint freeze and offset rebake",
-                "The source enables freeze or rebake editor semantics that the importer did not reproduce.",
-                lostFunctionality: "Freeze and rebake editor semantics were not reproduced.");
-            AddAvatarDiagnostic(
-                state,
-                behaviour,
-                hierarchy,
-                "UNITYVRC0004",
-                SourceImportDiagnosticSeverity.Warning,
-                "VRChat constraint offset rebake on unfreeze was not reproduced; the authored offsets stay fixed.");
-        }
     }
 
     private static void AttachAvatarPresentation(
@@ -647,83 +601,6 @@ internal static partial class SerializedSceneImporter
         return result;
     }
 
-    /// <summary>
-    /// Reads the constraint-level offsets and the rest pose of a VRChat constraint. The offsets are
-    /// added to the weighted source pose (PositionOffset in the target's parent space, RotationOffset as Euler
-    /// degrees after the source rotation). The rest pose (PositionAtRest and RotationAtRest, the
-    /// target's local pose) is where the constraint blends from by its weight and what it holds when
-    /// the total source weight is zero. Unity coordinates convert to engine coordinates.
-    /// </summary>
-    private static void ApplyConstraintOffsetsAndRestPose(WeightedTransformConstraintComponent component, YamlMappingNode fields)
-    {
-        component.PositionOffset = ConvertPosition(GetVector3(fields, "PositionOffset", Vector3.Zero));
-        component.RotationOffset = ConvertEulerDegrees(GetVector3(fields, "RotationOffset", Vector3.Zero));
-        bool hasPositionAtRest = GetNode(fields, "PositionAtRest") is not null;
-        bool hasRotationAtRest = GetNode(fields, "RotationAtRest") is not null;
-        component.HasRestPose = hasPositionAtRest || hasRotationAtRest;
-        component.PositionAtRest = ConvertPosition(GetVector3(fields, "PositionAtRest", Vector3.Zero));
-        component.RotationAtRest = ConvertEulerDegrees(GetVector3(fields, "RotationAtRest", Vector3.Zero));
-    }
-
-    private static List<TransformConstraintSource> ParseConstraintSources(
-        YamlMappingNode fields,
-        ImportedHierarchy hierarchy)
-    {
-        if (GetNode(fields, "Sources") is not YamlMappingNode sourceCollection)
-            return [];
-
-        var result = new List<TransformConstraintSource>();
-        foreach ((YamlNode _, YamlNode value) in sourceCollection.Children)
-        {
-            if (value is not YamlMappingNode source)
-                continue;
-
-            TransformBase? sourceTransform = ResolveTransformReference(GetNode(source, "SourceTransform"), hierarchy);
-            float weight = GetScalarFloat(source, "Weight") ?? 0.0f;
-            if (sourceTransform is null || weight <= 0.0f)
-                continue;
-
-            Vector3 rotationDegrees = GetVector3(source, "ParentRotationOffset", Vector3.Zero);
-            result.Add(new TransformConstraintSource
-            {
-                SourceTransform = sourceTransform,
-                Weight = weight,
-                PositionOffset = ConvertPosition(GetVector3(source, "ParentPositionOffset", Vector3.Zero)),
-                RotationOffset = ConvertEulerDegrees(rotationDegrees),
-                ScaleOffset = GetVector3(source, "ScaleOffset", Vector3.Zero),
-            });
-        }
-
-        return result;
-    }
-
-    private static TransformConstraintChannels ParseConstraintChannels(YamlMappingNode fields)
-    {
-        TransformConstraintChannels result = TransformConstraintChannels.None;
-        AddConstraintChannel(fields, "AffectsPositionX", TransformConstraintChannels.PositionX, ref result);
-        AddConstraintChannel(fields, "AffectsPositionY", TransformConstraintChannels.PositionY, ref result);
-        AddConstraintChannel(fields, "AffectsPositionZ", TransformConstraintChannels.PositionZ, ref result);
-        AddConstraintChannel(fields, "AffectsRotationX", TransformConstraintChannels.RotationX, ref result);
-        AddConstraintChannel(fields, "AffectsRotationY", TransformConstraintChannels.RotationY, ref result);
-        AddConstraintChannel(fields, "AffectsRotationZ", TransformConstraintChannels.RotationZ, ref result);
-        AddConstraintChannel(fields, "AffectsScaleX", TransformConstraintChannels.ScaleX, ref result);
-        AddConstraintChannel(fields, "AffectsScaleY", TransformConstraintChannels.ScaleY, ref result);
-        AddConstraintChannel(fields, "AffectsScaleZ", TransformConstraintChannels.ScaleZ, ref result);
-        return result == TransformConstraintChannels.None
-            ? TransformConstraintChannels.Parent
-            : result;
-    }
-
-    private static void AddConstraintChannel(
-        YamlMappingNode fields,
-        string key,
-        TransformConstraintChannels channel,
-        ref TransformConstraintChannels result)
-    {
-        if ((GetScalarInt(fields, key) ?? 0) != 0)
-            result |= channel;
-    }
-
     private static PhysicsChainCoefficientCurve? ParseSourceCurve(
         YamlMappingNode fields,
         string key,
@@ -915,6 +792,15 @@ internal static partial class SerializedSceneImporter
         string code,
         SourceImportDiagnosticSeverity severity,
         string message)
+        => AddAvatarDiagnostic(state, behaviour.FileId, hierarchy, code, severity, message);
+
+    private static void AddAvatarDiagnostic(
+        ImportState state,
+        long componentFileId,
+        ImportedHierarchy hierarchy,
+        string code,
+        SourceImportDiagnosticSeverity severity,
+        string message)
     {
         state.Context.AddDiagnostic(
             code,
@@ -925,7 +811,7 @@ internal static partial class SerializedSceneImporter
             identity: new SourceAssetIdentity
             {
                 AssetGuid = hierarchy.SourceGuid ?? string.Empty,
-                LocalFileId = behaviour.FileId,
+                LocalFileId = componentFileId,
                 ObjectKind = SourceAssetObjectKind.Component,
             });
     }
@@ -935,9 +821,6 @@ internal static partial class SerializedSceneImporter
 
     private static bool IsAvatarDynamicsChain(ParsedMonoBehaviour behaviour)
         => MatchesScript(behaviour, AvatarDynamicsScriptGuid, AvatarDynamicsChainScriptFileId);
-
-    private static bool IsAvatarConstraint(ParsedMonoBehaviour behaviour)
-        => MatchesScript(behaviour, AvatarConstraintScriptGuid, AvatarConstraintScriptFileId);
 
     private static bool IsAvatarPresentationDescriptor(ParsedMonoBehaviour behaviour)
         => MatchesScript(behaviour, AvatarPresentationScriptGuid, AvatarPresentationScriptFileId);

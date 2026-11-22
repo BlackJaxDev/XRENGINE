@@ -45,7 +45,7 @@ namespace XREngine.Data.Tools
 
         private static int ResolveMaxConcurrentRuns()
         {
-            string? rawValue = Environment.GetEnvironmentVariable(MaxConcurrentRunsEnvironmentVariable);
+            string? rawValue = XREnvironment.GetValue(MaxConcurrentRunsEnvironmentVariable);
             if (!int.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out int configuredValue))
                 return 1;
 

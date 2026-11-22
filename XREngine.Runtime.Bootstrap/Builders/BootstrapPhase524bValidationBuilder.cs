@@ -49,7 +49,7 @@ public static partial class BootstrapPhase524bValidationBuilder
     private const float MotionStopMetersPerFrame = 0.035f;
 
     public static bool IsEnabled
-        => IsEnabledValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPhase524bValidation));
+        => IsEnabledValue(XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanPhase524bValidation));
 
     public static void AddValidationWorkload(SceneNode rootNode)
     {

@@ -277,7 +277,7 @@ struct SkinInfluence
     vec4 Weights;
     uint SpillOffset;
     uint SpillCount;
-    uint Reserved0;
+    uint DeformationOrderVertex;
     uint Reserved1;
 };
 

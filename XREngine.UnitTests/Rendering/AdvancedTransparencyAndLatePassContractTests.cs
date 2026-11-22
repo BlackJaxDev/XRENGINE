@@ -26,6 +26,32 @@ public sealed class AdvancedTransparencyAndLatePassContractTests
     }
 
     [Test]
+    public void LatePassMetadata_RoundTripsThroughTheAssetYamlSerializer()
+    {
+        // A prefab copy writes its materials to YAML and reads them back.
+        AdvancedLatePassMetadata original = new(
+            EAdvancedLatePassKind.SortedAlpha,
+            requiresSceneColorSnapshot: true,
+            sceneColorSamplerName: "Texture3",
+            sceneColorTextureUnit: 3,
+            isOrderDependent: true)
+        {
+            TemporalUnsupportedReason = "No temporal variant.",
+        };
+
+        string yaml = AssetManager.Serializer.Serialize(original, typeof(AdvancedLatePassMetadata));
+        AdvancedLatePassMetadata? copy = AssetManager.Deserializer.Deserialize<AdvancedLatePassMetadata>(yaml);
+
+        copy.ShouldNotBeNull();
+        copy.Kind.ShouldBe(EAdvancedLatePassKind.SortedAlpha);
+        copy.RequiresSceneColorSnapshot.ShouldBeTrue();
+        copy.SceneColorSamplerName.ShouldBe("Texture3");
+        copy.SceneColorTextureUnit.ShouldBe(3);
+        copy.IsOrderDependent.ShouldBeTrue();
+        copy.TemporalUnsupportedReason.ShouldBe("No temporal variant.");
+    }
+
+    [Test]
     public void LatePassValidator_RejectsOpaqueAndMaskedDraws()
     {
         AdvancedLatePassMetadata metadata = new(EAdvancedLatePassKind.SortedAlpha);

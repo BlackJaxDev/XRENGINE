@@ -174,7 +174,7 @@ void ComputeNeighborhoodBounds(vec2 uv, out vec3 minColor, out vec3 maxColor,
         for (int y = -1; y <= 1; ++y)
         {
             vec2 sampleUv = ClampSourceUv(uv + vec2(float(x), float(y)) * sourceTexelSize);
-            vec3 s = TsrRgbToYCoCg(texture(PostProcessOutputTexture, sampleUv).rgb);
+            vec3 s = TsrRgbToYCoCg(TsrCompressHdrColor(texture(PostProcessOutputTexture, sampleUv).rgb));
             sampleMin = min(sampleMin, s);
             sampleMax = max(sampleMax, s);
             m1 += s;
@@ -286,8 +286,8 @@ void main()
         ? currentColorRaw
         : mix(currentColorRaw, currentColorFiltered, 0.25f);
 #endif
-    vec3 currentYCoCg = TsrRgbToYCoCg(currentColor);
-    float currentLuma = currentYCoCg.x;
+    vec3 currentYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(currentColor));
+    float currentLuma = TsrRgbToYCoCg(max(currentColor, vec3(0.0f))).x;
 
     // Neighborhood in YCoCg at source resolution
     vec3 minBound, maxBound, meanYCoCg, sampleMin, sampleMax;
@@ -312,7 +312,7 @@ void main()
         canUseHistory = TsrSampleSurfaceHistory(surface, historyUV,
             currentJitter, previousJitter, historyRGB, surfaceSupport, historyAge, rejectionReason);
         if (canUseHistory)
-            historyYCoCg = TsrRgbToYCoCg(historyRGB);
+            historyYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(historyRGB));
 #else
         vec2 historySampleUv = ClampHistoryUv(historyUV);
         float historyDepth = texture(HistoryDepth,
@@ -321,7 +321,7 @@ void main()
         {
             // Bicubic Catmull-Rom on full-resolution history
             vec3 historyRGB = SampleCatmullRom(TsrHistoryColor, historySampleUv, historyTexelSize);
-            historyYCoCg = TsrRgbToYCoCg(historyRGB);
+            historyYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(historyRGB));
         }
         else
         {
@@ -337,19 +337,21 @@ void main()
     TsrCoverageResult coverage = TsrResolveCoverage(uv, historyUV, currentJitter, previousJitter,
         historyAllowed, isPostTemporalForward ? 1.0 : canonicalReactive,
         TsrComputeMotionMask(velocity, ReactiveVelocityScale), currentLuma, depthDiscontinuity);
+    bool writeCoverageState = false;
     if (coverage.historyValid)
     {
         canUseHistory = true;
         historyAge = coverage.historyAge;
-        historyYCoCg = TsrRgbToYCoCg(coverage.historyColor);
+        historyYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(coverage.historyColor));
+        writeCoverageState = true;
     }
-    else if (coverage.currentCoverage >= 0.0)
+    else if (!canUseHistory && coverage.currentCoverage >= 0.0)
     {
-        // Seed color and coverage together. An ordinary history mixture has
-        // no matching coverage state and cannot be relabeled as this frame.
-        canUseHistory = false;
+        // Seed coverage metadata only when ordinary surface history is unavailable.
+        // Never discard a validated surface history or mark it as unvalidated coverage.
         historyAge = 0.0;
         historyYCoCg = currentYCoCg;
+        writeCoverageState = true;
     }
     float detailProtection = TsrComputeDetailProtection(canUseHistory, historyAge,
         TsrComputeMotionMask(velocity, ReactiveVelocityScale), canonicalReactive);
@@ -358,9 +360,9 @@ void main()
     minBound = mix(minBound, min(minBound, coverage.colorMin), coverage.retention);
     maxBound = mix(maxBound, max(maxBound, coverage.colorMax), coverage.retention);
 #endif
-    // Clip toward AABB center
+    // Clip toward AABB center in tone-compressed YCoCg space to suppress HDR specular fireflies
     vec3 clippedHistory = TsrClipHistoryToNeighborhood(historyYCoCg, minBound, maxBound);
-    float historyLuma = clippedHistory.x;
+    float historyLuma = TsrRgbToYCoCg(TsrExpandHdrColor(TsrYCoCgToRgb(clippedHistory))).x;
 
     float motionMask = TsrComputeMotionMask(velocity, ReactiveVelocityScale);
     float geometryInstability = TsrComputeGeometryInstability(depthDiscontinuity, motionMask);
@@ -394,12 +396,12 @@ void main()
     historyWeight = mix(historyWeight, max(historyWeight, clamp(FeedbackMax, 0.0, 0.99)), coverage.retention);
     OutHistoryMetadata = vec4(TsrAdvanceHistoryAge(canUseHistory, historyAge, reactiveMask),
         coverage.historyValid ? mix(coverage.currentCoverage, coverage.historyCoverage, historyWeight)
-            : coverage.currentCoverage,
+            : (writeCoverageState ? coverage.currentCoverage : -1.0),
         TsrCompressLuma(currentLuma), coverage.flicker);
 #endif
 
     vec3 resolved = mix(currentYCoCg, clippedHistory, historyWeight);
-    vec3 result = TsrYCoCgToRgb(resolved);
+    vec3 result = TsrExpandHdrColor(TsrYCoCgToRgb(resolved));
 #ifdef XR_TSR_STABLE_OUTPUT
     // Persist the real, unsharpened resolve even while viewing diagnostics.
     OutAccumulation = vec4(max(result, vec3(0.0)), 1.0);
@@ -445,9 +447,10 @@ void main()
         return;
     }
 
-    // Post-resolve sharpening — stronger than TAA because we're upscaling from low res.
-    // Uses current frame detail to restore high-frequency edges. Skip the
-    // overlay neighborhood; its coverage is resolved below from the stencil mask.
+#ifndef XR_TSR_STABLE_OUTPUT
+    // Post-resolve sharpening on the legacy non-stable path. Skip it under
+    // XR_TSR_STABLE_OUTPUT because raw current-frame high frequency carries
+    // the active jitter phase and re-injects shimmer into stationary edges.
     if (postTemporalCoverage <= 0.0f)
     {
         vec3 neighbors =
@@ -460,14 +463,9 @@ void main()
             nativeResolution,
             historyWeight,
             reactiveMask);
-#ifdef XR_TSR_STABLE_OUTPUT
-        sharpenStrength *= TsrComputeSharpenStability(canUseHistory, historyAge,
-            geometryInstability, motionMask, reactiveMask,
-            currentLuma, historyYCoCg.x, ReactiveLumaThreshold);
-        sharpenStrength *= 1.0 - coverage.retention;
-#endif
         result += highFreq * sharpenStrength;
     }
+#endif
 
     OutColor = vec4(max(result, vec3(0.0f)), 1.0f);
 }

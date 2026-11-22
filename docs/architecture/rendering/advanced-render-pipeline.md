@@ -577,7 +577,8 @@ witness (`AdvancedMaterialSourceWitness`) holds:
   array, the layer content witness; for a CPU-backed cube, the cube source
   generation;
 - the resource publisher `CommitGeneration`, which advances on each texture or
-  sampler record write or release;
+  sampler record add, release, or plan replacement (an in-place texture refresh,
+  below, does not advance it);
 - the material database generations;
 - a hash of the committed bindings and surface records that the check compared.
 
@@ -594,6 +595,66 @@ it is not lost. Set `XRE_ADVANCED_PUBLISHER_WITNESS_VALIDATE=1` to run the full
 check also when the witness is unchanged. A mismatch logs a warning and returns
 the full-check result. A hit that a concurrent texture write changed during the
 check is counted separately and is not a failure.
+
+#### In-place texture refresh
+
+A streamed upload replaces the record of a texture that the scene already
+publishes: its size, mip count, and content generation change. The texture object,
+its fallback, and its sampler stay the same. The logical texture entry of
+`AdvancedGpuResourcePublisher` is found by the texture object, and a record
+replacement keeps its handle, so the committed material bindings (texture handle
+and sampler handle) stay correct. Without a refresh path, each such upload failed
+the committed-binding check and sent the frame to the whole-scene plan.
+
+In the swap-time gate pass (not the collect-thread prepare and not the full plan),
+a binding that fails `BindingMatches` calls
+`AdvancedGpuResourcePublisher.TryStageTextureRefresh`. The call accepts the binding
+only when the entry under the bound texture handle holds the same texture object,
+the fallback and the sampler record are equal, and the new record is valid. It
+stages the new record one time for each texture; two different records for one
+texture in one pass fail the gate. The material keeps no witness for that pass, so
+a rejected publication cannot hide the old record.
+
+When the gate passes with staged refreshes, `TryPublishUnchangedRows` always
+commits the retained rows (a reuse would keep the old records). A frame that also
+changes global resource ownership, or whose texture table cannot accept the
+replacements, takes the full plan. `CommitRetainedRows` applies the staged records
+inside the open publication transaction through
+`AdvancedGlobalResourceDatabase.TryReplaceTexture`, with the default sampler of the
+entry. No material record, row, or draw handle changes. The refresh does not
+advance `CommitGeneration`: no handle or binding changes, and the witness of each
+material that binds the refreshed texture already changed through the texture
+source version. A gate failure or a full plan discards the staged refreshes; the
+full plan replaces the records through its own preflight.
+
+#### Material sampler rebind
+
+The full-size upload of a streamed texture can also change its sampler record,
+for example when the mip count grows from one level to a full chain. The texture
+refresh cannot apply that change: the material needs a new sampler handle. In the
+swap-time gate pass, a binding that fails both `BindingMatches` and
+`TryStageTextureRefresh`, but still names the same texture object with the same
+fallback and a valid new source (`IsSameTextureSource`), counts as a match. The
+gate records a rebind for the material, one time for each material handle, and
+the material keeps no witness for that pass.
+
+`TryPublishUnchangedRows` then plans one existing-material transition for each
+recorded material with the full-plan material resolve (`TryPlanMaterialRebinds`).
+The resolve must return the same material handle with changed resources;
+otherwise the frame takes the full plan. The transition keeps its handle and adds
+no draw owner. Its resource acquisitions and releases stay in the shared resource
+plan, so the global resource preflight checks them with the global resources.
+`CommitRetainedRows` applies the transition inside the open publication
+transaction: it acquires the new bindings, rewrites the binding span of the
+material record, and releases the old bindings after the rows. A frame that has
+both staged texture refreshes and material rebinds takes the full plan. A gate
+failure or a full plan discards the recorded rebinds.
+
+After a full plan that resolved a material again, `CaptureCommittedMaterialPlans`
+marks each such row as reused (`ReusedCommittedMaterial`) after the publication
+seals, because the committed material plan now matches the plan inputs. The next
+frame can then pass the gate. A row that got its registration in that publication
+keeps the full plan for one more frame, and a rejected publication marks no row.
 
 When the gate passes and no global resource changed, the publisher reuses the
 current publication and delivers the identities again, as the full reuse path
@@ -727,6 +788,32 @@ world-swap publication whose swap-time gate failed, by the reason of the first
 row or check that failed. Each of these publications plans and commits the whole
 scene, so these reasons name what keeps the scene off the unchanged-row path.
 
+### Error material rows
+
+The Advanced pipeline accepts a frame package only when each enabled primary
+draw has an exact canonical submission. A row without a submission would
+therefore stop all scene output. When the whole-scene plan rejects the material
+of a row without a fatal error (a compatibility reason such as
+`UnsupportedResourceBinding`), `AdvancedGpuScenePublisher.TrySubstituteErrorMaterial`
+plans the row again with one shared canonical error material: a standard
+deferred color material in flat magenta, without textures. The row keeps the
+command, geometry, bounds and render options of its source, so it draws in all
+passes and the frame package stays complete. The registration stores the error
+material. The unchanged-row check therefore sees a different material on each
+later plan, plans the row again, and tries the source material first, so a
+material that becomes supported replaces the error material on the next plan.
+While an error row exists, each publication therefore plans the whole scene
+and leaves the unchanged-row path, and it repeats the source material check.
+Error rows are a fault state for a material to fix, not a steady-state route.
+
+Each plan with error rows writes one `CanonicalErrorMaterial` line to the
+render-readiness failure log, at most once per 5 seconds. The line has the row
+count and the source material, mesh, compatibility reason and encoder text of
+the first error row. Release builds also write this log.
+`AdvancedGpuScenePublisher.LastErrorMaterialRowCount` gives the count of the last
+plan. A row whose geometry the plan rejects (`UnsupportedGeometryTopology`,
+`InvalidGeometrySource`) has no error material path and stays without a row.
+
 ### Deformation source identity
 
 `AdvancedPreparationExtractor` keeps an `AdvancedDeformationSourceSet` for each
@@ -811,6 +898,15 @@ the log gets a `PREP` line for each deferral (reason, frame id, render frame, vi
 the deferral text), and the `SUMMARY` line adds `lastPrepDeferral` and `prep.<reason>` totals.
 Rejected packages and reused deferred frames do not run a build, so the `SUMMARY` `deferred` count
 does not include them; the `prep.` totals do.
+
+The `SUMMARY` line also shows the latched virtual geometry settings (`vg`, `skinnedCut`,
+`deformationLod`) and these counts of its 5-second window: `deformedVertices` and `fullVertices`
+(the vertices that the deformation jobs deformed, and the vertex counts of the same skinned draws),
+`gate.<outcome>` for each skinned cluster cut draw (`EAdvancedDeformationLevelGate`: the first check
+that kept the draw at level 0, or `Chosen`; an `Excluded<flag>` outcome names the draw flag that
+stopped the draw, and `NoMeshlets` counts meshes without a meshlet payload), and `level<n>` for each chosen level above 0. When
+`deformedVertices` equals `fullVertices` in a deformation level of detail session, the `gate.` counts
+show why no draw got a coarser level.
 
 ### Extraction lookups
 
@@ -1382,6 +1478,7 @@ always set, so a debug resource gated on one of those bits is always allocated.
 - An unsupported opaque material in a required Advanced mode renders an observable error material or fails selection. It does not enter the classic opaque renderer.
 - A canonical texture whose image is still loading does not fail the frame. Its row keeps the non-resident encoded reference, so each material binding samples its own fallback (for example black, white, or a flat normal) until the image is ready. Every frame builds the scene publication again, so the real image (the streaming preview first, then the full image) replaces the fallback as soon as it is ready. A texture view with the wrong shape still fails the publication.
 - A canonical texture row refreshes only when the scene publisher plans a material that binds the texture again. The publisher plans only the commands that it collects, so a hidden or off-screen material can keep a row that describes an old source (for example the loading placeholder after streaming published the real image). The Vulkan publication validation (`VulkanAdvancedSceneResourceRuntime.TryValidatePublicationSources`) therefore does not fail the frame for such a stale row. It flags the row, and the texture-row preparation publishes it as not resident, so each binding samples its own fallback, the same as a loading texture. The row becomes resident again when a material that binds the texture is planned. Outputs that share the publication in the same frame slot accept only the stale rows that the first output already published as not resident (`EVulkanStaleTextureRowPolicy.AllowRecorded`). A row that became stale after that output still fails, because the shared texture table marks it resident.
+- The Vulkan resource set has one descriptor array each for 2D, 2D array and cube sampled images, and one for samplers. Each array has `VulkanAdvancedSceneResourceRuntime.DescriptorCapacity` rows. The runtime requests 65,536 rows and lowers the count to the device limits: the three sampled-image arrays count together against the sampled-image limits, and the per-stage limits keep 64 descriptors for the other sets. The shaders declare the arrays with the same count (`XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY`). One publication uses one row per physical texture record, and each later publication in the same frame slot appends its rows. A publication whose texture high-water does not fit fails with `TextureDescriptorCapacity`, and every frame package that needs it is rejected. A crowd of 12 imported avatars publishes more than 10,000 texture records.
 - An imported texture starts with a small loading placeholder: the red and blue filler checker for color slots and a flat normal for normal slots. The model importer marks this placeholder with `XRTexture2D.MarkAwaitingFirstResidency()`. While a texture is in this state, the Vulkan publication treats it as still loading, so the binding fallback shows instead of the checker. The first imported resident publication clears the state. This includes the filler data of a missing source file, so a missing texture still shows the checker. The state is runtime-only: it is not serialized and is not part of the asset or a cache key.
 - Before the Vulkan runtime admits a canonical package or lowers its texture table, it encodes each retained texture source again and compares it with the published record (`TryValidatePublicationSources`). Any difference fails with `SourceMismatch`, and the frame retries on a later publication, with two exceptions (`AdvancedTextureResidencyDrift`). The descriptor always binds the current image, so these changes keep what the shaders see:
   - Placeholder: `XRTexture2D` records the content generation of the resident commit that ends the loading placeholder state. A publication from an older generation described the placeholder, which never drew. Only the dimension, layer count and depth flag must match, and the texture row gets the whole current record (identity, encoded reference and default sampler stay).
@@ -1389,7 +1486,7 @@ always set, so a debug resource gated on one of those bits is always allocated.
   - Arrays, cubes, capture outputs and sparse textures keep the exact check.
   - Each failure has a reason (`EAdvancedTextureSourceMismatch`). The failure text starts with the reason name in brackets. `AdvancedTextureSourceMismatchDiagnostics` keeps process totals and the last reason. The MCP render pipeline readout shows them under the directional shadow lane (`sourceMismatch`), and the `XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS` `SUMMARY` line shows `srcMismatch.<reason>` totals.
 - Readiness is backend state that the canonical table generations do not cover. The Vulkan runtime keeps a texture readiness generation that advances when the encoded reference or a bound-image field (width, height, mip count, format class, flags, dimension) of any texture row changes.
-- Imported transparent materials draw in the late lane. `XRMaterial.ResolveAdvancedLatePassMetadata()` returns the explicit `AdvancedLatePassMetadata` when a material authors it. Otherwise it derives shared, immutable metadata from the transparency mode: `AlphaBlend` in the `TransparentForward` pass becomes sorted alpha, and `WeightedBlendedOit` in the weighted blended OIT pass becomes OIT. Derived metadata never requests the scene color snapshot, and it is not serialized, so no asset changes. A material that samples scene color must author its metadata.
+- Imported transparent materials draw in the late lane. `XRMaterial.ResolveAdvancedLatePassMetadata()` returns the explicit `AdvancedLatePassMetadata` when a material authors it. Otherwise it derives shared, immutable metadata from the transparency mode: `AlphaBlend`, `PremultipliedAlpha` and `Additive` in the `TransparentForward` pass become sorted alpha (each draw keeps the blend factors of its own render options, for example One, OneMinusSrcAlpha for premultiplied alpha), and `WeightedBlendedOit` in the weighted blended OIT pass becomes OIT. Without this, a premultiplied or additive material that has no authored metadata has no late pass and does not draw in the Advanced pipeline. The serialized material importer authors explicit metadata for imported source toon transparent materials, so they do not use this derivation. Derived metadata never requests the scene color snapshot, and it is not serialized, so no asset changes. A material that samples scene color must author its metadata.
 - A verified imported source surface can use `AdvancedLatePassMetadata.SourceSurfaceContract` to draw in source queue order after native opaque shading. The validator requires a canonical Uber Base pass, an imported queue above 2500, matching queue priority, and the supported pass options. The published frame package freezes the first scene-color consumer by sorted command index and stable key. One read scope holds that package while the late stage draws the prefix, copies the full HDR attachment to a dedicated Rgba16f array, and draws the suffix. The copy uses one layer on desktop and one layer per stereo eye. `_SourceSceneColor` samples the copied attachment with full framebuffer pixel coordinates and linear clamp filtering. The ordinary transparency copy is separate and cannot replace this source copy. A required source draw with an unsupported contract fails frame authoring; a missing render snapshot reports pending preparation.
 - A source-ordered command must have one primitive. The current command sorter and scene-color boundary cannot split different source materials inside one renderer. Admission rejects a multi-primitive source command before it draws.
 - Advanced frame admission checks each enabled primary mesh in passes 1, 3, and 4 against an exact compatible canonical submission in the same published package. It reports the missing count and the first pass, stable key, and reason before authoring. Supplemental and disabled Base draws do not require a primary submission. Verified source-ordered materials use pass 5 and the separate required source route.

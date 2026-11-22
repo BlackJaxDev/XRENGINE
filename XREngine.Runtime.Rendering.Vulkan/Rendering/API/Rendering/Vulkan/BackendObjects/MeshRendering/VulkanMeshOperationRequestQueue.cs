@@ -463,7 +463,7 @@ internal sealed class VulkanMeshOperationRequestQueue
 
     private static int ResolveBackgroundSchedulingCapacity()
     {
-        string? configured = Environment.GetEnvironmentVariable(
+        string? configured = XREnvironment.GetValue(
             XREngineEnvironmentVariables.VulkanMeshSchedulingCapacity);
         return int.TryParse(configured, out int parsed)
             ? Math.Clamp(parsed, 1, Capacity)

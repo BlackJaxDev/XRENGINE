@@ -101,6 +101,14 @@ public sealed partial class XRRenderPipelineInstance
     /// </summary>
     internal void ApplyAutomaticInternalResolutionPolicy(XRViewport viewport)
     {
+        // An instance that its owner released holds no pipeline on purpose. Reading Pipeline
+        // here would find none and fail, so the viewport keeps its base internal size.
+        if (IsPipelineReleasedByOwner && PipelineIfAssigned is null)
+        {
+            _appliedInternalResolutionScale = null;
+            return;
+        }
+
         XRCamera? camera = viewport.ActiveCamera;
         EAntiAliasingMode antiAliasingMode = camera?.AntiAliasingModeOverride
             ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingMode;

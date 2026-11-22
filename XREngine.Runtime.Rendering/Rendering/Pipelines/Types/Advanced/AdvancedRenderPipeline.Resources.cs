@@ -450,8 +450,13 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostColor(builder, TsrHistoryMetadataOutputTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TsrHistoryMetadataTextureName, windowSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, history: true);
         if (EditorHighlightModule is not null)
+        {
             DeclareLatePostColor(builder, EditorHighlightOutputTextureName, windowSize, layers,
                 EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+            DeclareLatePostColor(builder, EditorHighlightSilhouetteMaskTextureName, windowSize, layers,
+                EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8,
+                nearest: true);
+        }
         if (builder.Profile.Stereo)
         {
             // Edge stencil split of the stereo TSR resolve (see TsrResolveForm).
@@ -575,6 +580,12 @@ public partial class AdvancedRenderPipeline
         RenderPipelineResourceLayoutBuilder builder,
         RenderResourceSizePolicy windowSize)
     {
+        builder.FrameBuffer(EditorHighlightSilhouetteFBOName).Size(windowSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, EditorHighlightSilhouetteMaskTextureName)
+            .Factory(CreateEditorHighlightSilhouetteFBO).Add();
+
         builder.FrameBuffer(EditorHighlightOutputFBOName).Size(windowSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment)
@@ -596,7 +607,7 @@ public partial class AdvancedRenderPipeline
         string sourceTextureName)
         => builder.QuadMaterial(GetEditorHighlightCompositeFboName(sourceTextureName))
             .Lifetime(RenderResourceLifetime.Transient)
-            .DependsOn(sourceTextureName, EditorHighlightMaskTextureName)
+            .DependsOn(sourceTextureName, EditorHighlightMaskTextureName, EditorHighlightSilhouetteMaskTextureName)
             .Factory(() => CreateEditorHighlightCompositeFbo(sourceTextureName)).Add();
 
     /// <summary>
@@ -636,9 +647,14 @@ public partial class AdvancedRenderPipeline
             EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
             ESizedInternalFormat.Rgba16f);
         if (EditorHighlightModule is not null)
+        {
             DeclareLatePostColor(builder, EditorHighlightOutputTextureName, windowSize, layers,
                 EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
                 ESizedInternalFormat.Rgba16f);
+            DeclareLatePostColor(builder, EditorHighlightSilhouetteMaskTextureName, windowSize, layers,
+                EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte,
+                ESizedInternalFormat.Rgba8, nearest: true);
+        }
 
         builder.TextureView(DepthStencilTextureName, AdvancedVisibilityResourceNames.DepthStencil)
             .Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
@@ -687,6 +703,11 @@ public partial class AdvancedRenderPipeline
             .Factory(CreateFinalPostProcessFBO).Add();
         if (EditorHighlightModule is not null)
         {
+            builder.FrameBuffer(EditorHighlightSilhouetteFBOName).Size(windowSize)
+                .Lifetime(RenderResourceLifetime.Persistent)
+                .Usage(RenderPipelineResourceUsage.ColorAttachment)
+                .Color(0, EditorHighlightSilhouetteMaskTextureName)
+                .Factory(CreateEditorHighlightSilhouetteFBO).Add();
             builder.FrameBuffer(EditorHighlightOutputFBOName).Size(windowSize)
                 .Lifetime(RenderResourceLifetime.Persistent)
                 .Usage(RenderPipelineResourceUsage.ColorAttachment)
@@ -881,7 +902,7 @@ public partial class AdvancedRenderPipeline
             // The shared GTAO generation and blur shaders read the half-resolution depth here.
             // Generation reads the linear copy; the blur passes read the raw depth.
             name == AoHalfDepthTextureName || name == AoHalfLinearDepthTextureName ? DepthViewTextureName : name;
-        if (name == AoHalfDepthTextureName || name == AoHalfLinearDepthTextureName)
+        if (name == AoNormalTextureName || name == AoHalfDepthTextureName || name == AoHalfLinearDepthTextureName)
             SetNearestFilter(result);
         result.AutoGenerateMipmaps = false;
         result.RequiresStorageUsage = !Shaders.Compilation.WebPipelineRasterProgram.IsActive || name == AutoExposureTextureName;

@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Threading;
 
 namespace XREngine.Rendering;
@@ -9,6 +9,14 @@ internal sealed partial class ImportedTextureStreamingManager
     private static long s_releasedResidentPixelChains;
     private static long s_sourceRehydrationCount;
     private static long s_sourceRehydrationFailureCount;
+
+    // Released-pixel reloads that run on a general worker job and have not yet handed their chain
+    // to the renderer's upload scheduler. The backend activity does not see these jobs, so the
+    // stuck-transition recovery counts them as work and does not cancel their claimed transitions.
+    private static int s_inFlightReleasedPixelReloads;
+
+    /// <summary>True while a released-pixel reload is still reading its chain from the streaming source.</summary>
+    private static bool HasInFlightReleasedPixelReloads => Volatile.Read(ref s_inFlightReleasedPixelReloads) != 0;
 
     /// <summary>
     /// CPU pixel bytes freed after their Vulkan upload was published, since startup.
@@ -43,15 +51,31 @@ internal sealed partial class ImportedTextureStreamingManager
     }
 
     /// <summary>
-    /// Pixel bytes of a released RGBA8 resident chain, from mip metadata alone.
-    /// Imported streaming uploads are RGBA8; the caller has already checked the
-    /// record format.
+    /// Returns true for the resident formats that imported streaming publishes and that a released
+    /// chain can be reloaded in from its streaming source: uncompressed RGBA8 and the block-compressed
+    /// cache formats (BC4, BC5, BC7). The reload worker still checks that the reloaded chain has the
+    /// published format, size, and mip count.
     /// </summary>
-    private static long EstimateReleasedResidentBytes(Mipmap2D[] mipmaps)
+    private static bool CanReloadReleasedResidentFormat(ESizedInternalFormat format)
+        => format == ESizedInternalFormat.Rgba8 || TextureBlockFormats.IsBlockCompressed(format);
+
+    /// <summary>
+    /// Pixel bytes of a released resident chain in <paramref name="format"/>, from mip metadata
+    /// alone: 4 bytes per pixel for RGBA8, and whole 4x4 blocks for a block-compressed format.
+    /// The caller has already checked the format with <see cref="CanReloadReleasedResidentFormat"/>.
+    /// </summary>
+    private static long EstimateReleasedResidentBytes(Mipmap2D[] mipmaps, ESizedInternalFormat format)
     {
+        bool blockCompressed = TextureBlockFormats.IsBlockCompressed(format);
         long bytes = 0L;
         for (int mipIndex = 0; mipIndex < mipmaps.Length; mipIndex++)
-            bytes += (long)Math.Max(1u, mipmaps[mipIndex].Width) * Math.Max(1u, mipmaps[mipIndex].Height) * 4L;
+        {
+            uint width = Math.Max(1u, mipmaps[mipIndex].Width);
+            uint height = Math.Max(1u, mipmaps[mipIndex].Height);
+            bytes += blockCompressed
+                ? TextureBlockFormats.GetImageBytes(format, width, height)
+                : (long)width * height * 4L;
+        }
         return bytes;
     }
 
@@ -112,6 +136,18 @@ internal sealed partial class ImportedTextureStreamingManager
         }
 
         void Reload()
+        {
+            try
+            {
+                ReloadCore();
+            }
+            finally
+            {
+                Interlocked.Decrement(ref s_inFlightReleasedPixelReloads);
+            }
+        }
+
+        void ReloadCore()
         {
             if (!isCurrentTransition())
             {
@@ -178,10 +214,34 @@ internal sealed partial class ImportedTextureStreamingManager
         }
 
         LogStage("Scheduled");
-        RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
-            RunOnce(Reload),
-            error: ex => Fail($"{ex.GetType().Name}: {ex.Message}"),
-            canceled: () => Cancel("JobCanceled"));
+        Interlocked.Increment(ref s_inFlightReleasedPixelReloads);
+        bool started = false;
+        try
+        {
+            RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
+                RunOnce(() =>
+                {
+                    started = true;
+                    Reload();
+                }),
+                error: ex =>
+                {
+                    if (!started)
+                        Interlocked.Decrement(ref s_inFlightReleasedPixelReloads);
+                    Fail($"{ex.GetType().Name}: {ex.Message}");
+                },
+                canceled: () =>
+                {
+                    if (!started)
+                        Interlocked.Decrement(ref s_inFlightReleasedPixelReloads);
+                    Cancel("JobCanceled");
+                });
+        }
+        catch
+        {
+            Interlocked.Decrement(ref s_inFlightReleasedPixelReloads);
+            throw;
+        }
     }
 
     /// <summary>

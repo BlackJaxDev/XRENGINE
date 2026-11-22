@@ -351,6 +351,16 @@ renderer does not.
   an immutable validated payload and a revision token.
   `XRMesh.GetOrCreateMeshletPayload` must not become a disk-cache API that
   rendering calls.
+- A payload object stores the owner binding of one mesh
+  (`OwnerGeometryRevision`). `RenderableMesh` replaces a skinned mesh with a
+  runtime transform rebind clone when the serialized bone references point
+  outside the component hierarchy (for example, a cloned crowd avatar). The
+  clone uses the source buffers and topology lists and changes only bone
+  references. `XRMesh.TryAttachSharedGeometryMeshletPayload` gives the clone
+  its own payload copy, bound to the clone's geometry revision, after it checks
+  that both meshes use the same geometry objects. The copy shares the immutable
+  meshlet streams and needs no source hashing. Without the copy, the clone has
+  no meshlets and skips the meshlet and cluster level-of-detail routes.
 - Runtime format compatibility is separate from cook provenance. A runtime
   without the meshoptimizer cooker accepts a compatible baked payload. A newer
   cooker version invalidates derived data during import or cache validation,
@@ -493,9 +503,23 @@ The payload stores every cluster as a meshlet in the normal streams, level 0
 first, and adds `ClusterLevel0Count`, one `MeshletClusterLodRecord` (group,
 refined group; 8 bytes) per meshlet and one `MeshletLodGroupRecord`
 (simplified sphere, error, depth; 32 bytes) per group. Each meshlet keeps its
-own culling sphere and normal cone. Such a payload has payload version 5
+own culling sphere and normal cone. Such a payload has payload version 7
 (`MeshletPayload.ClusterHierarchyPayloadVersion`); every payload without a
 hierarchy stays version 4, so existing caches and cooked meshes stay valid.
+Version 6 added the cluster skinning tables (`ClusterSkins`, `ClusterBones`).
+Version 7 adds, for a skinned hierarchy, the deformation order
+(`DeformationVertexOrder`: a permutation of the source vertices, the vertices
+of the coarsest levels first), `DeformationPrefixCounts` (for each level `L`,
+the number of leading order entries that every cluster of level `L` or coarser
+and every root cluster reads) and `LevelMaxErrors` (the largest finite group
+error of each level). It also adds the level covers (`LevelCoverIndices`,
+`LevelCoverFirstIndex`, `LevelCoverIndexCount`, built by
+`MeshletLevelCoverBuilder`): for each level `L` above 0, the triangle list of
+every cluster of level `L` and every root cluster of a finer level. The cover of
+`L` is the cut that the clamped skinned cut selects at an infinite distance, so
+it covers the mesh once and reads only the deformation prefix of `L`. Level 0
+has no cover. The mesh vertices stay in source order. The cook writes one
+`[DeformationPrefix]` line for each model with the prefix share of each level.
 The hierarchy flag changes the meshlet settings hash only when it is set; it
 then adds `MeshletClusterHierarchyBuilder.CookVersion`, so a change of the cook
 recooks cached hierarchy payloads only.
@@ -518,9 +542,15 @@ summary line for each model to `meshlet-cache.log`.
 The Advanced canonical geometry publisher publishes the full hierarchy
 (`AdvancedPublishedMeshletLayout`): the descriptors and vertex indices of every
 level, and in the triangle-word stream of the geometry, after the packed
-triangle words, one cluster record per meshlet (2 words: group, refined group)
-and then one group record per group (8 words: sphere, error, depth, two
-reserved words; floats as bits). The geometry record keeps its GPU layout:
+triangle words, one skin header word, one cluster record per meshlet (2 words:
+group, refined group) and then one group record per group (8 words: sphere,
+error, depth, bone list offset, bone count; floats as bits). The skin header
+holds the offset of the skin tables (relative to the first cluster record), or
+zero for a geometry without them. A skinned payload adds the skin tables of
+`AdvancedClusterSkinTables` after the group records: one cluster skin record
+per meshlet (2 words: bone list offset, bone count) and the bone words (0-based
+utilized-bone indices). A group's bone list is the union of the bones of its
+clusters and of their refined groups, built once per payload. The geometry record keeps its GPU layout:
 `ReservedLayout0` holds the level-0 count (`ClusterLevel0Count`; zero without a
 hierarchy) and `ReservedLayout1` the word offset of the cluster records,
 relative to the geometry's `MeshletTriangleWords` reference, so arena
@@ -543,9 +573,14 @@ largest projected error, in render pixels, that a drawn cluster may have.
   start. The two consumers below must agree in every frame; a change while they
   run could draw every level at once.
 - The preparation extractor gives a static draw of a hierarchy geometry the
-  full meshlet range (`MeshletCount`). Skinned draws and every draw while the
-  setting is off keep `DrawMeshletCount`. Other backends never enable the
-  policy, so the OpenGL and WebGPU paths keep level 0.
+  full meshlet range (`MeshletCount`). A skinned draw gets it too while
+  `AdvancedSkinnedVirtualGeometry` (`Rendering.SkinnedVirtualGeometry`, on by
+  default, read with the other two settings) is on. The skinned cook locks the
+  vertices where clothing layers touch other skinned meshes, so layered clothing
+  (stockings over skin) does not show the layer under it. A capped A/B on one
+  avatar showed no GPU cost and no visible loss. Other skinned draws and
+  every draw while the setting is off keep `DrawMeshletCount`. Other backends never enable the policy, so the OpenGL
+  and WebGPU paths keep level 0.
 - The meshlet task stage is compiled with `XR_ADV_CLUSTER_LOD_CUT` (and the
   threshold as `XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD`) only while the setting is
   on. The off variant compiles from the same text as before, so its SPIR-V does
@@ -566,6 +601,87 @@ largest projected error, in render pixels, that a drawn cluster may have.
   against this frame's depth pyramid. Every cluster keeps its own sphere and
   cone for culling; the group sphere is used only for the error test.
 - Directional shadow casters still draw the full-detail canonical index buffer.
+- Posed bounds are on while `AdvancedSkinnedPosedClusterBounds`
+  (`Rendering.SkinnedPosedClusterBounds`, on by default, read with the other
+  settings) is on; the task stage then also compiles
+  `XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED`. Off makes every skinned draw use one
+  distance and culls no skinned cluster, which is useful to compare or to rule
+  out the posed bounds.
+- Skinned draws (`XR_ADV_CLUSTER_LOD_CUT_SKINNED`) with posed bounds: the cooked
+  group spheres are bind pose. When the GPU deformed the draw this frame (its
+  prepared deformation is active) and the geometry has skin tables, each group
+  uses a posed box: its bind sphere, grown by the blendshape margin, moved by
+  each bone of its bone list (the world-space skin palette rows at
+  `payload.paletteOffset`, visibility set binding 72), with the box around the
+  moved spheres. A linearly blended vertex lies in the convex hull of its bones'
+  moved positions, which the box holds. The projected error uses the distance
+  from the nearer eye to the box and the largest bone scale. A group's bone list
+  holds the lists of the groups below it and the cooked spheres grow from child
+  to parent, so a parent box holds each child box and the cut stays crack free.
+  A posed skinned cluster in the cut also gets the frustum test with the sphere
+  around its own posed box (its own bones). Posed skinned clusters still skip
+  the cone, history and Hi-Z tests.
+- Other skinned draws (no GPU deformation this frame, or no skin tables) use
+  one distance for the whole
+  draw: from the nearer eye to the nearer of the draw's two posed bounding
+  spheres (the instance record sphere, which the publisher updates when the CPU
+  posed bounds change, and visibility candidate words 4 to 7, which
+  `PatchPhysicsChainBounds` rewrites for GPU physics chains), less the
+  blendshape margin times the draw scale, clamped to the near distance. The margin (candidate word 2,
+  `AdvancedVisibilityCandidate.ClusterCutMargin`) is
+  `XRMesh.GetMaxBlendshapeDisplacement()`: per vertex the sum of its position
+  delta lengths, then the largest sum; a mesh without a CPU copy of its
+  blendshapes gives an unbounded margin, so its draw stays at level 0. One
+  distance with errors that grow from child to parent keeps the cut crack free.
+  The bound is per draw, so the whole draw refines as its nearest part does.
+  The task stage applies the skinned cut only when the payload range holds every
+  level, and an unusable candidate gives level 0.
+- Clothing layers: the skinned hierarchy cook locks every vertex that lies within
+  4 mm (bind space) of a triangle of another skinned mesh of the same model
+  (`SkinnedLayerContactLocks`, both sides of the layer), so a stocking and the
+  skin under it keep their full detail and the layer order does not change. On
+  the prefab avatar this locks about a third of the skinned vertices and keeps
+  4 to 19 percent of the triangle reduction from 1 to 12 m. Skinned clusters without
+  posed bounds still skip the frustum, cone, history and Hi-Z tests. Turn the setting off to compare
+  with full-detail skinned draws while static draws keep the cut.
+- Skinned deformation level of detail (`AdvancedSkinnedDeformationLod`,
+  `Rendering.SkinnedDeformationLod`, off by default, read with the other
+  settings; it needs the skinned cut): the extractor chooses a minimum level
+  `L` for each skinned draw with `AdvancedDeformationLevelSelector`. It uses
+  the eyes of the build's view set, the largest pixel scale times a safety
+  factor of 1.25, and a distance that is never larger than the GPU shared
+  distance (the instance sphere, the committed proxy box of a GPU physics draw
+  less its half diagonal, and the blendshape margin). `L` is the largest level
+  for which every finer group projects to at most the threshold. Mesh
+  preparation writes the deformation order into
+  `AdvancedSkinInfluence.DeformationOrderVertex`, the job deforms only the
+  first `DeformationPrefixCounts[L]` order entries
+  (`EAdvancedDeformationFeatureFlags.DeformationOrder`), and the candidate
+  carries `L` in word 3 (`AdvancedVisibilityCandidate.DeformationLevel`). The
+  task stage treats every group finer than `L` with a finite error as refined
+  enough, so it never draws a cluster that reads a vertex outside the prefix.
+  A grown prefix marks the draw's velocity invalid for one frame
+  (`AdvancedDeformedVertexArena.RecordDeformedVertexCount`). The canonical
+  geometry publisher appends the level covers after the canonical indices in
+  the same index arena range (`AdvancedGeometryRegistration.LevelCoverIndexCount`;
+  `AdvancedGeometryRecord.IndexData` then holds `IndexCount` canonical indices
+  and the covers, and arena compaction copies both). For a draw with `L > 0`
+  the visibility payload index range is the cover of `L`
+  (`AdvancedGeometryRecord.LevelCoverIndexBase` plus `LevelCoverFirstIndex[L]`),
+  so the directional shadow raster and the traditional raster draw only
+  deformed vertices; the Vulkan stable bins accept such a range through
+  `AdvancedGeometryRecord.IsDrawIndexRange`. A draw gets `L > 0` only when its
+  geometry holds the covers. Draws that another path reads keep `L = 0`:
+  transparent, fragment-depth, decal, wireframe, editor-highlighted and CPU
+  fallback draws, and draws that cull front faces or all faces. A double-sided
+  draw can get `L > 0`: its payload carries the cull mode, and the raster draws
+  it through the same cluster cut and index range.
+  The choice runs on both deformation preparation policies: the packed
+  aggregate inputs and the authored-vertex inputs of the Vulkan route. The
+  authored-vertex route keeps its visibility candidate bounds and reads only the
+  posed instance bounds of the publication for the choice. The
+  `XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS` `SUMMARY` line counts the choices
+  (`gate.<outcome>`, `level<n>`) and the deformed and full vertex counts.
 
 Measured with New Sponza and the prefab avatar at 2688x2688 (RVC, true single
 pass stereo): at the atrium the early raster goes from 5.9 to 3.6 ms and the

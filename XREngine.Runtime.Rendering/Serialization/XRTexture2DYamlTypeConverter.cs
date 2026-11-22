@@ -51,6 +51,10 @@ public sealed class XRTexture2DYamlTypeConverter : IYamlTypeConverter
 
     private static XRTexture2D? ResolveExternalReference(Guid id)
     {
+        // A clone that shares textures with its source reads back the source instance.
+        if (SharedAssetCloneScope.TryResolve(id, out XRTexture2D? shared))
+            return shared;
+
         IAssetSerializationServices services = AssetSerializationServices.Current;
         if (services.TryGetAssetById(id, out XRAsset? loadedAsset) && loadedAsset is XRTexture2D loadedTexture)
             return loadedTexture;
@@ -76,7 +80,8 @@ public sealed class XRTexture2DYamlTypeConverter : IYamlTypeConverter
         if (value is not XRTexture2D texture)
             throw new YamlException($"Expected {nameof(XRTexture2D)} but got '{value.GetType()}'.");
 
-        if (TryWriteAsReference.TryEmitReference(emitter, texture))
+        if (SharedAssetCloneScope.TryEmitSharedReference(emitter, texture) ||
+            TryWriteAsReference.TryEmitReference(emitter, texture))
             return;
 
         byte[] payloadBytes = RuntimeCookedBinarySerializer.Serialize(texture);

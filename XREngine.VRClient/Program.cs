@@ -48,7 +48,7 @@ namespace XREngine.VRClient
             using IDisposable applicationServices =
                 RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.VrClient);
             Engine.ConfigureMemoryPolicy(EngineMemoryProfile.VRLowLatency);
-            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ManagedClientConfigFile)))
+            if (!string.IsNullOrWhiteSpace(XREnvironment.GetValue(XREngineEnvironmentVariables.ManagedClientConfigFile)))
                 throw new NotSupportedException("Managed realtime launch must be handled by the paired main game process; the VR input/render proxy cannot load or join a managed world.");
             if (args.Length != 0)
             {
@@ -232,7 +232,7 @@ namespace XREngine.VRClient
             };
 
             // Allow pairing the VRClient with a specific running game process (e.g., XREngine.Editor).
-            string? gameNameOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VrClientGameName);
+            string? gameNameOverride = XREnvironment.GetValue(XREngineEnvironmentVariables.VrClientGameName);
             if (!string.IsNullOrWhiteSpace(gameNameOverride))
                 settings.GameName = gameNameOverride;
 

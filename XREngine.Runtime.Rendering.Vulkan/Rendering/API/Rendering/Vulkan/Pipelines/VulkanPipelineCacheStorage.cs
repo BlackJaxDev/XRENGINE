@@ -34,7 +34,7 @@ internal static class VulkanPipelineCacheStorage
 
     internal static string? GetRootOverride()
     {
-        string? configured = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPipelineCacheRoot);
+        string? configured = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanPipelineCacheRoot);
         return string.IsNullOrWhiteSpace(configured) ? null : Path.GetFullPath(configured);
     }
 

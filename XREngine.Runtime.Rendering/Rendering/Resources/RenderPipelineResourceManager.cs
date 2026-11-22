@@ -8,9 +8,9 @@ namespace XREngine.Rendering.Resources;
 public sealed class RenderPipelineResourceManager
 {
     private const string MaterializationFailureEnvironmentVariable =
-        "XRE_RENDER_RESOURCE_MATERIALIZATION_FAIL_ONCE";
+        XREngineEnvironmentVariables.RenderResourceMaterializationFailOnce;
     private static readonly string? s_materializationFailureRequest =
-        Environment.GetEnvironmentVariable(MaterializationFailureEnvironmentVariable);
+        XREnvironment.GetValue(MaterializationFailureEnvironmentVariable);
     private static int s_materializationFailureAttempt;
     private static int s_materializationFailureTriggered;
 

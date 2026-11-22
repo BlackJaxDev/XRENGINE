@@ -228,6 +228,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // passes the prepared verdict without a walk never patches rows of an earlier walk.
         _lastMovedRowPatchCount = 0;
         _movedRowCount = 0;
+        _resourcePublisher.ClearStagedTextureRefreshes();
+        ClearMaterialRebinds();
         _lastPublicationCommittedRetainedRows = false;
         _publicationStartMembershipGeneration = _registrationMembershipGeneration;
         _useRetainedIdentityGroups = false;
@@ -317,6 +319,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // The full publication splits into plan, apply, and seal stages. The mark
         // is 0 outside the world swap section, so nothing records there.
         long fullMark = stageMark != 0L ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
+
+        // The full plan replaces changed texture records and material bindings
+        // through its own preflight.
+        _resourcePublisher.ClearStagedTextureRefreshes();
+        ClearMaterialRebinds();
 
         // Plans and submission sources are scratch closures, not publication leases.
         // Release the prior frame's references even if this boundary rejects early.

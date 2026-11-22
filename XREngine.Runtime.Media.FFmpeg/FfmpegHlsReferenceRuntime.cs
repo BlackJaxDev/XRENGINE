@@ -297,7 +297,7 @@ internal sealed class FfmpegHlsReferenceRuntime : IHlsReferenceRuntime
             return;
 
         string full = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        string existing = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path) ?? string.Empty;
+        string existing = XREnvironment.GetValue(XREngineEnvironmentVariables.Path) ?? string.Empty;
 
         foreach (string part in existing.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
@@ -310,7 +310,7 @@ internal sealed class FfmpegHlsReferenceRuntime : IHlsReferenceRuntime
             ? full
             : full + Path.PathSeparator + existing;
 
-        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, updated);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.Path, updated);
     }
 
     private static bool ConfigureNativeDllSearchPath(string? directory)

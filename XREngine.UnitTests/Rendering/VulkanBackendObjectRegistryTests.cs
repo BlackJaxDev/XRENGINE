@@ -32,7 +32,7 @@ public sealed class VulkanBackendObjectRegistryTests
         firstRegistry.Snapshot<XRShader>().ShouldBe([firstWrapper]);
         secondRegistry.Snapshot<XRShader>().ShouldBe([secondWrapper]);
 
-        firstRegistry.Remove<XRShader>(firstBinding);
+        firstRegistry.Remove<XRShader>(firstBinding, firstWrapper);
 
         firstRegistry.Get<XRShader>(firstBinding).ShouldBeNull();
         firstRegistry.Snapshot<XRShader>().ShouldBeEmpty();
@@ -68,7 +68,7 @@ public sealed class VulkanBackendObjectRegistryTests
 
         uint firstBinding = firstRegistry.Cache(firstWrapper);
         uint secondBinding = secondRegistry.Cache(secondWrapper);
-        firstRegistry.Remove<XRShader>(firstBinding);
+        firstRegistry.Remove<XRShader>(firstBinding, firstWrapper);
 
         uint reusedFirstBinding =
             firstRegistry.Cache(CreateUninitializedShaderWrapper());

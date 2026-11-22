@@ -426,7 +426,7 @@ namespace XREngine
 
             private static bool IsEnvFlagEnabled(string name, bool defaultValue)
             {
-                string? raw = Environment.GetEnvironmentVariable(name);
+                string? raw = XREnvironment.GetValue(name);
                 if (string.IsNullOrWhiteSpace(raw))
                     return defaultValue;
 

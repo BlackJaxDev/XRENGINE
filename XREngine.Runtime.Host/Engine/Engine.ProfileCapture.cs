@@ -177,7 +177,7 @@ public static partial class Engine
         {
             string profileMode = ResolvePerformanceProfileMode();
             VulkanGpuDrivenProfileOverride = Enum.TryParse(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileVulkanGpuDrivenProfile),
+                XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileVulkanGpuDrivenProfile),
                 ignoreCase: true,
                 out EVulkanGpuDrivenProfile requestedGpuDrivenProfile)
                     ? requestedGpuDrivenProfile
@@ -261,8 +261,8 @@ public static partial class Engine
                 observers.ComparisonSuitable,
                 observers.PromotionEligible,
                 observers.Intrusive,
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileWarmupSeconds) ?? "unspecified",
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCaptureSeconds) ?? "unspecified");
+                XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileWarmupSeconds) ?? "unspecified",
+                XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileCaptureSeconds) ?? "unspecified");
 
             if (IsCleanPerformanceProfile(profileMode) && !observers.ComparisonSuitable)
             {
@@ -497,17 +497,17 @@ public static partial class Engine
             bool runtimeCapture = s_runtimeCaptureEnabled;
             string runLabel = runtimeCapture && !string.IsNullOrWhiteSpace(s_runtimeRunLabel)
                 ? s_runtimeRunLabel
-                : Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileRunLabel) ?? string.Empty;
+                : XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileRunLabel) ?? string.Empty;
 
-            string targetRefreshHzEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TargetRefreshHz) ??
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UpdateFps) ??
+            string targetRefreshHzEnv = XREnvironment.GetValue(XREngineEnvironmentVariables.TargetRefreshHz) ??
+                XREnvironment.GetValue(XREngineEnvironmentVariables.UpdateFps) ??
                 string.Empty;
             double? targetRefreshHz = TryParsePositiveDouble(targetRefreshHzEnv);
             double? xrFrameBudgetMs = targetRefreshHz is > 0.0 ? 1000.0 / targetRefreshHz.Value : null;
             string benchmarkErrors = CaptureBenchmarkEnvironmentErrors();
-            string renderTargetModeEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VkRenderTargetMode) ?? string.Empty;
+            string renderTargetModeEnv = XREnvironment.GetValue(XREngineEnvironmentVariables.VkRenderTargetMode) ?? string.Empty;
             string renderTargetModeSetting = CaptureString(() => Engine.EffectiveSettings.VulkanRenderTargetMode.ToString());
-            string primaryReuseEnvironment = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse) ?? string.Empty;
+            string primaryReuseEnvironment = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse) ?? string.Empty;
             bool primaryReuseSetting = CaptureBoolean(() => RuntimeEngine.Rendering.Settings.EnableVulkanPrimaryCommandBufferReuse);
             bool primaryReuseEnabled = ResolveOptionalBooleanOverride(primaryReuseEnvironment) ?? primaryReuseSetting;
             string primaryReusePolicy = string.IsNullOrWhiteSpace(primaryReuseEnvironment)
@@ -529,21 +529,21 @@ public static partial class Engine
                 SchemaVersion: ProfileCaptureSchemaVersion,
                 CaptureMode: runtimeCapture ? "runtime" : "launch",
                 RunLabel: runLabel,
-                WorldMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WorldMode) ?? string.Empty,
-                ForcedStrategy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy) ?? string.Empty,
+                WorldMode: XREnvironment.GetValue(XREngineEnvironmentVariables.WorldMode) ?? string.Empty,
+                ForcedStrategy: XREnvironment.GetValue(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy) ?? string.Empty,
                 EffectiveStrategy: CaptureString(() => RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy.ToString()),
                 ZeroReadbackMaterialDrawPath: CaptureString(() => Engine.EffectiveSettings.ZeroReadbackMaterialDrawPath.ToString()),
-                ZeroReadbackMaterialDrawPathEnv: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath) ?? string.Empty,
+                ZeroReadbackMaterialDrawPathEnv: XREnvironment.GetValue(XREngineEnvironmentVariables.ZeroReadbackMaterialDrawPath) ?? string.Empty,
                 Backend: CaptureString(() => RuntimeEngine.Rendering.Stats.RendererState.ActiveRenderBackend),
                 GpuName: CaptureString(() => RuntimeEngine.Rendering.State.OpenGLRendererName ?? RuntimeEngine.Rendering.State.VulkanDeviceName ?? string.Empty),
                 GpuVendor: CaptureString(() => RuntimeEngine.Rendering.State.OpenGLVendor ?? string.Empty),
-                GpuDeviceId: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuDeviceId) ?? string.Empty,
-                Driver: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuDriver) ?? string.Empty,
-                Scene: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty,
-                Camera: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCamera) ?? string.Empty,
-                Lights: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileLights) ?? string.Empty,
-                Viewport: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileViewport) ?? string.Empty,
-                RenderScale: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileRenderScale) ??
+                GpuDeviceId: XREnvironment.GetValue(XREngineEnvironmentVariables.GpuDeviceId) ?? string.Empty,
+                Driver: XREnvironment.GetValue(XREngineEnvironmentVariables.GpuDriver) ?? string.Empty,
+                Scene: XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty,
+                Camera: XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileCamera) ?? string.Empty,
+                Lights: XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileLights) ?? string.Empty,
+                Viewport: XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileViewport) ?? string.Empty,
+                RenderScale: XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileRenderScale) ??
                     CaptureString(() => RuntimeEngine.Rendering.Settings.TsrRenderScale.ToString(CultureInfo.InvariantCulture)),
                 SceneIdentity: sceneIdentity,
                 SceneIdentityHash: sceneIdentityHash,
@@ -565,21 +565,21 @@ public static partial class Engine
                 VrDesktopAutoSkipWhenOverBudget: CaptureString(() => RuntimeEngine.Rendering.Settings.VrDesktopAutoSkipWhenOverBudget ? "true" : "false"),
                 VulkanRenderTargetModeEnvironment: renderTargetModeEnv,
                 VulkanRenderTargetModeSetting: renderTargetModeSetting,
-                VulkanPresentationProfileEnvironment: Environment.GetEnvironmentVariable(
+                VulkanPresentationProfileEnvironment: XREnvironment.GetValue(
                     XREngineEnvironmentVariables.VulkanPresentationProfile) ?? string.Empty,
                 VulkanPresentationProfileSetting: CaptureString(
                     () => Engine.EffectiveSettings.VulkanPresentationProfile.ToString()),
                 VulkanPrimaryCommandBufferReusePolicy: primaryReusePolicy,
                 VulkanPrimaryCommandBufferReuseEnabled: primaryReuseEnabled,
-                VulkanObsHookPolicy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VkObsHook) ?? "Auto",
+                VulkanObsHookPolicy: XREnvironment.GetValue(XREngineEnvironmentVariables.VkObsHook) ?? "Auto",
                 VulkanSkipImGui: IsEnvFlagEnabled(XREngineEnvironmentVariables.VkSkipImGui),
                 ValidationLayersEnabled: CaptureString(() => RuntimeEngine.Rendering.Stats.RendererState.ValidationLayersEnabled ? "true" : "false"),
                 DebugOutputEnabled: CaptureString(() => RuntimeEngine.Rendering.Stats.RendererState.DebugOutputEnabled ? "true" : "false"),
                 DeferredDebugView: CaptureString(() => global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView.ToString(CultureInfo.InvariantCulture)),
-                DeferredDebugEnv: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DeferredDebug) ?? string.Empty,
-                ShaderCacheState: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ShaderCacheMode) ?? string.Empty,
-                TextureCacheState: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TextureCacheMode) ?? string.Empty,
-                CacheMode: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCacheMode) ?? string.Empty,
+                DeferredDebugEnv: XREnvironment.GetValue(XREngineEnvironmentVariables.DeferredDebug) ?? string.Empty,
+                ShaderCacheState: XREnvironment.GetValue(XREngineEnvironmentVariables.ShaderCacheMode) ?? string.Empty,
+                TextureCacheState: XREnvironment.GetValue(XREngineEnvironmentVariables.TextureCacheMode) ?? string.Empty,
+                CacheMode: XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileCacheMode) ?? string.Empty,
                 ProfileMode: profileMode,
                 ProfileSuitability: observers.Suitability,
                 ProfileComparisonSuitable: observers.ComparisonSuitable,
@@ -601,24 +601,24 @@ public static partial class Engine
                     return Debug.EnsureLogRunDirectory();
                 }),
                 XrRuntime: CaptureString(() => RuntimeEngine.VRState.ActiveRuntime.ToString()),
-                XrRuntimeManifest: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ?? string.Empty,
+                XrRuntimeManifest: XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson) ?? string.Empty,
                 ActiveRenderFeatures: activeRenderFeatures,
                 VulkanGpuDrivenProfile: CaptureString(() => Engine.EffectiveSettings.VulkanGpuDrivenProfile.ToString()),
-                GpuClockPolicy: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GpuClockPolicy) ?? string.Empty,
+                GpuClockPolicy: XREnvironment.GetValue(XREngineEnvironmentVariables.GpuClockPolicy) ?? string.Empty,
                 TargetRefreshHz: targetRefreshHz,
                 XrFrameBudgetMs: xrFrameBudgetMs,
-                BenchmarkPhase: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfilePhase) ?? string.Empty,
-                WarmupSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileWarmupSeconds)),
-                CaptureSeconds: TryParsePositiveDouble(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCaptureSeconds)),
+                BenchmarkPhase: XREnvironment.GetValue(XREngineEnvironmentVariables.ProfilePhase) ?? string.Empty,
+                WarmupSeconds: TryParsePositiveDouble(XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileWarmupSeconds)),
+                CaptureSeconds: TryParsePositiveDouble(XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileCaptureSeconds)),
                 SampleIntervalFrames: GetSampleIntervalFramesNoLock(),
                 BenchmarkEnvironmentValid: string.IsNullOrWhiteSpace(benchmarkErrors),
                 BenchmarkEnvironmentErrors: benchmarkErrors,
                 GpuTimestampDenseMode: IsEnvFlagEnabled(XREngineEnvironmentVariables.GpuTimestampDense),
-                P3Logging: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.P3Logging) ?? string.Empty,
-                BucketLoopDryRun: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BucketLoopDryRun) ?? string.Empty,
-                SkipCommandSwapIfClean: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.SkipCommandSwapIfClean) ?? string.Empty,
-                BucketLoopSkipEmpty: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.BucketLoopSkipEmpty) ?? string.Empty,
-                ForceSingleBucket: Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceSingleBucket) ?? string.Empty,
+                P3Logging: XREnvironment.GetValue(XREngineEnvironmentVariables.P3Logging) ?? string.Empty,
+                BucketLoopDryRun: XREnvironment.GetValue(XREngineEnvironmentVariables.BucketLoopDryRun) ?? string.Empty,
+                SkipCommandSwapIfClean: XREnvironment.GetValue(XREngineEnvironmentVariables.SkipCommandSwapIfClean) ?? string.Empty,
+                BucketLoopSkipEmpty: XREnvironment.GetValue(XREngineEnvironmentVariables.BucketLoopSkipEmpty) ?? string.Empty,
+                ForceSingleBucket: XREnvironment.GetValue(XREngineEnvironmentVariables.ForceSingleBucket) ?? string.Empty,
                 Configuration: CaptureString(() => typeof(Engine).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyConfigurationAttribute), false)
                     .OfType<System.Reflection.AssemblyConfigurationAttribute>()
                     .FirstOrDefault()?.Configuration ?? string.Empty),
@@ -1742,7 +1742,7 @@ public static partial class Engine
             if (s_sampleIntervalFrames > 0)
                 return s_sampleIntervalFrames;
 
-            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileSampleIntervalFrames);
+            string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileSampleIntervalFrames);
             s_sampleIntervalFrames = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int intervalFrames)
                 ? Math.Clamp(intervalFrames, 1, 10_000)
                 : 1;
@@ -2433,7 +2433,7 @@ public static partial class Engine
 
         private static void ValidateEnvFlag(List<string> errors, string name)
         {
-            string? raw = Environment.GetEnvironmentVariable(name);
+            string? raw = XREnvironment.GetValue(name);
             if (string.IsNullOrWhiteSpace(raw))
                 return;
 
@@ -2454,7 +2454,7 @@ public static partial class Engine
 
         private static void ValidateEnvEnum(List<string> errors, string name, params string[] allowed)
         {
-            string? raw = Environment.GetEnvironmentVariable(name);
+            string? raw = XREnvironment.GetValue(name);
             if (string.IsNullOrWhiteSpace(raw))
                 return;
 
@@ -2467,7 +2467,7 @@ public static partial class Engine
 
         private static void ValidateEnvPositiveDouble(List<string> errors, string name)
         {
-            string? raw = Environment.GetEnvironmentVariable(name);
+            string? raw = XREnvironment.GetValue(name);
             if (string.IsNullOrWhiteSpace(raw))
                 return;
 
@@ -2485,7 +2485,7 @@ public static partial class Engine
 
         private static string ResolvePerformanceProfileMode()
         {
-            string? raw = Environment.GetEnvironmentVariable(
+            string? raw = XREnvironment.GetValue(
                 XREngineEnvironmentVariables.ProfileMode);
             if (string.IsNullOrWhiteSpace(raw))
                 return "DevelopmentProfile";
@@ -2529,7 +2529,7 @@ public static partial class Engine
                 () => RuntimeEngine.Rendering.Stats.RendererState.DebugOutputEnabled);
             bool commandBufferLabelsEnabled =
                 ResolveOptionalBooleanOverride(
-                    Environment.GetEnvironmentVariable(
+                    XREnvironment.GetValue(
                         XREngineEnvironmentVariables.VulkanCommandBufferLabels)) ??
                 CaptureBoolean(
                     () => Engine.EffectiveSettings.VulkanDiagnosticFlags.HasFlag(
@@ -2628,7 +2628,7 @@ public static partial class Engine
 
         private static bool IsWarmCacheState(string environmentVariable)
             => string.Equals(
-                Environment.GetEnvironmentVariable(environmentVariable),
+                XREnvironment.GetValue(environmentVariable),
                 "Warm",
                 StringComparison.OrdinalIgnoreCase);
 
@@ -2767,12 +2767,12 @@ public static partial class Engine
                     .Select(static world => world.TargetWorld?.Name ?? "<unnamed>")
                     .OrderBy(static name => name, StringComparer.Ordinal)
                     .ToArray();
-                string configuredScene = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty;
+                string configuredScene = XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty;
                 return $"{string.Join("|", worldNames)}|profile={configuredScene}";
             }
             catch
             {
-                return Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty;
+                return XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileScene) ?? string.Empty;
             }
         }
 
@@ -2788,7 +2788,7 @@ public static partial class Engine
                 "foveation=" + CaptureString(() => RuntimeEngine.Rendering.Settings.VrFoveationMode.ToString()),
                 "mirror=" + CaptureString(() => RuntimeEngine.Rendering.Settings.VrMirrorMode.ToString()),
                 "renderWindowsInVr=" + CaptureString(() => RuntimeEngine.Rendering.Settings.RenderWindowsWhileInVR ? "1" : "0"),
-                "primaryReuse=" + ((ResolveOptionalBooleanOverride(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse)) ??
+                "primaryReuse=" + ((ResolveOptionalBooleanOverride(XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanPrimaryCommandBufferReuse)) ??
                     CaptureBoolean(() => RuntimeEngine.Rendering.Settings.EnableVulkanPrimaryCommandBufferReuse)) ? "1" : "0"),
                 "skipImGui=" + (IsEnvFlagEnabled(XREngineEnvironmentVariables.VkSkipImGui) ? "1" : "0"));
 

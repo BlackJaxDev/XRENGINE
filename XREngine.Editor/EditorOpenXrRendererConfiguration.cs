@@ -7,16 +7,16 @@ namespace XREngine.Editor;
 internal sealed class EditorOpenXrRendererConfiguration(EditorOpenXrRuntimePreparation prepared)
     : IRendererReplacementConfiguration
 {
-    private readonly string? _previousRuntime = Environment.GetEnvironmentVariable("XR_RUNTIME_JSON");
-    private readonly string? _previousOverride = Environment.GetEnvironmentVariable("XRE_UNIT_TEST_OPENXR_RUNTIME_JSON");
+    private readonly string? _previousRuntime = XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson);
+    private readonly string? _previousOverride = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson);
     private readonly Func<string, bool>? _previousEnsurer = RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer;
     private readonly bool _previousRestart = RuntimeRenderingHostServices.OpenXrRecommendedDimensionsRequireServiceRestart;
 
     public void ApplyAfterDetach()
     {
         EnsureRuntimeCanChange();
-        Environment.SetEnvironmentVariable("XR_RUNTIME_JSON", prepared.RuntimeJsonPath);
-        Environment.SetEnvironmentVariable("XRE_UNIT_TEST_OPENXR_RUNTIME_JSON", prepared.RuntimeJsonPath);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.XrRuntimeJson, prepared.RuntimeJsonPath);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson, prepared.RuntimeJsonPath);
         RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer = prepared.RuntimeServiceEnsurer;
         RuntimeRenderingHostServices.OpenXrRecommendedDimensionsRequireServiceRestart = prepared.RecommendedDimensionsRequireServiceRestart;
         OpenXrRuntimeSettings.ClearVulkanRuntimeRequirementsCache();
@@ -25,8 +25,8 @@ internal sealed class EditorOpenXrRendererConfiguration(EditorOpenXrRuntimePrepa
     public void RestoreBeforeRollback()
     {
         EnsureRuntimeCanChange();
-        Environment.SetEnvironmentVariable("XR_RUNTIME_JSON", _previousRuntime);
-        Environment.SetEnvironmentVariable("XRE_UNIT_TEST_OPENXR_RUNTIME_JSON", _previousOverride);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.XrRuntimeJson, _previousRuntime);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson, _previousOverride);
         RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer = _previousEnsurer;
         RuntimeRenderingHostServices.OpenXrRecommendedDimensionsRequireServiceRestart = _previousRestart;
         OpenXrRuntimeSettings.ClearVulkanRuntimeRequirementsCache();

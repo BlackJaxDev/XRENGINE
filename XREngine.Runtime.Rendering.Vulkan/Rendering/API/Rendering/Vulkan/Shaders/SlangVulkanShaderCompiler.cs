@@ -221,11 +221,11 @@ internal static class SlangVulkanShaderCompiler
 
     private static string ResolveCompilerPath()
     {
-        string? explicitPath = Environment.GetEnvironmentVariable("XRE_SLANGC");
+        string? explicitPath = XREnvironment.GetValue(XREngineEnvironmentVariables.SlangcPath);
         if (!string.IsNullOrWhiteSpace(explicitPath))
             return RequireExistingCompiler(explicitPath, "XRE_SLANGC");
 
-        string? sdk = Environment.GetEnvironmentVariable("VULKAN_SDK");
+        string? sdk = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanSdk);
         if (!string.IsNullOrWhiteSpace(sdk))
         {
             string sdkCompiler = Path.Combine(sdk, "Bin", "slangc.exe");
@@ -233,7 +233,7 @@ internal static class SlangVulkanShaderCompiler
                 return sdkCompiler;
         }
 
-        string pathVariable = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        string pathVariable = XREnvironment.GetValue(XREngineEnvironmentVariables.Path) ?? string.Empty;
         foreach (string segment in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             string candidate = Path.Combine(segment, "slangc.exe");

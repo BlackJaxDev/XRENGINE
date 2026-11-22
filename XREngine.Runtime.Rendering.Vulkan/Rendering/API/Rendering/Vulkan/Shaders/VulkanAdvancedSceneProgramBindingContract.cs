@@ -80,6 +80,10 @@ internal static class VulkanAdvancedSceneProgramBindingContract
     // Per-view previous/current meshlet visibility bit sets. The early task
     // variant reads them and the late task variant sets bits for the next frame.
     internal const uint VisibilityMeshletHistoryBinding = 71u;
+    // The current frame slot's skin palette rows (three vec4 rows per bone, world space). The
+    // skinned cluster-cut task variant reads them to bound posed clusters; a frame without GPU
+    // deformation binds a placeholder range that no prepared deformation refers to.
+    internal const uint VisibilitySkinPalettesBinding = 72u;
     internal const uint VisibilityDepthPyramidSampledBinding = 42u;
 internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint VisibilityDeformationOverlayBinding = 46u;
@@ -348,6 +352,7 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
             VisibilityEarlyIndexedGroupCountsBinding or
             VisibilityLateIndexedGroupCountsBinding or
             VisibilityMeshletHistoryBinding or
+            VisibilitySkinPalettesBinding or
             VisibilityDeformationOverlayBinding or
             VisibilityCanonicalIndicesBinding or
             VisibilityReconstructionCountersBinding or

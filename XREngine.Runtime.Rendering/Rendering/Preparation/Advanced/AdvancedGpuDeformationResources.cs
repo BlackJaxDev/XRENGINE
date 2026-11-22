@@ -825,6 +825,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         {
             InputGeneration = checked(++_inputPublicationGeneration),
             GpuPaletteCopies = PublishPaletteCopies(),
+            SkinPalettes = _paletteBuffers[_currentFrameSlot],
+            SkinPaletteCount = _paletteCount,
         };
     }
 

@@ -651,8 +651,9 @@ loading or executing Unity, VRChat, or package assemblies:
   stiffness, gravity, immobile, radius, limits, curves, collider lists, and
   referenced transforms;
 - PhysBone sphere, capsule, and plane colliders;
-- position, rotation, and scale constraints with source weights and affected
-  axes;
+- avatar SDK position, rotation, scale, parent, aim, and look-at constraints, and
+  the native constraint components of the same types (see
+  [Constraints](#constraints));
 - avatar descriptor view position, lip-sync mode, viseme blendshapes, and
   eye-look metadata;
 - animator controller, layer, mask, expression-menu, and parameter references
@@ -677,6 +678,39 @@ The unit-world physics-chain fixture switch does not disable imported chains.
 Restoring an avatar root transform does not reset particle history. For static
 image comparisons, save and disable the imported chains, take a new baseline,
 then restore their enabled states after the comparison.
+
+### Constraints
+
+Each avatar SDK constraint `MonoBehaviour` and each native constraint
+component becomes one `WeightedTransformConstraintComponent`. The avatar SDK
+converts native constraints to its own constraints field by field, so both
+families use the same settings. `Mode` selects the solve:
+
+| Source type | Mode | Notes |
+|---|---|---|
+| Position, Rotation, Scale | `Match` | The constraint-level offset is added to the weighted source pose. The position offset is in the target's parent space. The scale offset multiplies the source scale. |
+| Parent | `Parent` | Each source has its own offset. The position offset is in the source's space (source rotation and scale apply), as for a child of the source. Scale is not changed. |
+| Aim, LookAt | `Aim` | The aim axis points at the weighted source position. The up axis turns toward the world-up direction. Look-at aims the forward axis, uses scene up and `Roll`, or turns +Y toward the up transform. |
+
+The importer reads the weight, the locked state, the affected axes, the rest
+pose (position, rotation, and scale), Solve In Local Space, Freeze To World, and
+Rebake Offsets When Unfrozen. Sources with a weight of zero stay in the source
+list. An avatar SDK source list can hold more than 16 sources; the importer also
+reads `overflowList`. Source coordinates convert to engine coordinates.
+
+Constraints run in the late tick group, after animation and the physics chains.
+After the full prefab hierarchy exists, the importer calculates
+`ExecutionOrder` for every constraint: a constraint that reads a transform that
+another constraint moves (a source, a world-up transform, or, for a world-space
+solve, an ancestor of one of these or of the target) solves later in the same
+frame. A constraint with dependents recalculates the world matrices of its
+target subtree right after it writes the target. Dependencies that form a cycle
+are ignored, and diagnostic `SRCCONSTRAINT0002` reports them.
+
+Limitations: the importer applies only the enabled state from prefab-instance
+overrides to constraints, does not bind animation curves to constraint properties
+(for example source weights), and does not move a constraint before the physics
+chains when the avatar SDK runtime would solve it before its own physics chains.
 
 Pipeline-manager components are intentionally ignored. Unknown
 `MonoBehaviour` documents are summarized with script identity, local file ID,

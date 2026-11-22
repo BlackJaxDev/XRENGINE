@@ -23,19 +23,19 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
 {
     private static bool OpenXrVulkanMirrorFbo =>
         string.Equals(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo),
             "1",
             StringComparison.Ordinal);
 
     private static bool OpenXrVulkanPrewarmEyes =>
         string.Equals(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanPrewarmEyes),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrVulkanPrewarmEyes),
             "1",
             StringComparison.Ordinal);
 
     private static bool OpenXrVulkanSerialEyeSubmit =>
         string.Equals(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanSerialEyeSubmit),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrVulkanSerialEyeSubmit),
             "1",
             StringComparison.Ordinal);
 

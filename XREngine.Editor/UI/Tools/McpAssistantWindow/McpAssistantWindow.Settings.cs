@@ -146,7 +146,7 @@ public sealed partial class McpAssistantWindow
             ImGui.SameLine();
             if (ImGui.Button("Use environment key"))
             {
-                string? value = Environment.GetEnvironmentVariable(GetApiKeyEnvironmentName());
+                string? value = XREnvironment.GetValue(GetApiKeyEnvironmentName());
                 if (!string.IsNullOrWhiteSpace(value))
                     SetApiCredential(string.Empty, GetApiKeyEnvironmentName());
                 else

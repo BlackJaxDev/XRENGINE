@@ -44,7 +44,7 @@ internal sealed class RenderBenchProfileEnvironmentScope : IDisposable
     private void Set(string name, string value)
     {
         bool hasRuntimeOverride = XREnvironment.TryGetRuntimeOverride(name, out string? runtimeValue);
-        _previous.Add(name, (Environment.GetEnvironmentVariable(name), hasRuntimeOverride, runtimeValue));
+        _previous.Add(name, (XREnvironment.GetValue(name), hasRuntimeOverride, runtimeValue));
         XREnvironment.SetRuntimeOverride(name, value);
     }
 
@@ -55,10 +55,11 @@ internal sealed class RenderBenchProfileEnvironmentScope : IDisposable
             if (previous.HasRuntimeOverride)
                 XREnvironment.SetRuntimeOverride(name, previous.RuntimeValue);
             else
+            {
                 XREnvironment.ClearRuntimeOverride(name);
-            Environment.SetEnvironmentVariable(name, previous.ProcessValue);
+                XREnvironment.SetProcessValue(name, previous.ProcessValue);
+            }
         }
-        XREnvironment.RefreshFromProcess();
         _previous.Clear();
     }
 }

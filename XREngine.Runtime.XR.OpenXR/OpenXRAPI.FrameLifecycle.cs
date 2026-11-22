@@ -1364,7 +1364,7 @@ public unsafe partial class OpenXRAPI
 
     internal static float? ResolvePhase524bTsrRenderScaleOverride()
     {
-        string? value = Environment.GetEnvironmentVariable(
+        string? value = XREnvironment.GetValue(
             XREngineEnvironmentVariables.VulkanPhase524bTsrResolutionScale);
         if (!float.TryParse(
                 value,

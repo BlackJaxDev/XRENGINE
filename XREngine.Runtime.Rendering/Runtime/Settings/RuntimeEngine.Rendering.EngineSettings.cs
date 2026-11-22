@@ -1,4 +1,4 @@
-using MemoryPack;
+﻿using MemoryPack;
 using System;
 using System.ComponentModel;
 using System.Threading;
@@ -1145,7 +1145,7 @@ public static partial class RuntimeEngine
                 }
 
                 private static readonly bool s_directionalShadowStaticCacheDisabledByEnvironment =
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
 
                 [Category("Shadows")]
                 [Description("Makes the emulated VR eye viewports use the cascaded HMD directional shadow source, as headset eyes do: the HMD cascades fit both eye frusta and the combined eye frustum. Default-pipeline eyes read them. Advanced eyes in SequentialViews still read the desktop cascades, because their views carry the desktop view kind. Use it to test the HMD cascade source (fit, lane groups, static tiles) without a headset. The environment variable XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1 turns it on for the process.")]
@@ -1163,7 +1163,7 @@ public static partial class RuntimeEngine
                 }
 
                 private static readonly bool s_emulatedVrHmdDirectionalCascadesEnabledByEnvironment =
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EmulatedVrHmdDirectionalCascades) is "1" or "true" or "True";
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.EmulatedVrHmdDirectionalCascades) is "1" or "true" or "True";
 
                 [Category("Shadows")]
                 [Description("Centre of the directional cascade fit for the desktop camera. CameraPosition centres each cascade sphere on the camera, so turning the camera does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the camera: finer texels, but a turn refits the cascades.")]
@@ -3056,6 +3056,64 @@ public static partial class RuntimeEngine
                 {
                     get => _advancedVirtualGeometry;
                     set => SetField(ref _advancedVirtualGeometry, value);
+                }
+
+                private bool _advancedSkinnedVirtualGeometry = true;
+
+                /// <summary>
+                /// With <see cref="AdvancedVirtualGeometry"/> on, skinned meshlet draws of models cooked
+                /// with a cluster hierarchy also get the cluster cut, with the same
+                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. On by default. The skinned cook
+                /// locks vertices where clothing layers touch other skinned meshes, so a layer (for
+                /// example stockings over skin) keeps its shape against the mesh under it. Off keeps
+                /// skinned draws at level 0 while static draws keep the cut. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With Advanced virtual geometry on, skinned meshlet draws also get the cluster cut. On by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedVirtualGeometry
+                {
+                    get => _advancedSkinnedVirtualGeometry;
+                    set => SetField(ref _advancedSkinnedVirtualGeometry, value);
+                }
+
+                private bool _advancedSkinnedDeformationLod;
+
+                /// <summary>
+                /// With <see cref="AdvancedSkinnedVirtualGeometry"/> on, a far skinned draw of a model
+                /// cooked with a deformation order deforms only the vertices that its coarsest allowed
+                /// cluster level reads. The preparation extractor chooses that minimum level from the
+                /// draw's posed bounds and the views, the aggregate deformation job deforms only the
+                /// prefix of the order for that level, and the skinned cluster cut never draws a finer
+                /// level. Off (the default) deforms every vertex. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With skinned virtual geometry on, far skinned draws deform only the vertices of their coarsest allowed cluster level. Off by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedDeformationLod
+                {
+                    get => _advancedSkinnedDeformationLod;
+                    set => SetField(ref _advancedSkinnedDeformationLod, value);
+                }
+
+                private bool _advancedSkinnedPosedClusterBounds = true;
+
+                /// <summary>
+                /// With <see cref="AdvancedSkinnedVirtualGeometry"/> on, chooses how the cluster cut
+                /// of a skinned draw measures distance. On (the default): each cluster group of a
+                /// skinned draw that the GPU deformed this frame is bounded by its own posed box, made
+                /// from its bones' current matrices, so distant parts of the draw get coarser clusters
+                /// and clusters outside the view are culled. Off: every cluster of a skinned draw uses
+                /// one distance, from the nearest point of the draw's bounds, and no skinned cluster is
+                /// culled. Use off to compare or to rule out the posed bounds. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With skinned virtual geometry on, bound each skinned cluster group by its posed bone box (finer distance and frustum culling per cluster). Off uses one distance per skinned draw. On by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedPosedClusterBounds
+                {
+                    get => _advancedSkinnedPosedClusterBounds;
+                    set => SetField(ref _advancedSkinnedPosedClusterBounds, value);
                 }
 
                 private float _advancedVirtualGeometryPixelThreshold = 1.0f;

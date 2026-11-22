@@ -59,6 +59,33 @@ internal sealed class TextureStreamingRegistry
         }
     }
 
+    /// <summary>
+    /// Reads the LOD bias parts of a streamed texture: the base (authored) bias and the
+    /// promotion-fade bias that the streaming manager adds to it after a mip promotion.
+    /// Returns false when the texture has no streaming record.
+    /// </summary>
+    public bool TryGetStreamingLodBias(
+        XRTexture2D texture,
+        out float baseLodBias,
+        out float streamingLodBias)
+    {
+        if (!_recordsByTexture.TryGetValue(
+                texture,
+                out ImportedTextureStreamingRecord? record))
+        {
+            baseLodBias = 0.0f;
+            streamingLodBias = 0.0f;
+            return false;
+        }
+
+        lock (record.Sync)
+        {
+            baseLodBias = record.BaseLodBias;
+            streamingLodBias = record.CurrentStreamingLodBias;
+            return true;
+        }
+    }
+
     public void RecordTerminalGenerationFailure(
         XRTexture2D texture,
         long generation,

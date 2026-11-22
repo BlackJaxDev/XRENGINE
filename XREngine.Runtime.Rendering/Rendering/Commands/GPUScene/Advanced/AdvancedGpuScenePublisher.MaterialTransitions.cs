@@ -162,6 +162,7 @@ public sealed partial class AdvancedGpuScenePublisher
         _resourceAcquireCount = 0;
         _resourceReleaseCount = 0;
         _planBoundsEpochCaptured = false;
+        ResetErrorMaterialRows();
         BeginStampedPlan(ref _plannedVariantSlotGeneration, _plannedVariantSlotStamps);
         BeginStampedPlan(ref _plannedCommandSlotGeneration, _plannedCommandSlotStamps);
         BeginStampedPlan(ref _plannedReleaseSlotGeneration, _plannedReleaseSlotStamps);
@@ -302,7 +303,21 @@ public sealed partial class AdvancedGpuScenePublisher
                 plan.CompatibilityReason = compatibilityReason;
                 if (fatal)
                     return false;
-                continue;
+                string materialReason = reason;
+                if (!TrySubstituteErrorMaterial(
+                        ref plan,
+                        in command,
+                        registrationIndex,
+                        compatibilityReason,
+                        materialReason,
+                        out materialPlanIndex,
+                        out fatal,
+                        out reason))
+                {
+                    if (fatal)
+                        return false;
+                    continue;
+                }
             }
 
             plan.Supported = true;
@@ -386,6 +401,7 @@ public sealed partial class AdvancedGpuScenePublisher
             return false;
 
         _materialPublisher.RetainPreflightedStrictUberValidation(requests);
+        ReportErrorMaterialRows();
         reason = string.Empty;
         return true;
     }
@@ -547,12 +563,22 @@ public sealed partial class AdvancedGpuScenePublisher
            left.ColorWriteMask == right.ColorWriteMask &&
            left.Flags == right.Flags;
 
-    /// <summary>Stores source identity only after the canonical publication succeeds.</summary>
+    /// <summary>
+    /// Stores source identity only after the canonical publication succeeds. Each
+    /// supported row with a registration gets the committed material plan of this
+    /// publication. A row whose plan resolved its material again (for example after
+    /// a streamed texture changed its bindings) is then marked as reused, because the
+    /// committed material row now describes exactly the material inputs of the plan.
+    /// Without the mark, the next frame fails the unchanged-row gate with
+    /// <c>CommittedMaterialPlanNotReused</c> and runs a second full plan that only
+    /// proves the same result. A rejected or discarded publication does not reach
+    /// this method, so its rows stay on the full plan.
+    /// </summary>
     private void CaptureCommittedMaterialPlans()
     {
         for (int commandIndex = 0; commandIndex < _plannedCommandCount; ++commandIndex)
         {
-            ref readonly AdvancedGpuSceneCommandTransition plan =
+            ref AdvancedGpuSceneCommandTransition plan =
                 ref _plannedCommands[commandIndex];
             if (!plan.Supported || plan.Source is null)
                 continue;
@@ -598,6 +624,11 @@ public sealed partial class AdvancedGpuScenePublisher
                 MaterialUberStateRevision = plan.MaterialUberStateRevision,
                 Valid = true,
             };
+            // The gate compares the row with this registration index. A row that got
+            // its registration in this publication keeps the full plan for one more
+            // frame, which records the new index.
+            if (plan.RegistrationIndex == registrationIndex)
+                plan.ReusedCommittedMaterial = true;
         }
         _committedMaterialPlanCacheValid = true;
     }
@@ -1506,7 +1537,7 @@ public sealed partial class AdvancedGpuScenePublisher
                      (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
                       source.SourceContentGeneration == 0UL)))
                     return false;
-                if (!_resourcePublisher.BindingMatches(in bindings[index], in source))
+                if (!CommittedBindingMatches(in bindings[index], in source))
                     return false;
             }
             return true;
@@ -1571,7 +1602,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     AdvancedMaterialTextureBinding binding = index < MaterialBindingLayouts.StandardTextureCount
                         ? bindings[index]
                         : engineSurface.GetRole(index - MaterialBindingLayouts.StandardTextureCount).Binding;
-                    if (!_resourcePublisher.BindingMatches(in binding, in source))
+                    if (!CommittedBindingMatches(in binding, in source))
                         return false;
                 }
                 return true;
@@ -1611,7 +1642,7 @@ public sealed partial class AdvancedGpuScenePublisher
                          (source.Texture is not (XRTextureCube or XRTexture2DArray) ||
                           source.SourceContentGeneration == 0UL)))
                         return false;
-                    if (!_resourcePublisher.BindingMatches(in bindings[role], in source))
+                    if (!CommittedBindingMatches(in bindings[role], in source))
                         return false;
                 }
                 return true;

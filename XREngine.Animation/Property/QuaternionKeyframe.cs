@@ -60,14 +60,8 @@ namespace XREngine.Animation
             set => SetField(ref _outTangent, value);
         }
 
-        public new QuaternionKeyframe? Next
-        {
-            get => _next as QuaternionKeyframe;
-        }
-        public new QuaternionKeyframe? Prev
-        {
-            get => _prev as QuaternionKeyframe;
-        }
+        public new QuaternionKeyframe? Next => _next as QuaternionKeyframe;
+        public new QuaternionKeyframe? Prev => _prev as QuaternionKeyframe;
 
         public float TrackLength => OwningTrack?.LengthInSeconds ?? 0.0f;
 

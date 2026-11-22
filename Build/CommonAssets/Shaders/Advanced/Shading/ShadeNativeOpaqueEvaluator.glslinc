@@ -568,6 +568,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy,
             surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy);
     vec3 N = normalize(surface.shadingNormal);
+    float normalMapLength = 1.0;
     if ((materialFlags & 2u) != 0u &&
         XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT))
     {
@@ -584,9 +585,12 @@ void XR_ADV_EvaluateNativeOpaqueSample(
                 heightTaps);
         }
         else
+        {
             normalTex = XR_ADV_DecodeTangentNormal(XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
                 surface.texCoord0Dx, surface.texCoord0Dy,
                 vec4(0.5, 0.5, 1.0, 1.0)));
+            normalMapLength = length(normalTex);
+        }
         vec3 mappedN = normalize(surface.tangent * normalTex.x +
             surface.bitangent * normalTex.y + N * normalTex.z);
         // GTAO normal-map micro-occlusion. The view flag comes from the camera GTAO settings,
@@ -596,7 +600,11 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         N = mappedN;
     }
     vec3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
-    float roughness = clamp(rmse.x, 0.04, 1.0);
+    float roughness = XR_ADV_SpecularAntiAliasing(
+        clamp(rmse.x, 0.04, 1.0),
+        surface.shadingNormalDx,
+        surface.shadingNormalDy,
+        normalMapLength);
     float metallic = clamp(rmse.y, 0.0, 1.0);
     // Mesh surface decals belong to the surface. Projected decals apply over them below.
     XR_ADV_ApplyDecalBuffer(pixel, base.rgb, roughness, metallic);

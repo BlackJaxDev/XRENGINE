@@ -733,7 +733,7 @@ internal static class NativeDirectStorageIO
 
     private static int ResolveTimeoutMilliseconds()
     {
-        string? envValue = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectStorageTimeoutMs);
+        string? envValue = XREnvironment.GetValue(XREngineEnvironmentVariables.DirectStorageTimeoutMs);
         if (int.TryParse(envValue, out int configured) && configured > 0)
             return configured;
 
@@ -754,7 +754,7 @@ internal static class NativeDirectStorageIO
 
     private static RuntimeState DetectRuntime()
     {
-        string? overrideValue = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectStorageEnabled);
+        string? overrideValue = XREnvironment.GetValue(XREngineEnvironmentVariables.DirectStorageEnabled);
         if (!string.IsNullOrWhiteSpace(overrideValue) &&
             (string.Equals(overrideValue, "0", StringComparison.OrdinalIgnoreCase) ||
              string.Equals(overrideValue, "false", StringComparison.OrdinalIgnoreCase)))

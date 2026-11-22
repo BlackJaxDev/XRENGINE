@@ -28,12 +28,23 @@ internal sealed class VulkanBackendObjectBucket<T> : IVulkanBackendObjectBucket
             _generatedWrappers[bindingId] = wrapper;
     }
 
-    public void Remove(uint bindingId)
+    /// <summary>
+    /// Removes the slot only when it is still owned by <paramref name="wrapper"/>, preventing
+    /// a duplicate or late teardown from releasing a binding ID reassigned to another wrapper.
+    /// </summary>
+    public bool Remove(uint bindingId, VkObject<T> wrapper)
     {
         lock (_lock)
         {
+            if (!_bindingSlots.TryGetValue(bindingId, out VkObject<T>? current) ||
+                !ReferenceEquals(current, wrapper))
+            {
+                return false;
+            }
+
             _generatedWrappers.Remove(bindingId);
             _bindingSlots.Remove(bindingId);
+            return true;
         }
     }
 

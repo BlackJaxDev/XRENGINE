@@ -139,7 +139,7 @@ public static class WorldAssetIdentityProvider
 
     private static string? GetOverride(string name)
     {
-        string? value = Environment.GetEnvironmentVariable(name);
+        string? value = XREnvironment.GetValue(name);
         return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     }
 

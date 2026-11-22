@@ -521,6 +521,27 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                     return false;
                 }
             }
+            // The skinned cluster-cut task variant reads the palette rows of GPU-deformed draws.
+            // A frame with deformation jobs must bind the real palette buffer; a failed capture
+            // fails the preparation instead of letting the task stage read the placeholder.
+            VulkanNativeBufferRange skinPalettes = default;
+            AdvancedGpuDeformationPublication deformationPublication = input.DeformationPublication;
+            if (deformationPublication.SkinPaletteCount != 0u &&
+                deformationPublication.SkinPalettes is { } paletteBuffer &&
+                !_resources.TryCaptureNativeBufferRange(paletteBuffer,
+                    0u, paletteBuffer.Length,
+                    BufferUsageFlags.StorageBufferBit, out skinPalettes, out reason))
+            {
+                if (!TryRollbackFrameStorageTransaction(arena, frameSlot,
+                    rollbackCursor, out string rollbackReason))
+                {
+                    failure = EVulkanAdvancedVisibilityResourceFailure.TransactionIntegrityFailure;
+                    reason = rollbackReason;
+                    return false;
+                }
+                failure = EVulkanAdvancedVisibilityResourceFailure.InvalidPreparation;
+                return false;
+            }
             VulkanAdvancedVisibilityFamilySeal realizedSeal =
                 familySeal with { Geometry = realizedGeometry };
             if (!realizedSeal.IsValid || !realizedGeometry.IsValid)
@@ -562,6 +583,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 BoundsRoutes: boundsRoutes,
                 BoundsAtlas: boundsAtlas,
                 BoundsMetadata: boundsMetadata,
+                SkinPalettes: skinPalettes,
                 BoundsPageToken: input.BoundsPage.Token,
                 ViewCount: viewCount,
                 PayloadCapacity: publication.DrawCount,
@@ -868,7 +890,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityIndexedInstanceGroupsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilitySkinPalettesBinding];
         ReadOnlySpan<uint> nativeStorageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeActiveTilesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeKernelTilesBinding,
@@ -1240,12 +1263,15 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             state.Geometry.PreviousVertices;
         VulkanNativeBufferRange boundsAtlas = state.BoundsAtlas;
         VulkanNativeBufferRange boundsMetadata = state.BoundsMetadata;
+        VulkanNativeBufferRange skinPalettes = state.SkinPalettes;
         if (!currentVertices.TryValidate(_resources, out reason) ||
             !previousVertices.TryValidate(_resources, out reason) ||
             boundsAtlas.IsValid && !_resources.TryValidateNativeBufferRange(
                 in boundsAtlas, out reason) ||
             boundsMetadata.IsValid && !_resources.TryValidateNativeBufferRange(
-                in boundsMetadata, out reason))
+                in boundsMetadata, out reason) ||
+            skinPalettes.IsValid && !_resources.TryValidateNativeBufferRange(
+                in skinPalettes, out reason))
         {
             return false;
         }
@@ -1266,7 +1292,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             state.Geometry.Indices, state.Counters,
             state.BoundsRoutes, state.BoundsRoutes, state.BoundsRoutes,
             state.IndexedInstanceGroups, state.EarlyIndexedGroupCounts,
-            state.LateIndexedGroupCounts, default
+            state.LateIndexedGroupCounts, default, state.BoundsRoutes
         };
         ReadOnlySpan<uint> storageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.VisibilityCandidatesBinding,
@@ -1302,7 +1328,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityIndexedInstanceGroupsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilitySkinPalettesBinding];
         if (slices.Length != storageBindingNumbers.Length)
         {
             reason = "The advanced-visibility storage binding map is incomplete.";
@@ -1354,6 +1381,17 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                         Buffer = state.MeshletHistoryBuffer,
                         Offset = 0u,
                         Range = state.MeshletHistoryByteLength,
+                    },
+                // Without GPU deformation this frame no prepared deformation is active, so the
+                // task stage never reads the placeholder (the bounds-route slice) bound here.
+                _ when storageBindingNumbers[index] ==
+                    VulkanAdvancedSceneProgramBindingContract.VisibilitySkinPalettesBinding &&
+                    state.SkinPalettes.IsValid =>
+                    new DescriptorBufferInfo
+                    {
+                        Buffer = state.SkinPalettes.Buffer,
+                        Offset = state.SkinPalettes.Offset,
+                        Range = state.SkinPalettes.Length,
                     },
                 _ => new DescriptorBufferInfo
                 {

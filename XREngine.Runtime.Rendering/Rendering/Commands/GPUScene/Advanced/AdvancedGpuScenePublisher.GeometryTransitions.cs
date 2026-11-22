@@ -64,6 +64,16 @@ public sealed partial class AdvancedGpuScenePublisher
         => PackTriangleWords(triangleBytes, destination);
 
     /// <summary>
+    /// Returns the number of level cover indices that the publisher appends after the canonical
+    /// indices of a geometry: the cover table of a published cluster hierarchy payload, or zero.
+    /// The payload validation already checked that the covers address only vertices of the mesh.
+    /// </summary>
+    private static int ResolveLevelCoverIndexCount(MeshletPayload? payload, bool useMeshlets)
+        => useMeshlets && payload is { HasClusterHierarchy: true, HasDeformationOrder: true }
+            ? payload.LevelCoverIndices.Length
+            : 0;
+
+    /// <summary>
     /// Gets the ready pre-packed entry for the planned geometry. The entry must describe the same
     /// revision, buffers, triangle list, meshlet payload and counts as the mesh does now.
     /// </summary>
@@ -96,6 +106,11 @@ public sealed partial class AdvancedGpuScenePublisher
         public int VertexCount;
         public int IndexOffset;
         public int IndexCount;
+        /// <summary>
+        /// Level cover indices staged after the <see cref="IndexCount"/> canonical indices of a
+        /// skinned cluster hierarchy geometry, or zero.
+        /// </summary>
+        public int CoverIndexCount;
         public int DescriptorOffset;
         public int DescriptorCount;
         public int MeshletIndexOffset;
@@ -187,7 +202,9 @@ public sealed partial class AdvancedGpuScenePublisher
             1u);
         ReadOnlySpan<byte> vertexBytes = MemoryMarshal.AsBytes(
             _packedGeometryVertices.AsSpan(staged.VertexOffset, staged.VertexCount));
-        ReadOnlySpan<uint> indices = _packedGeometryIndices.AsSpan(staged.IndexOffset, staged.IndexCount);
+        ReadOnlySpan<uint> indices = _packedGeometryIndices.AsSpan(
+            staged.IndexOffset,
+            checked(staged.IndexCount + staged.CoverIndexCount));
 
         if (staged.DescriptorCount == 0)
             return Database.Scene.Geometry.TryAddStatic(
@@ -201,6 +218,7 @@ public sealed partial class AdvancedGpuScenePublisher
             MeshletCount = checked((uint)staged.DescriptorCount),
             ClusterLevel0Count = staged.ClusterLevel0Count,
             ClusterHierarchyWordOffset = staged.ClusterHierarchyWordOffset,
+            LevelCoverIndexCount = checked((uint)staged.CoverIndexCount),
         };
         return Database.Scene.Geometry.TryAddMeshletLocal(
             vertexBytes,
@@ -267,15 +285,17 @@ public sealed partial class AdvancedGpuScenePublisher
                 int descriptorCount = layout.DescriptorCount;
                 int meshletIndexCount = layout.VertexIndexCount;
                 int triangleWordCount = layout.TriangleWordCount;
+                int coverIndexCount = ResolveLevelCoverIndexCount(payload, useMeshlets);
                 ref StagedCanonicalGeometry sized = ref _stagedGeometry[commandIndex];
                 if (!ReferenceEquals(sized.SizedPayload, payload) ||
                     sized.SizedWithMeshlets != useMeshlets ||
                     sized.VertexCount != vertexCount || sized.IndexCount != indexCount ||
+                    sized.CoverIndexCount != coverIndexCount ||
                     sized.DescriptorCount != descriptorCount ||
                     sized.MeshletIndexCount != meshletIndexCount ||
                     sized.TriangleWordCount != triangleWordCount ||
                     vertexCount > _packedGeometryVertices.Length - vertexCursor ||
-                    indexCount > _packedGeometryIndices.Length - indexCursor ||
+                    indexCount + coverIndexCount > _packedGeometryIndices.Length - indexCursor ||
                     descriptorCount > _packedMeshletDescriptors.Length - descriptorCursor ||
                     meshletIndexCount > _packedMeshletVertexIndices.Length - meshletIndexCursor ||
                     triangleWordCount > _packedMeshletTriangleWords.Length - triangleWordCursor)
@@ -330,6 +350,11 @@ public sealed partial class AdvancedGpuScenePublisher
                     }
                 }
 
+                // The level covers follow the canonical indices in the same index arena range.
+                if (coverIndexCount != 0)
+                    payload!.LevelCoverIndices.AsSpan().CopyTo(
+                        _packedGeometryIndices.AsSpan(indexCursor + indexCount, coverIndexCount));
+
                 if (!ReferenceEquals(mesh.Buffers, buffers) ||
                     !ReferenceEquals(mesh.MeshletPayload, payload) ||
                     mesh.GeometryRevision != plan.MeshGeometryRevision ||
@@ -350,6 +375,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     VertexCount = vertexCount,
                     IndexOffset = indexCursor,
                     IndexCount = indexCount,
+                    CoverIndexCount = coverIndexCount,
                     DescriptorOffset = descriptorCursor,
                     DescriptorCount = descriptorCount,
                     MeshletIndexOffset = meshletIndexCursor,
@@ -360,7 +386,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     ClusterLevel0Count = layout.ClusterLevel0Count,
                 };
                 vertexCursor += vertexCount;
-                indexCursor += indexCount;
+                indexCursor += indexCount + coverIndexCount;
                 descriptorCursor += descriptorCount;
                 meshletIndexCursor += meshletIndexCount;
                 triangleWordCursor += triangleWordCount;
@@ -392,7 +418,7 @@ public sealed partial class AdvancedGpuScenePublisher
             return $"Geometry record add has no capacity or publication delta; {state}";
 
         ulong vertexBytes = (ulong)staged.VertexCount * (uint)Unsafe.SizeOf<AdvancedDeformedVertex>();
-        ulong indexBytes = (ulong)staged.IndexCount * sizeof(uint);
+        ulong indexBytes = (ulong)(staged.IndexCount + staged.CoverIndexCount) * sizeof(uint);
         if (vertexBytes > uint.MaxValue ||
             !geometry.StaticVertexArena.CanAppend((uint)vertexBytes, (uint)Unsafe.SizeOf<AdvancedDeformedVertex>()))
             return $"Static vertex arena rejected the append of {vertexBytes} bytes; {state}";
@@ -478,18 +504,20 @@ public sealed partial class AdvancedGpuScenePublisher
                 int descriptorCount = layout.DescriptorCount;
                 int meshletIndexCount = layout.VertexIndexCount;
                 int triangleWordCount = layout.TriangleWordCount;
+                int coverIndexCount = ResolveLevelCoverIndexCount(payload, useMeshlets);
                 _stagedGeometry[commandIndex] = new StagedCanonicalGeometry
                 {
                     SizedPayload = payload,
                     SizedWithMeshlets = useMeshlets,
                     VertexCount = vertexCount,
                     IndexCount = indexCount,
+                    CoverIndexCount = coverIndexCount,
                     DescriptorCount = descriptorCount,
                     MeshletIndexCount = meshletIndexCount,
                     TriangleWordCount = triangleWordCount,
                 };
                 totalVertexCount = checked(totalVertexCount + vertexCount);
-                totalIndexCount = checked(totalIndexCount + indexCount);
+                totalIndexCount = checked(totalIndexCount + indexCount + coverIndexCount);
                 totalMeshletDescriptorCount = checked(totalMeshletDescriptorCount + descriptorCount);
                 totalMeshletVertexIndexCount = checked(totalMeshletVertexIndexCount + meshletIndexCount);
                 totalMeshletTriangleWordCount = checked(totalMeshletTriangleWordCount + triangleWordCount);
@@ -500,7 +528,7 @@ public sealed partial class AdvancedGpuScenePublisher
                         vertexStride) ||
                     !TryAccumulateArenaAppend(
                         ref indexEnd,
-                        checked((ulong)indexCount * sizeof(uint)),
+                        checked((ulong)(indexCount + coverIndexCount) * sizeof(uint)),
                         sizeof(uint)))
                     return false;
 

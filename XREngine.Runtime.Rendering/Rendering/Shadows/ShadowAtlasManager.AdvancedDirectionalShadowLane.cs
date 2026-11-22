@@ -886,7 +886,7 @@ public sealed partial class ShadowAtlasManager
 
     private static bool ReadAdvancedDirectionalShadowLaneFlag()
     {
-        string? value = Environment.GetEnvironmentVariable(
+        string? value = XREnvironment.GetValue(
             XREngineEnvironmentVariables.AdvancedDirectionalShadowLane);
         return !string.Equals(value, "0", StringComparison.Ordinal) &&
                !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);

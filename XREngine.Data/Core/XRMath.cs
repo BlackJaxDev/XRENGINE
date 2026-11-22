@@ -155,15 +155,16 @@ namespace XREngine.Data.Core
         }
 
         /// <summary>
-        /// Returns a translation value representing a rotation of the cameraPoint around the focusPoint.
-        /// Assumes the Globals.Up axis is up. Yaw is performed before pitch.
+        /// Returns a translation value that rotates <paramref name="cameraPoint"/> around
+        /// <paramref name="focusPoint"/> to match a camera orientation change of local pitch
+        /// followed by world yaw (the same order as <see cref="Quaternion.CreateFromYawPitchRoll"/>).
         /// </summary>
-        /// <param name="pitch">Rotation about the X axis, after yaw.</param>
-        /// <param name="yaw">Rotation about the Y axis.</param>
+        /// <param name="pitch">Local pitch delta in degrees around <paramref name="cameraRightDir"/>.</param>
+        /// <param name="yaw">World yaw delta in degrees around <see cref="Globals.Up"/>.</param>
         /// <param name="focusPoint">The point to rotate around.</param>
         /// <param name="cameraPoint">The point to move.</param>
-        /// <param name="cameraRightDir">The direction representing the right side of a camera. This is the reference axis rotated around (at the focusPoint) using the pitch value.</param>
-        /// <returns></returns>
+        /// <param name="cameraRightDir">The camera right axis before the rotation.</param>
+        /// <returns>The rotated camera position.</returns>
         public static Vector3 ArcballTranslation(
             float pitch,
             float yaw,
@@ -171,7 +172,8 @@ namespace XREngine.Data.Core
             Vector3 cameraPoint,
             Vector3 cameraRightDir)
             => ArcballTranslation(
-                Quaternion.CreateFromAxisAngle(cameraRightDir, DegToRad(pitch)) * Quaternion.CreateFromAxisAngle(Globals.Up, DegToRad(yaw)),
+                Quaternion.CreateFromAxisAngle(Globals.Up, DegToRad(yaw)) *
+                Quaternion.CreateFromAxisAngle(cameraRightDir, DegToRad(pitch)),
                 focusPoint,
                 cameraPoint);
 

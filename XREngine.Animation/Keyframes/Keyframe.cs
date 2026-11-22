@@ -53,6 +53,9 @@ namespace XREngine.Animation
             set => _authoredFrameIndex = value < 0 ? -1 : value;
         }
 
+        // Next and Prev are read-only in every keyframe type. Only the track changes the links, through UpdateLink.
+        // The reflection and YAML serializers write every property that has a setter. A Next or Prev setter makes them
+        // write the whole list with each key, and the read sets links on keys that are only partly read.
         public Keyframe? Next => _next;
         public Keyframe? Prev => _prev;
         public bool IsFirst => _prev is null;
@@ -70,11 +73,12 @@ namespace XREngine.Animation
             get => _owningTrack;
             internal set
             {
+                // Walks the list in loops, not recursion: a long track would overflow the stack.
                 _owningTrack = value;
-                if (Next != null && Next.OwningTrack != _owningTrack)
-                    Next.OwningTrack = _owningTrack;
-                if (Prev != null && Prev.OwningTrack != _owningTrack)
-                    Prev.OwningTrack = _owningTrack;
+                for (Keyframe? key = _next; key is not null && key._owningTrack != value; key = key._next)
+                    key._owningTrack = value;
+                for (Keyframe? key = _prev; key is not null && key._owningTrack != value; key = key._prev)
+                    key._owningTrack = value;
             }
         }
 
@@ -91,70 +95,64 @@ namespace XREngine.Animation
                 ? frameIndex
                 : -1;
 
+        /// <summary>
+        /// Moves <paramref name="key"/> into this keyframe's list at the position of its time.
+        /// The search starts at this keyframe and walks forward or backward until it finds the
+        /// neighbors of the key's time, then links the key between them. The walk is a loop, so a
+        /// track with many keyframes (for example a long clip read from YAML) cannot overflow the stack.
+        /// </summary>
         public void UpdateLink(Keyframe? key, bool notifyChange = true)
         {
             if (key is null || key == this)
                 return;
 
-            //if (_next == key)
-            //    return;
-
-            //resize track length if second is outside of range
-            //if (key.Second > OwningTrack.LengthInSeconds)
-            //    OwningTrack.LengthInSeconds = key.Second;
-
             key.Remove(key.OwningTrack != OwningTrack);
             key.Second = key.Second.RemapToRange(0.0f, (OwningTrack?.LengthInSeconds ?? 0.0f) + 0.0001f);
 
-            //Second is within this keyframe and the next?
-            if (key.Second >= Second)
+            Keyframe anchor = this;
+            if (key.Second >= anchor.Second)
             {
-                //After current key
-                if (Next is null || key.Second < Next.Second)
+                // After the anchor: walk forward past every keyframe at or before the key's time.
+                while (anchor._next is { } next && key.Second >= next.Second)
                 {
-                    if (_next != key)
-                    {
-                        key._next = _next;
-                        _next?._prev = key;
-                    }
-
-                    key._prev = this;
-                    _next = key;
-
-                    PostKeyLinkUpdate(key, notifyChange);
+                    // An out-of-order list has no valid position for the key; leave it unlinked.
+                    if (next.Second < anchor.Second)
+                        return;
+                    anchor = next;
                 }
-                else
-                {
-                    //Recursive link to next key
-                    //next not null, greater than next, and next is not before this
-                    if (_next != null && key.Second >= _next.Second && _next.Second >= Second)
-                        _next.UpdateLink(key, notifyChange);
-                }
+                anchor.LinkAfter(key, notifyChange);
             }
             else
             {
-                //Before current key
-                if (Prev is null || key.Second >= Prev.Second)
+                // Before the anchor: walk backward past every keyframe after the key's time.
+                while (anchor._prev is { } prev && key.Second < prev.Second)
                 {
-                    if (_prev != key)
-                    {
-                        key._prev = _prev;
-                        _prev?._next = key;
-                    }
-
-                    key._next = this;
-                    _prev = key;
-
-                    PostKeyLinkUpdate(key, notifyChange);
+                    if (prev.Second >= anchor.Second)
+                        return;
+                    anchor = prev;
                 }
-                else
-                {
-                    //Recursive link to prev key
-                    //prev not null, less than this, and prev is not after this
-                    if (_prev != null && _prev.Second < Second)
-                        _prev.UpdateLink(key, notifyChange);
-                }
+                anchor.LinkBefore(key, notifyChange);
             }
+        }
+
+        /// <summary>Links the unlinked <paramref name="key"/> between this keyframe and its next keyframe.</summary>
+        private void LinkAfter(Keyframe key, bool notifyChange)
+        {
+            key._next = _next;
+            _next?._prev = key;
+            key._prev = this;
+            _next = key;
+            PostKeyLinkUpdate(key, notifyChange);
+        }
+
+        /// <summary>Links the unlinked <paramref name="key"/> between this keyframe and its previous keyframe.</summary>
+        private void LinkBefore(Keyframe key, bool notifyChange)
+        {
+            key._prev = _prev;
+            _prev?._next = key;
+            key._next = this;
+            _prev = key;
+            PostKeyLinkUpdate(key, notifyChange);
         }
 
         private void PostKeyLinkUpdate(Keyframe key, bool notifyChange)

@@ -48,7 +48,17 @@ namespace XREngine
             public static long DeltaTicks => ScaleStopwatchTicks(Timer.Update.DeltaTicks, Timer.Update.Dilation);
             public static long FixedDeltaTicks => Timer.FixedUpdateDeltaTicks;
 
-            static Time() => Timer = new EngineTimer();
+            static Time()
+            {
+                Timer = new EngineTimer();
+                XREnvironment.VariableChanged += HandleEnvironmentVariableChanged;
+            }
+
+            private static void HandleEnvironmentVariableChanged(RuntimeEnvironmentVariableChange change)
+            {
+                if (change.Name.Equals(XREngineEnvironmentVariables.DesktopRenderUncapped, StringComparison.OrdinalIgnoreCase))
+                    ApplyTimerSettings();
+            }
 
             private static readonly List<DateTime> _debugTimers = [];
             /// <summary>
@@ -162,7 +172,7 @@ namespace XREngine
 
             private static bool IsDesktopRenderUncapped()
             {
-                string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DesktopRenderUncapped);
+                string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.DesktopRenderUncapped);
                 return value is not null && (value.Trim() == "1" || value.Trim().Equals("true", StringComparison.OrdinalIgnoreCase));
             }
 

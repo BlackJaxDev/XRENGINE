@@ -517,14 +517,14 @@ namespace XREngine.Components.Animation
         private static bool TryGetUShortEnv(string name, out ushort value)
         {
             value = default;
-            string? raw = Environment.GetEnvironmentVariable(name);
+            string? raw = XREnvironment.GetValue(name);
             return !string.IsNullOrWhiteSpace(raw) && ushort.TryParse(raw, out value);
         }
 
         private static bool TryGetBoolEnv(string name, out bool value)
         {
             value = default;
-            string? raw = Environment.GetEnvironmentVariable(name);
+            string? raw = XREnvironment.GetValue(name);
             if (string.IsNullOrWhiteSpace(raw))
                 return false;
 

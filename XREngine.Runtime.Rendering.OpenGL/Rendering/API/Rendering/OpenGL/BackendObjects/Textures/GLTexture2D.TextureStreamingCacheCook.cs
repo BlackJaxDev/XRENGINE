@@ -30,7 +30,11 @@ public partial class GLTexture2D
         try
         {
             IsPushing = true;
-            ApplyPendingImmutableStorageRecreate();
+            if (!TryApplyPendingImmutableStorageRecreate())
+            {
+                failure = "The storage recreate for new texture dimensions is waiting for an Advanced bindless lease to end.";
+                return false;
+            }
             Bind();
 
             GLEnum glTarget = ToGLEnum(TextureTarget);

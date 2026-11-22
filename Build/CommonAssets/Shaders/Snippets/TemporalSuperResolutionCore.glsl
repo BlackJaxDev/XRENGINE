@@ -10,6 +10,20 @@ vec2 TsrFramebufferUvDisplacement(vec2 clipUvDisplacement, int framebufferTextur
         framebufferTextureYDirection == 1 ? -clipUvDisplacement.y : clipUvDisplacement.y);
 }
 
+vec3 TsrCompressHdrColor(vec3 rgb)
+{
+    vec3 safeRgb = max(rgb, vec3(0.0));
+    float luma = dot(safeRgb, vec3(0.25, 0.5, 0.25));
+    return safeRgb / (1.0 + luma);
+}
+
+vec3 TsrExpandHdrColor(vec3 compressed)
+{
+    vec3 safeColor = max(compressed, vec3(0.0));
+    float luma = dot(safeColor, vec3(0.25, 0.5, 0.25));
+    return safeColor / max(1.0 - luma, 1e-4);
+}
+
 vec3 TsrRgbToYCoCg(vec3 rgb)
 {
     float y = dot(rgb, vec3(0.25, 0.5, 0.25));
@@ -66,7 +80,9 @@ float TsrComputeMotionMask(vec2 velocity, float reactiveVelocityScale)
 
 float TsrComputeGeometryInstability(float depthDiscontinuity, float motionMask)
 {
-    return clamp(depthDiscontinuity * mix(0.2, 1.0, motionMask), 0.0, 1.0);
+    // Depth discontinuities only imply disocclusion instability when the camera
+    // or object moves. Keep stationary edges locked to history to prevent jitter.
+    return clamp(depthDiscontinuity * motionMask, 0.0, 1.0);
 }
 
 float TsrComputeReactiveMask(

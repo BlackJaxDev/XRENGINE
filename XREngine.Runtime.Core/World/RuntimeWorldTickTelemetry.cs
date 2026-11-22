@@ -18,7 +18,7 @@ public static class RuntimeWorldTickTelemetry
     public const int MaximumCallbackKindsPerSnapshot = 64;
 
     public static bool Enabled { get; } =
-        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WorldTickTelemetry) == "1";
+        XREnvironment.GetValue(XREngineEnvironmentVariables.WorldTickTelemetry) == "1";
 
     private static readonly int s_groupCount = Enabled ? Enum.GetValues<ETickGroup>().Length : 0;
 

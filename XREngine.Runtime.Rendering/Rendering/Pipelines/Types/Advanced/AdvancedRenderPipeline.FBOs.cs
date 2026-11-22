@@ -308,6 +308,61 @@ public partial class AdvancedRenderPipeline
             EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
     }
 
+    private XRFrameBuffer CreateEditorHighlightSilhouetteFBO()
+    {
+        IFrameBufferAttachement attachment = EnsureTextureAttachment(
+            EditorHighlightSilhouetteMaskTextureName, CreateEditorHighlightSilhouetteMaskTexture);
+
+        return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+        {
+            ForceOvrMultiview = Stereo,
+            Name = EditorHighlightSilhouetteFBOName
+        };
+    }
+
+    private XRTexture CreateEditorHighlightSilhouetteMaskTexture()
+    {
+        (uint width, uint height) = GetDesiredFBOSizeFull();
+        return CreateLatePostColor(EditorHighlightSilhouetteMaskTextureName, width, height,
+            Stereo ? 2u : 1u, 1u, EPixelInternalFormat.Rgba8,
+            EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8, nearest: true);
+    }
+
+    private XRMaterial CreateEditorHighlightSilhouetteMaterial()
+    {
+        XRShader shader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, "EditorHighlightSilhouette.fs"),
+            EShaderType.Fragment);
+        return new XRMaterial(Array.Empty<XRTexture?>(), shader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                StencilTest = new StencilTest
+                {
+                    Enabled = ERenderParamUsage.Disabled
+                },
+                CullMode = ECullMode.None,
+                BlendModeAllDrawBuffers = new BlendMode()
+                {
+                    Enabled = ERenderParamUsage.Enabled,
+                    RgbSrcFactor = EBlendingFactor.One,
+                    AlphaSrcFactor = EBlendingFactor.One,
+                    RgbDstFactor = EBlendingFactor.One,
+                    AlphaDstFactor = EBlendingFactor.One,
+                    RgbEquation = EBlendEquationMode.Max,
+                    AlphaEquation = EBlendEquationMode.Max
+                },
+                RequiredEngineUniforms = EUniformRequirements.None
+            }
+        };
+    }
+
     private XRFrameBuffer CreateAtmosphereHalfDepthQuadFBO()
     {
         XRTexture[] refs =

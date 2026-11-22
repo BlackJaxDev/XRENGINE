@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Commands;
 /// owns one reference to each valid logical resource; physical descriptors and
 /// native image realization remain backend-owned.
 /// </summary>
-public sealed class AdvancedGpuResourcePublisher
+public sealed partial class AdvancedGpuResourcePublisher
 {
     private long _commitGeneration = 1L;
 

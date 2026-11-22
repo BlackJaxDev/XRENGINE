@@ -35,6 +35,14 @@ public readonly record struct AdvancedGeometryRegistration(
     /// </summary>
     public uint ClusterHierarchyWordOffset { get; init; }
 
+    /// <summary>
+    /// The number of level cover indices that follow the <see cref="IndexCount"/> canonical
+    /// indices in the index span of a skinned cluster hierarchy geometry, or zero. The database
+    /// stores both lists in one index arena range, so the cover indices move with the canonical
+    /// indices when the arena compacts. See <see cref="AdvancedGeometryRecord.LevelCoverIndexBase"/>.
+    /// </summary>
+    public uint LevelCoverIndexCount { get; init; }
+
     public static AdvancedGeometryRegistration Create(
         uint vertexCount,
         uint indexCount,

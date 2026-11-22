@@ -1,7 +1,7 @@
 name: Prepare the Windows Editor CLI toolchain
 description: >-
   Check out the pinned Editor submodules, stage the pinned shader compiler, set up .NET and the
-  WebAssembly workload from a cache when one exists, build the pinned native meshoptimizer, and optionally
+  WebAssembly workload from a cache when one exists, build the pinned native meshoptimizer and patched GLFW, and optionally
   prepare browser physics and build the Editor.
 inputs:
   browser-physics:
@@ -94,6 +94,10 @@ runs:
     - name: Build native meshoptimizer
       shell: pwsh
       run: ./Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
+
+    - name: Build patched GLFW
+      shell: pwsh
+      run: ./Tools/Dependencies/Build-Glfw.ps1 -Rid win-x64
 
     - name: Prepare pinned browser physics sources
       if: ${{ inputs.browser-physics == 'true' }}

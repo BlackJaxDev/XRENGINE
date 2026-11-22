@@ -1,4 +1,4 @@
-namespace XREngine.Runtime.Bootstrap;
+﻿namespace XREngine.Runtime.Bootstrap;
 
 public class UnitTestingRenderSettings
 {
@@ -21,6 +21,29 @@ public class UnitTestingRenderSettings
     /// cluster cut of models cooked with a cluster hierarchy (<c>GenerateClusterHierarchy</c>).
     /// </summary>
     public bool VirtualGeometry { get; set; }
+
+    /// <summary>
+    /// Sets the <c>AdvancedSkinnedVirtualGeometry</c> engine setting: with <see cref="VirtualGeometry"/>
+    /// on, skinned meshlet draws also get the cluster cut. True (the default) matches the engine
+    /// default; false keeps skinned draws at full detail.
+    /// </summary>
+    public bool SkinnedVirtualGeometry { get; set; } = true;
+
+    /// <summary>
+    /// Sets the <c>AdvancedSkinnedPosedClusterBounds</c> engine setting: with
+    /// <see cref="SkinnedVirtualGeometry"/> on, true (the default) bounds each skinned cluster group
+    /// by its posed bone box, so distant parts of a skinned draw get coarser clusters and clusters
+    /// outside the view are culled; false uses one distance per skinned draw and culls no skinned
+    /// cluster.
+    /// </summary>
+    public bool SkinnedPosedClusterBounds { get; set; } = true;
+
+    /// <summary>
+    /// Sets the <c>AdvancedSkinnedDeformationLod</c> engine setting: with <see cref="SkinnedVirtualGeometry"/>
+    /// on, far skinned draws deform only the vertices of their coarsest allowed cluster level.
+    /// False (the default) deforms every vertex.
+    /// </summary>
+    public bool SkinnedDeformationLod { get; set; }
 
     /// <summary>
     /// Sets the <c>AdvancedVirtualGeometryPixelThreshold</c> engine setting: the cluster cut

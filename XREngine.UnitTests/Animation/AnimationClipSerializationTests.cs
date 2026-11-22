@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using MemoryPack;
 using NUnit.Framework;
@@ -22,6 +23,66 @@ public sealed class AnimationClipSerializationTests
 
         property.GetCustomAttribute<MemoryPackIgnoreAttribute>().ShouldNotBeNull();
         property.GetCustomAttribute<YamlIgnoreAttribute>().ShouldNotBeNull();
+    }
+
+    [Test]
+    public void KeyframeLinks_AreReadOnlyInEveryKeyframeType()
+    {
+        // The cooked reflection serializer and the YAML serializer write every property that has a setter.
+        // A writable Next or Prev makes them write the whole keyframe list with each key.
+        foreach (Type type in typeof(Keyframe).Assembly.GetTypes())
+        {
+            if (!typeof(Keyframe).IsAssignableFrom(type))
+                continue;
+
+            foreach (PropertyInfo property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                if (property.Name is nameof(Keyframe.Next) or nameof(Keyframe.Prev))
+                    property.CanWrite.ShouldBeFalse($"{type.Name}.{property.Name} must not have a setter.");
+            }
+        }
+    }
+
+    [Test]
+    public void YamlSerializer_RoundTrips_QuaternionTrackInTimeOrder()
+    {
+        const int frameCount = 120;
+        const float framesPerSecond = 60.0f;
+        PropAnimQuaternion animation = new(frameCount, framesPerSecond, looped: false, useKeyframes: true)
+        {
+            Name = "HipRotation"
+        };
+        for (int frame = 0; frame < frameCount; ++frame)
+        {
+            Quaternion rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, frame * 0.01f);
+            animation.Keyframes.Add(new QuaternionKeyframe(frame, framesPerSecond, rotation, Quaternion.Identity, Quaternion.Identity, ERadialInterpType.Linear));
+        }
+
+        AnimationMember root = new("Root", EAnimationMemberType.Group);
+        root.Children.Add(new AnimationMember("Rotation", EAnimationMemberType.Property, animation));
+        AnimationClip original = new(root)
+        {
+            Name = "Turn",
+            LengthInSeconds = animation.LengthInSeconds
+        };
+
+        string yaml = AssetManager.Serializer.Serialize(original, typeof(AnimationClip));
+        AnimationClip? clone = AssetManager.Deserializer.Deserialize<AnimationClip>(yaml);
+
+        clone.ShouldNotBeNull();
+        PropAnimQuaternion cloneAnimation = clone!.GetAllAnimations().Values.OfType<PropAnimQuaternion>().Single();
+        int count = 0;
+        float previousSecond = float.NegativeInfinity;
+        for (Keyframe? key = cloneAnimation.Keyframes.First; key is not null && count <= frameCount; key = key.Next)
+        {
+            key.Second.ShouldBeGreaterThanOrEqualTo(previousSecond);
+            key.OwningTrack.ShouldBeSameAs(cloneAnimation.Keyframes);
+            previousSecond = key.Second;
+            ++count;
+        }
+
+        count.ShouldBe(frameCount);
+        cloneAnimation.Keyframes.Count.ShouldBe(frameCount);
     }
 
     [Test]

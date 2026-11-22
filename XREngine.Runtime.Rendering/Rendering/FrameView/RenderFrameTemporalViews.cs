@@ -31,7 +31,9 @@ internal static class RenderFrameTemporalViews
             Vector2 previousJitter = right ? temporal.RightEyePreviousJitter : temporal.PreviousJitter;
             Matrix4x4 unjittered = view.ProjectionMatrixUnjittered == default
                 ? view.ProjectionMatrix : view.ProjectionMatrixUnjittered;
-            Vector2 extent = new(Math.Max(1, view.ViewRect.Width), Math.Max(1, view.ViewRect.Height));
+            Vector2 extent = temporal.Width > 0u && temporal.Height > 0u
+                ? new Vector2(temporal.Width, temporal.Height)
+                : new Vector2(Math.Max(1, view.ViewRect.Width), Math.Max(1, view.ViewRect.Height));
             Vector2 clipJitter = ProjectionJitterRequest.TexelSpace(jitter, extent).ToClipSpace();
             Vector2 previousClipJitter = ProjectionJitterRequest.TexelSpace(previousJitter, extent).ToClipSpace();
             Matrix4x4 projection = XRCamera.ApplyProjectionJitter(unjittered, clipJitter,

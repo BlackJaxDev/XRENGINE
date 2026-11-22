@@ -28,7 +28,7 @@ internal sealed class BrowserGameMetadataResolver : IDisposable
         // System.Console on Unix). Inspect the reference assemblies used to compile games.
         DirectoryInfo runtime = new(Path.GetDirectoryName(typeof(object).Assembly.Location)!);
         string? referenceDirectory = null;
-        foreach (string? root in new[] { Environment.GetEnvironmentVariable("DOTNET_ROOT"),
+        foreach (string? root in new[] { XREnvironment.GetValue(XREngineEnvironmentVariables.DotnetRoot),
                      runtime.Parent?.Parent?.Parent?.FullName }.Distinct(StringComparer.Ordinal))
         {
             if (root is null)

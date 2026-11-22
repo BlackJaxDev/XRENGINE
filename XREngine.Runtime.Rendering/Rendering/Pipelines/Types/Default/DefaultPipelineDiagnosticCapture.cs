@@ -16,8 +16,8 @@ internal static class DefaultPipelineDiagnosticCapture
     public static string ResolveOutputPath(string pipelineName, string label, int layerIndex)
     {
         string outputDirectory = ResolveOutputDirectory(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CaptureDefaultPipelineOutputDirectory),
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AgentValidationRunRoot));
+            XREnvironment.GetValue(XREngineEnvironmentVariables.CaptureDefaultPipelineOutputDirectory),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.AgentValidationRunRoot));
         return Path.Combine(outputDirectory, $"{pipelineName}_{label}_layer{layerIndex}.png");
     }
 
@@ -28,8 +28,8 @@ internal static class DefaultPipelineDiagnosticCapture
         int layerIndex)
     {
         string outputDirectory = ResolveOutputDirectory(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CaptureDefaultPipelineOutputDirectory),
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AgentValidationRunRoot));
+            XREnvironment.GetValue(XREngineEnvironmentVariables.CaptureDefaultPipelineOutputDirectory),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.AgentValidationRunRoot));
         return Path.Combine(
             outputDirectory,
             $"{pipelineName}_Temporal_{sample}_{label}_layer{layerIndex}.png");

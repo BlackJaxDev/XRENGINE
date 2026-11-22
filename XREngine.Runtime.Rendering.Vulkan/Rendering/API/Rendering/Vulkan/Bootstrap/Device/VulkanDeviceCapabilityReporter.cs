@@ -640,7 +640,7 @@ internal static class VulkanDeviceCapabilityReporter
             "VK_KHR_unified_image_layouts",
             "unifiedImageLayouts",
             "RenderBenchOptIn",
-            $"requested={Environment.GetEnvironmentVariable("XRE_VK_RENDER_BENCH_UNIFIED_IMAGE_LAYOUTS") == "1"};supported={mutable._unifiedImageLayoutsFeatureSupported};ordinarySupported={mutable._unifiedImageLayoutsFeatureSupported};videoSupported={mutable._unifiedImageLayoutsVideoFeatureSupported};enabled={SupportsUnifiedImageLayouts}",
+            $"requested={XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanRenderBenchUnifiedImageLayouts) == "1"};supported={mutable._unifiedImageLayoutsFeatureSupported};ordinarySupported={mutable._unifiedImageLayoutsFeatureSupported};videoSupported={mutable._unifiedImageLayoutsVideoFeatureSupported};enabled={SupportsUnifiedImageLayouts}",
             SupportsUnifiedImageLayouts ? "Benchmark-only ordinary-image policy enabled; graph hazards and exceptional layouts remain mandatory." : "Deferred unless the RenderBench opt-in requests and enables the ordinary-image feature.");
 
         VulkanDeviceCapabilityReporter.LogCapability(

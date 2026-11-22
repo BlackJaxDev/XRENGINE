@@ -144,6 +144,10 @@ namespace XREngine.Animation
                 Count = 1;
                 OnChanged();
             }
+            // Keys usually arrive in time order (import, YAML read), so a key at or after the
+            // last key links there without a walk from the first key.
+            else if (Last is not null && key.Second >= Last.Second)
+                Last.UpdateLink(key);
             else
                 First.UpdateLink(key);
         }

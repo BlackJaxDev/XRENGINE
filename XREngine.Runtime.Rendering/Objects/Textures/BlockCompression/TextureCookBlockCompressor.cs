@@ -77,7 +77,7 @@ internal static class TextureCookBlockCompressor
     {
         get
         {
-            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TextureCookCompression);
+            string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.TextureCookCompression);
             if (!string.IsNullOrWhiteSpace(raw) &&
                 Enum.TryParse(raw.Trim(), ignoreCase: true, out ETextureCookCompression parsed) &&
                 Enum.IsDefined(parsed))

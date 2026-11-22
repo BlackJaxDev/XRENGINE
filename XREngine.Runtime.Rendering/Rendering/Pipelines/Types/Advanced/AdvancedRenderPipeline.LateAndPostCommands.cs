@@ -535,6 +535,16 @@ public partial class AdvancedRenderPipeline
 
     private void AppendAdvancedDesktopOutputCommands(ViewportRenderCommandContainer commands)
     {
+        if (EditorHighlightModule is not null)
+        {
+            commands.Add<VPRC_SetClears>().Set(ColorF4.Transparent, null, null);
+            using (commands.AddUsing<VPRC_BindFBOByName>(x =>
+                x.SetOptions(EditorHighlightSilhouetteFBOName, write: true, clearColor: true, clearDepth: false, clearStencil: false)))
+            {
+                commands.Add<VPRC_RenderEditorHighlightSilhouette>();
+            }
+        }
+
         if (!AllowsPostAntiAliasing)
         {
             AppendAdvancedResolvedOutput(commands, FinalPostProcessOutputFBOName, FinalPostProcessOutputTextureName);
@@ -578,7 +588,8 @@ public partial class AdvancedRenderPipeline
                     EditorHighlightOutputFBOName, matchDestinationRenderArea: true)
                 .SetRenderGraphResources(new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
                     .SampleTexture(sourceTextureName)
-                    .SampleTexture(EditorHighlightMaskTextureName));
+                    .SampleTexture(EditorHighlightMaskTextureName)
+                    .SampleTexture(EditorHighlightSilhouetteMaskTextureName));
             composite.RequiredForOutput = true;
             AppendAdvancedWindowPresent(commands, EditorHighlightOutputFBOName);
             return;

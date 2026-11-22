@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Rendering.Compute;
@@ -399,6 +399,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         _physicsOutputMismatch = false;
         _materialBoundsContracts.Clear();
         AdvancedExtractionSubStageTimers.CountBuild();
+        CaptureDeformationLodViews(viewSet);
         for (int commandIndex = 0;
              commandIndex < _drawCount;
              commandIndex++)
@@ -875,11 +876,24 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             AabbMin = canonicalGeometry.BoundsMin,
             AabbMax = canonicalGeometry.BoundsMax,
         };
+        // The skinned cluster cut measures one distance per draw from the posed instance bounds
+        // (and the candidate sphere), which every skinned draw has. Its candidate carries the
+        // blendshape margin.
+        bool skinnedClusterCut = skinned && AdvancedVirtualGeometryPolicy.SkinnedEnabled;
+        float clusterCutMargin =
+            skinnedClusterCut && mesh is { HasBlendshapes: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes
+                ? mesh.GetMaxBlendshapeDisplacement()
+                : 0.0f;
+        uint deformationLevel = 0u;
+        AdvancedDrawRecord canonicalDraw = default;
+        AdvancedInstanceRecord instance = default;
+        bool hasCanonicalInstance = false;
         if (skinned && _gpuDeformation.UsesPackedAggregateInputs)
         {
-            if (!publication.Draws.TryGet(draw, out AdvancedDrawRecord canonicalDraw) ||
-                !publication.Instances.TryGet(canonicalDraw.Instance, out AdvancedInstanceRecord instance))
+            if (!publication.Draws.TryGet(draw, out canonicalDraw) ||
+                !publication.Instances.TryGet(canonicalDraw.Instance, out instance))
                 throw new InvalidOperationException("Aggregate visibility requires the exact canonical instance bounds.");
+            hasCanonicalInstance = true;
             // Geometry is immutable bind-pose topology. Animated bounds belong to the current instance publication.
             commandBounds.BoundingSphere = instance.BoundsSphere;
             commandBounds.AabbMin = instance.BoundsMin;
@@ -887,6 +901,28 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             if (mesh is { HasBlendshapeDeformation: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
                 visibilityFlags |= EAdvancedVisibilityPreparationFlags.Uncertain | EAdvancedVisibilityPreparationFlags.ConservativeVisible;
         }
+        else if (skinnedClusterCut)
+        {
+            // The authored-vertex preparation (the Vulkan route) keeps its candidate bounds, but the
+            // deformation level choice still needs the posed instance bounds. The job deforms the
+            // prefix of the chosen level on both preparation policies, and the task stage clamps the
+            // cut to that level, so the drawn clusters read only deformed vertices.
+            hasCanonicalInstance =
+                publication.Draws.TryGet(draw, out canonicalDraw) &&
+                publication.Instances.TryGet(canonicalDraw.Instance, out instance);
+        }
+        if (skinnedClusterCut && hasCanonicalInstance && mesh is not null)
+            deformationLevel = ChooseDeformationLevel(
+                publication,
+                in canonicalDraw,
+                in instance,
+                in canonicalGeometry,
+                in command,
+                mesh,
+                clusterCutMargin,
+                deformationSource.GpuBoundsSource.HasValue,
+                coveredStateCaptured,
+                in coveredState);
         _visibilityCandidates[commandIndex] =
             new AdvancedVisibilityCandidate(
                 draw,
@@ -895,14 +931,18 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 commandBounds.AabbMax,
                 ViewMask: ulong.MaxValue,
                 BvhLeaf: 0u,
-                visibilityFlags);
+                visibilityFlags)
+            {
+                ClusterCutMargin = clusterCutMargin,
+                DeformationLevel = deformationLevel,
+            };
 
         bool hasCanonicalGeometry = geometry.IsValid && canonicalGeometry.IsResident;
         AdvancedSceneGeometryOffsets offsets = ResolveGeometryOffsets(
             hasCanonicalGeometry,
             in canonicalGeometry,
             command.SkinID,
-            clusterCut: !skinned && AdvancedVirtualGeometryPolicy.Enabled);
+            clusterCut: AdvancedVirtualGeometryPolicy.Enabled && (!skinned || skinnedClusterCut));
         if (skinned && (renderer is null || mesh is not { VertexCount: > 0 }))
             throw new InvalidOperationException(
                 $"Advanced draw {draw} requires a captured primitive mesh and renderer for deformation.");
@@ -937,6 +977,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 in coveredState,
                 coveredMorphWeights,
                 in _preparedDeformationMeshes[commandIndex],
+                deformationLevel,
                 ref timerMark,
                 out deformationSlice,
                 out AdvancedGpuDeformationMeshSlice gpuMeshSlice,
@@ -977,6 +1018,10 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 deformationReason,
                 skinned && !_gpuDeformation.PreviousOutputValid);
 
+        uint payloadFirstIndex = offsets.IndexOffset;
+        uint payloadIndexCount = 0u;
+        if (hasCanonicalGeometry)
+            ResolveDrawIndexRange(in canonicalGeometry, mesh, deformationLevel, out payloadFirstIndex, out payloadIndexCount);
         _visibilityPayloads[commandIndex] =
             new AdvancedVisibilityPayload(
                 draw,
@@ -985,10 +1030,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 offsets,
                 PrimitiveSection: command.SubmeshID,
                 InstanceCount: Math.Max(1u, command.InstanceCount),
-                FirstIndex: offsets.IndexOffset,
-                IndexCount: hasCanonicalGeometry
-                    ? canonicalGeometry.IndexCount
-                    : 0u,
+                FirstIndex: payloadFirstIndex,
+                IndexCount: payloadIndexCount,
                 VertexCount: hasCanonicalGeometry ? canonicalGeometry.VertexCount : 0u,
                 RasterStateClass: WritesFragmentDepth(command)
                     ? command.StateClassID | AdvancedVisibilityRasterStateBits.FragmentDepth
@@ -1050,6 +1093,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         in PhysicsChainGpuRendererOutputState physicsState,
         ReadOnlySpan<PhysicsChainMorphWeight> retainedMorphWeights,
         in AdvancedPreparedDeformationMesh preparedMesh,
+        uint deformationLevel,
         ref long timerMark,
         out AdvancedDeformedArenaSlice slice,
         out AdvancedGpuDeformationMeshSlice gpuMeshSlice,
@@ -1133,6 +1177,18 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             _deformationArenaPending = true;
             return false;
         }
+        // A far draw deforms only a prefix of the cooked deformation order. The previous output
+        // slot holds valid vertices only for the prefix of the previous frame, so a grown prefix
+        // has no velocity history for its new vertices.
+        uint deformedVertexCount = ResolveDeformedVertexCount(
+            mesh,
+            in gpuMeshSlice,
+            deformationLevel,
+            out bool deformationOrdered);
+        NoteDeformedVertexCount(deformedVertexCount, mesh.VertexCount);
+        if (!_deformedArena.RecordDeformedVertexCount(outputHandle, deformedVertexCount) &&
+            slice.HasValidVelocity)
+            slice = slice with { VelocityValidity = EAdvancedVelocityValidityReason.VertexCountChanged };
         AdvancedExtractionSubStageTimers.Mark(ref timerMark, EAdvancedExtractionSubStage.HistoryAndArena);
 
         // The deformation scheduler consumes the draw record independently of
@@ -1176,6 +1232,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 EAdvancedDeformationFeatureFlags.MaximumBlendshapeAccumulation;
         if (meshletRange.HasMeshlets)
             features |= EAdvancedDeformationFeatureFlags.Meshlets;
+        if (deformationOrdered)
+            features |= EAdvancedDeformationFeatureFlags.DeformationOrder;
         if (!slice.HasValidVelocity ||
             !_gpuDeformation.PreviousOutputValid)
             features |= EAdvancedDeformationFeatureFlags.VelocityInvalid;
@@ -1200,7 +1258,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             BlendshapeShapeOffset =
                 gpuMeshSlice.BlendshapeRangeOffset,
             VertexFirst = 0u,
-            VertexCount = checked((uint)mesh.VertexCount),
+            VertexCount = deformedVertexCount,
             MeshletFirst = meshletRange.MeshletOffset,
             MeshletCount = meshletRange.MeshletCount,
             BoneCount = gpuPoseSlice.BoneCount,
@@ -1728,7 +1786,8 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
     /// <summary>
     /// Reads the arena offsets and the meshlet range of a draw's geometry for its visibility
     /// payload. With <paramref name="clusterCut"/> (a static draw while Advanced virtual geometry
-    /// is on), the range holds the meshlets of every level and the task stage selects the cut;
+    /// is on, or a skinned draw with posed bounds while the skinned cut is also on), the range
+    /// holds the meshlets of every level and the task stage selects the cut;
     /// otherwise it holds only the level-0 meshlets of a cluster hierarchy geometry.
     /// </summary>
     private static AdvancedSceneGeometryOffsets ResolveGeometryOffsets(

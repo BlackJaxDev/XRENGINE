@@ -27,7 +27,7 @@ internal partial class Program
     private static void ValidateDebugGpuRecordLayouts()
     {
 #if DEBUG
-        if (!string.Equals(Environment.GetEnvironmentVariable("XRE_VALIDATE_GPU_RECORD_LAYOUTS"), "1", StringComparison.Ordinal))
+        if (!string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.ValidateGpuRecordLayouts), "1", StringComparison.Ordinal))
             return;
 
         string shaderDirectory = Path.Combine(Engine.Assets?.EngineAssetsPath

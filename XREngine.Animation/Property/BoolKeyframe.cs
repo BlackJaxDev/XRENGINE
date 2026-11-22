@@ -15,16 +15,8 @@
         public bool Value { get; set; }
         public override Type ValueType => typeof(bool);
 
-        public new BoolKeyframe? Next
-        {
-            get => _next as BoolKeyframe;
-            set => SetField(ref _next, value);
-        }
-        public new BoolKeyframe? Prev
-        {
-            get => _prev as BoolKeyframe;
-            set => SetField(ref _prev, value);
-        }
+        public new BoolKeyframe? Next => _next as BoolKeyframe;
+        public new BoolKeyframe? Prev => _prev as BoolKeyframe;
 
         public override void ReadFromString(string str)
         {
