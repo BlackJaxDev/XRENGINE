@@ -398,8 +398,8 @@
             "type": "u32"
           },
           {
-            "name": "sourceCameraIdentityPadding1_0",
-            "provider": "sourceCameraIdentityPadding1",
+            "name": "renderTimeBits_1",
+            "provider": "renderTimeBits",
             "offset": 940,
             "bytes": 4,
             "type": "u32"
