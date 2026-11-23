@@ -290,6 +290,11 @@ bool XR_ADV_MeshletSphereOccluded(vec4 sphere, XRAdvancedViewRecord view)
 #ifndef XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD
 #define XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD 1.0
 #endif
+// The ideal cut of geometry streaming uses the threshold times this factor. A
+// smaller factor asks for finer pages earlier.
+#ifndef XR_ADV_STREAMING_PREFETCH
+#define XR_ADV_STREAMING_PREFETCH 0.5
+#endif
 #define XR_ADV_CLUSTER_RECORD_WORDS 2u
 #define XR_ADV_CLUSTER_GROUP_RECORD_WORDS 8u
 // Cluster skin record: bone list offset (relative to the cluster records) and
@@ -709,6 +714,116 @@ bool XR_ADV_ClusterInCut(
         return false;
     return refined < 0 ||
         XR_ADV_ClusterGroupProjectedError(uint(refined), cut, draw) <= threshold;
+}
+
+// The result of the streamed cut for one cluster of a geometry that draws from
+// geometry pages.
+struct XRAdvancedStreamedCutResult
+{
+    // The cluster is in the cut with residency: draw it.
+    bool draw;
+    // The page of the cluster's group is in the ideal cut, not resident, and
+    // its group sphere is in the view frustum: request it.
+    bool request;
+    // The page of the cluster's group is resident and drawn or in the ideal
+    // cut: set its touch bit.
+    bool touch;
+    uint groupPage;
+    uint groupSlot;
+    uint band;
+    uint priority;
+    float pixelScale;
+};
+
+// The cut of a geometry with geometry pages. With R(G) true when the page of
+// group G is resident and err(G) the projected error, the cluster draws when
+//   R(group) && err(group) > t && (refined < 0 || err(refined) <= t || !R(refined)).
+// A parent cluster therefore stays drawn while the finer group that it was made
+// from is not resident. Residency is closed toward the roots (a resident page
+// has resident dependencies, and root pages are always resident), so exactly
+// one cluster covers each point of the mesh. When every page is resident, the
+// rule is the same as XR_ADV_ClusterInCut.
+//
+// The ideal cut is the cut with every page resident, at the prefetch threshold
+// tp = t * XR_ADV_STREAMING_PREFETCH:
+//   err(group) > tp && (refined < 0 || err(refined) <= tp).
+// A cluster in the ideal cut requests the page of its group when that page is
+// not resident, and touches the slot of its group when it is. The band is
+// foreground when err(group) > t, because the cover that draws now has at least
+// that error, and prefetch otherwise. The priority is err(group) / t in 1/64
+// steps. The pixel scale is the projected error of one unit of mesh-space
+// error for this group, so the CPU can rank the dependencies of the page.
+XRAdvancedStreamedCutResult XR_ADV_StreamedClusterCut(
+    uint meshletIndex,
+    XRAdvancedClusterCutState cut,
+    XRAdvancedMeshletDrawCullState draw,
+    XRAdvancedStreamedGeometry streamed,
+    XRAdvancedViewRecord view)
+{
+    XRAdvancedStreamedCutResult result;
+    result.draw = false;
+    result.request = false;
+    result.touch = false;
+    result.groupPage = XR_ADV_PAGE_NOT_RESIDENT;
+    result.groupSlot = XR_ADV_PAGE_NOT_RESIDENT;
+    result.band = XR_ADV_STREAMING_BAND_PREFETCH;
+    result.priority = 0u;
+    result.pixelScale = 0.0;
+
+    // A streamed cluster with an unreadable record draws nothing: its level-0
+    // page may not be resident, so the level-0 rule of XR_ADV_ClusterInCut does
+    // not apply.
+    uint cluster = meshletIndex - cut.geometryMeshletFirst;
+    uint recordWord = cut.clusterWordBase + cluster * XR_ADV_CLUSTER_RECORD_WORDS;
+    if (meshletIndex < cut.geometryMeshletFirst || cluster >= cut.geometryMeshletCount ||
+        recordWord + 2u > cut.groupWordBase)
+        return result;
+    uint group = XR_ADV_VisibilityMeshletTriangleWords.records[recordWord + 0u];
+    int refined = int(XR_ADV_VisibilityMeshletTriangleWords.records[recordWord + 1u]);
+
+    result.groupPage = XR_ADV_StreamedClusterGlobalPage(streamed, cluster);
+    result.groupSlot = XR_ADV_StreamedPageSlot(result.groupPage);
+    bool groupResident = result.groupSlot != XR_ADV_PAGE_NOT_RESIDENT;
+
+    const float threshold = float(XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD);
+    const float prefetchThreshold = threshold * float(XR_ADV_STREAMING_PREFETCH);
+    float groupError = XR_ADV_ClusterGroupProjectedError(group, cut, draw);
+    float refinedError = 0.0;
+    bool refinedResident = false;
+    if (refined >= 0)
+    {
+        refinedError = XR_ADV_ClusterGroupProjectedError(uint(refined), cut, draw);
+        refinedResident = XR_ADV_StreamedPageSlot(
+            XR_ADV_StreamedGroupGlobalPage(streamed, uint(refined))) != XR_ADV_PAGE_NOT_RESIDENT;
+    }
+
+    result.draw = groupResident && groupError > threshold &&
+        (refined < 0 || refinedError <= threshold || !refinedResident);
+    bool ideal = groupError > prefetchThreshold &&
+        (refined < 0 || refinedError <= prefetchThreshold);
+    result.touch = groupResident && (result.draw || ideal);
+    if (!ideal || groupResident || result.groupPage == XR_ADV_PAGE_NOT_RESIDENT)
+        return result;
+
+    // Request only for a group sphere in the view frustum.
+    uint word = cut.groupWordBase + group * XR_ADV_CLUSTER_GROUP_RECORD_WORDS;
+    if (word + 5u > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()))
+        return result;
+    vec4 sphere = vec4(
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 0u]),
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 1u]),
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 2u]),
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 3u]));
+    float meshError = uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 4u]);
+    vec4 worldSphere = vec4((vec4(sphere.xyz, 1.0) * draw.world).xyz, sphere.w * draw.maxScale);
+    if (!XR_ADV_MeshletSphereInsideFrustum(worldSphere, view.viewProjectionUnjittered))
+        return result;
+
+    result.request = true;
+    result.band = groupError > threshold ? XR_ADV_STREAMING_BAND_FOREGROUND : XR_ADV_STREAMING_BAND_PREFETCH;
+    result.priority = uint(clamp(groupError / threshold * 64.0, 0.0, 65535.0));
+    result.pixelScale = meshError > 0.0 && meshError < 3.0e38 ? groupError / meshError : 0.0;
+    return result;
 }
 #endif
 

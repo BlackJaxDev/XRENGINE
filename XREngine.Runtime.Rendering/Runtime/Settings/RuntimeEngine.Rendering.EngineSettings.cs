@@ -3125,14 +3125,13 @@ public static partial class RuntimeEngine
                 /// payload, the publisher writes the page images to slots of the geometry page pool
                 /// (see <see cref="AdvancedGeometryPagePoolMiB"/>), and the meshlet task and mesh
                 /// stages and the surface reconstruction read the cluster descriptors, triangles and
-                /// static vertices from the pool through the page table. Every page stays resident,
-                /// so this tests the page pool and the shader paths; it does not save memory yet.
-                /// Off by default.
+                /// static vertices from the pool through the page table. Every page stays resident
+                /// unless <see cref="AdvancedGeometryStreaming"/> is also on. Off by default.
                 /// Read once with <see cref="AdvancedVirtualGeometry"/>; the import reads it when it
                 /// attaches the pages.
                 /// </summary>
                 [Category("Advanced")]
-                [Description("With Advanced virtual geometry on, cluster hierarchy models imported with geometry pages draw their clusters from the pages. Every page stays resident. Off by default. Read once at the first Advanced frame.")]
+                [Description("With Advanced virtual geometry on, cluster hierarchy models imported with geometry pages draw their clusters from the pages. Every page stays resident unless geometry streaming is on. Off by default. Read once at the first Advanced frame.")]
                 public bool AdvancedGeometryPages
                 {
                     get => _advancedGeometryPages;
@@ -3154,6 +3153,60 @@ public static partial class RuntimeEngine
                 {
                     get => _advancedGeometryPagePoolMiB;
                     set => SetField(ref _advancedGeometryPagePoolMiB, Math.Clamp(value, 16, 2048));
+                }
+
+                private bool _advancedGeometryStreaming;
+
+                /// <summary>
+                /// With <see cref="AdvancedGeometryPages"/> on, streams the pages of static cluster
+                /// hierarchy geometry. The publisher makes only the root pages of each geometry
+                /// resident. The meshlet task stage requests the missing pages of the cluster cut and
+                /// marks the resident pages that it uses. The publisher reads these requests from the
+                /// GPU, loads the pages into free pool slots within the upload budget (see
+                /// <see cref="AdvancedGeometryStreamingUploadMiBPerFrame"/>), and evicts the pages that
+                /// were not used for the longest time when the pool is full. A group whose finer pages
+                /// are not resident draws at the finest resident level. Skinned geometry keeps every
+                /// page resident. Off by default. Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With Advanced geometry pages on, streams the pages of static cluster hierarchy models: only the root pages stay resident, and the cluster cut requests the finer pages that it needs. Off by default. Read once at the first Advanced frame.")]
+                public bool AdvancedGeometryStreaming
+                {
+                    get => _advancedGeometryStreaming;
+                    set => SetField(ref _advancedGeometryStreaming, value);
+                }
+
+                private int _advancedGeometryStreamingUploadMiBPerFrame = 4;
+
+                /// <summary>
+                /// The largest number of MiB of page images that one publication loads into the page
+                /// pool with <see cref="AdvancedGeometryStreaming"/> on (1 to 64). Each page is 128 KiB,
+                /// so 4 MiB loads at most 32 pages. The first load of a publication is always allowed.
+                /// Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Upload budget of Advanced geometry streaming in MiB per publication (1 to 64). Read once at the first Advanced frame.")]
+                public int AdvancedGeometryStreamingUploadMiBPerFrame
+                {
+                    get => _advancedGeometryStreamingUploadMiBPerFrame;
+                    set => SetField(ref _advancedGeometryStreamingUploadMiBPerFrame, Math.Clamp(value, 1, 64));
+                }
+
+                private int _advancedGeometryPageRequestCapacity = 4096;
+
+                /// <summary>
+                /// The number of page requests that the GPU can write in one frame with
+                /// <see cref="AdvancedGeometryStreaming"/> on (256 to 65536). Each request is 16 bytes.
+                /// The task stage writes each missing page only once per frame. When more pages are
+                /// missing, the GPU counts the overflow and the page is requested again in a later
+                /// frame. Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Number of geometry page requests the GPU can write per frame with Advanced geometry streaming on (256 to 65536). Read once at the first Advanced frame.")]
+                public int AdvancedGeometryPageRequestCapacity
+                {
+                    get => _advancedGeometryPageRequestCapacity;
+                    set => SetField(ref _advancedGeometryPageRequestCapacity, Math.Clamp(value, 256, 65536));
                 }
 
                 private float _advancedVirtualGeometryPixelThreshold = 1.0f;

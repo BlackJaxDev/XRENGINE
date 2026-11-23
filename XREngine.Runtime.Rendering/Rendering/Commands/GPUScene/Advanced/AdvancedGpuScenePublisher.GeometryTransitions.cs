@@ -24,6 +24,9 @@ public sealed partial class AdvancedGpuScenePublisher
     private long _prepackHitCount;
     private long _prepackMissCount;
     private long _geometryPagePoolRejectCount;
+    // The frame of the publication that runs now. Pages that a streamed geometry makes resident
+    // at registration count as touched in it.
+    private long _geometryStreamingFrame;
 
     /// <summary>Gets the staged meshes that were copied from a worker-packed entry.</summary>
     internal long PrepackHitCount => _prepackHitCount;
@@ -231,10 +234,11 @@ public sealed partial class AdvancedGpuScenePublisher
 
         EAdvancedGeometryFlags geometryFlags = staged.GeometryFlags;
         bool reservedPages = false;
+        bool streamedPages = false;
         AdvancedGeometryPagePool.PageRange pageRange = default;
         if (staged.Pages is { } pages)
         {
-            reservedPages = TryReserveGeometryPages(pages, in staged, out pageRange);
+            reservedPages = TryReserveGeometryPages(pages, in staged, out pageRange, out streamedPages);
             if (!reservedPages)
                 geometryFlags &= ~EAdvancedGeometryFlags.StreamedPages;
         }
@@ -257,35 +261,104 @@ public sealed partial class AdvancedGpuScenePublisher
             out geometry);
         if (reservedPages)
         {
-            if (added)
-                Database.Scene.Geometry.PagePool.Bind(geometry, pageRange);
-            else
+            if (!added)
                 Database.Scene.Geometry.PagePool.Release(pageRange);
+            else
+            {
+                Database.Scene.Geometry.PagePool.Bind(geometry, pageRange);
+                // The streaming manager loads and evicts the pages that are not resident yet.
+                if (streamedPages)
+                    GetGeometryStreamingManager().RegisterGeometry(geometry, pageRange, staged.Pages!, _geometryStreamingFrame);
+            }
         }
         return added;
     }
 
     /// <summary>
+    /// Returns the residency manager of the geometry page pool, and creates it on the first call
+    /// with the latched upload budget of <see cref="AdvancedVirtualGeometryPolicy"/>.
+    /// </summary>
+    private MeshletPageStreamingManager GetGeometryStreamingManager()
+        => Database.Scene.Geometry.GetOrCreateStreamingManager(new MeshletPageResidencyPolicy
+        {
+            UploadBytesPerUpdate = AdvancedVirtualGeometryPolicy.GeometryStreamingUploadBytes,
+        });
+
+    /// <summary>
+    /// Runs the geometry page streaming step of a publication, before the publication captures
+    /// the page table. Gives the queued GPU feedback to the streaming manager and runs one
+    /// residency update, which loads requested pages into free pool slots and evicts old pages.
+    /// Evicted slots retire until the next sealed publication, the first one whose page table does
+    /// not name them, is reclaimed. Does nothing while streaming is off or before the first
+    /// streamed geometry registers.
+    /// </summary>
+    private void UpdateGeometryStreaming(ulong frameId)
+    {
+        _geometryStreamingFrame = (long)frameId;
+        if (!AdvancedVirtualGeometryPolicy.GeometryStreamingEnabled)
+            return;
+
+        AdvancedGeometryDatabase geometry = Database.Scene.Geometry;
+        if (geometry.StreamingManager is not { } manager)
+        {
+            geometry.StreamingFeedback.Clear();
+            return;
+        }
+
+        using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.GeometryStreaming"))
+        {
+            geometry.StreamingFeedback.DrainTo(manager);
+            manager.Update(
+                _geometryStreamingFrame,
+                AdvancedVirtualGeometryPolicy.PixelThreshold,
+                Database.NextPublicationSequence);
+        }
+    }
+
+    /// <summary>
+    /// True when the page pool changed its page table after <paramref name="publication"/> was
+    /// sealed, so that publication cannot be reused: the next frame must draw with a new capture
+    /// of the page table.
+    /// </summary>
+    private bool HasGeometryPageTableChanged(AdvancedGpuScenePublicationSnapshot publication)
+        => publication.GeometryPayloads.PageTableVersion != Database.Scene.Geometry.PagePool.Version;
+
+    /// <summary>
+    /// Removes a geometry from the streaming manager when its page range is retired or released.
+    /// </summary>
+    private void UnregisterStreamedGeometry(AdvancedGpuHandle geometry)
+        => Database.Scene.Geometry.StreamingManager?.UnregisterGeometry(geometry);
+
+    /// <summary>
     /// Reserves page table entries and pool slots for the pages of a staged geometry, and writes
     /// the first page into the page block of its staged triangle words, which the geometry add
-    /// then copies to the triangle-word arena. Returns false when the pool does not have enough
-    /// free slots; the geometry then registers without
+    /// then copies to the triangle-word arena. With geometry streaming on, a static geometry
+    /// (a page set without skinned topology) gets slots only for its root pages, and
+    /// <paramref name="streamed"/> is true: the caller then registers it with the streaming
+    /// manager, which loads the other pages on request. Otherwise every page gets a slot. Returns
+    /// false when the pool does not have enough free slots; the geometry then registers without
     /// <see cref="EAdvancedGeometryFlags.StreamedPages"/> and draws from its meshlet arenas.
     /// </summary>
     private bool TryReserveGeometryPages(
         MeshletPageSet pages,
         in StagedCanonicalGeometry staged,
-        out AdvancedGeometryPagePool.PageRange range)
+        out AdvancedGeometryPagePool.PageRange range,
+        out bool streamed)
     {
         AdvancedGeometryPagePool pool = Database.Scene.Geometry.PagePool;
         pool.EnsureConfigured(AdvancedVirtualGeometryPolicy.GeometryPagePoolSlotCount);
-        if (!pool.TryReserve(pages, out range))
+        streamed = AdvancedVirtualGeometryPolicy.GeometryStreamingEnabled &&
+            pages.Table.Kind == EMeshletPageFlags.None &&
+            pages.Table.RootPageCount > 0;
+        int residentPageCount = streamed ? pages.Table.RootPageCount : pages.PageImages.Length;
+        if (!pool.TryReserve(pages, residentPageCount, out range))
         {
             ++_geometryPagePoolRejectCount;
             Debug.RenderingWarningEvery(
                 "AdvancedGpuScenePublisher.GeometryPagePoolFull",
                 TimeSpan.FromSeconds(5),
-                $"Geometry page pool has no room for {pages.PageImages.Length} pages (used {pool.UsedSlotCount}/{pool.SlotCount} slots); the geometry draws from its meshlet arenas. Rejected geometries: {_geometryPagePoolRejectCount}.");
+                $"Geometry page pool has no room for {residentPageCount} pages (used {pool.UsedSlotCount}/{pool.SlotCount} slots); the geometry draws from its meshlet arenas. Rejected geometries: {_geometryPagePoolRejectCount}.");
+            streamed = false;
             return false;
         }
 

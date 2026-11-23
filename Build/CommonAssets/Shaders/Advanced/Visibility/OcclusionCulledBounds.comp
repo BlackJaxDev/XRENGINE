@@ -214,8 +214,15 @@ void main()
             meshletIndex >= XR_ADV_MESHLET_HISTORY_MESHLET_CAPACITY)
             break;
 #if defined(XR_ADV_CLUSTER_LOD_CUT)
-        if (cut.applies && !XR_ADV_ClusterInCut(meshletIndex, cut, drawState))
+        if (cut.applies && streamed.valid)
+        {
+            if (!XR_ADV_StreamedClusterCut(meshletIndex, cut, drawState, streamed, view).draw)
+                continue;
+        }
+        else if (cut.applies && !XR_ADV_ClusterInCut(meshletIndex, cut, drawState))
+        {
             continue;
+        }
 #endif
         // The task stage reads the descriptor from the same place: the page of
         // a geometry with geometry pages, or the descriptor table.

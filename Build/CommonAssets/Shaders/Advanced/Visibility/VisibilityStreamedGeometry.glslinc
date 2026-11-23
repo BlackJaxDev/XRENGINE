@@ -15,9 +15,12 @@
 //   the first cluster record.
 // - Page block word 0: the page count. Word 1: the cluster count, which must be
 //   the meshlet count of the geometry. Word 2: the first page of the geometry
-//   in the page table.
+//   in the page table. Word 3: the group count.
 // - Then one word for each cluster, in published meshlet order:
 //   (page << 8) | page-local cluster.
+// - Then one word for each group, in published group order: the
+//   geometry-local page that holds the group. The streamed cut uses it to test
+//   whether the finer group of a cluster is resident.
 // - The page table gives the pool slot of each page, or
 //   XR_ADV_PAGE_NOT_RESIDENT. A slot holds one page image (MeshletPageFormat)
 //   at word slot * XR_ADV_PAGE_WORDS of the pool. An image has an 8-word
@@ -42,7 +45,7 @@
 #define XR_ADV_PAGE_VERTEX_WORDS 16u
 #define XR_ADV_PAGE_FLAG_SKINNED_TOPOLOGY 1u
 #define XR_ADV_PAGE_NOT_RESIDENT 0xFFFFFFFFu
-#define XR_ADV_PAGE_BLOCK_HEADER_WORDS 3u
+#define XR_ADV_PAGE_BLOCK_HEADER_WORDS 4u
 // Words between the stream header and the first cluster record: the stream
 // header and the skin header.
 #define XR_ADV_STREAM_HEADER_DISTANCE 2u
@@ -57,6 +60,8 @@ struct XRAdvancedStreamedGeometry
     uint firstPage;
     uint clusterMapWord;
     uint clusterCount;
+    uint groupMapWord;
+    uint groupCount;
 };
 
 // One cluster in its page: the descriptor with page-local offsets, the pool
@@ -123,6 +128,78 @@ uint XR_ADV_PageSlot(uint globalPage)
     return slot < XR_ADV_PagePoolSlotCount() ? slot : XR_ADV_PAGE_NOT_RESIDENT;
 }
 
+// Geometry streaming feedback. A shader that defines
+// XR_ADV_ENABLE_GEOMETRY_STREAMING_FEEDBACK (the visibility task stage) writes
+// page requests and touch bits. The CPU clears both buffers before the early
+// raster and reads them back after the late raster:
+// - A touch bit marks a pool slot whose page the frame drew or had in its ideal
+//   cut. The streaming manager does not evict a page that was touched recently.
+// - A request names a page that is in the ideal cut but not resident. The
+//   request bit of the page lets only the first lane write the request, so one
+//   page gets one request per frame across clusters, draws, views and both
+//   raster passes.
+// A request buffer without entries (the sentinel that the backend binds while
+// streaming is off) turns the feedback off.
+#define XR_ADV_STREAMING_BAND_OCCLUDED 0u
+#define XR_ADV_STREAMING_BAND_PREFETCH 1u
+#define XR_ADV_STREAMING_BAND_FOREGROUND 2u
+
+#if defined(XR_ADV_BACKEND_VULKAN) && defined(XR_ADV_ENABLE_GEOMETRY_STREAMING_FEEDBACK)
+bool XR_ADV_StreamingFeedbackEnabled()
+{
+    return XR_ADV_VisibilityGeometryPageRequests.entries.length() > 0;
+}
+
+uint XR_ADV_StreamingTouchWordCount()
+{
+    return (XR_ADV_PagePoolSlotCount() + 31u) / 32u;
+}
+
+// Sets the touch bit of a pool slot. The plain read first skips the atomic for a
+// bit that another lane already set.
+void XR_ADV_StreamingTouchSlot(uint slot)
+{
+    if (!XR_ADV_StreamingFeedbackEnabled() || slot >= XR_ADV_PagePoolSlotCount())
+        return;
+    uint word = slot >> 5u;
+    uint bit = 1u << (slot & 31u);
+    if (word >= uint(XR_ADV_VisibilityGeometryPageFeedbackBits.words.length()) ||
+        (XR_ADV_VisibilityGeometryPageFeedbackBits.words[word] & bit) != 0u)
+        return;
+    atomicOr(XR_ADV_VisibilityGeometryPageFeedbackBits.words[word], bit);
+}
+
+// Writes one request for a global page, unless another lane already requested
+// it in this frame. A request past the buffer capacity counts as an overflow;
+// the page is requested again in a later frame.
+void XR_ADV_StreamingRequestPage(uint globalPage, uint band, uint priority, float pixelScale)
+{
+    if (!XR_ADV_StreamingFeedbackEnabled() || globalPage >= XR_ADV_PageTableLength())
+        return;
+    uint word = XR_ADV_StreamingTouchWordCount() + (globalPage >> 5u);
+    uint bit = 1u << (globalPage & 31u);
+    if (word >= uint(XR_ADV_VisibilityGeometryPageFeedbackBits.words.length()) ||
+        (XR_ADV_VisibilityGeometryPageFeedbackBits.words[word] & bit) != 0u)
+        return;
+    if ((atomicOr(XR_ADV_VisibilityGeometryPageFeedbackBits.words[word], bit) & bit) != 0u)
+        return;
+    uint index = atomicAdd(XR_ADV_VisibilityGeometryPageRequests.count, 1u);
+    if (index < uint(XR_ADV_VisibilityGeometryPageRequests.entries.length()))
+    {
+        XR_ADV_VisibilityGeometryPageRequests.entries[index] = uvec4(
+            globalPage, (band << 16u) | min(priority, 0xFFFFu), floatBitsToUint(pixelScale), 0u);
+    }
+    else
+    {
+        atomicAdd(XR_ADV_VisibilityGeometryPageRequests.overflow, 1u);
+    }
+}
+#else
+bool XR_ADV_StreamingFeedbackEnabled() { return false; }
+void XR_ADV_StreamingTouchSlot(uint slot) { }
+void XR_ADV_StreamingRequestPage(uint globalPage, uint band, uint priority, float pixelScale) { }
+#endif
+
 // Reads one word of a resident page. localWord must be below XR_ADV_PAGE_WORDS.
 uint XR_ADV_PageWord(XRAdvancedStreamedCluster cluster, uint localWord)
 {
@@ -140,6 +217,8 @@ XRAdvancedStreamedGeometry XR_ADV_StreamedGeometry(XRAdvancedGeometryRecord geom
     streamed.firstPage = 0u;
     streamed.clusterMapWord = 0u;
     streamed.clusterCount = 0u;
+    streamed.groupMapWord = 0u;
+    streamed.groupCount = 0u;
     if ((geometry.flags & XR_ADV_GEOMETRY_FLAG_STREAMED_PAGES) == 0u ||
         geometry.reservedLayout0 == 0u ||
         geometry.reservedLayout1 < XR_ADV_STREAM_HEADER_DISTANCE)
@@ -158,12 +237,14 @@ XRAdvancedStreamedGeometry XR_ADV_StreamedGeometry(XRAdvancedGeometryRecord geom
     uint pageCount = XR_ADV_StreamedWord(block);
     uint clusterCount = XR_ADV_StreamedWord(block + 1u);
     uint firstPage = XR_ADV_StreamedWord(block + 2u);
+    uint groupCount = XR_ADV_StreamedWord(block + 3u);
     uint clusterMapWord = block + XR_ADV_PAGE_BLOCK_HEADER_WORDS;
     if (pageCount == 0u || pageCount > 0x00FFFFFFu ||
         firstPage == XR_ADV_PAGE_NOT_RESIDENT ||
         firstPage > 0xFFFFFFFFu - pageCount ||
         clusterCount != geometry.meshletCount ||
-        clusterCount > wordCount - clusterMapWord)
+        clusterCount > wordCount - clusterMapWord ||
+        groupCount > wordCount - clusterMapWord - clusterCount)
         return streamed;
 
     streamed.valid = true;
@@ -172,7 +253,36 @@ XRAdvancedStreamedGeometry XR_ADV_StreamedGeometry(XRAdvancedGeometryRecord geom
     streamed.firstPage = firstPage;
     streamed.clusterMapWord = clusterMapWord;
     streamed.clusterCount = clusterCount;
+    streamed.groupMapWord = clusterMapWord + clusterCount;
+    streamed.groupCount = groupCount;
     return streamed;
+}
+
+// The global page (page table entry) of a geometry-local cluster, or
+// XR_ADV_PAGE_NOT_RESIDENT when the cluster or its map word is out of range.
+uint XR_ADV_StreamedClusterGlobalPage(XRAdvancedStreamedGeometry streamed, uint cluster)
+{
+    if (!streamed.valid || cluster >= streamed.clusterCount)
+        return XR_ADV_PAGE_NOT_RESIDENT;
+    uint page = XR_ADV_StreamedWord(streamed.clusterMapWord + cluster) >> 8u;
+    return page < streamed.pageCount ? streamed.firstPage + page : XR_ADV_PAGE_NOT_RESIDENT;
+}
+
+// The global page (page table entry) of a group, or XR_ADV_PAGE_NOT_RESIDENT
+// when the group or its map word is out of range.
+uint XR_ADV_StreamedGroupGlobalPage(XRAdvancedStreamedGeometry streamed, uint group)
+{
+    if (!streamed.valid || group >= streamed.groupCount)
+        return XR_ADV_PAGE_NOT_RESIDENT;
+    uint page = XR_ADV_StreamedWord(streamed.groupMapWord + group);
+    return page < streamed.pageCount ? streamed.firstPage + page : XR_ADV_PAGE_NOT_RESIDENT;
+}
+
+// The pool slot of a global page, or XR_ADV_PAGE_NOT_RESIDENT. Accepts
+// XR_ADV_PAGE_NOT_RESIDENT as the page.
+uint XR_ADV_StreamedPageSlot(uint globalPage)
+{
+    return globalPage == XR_ADV_PAGE_NOT_RESIDENT ? XR_ADV_PAGE_NOT_RESIDENT : XR_ADV_PageSlot(globalPage);
 }
 
 // Finds the page of a geometry-local cluster and its pool slot, checks the

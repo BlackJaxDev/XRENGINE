@@ -178,6 +178,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             _device = device;
             if (!TryCreatePersistentStateStorage(out reason) ||
                 !TryCreateMeshletHistoryStorage(out reason) ||
+                !TryCreateGeometryFeedbackStorage(out reason) ||
                 !TryCreateDescriptorStorage(device, out reason))
             {
                 RetireNativeStorageNoLock();
@@ -273,6 +274,9 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 reason = "Ready (immutable family reuse)";
                 return true;
             }
+            // A new frame generation of this slot means its earlier submission is complete, so the
+            // geometry page feedback of that frame can be read before the new frame clears it.
+            CollectGeometryFeedbackNoLock(frameSlot);
             // The descriptor ABI requires nonzero storage ranges even when this
             // publication has no logical draws. Keep the logical capacity below
             // at zero so no native stage can mistake backing storage for work.
@@ -542,6 +546,15 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 failure = EVulkanAdvancedVisibilityResourceFailure.InvalidPreparation;
                 return false;
             }
+            ResolveGeometryFeedbackBinding(
+                frameSlot,
+                in realizedGeometry,
+                out VkBufferHandle geometryPageRequests,
+                out ulong geometryPageRequestBytes,
+                out VkBufferHandle geometryPageFeedbackBits,
+                out ulong geometryPageFeedbackBitBytes,
+                out int geometryFeedbackTouchWords,
+                out int geometryFeedbackBitWords);
             VulkanAdvancedVisibilityFamilySeal realizedSeal =
                 familySeal with { Geometry = realizedGeometry };
             if (!realizedSeal.IsValid || !realizedGeometry.IsValid)
@@ -589,7 +602,11 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 PayloadCapacity: publication.DrawCount,
                 RangeCapacity: Math.Max(1u, indirect.RangeCount),
                 IndexedInstanceGroupCount: (uint)input.IndexedInstanceGroups.Length,
-                IndirectArgumentCapacity: totalPayloadCapacity);
+                IndirectArgumentCapacity: totalPayloadCapacity,
+                GeometryPageRequestsBuffer: geometryPageRequests,
+                GeometryPageRequestsByteLength: geometryPageRequestBytes,
+                GeometryPageFeedbackBitsBuffer: geometryPageFeedbackBits,
+                GeometryPageFeedbackBitsByteLength: geometryPageFeedbackBitBytes);
             if (!TryUpdateDescriptorSet(
                     candidateState.DescriptorSet,
                     in candidateState,
@@ -607,6 +624,11 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             }
             current = candidateState;
             _familySeals[frameSlot] = realizedSeal;
+            MarkGeometryFeedbackPendingNoLock(
+                frameSlot,
+                in realizedGeometry,
+                geometryFeedbackTouchWords,
+                geometryFeedbackBitWords);
             state = current;
             failure = EVulkanAdvancedVisibilityResourceFailure.None;
             reason = "Ready";
@@ -893,7 +915,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilitySkinPalettesBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPagePoolBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageTableBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageTableBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageRequestsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageFeedbackBitsBinding];
         ReadOnlySpan<uint> nativeStorageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeActiveTilesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeKernelTilesBinding,
@@ -1295,7 +1319,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             state.BoundsRoutes, state.BoundsRoutes, state.BoundsRoutes,
             state.IndexedInstanceGroups, state.EarlyIndexedGroupCounts,
             state.LateIndexedGroupCounts, default, state.BoundsRoutes,
-            state.Geometry.GeometryPagePool, state.Geometry.GeometryPageTable
+            state.Geometry.GeometryPagePool, state.Geometry.GeometryPageTable,
+            default, default
         };
         ReadOnlySpan<uint> storageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.VisibilityCandidatesBinding,
@@ -1334,7 +1359,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilitySkinPalettesBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPagePoolBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageTableBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageTableBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageRequestsBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageFeedbackBitsBinding];
         if (slices.Length != storageBindingNumbers.Length)
         {
             reason = "The advanced-visibility storage binding map is incomplete.";
@@ -1379,6 +1406,22 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                     Offset = state.BoundsMetadata.Offset,
                     Range = state.BoundsMetadata.Length,
                 },
+                _ when storageBindingNumbers[index] ==
+                    VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageRequestsBinding =>
+                    new DescriptorBufferInfo
+                    {
+                        Buffer = state.GeometryPageRequestsBuffer,
+                        Offset = 0u,
+                        Range = state.GeometryPageRequestsByteLength,
+                    },
+                _ when storageBindingNumbers[index] ==
+                    VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageFeedbackBitsBinding =>
+                    new DescriptorBufferInfo
+                    {
+                        Buffer = state.GeometryPageFeedbackBitsBuffer,
+                        Offset = 0u,
+                        Range = state.GeometryPageFeedbackBitsByteLength,
+                    },
                 _ when storageBindingNumbers[index] ==
                     VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding =>
                     new DescriptorBufferInfo
@@ -2634,6 +2677,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         _lateOperationGenerations.AsSpan().Clear();
         _nativeComputeDescriptorGenerations.AsSpan().Clear();
         _nativeComputeDescriptorSignatures.AsSpan().Clear();
+        ResetGeometryFeedbackNoLock();
         _persistentStateTopologyGeneration++;
         _persistentStateContentGeneration++;
         reason = "Ready";
@@ -2695,6 +2739,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             _meshletHistoryBuffer = default;
             _meshletHistoryMemory = default;
         }
+        RetireGeometryFeedbackStorageNoLock();
         _states.AsSpan().Clear();
         _familySeals.AsSpan().Clear();
         _assignedReservation = default;

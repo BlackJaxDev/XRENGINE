@@ -29,6 +29,13 @@ public sealed class AdvancedGeometryPublicationSnapshot
     public AdvancedGeometryPagePool PagePool => _geometry.PagePool;
 
     /// <summary>
+    /// The queue that takes the geometry page feedback of completed GPU frames. A backend that
+    /// binds the page request and touch-bit buffers reads them after the GPU finishes the frame and
+    /// adds them here. The publisher drains the queue on its next streaming update.
+    /// </summary>
+    public Meshlets.MeshletPageFeedbackQueue StreamingFeedback => _geometry.StreamingFeedback;
+
+    /// <summary>
     /// The page table at the seal of this publication: the pool slot of each page, or
     /// <see cref="AdvancedGeometryPagePool.NotResident"/>. The page blocks of the geometries in this
     /// publication index it.

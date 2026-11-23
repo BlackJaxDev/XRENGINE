@@ -825,6 +825,10 @@
           "type": "boolean",
           "description": "Enables or disables GeometryPages."
         },
+        "GeometryStreaming": {
+          "type": "boolean",
+          "description": "Enables or disables GeometryStreaming."
+        },
         "OpenGL": {
           "$ref": "#/definitions/UnitTestingOpenGLRenderSettings",
           "description": "Generated from OpenGL on UnitTestingRenderSettings."

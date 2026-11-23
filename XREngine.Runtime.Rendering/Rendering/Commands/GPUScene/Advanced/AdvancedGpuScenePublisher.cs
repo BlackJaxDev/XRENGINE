@@ -261,6 +261,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // the next publication. Reclaim acknowledged deltas here so a full
         // journal cannot prevent the transaction that would normally reclaim it.
         Database.ReclaimAcknowledgedTombstones();
+        // Page loads and evictions change the page table, which the publication below captures.
+        UpdateGeometryStreaming(frameId);
         AdvancedGlobalResourceCapture acceptedGlobalResources =
             globalResources.FrameId == frameId
                 ? globalResources
@@ -1522,6 +1524,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         if (!Database.Scene.Geometry.Records.TryTombstone(geometry, _sequence))
             return false;
 
+        UnregisterStreamedGeometry(geometry);
         Database.Scene.Geometry.PagePool.RetireGeometry(geometry, _sequence);
         return true;
     }
@@ -1544,6 +1547,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         if (geometry.IsValid)
         {
             Database.Scene.Geometry.Records.TryRemoveImmediatelyBeforePublication(geometry);
+            UnregisterStreamedGeometry(geometry);
             Database.Scene.Geometry.PagePool.ReleaseGeometry(geometry);
         }
         if (deformation.IsValid)

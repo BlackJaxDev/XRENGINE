@@ -118,6 +118,20 @@ public sealed class AdvancedSharedGpuSceneDatabase
         }
     }
 
+    /// <summary>
+    /// The sequence that the next publication receives when it begins. A publication that is
+    /// rejected before its seal does not use it up, so every later sealed publication has this
+    /// sequence or a higher one.
+    /// </summary>
+    public ulong NextPublicationSequence
+    {
+        get
+        {
+            lock (_publicationSync)
+                return _nextPublicationSequence;
+        }
+    }
+
     public ulong LastSealedPublicationSequence
     {
         get

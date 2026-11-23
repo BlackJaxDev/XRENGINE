@@ -26,6 +26,9 @@ public static class AdvancedVirtualGeometryPolicy
     private static float _pixelThreshold = 1.0f;
     private static bool _geometryPages;
     private static int _geometryPagePoolSlotCount;
+    private static bool _geometryStreaming;
+    private static long _geometryStreamingUploadBytes;
+    private static int _geometryPageRequestCapacity;
 
     /// <summary>
     /// True when the Vulkan Advanced path selects a cluster cut for static meshlet draws of cluster
@@ -116,6 +119,31 @@ public static class AdvancedVirtualGeometryPolicy
     public static int GeometryPagePoolSlotCount
         => GeometryPagesEnabled ? _geometryPagePoolSlotCount : 0;
 
+    /// <summary>
+    /// True when <see cref="GeometryPagesEnabled"/> and the geometry streaming setting are both on.
+    /// The publisher then makes only the root pages of a static paged geometry resident, the task
+    /// stage writes page requests and touch bits, and the streaming manager loads and evicts pages
+    /// from that feedback. The value is latched with the other settings, because the visibility
+    /// buffers and the task stage variant must agree in every frame.
+    /// </summary>
+    public static bool GeometryStreamingEnabled
+        => GeometryPagesEnabled && _geometryStreaming;
+
+    /// <summary>
+    /// The latched upload budget of geometry streaming, in bytes per publication. Zero when
+    /// <see cref="GeometryStreamingEnabled"/> is off.
+    /// </summary>
+    public static long GeometryStreamingUploadBytes
+        => GeometryStreamingEnabled ? _geometryStreamingUploadBytes : 0L;
+
+    /// <summary>
+    /// The latched number of page requests that the GPU can write in one frame. Zero when
+    /// <see cref="GeometryStreamingEnabled"/> is off; the visibility runtime then binds an empty
+    /// request buffer, which turns the feedback writes off.
+    /// </summary>
+    public static int GeometryPageRequestCapacity
+        => GeometryStreamingEnabled ? _geometryPageRequestCapacity : 0;
+
     /// <summary>The latched cut threshold, in render pixels of projected error.</summary>
     public static float PixelThreshold
     {
@@ -159,9 +187,13 @@ public static class AdvancedVirtualGeometryPolicy
             _geometryPagePoolSlotCount = Math.Min(
                 (int)((long)RuntimeEngine.Rendering.Settings.AdvancedGeometryPagePoolMiB * 1024L * 1024L / AdvancedGeometryPagePool.SlotBytes),
                 AdvancedGeometryPagePool.MaximumSlotCount);
+            _geometryStreaming = RuntimeEngine.Rendering.Settings.AdvancedGeometryStreaming;
+            _geometryStreamingUploadBytes = (long)RuntimeEngine.Rendering.Settings.AdvancedGeometryStreamingUploadMiBPerFrame * 1024L * 1024L;
+            _geometryPageRequestCapacity = RuntimeEngine.Rendering.Settings.AdvancedGeometryPageRequestCapacity;
             _latched = true;
+            bool streaming = _enabled && _geometryPages && _geometryStreaming;
             XREngine.Debug.Rendering(
-                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, skinned {(_enabled && _skinnedEnabled ? "on" : "off")}, skinned posed bounds {(_enabled && _skinnedEnabled && _skinnedPosedBounds ? "on" : "off")}, skinned deformation level of detail {(_enabled && _skinnedEnabled && _deformationLodEnabled ? "on" : "off")}, geometry pages {(_enabled && _geometryPages ? $"on ({_geometryPagePoolSlotCount} pool slots)" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
+                $"Advanced virtual geometry {(_enabled ? "on" : "off")}, skinned {(_enabled && _skinnedEnabled ? "on" : "off")}, skinned posed bounds {(_enabled && _skinnedEnabled && _skinnedPosedBounds ? "on" : "off")}, skinned deformation level of detail {(_enabled && _skinnedEnabled && _deformationLodEnabled ? "on" : "off")}, geometry pages {(_enabled && _geometryPages ? $"on ({_geometryPagePoolSlotCount} pool slots)" : "off")}, geometry streaming {(streaming ? $"on ({_geometryStreamingUploadBytes / (1024 * 1024)} MiB per publication, {_geometryPageRequestCapacity} requests per frame)" : "off")}, threshold {_pixelThreshold:0.###} px (read once; changes apply at the next start).");
         }
     }
 }

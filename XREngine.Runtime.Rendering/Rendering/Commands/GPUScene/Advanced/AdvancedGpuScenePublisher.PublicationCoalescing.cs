@@ -36,7 +36,8 @@ public sealed partial class AdvancedGpuScenePublisher
             // Keep this inspection lease until the retained span comparison ends.
             if (!Database.TryGetPublicationSnapshot(in candidate, out AdvancedGpuScenePublicationSnapshot retainedPublication))
                 return false;
-            hasMutation = HasPlannedPublicationMutation(frameId, retainedPublication.Submission.DeformationSources);
+            hasMutation = HasGeometryPageTableChanged(retainedPublication) ||
+                HasPlannedPublicationMutation(frameId, retainedPublication.Submission.DeformationSources);
         }
         finally
         {

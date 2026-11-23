@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using XREngine.Rendering.Meshlets;
 
 namespace XREngine.Rendering.Commands;
 
@@ -66,6 +67,26 @@ public sealed class AdvancedGeometryDatabase
     /// registers such a geometry and retires them with the geometry record.
     /// </summary>
     public AdvancedGeometryPagePool PagePool { get; } = new();
+
+    /// <summary>
+    /// The geometry page feedback of completed GPU frames. The backend adds each frame after the
+    /// GPU finishes it, and the publisher drains it into <see cref="StreamingManager"/> before each
+    /// streaming update.
+    /// </summary>
+    public MeshletPageFeedbackQueue StreamingFeedback { get; } = new();
+
+    /// <summary>
+    /// The residency manager of the streamed geometry pages, or null until the publisher registers
+    /// the first streamed geometry (see <see cref="GetOrCreateStreamingManager"/>).
+    /// </summary>
+    public MeshletPageStreamingManager? StreamingManager { get; private set; }
+
+    /// <summary>
+    /// Returns the residency manager of <see cref="PagePool"/>, and creates it with
+    /// <paramref name="policy"/> on the first call. Only the publisher thread calls it.
+    /// </summary>
+    public MeshletPageStreamingManager GetOrCreateStreamingManager(MeshletPageResidencyPolicy policy)
+        => StreamingManager ??= new MeshletPageStreamingManager(PagePool, policy);
 
     public bool TryAddStatic(
         ReadOnlySpan<byte> vertices,

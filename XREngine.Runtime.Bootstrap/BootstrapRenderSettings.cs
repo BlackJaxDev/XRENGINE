@@ -128,6 +128,7 @@ public static class BootstrapRenderSettings
             renderSettings.AdvancedSkinnedPosedClusterBounds = settings.Rendering.SkinnedPosedClusterBounds;
             renderSettings.AdvancedVirtualGeometryPixelThreshold = settings.Rendering.VirtualGeometryPixelThreshold;
             renderSettings.AdvancedGeometryPages = settings.Rendering.GeometryPages;
+            renderSettings.AdvancedGeometryStreaming = settings.Rendering.GeometryStreaming;
             Engine.GameSettings.VulkanPresentationProfileOverride = new(
                 settings.Rendering.Vulkan.PresentationProfile,
                 true);

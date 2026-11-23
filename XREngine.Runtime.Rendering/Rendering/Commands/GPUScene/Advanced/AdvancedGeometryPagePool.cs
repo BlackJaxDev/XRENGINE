@@ -25,8 +25,12 @@ namespace XREngine.Rendering.Commands;
 /// overwritten.
 /// </para>
 /// <para>
-/// Every page of a registered geometry is resident. A later residency manager makes entries
-/// change between a slot and <see cref="NotResident"/> at publication boundaries.
+/// A geometry can register with only some of its pages resident (for example only its root
+/// pages). The streaming manager (<see cref="XREngine.Rendering.Meshlets.MeshletPageStreamingManager"/>)
+/// then loads pages into free slots (<see cref="TryLoadPage"/>) and evicts pages
+/// (<see cref="EvictPage"/>). An entry changes between a slot and <see cref="NotResident"/> only
+/// in the next captured page table, so each publication reads one consistent table. An evicted
+/// slot follows the same retirement rule as the slots of a retired geometry.
 /// </para>
 /// </remarks>
 public sealed class AdvancedGeometryPagePool
@@ -83,6 +87,21 @@ public sealed class AdvancedGeometryPagePool
         get { lock (_gate) return _slotCount - _freeSlotCount; }
     }
 
+    /// <summary>The slots that are free now and can take a page.</summary>
+    public int FreeSlotCount
+    {
+        get { lock (_gate) return _freeSlotCount; }
+    }
+
+    /// <summary>
+    /// The slots that were evicted or retired and wait for <see cref="ReclaimAcknowledged"/>.
+    /// They return to the free list after the publications that name them are reclaimed.
+    /// </summary>
+    public int RetiringSlotCount
+    {
+        get { lock (_gate) return _retiredSlots.Count; }
+    }
+
     /// <summary>The number of page table entries in use or retired: the page table length.</summary>
     public int PageTableLength
     {
@@ -126,21 +145,35 @@ public sealed class AdvancedGeometryPagePool
     public bool TryReserve(MeshletPageSet pages, out PageRange range)
     {
         ArgumentNullException.ThrowIfNull(pages);
+        return TryReserve(pages, pages.PageImages.Length, out range);
+    }
+
+    /// <summary>
+    /// Reserves a page table entry for every page of <paramref name="pages"/>, and a slot for each
+    /// of the first <paramref name="residentPageCount"/> pages. The other entries are
+    /// <see cref="NotResident"/> until <see cref="TryLoadPage"/> loads them. The root pages are the
+    /// first pages of a page set, so a streamed geometry passes its root page count. Returns false,
+    /// and changes nothing, when the pool does not have enough free slots or a resident image is
+    /// empty or larger than a slot.
+    /// </summary>
+    public bool TryReserve(MeshletPageSet pages, int residentPageCount, out PageRange range)
+    {
+        ArgumentNullException.ThrowIfNull(pages);
         range = default;
         int pageCount = pages.PageImages.Length;
-        if (pageCount == 0)
+        if (pageCount == 0 || residentPageCount < 0 || residentPageCount > pageCount)
             return false;
 
         lock (_gate)
         {
-            if (pageCount > _freeSlotCount)
+            if (residentPageCount > _freeSlotCount)
                 return false;
-            for (int page = 0; page < pageCount; ++page)
-                if (pages.PageImages[page] is not { Length: > 0 and <= SlotBytes })
+            for (int page = 0; page < residentPageCount; ++page)
+                if (!IsValidImage(pages.PageImages[page]))
                     return false;
 
             uint firstPage = AllocatePageRangeNoLock(pageCount);
-            for (int page = 0; page < pageCount; ++page)
+            for (int page = 0; page < residentPageCount; ++page)
             {
                 int slot = _freeSlots[--_freeSlotCount];
                 _slotImages[slot] = pages.PageImages[page];
@@ -148,6 +181,62 @@ public sealed class AdvancedGeometryPagePool
             }
             ++_version;
             range = new PageRange(firstPage, pageCount);
+            return true;
+        }
+    }
+
+    /// <summary>Returns the slot of a page table entry, or <see cref="NotResident"/>.</summary>
+    public uint GetSlot(uint globalPage)
+    {
+        lock (_gate)
+            return globalPage < (uint)_pageHighWater ? _pageTable[globalPage] : NotResident;
+    }
+
+    /// <summary>
+    /// Puts <paramref name="image"/> in a free slot and points the page table entry at it. The
+    /// next captured page table names the slot, and a backend writes the slot image before it binds
+    /// that table. Returns false, and changes nothing, when no slot is free, the entry is outside
+    /// the table or already resident, or the image is empty or larger than a slot.
+    /// </summary>
+    public bool TryLoadPage(uint globalPage, byte[]? image, out int slot)
+    {
+        slot = -1;
+        if (!IsValidImage(image))
+            return false;
+
+        lock (_gate)
+        {
+            if (_freeSlotCount == 0 || globalPage >= (uint)_pageHighWater || _pageTable[globalPage] != NotResident)
+                return false;
+
+            slot = _freeSlots[--_freeSlotCount];
+            _slotImages[slot] = image;
+            _pageTable[globalPage] = (uint)slot;
+            ++_version;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Sets a resident page table entry to <see cref="NotResident"/> in the next captured table,
+    /// and retires its slot. The slot keeps its image and returns to the free list when
+    /// <see cref="ReclaimAcknowledged"/> reaches <paramref name="publicationGeneration"/>: the
+    /// generation of the publication that captures the eviction. Returns false when the entry is
+    /// not resident.
+    /// </summary>
+    public bool EvictPage(uint globalPage, ulong publicationGeneration)
+    {
+        lock (_gate)
+        {
+            if (globalPage >= (uint)_pageHighWater)
+                return false;
+            ref uint entry = ref _pageTable[globalPage];
+            if (entry == NotResident)
+                return false;
+
+            _retiredSlots.Add(new RetiredSlot((int)entry, publicationGeneration));
+            entry = NotResident;
+            ++_version;
             return true;
         }
     }
@@ -271,6 +360,9 @@ public sealed class AdvancedGeometryPagePool
             return _version;
         }
     }
+
+    private static bool IsValidImage(byte[]? image)
+        => image is { Length: > 0 and <= SlotBytes };
 
     private uint AllocatePageRangeNoLock(int pageCount)
     {

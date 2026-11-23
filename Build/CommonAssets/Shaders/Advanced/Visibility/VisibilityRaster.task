@@ -27,6 +27,12 @@
 // reads the descriptor from the page of the cluster; another geometry reads the
 // meshlet descriptor table.
 //
+// Geometry streaming: a geometry with geometry pages uses the streamed cut
+// (XR_ADV_StreamedClusterCut), which draws a cluster only when its page is
+// resident and keeps a parent drawn while the finer page is missing. Every lane
+// of such a geometry writes its page request and touch bit at the cut, before
+// the history, cone and Hi-Z tests, so occlusion does not change the requests.
+//
 // View rule: the task stage cannot read gl_ViewIndex, so every test uses the
 // view record and the history of push.viewIndex. The mesh stage discards all
 // hardware views except push.viewIndex, so this output rasterizes only into
@@ -44,6 +50,7 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
 
 #define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityRasterPush.viewIndex
 #define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
+#define XR_ADV_ENABLE_GEOMETRY_STREAMING_FEEDBACK 1
 #if defined(XR_ADV_VISIBILITY_LATE_TASK)
 #define XR_ADV_ENABLE_DEPTH_PYRAMID_IMAGES 1
 #endif
@@ -143,7 +150,24 @@ void main()
             if (producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
                 XR_ADV_ClusterCutUseDrawBound(cut, payloadIndex, payload, drawState);
 #endif
-            bool inCut = !cut.applies || XR_ADV_ClusterInCut(meshletIndex, cut, drawState);
+            bool inCut;
+            if (cut.applies && streamed.valid)
+            {
+                XRAdvancedStreamedCutResult streamedCut =
+                    XR_ADV_StreamedClusterCut(meshletIndex, cut, drawState, streamed, view);
+                inCut = streamedCut.draw;
+                if (streamedCut.touch)
+                    XR_ADV_StreamingTouchSlot(streamedCut.groupSlot);
+                if (streamedCut.request)
+                {
+                    XR_ADV_StreamingRequestPage(
+                        streamedCut.groupPage, streamedCut.band, streamedCut.priority, streamedCut.pixelScale);
+                }
+            }
+            else
+            {
+                inCut = !cut.applies || XR_ADV_ClusterInCut(meshletIndex, cut, drawState);
+            }
 #else
             bool inCut = true;
 #endif

@@ -89,6 +89,12 @@ internal static class VulkanAdvancedSceneProgramBindingContract
     // not resident. The meshlet task and mesh stages read cluster data through them.
     internal const uint VisibilityGeometryPagePoolBinding = 73u;
     internal const uint VisibilityGeometryPageTableBinding = 74u;
+    // Geometry page streaming feedback of the frame slot. The meshlet task stage writes one request
+    // for each missing page of the cut, and sets the touch bit of each resident slot that it uses
+    // and the request bit of each requested page. The visibility runtime reads both after the slot's
+    // submission completes. A request buffer without entries turns the feedback off.
+    internal const uint VisibilityGeometryPageRequestsBinding = 75u;
+    internal const uint VisibilityGeometryPageFeedbackBitsBinding = 76u;
     internal const uint VisibilityDepthPyramidSampledBinding = 42u;
 internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint VisibilityDeformationOverlayBinding = 46u;
@@ -360,6 +366,8 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
             VisibilitySkinPalettesBinding or
             VisibilityGeometryPagePoolBinding or
             VisibilityGeometryPageTableBinding or
+            VisibilityGeometryPageRequestsBinding or
+            VisibilityGeometryPageFeedbackBitsBinding or
             VisibilityDeformationOverlayBinding or
             VisibilityCanonicalIndicesBinding or
             VisibilityReconstructionCountersBinding or

@@ -161,6 +161,64 @@ public sealed class AdvancedGeometryPagePoolTests
         pool.PoolBytes.ShouldBe(4L * AdvancedGeometryPagePool.SlotBytes);
     }
 
+    [Test]
+    public void TryReserve_WithAResidentPageCount_LeavesTheOtherEntriesNotResident()
+    {
+        AdvancedGeometryPagePool pool = CreatePool(4);
+        MeshletPageSet pages = CreatePages(3);
+
+        pool.TryReserve(pages, residentPageCount: 1, out AdvancedGeometryPagePool.PageRange range).ShouldBeTrue();
+
+        range.PageCount.ShouldBe(3);
+        pool.UsedSlotCount.ShouldBe(1);
+        pool.GetSlot(range.FirstPage).ShouldNotBe(AdvancedGeometryPagePool.NotResident);
+        pool.GetSlot(range.FirstPage + 1).ShouldBe(AdvancedGeometryPagePool.NotResident);
+        pool.GetSlot(range.FirstPage + 2).ShouldBe(AdvancedGeometryPagePool.NotResident);
+    }
+
+    [Test]
+    public void TryLoadPage_FillsAFreeSlotOnce()
+    {
+        AdvancedGeometryPagePool pool = CreatePool(2);
+        MeshletPageSet pages = CreatePages(3);
+        pool.TryReserve(pages, residentPageCount: 1, out AdvancedGeometryPagePool.PageRange range).ShouldBeTrue();
+        ulong version = pool.Version;
+
+        pool.TryLoadPage(range.FirstPage + 1, pages.PageImages[1], out int slot).ShouldBeTrue();
+
+        pool.GetSlot(range.FirstPage + 1).ShouldBe((uint)slot);
+        pool.Version.ShouldNotBe(version);
+        byte[]?[] images = new byte[]?[pool.SlotCount];
+        pool.CaptureSlotImages(images);
+        images[slot].ShouldBeSameAs(pages.PageImages[1]);
+
+        // The entry is resident, and the pool has no free slot for the third page.
+        pool.TryLoadPage(range.FirstPage + 1, pages.PageImages[1], out _).ShouldBeFalse();
+        pool.TryLoadPage(range.FirstPage + 2, pages.PageImages[2], out _).ShouldBeFalse();
+        pool.TryLoadPage(range.FirstPage + 2, null, out _).ShouldBeFalse();
+    }
+
+    [Test]
+    public void EvictPage_RetiresTheSlotUntilThePublicationIsAcknowledged()
+    {
+        AdvancedGeometryPagePool pool = CreatePool(2);
+        MeshletPageSet pages = CreatePages(3);
+        pool.TryReserve(pages, residentPageCount: 1, out AdvancedGeometryPagePool.PageRange range).ShouldBeTrue();
+        pool.TryLoadPage(range.FirstPage + 1, pages.PageImages[1], out _).ShouldBeTrue();
+
+        pool.EvictPage(range.FirstPage + 1, publicationGeneration: 4u).ShouldBeTrue();
+
+        pool.GetSlot(range.FirstPage + 1).ShouldBe(AdvancedGeometryPagePool.NotResident);
+        pool.FreeSlotCount.ShouldBe(0);
+        pool.RetiringSlotCount.ShouldBe(1);
+        pool.EvictPage(range.FirstPage + 1, 4u).ShouldBeFalse();
+
+        pool.ReclaimAcknowledged(4u);
+        pool.FreeSlotCount.ShouldBe(1);
+        pool.RetiringSlotCount.ShouldBe(0);
+        pool.TryLoadPage(range.FirstPage + 2, pages.PageImages[2], out _).ShouldBeTrue();
+    }
+
     private static AdvancedGeometryPagePool CreatePool(int slotCount)
     {
         AdvancedGeometryPagePool pool = new();

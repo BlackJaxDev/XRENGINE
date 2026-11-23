@@ -57,6 +57,13 @@ public class UnitTestingRenderSettings
     /// the pages. False (the default) draws from the meshlet tables.
     /// </summary>
     public bool GeometryPages { get; set; }
+
+    /// <summary>
+    /// Sets the <c>AdvancedGeometryStreaming</c> engine setting: with <see cref="GeometryPages"/> on,
+    /// static paged models keep only their root pages resident and stream the finer pages that the
+    /// cluster cut requests. False (the default) keeps every page resident.
+    /// </summary>
+    public bool GeometryStreaming { get; set; }
     public UnitTestingOpenGLRenderSettings OpenGL { get; set; } = new();
     public UnitTestingVulkanRenderSettings Vulkan { get; set; } = new();
 }

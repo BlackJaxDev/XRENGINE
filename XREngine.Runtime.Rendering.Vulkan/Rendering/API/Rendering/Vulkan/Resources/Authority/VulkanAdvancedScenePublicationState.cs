@@ -53,7 +53,8 @@ internal readonly record struct VulkanAdvancedScenePublicationState(
     VulkanAdvancedSceneLookupSegments LookupSegments,
     VulkanAdvancedNativeShadingKernelFamilies KernelFamilies = default,
     VulkanFrameDataSlice GeometryPagePool = default,
-    VulkanFrameDataSlice GeometryPageTable = default)
+    VulkanFrameDataSlice GeometryPageTable = default,
+    XREngine.Rendering.Meshlets.MeshletPageFeedbackQueue? GeometryStreamingFeedback = null)
 {
     internal bool IsValid
         => FrameSlot >= 0 && FrameGeneration != 0u &&
