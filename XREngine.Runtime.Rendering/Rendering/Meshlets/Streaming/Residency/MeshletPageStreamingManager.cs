@@ -84,6 +84,8 @@ public sealed class MeshletPageStreamingManager
             throw new ArgumentException("The page range does not match the page set.", nameof(range));
 
         Registry.AddGeometry(handle, range.FirstPage, pages, _pool.SlotCount);
+        ++Telemetry.RegisteredGeometries;
+        ++Telemetry.TotalGeometryRegistrations;
         for (int page = 0; page < range.PageCount; ++page)
         {
             uint globalPage = range.FirstPage + (uint)page;
@@ -114,6 +116,7 @@ public sealed class MeshletPageStreamingManager
             {
                 --Telemetry.ResidentPages;
                 Telemetry.ResidentBytes -= geometry.Pages.PageImages[page].Length;
+                ++Telemetry.TotalReleasedPages;
             }
             else if (record.State == EMeshletPageResidencyState.Failed)
                 --Telemetry.FailedPages;
@@ -121,6 +124,8 @@ public sealed class MeshletPageStreamingManager
         // Removed pages stay in the candidate list of this update; a removed entry fails the
         // state check there.
         Registry.RemoveGeometry(handle);
+        --Telemetry.RegisteredGeometries;
+        ++Telemetry.TotalGeometryRemovals;
         return true;
     }
 

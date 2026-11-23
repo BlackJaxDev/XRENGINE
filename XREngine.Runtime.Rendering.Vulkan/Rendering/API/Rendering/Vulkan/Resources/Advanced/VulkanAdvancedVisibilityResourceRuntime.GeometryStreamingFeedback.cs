@@ -50,6 +50,9 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
     private DeviceMemory _geometryFeedbackSentinelMemory;
     private int _geometryPageRequestCapacity;
     private bool _geometryFeedbackTableLimitWarned;
+    // The Stopwatch timestamp after which the next [GeometryStreamingFeedback] line is written.
+    private long _nextGeometryFeedbackLogTimestamp;
+    private long _geometryFeedbackReadFailures;
 
     private string GeometryFeedbackOwner => $"AdvancedVisibility.OutputBank{_outputBankId}.GeometryPageFeedback";
 
@@ -210,14 +213,45 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                     {
                         ReadOnlySpan<uint> touchWords = MemoryMarshal.Cast<byte, uint>(touchLease.Bytes)[..touchWordCount];
                         queue.Enqueue(requests, overflow, touchWords, slot.PendingFrame);
+                        LogGeometryFeedbackDiagnostics(frameSlot, header, touchWords, bitWordCount);
                     }
                 }
+                else
+                    ++_geometryFeedbackReadFailures;
             }
         }
+        else if (queue is not null)
+            ++_geometryFeedbackReadFailures;
 
         TryClearGeometryFeedbackBytes(context, slot.RequestBuffer, slot.RequestMemory, 0UL, (ulong)GeometryPageRequestHeaderBytes);
         if (bitWordCount > 0)
             TryClearGeometryFeedbackBytes(context, slot.BitsBuffer, slot.BitsMemory, 0UL, (ulong)bitWordCount * sizeof(uint));
+    }
+
+    /// <summary>
+    /// Writes one <c>[GeometryStreamingFeedback]</c> rendering log line every two seconds with the
+    /// raw feedback of one frame: the request count and overflow from the request header, the set
+    /// touch bits, the bit words that the frame could write, and the feedback reads that failed.
+    /// The time test runs first, so the frames between two lines build no string.
+    /// </summary>
+    private void LogGeometryFeedbackDiagnostics(
+        int frameSlot,
+        ReadOnlySpan<uint> header,
+        ReadOnlySpan<uint> touchWords,
+        int bitWordCount)
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now < _nextGeometryFeedbackLogTimestamp)
+            return;
+        _nextGeometryFeedbackLogTimestamp = now + 2L * System.Diagnostics.Stopwatch.Frequency;
+
+        int touchedSlots = 0;
+        foreach (uint word in touchWords)
+            touchedSlots += System.Numerics.BitOperations.PopCount(word);
+        Debug.Rendering(
+            $"[GeometryStreamingFeedback] slot={frameSlot} requestCount={header[0]} overflow={header[1]} " +
+            $"touchedSlots={touchedSlots} " +
+            $"touchWords={touchWords.Length} bitWords={bitWordCount} capacity={_geometryPageRequestCapacity} readFailures={_geometryFeedbackReadFailures}");
     }
 
     /// <summary>

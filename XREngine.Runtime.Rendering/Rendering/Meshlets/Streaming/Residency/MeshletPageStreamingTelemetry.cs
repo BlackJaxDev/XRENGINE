@@ -3,8 +3,8 @@ namespace XREngine.Rendering.Meshlets;
 /// <summary>
 /// The counters of the <see cref="MeshletPageStreamingManager"/>. The "last update" values cover
 /// the feedback and the work of the most recent <see cref="MeshletPageStreamingManager.Update"/>,
-/// and the totals cover the lifetime of the manager. The editor panel and the MCP summary read
-/// these values.
+/// and the totals cover the lifetime of the manager. The Advanced publisher writes these values
+/// to a <c>[GeometryStreaming]</c> rendering log line every two seconds.
 /// </summary>
 public sealed class MeshletPageStreamingTelemetry
 {
@@ -48,6 +48,22 @@ public sealed class MeshletPageStreamingTelemetry
 
     /// <summary>The request overflows since the manager was created.</summary>
     public long TotalRequestOverflows { get; internal set; }
+
+    /// <summary>The geometries that are registered with the manager now.</summary>
+    public int RegisteredGeometries { get; internal set; }
+
+    /// <summary>The geometry registrations since the manager was created.</summary>
+    public long TotalGeometryRegistrations { get; internal set; }
+
+    /// <summary>The geometry removals since the manager was created.</summary>
+    public long TotalGeometryRemovals { get; internal set; }
+
+    /// <summary>
+    /// The resident pages that left the pool because their geometry was removed, since the manager
+    /// was created. These pages are not evictions: the publisher retired their geometry record, for
+    /// example when the draw changed to another mesh or left the scene.
+    /// </summary>
+    public long TotalReleasedPages { get; internal set; }
 
     /// <summary>Returns the distinct pages of one band that the feedback of the last update requested.</summary>
     public int LastRequestsInBand(EMeshletPageRequestBand band)

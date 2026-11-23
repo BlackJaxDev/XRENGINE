@@ -27,6 +27,9 @@ public sealed partial class AdvancedGpuScenePublisher
     // The frame of the publication that runs now. Pages that a streamed geometry makes resident
     // at registration count as touched in it.
     private long _geometryStreamingFrame;
+    // The Stopwatch timestamp after which the next [GeometryStreaming] telemetry line is written.
+    private long _nextGeometryStreamingLogTimestamp;
+    private static readonly TimeSpan GeometryStreamingLogInterval = TimeSpan.FromSeconds(2);
 
     /// <summary>Gets the staged meshes that were copied from a worker-packed entry.</summary>
     internal long PrepackHitCount => _prepackHitCount;
@@ -313,6 +316,37 @@ public sealed partial class AdvancedGpuScenePublisher
                 AdvancedVirtualGeometryPolicy.PixelThreshold,
                 Database.NextPublicationSequence);
         }
+
+        LogGeometryStreamingTelemetry(geometry, manager);
+    }
+
+    /// <summary>
+    /// Writes one <c>[GeometryStreaming]</c> rendering log line every
+    /// <see cref="GeometryStreamingLogInterval"/>: the resident pages, the pool slot use, the
+    /// requests of the last update by band, the totals of loads, evictions, overflows, failed
+    /// pages and feedback frames, and the geometry registrations and removals. A removal releases
+    /// the resident pages of its geometry without an eviction, so the line counts these pages
+    /// separately. Live validation reads this line to confirm that the GPU feedback reaches the
+    /// manager and that pages load and evict. The time test runs first, so the frames between two
+    /// lines build no string.
+    /// </summary>
+    private void LogGeometryStreamingTelemetry(AdvancedGeometryDatabase geometry, MeshletPageStreamingManager manager)
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now < _nextGeometryStreamingLogTimestamp)
+            return;
+
+        _nextGeometryStreamingLogTimestamp = now + (long)(GeometryStreamingLogInterval.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+        MeshletPageStreamingTelemetry telemetry = manager.Telemetry;
+        AdvancedGeometryPagePool pool = geometry.PagePool;
+        MeshletPageFeedbackQueue feedback = geometry.StreamingFeedback;
+        Debug.Rendering(
+            $"[GeometryStreaming] frame={_geometryStreamingFrame} resident={telemetry.ResidentPages} pages ({telemetry.ResidentBytes / (1024.0 * 1024.0):F1} MiB) " +
+            $"slots={pool.UsedSlotCount}/{pool.SlotCount} " +
+            $"requested={telemetry.LastRequestedPages} (foreground={telemetry.LastRequestsInBand(EMeshletPageRequestBand.Foreground)} prefetch={telemetry.LastRequestsInBand(EMeshletPageRequestBand.Prefetch)}) " +
+            $"loads={telemetry.TotalLoads} evictions={telemetry.TotalEvictions} overflows={telemetry.TotalRequestOverflows} failed={telemetry.FailedPages} " +
+            $"geometries={telemetry.RegisteredGeometries} registrations={telemetry.TotalGeometryRegistrations} removals={telemetry.TotalGeometryRemovals} releasedPages={telemetry.TotalReleasedPages} " +
+            $"feedbackFrames={feedback.EnqueuedFrames} droppedFeedbackFrames={feedback.DroppedFrames}");
     }
 
     /// <summary>

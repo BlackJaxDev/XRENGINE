@@ -685,6 +685,13 @@ world sets it with `Rendering.GeometryStreaming`) streams the pages of static
 cluster hierarchy geometry. It needs `AdvancedGeometryPages`, and
 `AdvancedVirtualGeometryPolicy.GeometryStreamingEnabled` latches it with the
 other virtual geometry settings. Skinned topology pages always stay resident.
+Only the meshlet task stage writes page requests, so pages stream only for
+draws that use the `StaticMeshlet` producer: the mesh submission strategy must
+be a meshlet strategy (for example `ForceMeshSubmissionStrategy` or
+`XRE_FORCE_MESH_SUBMISSION_STRATEGY` set to `GpuMeshletZeroReadback`). The
+automatic strategy resolves to `CpuDirect` or a GPU indirect strategy. These
+draw the canonical index stream and write no page requests, so only the root
+pages of their geometry are resident.
 
 - Registration: the publisher reserves page table entries for every page of a
   static paged geometry, but slots only for its root pages
@@ -742,6 +749,21 @@ other virtual geometry settings. Skinned topology pages always stay resident.
   the requests, overflows, loads, evictions and failed pages. A page whose image
   is missing or too large fails once, with a warning, and is not requested
   again.
+- Every two seconds the publisher writes one `[GeometryStreaming]` rendering
+  log line: the resident pages and MiB, the used pool slots, the requests of the
+  last update by band, the total loads, evictions, overflows and failed pages,
+  the feedback frames that the queue accepted and dropped, and the registered
+  geometries with the total registrations, removals and released pages. A
+  `feedbackFrames` count that does not grow means that no GPU feedback reaches
+  the manager.
+- A removed geometry releases its resident pages without an eviction. This
+  occurs when the publisher replaces the geometry of a draw, for example when
+  the drawn mesh changes. The new geometry starts again from its root pages. In
+  the log, `releasedPages` then grows while `evictions` does not.
+- Every two seconds the Vulkan visibility runtime writes one
+  `[GeometryStreamingFeedback]` rendering log line with the raw feedback of one
+  frame slot: the request count and overflow, the set touch bits, the bit words,
+  the request capacity, and the feedback reads that failed.
 
 ### Cluster cut (Advanced virtual geometry)
 
