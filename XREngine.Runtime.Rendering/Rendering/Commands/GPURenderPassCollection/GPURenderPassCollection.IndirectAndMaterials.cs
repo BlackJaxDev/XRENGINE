@@ -136,7 +136,7 @@ namespace XREngine.Rendering.Commands
 
             if (meshletDebugForced)
             {
-                MeshSubmissionStrategy = ResolveMeshletDebugDisplayStrategy().ToSubmissionMode();
+                MeshSubmissionStrategy = GpuBvhDebugSettings.ResolveMeshletDebugDisplayStrategy().ToSubmissionMode();
                 MeshPrimitivePathPreference = EMeshPrimitivePathPreference.MeshShaderPreferred;
                 UseMeshletPipeline = true;
             }
@@ -391,11 +391,6 @@ namespace XREngine.Rendering.Commands
 
             return true;
         }
-
-        private static EMeshSubmissionStrategy ResolveMeshletDebugDisplayStrategy()
-            => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging
-                ? EMeshSubmissionStrategy.GpuMeshletInstrumented
-                : EMeshSubmissionStrategy.GpuMeshletZeroReadback;
 
         #endregion
 
