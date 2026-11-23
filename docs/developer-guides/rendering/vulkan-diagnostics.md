@@ -27,6 +27,7 @@ The constants for all variables are in `XREngine.Data/Environment/XREngineEnviro
 | `XRE_VULKAN_RECORDING_DIAG` | Logs command-recording diagnostics. |
 | `XRE_VULKAN_MATERIAL_BINDING_DIAG` | Logs material descriptor resolution and auto-uniform writes. |
 | `XRE_VULKAN_DESCRIPTOR_TRACE`, `XRE_VULKAN_TARGET_TRACE`, `XRE_VULKAN_INDIRECT_TRACE` | Log descriptor, render-target, and indirect-draw activity. |
+| `XRE_ADVANCED_VISIBILITY_COUNTER_SAMPLING=<frames>` | Copies the Advanced per-view visibility counters every `<frames>` render frames under strategies that are not instrumented, with a delayed readback that adds no wait. `0` (default) is off, `1` is every frame. Read the values with the MCP `get_advanced_visibility_counters` tool and change the interval with `set_advanced_visibility_counter_sampling`. |
 | `XRE_VULKAN_FRAMEOP_TRACE=1` | Retains frame-operation traces for the MCP `get_vulkan_frame_op_trace` tool. |
 | `XRE_VULKAN_FINAL_PRESENT_LEDGER` | Enables the final-presentation ledger. |
 | `XRE_VK_PIPELINE_PREWARM_CAPTURE=1` | Writes observed pipeline permutations to `%LOCALAPPDATA%\XREngine\Vulkan\PipelinePrewarm\prewarm_*.json` at shutdown. |
