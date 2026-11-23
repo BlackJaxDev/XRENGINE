@@ -760,6 +760,11 @@ pages of their geometry are resident.
   occurs when the publisher replaces the geometry of a draw, for example when
   the drawn mesh changes. The new geometry starts again from its root pages. In
   the log, `releasedPages` then grows while `evictions` does not.
+- The shadow routing flags of a draw (`CastShadow`, `ReceiveShadows`,
+  `ShadowCasterDynamic` and `SharedOpaqueShadow`) are not part of its geometry
+  signature. The content update writes them to the draw record in place, so a
+  change of the shadow pass state does not replace the geometry or release its
+  pages.
 - Every two seconds the Vulkan visibility runtime writes one
   `[GeometryStreamingFeedback]` rendering log line with the raw feedback of one
   frame slot: the request count and overflow, the set touch bits, the bit words,

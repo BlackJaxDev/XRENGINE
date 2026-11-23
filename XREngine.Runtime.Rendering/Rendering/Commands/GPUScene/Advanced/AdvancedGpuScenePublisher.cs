@@ -1687,11 +1687,14 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             PrimitiveTopology = checked((uint)(mesh?.Type ?? EPrimitiveType.Triangles)),
             CoverageMode = (command.Flags & (uint)GPUIndirectRenderFlags.Transparent) != 0u ? 1u : 0u,
             CullMode = checked((uint)(renderOptions?.CullMode ?? ECullMode.Back)),
-            // Existing GPU draw flags occupy the low 24 bits. Native admission
-            // retains the actual command override's unsupported raster features.
-            // StructuralDrawFlags removes PrimaryDisabled (bit 24), so that draw
-            // flag cannot alias a raster-state flag in the high byte.
-            Flags = StructuralDrawFlags(command.Flags) | (uint)WebGpuAdvancedRasterStateContract.Capture(renderOptions),
+            // The low 24 bits hold the structural draw flags, and the high byte
+            // holds the native raster-state flags that admission reads
+            // (EAdvancedNativeRasterStateFlags). Draw flags at bit 24 and above
+            // (FragmentDepth, SurfaceDecal) use the same bit positions as raster
+            // flags, so the mask removes them here. ComputeStructuralSignature
+            // still hashes them from the command flags.
+            Flags = (StructuralDrawFlags(command.Flags) & ~RasterStateFlagMask) |
+                (uint)WebGpuAdvancedRasterStateContract.Capture(renderOptions),
         };
 
     private static AdvancedEditorIdentityRecord CreateEditorIdentity(
@@ -1714,12 +1717,21 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         };
     }
 
+    /// <summary>
+    /// Returns the draw flags that change the published geometry or render state of a draw. Editor
+    /// highlight, the disabled primary pass and the shadow routing flags (CastShadow,
+    /// ReceiveShadows, ShadowCasterDynamic and SharedOpaqueShadow) are removed: the content update
+    /// writes them to the draw record in place. SharedOpaqueShadow follows the shadow pass state of
+    /// the command each frame, so a structural flag would replace the geometry of the draw each
+    /// time that state changes.
+    /// </summary>
     private static uint StructuralDrawFlags(uint flags)
         => flags & ~((uint)GPUIndirectRenderFlags.EditorHighlightMask |
             (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
             (uint)GPUIndirectRenderFlags.ReceiveShadows |
-            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic);
+            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic |
+            (uint)GPUIndirectRenderFlags.SharedOpaqueShadow);
 
     private static ulong ComputeStructuralSignature(
         in DrawMetadata command,
