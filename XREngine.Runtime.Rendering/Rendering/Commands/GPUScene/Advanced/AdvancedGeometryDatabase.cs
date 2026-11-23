@@ -60,6 +60,13 @@ public sealed class AdvancedGeometryDatabase
 
     public AdvancedImmutableByteArena MeshletTriangleWordArena { get; }
 
+    /// <summary>
+    /// The pool slots and page table of the geometries that draw from geometry pages
+    /// (<see cref="EAdvancedGeometryFlags.StreamedPages"/>). The publisher reserves pages when it
+    /// registers such a geometry and retires them with the geometry record.
+    /// </summary>
+    public AdvancedGeometryPagePool PagePool { get; } = new();
+
     public bool TryAddStatic(
         ReadOnlySpan<byte> vertices,
         ReadOnlySpan<uint> indices,

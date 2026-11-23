@@ -1046,9 +1046,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     in bounds,
                     in command,
                     out AdvancedGpuHandle replacementGeometry) ||
-                !Database.Scene.Geometry.Records.TryTombstone(
-                    registration.Geometry,
-                    _sequence) ||
+                !TryTombstoneGeometry(registration.Geometry) ||
                 !Database.Scene.Deformations.TryReplace(
                     registration.Deformation,
                     CreateDeformation(replacementGeometry, plan.MeshVertexCount),
@@ -1155,7 +1153,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             bool tombstoned =
                 Database.Scene.Draws.TryTombstone(registration.Draw, _sequence) &&
                 Database.Scene.Instances.TryTombstone(registration.Instance, _sequence) &&
-                Database.Scene.Geometry.Records.TryTombstone(registration.Geometry, _sequence) &&
+                TryTombstoneGeometry(registration.Geometry) &&
                 Database.Scene.Deformations.TryTombstone(registration.Deformation, _sequence) &&
                 Database.Scene.RenderStates.TryTombstone(registration.RenderState, _sequence) &&
                 Database.Scene.EditorIdentities.TryTombstone(registration.EditorIdentity, _sequence) &&
@@ -1513,6 +1511,21 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
            Database.Scene.Transforms.IsCurrent(registration.PreviousTransform) &&
            Database.Scene.Transforms.CanApply(0, 0, 2);
 
+    /// <summary>
+    /// Tombstones a geometry record in the publication that is being built, and retires its
+    /// geometry pages with the same publication generation. The page table entries read
+    /// not-resident from this publication, and the pool slots stay unchanged until every consumer
+    /// acknowledges it.
+    /// </summary>
+    private bool TryTombstoneGeometry(AdvancedGpuHandle geometry)
+    {
+        if (!Database.Scene.Geometry.Records.TryTombstone(geometry, _sequence))
+            return false;
+
+        Database.Scene.Geometry.PagePool.RetireGeometry(geometry, _sequence);
+        return true;
+    }
+
     private void RollBackPartialRegistration(
         AdvancedGpuHandle currentTransform,
         AdvancedGpuHandle previousTransform,
@@ -1529,7 +1542,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         if (instance.IsValid)
             Database.Scene.Instances.TryRemoveImmediatelyBeforePublication(instance);
         if (geometry.IsValid)
+        {
             Database.Scene.Geometry.Records.TryRemoveImmediatelyBeforePublication(geometry);
+            Database.Scene.Geometry.PagePool.ReleaseGeometry(geometry);
+        }
         if (deformation.IsValid)
             Database.Scene.Deformations.TryRemoveImmediatelyBeforePublication(deformation);
         if (renderState.IsValid)

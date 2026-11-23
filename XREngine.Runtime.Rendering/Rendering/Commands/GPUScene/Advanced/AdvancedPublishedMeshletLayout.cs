@@ -53,21 +53,37 @@ internal readonly record struct AdvancedPublishedMeshletLayout(
     /// </summary>
     public const int StreamHeaderWords = 1;
 
-    /// <summary>Words of the page block header: the page count and the cluster count.</summary>
-    public const int PageBlockHeaderWords = 2;
+    /// <summary>
+    /// Words of the page block header: the page count, the cluster count and the first page of the
+    /// geometry in the page table of <see cref="AdvancedGeometryPagePool"/>.
+    /// </summary>
+    public const int PageBlockHeaderWords = 3;
+
+    /// <summary>The position of the first-page word in the page block header.</summary>
+    public const int PageBlockFirstPageWord = 2;
 
     /// <summary>
     /// The geometry pages that the geometry draws from, or null. With pages, the triangle-word
     /// stream ends with the page block at <see cref="PageBlockWordOffset"/>: the page block header,
-    /// one word per page with the word offset of the page image (relative to the first cluster
-    /// record), one word per cluster in published meshlet order with
-    /// <c>(page &lt;&lt; 8) | page-local cluster</c>, and then the page images. The geometry record of
-    /// such a geometry has <see cref="EAdvancedGeometryFlags.StreamedPages"/>.
+    /// then one word per cluster in published meshlet order with
+    /// <c>(page &lt;&lt; 8) | page-local cluster</c>. The page images are not in the stream. They go
+    /// to slots of the geometry page pool, and the page table maps page <c>firstPage + page</c> to
+    /// its slot. The geometry record of such a geometry has
+    /// <see cref="EAdvancedGeometryFlags.StreamedPages"/>.
     /// </summary>
     public MeshletPageSet? Pages { get; init; }
 
     /// <summary>The word offset of the page block relative to the first cluster record, or zero.</summary>
     public uint PageBlockWordOffset { get; init; }
+
+    /// <summary>
+    /// The index of the first-page word in the triangle-word stream of the geometry. The publisher
+    /// writes the first page of the reserved page table range there after <see cref="Pack"/>,
+    /// which writes <see cref="AdvancedGeometryPagePool.NotResident"/>. Valid only with
+    /// <see cref="Pages"/>.
+    /// </summary>
+    public int FirstPageWordIndex
+        => checked((int)(ClusterHierarchyWordOffset + PageBlockWordOffset) + PageBlockFirstPageWord);
 
     /// <summary>The geometry flags of the record that this layout registers.</summary>
     public EAdvancedGeometryFlags GeometryFlags
@@ -107,18 +123,9 @@ internal readonly record struct AdvancedPublishedMeshletLayout(
         };
     }
 
-    /// <summary>
-    /// The words of the page block of a page set: the header, the page offset table, the cluster
-    /// map and every page image. Page images are whole words (<see cref="MeshletPageFormat"/> aligns
-    /// every section).
-    /// </summary>
+    /// <summary>The words of the page block of a page set: the header and the cluster map.</summary>
     private static int PageBlockWordCount(MeshletPageSet pages)
-    {
-        long words = PageBlockHeaderWords + (long)pages.Table.PageCount + pages.Table.ClusterCount;
-        foreach (byte[] image in pages.PageImages)
-            words += image.Length / sizeof(uint);
-        return checked((int)words);
-    }
+        => checked(PageBlockHeaderWords + pages.Table.ClusterCount);
 
     /// <summary>
     /// Writes the published streams of a payload into destination spans with the sizes from
@@ -190,19 +197,20 @@ internal readonly record struct AdvancedPublishedMeshletLayout(
     }
 
     /// <summary>
-    /// Writes the page block of <see cref="Pages"/>. <paramref name="block"/> starts at the page block,
-    /// which is <see cref="PageBlockWordOffset"/> words after the first cluster record, so the page
-    /// image offsets are that offset plus the position of each image in the block.
+    /// Writes the page block of <see cref="Pages"/>: the header with a
+    /// <see cref="AdvancedGeometryPagePool.NotResident"/> first page, and the cluster map.
+    /// <paramref name="block"/> starts at the page block, which is <see cref="PageBlockWordOffset"/>
+    /// words after the first cluster record.
     /// </summary>
-    private void PackPageBlock(MeshletPageSet pages, Span<uint> block)
+    private static void PackPageBlock(MeshletPageSet pages, Span<uint> block)
     {
         MeshletPageTable table = pages.Table;
         int pageCount = table.PageCount;
         int clusterCount = table.ClusterCount;
         block[0] = (uint)pageCount;
         block[1] = (uint)clusterCount;
-        Span<uint> pageOffsets = block.Slice(PageBlockHeaderWords, pageCount);
-        Span<uint> clusterMap = block.Slice(PageBlockHeaderWords + pageCount, clusterCount);
+        block[PageBlockFirstPageWord] = AdvancedGeometryPagePool.NotResident;
+        Span<uint> clusterMap = block.Slice(PageBlockHeaderWords, clusterCount);
 
         // The page table lists the clusters in page order; ClusterOrder maps each paged position
         // back to the published (payload) meshlet index.
@@ -214,15 +222,6 @@ internal readonly record struct AdvancedPublishedMeshletLayout(
                 uint source = table.ClusterOrder[(int)(record.FirstCluster + local)];
                 clusterMap[(int)source] = ((uint)page << 8) | local;
             }
-        }
-
-        int imageWord = PageBlockHeaderWords + pageCount + clusterCount;
-        for (int page = 0; page < pageCount; page++)
-        {
-            ReadOnlySpan<uint> image = MemoryMarshal.Cast<byte, uint>(pages.PageImages[page].AsSpan());
-            pageOffsets[page] = checked(PageBlockWordOffset + (uint)imageWord);
-            image.CopyTo(block[imageWord..]);
-            imageWord += image.Length;
         }
     }
 }

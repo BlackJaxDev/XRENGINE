@@ -84,6 +84,11 @@ internal static class VulkanAdvancedSceneProgramBindingContract
     // skinned cluster-cut task variant reads them to bound posed clusters; a frame without GPU
     // deformation binds a placeholder range that no prepared deformation refers to.
     internal const uint VisibilitySkinPalettesBinding = 72u;
+    // Geometry pages: the pool of page slots (one page image per 128 KiB slot) and the page table
+    // of the publication, which maps each page of a StreamedPages geometry to its slot or to
+    // not resident. The meshlet task and mesh stages read cluster data through them.
+    internal const uint VisibilityGeometryPagePoolBinding = 73u;
+    internal const uint VisibilityGeometryPageTableBinding = 74u;
     internal const uint VisibilityDepthPyramidSampledBinding = 42u;
 internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint VisibilityDeformationOverlayBinding = 46u;
@@ -353,6 +358,8 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
             VisibilityLateIndexedGroupCountsBinding or
             VisibilityMeshletHistoryBinding or
             VisibilitySkinPalettesBinding or
+            VisibilityGeometryPagePoolBinding or
+            VisibilityGeometryPageTableBinding or
             VisibilityDeformationOverlayBinding or
             VisibilityCanonicalIndicesBinding or
             VisibilityReconstructionCountersBinding or

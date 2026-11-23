@@ -8,13 +8,16 @@ internal readonly record struct VulkanAdvancedVisibilityGeometrySlices(
     VulkanFrameDataSlice MeshletDescriptors,
     VulkanFrameDataSlice MeshletVertexIndices,
     VulkanFrameDataSlice MeshletTriangleWords,
-    VulkanFrameDataSlice DeformationOverlay)
+    VulkanFrameDataSlice DeformationOverlay,
+    VulkanFrameDataSlice GeometryPagePool = default,
+    VulkanFrameDataSlice GeometryPageTable = default)
 {
     internal bool HasValidSources
         => StaticVertices.IsValid && CurrentVertices.IsValid &&
            PreviousVertices.IsValid && Indices.IsValid &&
            MeshletDescriptors.IsValid && MeshletVertexIndices.IsValid &&
-           MeshletTriangleWords.IsValid;
+           MeshletTriangleWords.IsValid &&
+           GeometryPagePool.IsValid && GeometryPageTable.IsValid;
 
     internal bool IsValid => HasValidSources && DeformationOverlay.IsValid;
 
@@ -26,5 +29,7 @@ internal readonly record struct VulkanAdvancedVisibilityGeometrySlices(
            Indices == other.Indices &&
            MeshletDescriptors == other.MeshletDescriptors &&
            MeshletVertexIndices == other.MeshletVertexIndices &&
-           MeshletTriangleWords == other.MeshletTriangleWords;
+           MeshletTriangleWords == other.MeshletTriangleWords &&
+           GeometryPagePool == other.GeometryPagePool &&
+           GeometryPageTable == other.GeometryPageTable;
 }

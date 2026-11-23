@@ -986,6 +986,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
         reclaimed += Scene.RenderStates.ReclaimAcknowledged(safeSequence);
         reclaimed += Scene.EditorIdentities.ReclaimAcknowledged(safeSequence);
         reclaimed += Scene.Geometry.Records.ReclaimAcknowledged(safeSequence);
+        reclaimed += Scene.Geometry.PagePool.ReclaimAcknowledged(safeSequence);
         reclaimed += Materials.Materials.ReclaimAcknowledged(safeSequence);
         reclaimed += Materials.Kernels.ReclaimAcknowledged(safeSequence);
         reclaimed += Materials.Layouts.ReclaimAcknowledged(safeSequence);

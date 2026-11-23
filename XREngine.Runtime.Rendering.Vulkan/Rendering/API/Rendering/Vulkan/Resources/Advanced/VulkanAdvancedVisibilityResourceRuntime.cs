@@ -891,7 +891,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilitySkinPalettesBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilitySkinPalettesBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPagePoolBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageTableBinding];
         ReadOnlySpan<uint> nativeStorageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeActiveTilesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeKernelTilesBinding,
@@ -1292,7 +1294,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             state.Geometry.Indices, state.Counters,
             state.BoundsRoutes, state.BoundsRoutes, state.BoundsRoutes,
             state.IndexedInstanceGroups, state.EarlyIndexedGroupCounts,
-            state.LateIndexedGroupCounts, default, state.BoundsRoutes
+            state.LateIndexedGroupCounts, default, state.BoundsRoutes,
+            state.Geometry.GeometryPagePool, state.Geometry.GeometryPageTable
         };
         ReadOnlySpan<uint> storageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.VisibilityCandidatesBinding,
@@ -1329,7 +1332,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityEarlyIndexedGroupCountsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityLateIndexedGroupCountsBinding,
             VulkanAdvancedSceneProgramBindingContract.VisibilityMeshletHistoryBinding,
-            VulkanAdvancedSceneProgramBindingContract.VisibilitySkinPalettesBinding];
+            VulkanAdvancedSceneProgramBindingContract.VisibilitySkinPalettesBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPagePoolBinding,
+            VulkanAdvancedSceneProgramBindingContract.VisibilityGeometryPageTableBinding];
         if (slices.Length != storageBindingNumbers.Length)
         {
             reason = "The advanced-visibility storage binding map is incomplete.";

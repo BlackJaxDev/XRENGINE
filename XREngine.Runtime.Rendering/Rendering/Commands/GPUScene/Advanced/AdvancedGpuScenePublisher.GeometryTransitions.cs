@@ -23,12 +23,19 @@ public sealed partial class AdvancedGpuScenePublisher
     private readonly List<XRMesh> _consumedPrepackMeshes = [];
     private long _prepackHitCount;
     private long _prepackMissCount;
+    private long _geometryPagePoolRejectCount;
 
     /// <summary>Gets the staged meshes that were copied from a worker-packed entry.</summary>
     internal long PrepackHitCount => _prepackHitCount;
 
     /// <summary>Gets the staged meshes that were packed on the swap thread.</summary>
     internal long PrepackMissCount => _prepackMissCount;
+
+    /// <summary>
+    /// Gets the geometries with geometry pages that the page pool did not have free slots for.
+    /// Each one draws from its meshlet arenas instead.
+    /// </summary>
+    internal long GeometryPagePoolRejectCount => _geometryPagePoolRejectCount;
 
     /// <summary>Worker-packed canonical geometry that the staging step copies instead of packing.</summary>
     internal AdvancedCanonicalGeometryPrepackCache Prepack { get; } = new();
@@ -121,6 +128,13 @@ public sealed partial class AdvancedGpuScenePublisher
         public uint ClusterLevel0Count;
         /// <summary>The geometry flags of the layout, such as geometry pages.</summary>
         public EAdvancedGeometryFlags GeometryFlags;
+        /// <summary>The geometry pages of the layout, or null.</summary>
+        public MeshletPageSet? Pages;
+        /// <summary>
+        /// The index of the first-page word in the staged triangle words of this geometry
+        /// (relative to <see cref="TriangleWordOffset"/>). Valid only with <see cref="Pages"/>.
+        /// </summary>
+        public int FirstPageWordIndex;
     }
 
     /// <summary>
@@ -215,15 +229,25 @@ public sealed partial class AdvancedGpuScenePublisher
                 registration,
                 out geometry);
 
+        EAdvancedGeometryFlags geometryFlags = staged.GeometryFlags;
+        bool reservedPages = false;
+        AdvancedGeometryPagePool.PageRange pageRange = default;
+        if (staged.Pages is { } pages)
+        {
+            reservedPages = TryReserveGeometryPages(pages, in staged, out pageRange);
+            if (!reservedPages)
+                geometryFlags &= ~EAdvancedGeometryFlags.StreamedPages;
+        }
+
         registration = registration with
         {
             MeshletCount = checked((uint)staged.DescriptorCount),
             ClusterLevel0Count = staged.ClusterLevel0Count,
             ClusterHierarchyWordOffset = staged.ClusterHierarchyWordOffset,
             LevelCoverIndexCount = checked((uint)staged.CoverIndexCount),
-            GeometryFlags = staged.GeometryFlags,
+            GeometryFlags = geometryFlags,
         };
-        return Database.Scene.Geometry.TryAddMeshletLocal(
+        bool added = Database.Scene.Geometry.TryAddMeshletLocal(
             vertexBytes,
             indices,
             _packedMeshletDescriptors.AsSpan(staged.DescriptorOffset, staged.DescriptorCount),
@@ -231,6 +255,42 @@ public sealed partial class AdvancedGpuScenePublisher
             _packedMeshletTriangleWords.AsSpan(staged.TriangleWordOffset, staged.TriangleWordCount),
             registration,
             out geometry);
+        if (reservedPages)
+        {
+            if (added)
+                Database.Scene.Geometry.PagePool.Bind(geometry, pageRange);
+            else
+                Database.Scene.Geometry.PagePool.Release(pageRange);
+        }
+        return added;
+    }
+
+    /// <summary>
+    /// Reserves page table entries and pool slots for the pages of a staged geometry, and writes
+    /// the first page into the page block of its staged triangle words, which the geometry add
+    /// then copies to the triangle-word arena. Returns false when the pool does not have enough
+    /// free slots; the geometry then registers without
+    /// <see cref="EAdvancedGeometryFlags.StreamedPages"/> and draws from its meshlet arenas.
+    /// </summary>
+    private bool TryReserveGeometryPages(
+        MeshletPageSet pages,
+        in StagedCanonicalGeometry staged,
+        out AdvancedGeometryPagePool.PageRange range)
+    {
+        AdvancedGeometryPagePool pool = Database.Scene.Geometry.PagePool;
+        pool.EnsureConfigured(AdvancedVirtualGeometryPolicy.GeometryPagePoolSlotCount);
+        if (!pool.TryReserve(pages, out range))
+        {
+            ++_geometryPagePoolRejectCount;
+            Debug.RenderingWarningEvery(
+                "AdvancedGpuScenePublisher.GeometryPagePoolFull",
+                TimeSpan.FromSeconds(5),
+                $"Geometry page pool has no room for {pages.PageImages.Length} pages (used {pool.UsedSlotCount}/{pool.SlotCount} slots); the geometry draws from its meshlet arenas. Rejected geometries: {_geometryPagePoolRejectCount}.");
+            return false;
+        }
+
+        _packedMeshletTriangleWords[staged.TriangleWordOffset + staged.FirstPageWordIndex] = range.FirstPage;
+        return true;
     }
 
     private bool TryStagePlannedGeometry(out string failure)
@@ -391,6 +451,8 @@ public sealed partial class AdvancedGpuScenePublisher
                     ClusterHierarchyWordOffset = layout.ClusterHierarchyWordOffset,
                     ClusterLevel0Count = layout.ClusterLevel0Count,
                     GeometryFlags = layout.GeometryFlags,
+                    Pages = layout.Pages,
+                    FirstPageWordIndex = layout.Pages is null ? 0 : layout.FirstPageWordIndex,
                 };
                 vertexCursor += vertexCount;
                 indexCursor += indexCount + coverIndexCount;

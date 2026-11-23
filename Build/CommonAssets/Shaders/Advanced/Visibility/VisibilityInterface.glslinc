@@ -107,6 +107,15 @@ bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
 #ifndef XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS
 #define XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS 46
 #endif
+// The geometry page pool (fixed-size page slots that hold page images) and the
+// page table of this frame slot (one slot index per registered page). Only the
+// Vulkan backend binds them (VisibilityStreamedGeometry.glslinc).
+#ifndef XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_POOL
+#define XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_POOL 73
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_TABLE
+#define XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_TABLE 74
+#endif
 // Late visibility never overwrites the early producer's GPU-owned streams.
 // These three frame-slot ranges retain recovered candidates and their indexed
 // indirect expansion until the load-preserving late raster consumes them.
@@ -416,6 +425,18 @@ readonly buffer XRAdvancedVisibilityMeshletTriangleTable
 {
     uint records[];
 } XR_ADV_VisibilityMeshletTriangleWords;
+#if defined(XR_ADV_BACKEND_VULKAN)
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_POOL)
+readonly buffer XRAdvancedVisibilityGeometryPagePool
+{
+    uint words[];
+} XR_ADV_VisibilityGeometryPagePool;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_TABLE)
+readonly buffer XRAdvancedVisibilityGeometryPageTable
+{
+    uint slots[];
+} XR_ADV_VisibilityGeometryPageTable;
+#endif
 
 #define XR_ADV_PREPARED_DEFORMATION_ACTIVE 1u
 #define XR_ADV_PREPARED_DEFORMATION_PREVIOUS_VALID 2u

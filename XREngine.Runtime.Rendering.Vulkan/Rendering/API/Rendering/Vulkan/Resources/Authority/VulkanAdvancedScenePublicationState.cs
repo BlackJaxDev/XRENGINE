@@ -51,7 +51,9 @@ internal readonly record struct VulkanAdvancedScenePublicationState(
     VulkanFrameDataSlice HandleLookups,
     VulkanFrameDataSlice FallbackTable,
     VulkanAdvancedSceneLookupSegments LookupSegments,
-    VulkanAdvancedNativeShadingKernelFamilies KernelFamilies = default)
+    VulkanAdvancedNativeShadingKernelFamilies KernelFamilies = default,
+    VulkanFrameDataSlice GeometryPagePool = default,
+    VulkanFrameDataSlice GeometryPageTable = default)
 {
     internal bool IsValid
         => FrameSlot >= 0 && FrameGeneration != 0u &&
@@ -63,6 +65,7 @@ internal readonly record struct VulkanAdvancedScenePublicationState(
            PreSkinnedCurrent.IsValid && PreSkinnedPrevious.IsValid &&
            MeshletDescriptors.IsValid && MeshletVertexIndices.IsValid &&
            MeshletTriangleWords.IsValid &&
+           GeometryPagePool.IsValid && GeometryPageTable.IsValid &&
            Transforms.IsValid && Deformations.IsValid &&
            RenderStates.IsValid && EditorIdentities.IsValid &&
            Materials.IsValid && ShadingKernels.IsValid &&

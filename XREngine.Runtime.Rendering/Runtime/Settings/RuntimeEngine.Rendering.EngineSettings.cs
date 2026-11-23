@@ -3122,10 +3122,12 @@ public static partial class RuntimeEngine
                 /// With <see cref="AdvancedVirtualGeometry"/> on, cluster hierarchy geometry that was
                 /// imported with geometry pages (the <c>BuildStreamingPages</c> meshlet setting) draws
                 /// its clusters from the pages: the import attaches the cooked pages to the meshlet
-                /// payload, the publisher uploads them with the geometry, and the meshlet task and
-                /// mesh stages and the surface reconstruction read the cluster descriptors, triangles
-                /// and static vertices from the pages. Every page stays resident, so this tests the
-                /// page format and the shader paths; it does not save memory yet. Off by default.
+                /// payload, the publisher writes the page images to slots of the geometry page pool
+                /// (see <see cref="AdvancedGeometryPagePoolMiB"/>), and the meshlet task and mesh
+                /// stages and the surface reconstruction read the cluster descriptors, triangles and
+                /// static vertices from the pool through the page table. Every page stays resident,
+                /// so this tests the page pool and the shader paths; it does not save memory yet.
+                /// Off by default.
                 /// Read once with <see cref="AdvancedVirtualGeometry"/>; the import reads it when it
                 /// attaches the pages.
                 /// </summary>
@@ -3135,6 +3137,23 @@ public static partial class RuntimeEngine
                 {
                     get => _advancedGeometryPages;
                     set => SetField(ref _advancedGeometryPages, value);
+                }
+
+                private int _advancedGeometryPagePoolMiB = 512;
+
+                /// <summary>
+                /// The size of the geometry page pool of <see cref="AdvancedGeometryPages"/>, in MiB
+                /// (16 to 2048). The pool holds one 128 KiB page image per slot, so 512 MiB holds
+                /// 4096 pages. A geometry whose pages do not fit in the free slots draws from its
+                /// meshlet arenas instead, and the publisher logs it. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Size of the Advanced geometry page pool in MiB (16 to 2048). Each 128 KiB slot holds one geometry page. Read once at the first Advanced frame.")]
+                public int AdvancedGeometryPagePoolMiB
+                {
+                    get => _advancedGeometryPagePoolMiB;
+                    set => SetField(ref _advancedGeometryPagePoolMiB, Math.Clamp(value, 16, 2048));
                 }
 
                 private float _advancedVirtualGeometryPixelThreshold = 1.0f;

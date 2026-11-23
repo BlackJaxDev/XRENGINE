@@ -111,7 +111,9 @@ internal sealed partial class VulkanPreparedStableBinStream
             sceneState.MeshletDescriptors,
             sceneState.MeshletVertexIndices,
             sceneState.MeshletTriangleWords,
-            default);
+            default,
+            sceneState.GeometryPagePool,
+            sceneState.GeometryPageTable);
         if (!sources.HasValidSources)
         {
             miss = EAdvancedVisibilityStreamReuseMiss.SceneGeometry;

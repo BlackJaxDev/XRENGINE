@@ -618,9 +618,9 @@ world sets it with `Rendering.GeometryPages`) makes the Vulkan Advanced path dra
 cluster hierarchy geometry from its pages. It needs `AdvancedVirtualGeometry`, and
 `AdvancedVirtualGeometryPolicy.GeometryPagesEnabled` latches it with the other
 virtual geometry settings. Every page stays resident, so this mode tests the
-page format and the shader paths. It does not save memory yet: the geometry
-also keeps its meshlet tables and its canonical vertex and index streams, which
-the shadow, decal and fallback paths read.
+page pool, the page table and the shader paths. It does not save memory yet: the
+geometry also keeps its meshlet tables and its canonical vertex and index
+streams, which the shadow, decal and fallback paths read.
 
 - The import attaches the cooked or stored pages of a mesh to its payload
   (`MeshletPayload.AttachStreamingPages`) while the setting is on. The
@@ -630,10 +630,40 @@ the shadow, decal and fallback paths read.
   records, holds the word offset of the page block relative to the first cluster
   record (zero without pages); the skin header stays one word before the
   cluster records. The page block holds the page count, the cluster count, the
-  word offset of each page image, one word for each cluster in published meshlet
-  order (`(page << 8) | page-local cluster`), and then the page images. The
-  geometry record gets `EAdvancedGeometryFlags.StreamedPages`.
-- `VisibilityStreamedGeometry.glslinc` reads these tables. The meshlet task stage
+  first page of the geometry in the page table, and one word for each cluster in
+  published meshlet order (`(page << 8) | page-local cluster`). The page images
+  are not in the stream. The geometry record gets
+  `EAdvancedGeometryFlags.StreamedPages`.
+- `AdvancedGeometryPagePool` (`AdvancedGeometryDatabase.PagePool`) owns a fixed
+  number of 128 KiB slots and the page table, which maps each registered page to
+  a slot or to not resident (`0xFFFFFFFF`). `AdvancedGeometryPagePoolMiB`
+  (default 512, range 16 to 2048, read once with the other settings) sets the
+  slot count. When the publisher registers a geometry with pages, it reserves a
+  contiguous range of page table entries and one slot for each page, and writes
+  the first page into the page block. A geometry whose pages do not fit in the
+  free slots registers without `StreamedPages` and draws from its meshlet arenas;
+  the publisher logs a warning and counts it in `GeometryPagePoolRejectCount`.
+- A tombstoned geometry retires its pages with the generation of the tombstoning
+  publication. Its page table entries read not resident from that publication,
+  and its slots and entries return to the free lists only when
+  `AdvancedSharedGpuSceneDatabase` reclaims that generation, so a frame in flight
+  never reads a slot that is written again. A partial registration that rolls
+  back frees its pages at once.
+- Each sealed publication captures the page table
+  (`AdvancedGeometryPublicationSnapshot.PageTable` and `PageTableVersion`).
+  `VulkanAdvancedGeometryPageResources`, owned by the resident geometry cache,
+  keeps one pool buffer and a small set of page table buffers. When the pool
+  version changes, it writes every slot whose image changed into the pool
+  buffer before it binds a table that names the slot. A table buffer is pinned
+  by the frame slots that bind it and is written again only after they
+  complete. The buffers prefer device-local host-visible memory and fall back
+  to system memory with a warning. The pool and the table bind at visibility
+  bindings 73 and 74; an empty pool or table binds a 16-byte sentinel.
+- `VisibilityStreamedGeometry.glslinc` reads these tables. It finds the slot of
+  a page through the page table and reads the page at word
+  `slot * 32768` of the pool. A page that is outside the table, not resident, or
+  names a slot outside the pool makes the cluster read fail, and the stage skips
+  the cluster. The meshlet task stage
   tests the cluster cut from the cluster and group records, and then loads the
   descriptor of a cluster in the cut from its page. Every hierarchy draw now
   loads its descriptor after the cut test. The mesh stage reads the vertex
@@ -644,9 +674,9 @@ the shadow, decal and fallback paths read.
   triangle that the raster drew. `OcclusionCulledBounds.comp` also reads the
   descriptor from the page.
 - The visibility ID, the producers and the meshlet history keep the global
-  meshlet index, because the geometry keeps its meshlet range. A page pool with
-  slots, a page table, the streamed producers and history by slot come with
-  residency, when pages can move.
+  meshlet index, because the geometry keeps its meshlet range. Residency
+  requests, eviction, and the streamed producers and history by slot come with
+  the streaming manager, when pages can move.
 
 ### Cluster cut (Advanced virtual geometry)
 
