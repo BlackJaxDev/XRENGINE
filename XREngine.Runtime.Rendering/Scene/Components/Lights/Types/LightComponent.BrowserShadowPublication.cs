@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.InteropServices;
 using XREngine.Components.Lights;
 using XREngine.Rendering;
 
@@ -32,6 +33,7 @@ public abstract partial class LightComponent
     private BrowserShadowProjectionSnapshot _browserPendingShadowProjections;
     private BrowserShadowProjectionSnapshot _browserRenderedShadowProjections;
     private BrowserShadowProjectionSnapshot _browserPublishedShadowProjections;
+    private AdvancedShadowRecord _browserPublishedShadowRecord;
     private XRTexture? _browserPublishedShadowReceiver;
     private ulong _browserPublishedShadowFrame;
     private bool _browserPendingShadowValid;
@@ -41,18 +43,46 @@ public abstract partial class LightComponent
     /// Freezes the standalone producer inputs before command recording. This is
     /// a candidate, never evidence that a previous texture contains this projection.
     /// </summary>
+    /// <remarks>
+    /// The candidate keeps the frame stamp of the previous capture while its receiver,
+    /// projections and every other record field stay the same. The canonical shadow row is
+    /// then byte-identical, so the publisher writes no row update for a static shadow.
+    /// Per-frame stamps used two shadow-table journal entries each frame. While no frame
+    /// committed (for example, while resources prepared after a resize), the journal filled,
+    /// every later publication was rejected, and the stale row never validated.
+    /// </remarks>
     internal bool TryCaptureBrowserStandaloneShadow(ulong frameId,
         out AdvancedShadowRecord record, out XRTexture? texture)
     {
+        XRTexture? previousReceiver = _browserPublishedShadowReceiver;
         SetField(ref _browserPublishedShadowReceiver, null, publishNotifications: false);
         if (!TryCreateBrowserShadowRecord(frameId, out record, out texture) ||
             !TryCaptureBrowserShadowProjections(out BrowserShadowProjectionSnapshot projections))
             return false;
+        ulong stamp = frameId;
+        if (_browserPublishedShadowFrame != 0UL && previousReceiver is not null &&
+            ReferenceEquals(previousReceiver, texture) &&
+            BrowserShadowProjectionsMatch(in projections, in _browserPublishedShadowProjections))
+        {
+            AdvancedShadowRecord restamped = record;
+            restamped.LastRenderedFrameLo = (uint)_browserPublishedShadowFrame;
+            restamped.LastRenderedFrameHi = (uint)(_browserPublishedShadowFrame >> 32);
+            if (ShadowRecordBytesEqual(in restamped, in _browserPublishedShadowRecord))
+            {
+                record = restamped;
+                stamp = _browserPublishedShadowFrame;
+            }
+        }
+        SetField(ref _browserPublishedShadowRecord, record, publishNotifications: false);
         SetField(ref _browserPublishedShadowProjections, projections, publishNotifications: false);
         SetField(ref _browserPublishedShadowReceiver, texture, publishNotifications: false);
-        SetField(ref _browserPublishedShadowFrame, frameId, publishNotifications: false);
+        SetField(ref _browserPublishedShadowFrame, stamp, publishNotifications: false);
         return true;
     }
+
+    private static bool ShadowRecordBytesEqual(in AdvancedShadowRecord left, in AdvancedShadowRecord right)
+        => MemoryMarshal.AsBytes(new ReadOnlySpan<AdvancedShadowRecord>(in left))
+            .SequenceEqual(MemoryMarshal.AsBytes(new ReadOnlySpan<AdvancedShadowRecord>(in right)));
 
     private bool TryCreateBrowserShadowRecord(ulong frameId,
         out AdvancedShadowRecord record, out XRTexture? texture)
