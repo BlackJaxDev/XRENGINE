@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// individually and resolves depth-stencil via shader.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
     public class VPRC_ResolveMsaaGBuffer : ViewportRenderCommand
     {
         private XRMaterial? _depthResolveMaterial;
@@ -19,8 +20,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRMaterial? _colorTentResolveMaterial;
         private XRQuadFrameBuffer? _colorTentResolveQuad;
 
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? SourceMsaaFBOName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? DestinationFBOName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthViewTextureName { get; set; } = DefaultRenderPipeline.MsaaDepthViewTextureName;
         public string? ColorViewTextureName { get; set; }
 

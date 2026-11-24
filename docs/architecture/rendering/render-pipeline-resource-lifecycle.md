@@ -72,9 +72,27 @@ or another explicit generation-key field. History uses `History(...)` and must
 define its first-frame behavior. Caller/window/XR-owned targets use
 `External(...)` with explicit ownership and synchronization. Resource-free
 pipelines such as `DebugOpaqueRenderPipeline` may render only to the imported
-output target and return an empty layout. `CustomRenderPipeline` command assets
-must likewise reference either declared names supplied by a specialized
-subclass or imported targets; arbitrary command-time allocation is unsupported.
+output target and return an empty layout. Arbitrary command-time allocation is
+unsupported.
+
+### Authored Resource Declarations
+
+`CustomRenderPipeline` declares its resources as data in `AuthoredResources`.
+Each `AuthoredRenderResource` has a name, a kind (`Texture`, `TextureView`,
+`RenderBuffer`, `Buffer`, `FrameBuffer`, or `QuadMaterial`), a lifetime, a
+history policy, a size policy, and the fields of its kind.
+`CustomRenderPipeline.DescribeResources(...)` converts each declaration into
+the same layout builder calls that code pipelines make, with factories from
+`AuthoredRenderResourceFactory`. The authored layout hash is part of the
+generation key, so an edit to a declaration builds a new generation.
+
+Commands of a custom pipeline reference these declared names or imported
+targets. A render pipeline script stores the declarations in its `resources`
+block; see
+[Render Pipeline Scripts](../../developer-guides/rendering/render-pipelines/render-pipeline-scripts.md).
+A derived pipeline adds, overrides, or removes base resources with resource
+patches; see
+[Derived Render Pipelines](../../developer-guides/rendering/render-pipelines/derived-render-pipelines.md).
 
 ## Generations
 
@@ -173,6 +191,13 @@ successor asset.
   `incompatibility`, for example the name of an unknown feature or an unsupported mode. The
   line also has the frame and collect generations and the canonical publication of the package
   and of the scene.
+- A rejected native Advanced stage (`VPRC_AdvancedRenderStage`) writes a line with the category
+  `AdvancedStageRejected`, at most once per 5 seconds for each stage command. The stage throws
+  after the rejection, so the frame keeps only the operations that were authored before it, and
+  the desktop output can stall with no scene draw. The line names the stage, the backend phase,
+  the rejection kind (`Prerequisite`, `Admission`, `StageCapability`, `PhaseRejection` or
+  `UnexpectedFailure`), whether the stage retries on a later frame, the rejection count and the
+  reason.
 - A retired generation stays alive until its completion receipt signals. The
   retired-generation count limit is soft. Unsignaled generations are kept, and
   the instance drains them after they signal.
@@ -203,6 +228,15 @@ command chain from the new revision. A successor with an empty declared layout
 explicitly retires the old managed generation and uses the imported output or
 legacy resource path. This makes cross-type, same-type/different-asset, and
 managed-to-layoutless changes use one lifecycle.
+
+A command chain rebuild on the same asset, for example a change to
+`AdvancedRenderPipeline.EnableEditorHighlightModule`, keeps the pipeline
+revision and can keep the resource key and layout. The passes can still change:
+without the highlight module, the window present reads the final post-process
+framebuffer instead of the highlight output. Each generation records the
+`CommandGeneration` of its asset that produced its pass metadata. A generation
+from an older command chain does not satisfy a same-key request, so the instance
+builds a new generation with metadata for the current chain.
 
 The transition request, the applying asset, and the fully applied asset are
 distinct states protected by the instance transition lock. Output binding uses

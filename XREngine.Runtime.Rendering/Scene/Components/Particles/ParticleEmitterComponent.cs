@@ -76,6 +76,10 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     private float _emitAccumulator;
     private float _totalTime;
     private uint _randomSeed;
+    private int _prewarmStepsRemaining;
+    private double _prewarmBudgetMilliseconds;
+    private int _simulationHoldCount;
+    private Matrix4x4 _prewarmWorldMatrix = Matrix4x4.Identity;
     private string _currentShaderHash = "";
 
     // Shader assembler
@@ -193,6 +197,43 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     [Browsable(false)]
     public uint DeadParticleCount => _counters.DeadCount;
 
+    /// <summary>The length of one prewarm step, in seconds.</summary>
+    public const float PrewarmStepSeconds = 1.0f / 60.0f;
+
+    /// <summary>True while a <see cref="Prewarm"/> has steps that did not run yet.</summary>
+    [Browsable(false)]
+    public bool IsPrewarming => _prewarmStepsRemaining > 0;
+
+    /// <summary>The number of prewarm steps that did not run yet.</summary>
+    [Browsable(false)]
+    public int PrewarmStepsRemaining => _prewarmStepsRemaining;
+
+    /// <summary>
+    /// True while a controller, for example a cutscene, holds the simulation with <see cref="BeginSimulationHold"/>.
+    /// A held emitter does not step, and a prewarm does not continue. The hold is separate from <see cref="IsSimulating"/>,
+    /// <see cref="Pause"/>, and <see cref="Resume"/>, and it does not change the tick registration.
+    /// </summary>
+    [YamlIgnore]
+    [Browsable(false)]
+    public bool IsSimulationHeld => Volatile.Read(ref _simulationHoldCount) > 0;
+
+    /// <summary>Starts a controller hold. Each call needs one <see cref="EndSimulationHold"/>.</summary>
+    public void BeginSimulationHold()
+        => Interlocked.Increment(ref _simulationHoldCount);
+
+    /// <summary>Ends a controller hold that <see cref="BeginSimulationHold"/> started. An extra call does nothing.</summary>
+    public void EndSimulationHold()
+    {
+        int count = Volatile.Read(ref _simulationHoldCount);
+        while (count > 0)
+        {
+            int previous = Interlocked.CompareExchange(ref _simulationHoldCount, count - 1, count);
+            if (previous == count)
+                return;
+            count = previous;
+        }
+    }
+
     [YamlIgnore]
     [Browsable(false)]
     public RenderInfo[] RenderedObjects { get; private set; } = [];
@@ -307,7 +348,15 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         // Initialize rendering
         InitializeRendering();
 
-        // Register update tick
+        RegisterUpdateTickIfSimulating();
+    }
+
+    /// <summary>
+    /// Registers the update tick if <see cref="IsSimulating"/> is true. A controller hold does not change this decision,
+    /// so an activation during a hold registers the tick as normal.
+    /// </summary>
+    private void RegisterUpdateTickIfSimulating()
+    {
         if (IsSimulating)
             RegisterTick(ETickGroup.DuringPhysics, ETickOrder.Scene, Update);
     }
@@ -696,14 +745,28 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
 
     private void Update()
     {
-        if (!IsSimulating || !_buffersInitialized)
+        if (!IsSimulating || !_buffersInitialized || IsSimulationHeld)
             return;
 
-        float deltaTime = Delta;
+        // A prewarm that did not complete in its budget continues here, in place of the normal step.
+        if (_prewarmStepsRemaining > 0)
+        {
+            ContinuePrewarm();
+            return;
+        }
+
+        StepSimulation(Delta, Transform.WorldMatrix);
+    }
+
+    /// <summary>Advances the emitter by one step: spawn, update, and the render bounds.</summary>
+    /// <param name="deltaTime">The step length in seconds.</param>
+    /// <param name="worldMatrix">The emitter transform for the spawn of this step.</param>
+    private void StepSimulation(float deltaTime, in Matrix4x4 worldMatrix)
+    {
         _totalTime += deltaTime;
 
         // Update emitter parameters
-        UpdateEmitterParams(deltaTime);
+        UpdateEmitterParams(deltaTime, worldMatrix);
 
         // Calculate spawn count for this frame
         uint spawnCount = 0;
@@ -733,12 +796,13 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
     }
 
     private void UpdateEmitterParams(float deltaTime)
-    {
-        var worldMatrix = Transform.WorldMatrix;
+        => UpdateEmitterParams(deltaTime, Transform.WorldMatrix);
 
+    private void UpdateEmitterParams(float deltaTime, in Matrix4x4 worldMatrix)
+    {
         _emitterParams = new GPUEmitterParams
         {
-            EmitterPosition = Transform.WorldTranslation,
+            EmitterPosition = worldMatrix.Translation,
             DeltaTime = deltaTime,
             EmitterForward = Vector3.TransformNormal(Vector3.UnitZ, worldMatrix),
             TotalTime = _totalTime,
@@ -915,6 +979,72 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
             IsSimulating = true;
             RegisterTick(ETickGroup.DuringPhysics, ETickOrder.Scene, Update);
         }
+    }
+
+    /// <summary>
+    /// Clears all particles, sets the random seed, and runs fixed steps of <see cref="PrewarmStepSeconds"/> for
+    /// <paramref name="seconds"/> of simulation time. The steps run now until <paramref name="budgetMilliseconds"/>
+    /// of wall time is used. The emitter runs at least one step in each call, so a prewarm always advances.
+    /// The steps that remain continue in the next updates of the emitter, with the same budget in each update,
+    /// in place of the normal step. All prewarm steps use the emitter transform of this call, so the result does not depend
+    /// on how the budget splits the steps across frames: the same seed, duration, and transform give the same particles.
+    /// The budget measures the CPU time that records the steps. The GPU runs the compute work later, so the GPU cost of a
+    /// prewarm is not limited by the budget.
+    /// </summary>
+    /// <param name="seconds">The simulation time to run. Zero only clears the particles and sets the seed.</param>
+    /// <param name="seed">The random seed of the spawn shader.</param>
+    /// <param name="budgetMilliseconds">The wall time that the steps can use in each frame.</param>
+    /// <returns>True if the prewarm is complete.</returns>
+    public bool Prewarm(float seconds, int seed, double budgetMilliseconds)
+    {
+        Clear();
+        _totalTime = 0.0f;
+        _emitAccumulator = 0.0f;
+        _randomSeed = unchecked((uint)seed);
+        // A controller can move the emitter or a parent in the same tick, before the transform flush. The stored world
+        // matrix is then from the last frame, so the ancestors are recalculated first.
+        RefreshWorldMatrix(Transform);
+        _prewarmWorldMatrix = Transform.WorldMatrix;
+        _prewarmStepsRemaining = float.IsFinite(seconds) && seconds > 0.0f
+            ? (int)MathF.Ceiling(seconds / PrewarmStepSeconds)
+            : 0;
+        _prewarmBudgetMilliseconds = double.IsFinite(budgetMilliseconds) ? Math.Max(0.0, budgetMilliseconds) : 0.0;
+        return ContinuePrewarm();
+    }
+
+    /// <summary>The emitter transform that the prewarm steps use. It is set by <see cref="Prewarm"/>.</summary>
+    internal Matrix4x4 PrewarmWorldMatrix => _prewarmWorldMatrix;
+
+    /// <summary>
+    /// Recalculates the world matrix of a transform and its ancestors, from the root down, so a local change of this tick
+    /// is in the matrix. It does not allocate.
+    /// </summary>
+    /// <returns>True if the world matrix changed, so the children must also be recalculated.</returns>
+    private static bool RefreshWorldMatrix(TransformBase transform)
+    {
+        bool parentChanged = transform.Parent is { } parent && RefreshWorldMatrix(parent);
+        return transform.RecalculateMatrices(forceWorldRecalc: parentChanged) || parentChanged;
+    }
+
+    /// <summary>
+    /// Runs more prewarm steps until the budget of the last <see cref="Prewarm"/> call is used.
+    /// The update of the emitter calls it while <see cref="IsPrewarming"/> is true.
+    /// </summary>
+    /// <returns>True if the prewarm is complete.</returns>
+    public bool ContinuePrewarm()
+    {
+        if (_prewarmStepsRemaining <= 0)
+            return true;
+
+        long start = System.Diagnostics.Stopwatch.GetTimestamp();
+        do
+        {
+            StepSimulation(PrewarmStepSeconds, _prewarmWorldMatrix);
+            _prewarmStepsRemaining--;
+        }
+        while (_prewarmStepsRemaining > 0 && System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds < _prewarmBudgetMilliseconds);
+
+        return _prewarmStepsRemaining <= 0;
     }
 
     /// <summary>

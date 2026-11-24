@@ -571,7 +571,7 @@ public static partial class EditorImGuiUI
             }
         }
 
-        DrawGrid(drawList, canvasPos, canvasSize, view.Pan, view.Zoom);
+        DrawEditorCanvasGrid(drawList, canvasPos, canvasSize, view.Pan, view.Zoom);
 
         const float nodeWidth = 210.0f;
         const float nodeHeight = 72.0f;

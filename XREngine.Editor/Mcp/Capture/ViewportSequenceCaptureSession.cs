@@ -92,6 +92,24 @@ internal sealed partial class ViewportSequenceCaptureSession
     public string OutputDirectory { get; }
     public string ManifestPath { get; }
 
+    /// <summary>
+    /// Optional gate checked on the render thread before scheduling capture index <c>k</c>.
+    /// When set, the session schedules the frame only when the callback returns true.
+    /// </summary>
+    internal Func<int, bool>? ShouldCaptureFrame { get; set; }
+
+    /// <summary>
+    /// Optional callback invoked on the render thread after capture index <c>k</c> is queued for GPU readback.
+    /// </summary>
+    internal Action<int>? FrameScheduled { get; set; }
+
+    /// <summary>
+    /// Optional destination for the captured pixels. When set, the session sends each read-back frame to the sink
+    /// and writes no PNG file. Frame analysis and the contact sheet need PNG files, so the session skips them.
+    /// Set this property before <see cref="Start"/>.
+    /// </summary>
+    internal IViewportSequenceFrameSink? FrameSink { get; set; }
+
     public DateTimeOffset StartedAtUtc
     {
         get
@@ -117,6 +135,15 @@ internal sealed partial class ViewportSequenceCaptureSession
             lock (_sync)
                 return IsTerminalState(_state);
         }
+    }
+
+    /// <summary>
+    /// Reads the current scheduled, completed, and failed frame counts under the session lock without allocating a snapshot.
+    /// </summary>
+    internal (int Scheduled, int Completed, int Failed) GetProgressCounts()
+    {
+        lock (_sync)
+            return (_scheduledFrameCount, _completedFrameCount, _failedFrameCount);
     }
 
     /// <summary>

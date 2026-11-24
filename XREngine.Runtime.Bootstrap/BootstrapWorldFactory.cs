@@ -191,7 +191,7 @@ public static class BootstrapWorldFactory
         }
 
         if (settings.Mirror)
-            AddMirror(rootNode);
+            AddMirror(rootNode, settings);
 
         Debug.Out($"[VolumetricFog] BootstrapWorldFactory.CreateUnitTestWorld InitializeVolumetricFog = {settings.InitializeVolumetricFog}");
         if (settings.InitializeVolumetricFog)
@@ -432,13 +432,23 @@ public static class BootstrapWorldFactory
         return skyboxComp;
     }
 
-    private static void AddMirror(SceneNode rootNode)
+    private static void AddMirror(SceneNode rootNode, UnitTestingWorldSettings settings)
     {
         SceneNode mirrorNode = rootNode.NewChild("MirrorNode");
         var mirrorTfm = mirrorNode.SetTransform<Transform>();
         mirrorTfm.Translation = new Vector3(0.0f, 0.0f, -20.0f);
         mirrorTfm.Scale = new Vector3(160.0f, 90.0f, 1.0f);
-        _ = mirrorNode.AddComponent<MirrorCaptureComponent>();
+        // An AdvancedRenderPipeline view cannot submit the traditional mirror
+        // display, so a world with an Advanced scene pipeline uses the native
+        // Advanced mirror path. When the settings do not name a pipeline, the
+        // automatic desktop selection is the AdvancedRenderPipeline.
+        bool advancedScene =
+            !settings.IsJsonPropertyPathSpecified(
+                nameof(UnitTestingWorldSettings.Rendering),
+                nameof(UnitTestingRenderSettings.RenderPipeline)) ||
+            settings.Rendering.RenderPipeline == UnitTestingRenderPipeline.AdvancedRenderPipeline;
+        _ = mirrorNode.AddComponent(() => new MirrorCaptureComponent
+            { UseAdvancedCapturePipeline = advancedScene });
     }
 
     private static void AddVolumetricFogVolume(SceneNode rootNode, UnitTestingWorldSettings settings)

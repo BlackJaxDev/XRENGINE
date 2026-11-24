@@ -100,8 +100,12 @@ Related settings:
   shared contexts poll `GL_COMPLETION_STATUS_ARB` at once. Set
   `XRE_SHARED_CONTEXT_DISABLE_LINK_SERIALIZATION=1` only for local driver
   throughput experiments.
-- `XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=1` remains as a legacy narrower
-  single-stage suppression flag for local driver experiments.
+- Shared-context workers set the driver shader compiler thread count to `0`
+  around single-stage separable program builds by default and restore the
+  configured count afterward. This prevents driver parallel-link stalls on
+  single-stage separable programs. Set
+  `XRE_SHARED_CONTEXT_HAZARD_DISABLE_PARALLEL=0` only for local driver
+  experiments.
 - `XRE_ALLOW_SYNC_SOURCE_RETRY_AFTER_ASYNC_TIMEOUT` is no longer supported.
   A timeout does not cancel native compiler work. It stops source compilation
   until process restart; no source retry can bypass this stop.

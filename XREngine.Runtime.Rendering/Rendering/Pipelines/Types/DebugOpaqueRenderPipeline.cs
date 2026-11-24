@@ -16,6 +16,7 @@ namespace XREngine.Rendering;
 /// Lightweight render pipeline for diagnostic worlds. Renders the ordinary scene passes and globally batched debug
 /// primitives without the default pipeline's lighting, ambient occlusion, bloom, temporal upscaling, or post-processing.
 /// </summary>
+[RenderPipelineScriptBase("DebugOpaque")]
 public sealed class DebugOpaqueRenderPipeline : RenderPipeline
 {
     private const string SceneColorTextureName = "DebugOpaqueSceneColor";

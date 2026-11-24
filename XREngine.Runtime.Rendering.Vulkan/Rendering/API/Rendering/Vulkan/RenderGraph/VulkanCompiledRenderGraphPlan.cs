@@ -19,7 +19,7 @@ internal sealed class VulkanCompiledRenderGraphPlan
 
     internal VulkanCompiledRenderGraphPlan(
         IReadOnlyList<RenderPassMetadata> orderedPasses,
-        IReadOnlyList<VulkanCompiledPassBatch> batches,
+        IReadOnlyList<RenderGraphPassBatch> batches,
         RenderGraphSynchronizationInfo synchronization)
     {
         var passToSubmission = new Dictionary<int, int>(orderedPasses.Count);
@@ -37,7 +37,7 @@ internal sealed class VulkanCompiledRenderGraphPlan
         for (int passOrder = 0; passOrder < orderedPasses.Count; passOrder++)
         {
             RenderPassMetadata pass = orderedPasses[passOrder];
-            string attachmentSignature = VulkanAttachmentCompatibility.BuildSignature(pass);
+            string attachmentSignature = RenderGraphAttachmentCompatibility.BuildSignature(pass);
             var resources = new List<RenderGraphPlanResourceUse>(pass.ResourceUsages.Count);
             for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
             {
@@ -140,7 +140,7 @@ internal sealed class VulkanCompiledRenderGraphPlan
         var submissions = new List<RenderGraphPlanSubmission>(batches.Count);
         for (int batchIndex = 0; batchIndex < batches.Count; batchIndex++)
         {
-            VulkanCompiledPassBatch batch = batches[batchIndex];
+            RenderGraphPassBatch batch = batches[batchIndex];
             var waits = new HashSet<int>();
             foreach (RenderGraphSynchronizationEdge edge in synchronization.Edges)
             {

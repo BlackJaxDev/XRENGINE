@@ -122,7 +122,7 @@ internal sealed unsafe class VulkanDxgiPresenter : IDisposable
             return false;
         }
 
-        if (!device.MutableCapabilities._supportsTimelineSemaphores)
+        if (!device.Capabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores))
         {
             reason = "timeline semaphores are not enabled";
             return false;

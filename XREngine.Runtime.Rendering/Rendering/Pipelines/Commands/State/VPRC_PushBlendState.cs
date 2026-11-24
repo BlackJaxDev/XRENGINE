@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// <see cref="VPRC_PopBlendState"/> when used with the <c>using</c> pattern.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_PushBlendState : ViewportStateRenderCommand<VPRC_PopBlendState>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

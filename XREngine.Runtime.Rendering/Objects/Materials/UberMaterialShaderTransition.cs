@@ -20,7 +20,7 @@ internal sealed record UberMaterialShaderTransition(
         => ReferenceEquals(material.Shaders, Replacement) && material.ShaderStateRevision == expectedRevision &&
             material.UberStateRevision == UberRevision && material.EngineSemantic == Semantic &&
             MatchesStages(Previous, PreviousStages) && MatchesStages(Replacement, ReplacementStages) &&
-            UberShaderVariantBuilder.IsCompatibleInternalReplacement(PreviousFragment, NextFragment);
+            UberShaderVariantBuilder.IsCompatibleInternalReplacement(PreviousFragment, NextFragment, Semantic);
 
     private static bool MatchesStages(EventList<XRShader> shaders, XRShader[] expected)
     {

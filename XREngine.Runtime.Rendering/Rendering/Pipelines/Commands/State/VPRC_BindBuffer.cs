@@ -1,8 +1,10 @@
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_BindBuffer : ViewportStateRenderCommand<VPRC_PopBufferBinding>
     {
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string BufferName { get; set; } = string.Empty;
         public uint BindingLocation { get; set; }
 

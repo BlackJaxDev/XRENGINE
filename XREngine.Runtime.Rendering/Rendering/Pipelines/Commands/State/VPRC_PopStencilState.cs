@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Disables stencil testing and resets to default state.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_PopStencilState : ViewportPopStateRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

@@ -194,9 +194,8 @@ public partial class OpenGLRenderer
     }
 
     /// <summary>
-    /// Records desired shared GL context capabilities and defers hidden GLFW window
-    /// creation until a shader cache miss, slow binary load, or async upload job
-    /// actually requires a background worker context.
+    /// Records desired shared GL context capabilities and initializes the binary-upload
+    /// and source-compile worker contexts while running on the native window owner thread.
     /// </summary>
     private void InitAsyncProgramBinaryUpload()
     {
@@ -206,6 +205,14 @@ public partial class OpenGLRenderer
         if (!_wantCompileLinkSharedContext)
             Debug.OpenGL("[ShaderCache] Shared-context compile/link queue disabled by settings. Shader source cache misses will stay pending; render-thread synchronous source linking is disabled.");
         _wantSparseTextureSharedContext = GetSparseTextureStreamingSupport(ESizedInternalFormat.Rgba8).IsAvailable;
+
+        if (Environment.CurrentManagedThreadId == XRWindow.NativeWindowThreadId)
+        {
+            if (_wantBinaryUploadSharedContext)
+                EnsureProgramBinaryUploadQueueInitialized();
+            if (_wantCompileLinkSharedContext)
+                EnsureProgramCompileLinkQueueInitialized();
+        }
     }
 
     internal void EnsureProgramBinaryUploadQueueInitialized()
@@ -291,7 +298,8 @@ public partial class OpenGLRenderer
             _programCompileLinkSharedContexts = compileContexts.ToArray();
             _programCompileLinkQueue = new GLProgramCompileLinkQueue(
                 _programCompileLinkSharedContexts,
-                completionStatusPollingEnabled: _parallelShaderCompileSupported);
+                completionStatusPollingEnabled: _parallelShaderCompileSupported,
+                khrMaxShaderCompilerThreadsEntryPoint: _glMaxShaderCompilerThreadsKhr);
             Debug.OpenGL(
                 $"[ShaderCache] Async program compile+link enabled via {_programCompileLinkSharedContexts.Length} shared GL context worker(s); " +
                 $"completionPolling={_parallelShaderCompileSupported}.");

@@ -287,7 +287,7 @@ public static partial class EditorUnitTests
             public UnitTestModelImportKind Kind { get; set; } = UnitTestModelImportKind.Static;
             /// <summary>
             /// Selects the generic model material factory. Unity scenes and prefabs use their source-aware
-            /// material converter instead; recognized Poiyomi materials are always converted to
+            /// material converter instead; recognized source toon materials are always converted to
             /// XRENGINE's forward-plus Uber shader.
             /// </summary>
             public ModelImportMaterialMode MaterialMode { get; set; } = ModelImportMaterialMode.Deferred;
@@ -380,6 +380,14 @@ public static partial class EditorUnitTests
             public bool GenerateClusterHierarchy { get; set; }
 
             /// <summary>
+            /// Packs the cluster hierarchy of this model into geometry pages for geometry streaming and
+            /// writes them to a page file next to the meshlet cache. Requires
+            /// <see cref="GenerateClusterHierarchy"/>. Off by default. The renderer still draws the
+            /// unpaged meshlet payload.
+            /// </summary>
+            public bool GenerateStreamingPages { get; set; }
+
+            /// <summary>
             /// Additional post-import actions to apply after the source model has been loaded.
             /// </summary>
             public ModelPostImportFlags PostImportFlags { get; set; } = ModelPostImportFlags.None;
@@ -455,7 +463,7 @@ public static partial class EditorUnitTests
         /// Path, optional SourceProjectRoot, ImportFlags, Scale, ZUp, InstanceCount, GenerateMeshletLods,
         /// MeshletAdditionalLodCount, PostImportFlags, and optional
         /// YawPitchRoll/Translation objects. Unity scenes and prefabs use the Unity converter; recognized
-        /// Poiyomi materials are converted to the forward-plus Uber shader.
+        /// Source toon materials are converted to the forward-plus Uber shader.
         /// Relative paths are checked in the working directory, Desktop, and engine assets.
         /// Unity packages extract to the asset cache and import each scene and prefab as a separate root.
         /// </summary>

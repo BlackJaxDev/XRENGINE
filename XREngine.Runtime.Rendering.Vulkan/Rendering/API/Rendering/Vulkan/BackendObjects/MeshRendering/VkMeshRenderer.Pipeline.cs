@@ -52,12 +52,21 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private bool EnsureProgram(XRMaterial material, EditorHighlightRasterOutput editorHighlightOutput = default)
 	{
+		// The first draw of an Uber material, and the first draw after its Uber or shader state
+		// changes, starts an asynchronous variant build. An authored Uber draw waits until its
+		// generated variant is ready, so it never draws with the canonical fragment shader. The
+		// adoption changes ActiveUberVariant and the shader list, so the program state below
+		// differs and a program for the variant is built on a later draw.
+		material.RequestUberVariantPreparationForDraw();
 		if (!material.IsUberRasterSourceReady())
 			return false;
 
 		GeneratedProgramState programState = CaptureGeneratedProgramState(material, editorHighlightOutput);
 		if (_programStateCache.TryGetValue(programState, out GeneratedProgramCacheEntry? cachedEntry))
+		{
+			_programFailureMaterial = null;
 			return ActivateGeneratedProgramAndEvictSuperseded(cachedEntry, editorHighlightOutput);
+		}
 
 		var sourceShaders = new List<XRShader>(material.Shaders.Count);
 		string? generatedVertexIdentity = null;
@@ -93,6 +102,7 @@ internal unsafe partial class VkMeshRenderer
 					material?.Name ?? "<unnamed material>",
 					Mesh?.Name ?? "<unnamed mesh>",
 					Data.VersionKindLabel);
+				_programFailureMaterial = material;
 				return false;
 			}
 

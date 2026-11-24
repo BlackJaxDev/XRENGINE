@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 
 /// <summary>Draws DDGI probes from their GPU state buffer without CPU readback.</summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
 public sealed class VPRC_DDGIDebugVisualization : ViewportRenderCommand
 {
     private const uint ComputeGroupSize = 64u;
@@ -21,7 +22,9 @@ public sealed class VPRC_DDGIDebugVisualization : ViewportRenderCommand
     public EDDGIDebugMode DebugMode { get; set; } = EDDGIDebugMode.None;
     public string ReadyVariableName { get; set; } = "DDGIGeometryReady";
     public string NodeCountVariableName { get; set; } = "DDGIGeometryNodeCount";
+    [RenderResourceName(ERenderResourceNameKind.Buffer)]
     public string ProbeStateBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string ForwardFBOName { get; set; } = string.Empty;
     public string? RenderGraphPassName { get; set; }
 
@@ -121,15 +124,8 @@ public sealed class VPRC_DDGIDebugVisualization : ViewportRenderCommand
 
     private bool TryResolveRenderGraphPassIndex(string passName, out int passIndex)
     {
-        if (ParentPipeline?.PassMetadata is { } metadata)
-            foreach (RenderPassMetadata pass in metadata)
-                if (string.Equals(pass.Name, passName, StringComparison.OrdinalIgnoreCase))
-                {
-                    passIndex = pass.PassIndex;
-                    return true;
-                }
-        passIndex = int.MinValue;
-        return false;
+        passIndex = ResolveActiveRenderGraphPassIndex(passName);
+        return passIndex != int.MinValue;
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)

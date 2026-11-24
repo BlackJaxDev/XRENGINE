@@ -6,8 +6,9 @@ namespace XREngine.Rendering.Meshlets;
 /// The skinning record of one meshlet of a skinned cluster hierarchy payload (8 bytes), in meshlet
 /// order. It names the palette bones that influence any vertex of the meshlet. With linear blend
 /// skinning a posed vertex lies in the convex hull of its bones' transforms of the bind vertex, so
-/// the meshlet's posed geometry lies inside the union of its bind sphere moved by each of these
-/// bones. The runtime merges those moved spheres to get a bound that holds in every pose.
+/// the meshlet's posed geometry lies inside the convex hull of its bind sphere moved by each of
+/// these bones. The Advanced task stage takes the box around those moved spheres, which holds that
+/// hull in every pose (see <c>AdvancedClusterSkinTables</c>).
 /// </summary>
 /// <param name="FirstBone">The first entry of the meshlet's bones in the payload's cluster bone list.</param>
 /// <param name="BoneCount">The number of bones in the list; 0 for a meshlet without bone influences.</param>

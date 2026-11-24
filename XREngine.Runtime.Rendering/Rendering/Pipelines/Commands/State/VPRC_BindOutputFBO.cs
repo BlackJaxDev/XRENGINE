@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     /// <param name="pipeline"></param>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Targets)]
     public class VPRC_BindOutputFBO : ViewportStateRenderCommand<VPRC_UnbindFBO>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

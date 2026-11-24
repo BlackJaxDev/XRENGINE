@@ -12,6 +12,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Applies the engine FXAA shader as a standalone composable fullscreen pass.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.AntiAliasing, DoesGpuWork = true)]
 public sealed class VPRC_FXAA : ViewportRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -83,8 +84,11 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
     private string? _cachedProfilingSource;
     private string? _cachedProfilingName;
 
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string? SourceTextureName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? SourceFBOName { get; set; }
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? DestinationFBOName { get; set; }
     public bool Stereo { get; set; }
 
@@ -293,19 +297,7 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
     }
 
     private int ResolvePassIndex(string passName, out bool hasRenderGraphMetadata)
-    {
-        RenderPipeline? pipeline = ParentPipeline;
-        if (pipeline?.PassMetadata is not { Count: > 0 })
-        {
-            hasRenderGraphMetadata = false;
-            return int.MinValue;
-        }
-
-        hasRenderGraphMetadata = true;
-        return pipeline.TryGetRenderPassIndex(passName, out int passIndex)
-            ? passIndex
-            : int.MinValue;
-    }
+        => ResolveActiveRenderGraphPassIndex(passName, out hasRenderGraphMetadata);
 
     private string GetSourceDisplayName()
         => SourceTextureName ?? SourceFBOName ?? "Output";

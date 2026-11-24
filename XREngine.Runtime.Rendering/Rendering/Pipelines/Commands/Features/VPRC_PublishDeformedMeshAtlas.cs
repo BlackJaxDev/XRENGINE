@@ -7,6 +7,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// the pipeline so that its compute work belongs to the frame's resource generation.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Compute, DoesGpuWork = true)]
 public class VPRC_PublishDeformedMeshAtlas : ViewportRenderCommand
 {
     protected override void Execute()

@@ -44,6 +44,8 @@
       href: animation/animation-api.md
     - name: MotionBricks Procedural Locomotion
       href: animation/motionbricks-locomotion.md
+    - name: Cutscenes
+      href: animation/cutscenes.md
 
 - name: Components
   items:

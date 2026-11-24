@@ -1011,6 +1011,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
                 ValidateActiveGenerationDescriptorParity();
                 ValidateRenderGraphExecutionAgainstMetadata();
+                lock (_renderGraphValidationLock)
+                    ExecutionTrace.Publish(RuntimeEngine.Rendering.State.RenderFrameId);
                 if (historyReservationOwned)
                 {
                     (historyReservationOwner ?? throw new InvalidOperationException(
@@ -1580,7 +1582,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         ValidateResourceGenerationFeatureMask(key, reason);
 
-        if (!force && ActiveGeneration?.Key == key)
+        if (!force && ActiveGeneration?.Key == key && HasCurrentPassMetadata(ActiveGeneration, pipeline))
         {
             _requiresManagedResourceGeneration = true;
             _classifiedResourceLayoutKey = key;
@@ -1588,7 +1590,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return true;
         }
 
-        if (!force && PendingGeneration?.Key == key)
+        if (!force && PendingGeneration?.Key == key && HasCurrentPassMetadata(PendingGeneration, pipeline))
         {
             _requiresManagedResourceGeneration = true;
             _classifiedResourceLayoutKey = key;
@@ -1665,7 +1667,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         _requiresManagedResourceGeneration = true;
         _classifiedResourceLayoutKey = key;
 
-        if (ActiveGeneration?.Key == key && ActiveGeneration.Layout.IsStructurallyEquivalentTo(layout))
+        if (ActiveGeneration?.Key == key &&
+            ActiveGeneration.Layout.IsStructurallyEquivalentTo(layout) &&
+            HasCurrentPassMetadata(ActiveGeneration, pipeline))
         {
             DiscardPendingGeneration($"Active generation layout already matches request: {reason}");
             Debug.Rendering(
@@ -1675,6 +1679,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ActiveGeneration.Key,
                 layout.OrderedSpecs.Count);
             return true;
+        }
+        else if (ActiveGeneration?.Key == key && !HasCurrentPassMetadata(ActiveGeneration, pipeline))
+        {
+            Debug.Rendering(
+                "[RenderResources] Same-key generation request follows a command chain rebuild. Pipeline={0} Reason={1} Key={2} CommandGeneration={3}->{4}",
+                ProfilerKey,
+                reason,
+                key,
+                ActiveGeneration.CommandGeneration,
+                pipeline.CommandGeneration);
         }
         else if (ActiveGeneration?.Key == key)
         {
@@ -1686,7 +1700,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ActiveGeneration.Layout.DescribeStructuralDifferenceTo(layout));
         }
 
-        if (PendingGeneration?.Key == key && PendingGeneration.Layout.IsStructurallyEquivalentTo(layout))
+        if (PendingGeneration?.Key == key &&
+            PendingGeneration.Layout.IsStructurallyEquivalentTo(layout) &&
+            HasCurrentPassMetadata(PendingGeneration, pipeline))
             return true;
 
         if (PendingGeneration is not null)
@@ -1710,7 +1726,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             pipeline,
             _appliedPipelineRevision,
             isInitialBuild: ActiveGeneration is null,
-            passMetadata: passMetadata);
+            passMetadata: passMetadata,
+            commandGeneration: pipeline.CommandGeneration);
         ConfigurePendingGenerationDebounce(key, reason);
         Debug.Rendering(
             "[RenderResources] Pending generation requested. Pipeline={0} Reason={1} Active={2} Target={3} Delta={4} Resources={5} DebounceMs={6:F0}",
@@ -1723,6 +1740,20 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             PendingGenerationDebounceRemainingMilliseconds());
         return true;
     }
+
+    /// <summary>
+    /// True when the pass metadata of <paramref name="generation"/> comes from the current command chain of
+    /// <paramref name="pipeline"/>. A generation that another pipeline asset owns keeps the key comparison only.
+    /// </summary>
+    /// <remarks>
+    /// A command chain rebuild can keep the same resource key and layout but change the passes. For example,
+    /// when the editor highlight module is turned off, the window present reads the final post-process
+    /// framebuffer instead of the highlight output. A generation with old metadata then has no entry for the
+    /// new present pass, so the backend rejects every frame.
+    /// </remarks>
+    private static bool HasCurrentPassMetadata(RenderResourceGeneration generation, RenderPipeline pipeline)
+        => !ReferenceEquals(generation.OwnerPipeline, pipeline) ||
+           generation.CommandGeneration == pipeline.CommandGeneration;
 
     private void ValidateResourceGenerationFeatureMask(ResourceGenerationKey key, string reason)
     {
@@ -1886,7 +1917,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="oldKey">The previous resource generation key, or null if there was no previous key.</param>
     /// <param name="newKey">The new resource generation key to compare against the old key.</param>
     /// <returns>A string describing the differences between the old and new keys, or "initial" if there was no old key.</returns>
-    private static string DescribeResourceGenerationKeyDelta(ResourceGenerationKey? oldKey, ResourceGenerationKey newKey)
+    public static string DescribeResourceGenerationKeyDelta(ResourceGenerationKey? oldKey, ResourceGenerationKey newKey)
     {
         if (!oldKey.HasValue)
             return "initial";
@@ -2009,7 +2040,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             EffectiveMsaaSampleCountThisFrame
                 ?? viewportCamera?.MsaaSampleCountOverride
                 ?? RuntimeRenderingHostServices.FrameTiming.DefaultMsaaSampleCount);
-        ulong featureMask = pipeline?.BuildResourceFeatureMaskForGenerationKey(this, viewport) ?? 0UL;
+        // The overlay resource hash joins the key here, so a pipeline override that skips the base still sees it.
+        ulong featureMask = pipeline is null ? 0UL : pipeline.BuildResourceFeatureMaskForGenerationKey(this, viewport) ^ pipeline.OverlayResourceHash;
         RenderPipelineExternalTargetKind externalTargetKind = FinalOutput is not null
             ? RenderPipelineExternalTargetKind.PresentationTarget
             : viewport?.RendersToExternalSwapchainTarget == true
@@ -3882,6 +3914,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         lock (_renderGraphValidationLock)
         {
             _executedRenderGraphPassIndices.Add(passIndex);
+            ExecutionTrace.Record(passIndex);
             if (_activeRenderGraphBranchDepth > 0)
                 _executedBranchRenderGraphPassIndices.Add(passIndex);
         }
@@ -3922,6 +3955,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         {
             _executedRenderGraphPassIndices.Clear();
             _executedBranchRenderGraphPassIndices.Clear();
+            ExecutionTrace.BeginFrame();
             _activeRenderGraphBranchDepth = 0;
         }
     }
@@ -4021,6 +4055,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         IReadOnlyCollection<RenderPassMetadata>? metadata =
             ActiveGeneration?.PassMetadata ?? Pipeline?.PassMetadata;
+        if (metadata is RenderPassMetadataSnapshot snapshot)
+            return snapshot.TryGetPassIndex(passName, out passIndex);
+
         if (metadata is not null)
         {
             foreach (RenderPassMetadata pass in metadata)

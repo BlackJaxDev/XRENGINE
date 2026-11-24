@@ -10,7 +10,16 @@ namespace XREngine.Animation
         public event Action<BaseKeyframeTrack>? Changed;
         public event DelLengthChange? LengthChanged;
 
-        protected internal void OnChanged() => Changed?.Invoke(this);
+        protected internal void OnChanged()
+        {
+            ++Revision;
+            Changed?.Invoke(this);
+        }
+
+        /// <summary>
+        /// Changes each time the keys change. A retained key is valid for a search only at the same revision.
+        /// </summary>
+        internal int Revision { get; private protected set; }
         protected internal void OnLengthChanged(float prevLength) => LengthChanged?.Invoke(prevLength, this);
 
         protected internal abstract Keyframe? FirstKey { get; internal set; }
@@ -147,12 +156,10 @@ namespace XREngine.Animation
 
         public Keyframe? GetKeyBeforeGeneric(float second)
         {
+            // Walk the links directly. The track enumerator allocates, and sampling calls this each frame.
             Keyframe? bestKey = null;
-            foreach (Keyframe key in this)
-                if (second >= key.Second)
-                    bestKey = key;
-                else
-                    break;
+            for (Keyframe? key = FirstKey; key is not null && second >= key.Second; key = key.Next)
+                bestKey = key;
             return bestKey;
         }
 

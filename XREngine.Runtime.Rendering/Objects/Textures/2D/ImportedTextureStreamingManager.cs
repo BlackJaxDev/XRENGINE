@@ -10,18 +10,13 @@ namespace XREngine.Rendering;
 
 internal sealed partial class ImportedTextureStreamingManager
 {
-    private const int MaxResidentTransitionsPerFrame = 2;
-    private const int MaxPromotionTransitionsPerFrame = 1;
     private const int MaxSparseFinalizationsPerFrame = 2;
     private const int MinTransitionCooldownFrames = 2;
-    private const int PromotionCooldownFrames = 6;
     private const int FailedPromotionCooldownFrames = 180;
     private const int MaxFailedPromotionCooldownFrames = 1800;
     private const int DemotionCooldownFrames = 90;
     private const int VisiblePromotionPinFrames = 180;
-    private const int PromotionFadeFrames = 90;
     private const int RecentlyBoundFallbackFrames = 3;
-    private const long MaxPromotionBytesPerFrame = 32L * 1024L * 1024L;
     private const long MaxImportEraPromotionBytesPerFrame = 4L * 1024L * 1024L;
     private const uint BoundMaterialRelatedMinResidentMaxDimension = 512u;
     private const float BoundMaterialFallbackProjectedPixelSpan = 384.0f;
@@ -93,18 +88,42 @@ internal sealed partial class ImportedTextureStreamingManager
     private long _lastCurrentManagedBytes;
     private long _lastAvailableManagedBytes;
     private long _lastAssignedManagedBytes;
+    private int _budgetPressure;
+    private long _budgetPressureFrameId = long.MinValue;
     private long _lastCompactionFrameId = long.MinValue;
 
-    private ImportedTextureStreamingManager()
+    /// <summary>
+    /// Creates a manager. Runtime code uses <see cref="Instance"/>. Tests create other
+    /// instances to isolate their state; such an instance subscribes to no frame callbacks
+    /// until it registers a texture.
+    /// </summary>
+    internal ImportedTextureStreamingManager()
     {
     }
+
+    /// <summary>
+    /// True if the last evaluation found VRAM budget pressure: the budget fit gave at least one texture less than its
+    /// desired size, the streamed textures used more than the available budget so promotions stopped, or the Vulkan
+    /// allocator budget stopped promotions. The per-frame transition limits of a budget profile do not count, because
+    /// they limit the work of a frame and not the memory. Any thread can read it. It allocates nothing.
+    /// </summary>
+    internal bool IsUnderBudgetPressure
+        => Volatile.Read(ref _budgetPressure) != 0;
+
+    /// <summary>
+    /// The frame of the evaluation that wrote <see cref="IsUnderBudgetPressure"/>. A value that does not advance means that
+    /// no evaluation ran, for example because no viewport collects, so the flag is stale. Any thread can read it.
+    /// </summary>
+    internal long BudgetPressureFrameId
+        => Volatile.Read(ref _budgetPressureFrameId);
 
     private readonly record struct DeferredPromotionCandidate(
         ImportedTextureStreamingSnapshot Snapshot,
         uint AssignedResidentSize,
         SparseTextureStreamingPageSelection DesiredPageSelection,
         long TargetCommittedBytes,
-        bool PressureDemotion);
+        bool PressureDemotion,
+        bool RequestDriven);
 
     internal bool HasActiveImportedModelImports
         => Volatile.Read(ref _activeImportedModelImports) > 0;
@@ -1012,6 +1031,8 @@ internal sealed partial class ImportedTextureStreamingManager
             return;
 
         UpdatePromotionFades(frameId);
+        // One frame sample for the decode width feedback (decode contention is not visible on the render thread).
+        TextureStreamingCapacity.ObserveDecodeFrame();
         Evaluate(frameId);
         Volatile.Write(ref _lastEvaluatedFrameId, frameId);
 
@@ -1161,7 +1182,7 @@ internal sealed partial class ImportedTextureStreamingManager
             && current.FenceSync == transitionResult.FenceSync;
     }
 
-    private ImportedTextureStreamingRecord GetOrCreateRecord(
+    internal ImportedTextureStreamingRecord GetOrCreateRecord(
         XRTexture2D texture,
         string? filePath = null,
         bool deferAuthorityResolution = false)
@@ -1230,8 +1251,16 @@ internal sealed partial class ImportedTextureStreamingManager
         _registry.CompactRecordRefs();
     }
 
-    private void Evaluate(long frameId)
+    /// <summary>
+    /// Runs residency policy for one collect frame: advances the budget profile fade, applies the
+    /// explicit residency requests, then admits transitions within the per-frame limits.
+    /// The frame callback calls it after visible collection. Tests call it directly.
+    /// </summary>
+    internal void Evaluate(long frameId)
     {
+        TextureStreamingBudgetLimits limits = AdvanceBudgetProfile();
+        RefreshResidencyRequests(frameId);
+
         if (_lastCompactionFrameId == long.MinValue
             || frameId - _lastCompactionFrameId >= RecordRefCompactionIntervalFrames)
         {
@@ -1244,6 +1273,9 @@ internal sealed partial class ImportedTextureStreamingManager
         CollectSnapshots(snapshots);
         if (snapshots.Count == 0)
         {
+            Volatile.Write(ref _budgetPressure, 0);
+            Volatile.Write(ref _budgetPressureFrameId, frameId);
+
             // Log once when first called with no snapshots, to confirm Evaluate is running
             if (frameId <= 10 && frameId % 5 == 0)
                 Debug.Textures(
@@ -1252,6 +1284,8 @@ internal sealed partial class ImportedTextureStreamingManager
         }
 
         bool importsActive = Volatile.Read(ref _activeImportedModelImports) > 0;
+        if (!importsActive)
+            _requestImportDeferralLogged = false;
         bool allowPromotions = true;
         long currentManagedBytes = 0L;
         for (int i = 0; i < snapshots.Count; i++)
@@ -1340,6 +1374,7 @@ internal sealed partial class ImportedTextureStreamingManager
         }
 
         long assignedManagedBytes = 0L;
+        int budgetFitLimitedCount = 0;
         int queuedTransitions = 0;
         int queuedPromotions = 0;
         int queuedDemotions = 0;
@@ -1355,6 +1390,7 @@ internal sealed partial class ImportedTextureStreamingManager
             SparseTextureStreamingPageSelection desiredPageSelection,
             long targetCommittedBytes,
             bool pressureDemotion,
+            bool requestDriven,
             bool enforceFairness)
         {
             SparseTextureStreamingPageSelection currentPageSelection = snapshot.PendingMaxDimension != 0
@@ -1408,15 +1444,19 @@ internal sealed partial class ImportedTextureStreamingManager
                 if (importsActive)
                 {
                     if (!visibleThisFrame)
+                    {
+                        if (requestDriven)
+                            LogRequestDeferredByImportsOnce(snapshot);
                         return false;
+                    }
 
                     if (queuedPromotionBytes + deltaBytes > CollectBudgetPeriods.Scale(MaxImportEraPromotionBytesPerFrame))
                         return false;
                 }
 
-                if (queuedTransitions >= CollectBudgetPeriods.Scale(MaxResidentTransitionsPerFrame)
-                    || queuedPromotions >= CollectBudgetPeriods.Scale(MaxPromotionTransitionsPerFrame)
-                    || (queuedPromotions > 0 && queuedPromotionBytes + deltaBytes > CollectBudgetPeriods.Scale(MaxPromotionBytesPerFrame)))
+                if (queuedTransitions >= CollectBudgetPeriods.Scale(limits.MaxResidentTransitionsPerFrame)
+                    || queuedPromotions >= CollectBudgetPeriods.Scale(limits.MaxPromotionTransitionsPerFrame)
+                    || (queuedPromotions > 0 && queuedPromotionBytes + deltaBytes > CollectBudgetPeriods.Scale(limits.MaxPromotionBytesPerFrame)))
                 {
                     return false;
                 }
@@ -1425,7 +1465,7 @@ internal sealed partial class ImportedTextureStreamingManager
                     && !string.IsNullOrWhiteSpace(snapshot.FairnessGroupKey)
                     && promotionCountsByGroup.GetValueOrDefault(snapshot.FairnessGroupKey) > 0)
                 {
-                    deferredPromotions.Add(new DeferredPromotionCandidate(snapshot, assignedResidentSize, desiredPageSelection, targetCommittedBytes, pressureDemotion));
+                    deferredPromotions.Add(new DeferredPromotionCandidate(snapshot, assignedResidentSize, desiredPageSelection, targetCommittedBytes, pressureDemotion, requestDriven));
                     return false;
                 }
             }
@@ -1473,7 +1513,7 @@ internal sealed partial class ImportedTextureStreamingManager
                     }
                 }
 
-                if (queuedTransitions >= CollectBudgetPeriods.Scale(MaxResidentTransitionsPerFrame))
+                if (queuedTransitions >= CollectBudgetPeriods.Scale(limits.MaxResidentTransitionsPerFrame))
                     return false;
             }
 
@@ -1486,7 +1526,8 @@ internal sealed partial class ImportedTextureStreamingManager
                 currentCommittedBytes,
                 targetCommittedBytes,
                 pressureDemotion,
-                reason))
+                reason,
+                isPromotion && requestDriven))
             {
                 return false;
             }
@@ -1567,6 +1608,26 @@ internal sealed partial class ImportedTextureStreamingManager
                 }
             }
 
+            // An explicit request is a separate demand signal. It raises the target, but it does not
+            // count as visibility, and the quality cap, the failed-promotion cooldown, the Vulkan
+            // freeze, and the budget fit below apply to it as to any target.
+            uint visibilityDesiredResidentSize = desiredResidentSize;
+            if (snapshot.RequestedMaxDimension != 0 && !freezeResidentSizeForVulkan)
+            {
+                uint requestedResidentSize = TextureResidencyPolicy.ResolveRequestedResidentSize(
+                    snapshot.RequestedMaxDimension,
+                    Math.Max(snapshot.SourceWidth, snapshot.SourceHeight),
+                    snapshot.Backend.PreviewMaxDimension,
+                    snapshot.PreviewReady,
+                    allowPromotions && !suppressPromotionsForVulkanPressure);
+                requestedResidentSize = TextureResidencyPolicy.ApplyTextureQuality(
+                    requestedResidentSize,
+                    snapshot.Backend.PreviewMaxDimension,
+                    RuntimeRenderingHostServices.Settings.TextureQuality);
+                if (!IsFailedPromotionCoolingDown(snapshot, requestedResidentSize, frameId))
+                    desiredResidentSize = Math.Max(desiredResidentSize, requestedResidentSize);
+            }
+
             SparseTextureStreamingPageSelection budgetPageSelection = DetermineDesiredPageSelection(snapshot, desiredResidentSize, frameId);
 
             long remainingBudget = availableManagedBytes == long.MaxValue
@@ -1592,9 +1653,10 @@ internal sealed partial class ImportedTextureStreamingManager
                 snapshot.Format,
                 snapshot.SparseNumLevels,
                 desiredPageSelection);
-            bool pressureDemotion = assignedResidentSize < desiredResidentSize
-                && targetCommittedBytes < snapshot.CurrentCommittedBytes
+            bool budgetFitLimited = assignedResidentSize < desiredResidentSize
                 && availableManagedBytes != long.MaxValue;
+            bool pressureDemotion = budgetFitLimited
+                && targetCommittedBytes < snapshot.CurrentCommittedBytes;
             if (ShouldPreserveVulkanDenseResidentSizeWithoutPressure(
                     snapshot,
                     assignedResidentSize,
@@ -1606,7 +1668,18 @@ internal sealed partial class ImportedTextureStreamingManager
                 desiredPageSelection = snapshot.CurrentPageSelection.Normalize(PageSelectionFullCoverageThreshold);
                 targetCommittedBytes = snapshot.CurrentCommittedBytes;
                 pressureDemotion = false;
+                budgetFitLimited = false;
             }
+
+            if (budgetFitLimited)
+                budgetFitLimitedCount++;
+
+            // Only a promotion that no visibility or binding signal shares is request-driven. A visible
+            // texture that a request raises keeps its visible pin, and a cancel of the request does not
+            // cancel a promotion that visibility also needs.
+            bool requestDriven = !visibleThisFrame
+                && !recentlyBound
+                && assignedResidentSize > visibilityDesiredResidentSize;
 
             TextureRuntimeDiagnostics.LogResidencyDesired(
                 frameId,
@@ -1642,13 +1715,12 @@ internal sealed partial class ImportedTextureStreamingManager
                 Monitor.Exit(snapshot.Record.Sync);
             }
 
-            _ = TryQueueCandidate(snapshot, assignedResidentSize, desiredPageSelection, targetCommittedBytes, pressureDemotion, enforceFairness: true);
+            _ = TryQueueCandidate(snapshot, assignedResidentSize, desiredPageSelection, targetCommittedBytes, pressureDemotion, requestDriven, enforceFairness: true);
         }
 
         for (int i = 0; i < deferredPromotions.Count; i++)
         {
-            if (queuedTransitions >= CollectBudgetPeriods.Scale(MaxResidentTransitionsPerFrame) ||
-                queuedPromotions >= CollectBudgetPeriods.Scale(MaxPromotionTransitionsPerFrame))
+            if (queuedTransitions >= CollectBudgetPeriods.Scale(limits.MaxResidentTransitionsPerFrame) || queuedPromotions >= CollectBudgetPeriods.Scale(limits.MaxPromotionTransitionsPerFrame))
                 break;
 
             DeferredPromotionCandidate deferred = deferredPromotions[i];
@@ -1658,6 +1730,7 @@ internal sealed partial class ImportedTextureStreamingManager
                 deferred.DesiredPageSelection,
                 deferred.TargetCommittedBytes,
                 deferred.PressureDemotion,
+                deferred.RequestDriven,
                 enforceFairness: false);
         }
 
@@ -1668,6 +1741,9 @@ internal sealed partial class ImportedTextureStreamingManager
         Volatile.Write(ref _lastCurrentManagedBytes, currentManagedBytes);
         Volatile.Write(ref _lastAvailableManagedBytes, availableManagedBytes);
         Volatile.Write(ref _lastAssignedManagedBytes, assignedManagedBytes);
+        bool budgetPressure = budgetFitLimitedCount > 0 || !allowPromotions || suppressPromotionsForVulkanPressure;
+        Volatile.Write(ref _budgetPressure, budgetPressure ? 1 : 0);
+        Volatile.Write(ref _budgetPressureFrameId, frameId);
 
         int pendingTextureQueueDepth = XRTexture2D.QueuedProgressiveUploadCount;
         int urgentTextureRepairDepth = 0;
@@ -1732,6 +1808,7 @@ internal sealed partial class ImportedTextureStreamingManager
                 $"vulkanFrozen={vulkanFrozenCount} freezeReason='{(vulkanFrozenCount > 0 ? VulkanPreviewFreezeReason : string.Empty)}' " +
                 $"allowPromotions={allowPromotions} importsActive={importsActive} activeImports={Volatile.Read(ref _activeImportedModelImports)} " +
                 $"queuedTransitions={queuedTransitions} queuedPromotions={queuedPromotions} queuedDemotions={queuedDemotions} " +
+                $"budgetProfile={BudgetProfile} budgetBlend={_budgetProfileBlend:F2} residencyRequests={ActiveResidencyRequestCount} " +
                 $"budget={(availableManagedBytes == long.MaxValue ? "unlimited" : $"{availableManagedBytes / (1024 * 1024)}MB")} " +
                 $"vulkanAllocatorBudget='{(usingVulkanAllocatorBudget ? vulkanAllocatorBudgetReason : string.Empty)}'");
         }
@@ -1848,7 +1925,8 @@ internal sealed partial class ImportedTextureStreamingManager
         long currentCommittedBytes,
         long targetCommittedBytes,
         bool pressureDemotion,
-        string reason)
+        string reason,
+        bool requestDriven)
     {
         ImportedTextureStreamingRecord record = snapshot.Record;
         uint sourceMaxDimension = Math.Max(snapshot.SourceWidth, snapshot.SourceHeight);
@@ -1960,7 +2038,8 @@ internal sealed partial class ImportedTextureStreamingManager
                     reason,
                     transitionPriority,
                     uploadPriorityClass,
-                    out previousPendingLoadCts))
+                    out previousPendingLoadCts,
+                    requestDriven))
             {
                 cts.Dispose();
                 return false;
@@ -2279,7 +2358,7 @@ internal sealed partial class ImportedTextureStreamingManager
             || VulkanProvider.IsSynchronizedUploadAvailable;
     }
 
-    private static void ClearPendingTransition(
+    private void ClearPendingTransition(
         ImportedTextureStreamingRecord record,
         CancellationTokenSource cts,
         XRTexture2D? texture,
@@ -2298,6 +2377,7 @@ internal sealed partial class ImportedTextureStreamingManager
         long pendingPreviousBytes = 0L;
         long pendingTargetBytes = 0L;
         bool pressureDemotion = false;
+        bool requestDriven = false;
         string backendName = string.Empty;
         string reason = string.Empty;
         JobPriority transitionPriority = JobPriority.Low;
@@ -2321,6 +2401,16 @@ internal sealed partial class ImportedTextureStreamingManager
             pendingPreviousBytes = record.PendingTransitionPreviousCommittedBytes;
             pendingTargetBytes = record.PendingTransitionTargetCommittedBytes;
             pressureDemotion = record.PendingTransitionWasPressureDemotion;
+            requestDriven = record.PendingTransitionRequestDriven;
+
+            // The queue decided "request-driven" when it queued the promotion. A texture that became visible or bound while
+            // the promotion was in flight is on screen now, so it gets the fade and the pin, as a visible promotion does.
+            if (requestDriven)
+            {
+                long now = Math.Max(frameId, Volatile.Read(ref _collectFrameId));
+                if (record.LastVisibleFrameId >= now - 1 || record.LastBoundFrameId >= now - 1)
+                    requestDriven = false;
+            }
             backendName = string.IsNullOrWhiteSpace(record.PendingTransitionBackendName)
                 ? record.Backend?.Name ?? "Unknown"
                 : record.PendingTransitionBackendName;
@@ -2351,8 +2441,13 @@ internal sealed partial class ImportedTextureStreamingManager
                 record.PreviewReady = true;
                 if (completedResidentSize > previousResidentSize)
                 {
-                    record.PromotionCooldownUntilFrameId = frameId + PromotionCooldownFrames;
-                    record.PinUntilFrameId = frameId + VisiblePromotionPinFrames;
+                    record.PromotionCooldownUntilFrameId = frameId + Volatile.Read(ref _activePromotionCooldownFrames);
+
+                    // The pin keeps a newly promoted visible texture resident. A promotion
+                    // that only an explicit request raised is not visible, so it sets no pin.
+                    // The request itself holds the size until the caller cancels it.
+                    if (!requestDriven)
+                        record.PinUntilFrameId = frameId + VisiblePromotionPinFrames;
                 }
                 else if (completedResidentSize < previousResidentSize)
                 {
@@ -2368,7 +2463,12 @@ internal sealed partial class ImportedTextureStreamingManager
                     record.BaseLodBias = applySamplerLodBias
                         ? textureLodBias - currentStreamingLodBias
                         : textureLodBias;
-                    if (completedResidentSize > previousResidentSize)
+
+                    // The fade hides the change of mips on screen. A promotion that only an explicit
+                    // request raised was not visible, so it shows the new mips at once. A caller that
+                    // waits for the request, for example a cutscene that holds at a camera cut, then
+                    // shows the sharp texture in the first frame after the completion.
+                    if (completedResidentSize > previousResidentSize && !requestDriven)
                     {
                         float promotionFadeBias = CalculatePromotionFadeBias(
                             record.SourceWidth,
@@ -2381,7 +2481,7 @@ internal sealed partial class ImportedTextureStreamingManager
                             record.CurrentStreamingLodBias = startBias;
                             record.PromotionFadeStartBias = startBias;
                             record.PromotionFadeStartFrameId = frameId;
-                            Volatile.Write(ref record.PromotionFadeEndFrameId, frameId + PromotionFadeFrames);
+                            Volatile.Write(ref record.PromotionFadeEndFrameId, frameId + Volatile.Read(ref _activePromotionFadeFrames));
                             targetLodBias = record.BaseLodBias + startBias;
                             shouldApplyLodBias = applySamplerLodBias;
                         }
@@ -2492,8 +2592,8 @@ internal sealed partial class ImportedTextureStreamingManager
     /// The later of the frame a transition was queued in and the current collect
     /// frame, so cooldowns are measured from when a transition actually ended.
     /// </summary>
-    private static long CurrentCompletionFrameId(long queuedFrameId)
-        => Math.Max(queuedFrameId, Volatile.Read(ref Instance._collectFrameId));
+    private long CurrentCompletionFrameId(long queuedFrameId)
+        => Math.Max(queuedFrameId, Volatile.Read(ref _collectFrameId));
 
     private static void RecordFailedTransitionAfterLock(
         ImportedTextureStreamingRecord record,

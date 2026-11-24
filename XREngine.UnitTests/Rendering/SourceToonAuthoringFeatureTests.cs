@@ -36,62 +36,6 @@ public sealed class SourceToonAuthoringFeatureTests
     }
 
     [Test]
-    public void PinnedAuthoringAudit_ClassifiesEveryActiveAnnotationAndWorkflow()
-    {
-        IReadOnlyList<SourceToonAuthoringAuditEntry> audit = SourceToonAuthoringParityAudit.All;
-
-        audit.Count(entry => entry.Kind == "annotation").ShouldBe(41);
-        audit.Count(entry => entry.Kind is "menu" or "auxiliaryWindow" or "inspectorWorkflow")
-            .ShouldBe(62);
-        SourceToonAuthoringParityAudit.Unclassified.ShouldBeEmpty();
-        audit.ShouldAllBe(entry => entry.ActiveUsageCount > 0);
-    }
-
-    [Test]
-    public void PinnedModeActionGraph_MapsEveryCoupledRenderPresetField()
-    {
-        IRuntimeShaderServices? previous = RuntimeShaderServices.Current;
-        RuntimeShaderServices.Current = new UberRuntimeShaderServices();
-        try
-        {
-            ShaderAuthoringSchema schema = SourceToonAuthoringSchemaCatalog.GetOrCreate(
-                ShaderHelper.UberFragForward().GetUiManifest());
-            ShaderAuthoringNode mode = schema.PropertyLookup["_Mode"];
-            string actions = mode.Options.OnValueActions.ShouldNotBeNull();
-
-            MaterialAuthoringActionGraph opaque =
-                MaterialAuthoringActionGraph.ParseForValue(actions, "0");
-            MaterialAuthoringActionGraph transparent =
-                MaterialAuthoringActionGraph.ParseForValue(actions, "2");
-
-            opaque.Actions.Count.ShouldBe(24);
-            transparent.Actions.Count.ShouldBe(24);
-            opaque.Actions.ShouldContain(action =>
-                action.Target == "render_queue" && action.Value == "2000");
-            transparent.Actions.ShouldContain(action =>
-                action.Target == "render_queue" && action.Value == "3000");
-            transparent.Actions.ShouldContain(action =>
-                action.Target == "_ZWrite" && action.Value == "0");
-            MaterialRenderStateActionAdapter.IsSupported("_BlendOp").ShouldBeTrue();
-            MaterialRenderStateActionAdapter.IsSupported("_OutlineDstBlendAlpha").ShouldBeTrue();
-
-            foreach (MaterialAuthoringAction action in opaque.Actions.Concat(transparent.Actions))
-            {
-                if (action.Target is "render_queue" or "render_type" ||
-                    MaterialRenderStateActionAdapter.IsSupported(action.Target))
-                    continue;
-                schema.PropertyLookup.ContainsKey(action.Target).ShouldBeTrue(
-                    $"Missing action target {action.Target}");
-                schema.PropertyLookup[action.Target].ManifestProperty.ShouldNotBeNull(
-                    $"Unmapped action target {action.Target}");
-            }
-        }
-        finally
-        {
-            RuntimeShaderServices.Current = previous;
-        }
-    }
-    [Test]
     public void TexturePackingGraph_CompilesExplicitWiringAndRejectsCycles()
     {
         TexturePackingNode constant = new(

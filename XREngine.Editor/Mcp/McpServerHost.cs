@@ -664,18 +664,25 @@ namespace XREngine.Editor.Mcp
             string payload = JsonSerializer.Serialize(result, _serializerOptions);
             byte[] bytes = Encoding.UTF8.GetBytes(payload);
             response.ContentLength64 = bytes.Length;
-            trace?.Record("HttpWriteBegin", $"bytes={bytes.Length}");
+            // A synchronous tool does not observe the request timeout, so it can finish after the timeout elapsed. The
+            // result is complete at this point, so the write uses the server lifetime token. With the expired request
+            // token the write would throw, and the client would wait for a response that never comes.
+            bool finishedAfterTimeout = requestToken.IsCancellationRequested;
+            trace?.Record("HttpWriteBegin", $"bytes={bytes.Length} afterTimeout={finishedAfterTimeout}");
             try
             {
-                await response.OutputStream.WriteAsync(bytes, 0, bytes.Length, requestToken);
+                await response.OutputStream.WriteAsync(bytes, 0, bytes.Length, token);
                 trace?.Record("HttpWriteEnd");
             }
             catch (Exception exception)
             {
                 trace?.Record("HttpWriteError", exception.GetType().Name);
+                // Abort closes the connection, so the client gets an error at once instead of waiting for its own timeout.
+                response.Abort();
                 throw;
             }
-            LogRequest(requestId, "Ok", context.Request, (int)HttpStatusCode.OK, responseSessionId is null ? $"bytes={bytes.Length}" : $"bytes={bytes.Length} session={responseSessionId}");
+            string okDetail = responseSessionId is null ? $"bytes={bytes.Length}" : $"bytes={bytes.Length} session={responseSessionId}";
+            LogRequest(requestId, "Ok", context.Request, (int)HttpStatusCode.OK, finishedAfterTimeout ? $"{okDetail} after_timeout_ms={timeoutMs}" : okDetail);
             response.Close();
         }
 

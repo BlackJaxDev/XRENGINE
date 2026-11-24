@@ -82,21 +82,40 @@ internal unsafe partial class VkMeshRenderer
 		switch (engineType)
 		{
 			case EShaderVarType._float:
-				Unsafe.WriteUnaligned(ref data[offset], value.Float);
+				float floatValue = valueType switch
+				{
+					EShaderVarType._float => value.Float,
+					EShaderVarType._uint => value.UInt,
+					_ => value.Int,
+				};
+				Unsafe.WriteUnaligned(ref data[offset], floatValue);
 				return true;
 			case EShaderVarType._int:
-				Unsafe.WriteUnaligned(ref data[offset], value.Int);
+				int intValue = valueType switch
+				{
+					EShaderVarType._float => (int)MathF.Truncate(value.Float),
+					EShaderVarType._uint => unchecked((int)value.UInt),
+					_ => value.Int,
+				};
+				Unsafe.WriteUnaligned(ref data[offset], intValue);
 				return true;
 			case EShaderVarType._uint:
-				uint unsignedValue = valueType == EShaderVarType._bool
-					? value.Int != 0 ? 1u : 0u
-					: value.UInt;
-				Unsafe.WriteUnaligned(ref data[offset], unsignedValue);
+				uint uintValue = valueType switch
+				{
+					EShaderVarType._float => (uint)MathF.Max(0.0f, MathF.Truncate(value.Float)),
+					EShaderVarType._uint => value.UInt,
+					EShaderVarType._bool => value.Int != 0 ? 1u : 0u,
+					_ => (uint)Math.Max(0, value.Int),
+				};
+				Unsafe.WriteUnaligned(ref data[offset], uintValue);
 				return true;
 			case EShaderVarType._bool:
-				int booleanValue = valueType == EShaderVarType._uint
-					? value.UInt != 0u ? 1 : 0
-					: value.Int != 0 ? 1 : 0;
+				int booleanValue = valueType switch
+				{
+					EShaderVarType._float => MathF.Abs(value.Float) > 1.0e-6f ? 1 : 0,
+					EShaderVarType._uint => value.UInt != 0u ? 1 : 0,
+					_ => value.Int != 0 ? 1 : 0,
+				};
 				Unsafe.WriteUnaligned(ref data[offset], booleanValue);
 				return true;
 			case EShaderVarType._vec2:
@@ -123,17 +142,17 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	/// <summary>
-	/// Accepts vector size changes and conversions between Boolean and integer types.
+	/// Accepts vector size changes and conversions between scalar numeric and Boolean types.
 	/// </summary>
 	private static bool AreCompatible(EShaderVarType expected, EShaderVarType actual)
 		=> expected == actual || (expected, actual) switch
 		{
 			(EShaderVarType._vec4, EShaderVarType._vec3) => true,
 			(EShaderVarType._vec3, EShaderVarType._vec4) => true,
-			(EShaderVarType._int, EShaderVarType._bool) => true,
-			(EShaderVarType._uint, EShaderVarType._bool) => true,
-			(EShaderVarType._bool, EShaderVarType._int) => true,
-			(EShaderVarType._bool, EShaderVarType._uint) => true,
+			(EShaderVarType._float, EShaderVarType._int or EShaderVarType._uint or EShaderVarType._bool) => true,
+			(EShaderVarType._int, EShaderVarType._float or EShaderVarType._uint or EShaderVarType._bool) => true,
+			(EShaderVarType._uint, EShaderVarType._float or EShaderVarType._int or EShaderVarType._bool) => true,
+			(EShaderVarType._bool, EShaderVarType._float or EShaderVarType._int or EShaderVarType._uint) => true,
 			_ => false
 		};
 

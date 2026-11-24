@@ -107,6 +107,24 @@ bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
 #ifndef XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS
 #define XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS 46
 #endif
+// The geometry page pool (fixed-size page slots that hold page images) and the
+// page table of this frame slot (one slot index per registered page). Only the
+// Vulkan backend binds them (VisibilityStreamedGeometry.glslinc).
+#ifndef XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_POOL
+#define XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_POOL 73
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_TABLE
+#define XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_TABLE 74
+#endif
+// Geometry streaming feedback of this frame slot: the page requests and the
+// touch and request bits. The visibility task stage writes them, and the CPU
+// reads them back after the frame (VisibilityStreamedGeometry.glslinc).
+#ifndef XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_REQUESTS
+#define XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_REQUESTS 75
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_FEEDBACK_BITS
+#define XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_FEEDBACK_BITS 76
+#endif
 // Late visibility never overwrites the early producer's GPU-owned streams.
 // These three frame-slot ranges retain recovered candidates and their indexed
 // indirect expansion until the load-preserving late raster consumes them.
@@ -220,6 +238,19 @@ buffer XRAdvancedVisibilityPersistentState { uint records[]; } XR_ADV_Visibility
 #define XR_ADV_MESHLET_HISTORY_SET_WORDS (XR_ADV_MESHLET_HISTORY_MESHLET_CAPACITY / 32u)
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_MESHLET_HISTORY)
 buffer XRAdvancedVisibilityMeshletHistory { uint words[]; } XR_ADV_VisibilityMeshletHistory;
+
+// Skin palette rows of the current frame slot: three vec4 rows per palette
+// matrix, world space (out_i = dot(row_i, vec4(bindPosition, 1))). A visibility
+// payload's paletteOffset is the index of its first matrix (the identity row);
+// utilized bone i is matrix paletteOffset + i + 1. Only the posed skinned
+// cluster-cut task variant (XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED) declares it.
+#ifndef XR_ADV_BINDING_VISIBILITY_SKIN_PALETTES
+#define XR_ADV_BINDING_VISIBILITY_SKIN_PALETTES 72
+#endif
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_SKIN_PALETTES)
+readonly buffer XRAdvancedVisibilitySkinPalettes { vec4 rows[]; } XR_ADV_VisibilitySkinPalettes;
+#endif
 
 bool XR_ADV_MeshletHistoryAvailable(uint viewIndex)
 {
@@ -403,6 +434,40 @@ readonly buffer XRAdvancedVisibilityMeshletTriangleTable
 {
     uint records[];
 } XR_ADV_VisibilityMeshletTriangleWords;
+#if defined(XR_ADV_BACKEND_VULKAN)
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_POOL)
+readonly buffer XRAdvancedVisibilityGeometryPagePool
+{
+    uint words[];
+} XR_ADV_VisibilityGeometryPagePool;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_TABLE)
+readonly buffer XRAdvancedVisibilityGeometryPageTable
+{
+    uint slots[];
+} XR_ADV_VisibilityGeometryPageTable;
+#if defined(XR_ADV_ENABLE_GEOMETRY_STREAMING_FEEDBACK)
+// Header: the written request count (it can pass the capacity), the requests
+// that did not fit, and two reserved words. Each entry: global page, band and
+// priority, pixel scale bits, zero. A buffer with no entries turns the feedback
+// off.
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_REQUESTS)
+buffer XRAdvancedVisibilityGeometryPageRequests
+{
+    uint count;
+    uint overflow;
+    uint reserved0;
+    uint reserved1;
+    uvec4 entries[];
+} XR_ADV_VisibilityGeometryPageRequests;
+// The touch bits (one bit per pool slot, rounded up to whole words), then the
+// request bits (one bit per page table entry).
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_GEOMETRY_PAGE_FEEDBACK_BITS)
+buffer XRAdvancedVisibilityGeometryPageFeedbackBits
+{
+    uint words[];
+} XR_ADV_VisibilityGeometryPageFeedbackBits;
+#endif
+#endif
 
 #define XR_ADV_PREPARED_DEFORMATION_ACTIVE 1u
 #define XR_ADV_PREPARED_DEFORMATION_PREVIOUS_VALID 2u

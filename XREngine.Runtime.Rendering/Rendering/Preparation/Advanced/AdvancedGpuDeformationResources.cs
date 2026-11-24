@@ -623,13 +623,13 @@ public sealed partial class AdvancedGpuDeformationResources :
             slice = entry.Slice;
             return retainedEnvelope is not { } cachedEnvelope ||
                 (cachedEnvelope.Matches(renderer, mesh) &&
-                    (mesh.BlendshapeCount == 0u ||
+                    (!mesh.HasBlendshapeDeformation ||
                         slice.BlendshapeVersion == cachedEnvelope.BlendshapeWeightsVersion));
         }
 
         bool packed = UsesPackedAggregateInputs;
         bool skinning = !packed || mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning;
-        bool blendshapes = mesh.HasBlendshapes && (!packed || RuntimeEngine.Rendering.Settings.AllowBlendshapes);
+        bool blendshapes = mesh.HasBlendshapeDeformation && (!packed || RuntimeEngine.Rendering.Settings.AllowBlendshapes);
         // A covered renderer draws the retained physics palette, and the retained envelope
         // proves the mesh, geometry revision, bind root, and bone layout. Without active
         // blendshapes it needs no renderer input preparation; only its pose version is read.
@@ -825,6 +825,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         {
             InputGeneration = checked(++_inputPublicationGeneration),
             GpuPaletteCopies = PublishPaletteCopies(),
+            SkinPalettes = _paletteBuffers[_currentFrameSlot],
+            SkinPaletteCount = _paletteCount,
         };
     }
 

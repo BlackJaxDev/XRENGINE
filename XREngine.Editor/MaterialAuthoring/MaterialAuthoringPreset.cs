@@ -58,7 +58,7 @@ public sealed class MaterialAuthoringPreset
         List<MaterialAuthoringPresetDiffEntry> entries = [];
         foreach (MaterialAuthoringPresetValue value in Values)
         {
-            if (!schema.NodeLookup.TryGetValue(value.SemanticId, out ShaderAuthoringNode? node))
+            if (!schema.TryGetNode(value.SemanticId, out ShaderAuthoringNode? node))
             {
                 entries.Add(new(value.SemanticId, null, value.SerializedValue, "Semantic property is unavailable."));
                 continue;

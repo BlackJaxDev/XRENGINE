@@ -120,6 +120,7 @@ namespace XREngine.Rendering.OpenGL
             private long _preparedCompileSourceBytes;
             private int _linkPreparationPendingGeneration = -1;
             private int _linkPreparationGeneration;
+            private int _preparedLinkGeneration = -1;
             private Exception? _linkPreparationFailure;
 
             internal long PreparedCompileSourceBytes

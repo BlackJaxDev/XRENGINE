@@ -39,7 +39,7 @@ namespace XREngine.Components.Scene.Mesh;
 /// </para>
 /// </remarks>
 [Serializable]
-public partial class GaussianCacheComponent : XRComponent, IRenderable
+public partial class GaussianCacheComponent : XRComponent, IRenderable, IRenderCaptureReadiness
 {
     private readonly RenderInfo3D _renderInfo;
     private readonly RenderInfo[] _renderedObjects;
@@ -86,6 +86,37 @@ public partial class GaussianCacheComponent : XRComponent, IRenderable
             QueueCacheUpload(value);
         }
     }
+
+    private string? _cacheAssetPath;
+    private CancellationTokenSource? _cacheLoadCancellation;
+    private Task? _cacheLoadTask;
+
+    /// <summary>
+    /// The path of the root asset of the cache to load when the component activates, or null to set <see cref="Cache"/>
+    /// in code. A saved scene uses this path, because the scene does not store the cache data. A new path loads at the next
+    /// activation.
+    /// </summary>
+    [Category("Playback")]
+    public string? CacheAssetPath
+    {
+        get => _cacheAssetPath;
+        set => SetField(ref _cacheAssetPath, string.IsNullOrWhiteSpace(value) ? null : value);
+    }
+
+    /// <summary>The load that <see cref="CacheAssetPath"/> started, or null. A recorder waits for it before the first frame.</summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public Task? CacheLoadTask => _cacheLoadTask;
+
+    /// <inheritdoc />
+    [Browsable(false)]
+    [YamlIgnore]
+    public bool IsReadyForCapture => (_cache?.IsComplete ?? false) && IsGpuDataReady;
+
+    /// <inheritdoc />
+    public string DescribeCaptureReadiness()
+        => $"gaussianCache(path='{_cacheAssetPath}', loaded={_cache is not null}, complete={_cache?.IsComplete ?? false}, " +
+           $"loadFaulted={_cacheLoadTask?.IsFaulted ?? false}, gpuReady={IsGpuDataReady})";
 
     private bool _playing = true;
 
@@ -154,12 +185,37 @@ public partial class GaussianCacheComponent : XRComponent, IRenderable
     {
         base.OnComponentActivated();
         RegisterTick(ETickGroup.Normal, ETickOrder.Animation, AdvancePlayback);
+        if (_cacheAssetPath is { } path && _cache is null && _cacheLoadTask is null)
+        {
+            _cacheLoadCancellation = new CancellationTokenSource();
+            _cacheLoadTask = LoadFromPathAsync(path, _cacheLoadCancellation.Token);
+        }
     }
 
     protected override void OnComponentDeactivated()
     {
         UnregisterTick(ETickGroup.Normal, ETickOrder.Animation, AdvancePlayback);
+        _cacheLoadCancellation?.Cancel();
+        _cacheLoadCancellation?.Dispose();
+        _cacheLoadCancellation = null;
+        _cacheLoadTask = null;
         base.OnComponentDeactivated();
+    }
+
+    private async Task LoadFromPathAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await LoadAsync(path, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception error)
+        {
+            Debug.LogException(error, $"Failed to load the gaussian cache '{path}'.");
+            throw;
+        }
     }
 
     protected override void OnDestroying()

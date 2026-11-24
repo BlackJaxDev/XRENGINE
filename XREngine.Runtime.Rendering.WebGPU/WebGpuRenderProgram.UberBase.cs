@@ -25,7 +25,7 @@ public sealed partial class WebGpuRenderProgram
         {
             if (block.Contract.Name != "UberBaseMaterial") continue;
             if (block.Contract.ByteSize != UberBaseParameterSchema.ByteSize || values.Length != UberBaseParameterSchema.ByteSize)
-                throw new NotSupportedException("WebGPU.UberBase.ParameterAbiMismatch: the exact 352-byte material parameter ABI is required.");
+                throw new NotSupportedException($"WebGPU.UberBase.ParameterAbiMismatch: the exact {UberBaseParameterSchema.ByteSize}-byte material parameter ABI is required.");
             if (!values.SequenceEqual(block.Bytes)) values.CopyTo(block.Bytes);
             return;
         }

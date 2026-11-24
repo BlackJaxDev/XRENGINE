@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// </summary>
     /// <param name="pipeline"></param>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Utility, RequiresCode = true)]
     public class VPRC_Manual : ViewportRenderCommand
     {
         public Action? ManualAction { get; set; }

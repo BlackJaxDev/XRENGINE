@@ -7,7 +7,8 @@
 // Engine.LoadProjectUserSettings loads user preferences; ProjectBuilder packages them for the game.
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.UserSettings), "xre.settings.user", 7)]
 // Engine.LoadProjectBuildSettings loads the project's build settings asset.
-[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.BuildSettings), "xre.settings.build", 1)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.BuildSettings), "xre.settings.build", 2)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Data.AudioProxyAsset), "xre.audio.proxy", 1)]
 
 // RuntimeCookedAsset generates the save/load functions stored in PublishedCookedAssetRegistry.
 // For these two types, MemoryPack writes the settings object to bytes and reads the bytes back

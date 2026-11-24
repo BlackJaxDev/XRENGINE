@@ -15,10 +15,16 @@ using XREngine.Components.Scripting;
 using XREngine.Core.Attributes;
 using XREngine.Core.Files;
 using XREngine.Diagnostics;
+using XREngine.Editor.Publishing;
 using XREngine.Networking;
 using XREngine.Scene.Transforms;
 using XREngine.Serialization;
 using YamlDotNet.Serialization;
+using Model = XREngine.Rendering.Models.Model;
+using SubMesh = XREngine.Rendering.Models.SubMesh;
+using SubMeshLodDescriptor = XREngine.Rendering.Models.SubMeshLodDescriptor;
+using SubMeshLodPayloadCookSink = XREngine.Rendering.Models.SubMeshLodPayloadCookSink;
+using XRWorld = XREngine.Scene.XRWorld;
 
 namespace XREngine.Editor;
 
@@ -103,6 +109,8 @@ internal static partial class ProjectBuilder
             return;
         }
 
+        PublishPathRedactionLog.DeleteReport(GetPublishReportPath(context));
+        using PublishPathRedactionLog redactions = PublishPathRedactionLog.Begin();
         try
         {
             for (int i = 0; i < steps.Count; i++)
@@ -113,7 +121,7 @@ internal static partial class ProjectBuilder
                 float progress = (i + 1f) / steps.Count;
                 progressCallback?.Invoke(new JobProgress(progress, step.Description));
             }
-            progressCallback?.Invoke(new JobProgress(1f, "Build completed"));
+            progressCallback?.Invoke(new JobProgress(1f, DescribeCompletion(redactions, context)));
         }
         finally { context.CleanupAfterBuild?.Invoke(); }
     }
@@ -179,6 +187,8 @@ internal static partial class ProjectBuilder
             yield break;
         }
 
+        PublishPathRedactionLog.DeleteReport(GetPublishReportPath(context));
+        PublishPathRedactionLog redactions = PublishPathRedactionLog.Begin();
         try
         {
             for (int i = 0; i < steps.Count; i++)
@@ -189,10 +199,33 @@ internal static partial class ProjectBuilder
                 float progress = (i + 1f) / steps.Count;
                 yield return new JobProgress(progress, step.Description);
             }
-            yield return new JobProgress(1f, "Build completed");
+            yield return new JobProgress(1f, DescribeCompletion(redactions, context));
         }
-        finally { context.CleanupAfterBuild?.Invoke(); }
+        finally
+        {
+            redactions.Dispose();
+            context.CleanupAfterBuild?.Invoke();
+        }
     }
+
+    /// <summary>
+    /// Writes the publish report (and the warning when the publish removed machine paths or secrets), and gets the
+    /// completion text. The text names the report, so the editor shows it also in a Release build.
+    /// </summary>
+    private static string DescribeCompletion(PublishPathRedactionLog redactions, BuildContext context)
+    {
+        string report = redactions.WriteReport(GetPublishReportPath(context));
+        return redactions.Entries.Count == 0
+            ? $"Build completed. Report: {report}"
+            : $"Build completed with {redactions.Entries.Count} removed machine path(s) or secret(s). Report: {report}";
+    }
+
+    /// <summary>
+    /// Gets the path of the publish report. It is in the intermediate folder of the project, which is never part of a
+    /// publish output tree, because the report lists the removed machine paths.
+    /// </summary>
+    private static string GetPublishReportPath(BuildContext context)
+        => Path.Combine(context.IntermediateDirectory, "Build", "Logs", "publish-report.txt");
 
     private static XRProject EnsureProjectLoaded()
         => Engine.CurrentProject ?? throw new InvalidOperationException("No project is currently loaded.");
@@ -233,6 +266,38 @@ internal static partial class ProjectBuilder
             configArchivePath);
     }
 
+    /// <summary>
+    /// Stops a build in which a non-AOT launcher counts as a production build. A non-AOT launcher that lists a published
+    /// define constant fails in every configuration. A non-AOT launcher that reads the archives fails in the
+    /// <see cref="EBuildConfiguration.Release"/> configuration, which the project uses to mark production builds.
+    /// Production builds must use NativeAOT.
+    /// </summary>
+    /// <param name="settings">The build settings.</param>
+    /// <exception cref="InvalidOperationException">The settings make a non-AOT launcher that counts as a production build.</exception>
+    internal static void ValidateLauncherBuildKind(BuildSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        global::CodeManager.ValidateLauncherDefineConstants(settings);
+        if (!global::CodeManager.UsesDevelopmentArchiveLauncher(settings))
+            return;
+
+        if (settings.Configuration == EBuildConfiguration.Release)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(BuildSettings.DevelopmentLauncherReadsArchives)} makes a non-AOT development launcher, but the " +
+                $"build configuration is {EBuildConfiguration.Release}, which is a production build. Production builds must use " +
+                $"NativeAOT: enable {nameof(BuildSettings.PublishLauncherAsNativeAot)}, or use the " +
+                $"{EBuildConfiguration.Debug} or {EBuildConfiguration.Development} configuration for a development launcher " +
+                $"that reads the archives.");
+        }
+
+        if (!settings.BuildLauncherExecutable)
+        {
+            throw new InvalidOperationException(
+                $"{nameof(BuildSettings.DevelopmentLauncherReadsArchives)} requires {nameof(BuildSettings.BuildLauncherExecutable)} to be enabled.");
+        }
+    }
+
     private static List<BuildStep> CreateSteps(BuildSettings settings, BuildContext context)
     {
         if (settings.Platform == EBuildPlatform.BrowserWebGPU)
@@ -245,9 +310,13 @@ internal static partial class ProjectBuilder
         if (settings.PublishLauncherAsNativeAot && !settings.BuildLauncherExecutable)
             throw new InvalidOperationException("PublishLauncherAsNativeAot requires BuildLauncherExecutable to be enabled.");
 
+        ValidateLauncherBuildKind(settings);
+
         bool isFinalBuild = settings.PublishLauncherAsNativeAot;
-        bool cookContent = settings.CookContent || isFinalBuild;
-        bool generateConfigArchive = settings.GenerateConfigArchive || isFinalBuild;
+        // A development launcher that reads the archives needs the same archives as a final build.
+        bool readsArchives = isFinalBuild || global::CodeManager.UsesDevelopmentArchiveLauncher(settings);
+        bool cookContent = settings.CookContent || readsArchives;
+        bool generateConfigArchive = settings.GenerateConfigArchive || readsArchives;
 
         if (settings.SaveSettingsBeforeBuild)
         {
@@ -353,14 +422,12 @@ internal static partial class ProjectBuilder
             ? BuildAotRuntimeMetadata(configuration, platform)
             : null;
 
-        WriteCookedAsset(Engine.PersistentGameSettings, Path.Combine(staging, StartupAssetName), aotMetadata);
-
-        WriteCookedAsset(
+        WriteConfigArchiveAssets(
+            staging,
+            Engine.PersistentGameSettings,
             Engine.CreatePersistableEditorPreferencesSnapshot(),
-            Path.Combine(staging, XRProject.EditorPreferencesFileName),
+            Engine.UserSettings ?? new UserSettings(),
             aotMetadata);
-
-        WriteCookedAsset(Engine.UserSettings ?? new UserSettings(), Path.Combine(staging, XRProject.UserSettingsFileName), aotMetadata);
 
         if (aotMetadata is not null)
             WriteAotRuntimeMetadata(staging, aotMetadata);
@@ -384,6 +451,55 @@ internal static partial class ProjectBuilder
             if (Directory.Exists(staging))
                 Directory.Delete(staging, true);
         }
+    }
+
+    /// <summary>
+    /// Writes the settings assets of the config archive into a staging folder. Each asset is a published copy with no file
+    /// path and a portable source path, written under the cook scope and checked for machine paths.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    internal static void WriteConfigArchiveAssets(
+        string staging,
+        GameStartupSettings startupSettings,
+        EditorPreferences editorPreferences,
+        UserSettings userSettings,
+        AotRuntimeMetadata? aotMetadata)
+    {
+        using CookedSourcePathScope sourcePaths = CookedSourcePathProjection.Begin();
+        WriteGuardedCookedAsset(
+            PublishedConfigAssets.CreateStartupSettings(startupSettings),
+            Path.Combine(staging, StartupAssetName),
+            StartupAssetName,
+            aotMetadata);
+        WriteGuardedCookedAsset(
+            PublishedConfigAssets.CreateEditorPreferences(editorPreferences),
+            Path.Combine(staging, XRProject.EditorPreferencesFileName),
+            XRProject.EditorPreferencesFileName,
+            aotMetadata);
+        WriteGuardedCookedAsset(
+            PublishedConfigAssets.CreateUserSettings(userSettings),
+            Path.Combine(staging, XRProject.UserSettingsFileName),
+            XRProject.UserSettingsFileName,
+            aotMetadata);
+
+        // The published copies project their own source paths in this scope.
+        RecordClearedItems(sourcePaths, "config archive settings");
+    }
+
+    /// <summary>
+    /// Writes one cooked asset under the cook scope, lists the source paths and secrets that the scope cleared, and strips
+    /// machine paths from the written file. The config archive and the browser cooks use it.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static void WriteGuardedCookedAsset(object data, string destination, string assetLabel,
+        AotRuntimeMetadata? aotMetadata = null, CookedBinarySerializationCallbacks? callbacks = null)
+    {
+        using (CookedSourcePathScope sourcePaths = CookedSourcePathProjection.Begin())
+        {
+            WriteCookedAsset(data, destination, aotMetadata, callbacks);
+            RecordClearedItems(sourcePaths, assetLabel);
+        }
+        CookedOutputPathGuard.StripCookedFile(destination, assetLabel);
     }
 
     private static void WriteAotRuntimeMetadata(string stagingDirectory, AotRuntimeMetadata metadata)
@@ -558,22 +674,46 @@ internal static partial class ProjectBuilder
             return;
         }
 
-        if (!ShouldUseIncrementalArchives(context))
+        PackFullCommonAssets(engineAssetsPath, commonAssetsArchivePath, context.IntermediateDirectory, ShouldUseIncrementalArchives(context));
+    }
+
+    /// <summary>
+    /// Packs the full engine asset folder as it is. Machine paths are stripped from the packed bytes of every file in a full
+    /// pack, and of each changed file in an incremental repack. The source files do not change.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static void PackFullCommonAssets(string engineAssetsPath, string commonAssetsArchivePath, string intermediateDirectory, bool incremental)
+    {
+        if (!incremental)
         {
             if (File.Exists(commonAssetsArchivePath))
                 File.Delete(commonAssetsArchivePath);
 
-            AssetPacker.Pack(engineAssetsPath, commonAssetsArchivePath);
+            PackStrippedSourceDirectory(engineAssetsPath, commonAssetsArchivePath, intermediateDirectory, "CommonAssetsStripped");
             return;
         }
 
         RepackArchiveFromSourceIncremental(
             sourceDirectory: engineAssetsPath,
             archivePath: commonAssetsArchivePath,
-            intermediateDirectory: context.IntermediateDirectory,
+            intermediateDirectory: intermediateDirectory,
             deltaFolderName: "CommonAssetsDelta",
-            transformFile: static (source, destination) => File.Copy(source, destination, true),
+            transformFile: CopyAndStripFile,
             packFullSourceDirectly: true);
+    }
+
+    /// <summary>Packs the full engine asset folder into a common-assets archive in the output folder.</summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    internal static string PackFullCommonAssetsForTests(
+        string engineAssetsDirectory,
+        string intermediateDirectory,
+        string contentOutputDirectory,
+        bool incremental)
+    {
+        string archivePath = Path.Combine(contentOutputDirectory, CommonAssetsArchiveName);
+        Directory.CreateDirectory(contentOutputDirectory);
+        PackFullCommonAssets(engineAssetsDirectory, archivePath, intermediateDirectory, incremental);
+        return archivePath;
     }
 
     private static void PackageRuntimeShaderAssets(
@@ -599,7 +739,66 @@ internal static partial class ProjectBuilder
         if (File.Exists(commonAssetsArchivePath))
             File.Delete(commonAssetsArchivePath);
 
+        // The staging folder is a copy, so the strip changes it in place.
+        StripCopiedDirectory(stagingDirectory);
         AssetPacker.Pack(stagingDirectory, commonAssetsArchivePath);
+    }
+
+    /// <summary>
+    /// Packs a source folder as it is, but stores a stripped copy of each file that holds a machine path. The stripped copies
+    /// go to a folder in the intermediate directory; the source files do not change. The archive entry of a stripped file
+    /// keeps the path and the timestamp of the source file.
+    /// </summary>
+    private static void PackStrippedSourceDirectory(string sourceDirectory, string archivePath, string intermediateDirectory, string strippedFolderName)
+    {
+        Dictionary<string, string> replacements = CreateStrippedCopies(sourceDirectory, Path.Combine(intermediateDirectory, "Build", strippedFolderName));
+        AssetPacker.Pack(sourceDirectory, archivePath, replacementFiles: replacements.Count > 0 ? replacements : null);
+    }
+
+    /// <summary>
+    /// Writes a stripped copy of each source file that holds a machine path into a folder, and records each stripped path.
+    /// The source files do not change.
+    /// </summary>
+    /// <param name="sourceDirectory">The source folder that a publish packs as it is.</param>
+    /// <param name="strippedRoot">The folder for the stripped copies. It is made again.</param>
+    /// <returns>A map from each full source file path to its stripped copy.</returns>
+    internal static Dictionary<string, string> CreateStrippedCopies(string sourceDirectory, string strippedRoot)
+    {
+        if (Directory.Exists(strippedRoot))
+            Directory.Delete(strippedRoot, true);
+
+        Dictionary<string, string> replacements = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string file in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            string relative = Path.GetRelativePath(sourceDirectory, file);
+            if (!CookedOutputPathGuard.ContainsMachinePathInCopiedFile(file, NormalizePath(relative)))
+                continue;
+
+            string copy = Path.Combine(strippedRoot, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+            File.Copy(file, copy, true);
+            CookedOutputPathGuard.StripCopiedFile(copy, NormalizePath(relative));
+            replacements.Add(Path.GetFullPath(file), copy);
+        }
+
+        return replacements;
+    }
+
+    /// <summary>
+    /// Strips machine paths from every file in a folder of the build output or of a staging copy. Never call it on a source
+    /// folder.
+    /// </summary>
+    internal static void StripCopiedDirectory(string directory)
+    {
+        foreach (string file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+            CookedOutputPathGuard.StripCopiedFile(file, NormalizePath(Path.GetRelativePath(directory, file)));
+    }
+
+    /// <summary>Copies a file that the publish ships as it is, then strips machine paths from the copy.</summary>
+    internal static void CopyAndStripFile(string source, string destination)
+    {
+        File.Copy(source, destination, true);
+        CookedOutputPathGuard.StripCopiedFile(destination, source);
     }
 
     internal static string PackageRuntimeShaderAssetsForTests(
@@ -769,8 +968,22 @@ internal static partial class ProjectBuilder
             archivePath: context.ContentArchivePath,
             intermediateDirectory: context.IntermediateDirectory,
             deltaFolderName: "CookedContentDelta",
-            transformFile: static (source, destination) => WritePublishedCookedFile(source, destination),
+            transformFile: TransformIncrementalContentFile,
             includeRelativePath: ShouldIncludeInCookedContent);
+    }
+
+    /// <summary>
+    /// Cooks one file of the incremental content archive, then strips machine paths from the cooked asset file, or from the
+    /// copied file.
+    /// </summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    internal static void TransformIncrementalContentFile(string source, string destination)
+    {
+        WritePublishedCookedFile(source, destination);
+        if (string.Equals(Path.GetExtension(source), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+            CookedOutputPathGuard.StripCookedFile(destination, source);
+        else
+            CookedOutputPathGuard.StripCopiedFile(destination, source);
     }
 
     private static void RepackConfigArchiveIncremental(BuildContext context, string stagingDirectory)
@@ -850,18 +1063,56 @@ internal static partial class ProjectBuilder
         Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
 
         Dictionary<string, AssetTimestampEntry> currentSnapshot = CaptureDirectorySnapshot(sourceDirectory, includeRelativePath);
+        string ledgerPath = SubMeshLodEntryLedger.GetPath(intermediateDirectory, deltaFolderName);
+
+        // An archive that the current strip rules did not write can hold entries with machine paths. Pack it again in full,
+        // so every entry passes the current strip once.
+        string stripLedgerPath = StripLedger.GetPath(intermediateDirectory, deltaFolderName);
+        int logStart = PublishPathRedactionLog.CurrentCount;
+        List<(string Entry, string Item)> earlierStrips = [];
+        if (File.Exists(archivePath) && !StripLedger.IsCurrent(stripLedgerPath, archivePath))
+        {
+            File.Delete(archivePath);
+            SubMeshLodEntryLedger.Delete(ledgerPath);
+        }
+        else if (File.Exists(archivePath))
+        {
+            earlierStrips = StripLedger.ReadEntries(stripLedgerPath);
+        }
+
+        // Saves the strip record. A full pack lists only the strips of this build. A repack keeps the earlier strips of
+        // the entries that it did not write again, and lists them in the warning, so the warning describes the whole archive.
+        void SaveStripLedger(ICollection<string>? rewrittenEntries)
+        {
+            List<(string Entry, string Item)> entries = [];
+            List<(string Entry, string Item)> kept = [];
+            if (rewrittenEntries is not null)
+            {
+                foreach ((string entry, string item) in earlierStrips)
+                    if (!rewrittenEntries.Contains(entry))
+                        kept.Add((entry, item));
+                entries.AddRange(kept);
+            }
+
+            foreach ((string file, string item) in PublishPathRedactionLog.CurrentEntriesFrom(logStart))
+                entries.Add((ToArchiveEntryKey(sourceDirectory, file), item));
+            StripLedger.Save(stripLedgerPath, archivePath, entries);
+            RecordEarlierStrips(archivePath, kept);
+        }
 
         if (!File.Exists(archivePath))
         {
             if (packFullSourceDirectly)
             {
-                AssetPacker.Pack(sourceDirectory, archivePath);
+                SubMeshLodEntryLedger.Delete(ledgerPath);
+                PackStrippedSourceDirectory(sourceDirectory, archivePath, intermediateDirectory, deltaFolderName + "_Stripped");
+                SaveStripLedger(rewrittenEntries: null);
                 return;
             }
 
             string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_Full");
-            StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
-            AssetPacker.Pack(fullStagingDir, archivePath);
+            PackFullAndWriteLedger(sourceDirectory, fullStagingDir, archivePath, ledgerPath, currentSnapshot.Keys, transformFile);
+            SaveStripLedger(rewrittenEntries: null);
             return;
         }
 
@@ -876,18 +1127,20 @@ internal static partial class ProjectBuilder
             // Corrupt or unreadable archive — do a full repack
             if (packFullSourceDirectly)
             {
+                SubMeshLodEntryLedger.Delete(ledgerPath);
                 if (File.Exists(archivePath))
                     File.Delete(archivePath);
 
-                AssetPacker.Pack(sourceDirectory, archivePath);
+                PackStrippedSourceDirectory(sourceDirectory, archivePath, intermediateDirectory, deltaFolderName + "_Stripped");
+                SaveStripLedger(rewrittenEntries: null);
                 return;
             }
 
             string fullStagingDir = Path.Combine(intermediateDirectory, "Build", deltaFolderName + "_FallbackFull");
-            StageFiles(sourceDirectory, fullStagingDir, currentSnapshot.Keys, transformFile);
             if (File.Exists(archivePath))
                 File.Delete(archivePath);
-            AssetPacker.Pack(fullStagingDir, archivePath);
+            PackFullAndWriteLedger(sourceDirectory, fullStagingDir, archivePath, ledgerPath, currentSnapshot.Keys, transformFile);
+            SaveStripLedger(rewrittenEntries: null);
             return;
         }
 
@@ -911,42 +1164,115 @@ internal static partial class ProjectBuilder
         List<string> removedPaths = [];
         foreach (string existingPath in embeddedTimestamps.Keys)
         {
-            if (!currentSnapshot.ContainsKey(existingPath))
+            // LOD payload entries have no source file of their own; the cooked sub-mesh that refers to one writes it.
+            if (!currentSnapshot.ContainsKey(existingPath) && !IsSubMeshLodPayloadEntry(existingPath))
                 removedPaths.Add(existingPath);
         }
 
         if (changedPaths.Count == 0 && removedPaths.Count == 0)
+        {
+            RecordEarlierStrips(archivePath, earlierStrips);
             return;
+        }
+
+        // The ledger knows the LOD entries of the files that this build does not cook again.
+        // With no valid ledger, the build keeps all LOD entries, because it cannot know which entries are live.
+        SubMeshLodEntryLedger? ledger = packFullSourceDirectly ? null : SubMeshLodEntryLedger.TryLoad(ledgerPath, archivePath);
 
         string deltaDirectory = Path.Combine(intermediateDirectory, "Build", deltaFolderName);
         if (changedPaths.Count > 0)
-            StageFiles(sourceDirectory, deltaDirectory, changedPaths, transformFile);
+            StageFiles(sourceDirectory, deltaDirectory, changedPaths, transformFile, ledger);
+
+        if (ledger is not null)
+        {
+            for (int i = 0; i < removedPaths.Count; i++)
+                ledger.Remove(removedPaths[i]);
+
+            HashSet<string> liveEntries = ledger.CollectLiveEntries();
+            foreach (string existingPath in embeddedTimestamps.Keys)
+                if (IsSubMeshLodPayloadEntry(existingPath) && !liveEntries.Contains(NormalizePath(existingPath)))
+                    removedPaths.Add(existingPath);
+        }
 
         AssetPacker.Repack(
             archivePath,
             changedPaths.Count > 0 ? deltaDirectory : string.Empty,
             [.. removedPaths]);
+        ledger?.Save(ledgerPath, archivePath);
+        HashSet<string> rewritten = new(StringComparer.Ordinal);
+        foreach (string path in changedPaths)
+            rewritten.Add(NormalizePath(path));
+        foreach (string path in removedPaths)
+            rewritten.Add(NormalizePath(path));
+        SaveStripLedger(rewritten);
+    }
+
+    /// <summary>Gets the archive entry path of a file label: a path relative to the source folder, or the label itself.</summary>
+    private static string ToArchiveEntryKey(string sourceDirectory, string fileLabel)
+    {
+        if (!Path.IsPathRooted(fileLabel))
+            return NormalizePath(fileLabel);
+
+        string relative = Path.GetRelativePath(sourceDirectory, fileLabel);
+        return Path.IsPathRooted(relative) || relative.StartsWith("..", StringComparison.Ordinal)
+            ? NormalizePath(fileLabel)
+            : NormalizePath(relative);
+    }
+
+    /// <summary>
+    /// Lists, in the publish warning, the stripped paths that archive entries from an earlier build hold. A build that
+    /// writes no entry again still shows what the archive holds.
+    /// </summary>
+    private static void RecordEarlierStrips(string archivePath, List<(string Entry, string Item)> strips)
+    {
+        string archiveName = Path.GetFileName(archivePath);
+        foreach ((string entry, string item) in strips)
+            PublishPathRedactionLog.Record($"{archiveName}: {entry}", $"{item} (stripped in an earlier build)");
+    }
+
+    private static void PackFullAndWriteLedger(
+        string sourceDirectory,
+        string stagingDirectory,
+        string archivePath,
+        string ledgerPath,
+        IEnumerable<string> relativePaths,
+        Action<string, string> transformFile)
+    {
+        SubMeshLodEntryLedger ledger = new();
+        StageFiles(sourceDirectory, stagingDirectory, relativePaths, transformFile, ledger);
+        AssetPacker.Pack(stagingDirectory, archivePath);
+        ledger.Save(ledgerPath, archivePath);
     }
 
     private static void StageFiles(
         string sourceDirectory,
         string destinationDirectory,
         IEnumerable<string> relativePaths,
-        Action<string, string> transformFile)
+        Action<string, string> transformFile,
+        SubMeshLodEntryLedger? ledger = null)
     {
         if (Directory.Exists(destinationDirectory))
             Directory.Delete(destinationDirectory, true);
         Directory.CreateDirectory(destinationDirectory);
 
+        // A cooked sub-mesh writes its separate LOD payloads next to the staged files.
+        using SubMeshLodPayloadCookSink lodPayloads = SubMeshLodPayloadCookSink.Begin(destinationDirectory);
         foreach (string relativePath in relativePaths)
         {
             string sourcePath = Path.Combine(sourceDirectory, ToSystemPath(relativePath));
             if (!File.Exists(sourcePath))
+            {
+                ledger?.Remove(relativePath);
                 continue;
+            }
 
             string destinationPath = Path.Combine(destinationDirectory, ToSystemPath(relativePath));
             Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
             transformFile(sourcePath, destinationPath);
+
+            // Take the entries after each file, so the ledger knows the LOD entries of each cooked file.
+            string[] referencedEntries = lodPayloads.TakeReferencedEntries();
+            ledger?.Set(relativePath, referencedEntries);
         }
     }
 
@@ -971,6 +1297,10 @@ internal static partial class ProjectBuilder
     #endregion
 
     #region Content Cooking
+
+    /// <summary>True for a separate LOD payload entry of a cooked sub-mesh (<c>lod/&lt;key&gt;</c>).</summary>
+    private static bool IsSubMeshLodPayloadEntry(string relativePath)
+        => NormalizePath(relativePath).StartsWith(SubMeshLodDescriptor.EntryPrefix, StringComparison.Ordinal);
 
     private static readonly HashSet<string> ExcludedCookedContentExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1022,40 +1352,43 @@ internal static partial class ProjectBuilder
                 $"register an AOT-safe {nameof(PublishedCookedAssetRegistry)} serializer for its runtime type.");
         }
 
+        // The registered sub-mesh codec still reads its LOD materials with the reflective cooked serializer, which a
+        // published NativeAOT runtime cannot run. Fail here, not at load.
+        if (string.Equals(blob.TypeReference, CookedAssetTypeReference.Encode(typeof(SubMesh)), StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Published NativeAOT asset '{sourceFile}' is a {nameof(SubMesh)}. Its cooked codec reads the LOD materials with " +
+                "the reflective cooked serializer, which NativeAOT builds do not support. Publish without NativeAOT.");
+        }
+
         WriteCookedBlob(destination, blob);
     }
 
+    /// <summary>
+    /// Cooks one asset file of the content cook. A cook does not ship a YAML source: the YAML can hold machine paths, also
+    /// inside compressed payloads that the output check cannot read. So an asset file with no type hint, or an asset whose
+    /// cook fails, fails the cook with an error that names the file.
+    /// </summary>
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static void WriteCookedAssetFile(string sourceFile, string destination)
+    private static void WriteCookedContentAssetFile(string sourceFile, string destination)
     {
-        if (TryWriteCookedAssetFile(sourceFile, destination))
-            return;
-
-        File.Copy(sourceFile, destination, true);
-    }
-
-    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static bool TryWriteCookedAssetFile(string sourceFile, string destination)
-    {
-        if (!string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
-            return false;
-
         string yaml = File.ReadAllText(sourceFile, Encoding.UTF8);
-        string? typeHint = ExtractAssetTypeHint(yaml);
+        if (string.IsNullOrWhiteSpace(ExtractAssetTypeHint(yaml)))
+            throw new InvalidOperationException(
+                $"Asset '{sourceFile}' could not be cooked: it has no __assetType or __type hint. A cook does not ship YAML sources.");
 
-        if (string.IsNullOrWhiteSpace(typeHint))
-            return false;
-
+        CookedAssetBlob blob;
         try
         {
-            var blob = CreateCookedBlobFromYaml(yaml, sourceFile);
-            WriteCookedBlob(destination, blob);
-            return true;
+            blob = CreateCookedBlobFromYaml(yaml, sourceFile);
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidOperationException or YamlDotNet.Core.YamlException)
         {
-            return false;
+            throw new InvalidOperationException(
+                $"Asset '{sourceFile}' could not be cooked, and a cook does not ship YAML sources: {ex.Message}", ex);
         }
+
+        WriteCookedBlob(destination, blob);
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
@@ -1080,6 +1413,8 @@ internal static partial class ProjectBuilder
                 NormalizePath(Path.GetRelativePath(context.AssetsDirectory, sourceFile))))];
         int totalFiles = sourceFiles.Length;
 
+        // A cooked sub-mesh writes each LOD other than its coarsest one as a separate lod/<key> entry in the cooked root.
+        using SubMeshLodPayloadCookSink lodPayloads = SubMeshLodPayloadCookSink.Begin(cookedRoot);
         for (int i = 0; i < sourceFiles.Length; i++)
         {
             string sourceFile = sourceFiles[i];
@@ -1097,9 +1432,8 @@ internal static partial class ProjectBuilder
                 }
                 else
                 {
-                    cookedAsBinaryAsset = TryWriteCookedAssetFile(sourceFile, destination);
-                    if (!cookedAsBinaryAsset)
-                        File.Copy(sourceFile, destination, true);
+                    WriteCookedContentAssetFile(sourceFile, destination);
+                    cookedAsBinaryAsset = true;
                 }
 
                 progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
@@ -1110,8 +1444,46 @@ internal static partial class ProjectBuilder
             progress?.Invoke(new CookProgress(i + 1, totalFiles, relative, cookedAsBinaryAsset));
         }
 
+        StripCookedContent(context.AssetsDirectory, cookedRoot, sourceFiles);
         return cookedRoot;
     }
+
+    /// <summary>
+    /// Strips machine paths from the cooked copy of each cooked asset file, each file that the cook copies as it is (text,
+    /// JSON, media, and other files), and each separate LOD entry. The source files do not change.
+    /// </summary>
+    private static void StripCookedContent(string assetsDirectory, string cookedRoot, string[] sourceFiles)
+    {
+        foreach (string sourceFile in sourceFiles)
+        {
+            string relative = Path.GetRelativePath(assetsDirectory, sourceFile);
+            string cookedFile = Path.Combine(cookedRoot, relative);
+            if (string.Equals(Path.GetExtension(sourceFile), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                CookedOutputPathGuard.StripCookedFile(cookedFile, NormalizePath(relative));
+            else
+                CookedOutputPathGuard.StripCopiedFile(cookedFile, NormalizePath(relative));
+        }
+
+        string lodDirectory = Path.Combine(cookedRoot, "lod");
+        if (!Directory.Exists(lodDirectory))
+            return;
+
+        foreach (string lodFile in Directory.GetFiles(lodDirectory, "*", SearchOption.AllDirectories))
+            CookedOutputPathGuard.StripCookedFile(lodFile, NormalizePath(Path.GetRelativePath(cookedRoot, lodFile)));
+    }
+
+    /// <summary>Runs the incremental archive repack with a test transform. The delta folder name is fixed.</summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    internal static void RepackArchiveIncrementalForTests(
+        string sourceDirectory,
+        string archivePath,
+        string intermediateDirectory,
+        Action<string, string> transformFile)
+        => RepackArchiveFromSourceIncremental(sourceDirectory, archivePath, intermediateDirectory, "TestDelta", transformFile);
+
+    /// <summary>Gets the LOD entry ledger file that <see cref="RepackArchiveIncrementalForTests"/> uses.</summary>
+    internal static string GetRepackLedgerPathForTests(string intermediateDirectory)
+        => SubMeshLodEntryLedger.GetPath(intermediateDirectory, "TestDelta");
 
     internal static string PrepareCookedContentDirectoryForTests(
         string assetsDirectory,
@@ -1158,7 +1530,13 @@ internal static partial class ProjectBuilder
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
     private static CookedAssetBlob CreateCookedBlobFromYaml(string yaml, string sourcePath)
+        => CreateCookedBlobFromYaml(yaml, sourcePath, out _);
+
+    /// <summary>Cooks a YAML asset, and gives the loaded asset (null if the load failed) for the error handling of the caller.</summary>
+    [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
+    private static CookedAssetBlob CreateCookedBlobFromYaml(string yaml, string sourcePath, out object? loaded)
     {
+        loaded = null;
         string? typeHint = ExtractAssetTypeHint(yaml);
         if (string.IsNullOrWhiteSpace(typeHint))
             throw new InvalidOperationException($"Asset '{sourcePath}' is missing an __assetType or __type hint and cannot be cooked.");
@@ -1168,8 +1546,56 @@ internal static partial class ProjectBuilder
 
         object asset = DeserializeAssetFromYaml(yaml, assetType)
             ?? throw new InvalidOperationException($"Failed to deserialize asset '{sourcePath}' as '{assetType.FullName}'.");
+        loaded = asset;
 
-        return CreateCookedBlob(asset);
+        if (asset is XRAsset xrAsset)
+            CookedCopyGraph.ReleaseLiveAssets(xrAsset);
+
+        StripCookedCopySecrets(asset, sourcePath);
+
+        // The cooked build runs from another folder, so the asset headers get portable source paths and no file paths.
+        CookedAssetBlob blob;
+        using (CookedSourcePathScope sourcePaths = CookedSourcePathProjection.Begin())
+        {
+            blob = CreateCookedBlob(asset);
+            RecordClearedItems(sourcePaths, sourcePath);
+        }
+        return blob;
+    }
+
+    /// <summary>
+    /// Clears the secrets of the copy that the content cook deserialized. If the load gave a live asset (an instance that the
+    /// asset services track) and its type has secrets, the cook fails: a strip would clear the secrets of the live editor
+    /// asset, and a write without the strip would ship them.
+    /// </summary>
+    /// <param name="asset">The deserialized asset.</param>
+    /// <param name="sourcePath">The asset file, for the error.</param>
+    /// <exception cref="InvalidOperationException">The asset is live and has secrets, or its type reaches a nested secret.</exception>
+    internal static void StripCookedCopySecrets(object asset, string sourcePath)
+    {
+        if (asset is XRAsset xrAsset && CookedCopyGraph.IsLiveInstance(xrAsset))
+        {
+            PublishedSecrets.ThrowIfNestedSecret(asset.GetType());
+            if (PublishedSecrets.HasSecretMembers(asset.GetType()))
+                throw new InvalidOperationException(
+                    $"Asset '{sourcePath}' loaded as the live editor instance of '{asset.GetType().Name}', which has secret members. " +
+                    "The cook clears secrets only on a copy, so it cannot write this asset.");
+            return;
+        }
+
+        PublishedSecrets.Strip(asset);
+    }
+
+    /// <summary>
+    /// Lists, in the publish warning, the source paths outside every asset root and the secret members that a cook scope
+    /// cleared from the cooked bytes. The cook continues.
+    /// </summary>
+    private static void RecordClearedItems(CookedSourcePathScope sourcePaths, string fileLabel)
+    {
+        foreach (ClearedCookedSourcePath cleared in sourcePaths.ClearedPaths)
+            PublishPathRedactionLog.Record(fileLabel, $"{cleared.Path} (source path of asset '{cleared.AssetName}')");
+        foreach (ClearedCookedSecret secret in sourcePaths.ClearedSecrets)
+            PublishPathRedactionLog.Record(fileLabel, $"secret member {secret.OwnerType}.{secret.Member}");
     }
 
     private static void WriteCookedBlob(string destination, CookedAssetBlob blob)
@@ -1179,7 +1605,7 @@ internal static partial class ProjectBuilder
     }
 
     [RequiresUnreferencedCode("Cooking assets reflects over concrete asset types to build binary payloads.")]
-    private static CookedAssetBlob CreateCookedBlob(object instance, AotRuntimeMetadata? aotMetadata = null,
+    internal static CookedAssetBlob CreateCookedBlob(object instance, AotRuntimeMetadata? aotMetadata = null,
         CookedBinarySerializationCallbacks? callbacks = null)
     {
         ArgumentNullException.ThrowIfNull(instance);

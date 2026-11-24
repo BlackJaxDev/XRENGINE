@@ -258,6 +258,38 @@ public sealed class MeshletPayload
     /// </summary>
     public ImmutableArray<uint> LevelCoverIndexCount { get; init; } = [];
 
+    private MeshletPageSet? _streamingPages;
+
+    /// <summary>
+    /// Nonserialized geometry pages of this cluster hierarchy payload (see
+    /// <see cref="MeshletPageBuilder"/>), or null. The model import attaches them when it cooks or
+    /// reads the page file and geometry pages are on; the Advanced publisher then publishes them with
+    /// the geometry (see <c>AdvancedPublishedMeshletLayout</c>). A copy for a mesh that shares the
+    /// geometry keeps the same pages.
+    /// </summary>
+    public MeshletPageSet? StreamingPages => Volatile.Read(ref _streamingPages);
+
+    /// <summary>
+    /// Attaches the geometry pages of this payload. Attach them before the mesh is published, because
+    /// the published layout of a geometry includes its pages.
+    /// </summary>
+    /// <exception cref="InvalidDataException">
+    /// The pages do not have one cluster record per meshlet, one group record per group, or the page
+    /// kind of this payload (skinned topology for a skinned hierarchy).
+    /// </exception>
+    public void AttachStreamingPages(MeshletPageSet pages)
+    {
+        ArgumentNullException.ThrowIfNull(pages);
+        bool skinnedTopology = (pages.Table.Kind & EMeshletPageFlags.SkinnedTopology) != 0;
+        if (!HasClusterHierarchy ||
+            pages.Table.ClusterCount != ClusterLods.Length ||
+            pages.Table.Groups.Length != LodGroups.Length ||
+            pages.PageImages.Length != pages.Table.PageCount ||
+            skinnedTopology != HasClusterSkinning)
+            throw new InvalidDataException("The geometry pages do not match the cluster hierarchy of this payload.");
+        Volatile.Write(ref _streamingPages, pages);
+    }
+
     public bool HasMeshlets => State == MeshletPayloadState.Present && Meshlets.Length > 0;
 
     /// <summary>True when the payload holds a cluster hierarchy (version 5).</summary>
@@ -329,6 +361,30 @@ public sealed class MeshletPayload
         OwnerGeometryRevision = mesh.GeometryRevision;
         if (ValidationRevision == 0)
             ValidationRevision = Interlocked.Increment(ref s_nextValidationRevision);
+    }
+
+    /// <summary>
+    /// Creates a copy of this payload that belongs to <paramref name="owner"/>, a mesh that uses the
+    /// same geometry objects as <paramref name="source"/>. One payload object stores the geometry
+    /// revision of one owner mesh, so two meshes cannot use one payload object. The copy uses the
+    /// same immutable meshlet streams and the same owner validation token, and it gets the current
+    /// geometry revision of <paramref name="owner"/>. A later geometry change on the owner advances its
+    /// revision, and the copy is then no longer valid for it.
+    /// </summary>
+    /// <param name="source">The mesh that this payload is currently valid for.</param>
+    /// <param name="owner">The mesh that uses the geometry objects of <paramref name="source"/>.</param>
+    /// <exception cref="InvalidOperationException">This payload is not valid for <paramref name="source"/>.</exception>
+    internal MeshletPayload CreateCopyForSharedGeometryOwner(XRMesh source, XRMesh owner)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(owner);
+        if (!IsValidatedFor(source))
+            throw new InvalidOperationException("Only a meshlet payload that is valid for its source mesh can be copied to a mesh that shares the source geometry.");
+
+        MeshletPayload copy = (MeshletPayload)MemberwiseClone();
+        copy.ValidationRevision = Interlocked.Increment(ref s_nextValidationRevision);
+        copy.OwnerGeometryRevision = owner.GeometryRevision;
+        return copy;
     }
 
     /// <summary>Validates all portable CPU payload ranges before persistence or GPU registration.</summary>
@@ -674,9 +730,10 @@ public static class MeshletPayloadUtility
     // carries an ownership-validated meshlet payload.
     private const int SharedMeshletCodecVersion = 4;
     // Version 1: a skinned sub-mesh with meshlets gets a cluster hierarchy by default (with its
-    // skinning tables). Part of the cook provenance, so model caches and payload caches that were
+    // skinning tables). Version 2: the cook locks the vertices of skinned meshes that lie on a
+    // clothing layer. Part of the cook provenance, so model caches and payload caches that were
     // cooked before this policy recook once.
-    private const int SkinnedClusterHierarchyPolicyVersion = 1;
+    private const int SkinnedClusterHierarchyPolicyVersion = 2;
 
     /// <summary>Import/cache provenance; runtime compatibility is deliberately separate.</summary>
     public static string CurrentCookProvenanceKey

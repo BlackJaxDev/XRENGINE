@@ -1,0 +1,36 @@
+// XRENGINE render pipeline script.
+// Template: Minimal Forward.
+// Forward rendering into an HDR target, an optional bloom stage, and tonemapping to the output.
+// Turn off the 'bloom' stage in the post-process settings to skip the bloom pass.
+
+passes {
+    scene 0;
+    scene 3 sorter nearToFar;
+    scene 4 sorter nearToFar;
+    scene 5 sorter farToNear;
+}
+
+resources {
+    Texture HDRSceneTex;
+    Texture HDRSceneDepth(Format=Depth24Stencil8);
+    FrameBuffer HDRSceneFBO(Attachments=[attachment(ResourceName="HDRSceneTex"), attachment(ResourceName="HDRSceneDepth", Attachment=DepthStencilAttachment)]);
+    Texture BloomOutputTexture(MipLevels=5);
+}
+
+schema {
+    library tonemapping;
+    library bloom;
+}
+
+bindFBOByName(FrameBufferName="HDRSceneFBO");
+renderMeshesPass();
+renderMeshesPass(RenderPass=3);
+renderMeshesPass(RenderPass=4);
+renderMeshesPass(RenderPass=5);
+unbindFBO();
+if (stage bloom enabled) as "Bloom" {
+    bloomPass(InputFBOName="HDRSceneFBO");
+}
+bindOutputFBO(ClearDepth=false, ClearStencil=false);
+tonemap(SourceTextureName="HDRSceneTex", BloomTextureName="BloomOutputTexture");
+unbindFBO();

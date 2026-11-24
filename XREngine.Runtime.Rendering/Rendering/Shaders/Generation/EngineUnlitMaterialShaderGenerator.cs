@@ -58,7 +58,7 @@ public static class EngineUnlitMaterialShaderGenerator
         new("Common/UnlitTexturedArraySliceForward.fs", "19b9a48c3ea2df7443b30192e7b4c28c987b636f6f1966376360fced003c24de"),
     ];
     private static readonly EngineLitMaterialShaderSource NormalSnippet = new("Snippets/NormalEncoding.glsl", "926f6f879f1cebbbdbe7eb911d0ccfe3e57a2353345cffb69508ddf7ab90e7e9");
-    private static readonly EngineLitMaterialShaderSource MomentSnippet = new("Snippets/ShadowMomentEncoding.glsl", "b0ad566842e7e9ea654685bcadba629cf2000c88088251cffc5792a9ddf1b17b");
+    private static readonly EngineLitMaterialShaderSource MomentSnippet = new("Snippets/ShadowMomentEncoding.glsl", "05ec8ee6984c20bf213c40e9308f44b762674ed4864eb3964a971140d3944f23");
     private static readonly EngineLitMaterialShaderSource PpllSnippet = new("Snippets/ExactTransparencyPpll.glsl", "0a11e1086909cd3476a5f400c64b79d586ebc49b9bd324280bd0376192757f58");
     private static readonly EngineLitMaterialShaderSource PeelSnippet = new("Snippets/ExactTransparencyDepthPeel.glsl", "a2bad4809a51dc086c33444e22e9992f6bc3da2fa8d38ebb21205fbb37babdaa");
 

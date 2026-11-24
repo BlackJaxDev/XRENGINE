@@ -9,13 +9,17 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Applies a standalone tonemapping pass from a named input texture into the current or specified output framebuffer.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.Tonemapping })]
     public sealed class VPRC_Tonemap : ViewportRenderCommand
     {
         private XRMaterial? _material;
         private XRQuadFrameBuffer? _quad;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string SourceTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? BloomTextureName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string? DestinationFBOName { get; set; }
         public ETonemappingType TonemapType { get; set; } = ETonemappingType.Mobius;
         public float MobiusTransition { get; set; } = TonemappingSettings.DefaultMobiusTransition;

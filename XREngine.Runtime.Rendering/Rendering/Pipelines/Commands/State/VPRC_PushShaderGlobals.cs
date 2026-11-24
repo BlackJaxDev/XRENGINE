@@ -3,6 +3,7 @@ using System.Numerics;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.State)]
     public class VPRC_PushShaderGlobals : ViewportStateRenderCommand<VPRC_PopShaderGlobals>
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)

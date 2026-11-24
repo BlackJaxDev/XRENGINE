@@ -18,11 +18,23 @@ internal sealed class ViewportSequenceCaptureManager
 
     public static ViewportSequenceCaptureManager Instance { get; } = new();
 
+    /// <summary>
+    /// Creates and starts one capture session for <paramref name="viewport"/>.
+    /// </summary>
+    /// <param name="viewport">The viewport to capture.</param>
+    /// <param name="options">The validated capture options.</param>
+    /// <param name="session">The started session when the method returns true.</param>
+    /// <param name="error">The reason for a failure when the method returns false.</param>
+    /// <param name="configure">
+    /// Optional setup that runs before the session attaches to the window. Use it to set the capture gate, the
+    /// schedule callback, or the frame sink, so that the first rendered frame already sees them.
+    /// </param>
     public bool TryStart(
         XRViewport viewport,
         ViewportSequenceCaptureOptions options,
         out ViewportSequenceCaptureSession? session,
-        out string? error)
+        out string? error,
+        Action<ViewportSequenceCaptureSession>? configure = null)
     {
         session = null;
         error = null;
@@ -106,6 +118,7 @@ internal sealed class ViewportSequenceCaptureManager
 
         try
         {
+            configure?.Invoke(createdSession);
             createdSession.Start();
             session = createdSession;
             return true;

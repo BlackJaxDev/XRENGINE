@@ -82,6 +82,9 @@ internal sealed partial class VulkanFrameLoop
             ? $"retryStage={retry.Stage} retryTicket='{retry.ActiveTicket}' " +
               $"retryDependency='{retry.DependencyChain}' retryDetail={retry.Detail}"
             : "retry=<none>";
+        string terminalWriteText = terminalWrite is null
+            ? string.Empty
+            : $"{Environment.NewLine}  missingTerminalWrite: {terminalWrite}";
         WritePresentNowAuxiliaryLog(
             $"PresentStalled frame={attempt.FrameNumber} " +
             $"attemptsWithoutPresent={_desktopAttemptsWithoutPresent} " +
@@ -89,8 +92,7 @@ internal sealed partial class VulkanFrameLoop
             $"outcome={outcome} reason={attempt.Reason} failureKind={failure.Kind} " +
             $"failureStage={failure.Stage} native={failure.NativeResult} " +
             $"exception={failure.ExceptionType ?? "<none>"} detail={failure.Detail ?? "<none>"} " +
-            $"recordingDeferral={attempt.RecordingDeferralDetail ?? "<none>"} {retryText}" +
-            (terminalWrite is null ? string.Empty : $"{Environment.NewLine}  missingTerminalWrite: {terminalWrite}"));
+            $"recordingDeferral={attempt.RecordingDeferralDetail ?? "<none>"} {retryText}{terminalWriteText}");
     }
 
     private static double PresentStallMilliseconds(long startTimestamp, long endTimestamp)

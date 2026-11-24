@@ -11,6 +11,33 @@ public class PhysicsChainCollider : PhysicsChainColliderBase
     public float _height = 0;
     public float _radius2 = 0;
 
+    /// <summary>
+    /// Primary local-space radius of the sphere or capsule collider.
+    /// </summary>
+    public float Radius
+    {
+        get => _radius;
+        set => SetField(ref _radius, MathF.Max(value, 0.0f));
+    }
+
+    /// <summary>
+    /// Total local-space capsule height including both end caps. Zero selects a sphere collider.
+    /// </summary>
+    public float Height
+    {
+        get => _height;
+        set => SetField(ref _height, MathF.Max(value, 0.0f));
+    }
+
+    /// <summary>
+    /// Secondary local-space cap radius for a tapered capsule collider. Zero uses <see cref="Radius"/> at both ends.
+    /// </summary>
+    public float Radius2
+    {
+        get => _radius2;
+        set => SetField(ref _radius2, MathF.Max(value, 0.0f));
+    }
+
     private float _scaledRadius;
     private float _scaledRadius2;
     private Vector3 _center0;

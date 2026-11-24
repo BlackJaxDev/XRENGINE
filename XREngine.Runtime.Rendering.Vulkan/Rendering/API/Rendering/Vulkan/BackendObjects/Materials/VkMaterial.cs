@@ -1425,7 +1425,15 @@ namespace XREngine.Rendering.Vulkan
                     $"on binding '{binding.Name}' is not published yet.");
                 return false;
             }
-            if (WrapperLookup.GetOrCreate(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
+            AbstractRenderAPIObject? apiTextureObject = WrapperLookup.GetOrCreate(texture, generateNow: allowSynchronousTextureUpload);
+            if (apiTextureObject is null && allowSynchronousTextureUpload)
+            {
+                apiTextureObject = BackendContext.Resources.CreateAPIRenderObject(texture);
+                if (apiTextureObject is not null && !apiTextureObject.IsGenerated)
+                    apiTextureObject.Generate();
+            }
+
+            if (apiTextureObject is not IVkImageDescriptorSource source)
             {
                 WarnOnce($"Material texture '{texture.Name ?? "<unnamed>"}' does not have a Vulkan image wrapper.");
                 return false;

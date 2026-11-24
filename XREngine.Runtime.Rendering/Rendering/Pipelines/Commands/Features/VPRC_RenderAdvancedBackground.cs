@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Executes the explicitly authored CPU-direct background lane after native opaque
 /// compute shading. Far-depth admission keeps native geometry and identity intact.
 /// </summary>
+[RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
 public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
 {
     private readonly Predicate<RenderCommand> _filter;
@@ -47,7 +48,9 @@ public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
             return;
         }
 
-        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_passIndex);
+        int activePassIndex = ResolveActiveRenderGraphPassIndex("AdvancedAuthoredBackground");
+        int resolvedPassIndex = activePassIndex != int.MinValue ? activePassIndex : _passIndex;
+        using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(resolvedPassIndex);
         bool previous = state.AdvancedMultisampleBackground;
         _admittedMaterial = null;
         state.AdvancedMultisampleBackground = RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa &&

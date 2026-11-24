@@ -112,7 +112,7 @@ public static partial class EditorUnitTests
                 string? projectRoot = sourceProjectRoot ?? ResolveSourceProjectRoot(settings.SourceProjectRoot);
                 Debug.Meshes(
                     $"[UnityPrefab] Converting '{prefabPath}' with the Unity project importer. " +
-                    "Recognized Poiyomi materials will use the XRENGINE Uber shader.");
+                    "Recognized source toon materials will use the XRENGINE Uber shader.");
                 if (settings.ZUp)
                 {
                     Debug.MeshesWarning(
@@ -485,7 +485,7 @@ public static partial class EditorUnitTests
         /// reason. These warnings never stop the import, because one material must not remove the rest
         /// of the avatar.
         /// </summary>
-        private static (int ModelCount, int MaterialCount, int PoiyomiCount, int DowngradeCount)
+        private static (int ModelCount, int MaterialCount, int SourceToonCount, int DowngradeCount)
             ValidateSerializedPrefabMaterials(SceneNode rootNode, string prefabPath)
         {
             var models = new HashSet<Model>();
@@ -506,7 +506,7 @@ public static partial class EditorUnitTests
             foreach (XRMaterial material in materials)
             {
                 if (!MaterialConversionReportRegistry.Instance.TryGet(material, out MaterialConversionReport report) ||
-                    !report.SourceShaderFamily.StartsWith("Poiyomi", StringComparison.OrdinalIgnoreCase))
+                    report.SourceShaderFamily is not (MaterialConversionReportBuilder.SourceToonFamilyName or MaterialConversionReportBuilder.ProToonFamilyName))
                 {
                     continue;
                 }

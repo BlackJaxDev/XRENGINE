@@ -10,7 +10,15 @@ public static class PostProcessBackingFactoryRegistry
     /// <summary>
     /// Gets the concurrent dictionary that holds the registered factories for post-process backing types.
     /// </summary>
-    private static readonly ConcurrentDictionary<Type, Func<object>> Factories = new();
+    private static readonly ConcurrentDictionary<Type, Func<object>> Factories = CreateDefaultFactories();
+
+    private static ConcurrentDictionary<Type, Func<object>> CreateDefaultFactories()
+    {
+        ConcurrentDictionary<Type, Func<object>> factories = new();
+        // Authored stages have no typed backing, so the bag must be creatable in AOT builds without reflection.
+        factories[typeof(PostProcessPropertyBag)] = static () => new PostProcessPropertyBag();
+        return factories;
+    }
 
     /// <summary>
     /// Registers a factory for creating instances of the specified backing type.

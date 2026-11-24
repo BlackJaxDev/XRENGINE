@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// </para>
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
 public class VPRC_RenderUIBatched : ViewportPopStateRenderCommand
 {
     private int _renderPass;

@@ -67,20 +67,26 @@ private bool TryResolveEngineUniformBuffer(DescriptorBindingInfo binding, int fr
 		/// Resolves a descriptor buffer binding for a reflection-driven auto uniform
 		/// block. Creates the per-frame UBO on demand.
 		/// </summary>
-		private bool TryResolveAutoUniformBuffer(DescriptorBindingInfo binding, int frameIndex, int drawUniformSlot, out DescriptorBufferInfo bufferInfo)
+		private bool TryResolveAutoUniformBuffer(
+			DescriptorBindingInfo binding,
+			int frameIndex,
+			int drawUniformSlot,
+			out DescriptorBufferInfo bufferInfo,
+			VkRenderProgram? programOverride = null)
 		{
 			bufferInfo = default;
-			if (_program is null)
+			VkRenderProgram? program = programOverride ?? _program;
+			if (program is null)
 				return false;
 
-			if (!_program.TryGetAutoUniformBlock(
+			if (!program.TryGetAutoUniformBlock(
 					binding.Set,
 					binding.Binding,
 					out AutoUniformBlockInfo block))
 				return false;
 
 			uint size = Math.Max(block.Size, 1u);
-			if (!EnsureAutoUniformBuffer(block.InstanceName, size))
+			if (!EnsureAutoUniformBuffer(block.InstanceName, size, program))
 				return false;
 
 			if (!_autoUniformBuffers.TryGetValue(block.InstanceName, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)

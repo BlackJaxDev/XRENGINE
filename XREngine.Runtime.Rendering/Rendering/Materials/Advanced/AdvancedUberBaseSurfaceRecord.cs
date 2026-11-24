@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 namespace XREngine.Rendering;
 
 /// <summary>
-/// Browser-only 624-byte Uber companion indexed by material stable row identity.
+/// Browser-only 768-byte Uber companion indexed by material stable row identity.
 /// Its seven image references own resources independently of canonical material slots.
 /// </summary>
 [StructLayout(LayoutKind.Sequential, Pack = 4)]
@@ -11,8 +11,8 @@ public struct AdvancedUberBaseSurfaceRecord
 {
     public const uint CurrentSchemaVersion = 1;
     public const int RoleCount = 7;
-    public const uint WordCount = 156;
-    public const int ByteSize = 624;
+    public const uint WordCount = 192;
+    public const int ByteSize = 768;
 
     public uint Generation;
     public uint SchemaVersion;
@@ -33,7 +33,7 @@ public struct AdvancedUberBaseSurfaceRecord
     public void SetParameters(ReadOnlySpan<byte> values)
     {
         if (values.Length != UberBaseParameterSchema.ByteSize)
-            throw new ArgumentException("Uber base parameters require exactly 352 bytes.", nameof(values));
+            throw new ArgumentException($"Uber base parameters require exactly {UberBaseParameterSchema.ByteSize} bytes.", nameof(values));
         Span<uint> words = Parameters;
         values.CopyTo(MemoryMarshal.AsBytes(words));
     }

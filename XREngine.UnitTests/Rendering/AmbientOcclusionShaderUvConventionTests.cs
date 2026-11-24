@@ -82,7 +82,9 @@ public sealed class AmbientOcclusionShaderUvConventionTests
         string source = ReadWorkspaceFile(relativePath).Replace("\r\n", "\n");
 
         source.ShouldContain("vec2 clipDir = AOClipDirectionFromTextureDirection(screenDir);");
-        source.ShouldContain("vec3 sliceTangent = normalize(vec3(clipDir.x * invProjX, clipDir.y * invProjY, 0.0f));");
+        // The texel size scale keeps the tangent aligned with the pixel raymarch direction
+        // on viewports that are not square.
+        source.ShouldContain("vec3 sliceTangent = normalize(vec3(clipDir.x * texelSize.x * invProjX, clipDir.y * texelSize.y * invProjY, 0.0f));");
         source.ShouldNotContain("vec3 sliceTangent = normalize(vec3(screenDir.x * invProjX, screenDir.y * invProjY, 0.0f));");
     }
 

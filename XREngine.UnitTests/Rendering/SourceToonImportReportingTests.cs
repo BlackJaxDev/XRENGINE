@@ -43,7 +43,7 @@ public sealed class SourceToonImportReportingTests
 
         MaterialConversionReport report = result.ConversionReport.ShouldNotBeNull();
         report.Outcome.ShouldBe(EMaterialConversionOutcome.Converted);
-        report.SourceShaderFamily.ShouldBe("Poiyomi Toon");
+        report.SourceShaderFamily.ShouldBe(MaterialConversionReportBuilder.SourceToonFamilyName);
         report.SourceShaderVersion.ShouldBe(SourceToon93Catalog.VersionText);
         report.SourceWasLocked.ShouldBeFalse();
         report.ConverterVersion.ShouldBe(MaterialConversionReportBuilder.ConverterVersion);

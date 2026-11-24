@@ -353,13 +353,26 @@ namespace XREngine.Rendering
             if (internalUberReplacement && shader is not null && HasEngineSemantic &&
                 GetShaderCount(EShaderType.Fragment) == 1 &&
                 GetShader(EShaderType.Fragment) is { } previousFragment &&
-                UberShaderVariantBuilder.IsCompatibleInternalReplacement(previousFragment, shader))
+                UberShaderVariantBuilder.IsCompatibleInternalReplacement(previousFragment, shader, EngineSemantic))
             {
                 transition = new(Shaders, replacement, [.. Shaders], [.. replacement],
                     previousFragment, shader, ShaderStateRevision, UberStateRevision, EngineSemantic);
                 SetField(ref _pendingUberShaderTransition, transition, publishNotifications: false, nameof(Shaders));
             }
-            try { Shaders = replacement; }
+            // Cooked-binary reads run post-deserialize hooks inside XRBase.SuppressPropertyNotifications().
+            // In that scope SetField only writes the field, so OnPropertyChanged does not rebuild the
+            // per-stage shader lists or bump ShaderStateRevision. Apply the same change here directly.
+            bool notificationsSuppressed = ArePropertyNotificationsSuppressed;
+            try
+            {
+                Shaders = replacement;
+                if (notificationsSuppressed && ReferenceEquals(Shaders, replacement))
+                {
+                    if (transition is null)
+                        InvalidateEngineSemantic();
+                    ShadersChanged();
+                }
+            }
             finally
             {
                 if (ReferenceEquals(_pendingUberShaderTransition, transition))
@@ -488,8 +501,12 @@ namespace XREngine.Rendering
         public void SetUberVariantStatus(UberMaterialVariantStatus? status)
         {
             UberMaterialVariantStatus next = status ?? UberMaterialVariantStatus.Empty;
-            if (!UberVariantStatus.Equals(next))
-                UberVariantStatus = next;
+            if (UberVariantStatus.Equals(next))
+                return;
+
+            UberVariantStatus = next;
+            if (next.Stage == EUberMaterialVariantStage.Failed)
+                ReportUberVariantFailureOnce(next);
         }
 
         public void ClearUberVariantRuntimeState()
@@ -1651,6 +1668,10 @@ namespace XREngine.Rendering
             }
 
             bool isUberMaterial = IsUberShaderMaterial();
+            // Rename earlier Uber names first, so that the merge below keeps their values instead of dropping them.
+            if (isUberMaterial)
+                MigrateLegacyUberParameterNames();
+
             Dictionary<string, ShaderUiProperty>? uberProperties = null;
             if (isUberMaterial && GetShader(EShaderType.Fragment) is XRShader uberFragmentShader)
             {
@@ -1724,8 +1745,13 @@ namespace XREngine.Rendering
         private bool IsUberShaderMaterial()
         {
             XRShader? fragmentShader = GetShader(EShaderType.Fragment);
-            string? shaderPath = fragmentShader?.Source?.FilePath ?? fragmentShader?.FilePath;
-            return string.Equals(Path.GetFileName(shaderPath), "UberShader.frag", StringComparison.OrdinalIgnoreCase);
+            if (fragmentShader is not null && UberShaderVariantBuilder.IsGeneratedVariant(fragmentShader))
+                return true;
+
+            string? shaderPath = fragmentShader is null ? null : ResolveShaderPathOrName(fragmentShader);
+            return HasUberShaderFileName(shaderPath) ||
+                   EngineSemantic == EngineMaterialSemanticIdentity.NativeUberV1 ||
+                   UberAuthoredState.Features.Length > 0;
         }
 
         private static bool ShouldPreserveUberParameter(string? parameterName)

@@ -53,6 +53,8 @@ public sealed class UberOutlineSurfaceBinding
         if (!TryValidateCommonSource(source, out features, out renderTimeEnabled, out reason))
             return false;
         ReadOnlySpan<ShaderAbiMemberContract> schema = UberOutlineProgramContract.SourceMembers;
+        bool basicDissolve = (features & UberOutlineMaterialProfile.Dissolve) != 0 &&
+            IsSourceBasicDissolve(FindParameter(source.Parameters, "_DissolveType"));
         for (int memberIndex = 0; memberIndex < schema.Length; memberIndex++)
         {
             if (!UberOutlineProgramContract.IsSourceMemberActive(memberIndex, features)) continue;
@@ -68,6 +70,7 @@ public sealed class UberOutlineSurfaceBinding
                 }
                 found = parameter;
             }
+            if (found is null && CanReadZero(memberIndex, basicDissolve)) continue;
             if (!TryValidateValue(found, member, out reason)) return false;
         }
         return TryValidateVertexEffects(source.Parameters, out _, out reason);
@@ -94,17 +97,17 @@ public sealed class UberOutlineSurfaceBinding
                 }
         for (int index = 0; index < _profile.TextureBindings.Length; index++)
         {
-            XRTexture2D texture = _profile.TextureBindings[index].Texture;
+            XRTexture texture = _profile.TextureBindings[index].Texture;
             try
             {
-                // This is a value-type capture. It validates current image/sampler state while allowing
-                // supported live sampler changes to flow through ordinary resource generations.
-                PublishedStandardLitTextureSettings settings = PublishedStandardLitTextureSettings.Capture(texture);
-                if (settings.EnableComparison)
+                if (texture is XRTexture2DArray array)
                 {
-                    reason = "UberOutline.ComparisonSamplerUnsupported: canonical outline images require ordinary filtering samplers.";
-                    return false;
+                    // Each layer is a static image. The array samples all layers through one sampler.
+                    foreach (XRTexture2D layer in array.Textures)
+                        if (!TryValidateImage(layer, out reason)) return false;
                 }
+                else if (!TryValidateImage((XRTexture2D)texture, out reason))
+                    return false;
             }
             catch (InvalidDataException exception)
             {
@@ -115,11 +118,7 @@ public sealed class UberOutlineSurfaceBinding
 
         ShaderVar[] parameters = _source.Parameters;
         if (!MatchesParameters(parameters) && !TryBindParameters(parameters, out reason)) return false;
-        ReadOnlySpan<ShaderAbiMemberContract> schema = UberOutlineProgramContract.SourceMembers;
-        for (int index = 0; index < schema.Length; index++)
-            if (UberOutlineProgramContract.IsSourceMemberActive(index, Features) &&
-                !TryValidateValue(_members[index], schema[index], out reason))
-                return false;
+        if (!TryValidateMembers(out reason)) return false;
         if (_vertexEffectsEnabled is not null && (!float.IsFinite(_vertexEffectsEnabled.Value) || _vertexEffectsEnabled.Value != 0))
         {
             reason = "UberOutline.VertexEffectsUnsupported: _VertexEffectsEnabled must remain finite and exactly zero because the canonical vertex stage does not prune it.";
@@ -127,6 +126,19 @@ public sealed class UberOutlineSurfaceBinding
         }
         reason = null;
         return true;
+    }
+
+    /// <summary>
+    /// Validates one static image. This is a value-type capture: it checks the current image and
+    /// sampler state, and supported live sampler changes still flow through ordinary resource generations.
+    /// </summary>
+    private static bool TryValidateImage(XRTexture2D texture, out string? reason)
+    {
+        PublishedStandardLitTextureSettings settings = PublishedStandardLitTextureSettings.Capture(texture);
+        reason = settings.EnableComparison
+            ? "UberOutline.ComparisonSamplerUnsupported: canonical outline images require ordinary filtering samplers."
+            : null;
+        return reason is null;
     }
 
     private bool MatchesParameters(ShaderVar[] parameters)
@@ -156,10 +168,7 @@ public sealed class UberOutlineSurfaceBinding
             }
             _members[index] = parameter;
         }
-        for (int index = 0; index < schema.Length; index++)
-            if (UberOutlineProgramContract.IsSourceMemberActive(index, Features) &&
-                !TryValidateValue(_members[index], schema[index], out reason))
-                return false;
+        if (!TryValidateMembers(out reason)) return false;
         if (!TryValidateVertexEffects(parameters, out _vertexEffectsEnabled, out reason)) return false;
         if (_parameterReferences.Length != parameters.Length)
         {
@@ -174,6 +183,58 @@ public sealed class UberOutlineSurfaceBinding
         _parameters = parameters;
         reason = null;
         return true;
+    }
+
+    /// <summary>Validates every active bound field. An absent imported source control reads zero.</summary>
+    private bool TryValidateMembers(out string? reason)
+    {
+        ReadOnlySpan<ShaderAbiMemberContract> schema = UberOutlineProgramContract.SourceMembers;
+        bool basicDissolve = (Features & UberOutlineMaterialProfile.Dissolve) != 0 &&
+            IsSourceBasicDissolve(_members[DissolveTypeIndex]);
+        for (int index = 0; index < schema.Length; index++)
+        {
+            if (!UberOutlineProgramContract.IsSourceMemberActive(index, Features)) continue;
+            if (_members[index] is null && CanReadZero(index, basicDissolve)) continue;
+            if (!TryValidateValue(_members[index], schema[index], out reason)) return false;
+        }
+        reason = null;
+        return true;
+    }
+
+    private static readonly int DissolveTypeIndex = SourceMemberIndex("_DissolveType");
+
+    /// <summary>
+    /// Returns true when an absent field can read zero. The source basic dissolve
+    /// reads its parameters and color, whose desktop defaults are not zero, so
+    /// that type requires them.
+    /// </summary>
+    private static bool CanReadZero(int sourceIndex, bool basicDissolve)
+        => UberOutlineProgramContract.ReadsZeroWhenAbsent(sourceIndex) &&
+           !(basicDissolve && UberOutlineProgramContract.IsSourceBasicDissolveInput(sourceIndex));
+
+    /// <summary>Returns true when the dissolve type selects the source basic dissolve, as the shader int conversion reads it.</summary>
+    private static bool IsSourceBasicDissolve(ShaderVar? dissolveType)
+        => dissolveType is ShaderFloat { Value: var value } && float.IsFinite(value) && (int)value == 5;
+
+    private static ShaderVar? FindParameter(ShaderVar[] parameters, string name)
+    {
+        foreach (ShaderVar? parameter in parameters)
+            if (parameter?.Name == name) return parameter;
+        return null;
+    }
+
+    /// <summary>
+    /// Reads an integer control as the desktop variant does: an authored static
+    /// literal first, then the live parameter, then zero.
+    /// </summary>
+    private static int ResolveIntControl(XRMaterial source, string name)
+    {
+        foreach (UberMaterialPropertyState? property in source.UberAuthoredState.Properties)
+            if (property?.Name == name && property.Mode != EShaderUiPropertyMode.Animated &&
+                int.TryParse(property.StaticLiteral, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out int literal))
+                return literal;
+        return FindParameter(source.Parameters, name) is ShaderInt { Value: var value } ? value : 0;
     }
 
     private static bool TryValidateCommonSource(XRMaterial source, out uint features, out bool renderTime, out string? reason)
@@ -207,6 +268,13 @@ public sealed class UberOutlineSurfaceBinding
             if (feature.Id == "alpha-masks") features |= UberOutlineMaterialProfile.AlphaMasks;
             if (feature.Id == "dissolve") features |= UberOutlineMaterialProfile.Dissolve;
         }
+        // In the outline pass the source texture-array flipbook changes only the
+        // coverage alpha, and only in its final-alpha mode. Other modes change only
+        // color and emission, which the outline output does not read.
+        if (IsFeatureEnabled(source, "texture-array-flipbook") &&
+            ResolveIntControl(source, "_FlipbookToonModel") != 0 &&
+            ResolveIntControl(source, "_FlipbookAlphaControlsFinalAlpha") == 1)
+            features |= UberOutlineMaterialProfile.FlipbookAlpha;
         foreach (string id in source.ActiveUberVariant.EnabledFeatures)
             if (!TryAdmitFeature(id, out reason)) return false;
         foreach (string id in source.RequestedUberVariant.EnabledFeatures)
@@ -249,6 +317,17 @@ public sealed class UberOutlineSurfaceBinding
         }
         reason = null;
         return true;
+    }
+
+    private static bool IsFeatureEnabled(XRMaterial source, string id)
+    {
+        foreach (UberMaterialFeatureState? feature in source.UberAuthoredState.Features)
+            if (feature?.Id == id && feature.Enabled) return true;
+        foreach (string enabled in source.ActiveUberVariant.EnabledFeatures)
+            if (enabled == id) return true;
+        foreach (string enabled in source.RequestedUberVariant.EnabledFeatures)
+            if (enabled == id) return true;
+        return false;
     }
 
     private static bool TryAdmitFeature(string id, out string? reason)

@@ -193,7 +193,9 @@ public static partial class BrowserContentPackageBuilder
                         "Octahedral impostors require their exact camera-facing 26-view RGBA profile.");
                 if (semantic == "UberOutline")
                     Require(pass == "outline" && vertexProfile == "position-normal-uv4-color-v1" &&
-                        outputProfile is "linear-hdr-v1" or "linear-hdr-alpha-mask-v1" or "linear-hdr-dissolve-v1" or "linear-hdr-alpha-mask-dissolve-v1",
+                        outputProfile is "linear-hdr-v1" or "linear-hdr-alpha-mask-v1" or "linear-hdr-dissolve-v1" or "linear-hdr-alpha-mask-dissolve-v1" or
+                            "linear-hdr-flipbook-v1" or "linear-hdr-alpha-mask-flipbook-v1" or "linear-hdr-dissolve-flipbook-v1" or
+                            "linear-hdr-alpha-mask-dissolve-flipbook-v1",
                         "Outline variants require their exact inverse-hull vertex and authored coverage profile.");
                 if (semantic == "StandardLitTexture")
                     Require(vertexProfile is "position-normal-uv-v1" or "position-normal-tangent-uv-v1" &&

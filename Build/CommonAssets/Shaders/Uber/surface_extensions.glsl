@@ -42,48 +42,124 @@ vec2 uberResolveUv(int uvMode, ToonMesh mesh)
     return getUV(uvMode, mesh);
 }
 
-vec4 uberSampleStochastic(sampler2D source, vec2 uv, int mode)
+#ifndef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+// Stochastic sampling hides texture repetition. Each pixel blends three samples
+// whose UV offsets come from the corners of a skewed triangle grid. Deliot-Heitz
+// blends with the barycentric weights. Hextile can also rotate each tile, and it
+// blends with weights that favor the brighter sample.
+vec2 uberStochasticHash(vec2 cell)
 {
-    if (mode == 0)
+    vec2 seed = vec2(dot(cell, vec2(127.1, 311.7)), dot(cell, vec2(269.5, 183.3)));
+    return fract(sin(mod(seed, 3.14159)) * 43758.5453);
+}
+
+// Skews UV into a triangle grid whose cell edge is about 1 / (2 * sqrt(3)) of a UV unit at density 1.
+vec2 uberStochasticSkew(vec2 uv, float density)
+{
+    vec2 scaled = uv * 3.4641 * density;
+    return vec2(scaled.x - 0.57735027 * scaled.y, 1.15470054 * scaled.y);
+}
+
+vec4 uberSampleDeliotHeitz(sampler2D source, vec2 uv, vec2 dx, vec2 dy)
+{
+    vec2 skewed = uberStochasticSkew(uv, _StochasticDeliotHeitzDensity);
+    vec2 cell = floor(skewed);
+    vec2 local = fract(skewed);
+    float remainder = 1.0 - local.x - local.y;
+
+    vec2 cell0 = cell;
+    vec2 cell1 = cell + vec2(0.0, 1.0);
+    vec2 cell2 = cell + vec2(1.0, 0.0);
+    vec3 weights = vec3(remainder, local.y, local.x);
+    if (remainder <= 0.0)
+    {
+        cell0 = cell + vec2(1.0);
+        cell1 = cell + vec2(1.0, 0.0);
+        cell2 = cell + vec2(0.0, 1.0);
+        weights = vec3(-remainder, 1.0 - local.y, 1.0 - local.x);
+    }
+
+    return textureGrad(source, uv + uberStochasticHash(cell0), dx, dy) * weights.x
+         + textureGrad(source, uv + uberStochasticHash(cell1), dx, dy) * weights.y
+         + textureGrad(source, uv + uberStochasticHash(cell2), dx, dy) * weights.z;
+}
+
+// Returns (cos, sin) of the tile rotation. The angle depends only on the tile vertex.
+vec2 uberHextileRotation(vec2 vertex)
+{
+    // The snippets undefine PI, so this function uses TWO_PI.
+    float angle = abs(vertex.x * vertex.y) + abs(vertex.x + vertex.y) + 0.5 * TWO_PI;
+    angle = mod(angle, TWO_PI);
+    if (angle > 0.5 * TWO_PI)
+        angle -= TWO_PI;
+    angle *= _StochasticHexRotationStrength;
+    return vec2(cos(angle), sin(angle));
+}
+
+// Rotates a row vector by the tile rotation.
+vec2 uberHextileRotate(vec2 value, vec2 rotation)
+{
+    return vec2(
+        value.x * rotation.x + value.y * rotation.y,
+        value.y * rotation.x - value.x * rotation.y);
+}
+
+vec4 uberSampleHextileTile(sampler2D source, vec2 uv, vec2 vertex, vec2 dx, vec2 dy)
+{
+    vec2 center = vec2(vertex.x + 0.5 * vertex.y, vertex.y / 1.15470054) * 0.288675;
+    vec2 rotation = _StochasticHexRotationStrength > 0.0 ? uberHextileRotation(vertex) : vec2(1.0, 0.0);
+    vec2 tileUv = uberHextileRotate(uv - center, rotation) + center + uberStochasticHash(vertex);
+    return textureGrad(source, tileUv, uberHextileRotate(dx, rotation), uberHextileRotate(dy, rotation));
+}
+
+vec4 uberSampleHextile(sampler2D source, vec2 uv, vec2 dx, vec2 dy)
+{
+    vec2 skewed = uberStochasticSkew(uv, _StochasticHexGridDensity);
+    vec2 cell = floor(skewed);
+    vec3 local = vec3(fract(skewed), 0.0);
+    local.z = 1.0 - local.x - local.y;
+
+    float upper = step(0.0, -local.z);
+    float sign2 = 2.0 * upper - 1.0;
+    vec3 weights = vec3(-local.z * sign2, upper - local.y * sign2, upper - local.x * sign2);
+
+    vec4 c0 = uberSampleHextileTile(source, uv, cell + vec2(upper, upper), dx, dy);
+    vec4 c1 = uberSampleHextileTile(source, uv, cell + vec2(upper, 1.0 - upper), dx, dy);
+    vec4 c2 = uberSampleHextileTile(source, uv, cell + vec2(1.0 - upper, upper), dx, dy);
+
+    const vec3 lumaWeights = vec3(0.299, 0.587, 0.114);
+    vec3 luma = vec3(dot(c0.rgb, lumaWeights), dot(c1.rgb, lumaWeights), dot(c2.rgb, lumaWeights));
+    luma = mix(vec3(1.0), luma, _StochasticHexFallOffContrast);
+    weights = luma * pow(max(weights, vec3(0.0)), vec3(_StochasticHexFallOffPower));
+    weights /= max(weights.x + weights.y + weights.z, 1e-6);
+    return c0 * weights.x + c1 * weights.y + c2 * weights.z;
+}
+
+// Pixel mode snaps UV to texel centers and keeps a one-pixel smooth edge between texels.
+vec2 uberSharpSample(vec2 uv, vec2 textureSizePixels)
+{
+    vec2 p = uv * textureSizePixels;
+    vec2 edge = max(fwidth(p), vec2(1e-6));
+    p = floor(p) + saturate(fract(p) / edge);
+    return (p - 0.5) / textureSizePixels;
+}
+#endif
+
+// Samples with the material stochastic mode when the texture enables it.
+vec4 uberSampleStochastic(sampler2D source, vec2 uv, float enabled)
+{
+#ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+    return texture(source, uv);
+#else
+    if (enabled < 0.5 || _StochasticMode == 2)
         return texture(source, uv);
 
     vec2 dx = dFdx(uv);
     vec2 dy = dFdy(uv);
-    vec2 cell = floor(uv * 64.0);
-
-    if (mode == 1)
-    {
-        // Deliot-Heitz style decorrelation: three triangular-lattice samples
-        // are reoriented per cell while retaining the original derivatives.
-        float seed = uberHash21(cell);
-        vec2 o0 = vec2(seed, fract(seed * 7.13));
-        vec2 o1 = vec2(fract(seed * 13.7), fract(seed * 3.71));
-        vec2 o2 = vec2(fract(seed * 5.31), fract(seed * 11.9));
-        vec4 a = textureGrad(source, uv + o0, dx, dy);
-        vec4 b = textureGrad(source, uv + o1, dx, dy);
-        vec4 c = textureGrad(source, uv + o2, dx, dy);
-        vec3 weights = vec3(0.5, 0.3, 0.2);
-        return a * weights.x + b * weights.y + c * weights.z;
-    }
-
-    // Hex-tile sampling uses three neighboring skewed cells. The blend is
-    // continuous across cell boundaries and textureGrad keeps mip selection
-    // stable under animated projections.
-    const mat2 skew = mat2(1.0, 0.0, 0.5, 0.8660254);
-    vec2 hex = skew * uv;
-    vec2 baseCell = floor(hex);
-    vec2 local = fract(hex);
-    vec2 cellA = baseCell;
-    vec2 cellB = baseCell + vec2(local.x > local.y ? 1.0 : 0.0, local.x > local.y ? 0.0 : 1.0);
-    vec2 cellC = baseCell + vec2(1.0);
-    vec2 offsetA = vec2(uberHash21(cellA), uberHash21(cellA + 17.0));
-    vec2 offsetB = vec2(uberHash21(cellB), uberHash21(cellB + 17.0));
-    vec2 offsetC = vec2(uberHash21(cellC), uberHash21(cellC + 17.0));
-    vec3 weights = max(vec3(1.0 - local.x, abs(local.x - local.y), local.y), vec3(0.001));
-    weights /= dot(weights, vec3(1.0));
-    return textureGrad(source, uv + offsetA, dx, dy) * weights.x
-         + textureGrad(source, uv + offsetB, dx, dy) * weights.y
-         + textureGrad(source, uv + offsetC, dx, dy) * weights.z;
+    return _StochasticMode == 0
+        ? uberSampleDeliotHeitz(source, uv, dx, dy)
+        : uberSampleHextile(source, uv, dx, dy);
+#endif
 }
 
 vec2 uberMainUv(ToonMesh mesh)
@@ -101,8 +177,13 @@ vec2 uberMainUv(ToonMesh mesh)
     vec2 distortion = texture(_MainTexDistortionMap, distortionUv).rg * 2.0 - 1.0;
     float distortionMask = texture(_MainTexDistortionMask, maskUv).r;
     uv += distortion * (_MainTexDistortionStrength * distortionMask);
-#endif
+    uv = transformUV(uv, _MainTex_ST);
+    if (_MainPixelMode > 0.5)
+        uv = uberSharpSample(uv, vec2(textureSize(_MainTex, 0)));
+    return panUV(uv, _MainTexPan, u_Time);
+#else
     return panUV(transformUV(uv, _MainTex_ST), _MainTexPan, u_Time);
+#endif
 }
 
 vec4 uberSampleMainTexture(ToonMesh mesh)
@@ -111,7 +192,9 @@ vec4 uberSampleMainTexture(ToonMesh mesh)
 #ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
     return texture(_MainTex, uv);
 #else
-    return uberSampleStochastic(_MainTex, uv, _MainTexStochasticMode);
+    vec4 color = uberSampleStochastic(_MainTex, uv, _MainTexStochastic);
+    color.a = max(color.a, _MainIgnoreTexAlpha);
+    return color;
 #endif
 }
 
@@ -124,6 +207,39 @@ vec3 uberApplyExtendedColorAdjustments(vec3 color)
     color = mix(color, vec3(luminance(color)), saturate(_MainGrayscale));
     color = mix(color, _MainColorReplace.rgb, saturate(_MainColorReplaceStrength) * _MainColorReplace.a);
     return color;
+#endif
+}
+
+// Adjusts the lit color before emission is added: hue shift, saturation, sRGB-to-linear HDR curve,
+// contrast around mid gray, brightness multiply, and lightness add. The order matches the source
+// post-processing section. _PostProcessSettings.x turns the stage on.
+vec3 uberApplyPostProcess(vec3 color)
+{
+#ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+    return color;
+#else
+    if (_PostProcessSettings.x <= 0.5)
+        return color;
+
+    vec3 col = color;
+    if (_PostProcessHue.x != 0.0)
+        col = _PostProcessHue.w < 0.5
+            ? hueShiftOklab(col, _PostProcessHue.x)
+            : hueShift(col, _PostProcessHue.x);
+    col = mix(vec3(dot(col, vec3(0.3, 0.59, 0.11))), col, _PostProcessSettings.w);
+    if (_PostProcessHue.z != 0.0)
+    {
+        vec3 c = max(col, vec3(0.0));
+        vec3 hdr = vec3(
+            c.r <= 0.04045 ? c.r / 12.92 : pow((c.r + 0.055) / 1.055, 2.4),
+            c.g <= 0.04045 ? c.g / 12.92 : pow((c.g + 0.055) / 1.055, 2.4),
+            c.b <= 0.04045 ? c.b / 12.92 : pow((c.b + 0.055) / 1.055, 2.4));
+        col = mix(col, hdr, _PostProcessHue.z);
+    }
+    col = mix(vec3(0.5), col, _PostProcessSettings.z);
+    col *= _PostProcessSettings.y;
+    col += vec3(_PostProcessHue.y);
+    return col;
 #endif
 }
 
@@ -153,6 +269,7 @@ vec4 uberSampleGlobalMaskTexture(int textureIndex, ToonMesh mesh, float timeScal
 #ifdef XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES
     return vec4(1.0);
 #else
+    // Global mask pans use the source time unit (0.05 per second), as the native Uber path does.
     vec4 value;
     if (textureIndex == 0)
         value = texture(_GlobalMaskTexture0, panUV(transformUV(getUV(_GlobalMaskTexture0UV, mesh), _GlobalMaskTexture0_ST), _GlobalMaskTexture0Pan, u_Time * timeScale));
@@ -262,51 +379,133 @@ vec3 uberApplyColorMaskNormal(vec3 normal, ToonMesh mesh)
 #endif
 }
 
-float uberInterleavedGradientNoise(vec2 pixel, float frame)
+// Combines two mask values with a blend operation.
+// Blend type: 0 replace, 1 subtract, 2 multiply, 3 divide, 4 min, 5 max, 6 average, 7 add.
+float uberMaskBlend(float baseMask, float blendMask, int blendType)
 {
-    return fract(52.9829189 * fract(dot(pixel + frame, vec2(0.06711056, 0.00583715))));
+    float result;
+    switch (blendType)
+    {
+        case 0: result = blendMask; break;
+        case 1: result = baseMask - blendMask; break;
+        case 2: result = baseMask * blendMask; break;
+        case 3: result = baseMask / max(blendMask, 0.0001); break;
+        case 4: result = min(baseMask, blendMask); break;
+        case 5: result = max(baseMask, blendMask); break;
+        case 6: result = (baseMask + blendMask) * 0.5; break;
+        default: result = baseMask + blendMask; break;
+    }
+    return saturate(result);
 }
 
+// Hermite step that accepts equal or reversed edges. Equal edges give a hard step at the edge.
+float uberEdgeStep(float edge0, float edge1, float x)
+{
+    float range = edge1 - edge0;
+    float t = abs(range) < EPSILON ? step(edge0, x) : saturate((x - edge0) / range);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// Lerps from 1 to the value by a global mask. Index 0 keeps the value.
+float uberGlobalMaskStrength(float value, int encodedIndex, ToonMesh mesh)
+{
+    return encodedIndex > 0 ? mix(1.0, value, uberGlobalMask(encodedIndex, mesh)) : value;
+}
+
+// Applies the alpha options that run before decals and dissolve: the alpha global mask,
+// distance fade, fresnel alpha, and angular alpha.
 float uberApplyExtendedAlpha(float alpha, ToonMesh mesh)
 {
 #ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
     return alpha;
 #else
-    float distanceToCamera = length(mesh.worldPos - CameraPosition);
-    float distanceFade = 1.0 - smoothstep(
-        _DistanceFadeMin,
-        max(_DistanceFadeMax, _DistanceFadeMin + EPSILON),
-        distanceToCamera);
-    alpha *= mix(1.0, distanceFade, saturate(_DistanceFade));
+    if (_AlphaGlobalMask > 0)
+        alpha = uberMaskBlend(alpha, uberGlobalMask(_AlphaGlobalMask, mesh), _AlphaGlobalMaskBlendType);
+
+    vec3 objectOrigin = (u_ModelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    if (_DistanceFade > 0.5)
+    {
+        vec3 position = _DistanceFadePosition != 0 ? mesh.worldPos : objectOrigin;
+        float fade = mix(
+            _DistanceFadeNearAlpha,
+            _DistanceFadeFarAlpha,
+            uberEdgeStep(_DistanceFadeMin, _DistanceFadeMax, distance(position, CameraPosition)));
+        alpha *= uberGlobalMaskStrength(fade, _DistanceFadeGlobalMask, mesh);
+    }
 
     if (_AlphaFresnel > 0.5)
     {
-        float viewNormalDot = abs(dot(mesh.worldNormal, mesh.viewDir));
-        float fresnel = saturate(1.0 - smoothstep(
+        float viewDotNormal = abs(dot(mesh.viewDir, mesh.worldNormal));
+        float rim = saturate(1.0 - uberEdgeStep(
             min(_AlphaFresnelSharpness, _AlphaFresnelWidth),
             _AlphaFresnelWidth,
-            viewNormalDot));
-        float alphaMultiplier = abs(mix(1.0, fresnel, _AlphaFresnelAlpha));
-        alphaMultiplier = _AlphaFresnelInvert > 0.5 ? 1.0 - alphaMultiplier : alphaMultiplier;
-        alpha *= alphaMultiplier;
+            viewDotNormal));
+        rim = abs(mix(1.0, rim, _AlphaFresnelAlpha));
+        rim = _AlphaFresnelInvert > 0.5 ? 1.0 - rim : rim;
+        alpha *= uberGlobalMaskStrength(rim, _AlphaFresnelGlobalMask, mesh);
     }
 
     if (_AlphaAngular > 0.5)
     {
-        vec3 forward = normalize(_AngleForwardDirection);
-        float angle = degrees(acos(clamp(abs(dot(forward, mesh.viewDir)), 0.0, 1.0)));
-        float angular = smoothstep(_CameraAngleMin, max(_CameraAngleMax, _CameraAngleMin + EPSILON), angle);
-        alpha *= mix(_AngleMinAlpha, 1.0, angular);
-    }
-
-    if (_AlphaDither > 0.0)
-    {
-        float screenNoise = uberInterleavedGradientNoise(gl_FragCoord.xy, floor(u_Time * _AlphaDitherSpeed));
-        float objectNoise = uberHash21(floor(mesh.localPos.xy * 64.0));
-        float threshold = mix(screenNoise, objectNoise, saturate(_AlphaDitherGradient));
-        alpha = alpha >= mix(1.0, threshold, saturate(_AlphaDither)) ? alpha : 0.0;
+        // The camera axis is the camera +Z axis in world space. It points away from the view direction.
+        vec3 cameraAxis = normalize(XRENGINE_GetForwardResolvedInverseViewMatrix()[2].xyz);
+        vec3 position = _AngleCompareTo == 0 ? objectOrigin : mesh.worldPos;
+        vec3 cameraToModel = normalize(position - CameraPosition);
+        vec3 modelForward = normalize(mat3(u_ModelMatrix) * normalize(_AngleForwardDirection));
+        float cameraFacing = saturate(
+            (0.5 * dot(cameraToModel, cameraAxis) + 0.5 - _CameraAngleMax / 180.0) /
+            ((_CameraAngleMin - _CameraAngleMax) / 180.0 + EPSILON));
+        float modelFacing = saturate(
+            (0.5 * dot(-cameraToModel, modelForward) + 0.5 - _ModelAngleMax / 180.0) /
+            ((_ModelAngleMin - _ModelAngleMax) / 180.0 + EPSILON));
+        float facing = _AngleType == 0 ? cameraFacing
+            : _AngleType == 1 ? modelFacing
+            : cameraFacing * modelFacing;
+        alpha *= uberGlobalMaskStrength(max(facing, _AngleMinAlpha), _AlphaAngularGlobalMask, mesh);
     }
     return saturate(alpha);
+#endif
+}
+
+// Returns the 8x8 ordered dither threshold of a pixel.
+float uberBayerDither(vec2 pixel)
+{
+    const float bayer[64] = float[64](
+        0.015625, 0.765625, 0.203125, 0.953125, 0.06250, 0.81250, 0.25000, 1.00000,
+        0.515625, 0.265625, 0.703125, 0.453125, 0.56250, 0.31250, 0.75000, 0.50000,
+        0.140625, 0.890625, 0.078125, 0.828125, 0.18750, 0.93750, 0.12500, 0.87500,
+        0.640625, 0.390625, 0.578125, 0.328125, 0.68750, 0.43750, 0.62500, 0.37500,
+        0.046875, 0.796875, 0.234375, 0.984375, 0.03125, 0.78125, 0.21875, 0.96875,
+        0.546875, 0.296875, 0.734375, 0.484375, 0.53125, 0.28125, 0.71875, 0.46875,
+        0.171875, 0.921875, 0.109375, 0.859375, 0.15625, 0.90625, 0.09375, 0.84375,
+        0.671875, 0.421875, 0.609375, 0.359375, 0.65625, 0.40625, 0.59375, 0.34375);
+    ivec2 cell = ivec2(mod(floor(pixel), 8.0));
+    return bayer[cell.y * 8 + cell.x];
+}
+
+// Applies the alpha options that run directly before the coverage test: sharpened alpha to
+// coverage and dithering. The caller applies force opaque.
+float uberApplyCoverageAlpha(float alpha, ToonMesh mesh)
+{
+#ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
+    return alpha;
+#else
+    if (_Mode == BLEND_MODE_CUTOUT && _AlphaSharpenedA2C > 0.5)
+    {
+        vec2 texel = mesh.uv[0] * vec2(textureSize(_MainTex, 0));
+        vec2 dx = dFdx(texel);
+        vec2 dy = dFdy(texel);
+        float mipLevel = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), EPSILON));
+        alpha *= 1.0 + max(0.0, mipLevel) * _AlphaMipScale;
+        alpha = saturate((alpha - _Cutoff) / max(fwidth(alpha), 0.0001) + _Cutoff);
+    }
+
+    if (_AlphaDither > 0.5)
+    {
+        float dither = uberBayerDither(gl_FragCoord.xy) - _AlphaDitherBias;
+        alpha = saturate(alpha - dither * (1.0 - alpha) * _AlphaDitherGradient);
+    }
+    return alpha;
 #endif
 }
 
@@ -315,10 +514,19 @@ vec3 uberCorrectNormal(vec3 normal, ToonMesh mesh)
 #ifdef XRENGINE_UBER_DISABLE_SURFACE_EXTENSIONS
     return normal;
 #else
-    vec3 objectOut = normalize(mesh.worldPos - (u_ModelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz);
+    if (_NormalCorrectStrength <= 0.0)
+        return normal;
+
+    // The corrected normal points away from a vertical axis through the origin, in the
+    // horizontal plane of the object.
+    vec3 horizontal = mesh.localPos - _NormalCorrectOrigin;
+    horizontal.y = 0.0;
+    if (dot(horizontal, horizontal) <= 1e-12)
+        return normal;
+    vec3 objectOut = normalize(mat3(u_ModelMatrix) * normalize(horizontal));
     float vertexMask = _NormalCorrectVertexColor == 0
         ? 1.0
-        : mesh.vertexColor[clamp(_NormalCorrectVertexColor - 1, 0, 3)];
+        : uberChannelAt(mesh.vertexColor, _NormalCorrectVertexColor - 1);
     return normalize(mix(normal, objectOut, saturate(_NormalCorrectStrength * vertexMask)));
 #endif
 }
@@ -329,6 +537,7 @@ vec4 uberSampleDecal(
     vec4 decalColor,
     vec2 position,
     vec2 scale,
+    vec4 sideOffset,
     vec2 pan,
     float rotation,
     float rotationSpeed,
@@ -344,6 +553,11 @@ vec4 uberSampleDecal(
     int mirrorMode = int(modifiers.z + 0.5);
     if (mirrorMode == 1 || (mirrorMode == 4 && mesh.viewDir.x < 0.0))
         uv.x = 1.0 - uv.x;
+    // A side offset moves each edge of the decal rectangle: x and y move the left and right
+    // edges, z and w move the bottom and top edges. It shifts the center and changes the span.
+    vec4 sideAdjust = vec4(-sideOffset.x, sideOffset.y, -sideOffset.z, sideOffset.w);
+    position += 0.5 * vec2(sideAdjust.x + sideAdjust.y, sideAdjust.z + sideAdjust.w);
+    scale += vec2(sideAdjust.y - sideAdjust.x, sideAdjust.w - sideAdjust.z);
     uv = panUV(uv, pan, u_Time);
     uv = (uv - position) / max(abs(scale), vec2(EPSILON)) + vec2(0.5);
     uv = rotateUV(uv, radians(rotation + rotationSpeed * u_Time), vec2(0.5));
@@ -424,14 +638,14 @@ void uberApplyDecals(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_DECALS
     vec3 alphaControl;
-    vec4 decal = uberSampleDecal(_DecalTexture, _DecalColor, _DecalPosition, _DecalScale, _DecalTexturePan, _DecalRotation, _DecalRotationSpeed, _DecalUvMode0, 0, _DecalSlotModifiers0, _DecalSlotFx0, _SourceDecalAlphaParams0, mesh, alphaControl);
-    uberBlendDecal(fragData, decal, _DecalBlendParams0, _SourceDecalAlphaParams0, alphaControl);
-    decal = uberSampleDecal(_DecalTexture1, _DecalColor1, _DecalPosition1, _DecalScale1, _DecalTexturePan1, _DecalRotation1, _DecalRotationSpeed1, _DecalUvMode1, 1, _DecalSlotModifiers1, _DecalSlotFx1, _SourceDecalAlphaParams1, mesh, alphaControl);
-    uberBlendDecal(fragData, decal, _DecalBlendParams1, _SourceDecalAlphaParams1, alphaControl);
-    decal = uberSampleDecal(_DecalTexture2, _DecalColor2, _DecalPosition2, _DecalScale2, _DecalTexturePan2, _DecalRotation2, _DecalRotationSpeed2, _DecalUvMode2, 2, _DecalSlotModifiers2, _DecalSlotFx2, _SourceDecalAlphaParams2, mesh, alphaControl);
-    uberBlendDecal(fragData, decal, _DecalBlendParams2, _SourceDecalAlphaParams2, alphaControl);
-    decal = uberSampleDecal(_DecalTexture3, _DecalColor3, _DecalPosition3, _DecalScale3, _DecalTexturePan3, _DecalRotation3, _DecalRotationSpeed3, _DecalUvMode3, 3, _DecalSlotModifiers3, _DecalSlotFx3, _SourceDecalAlphaParams3, mesh, alphaControl);
-    uberBlendDecal(fragData, decal, _DecalBlendParams3, _SourceDecalAlphaParams3, alphaControl);
+    vec4 decal = uberSampleDecal(_DecalTexture, _DecalColor, _DecalPosition, _DecalScale, _DecalSideOffset, _DecalTexturePan, _DecalRotation, _DecalRotationSpeed, _DecalUvMode0, 0, _DecalSlotModifiers0, _DecalSlotFx0, _DecalAlphaParams0, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams0, _DecalAlphaParams0, alphaControl);
+    decal = uberSampleDecal(_DecalTexture1, _DecalColor1, _DecalPosition1, _DecalScale1, _DecalSideOffset1, _DecalTexturePan1, _DecalRotation1, _DecalRotationSpeed1, _DecalUvMode1, 1, _DecalSlotModifiers1, _DecalSlotFx1, _DecalAlphaParams1, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams1, _DecalAlphaParams1, alphaControl);
+    decal = uberSampleDecal(_DecalTexture2, _DecalColor2, _DecalPosition2, _DecalScale2, _DecalSideOffset2, _DecalTexturePan2, _DecalRotation2, _DecalRotationSpeed2, _DecalUvMode2, 2, _DecalSlotModifiers2, _DecalSlotFx2, _DecalAlphaParams2, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams2, _DecalAlphaParams2, alphaControl);
+    decal = uberSampleDecal(_DecalTexture3, _DecalColor3, _DecalPosition3, _DecalScale3, _DecalSideOffset3, _DecalTexturePan3, _DecalRotation3, _DecalRotationSpeed3, _DecalUvMode3, 3, _DecalSlotModifiers3, _DecalSlotFx3, _DecalAlphaParams3, mesh, alphaControl);
+    uberBlendDecal(fragData, decal, _DecalBlendParams3, _DecalAlphaParams3, alphaControl);
 #endif
 }
 
@@ -456,7 +670,7 @@ void uberEmissionSlot(
 {
     vec2 baseUv = getUV(uvMode, mesh);
     vec2 uv = panUV(transformUV(baseUv, sourceTransform), pan, u_Time);
-    bool sourceLayered = _SourceLayeredEmission > 0.5;
+    bool sourceLayered = _EmissionToonModel > 0.5;
     if (sourceLayered && modifiers.y > 0.5)
     {
         float nDotV = abs(dot(mesh.worldNormal, mesh.viewDir));
@@ -470,7 +684,7 @@ void uberEmissionSlot(
     float mask = maskTexel[int(clamp(sampling.y, 0.0, 3.0) + 0.5)];
     mask = mix(mask, 1.0 - mask, saturate(sampling.z));
     float pulse = mix(1.0, 0.5 + 0.5 * sin(u_Time * parameters.z), saturate(parameters.y));
-    vec3 sourceColor = _SourceLayeredEmission > 0.5
+    vec3 sourceColor = _EmissionToonModel > 0.5
         ? texel.rgb * mix(vec3(1.0), fragData.baseColor, saturate(sampling.x))
         : mix(texel.rgb, fragData.baseColor, saturate(sampling.x));
     vec3 shifted = parameters.w == 0.0 ? sourceColor : hueShift(sourceColor, parameters.w * u_Time);
@@ -479,7 +693,7 @@ void uberEmissionSlot(
         ? smoothstep(0.0, 0.5, abs(fract(uv.x + u_Time * parameters.z) - 0.5))
         : 1.0;
     float globalMask = uberGlobalMask(int(modifiers.z + 0.5), mesh);
-    float sourceAlpha = _SourceLayeredEmission > 0.5 ? texel.a : 1.0;
+    float sourceAlpha = _EmissionToonModel > 0.5 ? texel.a : 1.0;
     vec3 emission = shifted * themedColor * max(parameters.x, 0.0) * sourceAlpha * mask * pulse * centerOut * globalMask;
     emission *= xrSourceEmissionFluorescence(directColor, sampling.w);
     fragData.emission += emission;
@@ -502,10 +716,11 @@ void uberApplyEmissionSlots(inout FragmentData fragData, ToonMesh mesh, vec3 dir
 float uberAudioBandValue(int band, float history);
 #endif
 
-vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection, vec3 projectedNormal)
+// Projection modes: 0 view normal, 1 top pinch, 2 reflection, 3 view gradient, 4 light half vector.
+vec2 uberMatcapUv(ToonMesh mesh, ToonLight light, vec4 projection, vec3 projectedNormal)
 {
     vec3 normal = projectedNormal;
-    if (_SourceMatcap <= 0.5) normal = normalize(normal);
+    if (_MatcapToonModel <= 0.5) normal = normalize(normal);
     int uvMode = int(projection.z + 0.5);
     float border = max(projection.y, 0.0);
 
@@ -514,7 +729,7 @@ vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection, vec3 projecte
         vec3 viewUp = normalize(vec3(0.0, 1.0, 0.0) - mesh.viewDir * dot(mesh.viewDir, vec3(0.0, 1.0, 0.0)));
         vec3 viewRight = normalize(cross(mesh.viewDir, viewUp));
         // The source Z reflection reverses this cross-product axis.
-        if (_SourceMatcap > 0.5) viewRight = -viewRight;
+        if (_MatcapToonModel > 0.5) viewRight = -viewRight;
         return vec2(dot(viewRight, normal), dot(viewUp, normal)) * border + 0.5;
     }
 
@@ -524,7 +739,27 @@ vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection, vec3 projecte
         return reflected.xy * border + 0.5;
     }
 
-    if (_SourceMatcap > 0.5)
+    if (uvMode == 3)
+        return vec2(1.0 - abs(dot(normal, mesh.viewDir)));
+
+    if (uvMode == 4)
+    {
+        vec3 tangent = cross(normal, vec3(0.0, 1.0, 0.0));
+        // A vertical normal has no cross product with the up axis. Use the forward axis for it.
+        // The source forward axis is the engine -Z axis.
+        if (dot(tangent, tangent) < 1e-12)
+            tangent = cross(normal, vec3(0.0, 0.0, _MatcapToonModel > 0.5 ? -1.0 : 1.0));
+        tangent = normalize(tangent);
+        // The source Z reflection reverses this cross-product axis.
+        if (_MatcapToonModel > 0.5)
+            tangent = -tangent;
+        vec3 bitangent = normalize(cross(normal, tangent));
+        if (_MatcapToonModel > 0.5)
+            bitangent = -bitangent;
+        return vec2(dot(light.halfDir, tangent), dot(light.halfDir, bitangent)) * border + 0.5;
+    }
+
+    if (_MatcapToonModel > 0.5)
     {
         vec3 detail = (mat3(u_ViewMatrix) * normal) * vec3(-1.0, -1.0, 1.0);
         vec3 base = (mat3(u_ViewMatrix) * mesh.viewDir) * vec3(-1.0, -1.0, 1.0) + vec3(0.0, 0.0, 1.0);
@@ -535,6 +770,11 @@ vec2 uberMatcapUv(ToonMesh mesh, vec4 parameters, vec4 projection, vec3 projecte
     return viewNormal.xy * border + 0.5;
 }
 
+// Applies the matcap shape, alpha, and hue options of one slot.
+// shape: x is not used (the rotation argument rotates the UV), y circle mask toggle, z circle radius, w circle blur.
+// alphaOptions: x alpha override, y intensity-to-alpha blend weight (0 or less is off),
+// z intensity source (0 grayscale, 1 max channel), w blend type (0 add, 1 multiply).
+// hueSelect: 1 replaces the hue with the shift value, 0 offsets the hue.
 vec4 uberMatcapSlot(
     sampler2D source,
     sampler2D maskTexture,
@@ -552,6 +792,9 @@ vec4 uberMatcapSlot(
     vec2 audioAlpha,
     vec2 audioEmission,
     vec2 audioIntensity,
+    vec4 shape,
+    vec4 alphaOptions,
+    int hueSelect,
     vec4 sourceSt,
     vec2 sourcePan,
     vec4 maskSt,
@@ -559,6 +802,7 @@ vec4 uberMatcapSlot(
     ToonMesh mesh,
     ToonLight light,
     vec3 baseColor,
+    inout float alpha,
     inout vec3 emission,
     inout vec3 lightAdd)
 {
@@ -571,15 +815,18 @@ vec4 uberMatcapSlot(
         projectedNormal = normalize(mesh.TBN[0] * mappedNormal.x +
             mesh.TBN[1] * mappedNormal.y + mesh.worldNormal * mappedNormal.z);
     }
-    vec2 uv = uberMatcapUv(mesh, parameters, projection, projectedNormal);
-    bool sourceMatcap = _SourceMatcap > 0.5;
+    vec2 uv = uberMatcapUv(mesh, light, projection, projectedNormal);
+    bool sourceMatcap = _MatcapToonModel > 0.5;
     vec4 maskSample = vec4(1.0);
+    // The circle mask uses the projected UV before pan, rotation, and transform.
+    vec2 circleUv = uv;
     if (sourceMatcap)
     {
         vec2 maskUv = panUV(transformUV(getUV(int(maskOptions.w + 0.5), mesh), maskSt), maskPan, u_Time * 0.05);
         maskSample = texture(maskTexture, maskUv);
         if (uvBlend.x != 0.0 || uvBlend.y != 0.0)
             uv = mix(uv, getUV(int(uvControl.x + 0.5), mesh), uvBlend.xy);
+        circleUv = uv;
         uv = panUV(uv, sourcePan, u_Time * 0.05);
         float angle = rotation * 3.14159265359;
         float sine = sin(angle), cosine = cos(angle);
@@ -613,22 +860,44 @@ vec4 uberMatcapSlot(
 #endif
     float mask = sourceMatcap ? maskSample[clamp(int(maskOptions.x + 0.5), 0, 3)] : texture(maskTexture, getUV(0, mesh)).r;
     if (sourceMatcap && maskOptions.y > 0.5) mask = 1.0 - mask;
+    if (sourceMatcap && shape.y > 0.5)
+    {
+        float circleDistance = distance(vec2(0.5), circleUv);
+        float circleWidth = fwidth(circleDistance);
+        float circleMin = saturate(shape.z - shape.w * 0.5);
+        float circleMax = saturate(shape.z + shape.w * 0.5);
+        mask *= 1.0 - smoothstep(circleMin - circleWidth, circleMax + circleWidth, circleDistance);
+    }
+    sampleColor.rgb *= mix(vec3(1.0), light.color, saturate(projection.w));
+    sampleColor.rgb *= max(intensity, 0.0);
+    if (sourceMatcap)
+    {
+        sampleColor.rgb = mix(sampleColor.rgb, sampleColor.rgb * baseColor, clamp(sourceOptions.y, 0.0, 1.0));
+        if (hue.x > 0.5)
+        {
+            float shift = hue.y + hue.z * u_Time * 0.05;
+            sampleColor.rgb = uberSelectOrShiftHue(sampleColor.rgb, shift,
+                int(hue.w + 0.5), hueSelect > 0 ? 0 : 1);
+        }
+
+        // Alpha options use the slot mask before the light and global masks.
+        alpha *= mix(1.0, sampleColor.a, mask * alphaOptions.x);
+        if (alphaOptions.y > 0.0)
+        {
+            float intensity = alphaOptions.z > 0.5
+                ? max(max(sampleColor.r, sampleColor.g), sampleColor.b)
+                : dot(sampleColor.rgb, vec3(0.299, 0.587, 0.114));
+            alpha = alphaOptions.w > 0.5
+                ? alpha * mix(1.0, intensity, alphaOptions.y)
+                : saturate(alpha + intensity * alphaOptions.y);
+        }
+    }
     mask *= mix(1.0, saturate(light.lightMap), saturate(parameters.y));
 #ifndef XRENGINE_UBER_DISABLE_GLOBAL_MASKS_THEMES
     if (sourceMatcap && uvControl.z > 0.5)
         mask = uberBlendMask(mask, uberGlobalMask(int(uvControl.z + 0.5), mesh, 0.05),
             int(uvControl.w + 0.5));
 #endif
-    sampleColor.rgb *= mix(vec3(1.0), light.color, saturate(projection.w));
-    sampleColor.rgb *= max(intensity, 0.0);
-    if (sourceMatcap)
-        sampleColor.rgb = mix(sampleColor.rgb, sampleColor.rgb * baseColor, clamp(sourceOptions.y, 0.0, 1.0));
-    if (sourceMatcap && hue.x > 0.5)
-    {
-        float shift = hue.y + hue.z * u_Time * 0.05;
-        sampleColor.rgb = mix(hueShiftOklab(sampleColor.rgb, shift),
-            hueShift(sampleColor.rgb, shift), clamp(hue.w, 0.0, 1.0));
-    }
     mask *= sampleColor.a;
     if (sourceMatcap) lightAdd += sampleColor.rgb * sourceOptions.z * mask;
     emission += sampleColor.rgb * max(emissionStrength, 0.0) * mask;
@@ -646,7 +915,7 @@ void uberBlendMatcapSlot(inout vec3 finalColor, vec4 slot, vec4 blend, float mix
 }
 #endif
 
-void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3 lightAdd, ToonMesh mesh, ToonLight light)
+void uberApplyMatcapSlots(inout vec3 finalColor, inout float alpha, inout vec3 emission, inout vec3 lightAdd, ToonMesh mesh, ToonLight light)
 {
 #ifndef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
     bool audioActive = false;
@@ -662,8 +931,9 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
             _MatcapSlotParams0, _MatcapSlotExtra0, _MatcapSlotSource0, _MatcapSlotMask0,
             _MatcapSlotUvBlend0, _MatcapSlotUvControl0, _MatcapSlotRotation0, _MatcapSlotHue0,
             _MatcapSlotAudioBands0, _MatcapSlotAudioAlpha0, _MatcapSlotAudioEmission0, _MatcapSlotAudioIntensity0,
+            _MatcapSlotShape0, _MatcapSlotAlpha0, _MatcapSlotHueSelect0,
             _Matcap0Tex_ST, _Matcap0TexPan, _Matcap0Mask_ST, _Matcap0MaskPan,
-            mesh, light, finalColor, emission, lightAdd);
+            mesh, light, finalColor, alpha, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend0, _MatcapSlotExtra0.x);
     }
     if (_MatcapSlotParams1.x > 0.0 || (audioActive && _MatcapSlotAudioBands1.x > 0.5 &&
@@ -675,8 +945,9 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
             _MatcapSlotParams1, _MatcapSlotExtra1, _MatcapSlotSource1, _MatcapSlotMask1,
             _MatcapSlotUvBlend1, _MatcapSlotUvControl1, _MatcapSlotRotation1, _MatcapSlotHue1,
             _MatcapSlotAudioBands1, _MatcapSlotAudioAlpha1, _MatcapSlotAudioEmission1, _MatcapSlotAudioIntensity1,
+            _MatcapSlotShape1, _MatcapSlotAlpha1, _MatcapSlotHueSelect1,
             _Matcap1Tex_ST, _Matcap1TexPan, _Matcap1Mask_ST, _Matcap1MaskPan,
-            mesh, light, finalColor, emission, lightAdd);
+            mesh, light, finalColor, alpha, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend1, _MatcapSlotExtra1.x);
     }
     if (_MatcapSlotParams2.x > 0.0 || (audioActive && _MatcapSlotAudioBands2.x > 0.5 &&
@@ -688,8 +959,9 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
             _MatcapSlotParams2, _MatcapSlotExtra2, _MatcapSlotSource2, _MatcapSlotMask2,
             _MatcapSlotUvBlend2, _MatcapSlotUvControl2, _MatcapSlotRotation2, _MatcapSlotHue2,
             _MatcapSlotAudioBands2, _MatcapSlotAudioAlpha2, _MatcapSlotAudioEmission2, _MatcapSlotAudioIntensity2,
+            _MatcapSlotShape2, _MatcapSlotAlpha2, _MatcapSlotHueSelect2,
             _Matcap2Tex_ST, _Matcap2TexPan, _Matcap2Mask_ST, _Matcap2MaskPan,
-            mesh, light, finalColor, emission, lightAdd);
+            mesh, light, finalColor, alpha, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend2, _MatcapSlotExtra2.x);
     }
     if (_MatcapSlotParams3.x > 0.0 || (audioActive && _MatcapSlotAudioBands3.x > 0.5 &&
@@ -701,8 +973,9 @@ void uberApplyMatcapSlots(inout vec3 finalColor, inout vec3 emission, inout vec3
             _MatcapSlotParams3, _MatcapSlotExtra3, _MatcapSlotSource3, _MatcapSlotMask3,
             _MatcapSlotUvBlend3, _MatcapSlotUvControl3, _MatcapSlotRotation3, _MatcapSlotHue3,
             _MatcapSlotAudioBands3, _MatcapSlotAudioAlpha3, _MatcapSlotAudioEmission3, _MatcapSlotAudioIntensity3,
+            _MatcapSlotShape3, _MatcapSlotAlpha3, _MatcapSlotHueSelect3,
             _Matcap3Tex_ST, _Matcap3TexPan, _Matcap3Mask_ST, _Matcap3MaskPan,
-            mesh, light, finalColor, emission, lightAdd);
+            mesh, light, finalColor, alpha, emission, lightAdd);
         uberBlendMatcapSlot(finalColor, value, _MatcapSlotBlend3, _MatcapSlotExtra3.x);
     }
 #endif
@@ -713,7 +986,7 @@ vec3 uberApplySecondRim(ToonMesh mesh, ToonLight light)
 #ifdef XRENGINE_UBER_DISABLE_LAYERED_MATCAP_RIM
     return vec3(0.0);
 #else
-    if (_SourceRim2Settings.x > 0.5)
+    if (_Rim2Settings.x > 0.5)
         return vec3(0.0);
     float fresnel = pow(1.0 - saturate(dot(mesh.worldNormal, mesh.viewDir)),
         max(_Rim2Params.y, EPSILON));
@@ -860,9 +1133,9 @@ vec3 uberApplyAdvancedPbr(
     finalColor += vec3(coat);
 
     vec3 environment = vec3(0.0);
-    if (_SourceCubeMap == 0 && _SourceEnviroRim.x < 0.5)
+    if (_CubeMapToonModel == 0 && _EnviroRimSettings.x < 0.5)
         environment = uberApplyCubemap(mesh, light, false, finalColor, emission);
-    else if (_SourceEnviroRim.x < 0.5 && _RimEnviroIntensity > 0.0)
+    else if (_EnviroRimSettings.x < 0.5 && _RimEnviroIntensity > 0.0)
     {
         vec3 direction = reflect(-mesh.viewDir, mesh.worldNormal);
         if (_CubeMapUvMode == 0) direction = -mesh.viewDir;
@@ -876,7 +1149,7 @@ vec3 uberApplyAdvancedPbr(
     float rim = pow(1.0 - saturate(dot(mesh.worldNormal, mesh.viewDir)),
         mix(0.25, 16.0, saturate(_RimEnviroSharpness)));
     rim = smoothstep(1.0 - _RimEnviroWidth, 1.0, rim);
-    if (_SourceEnviroRim.x < 0.5)
+    if (_EnviroRimSettings.x < 0.5)
         finalColor += environment * rim * _RimEnviroIntensity;
 
     float backlight = saturate(dot(-mesh.worldNormal, light.direction));
@@ -892,15 +1165,15 @@ vec3 uberApplySourceEnviroRim(ToonMesh mesh, vec3 baseColor,
 #ifdef XRENGINE_UBER_DISABLE_ADVANCED_PBR
     return vec3(0.0);
 #else
-    if (_SourceEnviroRim.x < 0.5 || _RimEnviroIntensity <= 0.0)
+    if (_EnviroRimSettings.x < 0.5 || _RimEnviroIntensity <= 0.0)
         return vec3(0.0);
     float width = _RimEnviroWidth;
     float edge = saturate(1.0 - smoothstep(min(_RimEnviroSharpness, width),
         width, abs(dot(mesh.worldNormal, mesh.viewDir))));
     vec2 uv = panUV(transformUV(getUV(_RimEnviroMaskUV, mesh),
         _RimEnviroMask_ST), _RimEnviroMaskPan, u_Time);
-    float mask = texture(_RimEnviroMask, uv)[clamp(int(_SourceEnviroRim.w + 0.5), 0, 3)];
-    return max((probeRadiance - vec3(_SourceEnviroRim.z)) * baseColor,
+    float mask = texture(_RimEnviroMask, uv)[clamp(int(_EnviroRimSettings.w + 0.5), 0, 3)];
+    return max((probeRadiance - vec3(_EnviroRimSettings.z)) * baseColor,
         vec3(0.0)) * edge * mask * _RimEnviroIntensity;
 #endif
 }
@@ -932,7 +1205,7 @@ vec3 uberApplySourceEnviroRim(ToonMesh mesh, vec3 baseColor,
 void uberApplySourceFlipbook(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_TEXTURE_ARRAY_FLIPBOOK
-    if (_SourceFlipbook == 0) return;
+    if (_FlipbookToonModel == 0) return;
 #if defined(XRENGINE_SHADOW_CASTER_PASS) || defined(XRENGINE_POINT_SHADOW_CASTER_PASS) || defined(XRENGINE_OUTLINE_PASS)
     const bool shadowPass = true;
     if (_FlipbookAlphaControlsFinalAlpha != 1) return;
@@ -945,7 +1218,7 @@ void uberApplySourceFlipbook(inout FragmentData fragData, ToonMesh mesh)
     vec4 mask = texture(_FlipbookMask, maskUv);
     vec4 base = vec4(fragData.baseColor, fragData.alpha);
     xrApplySourceFlipbook(uv, dFdx(uv), dFdy(uv), vec3(textureSize(_FlipbookTexArray, 0)),
-        mask[clamp(int(_SourceFlipbookFlags.z), 0, 3)], u_Time, shadowPass, base, fragData.emission);
+        mask[clamp(int(_FlipbookFlags.z), 0, 3)], u_Time, shadowPass, base, fragData.emission);
     fragData.baseColor = base.rgb;
     fragData.alpha = base.a;
 #endif
@@ -954,7 +1227,7 @@ void uberApplySourceFlipbook(inout FragmentData fragData, ToonMesh mesh)
 void uberApplyFlipbookArray(inout FragmentData fragData, ToonMesh mesh)
 {
 #ifndef XRENGINE_UBER_DISABLE_TEXTURE_ARRAY_FLIPBOOK
-    if (_SourceFlipbook != 0) return;
+    if (_FlipbookToonModel != 0) return;
     int layerCount = max(textureSize(_FlipbookTexArray, 0).z, 1);
     float firstFrame = clamp(_FlipbookStartFrame, 0.0, float(layerCount - 1));
     float lastFrame = _FlipbookEndFrame > firstFrame

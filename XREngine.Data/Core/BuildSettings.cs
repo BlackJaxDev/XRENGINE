@@ -37,6 +37,7 @@ namespace XREngine
         private string _launcherDefineConstants = string.Empty;
         private ERendererBackendPackageMode _rendererBackendPackage = ERendererBackendPackageMode.All;
         private int _archiveCopyBufferBytes = DefaultArchiveCopyBufferBytes;
+        private bool _developmentLauncherReadsArchives = false;
 
         [Category("Build Target")]
         public EBuildConfiguration Configuration
@@ -190,7 +191,7 @@ namespace XREngine
         }
 
         [Category("Build Target")]
-        [Description("Semicolon-delimited compile constants passed when building the generated launcher project. XRE_PUBLISHED is reserved for published launcher builds and XRE_AOT_RUNTIME is reserved for NativeAOT runtime launchers; both are added automatically when applicable.")]
+        [Description("Semicolon-delimited compile constants passed when building the generated launcher project. XRE_PUBLISHED and XRE_AOT_RUNTIME are reserved for NativeAOT launchers and are added automatically. A non-AOT launcher that lists either one fails the build, because production published builds must use NativeAOT; use DevelopmentLauncherReadsArchives for non-AOT tests of the archives.")]
         public string LauncherDefineConstants
         {
             get => _launcherDefineConstants;
@@ -213,6 +214,18 @@ namespace XREngine
             set => SetField(
                 ref _archiveCopyBufferBytes,
                 Math.Clamp(value, MinArchiveCopyBufferBytes, MaxArchiveCopyBufferBytes));
+        }
+
+        /// <summary>
+        /// Makes a non-AOT launcher read the config, content, and common-assets archives as a development build.
+        /// It is for development and testing only. It is not for production builds.
+        /// </summary>
+        [Category("Build Steps")]
+        [Description("For development and testing only, not for production. When enabled and NativeAOT is off, the launcher reads the config, content, and common-assets archives (also the lod/ entries) and stays a development build with reflective loading. A Release build with this option and no NativeAOT fails, because production builds must use NativeAOT. A NativeAOT launcher ignores this option.")]
+        public bool DevelopmentLauncherReadsArchives
+        {
+            get => _developmentLauncherReadsArchives;
+            set => SetField(ref _developmentLauncherReadsArchives, value);
         }
     }
 }

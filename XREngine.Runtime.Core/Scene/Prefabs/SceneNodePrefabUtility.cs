@@ -7,6 +7,7 @@ using System.IO;
 using System.Numerics;
 using XREngine.Components;
 using XREngine;
+using XREngine.Core.Files;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Diagnostics;
@@ -225,24 +226,68 @@ namespace XREngine.Scene.Prefabs
         /// Creates a deep clone of the hierarchy rooted at <paramref name="template"/> using the engine serializers.
         /// </summary>
         public static SceneNode CloneHierarchy(SceneNode template)
+            => CloneHierarchy(template, shareTextures: false);
+
+        /// <summary>
+        /// Creates a deep clone of the hierarchy rooted at <paramref name="template"/> using the engine serializers.
+        /// </summary>
+        /// <param name="template">The hierarchy to copy.</param>
+        /// <param name="shareTextures">
+        /// True to make the clone use the texture objects of <paramref name="template"/> instead of
+        /// copies (<see cref="SharedAssetCloneScope"/>). A copy holds the pixel data of the texture at
+        /// clone time and is not registered for streaming, so a copy of a texture that was still
+        /// loading keeps its loading placeholder. Shared textures also keep the clone fast and small,
+        /// because no pixel data is serialized. Changes to a shared texture show on every copy.
+        /// </param>
+        /// <remarks>
+        /// The serialize and deserialize steps run in a <see cref="TransientSerializationScope"/>,
+        /// so meshes store their streams raw. Without the scope, the serializer compresses large
+        /// streams with LZMA for every clone, which takes most of the clone time for an avatar
+        /// with many blendshapes.
+        /// </remarks>
+        public static SceneNode CloneHierarchy(SceneNode template, bool shareTextures)
         {
             ArgumentNullException.ThrowIfNull(template);
 
             if (XRRuntimeEnvironment.IsAotRuntimeBuild)
                 return CloneHierarchyBounded(template);
 
-            string serialized = AssetManager.Serializer.Serialize(template);
-            SceneNode clone;
-            using (XRObjectBase.SuppressObjectCacheRegistration())
+            SceneNode? clone = null;
+            try
             {
-                clone = AssetManager.Deserializer.Deserialize<SceneNode>(serialized)
-                    ?? throw new InvalidOperationException("Failed to deserialize prefab hierarchy");
+                using (TransientSerializationScope.Begin())
+                using (shareTextures ? SharedAssetCloneScope.Begin() : null)
+                {
+                    string serialized = AssetManager.Serializer.Serialize(template);
+                    using (XRObjectBase.SuppressObjectCacheRegistration())
+                    {
+                        clone = AssetManager.Deserializer.Deserialize<SceneNode>(serialized);
+                    }
+                }
             }
+            catch
+            {
+                clone = CloneHierarchyCookedBinary(template);
+            }
+
+            if (clone is null)
+                throw new InvalidOperationException("Failed to deserialize prefab hierarchy");
 
             DetachWorldRecursive(clone);
             RegenerateRuntimeHierarchyIdentities(clone);
             NotifyYamlHierarchyDeserialized(clone);
             return clone;
+        }
+
+        [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "The cooked-binary reflection fallback is guarded out of published AOT builds by the IsAotRuntimeBuild check in CloneHierarchy.")]
+        [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "The cooked-binary reflection fallback is guarded out of published AOT builds by the IsAotRuntimeBuild check in CloneHierarchy.")]
+        private static SceneNode? CloneHierarchyCookedBinary(SceneNode template)
+        {
+            byte[] binaryPayload = CookedBinarySerializer.Serialize(template);
+            using (XRObjectBase.SuppressObjectCacheRegistration())
+            {
+                return CookedBinarySerializer.Deserialize(typeof(SceneNode), binaryPayload) as SceneNode;
+            }
         }
 
         /// <summary>
@@ -255,11 +300,12 @@ namespace XREngine.Scene.Prefabs
         /// </remarks>
         public static SceneNode CloneHierarchyAttached(SceneNode template,
                                                        SceneNode parent,
-                                                       bool maintainWorldTransform = false)
+                                                       bool maintainWorldTransform = false,
+                                                       bool shareTextures = false)
         {
             ArgumentNullException.ThrowIfNull(parent);
 
-            SceneNode clone = CloneHierarchy(template);
+            SceneNode clone = CloneHierarchy(template, shareTextures);
             if (maintainWorldTransform)
                 clone.Transform.SetParent(parent.Transform, true, EParentAssignmentMode.Immediate);
             else

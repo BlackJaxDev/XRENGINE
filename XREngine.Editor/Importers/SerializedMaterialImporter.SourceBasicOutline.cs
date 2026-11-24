@@ -23,9 +23,12 @@ public static partial class SerializedMaterialImporter
     {
         if (!match.IsLocked)
             throw new SourceVisualImportException("Active source toon Basic outline requires a verified locked source shader.");
-        if (match.Version != new SourceToonShaderVersion(9, 3, 63))
+        // 9.3.9 and 9.3.63 compute the Basic outline offset and color with the same math. 9.3.63
+        // adds only an outline Z offset, which the checks below require to be zero.
+        if (match.Version != new SourceToonShaderVersion(9, 3, 63) &&
+            match.Version != new SourceToonShaderVersion(9, 3, 9))
             throw new SourceVisualImportException(
-                $"Active source toon outline requires verified source version 9.3.63; found {match.Version?.ToString() ?? "unknown"}.");
+                $"Active source toon outline requires verified source version 9.3.9 or 9.3.63; found {match.Version?.ToString() ?? "unknown"}.");
 
         RequireSourceBasicOutlineValue(document, "_OutlineExpansionMode", 1.0f);
         RequireSourceBasicOutlineValue(document, "_OutlineSpace", 0.0f);
@@ -94,7 +97,7 @@ public static partial class SerializedMaterialImporter
             throw new SourceVisualImportException(
                 "Active source Basic outline requires a resolved linear-repeat '_OutlineMask' sampler with zero LOD bias.");
 
-        SetInt(material, "_SourceOutlineBasic", 1);
+        SetInt(material, "_OutlineBasicModel", 1);
         SetFloat(material, "_OutlineFixWidth", fixWidth);
         SetFloat(material, "_OutlinesMaxDistance", maxDistance);
     }

@@ -37,7 +37,7 @@ public sealed class UberSurfaceFeatureContractTests
         source.ShouldContain("uberApplyAdvancedPbr(");
         source.ShouldContain("uberApplyMatcapSlots(");
         source.ShouldContain("uberApplyDepthRim(mesh)");
-        source.ShouldContain("uberApplyEmissionSlots(fragData, mesh)");
+        source.ShouldContain("uberApplyEmissionSlots(fragData, mesh, light.color)");
         source.ShouldContain("uberApplyFlipbookArray(fragData, mesh)");
     }
 

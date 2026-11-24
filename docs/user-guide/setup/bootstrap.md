@@ -47,8 +47,8 @@ The opt-in step:
 4. verifies that the C# Tree-sitter parser loads in Python isolated mode
 5. builds `.code-review-graph/graph.db` on a fresh checkout, or updates an
    existing graph
-6. publishes the BCL-only local agent broker under
-   `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker`
+6. installs the checksum-pinned standalone broker release under
+   `Build/_AgentValidation/00000000-000000-shared/agent-tools/LocalAgentBroker-<timestamp>`
 7. performs an MCP initialize/list-tools smoke test with no API request
 
 The environments and generated outputs are checkout-local and ignored by Git.
@@ -146,7 +146,7 @@ when the library is missing. The script needs git, CMake, and a C++ compiler too
 pwsh Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
 ```
 
-Build the patched GLFW 3.4 library before a Windows x64 editor or VR client build. This step needs CMake and Visual Studio 2022 C++ tools. The build stops with a command to run when the DLL is missing:
+Build the patched GLFW 3.4 library before a Windows x64 editor or VR client build. This step needs CMake and Visual Studio 2022 or 2026 C++ tools. The build stops with a command to run when the DLL is missing:
 
 ```powershell
 pwsh Tools/Dependencies/Build-Glfw.ps1 -Rid win-x64

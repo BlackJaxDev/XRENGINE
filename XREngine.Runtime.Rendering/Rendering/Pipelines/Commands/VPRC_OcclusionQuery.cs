@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// On unsupported backends, the command publishes the query as unavailable.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Flow)]
     public sealed class VPRC_OcclusionQuery : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -39,6 +40,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         public override bool NeedsCollecVisible => Body is not null;
+
+        /// <inheritdoc />
+        public override void CollectChildContainers(List<RenderCommandChildContainer> results)
+        {
+            if (Body is not null)
+                results.Add(new RenderCommandChildContainer("Body", Body));
+        }
 
         protected override void Execute()
         {

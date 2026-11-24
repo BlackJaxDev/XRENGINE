@@ -127,6 +127,8 @@ public sealed class GpuMaterialReadinessContractTests
         indirectSource.ShouldNotContain("new IndirectDrawOp(");
         indirectSource.ShouldContain("IndirectDrawOp.Rent(");
         opSource.ShouldContain("TryRentForCurrentFrame(context, out IndirectDrawOp? reusable)");
-        frameOpSource.ShouldContain("context.OperationWorkspace.TryRent(frameId, out reusable)");
+        frameOpSource.ShouldContain("VulkanFrameOpWorkspace? workspace = ResolveRentWorkspace(context);");
+        frameOpSource.ShouldContain("return workspace.TryRent(frameId, out reusable);");
+        frameOpSource.ShouldContain("=> context.OperationWorkspace ??");
     }
 }

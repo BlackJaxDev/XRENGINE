@@ -44,12 +44,14 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Physics Debug Frame](architecture/physics/physics-debug-frame.md)
 - [Physics Chain World Runtime](architecture/physics/physics-chain-world-runtime.md)
 - [Audio Architecture](architecture/audio/audio-architecture.md)
+- [Cutscene System](architecture/animation/cutscene-system.md)
 - [Networking Overview](architecture/networking/overview.md)
 - [Control Plane Runtime Architecture](architecture/runtime/control-plane.md)
 - [Portable Engine Host](architecture/runtime/portable-engine-host.md)
 - [Modeling XRMesh Editing](architecture/modeling/xrmesh-editing.md)
 - [Play Mode Architecture](architecture/editor/play-mode-architecture.md)
 - [Editor Undo System](architecture/editor/undo-system.md)
+- [Render Pipeline Workbench](architecture/editor/render-pipeline-workbench.md)
 - [Editor Background Preparation](architecture/editor/background-preparation.md)
 
 ## Developer Guides
@@ -61,10 +63,11 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Continuous Integration And Releases](developer-guides/ci-cd.md)
 - [Windows CI Test Coverage](developer-guides/testing/windows-ci.md)
 - [MCP Server Implementation](developer-guides/ai/mcp-server.md)
-- [Assistant](developer-guides/ai/mcp-assistant.md)
-- [Local Agent Broker Implementation](developer-guides/ai/local-agent-broker.md)
+- [MCP Assistant](developer-guides/ai/mcp-assistant.md)
+- [Local Agent Broker Integration](developer-guides/ai/local-agent-broker.md)
 - [Animation API](developer-guides/animation/animation-api.md)
 - [MotionBricks Procedural Locomotion](developer-guides/animation/motionbricks-locomotion.md): SOMA TensorRT locomotion inside `AnimStateMachine`, live pose seeding, and Jolt root motion.
+- [Cutscenes](developer-guides/animation/cutscenes.md)
 - [Model Import](developer-guides/assets/model-import.md): import backends, warning logs, and missing-texture reporting after import.
 - [Unity Conversion](developer-guides/assets/unity-conversion-integrations.md): package startup imports, scene and prefab roots, source dependencies, and Poiyomi materials.
 - [Unity Script Host](developer-guides/assets/unity-script-host.md): source inventory, assembly graphs, source compilation, and explicit execution limits.
@@ -93,6 +96,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
 - [Poiyomi Toon Material Conversion](developer-guides/rendering/poiyomi-toon-material-conversion.md)
 - [Maintaining Poiyomi Toon Support](developer-guides/rendering/poiyomi-toon-maintenance.md)
+- [Gaussian Splat Cutscene Capture](developer-guides/rendering/gaussian-splat-cutscene-capture.md)
 - [Vulkan OBS Hook Compatibility](developer-guides/rendering/vulkan-obs-hook-compatibility.md)
 - [Surface Detail And Forward Shadows](developer-guides/rendering/shadows/surface-detail-forward-shadows.md)
 - [OpenXR Runtime](developer-guides/vr/openxr-runtime.md)

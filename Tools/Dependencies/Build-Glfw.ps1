@@ -80,6 +80,8 @@ if (-not (Test-Path -LiteralPath (Join-Path $sourceDir "src\win32_window.c"))) {
 
 Invoke-RequiredTool -Name "git" -Arguments @("-C", $sourceDir, "apply", "--check", $patchPath)
 Invoke-RequiredTool -Name "git" -Arguments @("-C", $sourceDir, "apply", $patchPath)
+# Do not pin a generator. CMake selects the newest installed Visual Studio, so the
+# script works with Visual Studio 2022 and 2026. The output stays at src/Release.
 Invoke-RequiredTool -Name "cmake" -Arguments @(
     "-S", $sourceDir, "-B", $cmakeDir,
     "-A", "x64",

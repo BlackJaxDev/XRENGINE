@@ -22,22 +22,22 @@ public static partial class SerializedMaterialImporter
         if (!document.TryGetPositive("_GlobalMaskTexturesEnable"))
             globalMask = 0;
 
-        SetVector4(material, "_SourceRim2Settings", new Vector4(
+        SetVector4(material, "_Rim2Settings", new Vector4(
             1.0f,
             GetFloat(document, "_Rim2LightingInvert"),
             GetFloat(document, "_Rim2Power", 1.0f),
             GetFloat(document, "_Is_NormalMapToRim2Light", 1.0f)));
-        SetVector4(material, "_SourceRim2ColorSettings", new Vector4(
+        SetVector4(material, "_Rim2ColorSettings", new Vector4(
             GetFloat(document, "_Rim2BaseColorMix"),
             GetFloat(document, "_Rim2Brightness", 1.0f),
             GetInt(document, "_RimPoi2BlendMode"),
             globalMask));
-        SetVector4(material, "_SourceRim2Strengths", new Vector4(
+        SetVector4(material, "_Rim2Strengths", new Vector4(
             GetFloat(document, "_Rim2BlendStrength", 1.0f),
             GetFloat(document, "_Rim2Strength"),
             GetInt(document, "_Rim2GlobalMaskBlendType", 2),
             GetInt(document, "_Rim2LightColorThemeIndex")));
-        SetVector4(material, "_SourceRim2Tint",
+        SetVector4(material, "_Rim2Tint",
             document.TryGetVector("_Rim2LightColor", out Vector4 tint) ? tint : Vector4.One);
 
         // The source branch changes the base color before lighting. The legacy
@@ -67,17 +67,15 @@ public static partial class SerializedMaterialImporter
         }
         foreach (string name in new[]
         {
-            "_Rim2BiasIntensity", "_Rim2ShadowToggle", "_Rim2HueShiftEnabled",
+            "_Rim2BiasIntensity", "_Rim2ShadowToggle",
             "_Rim2ApplyAlpha", "_Rim2ApplyGlobalMaskIndex", "_Rim2MaskInvert"
         })
             if (document.TryGetPositive(name))
                 return name;
-        foreach (string name in new[] { "_Rim2TexUV", "_Rim2MaskUV", "_Rim2MaskChannel" })
-            if (GetInt(document, name) != 0)
-                return name;
-        foreach (string name in new[] { "_Rim2TexPan", "_Rim2MaskPan" })
-            if (document.TryGetVector(name, out Vector4 pan) && pan != Vector4.Zero)
-                return name;
+        // The checks above allow only the white default for both textures, so their UV set,
+        // channel, and pan do not change the sampled value.
+        if (document.TryGetPositive("_Rim2HueShiftEnabled") && !IsIdentitySourceHueShift(document, "_Rim2"))
+            return "_Rim2HueShiftEnabled";
         if (document.TryGetPositive("_EnableAudioLink"))
         {
             foreach (string name in new[]
@@ -103,4 +101,13 @@ public static partial class SerializedMaterialImporter
             return "_RimPoi2BlendMode";
         return null;
     }
+
+    /// <summary>
+    /// True when an enabled source hue shift with the given prefix leaves the color unchanged:
+    /// shift mode (<c>{prefix}HueSelectOrShift</c> = 1) with a zero shift and a zero speed.
+    /// </summary>
+    private static bool IsIdentitySourceHueShift(SerializedMaterialDocument document, string prefix)
+        => GetInt(document, prefix + "HueSelectOrShift", 1) == 1 &&
+           GetFloat(document, prefix + "HueShift") == 0.0f &&
+           GetFloat(document, prefix + "HueShiftSpeed") == 0.0f;
 }

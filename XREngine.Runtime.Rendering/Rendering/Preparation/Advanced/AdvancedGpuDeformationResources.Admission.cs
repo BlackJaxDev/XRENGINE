@@ -14,7 +14,7 @@ public sealed partial class AdvancedGpuDeformationResources
     {
         ArgumentNullException.ThrowIfNull(mesh);
         reason = string.Empty;
-        if (!mesh.HasSkinning && !mesh.HasBlendshapes)
+        if (!mesh.HasSkinning && !mesh.HasBlendshapeDeformation)
             return true;
         if (!CanReadCanonicalVertices(mesh))
         {

@@ -50,6 +50,62 @@ public partial class AdvancedRenderPipeline
     }
 
     /// <summary>
+    /// Returns the shading debug view that native opaque shading uses for one camera.
+    /// The pipeline's <see cref="ShadingDebugView"/> wins when it selects a view. When it
+    /// selects none and the camera's meshlet debug display is on (the camera's runtime
+    /// override or its <see cref="GpuBvhDebugSettings"/> post-process stage), this returns
+    /// <see cref="EAdvancedShadingDebugView.MeshletId"/>.
+    /// </summary>
+    public EAdvancedShadingDebugView ResolveShadingDebugView(XRCamera? camera)
+    {
+        EAdvancedShadingDebugView view = ShadingDebugView;
+        return view == EAdvancedShadingDebugView.Disabled &&
+            GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(camera, this)
+                ? EAdvancedShadingDebugView.MeshletId
+                : view;
+    }
+
+    /// <summary>
+    /// Selects the mesh submission strategy that an Advanced output captures in its frame
+    /// package. The meshlet ID view colors each pixel by the meshlet that drew it. Only the
+    /// meshlet producers write a meshlet index into the visibility identity; the indexed
+    /// producers write a triangle index, so with an indexed strategy every opaque pixel is
+    /// neutral grey. While the camera shows the meshlet ID view on a Vulkan renderer that
+    /// reported a meshlet path, this replaces a GPU indexed strategy with a GPU meshlet
+    /// strategy, so the visibility raster draws through the meshlet producers. Other
+    /// outputs and the process-wide strategy do not change.
+    /// </summary>
+    /// <param name="pipeline">The output's pipeline. Only a pipeline that runs the Advanced stage family is changed.</param>
+    /// <param name="camera">The output's camera, which owns the meshlet debug display toggle.</param>
+    /// <param name="requested">The strategy that the output requests without the meshlet view.</param>
+    /// <returns>
+    /// <paramref name="requested"/> for CPU-direct submission, for a requested meshlet strategy,
+    /// for a pipeline without the Advanced stage family, and when no meshlet path is available.
+    /// The view then stays grey, and the pipeline editor states why.
+    /// </returns>
+    public static EMeshSubmissionStrategy ResolveMeshletViewSubmissionStrategy(
+        RenderPipeline? pipeline,
+        XRCamera? camera,
+        EMeshSubmissionStrategy requested)
+    {
+        if (requested == EMeshSubmissionStrategy.CpuDirect || requested.IsAnyMeshletStrategy())
+            return requested;
+
+        if (pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } familyHost ||
+            familyHost.AdvancedStageFamilyDefinition.ResolveShadingDebugView(camera) != EAdvancedShadingDebugView.MeshletId)
+            return requested;
+
+        // Only the Vulkan Advanced path rasterizes the meshlet producers. The collect-visible
+        // thread captures the package and can run before a renderer is current, so this
+        // reads the renderer capability that the last strategy resolution recorded.
+        if (RuntimeEngine.Rendering.LastResolvedRendererBackend != RuntimeGraphicsApiKind.Vulkan ||
+            !RuntimeEngine.Rendering.LastResolvedSupportsMeshletDispatch)
+            return requested;
+
+        return GpuBvhDebugSettings.ResolveMeshletDebugDisplayStrategy();
+    }
+
+    /// <summary>
     /// Number of exponential depth slices along the view frustum (defaults to 24).
     /// </summary>
     public uint FroxelDepthSlices

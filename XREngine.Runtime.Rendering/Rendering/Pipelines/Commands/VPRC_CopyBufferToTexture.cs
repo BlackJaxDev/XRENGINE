@@ -5,9 +5,12 @@ using XREngine.Data.Rendering;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Transfer, DoesGpuWork = true)]
     public class VPRC_CopyBufferToTexture : ViewportRenderCommand
     {
+        [RenderResourceName(ERenderResourceNameKind.Buffer)]
         public string? SourceBufferName { get; set; }
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? DestinationTextureName { get; set; }
         public uint Width { get; set; }
         public uint Height { get; set; }

@@ -129,9 +129,11 @@ void main()
             LoadShaderSource("Common/GizmoLine.gs").Source,
             EShaderType.Geometry);
 
-        skyboxFragmentBinding.ShouldBe(64u);
-        skyboxVertexBinding.ShouldBe(72u);
-        debugGeometryBinding.ShouldBe(80u);
+        // Generated auto-uniform blocks start at set 0, binding 256, with an
+        // eight-binding window per stage: fragment, then vertex, then geometry.
+        skyboxFragmentBinding.ShouldBe(256u);
+        skyboxVertexBinding.ShouldBe(264u);
+        debugGeometryBinding.ShouldBe(272u);
         new[] { skyboxVertexBinding, skyboxFragmentBinding, debugGeometryBinding }
             .Distinct()
             .Count()
@@ -180,7 +182,7 @@ void main()
             ]);
         blockInfos
             .Select(block => GetProperty<uint>(block, "Binding"))
-            .ShouldBe([64u, 65u, 66u, 67u, 68u]);
+            .ShouldBe([256u, 257u, 258u, 259u, 260u]);
         blockInfos
                 .Select(block => GetProperty<System.Collections.IEnumerable>(
                     block,

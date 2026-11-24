@@ -65,6 +65,7 @@ public partial class AdvancedRenderPipeline
             Stage = descriptor.Stage,
             EnableAuthoredDecals = descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading,
         };
+        stageCommand.AnchorId = GetStageAnchorId(descriptor.Stage);
         commands.Add(stageCommand);
         stageCommand.GlobalIlluminationPlan = GlobalIlluminationPlan;
 
@@ -77,13 +78,23 @@ public partial class AdvancedRenderPipeline
                 AppendAdvancedAmbientOcclusionCommands(commands);
                 break;
             case EAdvancedRenderStage.NativeOpaqueShading:
-                AppendAdvancedBackgroundCommands(commands);
+                // The background and late passes draw CPU-direct meshes into
+                // ForwardPassFBO, which has the internal resolution. Push the internal
+                // render area so the draw viewport matches that target. Without it, the
+                // passes keep the full output area that is active at this point. When
+                // the render scale is below 1 (for example in the OpenXR eyes), those
+                // meshes are then scaled away from the opaque scene.
+                using (commands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))
+                    AppendAdvancedBackgroundCommands(commands);
                 AppendAdvancedGlobalIlluminationCommands(commands);
                 break;
             case EAdvancedRenderStage.LatePasses:
-                AppendAdvancedLatePassCommands(commands);
-                AppendAdvancedPhysicsDebugCommands(commands);
-                AppendAdvancedDebugShapeCommands(commands);
+                using (commands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))
+                {
+                    AppendAdvancedLatePassCommands(commands);
+                    AppendAdvancedPhysicsDebugCommands(commands);
+                    AppendAdvancedDebugShapeCommands(commands);
+                }
                 break;
             case EAdvancedRenderStage.TemporalAndPostProcessing:
                 AppendAdvancedPostProcessCommands(commands);
@@ -97,6 +108,29 @@ public partial class AdvancedRenderPipeline
         }
         commands.Add<VPRC_GPUTimerEnd>().Label = descriptor.GpuLabel;
     }
+
+    /// <summary>
+    /// Gets the anchor id of a stage marker. The ids are written out so that a rename of the enum member does not
+    /// break derived pipelines that patch the stage.
+    /// </summary>
+    private static string? GetStageAnchorId(EAdvancedRenderStage stage)
+        => stage switch
+        {
+            EAdvancedRenderStage.FrameBegin => "advanced.frameBegin",
+            EAdvancedRenderStage.Deformation => "advanced.deformation",
+            EAdvancedRenderStage.VisibilityPreparation => "advanced.visibilityPreparation",
+            EAdvancedRenderStage.VisibilityRaster => "advanced.visibility",
+            EAdvancedRenderStage.DepthPyramidAndLateVisibility => "advanced.lateVisibility",
+            EAdvancedRenderStage.DirectionalShadowRaster => "advanced.directionalShadows",
+            EAdvancedRenderStage.AmbientOcclusion => "advanced.ambientOcclusionStage",
+            EAdvancedRenderStage.WorkClassification => "advanced.classification",
+            EAdvancedRenderStage.NativeOpaqueShading => "advanced.shading.native",
+            EAdvancedRenderStage.LatePasses => "advanced.latePasses",
+            EAdvancedRenderStage.TemporalAndPostProcessing => "advanced.post",
+            EAdvancedRenderStage.Output => "advanced.output",
+            EAdvancedRenderStage.UserInterface => "advanced.userInterface",
+            _ => null,
+        };
 
     /// <summary>Draws selected GPU chains against the completed scene depth.</summary>
     private void AppendAdvancedPhysicsDebugCommands(ViewportRenderCommandContainer commands)
@@ -144,6 +178,7 @@ public partial class AdvancedRenderPipeline
         commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         var ui = commands.Add<VPRC_IfElse>();
         ui.Label = "AdvancedScreenSpaceUiAllowed";
+        ui.AnchorId = "advanced.screenSpaceUI";
         ui.ConditionEvaluator = () => AllowsScreenSpaceUi;
         var uiCommands = new ViewportRenderCommandContainer(this);
         uiCommands.Add<VPRC_RenderScreenSpaceUI>();

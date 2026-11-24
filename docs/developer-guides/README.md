@@ -14,6 +14,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Work Doc Templates](ai/work-doc-templates.md)
 - [Animation](animation/animation-api.md)
 - [MotionBricks Procedural Locomotion](animation/motionbricks-locomotion.md)
+- [Cutscenes](animation/cutscenes.md)
 - [Assets](assets/model-import.md)
 - [Audio](audio/openal-streaming-audio.md)
 - [Components](components/component-api.md)

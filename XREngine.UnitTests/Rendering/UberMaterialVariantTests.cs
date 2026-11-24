@@ -127,6 +127,30 @@ public sealed class UberMaterialVariantTests
     }
 
     [Test]
+    public void EnsureUberStateInitialized_RenamesLegacyParameterNames()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@property(name="_LightModel", display="Light Model", mode=static, default="0")
+            uniform int _LightModel;
+            //@property(name="_DissolveSettings", display="Dissolve Settings", mode=static, default="vec4(0.5)")
+            uniform vec4 _DissolveSettings;
+            """,
+            new ShaderInt(2, "_SourceLightMode"),
+            new ShaderVector4(new Vector4(0.1f, 0.2f, 0.3f, 0.4f), "_SourceDissolveParams"),
+            new ShaderVector4(Vector4.One, "_DissolveSettings"));
+
+        material.EnsureUberStateInitialized();
+
+        material.Parameter<ShaderInt>("_LightModel").ShouldNotBeNull().Value.ShouldBe(2);
+        material.Parameter<ShaderInt>("_SourceLightMode").ShouldBeNull();
+        // A parameter that already has the current name wins over the earlier name.
+        material.Parameter<ShaderVector4>("_DissolveSettings").ShouldNotBeNull().Value.ShouldBe(Vector4.One);
+        material.Parameters.Count(parameter => parameter.Name == "_LightModel").ShouldBe(1);
+    }
+
+    [Test]
     public void RequestUberVariantRebuild_StripsCanonicalFeatureGuard_WhenFeatureIsEnabled()
     {
         XRMaterial material = CreateUberMaterial(
@@ -1287,6 +1311,25 @@ public sealed class UberMaterialVariantTests
         material.ActiveUberVariant.StaticProperties.ShouldContain("_One=1.0");
         material.ActiveUberVariant.StaticProperties.ShouldContain("_NegativeOne=-1.0");
         material.ActiveUberVariant.StaticProperties.ShouldContain("_Half=0.5");
+    }
+
+    [Test]
+    public void RequestUberVariantRebuild_ParenthesizesNegativeStaticLiteralAfterUnaryMinus()
+    {
+        XRMaterial material = CreateUberMaterial(
+            """
+            #version 450 core
+            //@property(name="_Saturation", display="Saturation", mode=static)
+            uniform float _Saturation;
+            float ResolveValue(float mask) { return -_Saturation * mask + 1.0 - _Saturation; }
+            """,
+            new ShaderFloat(-0.25f, "_Saturation"));
+
+        material.RequestUberVariantRebuild();
+        WaitForActiveUberVariant(material);
+
+        string generatedSource = GetFragmentSource(material);
+        generatedSource.ShouldContain("return -(-0.25) * mask + 1.0 - -0.25;");
     }
 
     [Test]

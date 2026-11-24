@@ -3,6 +3,7 @@ using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_ConvolveCubemap : ViewportRenderCommand
     {
         private static XRShader? s_fullscreenCubeVertex;
@@ -14,8 +15,11 @@ namespace XREngine.Rendering.Pipelines.Commands
         private XRCubeFrameBuffer? _irradianceFbo;
         private XRCubeFrameBuffer? _prefilterFbo;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string SourceCubemapTextureName { get; set; } = "EnvironmentCubemap";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string IrradianceTextureName { get; set; } = "IrradianceCubemap";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string PrefilterTextureName { get; set; } = "PrefilterCubemap";
         public uint IrradianceResolution { get; set; } = 32;
         public uint PrefilterResolution { get; set; }

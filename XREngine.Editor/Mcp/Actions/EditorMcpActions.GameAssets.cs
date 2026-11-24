@@ -459,7 +459,11 @@ namespace XREngine.Editor.Mcp
             [McpName("unity_project_root"), Description("Optional Unity project or Assets folder override used when importing an external .prefab.")]
             string? sourceProjectRoot = null,
             [McpName("overwrite"), Description("Allow an existing generated Unity prefab output to be replaced transactionally.")]
-            bool overwrite = false)
+            bool overwrite = false,
+            [McpName("allow_partial_import"), Description("For an external .prefab: keep importing when the source project is missing required textures or materials. The import uses fallback materials and reports each missing asset.")]
+            bool allowPartialImport = false,
+            [McpName("scene_root"), Description("For an external .unity scene: the name of one top-level object, for example an avatar prefab instance. The scene then imports as a prefab of that object only, named after it, with its root translation at the origin.")]
+            string? sceneRoot = null)
         {
             if (!TryGetGameAssetsPath(out string assetsPath, out McpToolResponse? error))
                 return error!;
@@ -481,15 +485,22 @@ namespace XREngine.Editor.Mcp
 
             string sourceFullPath = Path.GetFullPath(sourcePath);
             string normalizedRoot = Path.GetFullPath(assetsPath);
+            bool isSceneRootImport =
+                !string.IsNullOrWhiteSpace(sceneRoot) &&
+                string.Equals(Path.GetExtension(sourceFullPath), ".unity", StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(sceneRoot) && !isSceneRootImport)
+                return new McpToolResponse("scene_root applies only to a .unity scene file.", isError: true);
+
             bool isExternalSerializedPrefab =
-                string.Equals(Path.GetExtension(sourceFullPath), ".prefab", StringComparison.OrdinalIgnoreCase) &&
+                (isSceneRootImport || string.Equals(Path.GetExtension(sourceFullPath), ".prefab", StringComparison.OrdinalIgnoreCase)) &&
                 !sourceFullPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
 
             if (isExternalSerializedPrefab)
             {
-                string outputPath = Path.Combine(
-                    targetDir,
-                    $"{Path.GetFileNameWithoutExtension(sourceFullPath)}.asset");
+                string outputName = isSceneRootImport
+                    ? string.Join("_", sceneRoot!.Trim().Split(Path.GetInvalidFileNameChars()))
+                    : Path.GetFileNameWithoutExtension(sourceFullPath);
+                string outputPath = Path.Combine(targetDir, $"{outputName}.asset");
                 if (File.Exists(outputPath) && !overwrite)
                     return new McpToolResponse(
                         $"Native output '{Path.GetFileName(outputPath)}' already exists in destination. Enable overwrite or choose another destination.",
@@ -498,6 +509,8 @@ namespace XREngine.Editor.Mcp
                 var importOptions = new ModelImportOptions
                 {
                     SourceProjectRootOverride = sourceProjectRoot,
+                    AllowPartialSourceImport = allowPartialImport,
+                    SourceSceneRootName = isSceneRootImport ? sceneRoot!.Trim() : null,
                     ProcessMeshesAsynchronously = false,
                     GenerateMeshRenderersAsync = false,
                 };

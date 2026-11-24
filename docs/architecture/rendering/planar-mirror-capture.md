@@ -17,6 +17,16 @@ the plane's local axes.
 - `true` uses the Advanced offscreen capture family and native projective
   mirror material.
 
+An `AdvancedRenderPipeline` view requires `true`. The traditional display is a
+CPU-only draw in the opaque forward pass. An Advanced view submits only
+canonical scene draws in its opaque passes, and it rejects its whole frame
+package when one draw has no canonical submission, so the desktop frame would
+never present. The component therefore does not add the traditional display to
+an Advanced view and does not start captures for that view. It writes one
+warning instead. The unit-testing world creates its mirror with `true` when its
+scene pipeline is the `AdvancedRenderPipeline`, which is also the automatic
+desktop selection.
+
 `TextureWidthOverride` and `TextureHeightOverride` default to 512. A missing
 override also resolves to 512. The effective size is clamped to at least one
 pixel in each dimension. Changing the Advanced selection retires the existing
@@ -32,6 +42,10 @@ single-pass stereo collects the display once but also requests the distinct
 right-eye camera from the scoped stereo collection state. When all three banks
 are occupied, later cameras are not admitted and the component emits one
 capacity warning.
+
+A shadow-pass collection does not request a bank. A light camera does not view
+the mirror, and a bank for it would add capture work to every desktop frame.
+In the native mode, the shown display still casts shadows.
 
 Each slot owns a private capture camera. Immediately before authoring, it:
 

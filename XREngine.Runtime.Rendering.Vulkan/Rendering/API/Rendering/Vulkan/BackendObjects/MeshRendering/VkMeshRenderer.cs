@@ -238,10 +238,17 @@ internal unsafe partial class VkMeshRenderer(
     public override VkObjectType Type => VkObjectType.MeshRenderer;
     public override bool IsGenerated => IsActive;
 
-    protected override uint CreateObjectInternal() => CacheObject(this);
+    protected override uint CreateObjectInternal()
+    {
+        Volatile.Write(ref _drawReadinessDeleted, false);
+        return CacheObject(this);
+    }
 
     protected override void DeleteObjectInternal()
     {
+        // A deleted wrapper must not make programs or pipelines again for a draw readiness request.
+        Volatile.Write(ref _drawReadinessDeleted, true);
+        BackendContext.Resources.DrawReadiness.RemoveRenderer(this);
         BackendContext.Resources.PipelineManager.DrainPipelineCompileJobsForOwner(
             PipelineCompileOwnerId,
             GetDescribingName());
@@ -294,6 +301,7 @@ internal unsafe partial class VkMeshRenderer(
         Mesh?.DataChanged -= OnMeshChanged;
         SubscribeMeshBufferCollection(null);
 
+        BackendContext.Resources.DrawReadiness.RemoveRenderer(this);
         BackendContext.Resources.PipelineManager.DrainPipelineCompileJobsForOwner(
             PipelineCompileOwnerId,
             GetDescribingName());
@@ -559,7 +567,7 @@ internal unsafe partial class VkMeshRenderer(
                 billboardMode != EMeshBillboardMode.None ||
                 MeshRenderer.MeshDeformEnabled ||
                 mesh.HasSkinning ||
-                mesh.HasBlendshapes;
+                mesh.HasBlendshapeDeformation;
             shadowCasterRelevance =
                 shadowUniformState.CalculateCasterTargetRelevance(
                     mesh.Bounds,
@@ -913,6 +921,12 @@ internal unsafe partial class VkMeshRenderer(
         XRFrameBuffer? target = producer.Target;
         VulkanFixedFunctionStateSnapshot producerState = producer.FixedFunctionState;
 
+        // The draw readiness prewarm needs the pass state of each pass context. It is stored one time for each context, and
+        // only while a readiness request is active, so a draw with no request pays one volatile read.
+        VulkanDrawReadinessRegistry readiness = BackendContext.Resources.DrawReadiness;
+        if (readiness.HasActiveRequests)
+            readiness.RecordPassState(producer.Context.PipelineInstance, passIndex, target, producerState);
+
         // Material, layered expansion, and view/shadow state were resolved while
         // the producer scopes were active. Re-resolving here can pair a warm
         // preparation signature with an ordinary scene material after a shadow
@@ -931,120 +945,33 @@ internal unsafe partial class VkMeshRenderer(
 
         RenderingParameters? matOpts = renderOptionsOverride ?? effectiveMaterial.RenderOptions;
 
-        // Ã¢â€â‚¬Ã¢â€â‚¬ CullMode Ã¢â€â‚¬Ã¢â€â‚¬
-        CullModeFlags cullMode;
-        if (matOpts is not null)
-            cullMode = VulkanMeshRenderingConventions.ToVulkanCullMode(VulkanMeshRenderingConventions.ResolveCullMode(matOpts.CullMode));
-        else
-            cullMode = producerState.CullMode;
-
-        // Ã¢â€â‚¬Ã¢â€â‚¬ FrontFace Ã¢â€â‚¬Ã¢â€â‚¬
-        FrontFace frontFace;
-        if (matOpts is not null)
-            frontFace = VulkanMeshRenderingConventions.ToVulkanFrontFace(VulkanMeshRenderingConventions.ResolveWinding(matOpts.Winding));
-        else
-            frontFace = producerState.FrontFace;
-
-        // Ã¢â€â‚¬Ã¢â€â‚¬ DepthTest Ã¢â€â‚¬Ã¢â€â‚¬
-        bool depthTestEnabled;
-        bool depthWriteEnabled;
-        CompareOp depthCompareOp;
         SampleCountFlags rasterizationSamples = ResolveRasterizationSamples(target);
-        if (matOpts?.DepthTest is { } dt && dt.Enabled != ERenderParamUsage.Unchanged)
-        {
-            depthTestEnabled = dt.Enabled == ERenderParamUsage.Enabled;
-            depthWriteEnabled = depthTestEnabled && dt.UpdateDepth;
-            depthCompareOp = depthTestEnabled
-                ? VulkanMeshRenderingConventions.ToVulkanCompareOp(RuntimeEngine.Rendering.State.MapDepthComparison(dt.Function))
-                : CompareOp.Always;
-        }
-        else
-        {
-            depthTestEnabled = producerState.DepthTestEnabled;
-            depthWriteEnabled = producerState.DepthWriteEnabled;
-            depthCompareOp = producerState.DepthCompareOp;
-        }
-
-        // Ã¢â€â‚¬Ã¢â€â‚¬ Blend Ã¢â€â‚¬Ã¢â€â‚¬
-        bool blendEnabled;
-        bool alphaToCoverageEnabled;
-        BlendOp colorBlendOp, alphaBlendOp;
-        BlendFactor srcColor, dstColor, srcAlpha, dstAlpha;
-        BlendMode? matBlend = matOpts is not null ? VulkanMeshRenderingConventions.ResolveBlendMode(matOpts) : null;
-        bool requestedAlphaToCoverage = matOpts?.AlphaToCoverage == ERenderParamUsage.Enabled;
-        if (matBlend is not null && matBlend.Enabled == ERenderParamUsage.Enabled)
-        {
-            blendEnabled = true;
-            alphaToCoverageEnabled = requestedAlphaToCoverage;
-            colorBlendOp = VulkanMeshRenderingConventions.ToVulkanBlendOp(matBlend.RgbEquation);
-            alphaBlendOp = VulkanMeshRenderingConventions.ToVulkanBlendOp(matBlend.AlphaEquation);
-            srcColor = VulkanMeshRenderingConventions.ToVulkanBlendFactor(matBlend.RgbSrcFactor);
-            dstColor = VulkanMeshRenderingConventions.ToVulkanBlendFactor(matBlend.RgbDstFactor);
-            srcAlpha = VulkanMeshRenderingConventions.ToVulkanBlendFactor(matBlend.AlphaSrcFactor);
-            dstAlpha = VulkanMeshRenderingConventions.ToVulkanBlendFactor(matBlend.AlphaDstFactor);
-        }
-        else if (matBlend is not null && matBlend.Enabled == ERenderParamUsage.Disabled)
-        {
-            blendEnabled = false;
-            alphaToCoverageEnabled = requestedAlphaToCoverage;
-            colorBlendOp = BlendOp.Add;
-            alphaBlendOp = BlendOp.Add;
-            srcColor = BlendFactor.One;
-            dstColor = BlendFactor.Zero;
-            srcAlpha = BlendFactor.One;
-            dstAlpha = BlendFactor.Zero;
-        }
-        else if (matBlend is null && matOpts is not null)
-        {
-            blendEnabled = false;
-            alphaToCoverageEnabled = requestedAlphaToCoverage;
-            colorBlendOp = BlendOp.Add;
-            alphaBlendOp = BlendOp.Add;
-            srcColor = BlendFactor.One;
-            dstColor = BlendFactor.Zero;
-            srcAlpha = BlendFactor.One;
-            dstAlpha = BlendFactor.Zero;
-        }
-        else
-        {
-            blendEnabled = producerState.BlendEnabled;
-            alphaToCoverageEnabled = producerState.AlphaToCoverageEnabled;
-            colorBlendOp = producerState.ColorBlendOp;
-            alphaBlendOp = producerState.AlphaBlendOp;
-            srcColor = producerState.SrcColorBlendFactor;
-            dstColor = producerState.DstColorBlendFactor;
-            srcAlpha = producerState.SrcAlphaBlendFactor;
-            dstAlpha = producerState.DstAlphaBlendFactor;
-        }
-
-        bool stencilTestEnabled;
-        StencilOpState frontStencilState;
-        StencilOpState backStencilState;
-        uint stencilWriteMask;
-        if (matOpts?.StencilTest is { } stencilTest && stencilTest.Enabled != ERenderParamUsage.Unchanged)
-        {
-            if (stencilTest.Enabled == ERenderParamUsage.Enabled)
-            {
-                stencilTestEnabled = true;
-                frontStencilState = VulkanMeshRenderingConventions.ToVulkanStencilState(stencilTest.FrontFace);
-                backStencilState = VulkanMeshRenderingConventions.ToVulkanStencilState(stencilTest.BackFace);
-                stencilWriteMask = stencilTest.FrontFace.WriteMask;
-            }
-            else
-            {
-                stencilTestEnabled = false;
-                frontStencilState = default;
-                backStencilState = default;
-                stencilWriteMask = 0u;
-            }
-        }
-        else
-        {
-            stencilTestEnabled = producerState.StencilTestEnabled;
-            frontStencilState = producerState.FrontStencilState;
-            backStencilState = producerState.BackStencilState;
-            stencilWriteMask = producerState.StencilWriteMask;
-        }
+        XRCamera.EDepthMode cameraDepthMode = shadowUniformState.IsShadowPass
+            ? XRCamera.EDepthMode.Normal
+            : (snapshotCamera?.DepthMode ?? XRCamera.EDepthMode.Normal);
+        VulkanFixedFunctionStateSnapshot drawState = VulkanMeshDrawFixedState.Resolve(
+            matOpts,
+            producerState,
+            rasterizationSamples,
+            cameraDepthMode);
+        CullModeFlags cullMode = drawState.CullMode;
+        FrontFace frontFace = drawState.FrontFace;
+        bool depthTestEnabled = drawState.DepthTestEnabled;
+        bool depthWriteEnabled = drawState.DepthWriteEnabled;
+        CompareOp depthCompareOp = drawState.DepthCompareOp;
+        bool blendEnabled = drawState.BlendEnabled;
+        bool alphaToCoverageEnabled = drawState.AlphaToCoverageEnabled;
+        BlendOp colorBlendOp = drawState.ColorBlendOp;
+        BlendOp alphaBlendOp = drawState.AlphaBlendOp;
+        BlendFactor srcColor = drawState.SrcColorBlendFactor;
+        BlendFactor dstColor = drawState.DstColorBlendFactor;
+        BlendFactor srcAlpha = drawState.SrcAlphaBlendFactor;
+        BlendFactor dstAlpha = drawState.DstAlphaBlendFactor;
+        bool stencilTestEnabled = drawState.StencilTestEnabled;
+        StencilOpState frontStencilState = drawState.FrontStencilState;
+        StencilOpState backStencilState = drawState.BackStencilState;
+        uint stencilWriteMask = drawState.StencilWriteMask;
+        ColorComponentFlags colorWriteMask = drawState.ColorWriteMask;
         if (request.SuppressLegacyGizmoStencil)
         {
             stencilTestEnabled = false;
@@ -1052,10 +979,6 @@ internal unsafe partial class VkMeshRenderer(
             backStencilState = default;
             stencilWriteMask = 0u;
         }
-
-        ColorComponentFlags colorWriteMask = matOpts is not null
-            ? VulkanMeshRenderingConventions.ToVulkanColorWriteMask(matOpts)
-            : producerState.ColorWriteMask;
 
         // The pipeline frame-resource scope already captured and installed the immutable
         // context that owns this command list. Recomputing it for every visible mesh repeats
@@ -1360,7 +1283,7 @@ internal unsafe partial class VkMeshRenderer(
         XRFrameBuffer? effectiveTarget = producer.Target;
         SampleCountFlags rasterizationSamples = ResolveRasterizationSamples(effectiveTarget);
         VulkanFixedFunctionStateSnapshot producerState = producer.FixedFunctionState;
-        bool alphaToCoverageEnabled = producerState.AlphaToCoverageEnabled;
+        bool alphaToCoverageEnabled = producerState.AlphaToCoverageEnabled && rasterizationSamples != SampleCountFlags.Count1Bit;
 
         XRRenderPipelineInstance? currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         bool explicitCameraScope = RuntimeEngine.Rendering.State.RenderingPipelineState?.HasRenderingCameraScope == true;

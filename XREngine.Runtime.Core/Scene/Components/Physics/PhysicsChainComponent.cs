@@ -44,6 +44,7 @@ public partial class PhysicsChainComponent : XRComponent
     }
     private int _particlesVersion;
     private int _particleStateVersion;
+    private int _poseResetRequested;
 
     private static string FormatRoot(Transform? root)
         => root?.ToString() ?? "<null>";
@@ -261,6 +262,18 @@ public partial class PhysicsChainComponent : XRComponent
     /// </summary>
     internal bool BeginWorldLateTick()
     {
+        // A requested reset replaces the simulation step of this frame, so the frame shows the reset pose.
+        // The GPU path still dispatches once with a zero time step: it uploads the reset particles, keeps the GPU
+        // bone palette on the reset pose, and consumes the world rest input of this frame (with its capture fault).
+        if (TryApplyRequestedPoseReset())
+        {
+            _isSimulating = true;
+            if (UseGPU)
+                ExecuteGpuLateUpdate(resetFrame: true);
+            CompleteWorldLateTick();
+            return false;
+        }
+
         if (_preUpdateCount == 0)
         {
             ApplyPendingGpuBoneSync();
@@ -319,7 +332,7 @@ public partial class PhysicsChainComponent : XRComponent
     }
 
     internal bool CanPrepareWorldLateTickInputsInParallel
-        => _preUpdateCount != 0 && !UseGPU && Multithread;
+        => _preUpdateCount != 0 && !UseGPU && Multithread && Volatile.Read(ref _poseResetRequested) == 0;
 
     internal bool BeginWorldLateTickParallelPreparation()
     {
@@ -1542,6 +1555,63 @@ public partial class PhysicsChainComponent : XRComponent
         _cpuBackendWorld?.ResetSimulationClock(_runtimeHandle, this);
         _preUpdateCount = 0;
         InitializeRootBoneTracking();
+    }
+
+    /// <summary>
+    /// Asks the chain to reset its simulation to the current pose of its bones. The reset does not occur in this call.
+    /// It occurs at the start of the next simulation step of the chain, after the step reads the current pose, and it
+    /// replaces that step. Thus the call is safe from any tick, and many calls before one step give one reset.
+    /// Call it in each frame to hold the chain in the pose of its bones.
+    /// </summary>
+    public void ResetSimulationToCurrentPose()
+        => Volatile.Write(ref _poseResetRequested, 1);
+
+    /// <summary>True while a reset from <see cref="ResetSimulationToCurrentPose"/> waits for the next simulation step.</summary>
+    [YamlIgnore]
+    [System.ComponentModel.Browsable(false)]
+    public bool IsSimulationResetPending
+        => Volatile.Read(ref _poseResetRequested) != 0;
+
+    /// <summary>
+    /// Applies a reset that <see cref="ResetSimulationToCurrentPose"/> requested. The bones go back to their rest
+    /// rotations under the current parent pose, as in a normal step, and the particles move to those bones.
+    /// A chain that does not update (weight zero or disabled by distance) drops the request: it does not touch its bones in
+    /// that state, and it resets its particles itself when it updates again.
+    /// </summary>
+    /// <returns>True if a reset was applied.</returns>
+    private bool TryApplyRequestedPoseReset()
+    {
+        if (Interlocked.Exchange(ref _poseResetRequested, 0) == 0)
+            return false;
+
+        SetWeight(BlendWeight);
+        if (!IsNeedUpdate())
+            return false;
+
+        for (int i = 0; i < _particleTrees.Count; ++i)
+        {
+            ParticleTree pt = _particleTrees[i];
+            if (pt.Particles is not { Count: > 0 })
+                continue;
+
+            InitTransforms(pt);
+            RecalculateResetPoseMatrices(pt);
+        }
+
+        ResetParticlesPosition();
+        return true;
+    }
+
+    /// <summary>
+    /// Recalculates the world matrices of the chain bones after a pose reset wrote their rest poses, so that
+    /// <see cref="ResetParticlesPosition(ParticleTree)"/> reads the new pose. Particles are in parent-first order,
+    /// so each parent is current before its children. The reset wrote every bone, so every bone recalculates.
+    /// </summary>
+    private static void RecalculateResetPoseMatrices(ParticleTree pt)
+    {
+        List<Particle> particles = pt.Particles;
+        for (int i = 0; i < particles.Count; ++i)
+            particles[i].Transform?.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
     }
 
     private void InitializeRootBoneTracking()

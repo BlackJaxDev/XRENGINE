@@ -102,6 +102,14 @@ public partial class UnitTestingWorldSettings
         public bool GenerateClusterHierarchy { get; set; }
 
         /// <summary>
+        /// Packs the cluster hierarchy of this model into geometry pages for geometry streaming and
+        /// writes them to a page file next to the meshlet cache. Requires
+        /// <see cref="GenerateClusterHierarchy"/>. Off by default. The renderer still draws the
+        /// unpaged meshlet payload.
+        /// </summary>
+        public bool GenerateStreamingPages { get; set; }
+
+        /// <summary>
         /// Additional post-import actions to apply after the source model has been loaded.
         /// </summary>
         public ModelPostImportFlags PostImportFlags { get; set; } = ModelPostImportFlags.None;

@@ -885,30 +885,44 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
                 ? mesh.GetMaxBlendshapeDisplacement()
                 : 0.0f;
         uint deformationLevel = 0u;
+        AdvancedDrawRecord canonicalDraw = default;
+        AdvancedInstanceRecord instance = default;
+        bool hasCanonicalInstance = false;
         if (skinned && _gpuDeformation.UsesPackedAggregateInputs)
         {
-            if (!publication.Draws.TryGet(draw, out AdvancedDrawRecord canonicalDraw) ||
-                !publication.Instances.TryGet(canonicalDraw.Instance, out AdvancedInstanceRecord instance))
+            if (!publication.Draws.TryGet(draw, out canonicalDraw) ||
+                !publication.Instances.TryGet(canonicalDraw.Instance, out instance))
                 throw new InvalidOperationException("Aggregate visibility requires the exact canonical instance bounds.");
+            hasCanonicalInstance = true;
             // Geometry is immutable bind-pose topology. Animated bounds belong to the current instance publication.
             commandBounds.BoundingSphere = instance.BoundsSphere;
             commandBounds.AabbMin = instance.BoundsMin;
             commandBounds.AabbMax = instance.BoundsMax;
-            if (mesh is { HasBlendshapes: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+            if (mesh is { HasBlendshapeDeformation: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
                 visibilityFlags |= EAdvancedVisibilityPreparationFlags.Uncertain | EAdvancedVisibilityPreparationFlags.ConservativeVisible;
-            if (skinnedClusterCut && mesh is not null)
-                deformationLevel = ChooseDeformationLevel(
-                    publication,
-                    in canonicalDraw,
-                    in instance,
-                    in canonicalGeometry,
-                    in command,
-                    mesh,
-                    clusterCutMargin,
-                    deformationSource.GpuBoundsSource.HasValue,
-                    coveredStateCaptured,
-                    in coveredState);
         }
+        else if (skinnedClusterCut)
+        {
+            // The authored-vertex preparation (the Vulkan route) keeps its candidate bounds, but the
+            // deformation level choice still needs the posed instance bounds. The job deforms the
+            // prefix of the chosen level on both preparation policies, and the task stage clamps the
+            // cut to that level, so the drawn clusters read only deformed vertices.
+            hasCanonicalInstance =
+                publication.Draws.TryGet(draw, out canonicalDraw) &&
+                publication.Instances.TryGet(canonicalDraw.Instance, out instance);
+        }
+        if (skinnedClusterCut && hasCanonicalInstance && mesh is not null)
+            deformationLevel = ChooseDeformationLevel(
+                publication,
+                in canonicalDraw,
+                in instance,
+                in canonicalGeometry,
+                in command,
+                mesh,
+                clusterCutMargin,
+                deformationSource.GpuBoundsSource.HasValue,
+                coveredStateCaptured,
+                in coveredState);
         _visibilityCandidates[commandIndex] =
             new AdvancedVisibilityCandidate(
                 draw,
@@ -1171,6 +1185,7 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
             in gpuMeshSlice,
             deformationLevel,
             out bool deformationOrdered);
+        NoteDeformedVertexCount(deformedVertexCount, mesh.VertexCount);
         if (!_deformedArena.RecordDeformedVertexCount(outputHandle, deformedVertexCount) &&
             slice.HasValidVelocity)
             slice = slice with { VelocityValidity = EAdvancedVelocityValidityReason.VertexCountChanged };
@@ -1817,8 +1832,11 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         }
         if (IsSurfaceDecal(command))
             return EAdvancedMaterialCoverageMode.Decal;
-        if (WritesFragmentDepth(command))
+        if (WritesFragmentDepth(command) ||
+            (command.Flags & (uint)GPUIndirectRenderFlags.CoverageDiscard) != 0u)
+        {
             return EAdvancedMaterialCoverageMode.Masked;
+        }
         return command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested
             ? EAdvancedMaterialCoverageMode.Masked
             : EAdvancedMaterialCoverageMode.Opaque;

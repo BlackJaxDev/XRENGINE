@@ -20,7 +20,7 @@ public partial class XRMeshRenderer
         ValidateResourcePublicationLease();
         XRMaterial source = material.ShadowBindingSourceMaterial ?? material;
         bool required = NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(source);
-        bool flipSourceV = source.Parameter<ShaderFloat>("_SourceUdimFlipV") is { Value: > 0.5f };
+        bool flipSourceV = source.Parameter<ShaderFloat>("_UdimFlipV") is { Value: > 0.5f };
         if (!required)
         {
             if (publishInactive)

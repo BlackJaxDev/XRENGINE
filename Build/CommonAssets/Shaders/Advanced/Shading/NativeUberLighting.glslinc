@@ -22,7 +22,7 @@ vec3 XR_UBER_LightColor(vec3 color)
 
 vec3 XR_UBER_PrimaryLightColor(vec3 color)
 {
-    return UBER_I(_SourceLightMode) != 0 ? color : XR_UBER_LightColor(color);
+    return UBER_I(_LightModel) != 0 ? color : XR_UBER_LightColor(color);
 }
 
 XrSourceMultilayerInputs XR_UBER_MultilayerInputs(XRUberCoordinates c, vec3 L)
@@ -36,7 +36,7 @@ XrSourceMultilayerInputs XR_UBER_MultilayerInputs(XRUberCoordinates c, vec3 L)
     data.secondTexture = UBER_SAMPLE(c, _Shadow2ndColorTex, vec4(1.0));
     data.thirdTexture = UBER_SAMPLE(c, _Shadow3rdColorTex, vec4(1.0));
     data.blurTexture = UBER_SAMPLE(c, _MultilayerMathBlurMap, vec4(1.0));
-    data.options = UBER_V(_SourceMultilayerOptions);
+    data.options = UBER_V(_MultilayerOptions);
     data.borderShift = UBER_V(_ShadowAOShift);
     data.borderShift2 = UBER_V(_ShadowAOShift2);
     data.borderMask = vec4(1.0);
@@ -57,7 +57,7 @@ XrSourceMultilayerInputs XR_UBER_MultilayerInputs(XRUberCoordinates c, vec3 L)
             float minimumGradient = pow(data.options.w, 4.0);
             dx = max(abs(dx), vec2(minimumGradient));
             dy = max(abs(dy), vec2(minimumGradient));
-            slot = UBER_T(_SourceShadowBorderMaskLod);
+            slot = UBER_T(_ShadowBorderMaskTrilinear);
         }
         data.borderMask = XR_UBER_Sample(slot, uv, dx, dy, vec4(1.0));
         data.borderMaskX = XR_UBER_Sample(slot, uv + sampleDx,
@@ -68,12 +68,12 @@ XrSourceMultilayerInputs XR_UBER_MultilayerInputs(XRUberCoordinates c, vec3 L)
         data.borderMaskX.rgb = xrSourceMultilayerRemappedMask(data.borderMaskX, data);
         data.borderMaskY.rgb = xrSourceMultilayerRemappedMask(data.borderMaskY, data);
     }
-    data.flatSettings = UBER_V(_SourceMultilayerFlat);
+    data.flatSettings = UBER_V(_MultilayerFlat);
     data.flatLight = dot(c.flatNormal, L);
-    data.borders = UBER_V(_SourceMultilayerBorders);
-    data.blurs = UBER_V(_SourceMultilayerBlurs);
-    data.receive = UBER_V(_SourceMultilayerReceive);
-    data.mixSettings = UBER_V(_SourceMultilayerMix);
+    data.borders = UBER_V(_MultilayerBorders);
+    data.blurs = UBER_V(_MultilayerBlurs);
+    data.receive = UBER_V(_MultilayerReceive);
+    data.mixSettings = UBER_V(_MultilayerMix);
     data.strengthMask = UBER_SAMPLE(c, _ShadowStrengthMask, vec4(1.0)).r;
     return data;
 }
@@ -81,17 +81,17 @@ XrSourceMultilayerInputs XR_UBER_MultilayerInputs(XRUberCoordinates c, vec3 L)
 float XR_UBER_PrimaryLightMap(XRUberCoordinates c, vec3 N, vec3 L,
     XrSourceShCoefficients sh, vec3 rawPrimary, vec3 selectedDirect, float visibility)
 {
-    if (UBER_I(_SourceLightMode) == 0) return XR_UBER_LightMap(dot(N, L));
+    if (UBER_I(_LightModel) == 0) return XR_UBER_LightMap(dot(N, L));
     if (UBER_I(_LightingMode) == 2)
         return xrSourceWrappedMap(N, L, rawPrimary, sh,
             UBER_F(_LightingWrappedWrap), UBER_F(_LightingWrappedNormalization),
-            XR_UBER_MaterialAo(c), visibility, UBER_V(_SourceLightSettings).y,
+            XR_UBER_MaterialAo(c), visibility, UBER_V(_ToonLightSettings).y,
             1.0, UBER_F(_LightingMonochromatic));
     return UBER_I(_LightingMapMode) == 0
         ? xrSourceShLightMap(sh, N, selectedDirect, dot(N, L), visibility,
-            UBER_V(_SourceLightSettings).y)
+            UBER_V(_ToonLightSettings).y)
         : xrSourceLightMap(dot(N, L), UBER_I(_LightingMapMode),
-            UBER_V(_SourceLightSettings).y, visibility);
+            UBER_V(_ToonLightSettings).y, visibility);
 }
 
 // Evaluates both the ramped glitter light map (x) and the unramped primary light map (y)
@@ -104,7 +104,7 @@ vec2 XR_UBER_GlitterLightMapPair(XRUberCoordinates c, vec3 N, vec3 Nx, vec3 Ny, 
     if (direction == 1) L = N;
     else if (direction == 3) L = vec3(0.0, 1.0, 0.0);
     float nl = dot(N, L);
-    bool isMultilayer = UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMode) == 1;
+    bool isMultilayer = UBER_I(_LightModel) != 0 && UBER_I(_LightingMode) == 1;
     bool isRamp = !isMultilayer && UBER_I(_LightingMode) == 0;
     int sampleCount = isMultilayer ? 4 : (isRamp ? 3 : 1);
     float m0 = 0.0, m1 = 0.0, m2 = 0.0, m3 = 0.0;
@@ -149,7 +149,7 @@ vec2 XR_UBER_GlitterLightMapPair(XRUberCoordinates c, vec3 N, vec3 Nx, vec3 Ny, 
     {
         float wrapped = nl + UBER_F(_LightingWrappedWrap);
         if (UBER_F(_LightingWrappedNormalization) > 0.5) wrapped /= max(1.0 + UBER_F(_LightingWrappedWrap), 1.0e-6);
-        ramp = UBER_I(_SourceLightMode) != 0 ? m0 :
+        ramp = UBER_I(_LightModel) != 0 ? m0 :
             smoothstep(UBER_F(_LightingGradientStart), UBER_F(_LightingGradientEnd), clamp(wrapped, 0.0, 1.0));
     }
     else if (UBER_I(_LightingMode) == 5)
@@ -180,8 +180,8 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
     bool primary, vec3 rawPrimary, vec3 rawSelectedDirect,
     XrSourceShCoefficients sh, vec3 worldDiffuseOcclusion)
 {
-    if (UBER_I(_SourceLightMode) != 0 && UBER_I(_LightingMode) == 1 &&
-        (primary || UBER_V(_SourceAdditiveColor).z >= 1.5))
+    if (UBER_I(_LightModel) != 0 && UBER_I(_LightingMode) == 1 &&
+        (primary || UBER_V(_AdditiveLightColor).z >= 1.5))
     {
         float map = 0.0, mapX = 0.0, mapY = 0.0;
         for (int sampleIndex = 0; sampleIndex < 3; ++sampleIndex)
@@ -199,20 +199,20 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
             vec2(mapX - map, mapY - map), visibility, vec2(0.0),
             mask, primary, data);
     }
-    if (!primary && UBER_I(_SourceLightMode) != 0)
+    if (!primary && UBER_I(_LightModel) != 0)
     {
         float map = xrSourceAdditiveLightMap(dot(N, L), UBER_I(_LightingMapMode),
-            visibility, UBER_V(_SourceAdditiveColor).w);
+            visibility, UBER_V(_AdditiveLightColor).w);
         vec2 rampUv, rampDx, rampDy;
         XR_UBER_CoverageUv(c, UBER_I(_ToonRampUV), rampUv, rampDx, rampDy);
         vec4 st = UBER_V(_ToonRamp_ST);
         vec2 uv = vec2(clamp(map + UBER_F(_ShadowOffset), 0.0, 1.0), rampUv.y);
         vec2 dx = vec2(xrSourceAdditiveLightMap(dot(normalize(N + Nx), L),
             UBER_I(_LightingMapMode), visibility,
-            UBER_V(_SourceAdditiveColor).w) - map, rampDx.y);
+            UBER_V(_AdditiveLightColor).w) - map, rampDx.y);
         vec2 dy = vec2(xrSourceAdditiveLightMap(dot(normalize(N + Ny), L),
             UBER_I(_LightingMapMode), visibility,
-            UBER_V(_SourceAdditiveColor).w) - map, rampDy.y);
+            UBER_V(_AdditiveLightColor).w) - map, rampDy.y);
         vec3 ramp = XR_UBER_Sample(UBER_T(_ToonRamp), uv * st.xy + st.zw +
             UBER_V(_ToonRampPan).xy * c.time, dx * st.xy, dy * st.xy,
             vec4(1.0)).rgb;
@@ -220,21 +220,21 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
             UBER_V(_LightingShadowColor).rgb, dot(N, L), visibility, mask,
             XR_UBER_MaterialAo(c), UBER_F(_ShadowStrength),
             UBER_F(_LightingIgnoreAmbientColor), UBER_I(_LightingMode),
-            UBER_V(_SourceAdditiveColor), UBER_V(_SourceAdditiveGradient));
+            UBER_V(_AdditiveLightColor), UBER_V(_AdditiveLightGradient));
     }
-    if (primary && UBER_I(_SourceLightMode) != 0 &&
+    if (primary && UBER_I(_LightModel) != 0 &&
         (UBER_I(_LightingMode) == 0 || UBER_I(_LightingMode) == 2 ||
          UBER_I(_LightingMode) == 5))
     {
         if (UBER_I(_LightingMode) == 5)
             return base * radiance * mix(1.0, visibility,
-                clamp(UBER_V(_SourceLightSettings).y, 0.0, 1.0));
+                clamp(UBER_V(_ToonLightSettings).y, 0.0, 1.0));
         if (UBER_I(_LightingMode) == 2)
         {
             float materialAo = XR_UBER_MaterialAo(c);
             float wrapAmount = UBER_F(_LightingWrappedWrap);
             float normalization = UBER_F(_LightingWrappedNormalization);
-            float castedShadows = UBER_V(_SourceLightSettings).y;
+            float castedShadows = UBER_V(_ToonLightSettings).y;
             float monochromatic = UBER_F(_LightingMonochromatic);
             float map = 0.0, mapX = 0.0, mapY = 0.0;
             for (int sampleIndex = 0; sampleIndex < 3; ++sampleIndex)
@@ -248,7 +248,7 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
                 else mapY = value;
             }
             return xrSourceWrappedDiffuse(base, N, L, rawPrimary, sh,
-                UBER_V(_SourceWrappedColor).rgb,
+                UBER_V(_WrappedLightColor).rgb,
                 UBER_V(_LightingShadowColor).rgb, wrapAmount, normalization,
                 materialAo, worldDiffuseOcclusion, visibility,
                 castedShadows, 1.0, monochromatic,
@@ -258,10 +258,10 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
                 UBER_F(_LightingCap), abs(mapX - map) + abs(mapY - map));
         }
         float map = xrSourceLightMap(dot(N, L), UBER_I(_LightingMapMode),
-            UBER_V(_SourceLightSettings).y, visibility);
+            UBER_V(_ToonLightSettings).y, visibility);
         if (UBER_I(_LightingMapMode) == 0)
             map = xrSourceShLightMap(sh, N, rawSelectedDirect, dot(N, L),
-                visibility, UBER_V(_SourceLightSettings).y);
+                visibility, UBER_V(_ToonLightSettings).y);
         vec2 rampUv, rampDx, rampDy;
         XR_UBER_CoverageUv(c, UBER_I(_ToonRampUV), rampUv, rampDx, rampDy);
         vec4 st = UBER_V(_ToonRamp_ST);
@@ -269,15 +269,15 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
         float mapX = UBER_I(_LightingMapMode) == 0
             ? xrSourceShLightMap(sh, normalize(N + Nx), rawSelectedDirect,
                 dot(normalize(N + Nx), L), visibility,
-                UBER_V(_SourceLightSettings).y)
+                UBER_V(_ToonLightSettings).y)
             : xrSourceLightMap(dot(normalize(N + Nx), L),
-                UBER_I(_LightingMapMode), UBER_V(_SourceLightSettings).y, visibility);
+                UBER_I(_LightingMapMode), UBER_V(_ToonLightSettings).y, visibility);
         float mapY = UBER_I(_LightingMapMode) == 0
             ? xrSourceShLightMap(sh, normalize(N + Ny), rawSelectedDirect,
                 dot(normalize(N + Ny), L), visibility,
-                UBER_V(_SourceLightSettings).y)
+                UBER_V(_ToonLightSettings).y)
             : xrSourceLightMap(dot(normalize(N + Ny), L),
-                UBER_I(_LightingMapMode), UBER_V(_SourceLightSettings).y, visibility);
+                UBER_I(_LightingMapMode), UBER_V(_ToonLightSettings).y, visibility);
         vec2 dx = vec2(mapX - uv.x,
             rampDx.y);
         vec2 dy = vec2(mapY - uv.x,
@@ -292,7 +292,7 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
     if (direction == 1) L = N;
     else if (direction == 2) L = V;
     else if (direction == 3) L = vec3(0.0, 1.0, 0.0);
-    if (UBER_I(_SourceLightMode) == 0)
+    if (UBER_I(_LightModel) == 0)
         radiance = XR_UBER_LightColor(radiance);
     float nl = dot(N, L), map = XR_UBER_LightMap(nl);
     int mode = UBER_I(_LightingMode);
@@ -348,8 +348,8 @@ vec3 XR_UBER_Toon(XRUberCoordinates c, vec3 base, vec3 N, vec3 Nx, vec3 Ny,
 
 vec3 XR_UBER_Specular(vec3 N, vec3 V, vec3 L, vec3 tangent, vec3 radiance, vec3 tint, float mask)
 {
-    if (UBER_V(_SourceMochieSecond).w > 0.5) return vec3(0.0);
-    float strength = UBER_I(_PBRMochiePackedMasksEnabled) != 0
+    if (UBER_V(_SecondSpecularSettings).w > 0.5) return vec3(0.0);
+    float strength = UBER_I(_PBRPackedMasksEnabled) != 0
         ? mask : UBER_F(_SpecularStrength) * mask * mask;
     if (!XR_UBER_HasFeature(XR_UBER_FEATURE_ADVANCED_SPECULAR) || strength <= 0.0) return vec3(0.0);
     vec3 H = XR_ADV_NormalizeOr(L + V, N);
@@ -414,11 +414,11 @@ vec3 XR_UBER_AdvancedPbr(XRUberCoordinates c, vec3 N, vec3 V,
     color += (UBER_V(_Specular2Color).rgb * spec2 + specularColor * anisoSpec * abs(UBER_F(_Anisotropy))) * lightColor;
     color += pow(clamp(dot(N, H), 0.0, 1.0), mix(16.0, 1024.0, clamp(UBER_F(_ClearCoatSmoothness), 0.0, 1.0))) * clamp(dot(N, L), 0.0, 1.0) * UBER_F(_ClearCoat);
     vec3 environment = vec3(0.0);
-    if (UBER_I(_SourceCubeMap) == 0 && UBER_V(_SourceEnviroRim).x < 0.5)
+    if (UBER_I(_CubeMapToonModel) == 0 && UBER_V(_EnviroRimSettings).x < 0.5)
         environment = XR_UBER_ApplyCubemap(c, N, V, cameraPosition, lightMap,
             false, color, emission);
     vec3 direction = reflect(-V, N);
-    if (UBER_I(_SourceCubeMap) != 0 && UBER_V(_SourceEnviroRim).x < 0.5 &&
+    if (UBER_I(_CubeMapToonModel) != 0 && UBER_V(_EnviroRimSettings).x < 0.5 &&
         UBER_F(_RimEnviroIntensity) > 0.0)
     {
         if (UBER_I(_CubeMapUvMode) == 0) direction = -V;
@@ -429,7 +429,7 @@ vec3 XR_UBER_AdvancedPbr(XRUberCoordinates c, vec3 N, vec3 V,
             UBER_V(_CubeMapColor).rgb * max(UBER_F(_CubeMapStrength), 0.0);
     }
     float rim = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), mix(0.25, 16.0, clamp(UBER_F(_RimEnviroSharpness), 0.0, 1.0)));
-    if (UBER_V(_SourceEnviroRim).x < 0.5)
+    if (UBER_V(_EnviroRimSettings).x < 0.5)
         color += environment * smoothstep(1.0 - UBER_F(_RimEnviroWidth), 1.0, rim) * UBER_F(_RimEnviroIntensity);
     color += UBER_V(_BacklightColor).rgb * clamp(dot(-N, L), 0.0, 1.0) * UBER_SAMPLE(c, _BacklightMask, vec4(1.0)).r * UBER_F(_BacklightStrength);
     return color;
@@ -438,7 +438,7 @@ vec3 XR_UBER_AdvancedPbr(XRUberCoordinates c, vec3 N, vec3 V,
 vec3 XR_UBER_SourceEnviroRim(XRUberCoordinates c, vec3 N, vec3 V,
     vec3 baseColor, vec3 probeRadiance)
 {
-    vec4 settings = UBER_V(_SourceEnviroRim);
+    vec4 settings = UBER_V(_EnviroRimSettings);
     if (settings.x < 0.5 || UBER_F(_RimEnviroIntensity) <= 0.0) return vec3(0.0);
     float width = UBER_F(_RimEnviroWidth);
     float edge = clamp(1.0 - smoothstep(min(UBER_F(_RimEnviroSharpness), width),

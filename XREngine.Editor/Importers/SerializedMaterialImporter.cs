@@ -36,7 +36,7 @@ public static partial class SerializedMaterialImporter
     public static XRMaterial? Import(string materialPath, string? projectRoot = null)
         => ImportWithReport(materialPath, projectRoot).Material;
     /// <summary>
-    /// Validates the UV channels requested by an imported Poiyomi material against a mesh.
+    /// Validates the UV channels requested by an imported source toon material against a mesh.
     /// Missing channels fall back to UV0 in generated vertex shaders.
     /// </summary>
     public static MaterialConversionDiagnostic[] ValidateMeshCompatibility(XRMaterial material, uint availableUvChannels)
@@ -94,23 +94,27 @@ public static partial class SerializedMaterialImporter
         SourceResolvedAsset shaderAsset = resolver.Resolve(document.Shader);
         SourceToonShaderMatchResult sourceToonMatch = MatchSourceToonMaterial(document, resolver, out string? shaderPath);
         diagnostics.AddRange(sourceToonMatch.Diagnostics);
-        bool requiresSourceBasicOutline = RequiresSourceBasicOutline(document, sourceToonMatch);
+        // A locked shader reads animated renamed properties, so conversion uses their values.
+        SerializedMaterialDocument effectiveDocument = sourceToonMatch.IsLocked
+            ? ApplyLockedRenamedPropertyValues(document)
+            : document;
+        bool requiresSourceBasicOutline = RequiresSourceBasicOutline(effectiveDocument, sourceToonMatch);
         SourceOrderedSurfacePlan orderedSurface = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
-            ? ClassifySourceOrderedSurface(document, shaderPath)
+            ? ClassifySourceOrderedSurface(effectiveDocument, shaderPath)
             : default;
         SerializedMaterialDocument conversionDocument;
         if (sourceToonMatch.IsDowngradeSource)
             conversionDocument = SourceToonFeatureLossNormalizer.Normalize(
-                document, diagnostics, shaderPath, sourceToonMatch.IsLocked,
+                effectiveDocument, diagnostics, shaderPath, sourceToonMatch.IsLocked,
                 preserveCertifiedGrabPass: orderedSurface.HasSceneColor);
-        else if (sourceToonMatch.IsAccepted && sourceToonMatch.Version == SourceToon10Catalog.Version)
-            conversionDocument = SourceToon10Catalog.CreateConversionDocument(document, sourceToonMatch);
+        else if (sourceToonMatch.IsAccepted && sourceToonMatch.BehaviorVersion == SourceToon10Catalog.Version)
+            conversionDocument = SourceToon10Catalog.CreateConversionDocument(effectiveDocument, sourceToonMatch);
         else
-            conversionDocument = document;
+            conversionDocument = effectiveDocument;
         SourceToonMaterialDescriptor? sourceToonDescriptor = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource
             ? SourceToonMaterialDescriptorFactory.Create(conversionDocument, resolver, sourceToonMatch, diagnostics)
             : null;
-        if (sourceToonMatch.IsAccepted && SourceToon92Catalog.Supports(sourceToonMatch.Version))
+        if (sourceToonMatch.IsAccepted && SourceToon92Catalog.Supports(sourceToonMatch.BehaviorVersion))
             SourceToon92Catalog.AppendUnmappedFeatureDiagnostics(conversionDocument, diagnostics);
         bool isSourceToonConversion = sourceToonMatch.IsAccepted || sourceToonMatch.IsDowngradeSource;
         foreach (MaterialConversionDiagnostic diagnostic in diagnostics)
@@ -118,8 +122,13 @@ public static partial class SerializedMaterialImporter
         bool isSourceToon = sourceToonMatch.IsAccepted;
         bool isSourceToonFeatureLoss = sourceToonMatch.IsDowngradeSource;
         bool isLilToon = false;
+        bool isProceduralEye = false;
         if (!isSourceToonConversion && !sourceToonMatch.IsSourceToonFamily)
+        {
             isLilToon = IsLilToonMaterial(document, resolver, out shaderPath);
+            if (!isLilToon)
+                isProceduralEye = IsProceduralEyeMaterial(document, resolver, out shaderPath);
+        }
 
         try
         {
@@ -130,16 +139,26 @@ public static partial class SerializedMaterialImporter
                     warnings,
                     diagnostics,
                     isSourceToonFeatureLoss,
-                    sourceToonMatch.Version,
+                    // Version-specific conversion rules follow the verified behavior version, not the exact release.
+                    sourceToonMatch.BehaviorVersion,
                     sourceToonDescriptor,
                     orderedSurface)
                 : isLilToon
                     ? ConvertLilToonToUberMaterial(document, resolver, warnings, shaderPath)
-                    : ConvertGenericSerializedMaterial(
-                        document, resolver, warnings, reportUnconvertedProjectShader: true);
+                    : isProceduralEye
+                        ? ConvertProceduralEyeToUberMaterial(document, resolver, warnings)
+                        : ConvertGenericSerializedMaterial(
+                            document, resolver, warnings, reportUnconvertedProjectShader: true);
 
             if (requiresSourceBasicOutline)
-                ApplySourceBasicOutline(material, document, sourceToonMatch);
+            {
+                BindOptionalSourceFeature(
+                    "outline",
+                    () => ApplySourceBasicOutline(material, effectiveDocument, sourceToonMatch),
+                    null,
+                    warnings,
+                    diagnostics);
+            }
 
             material.OriginalPath = normalizedPath;
             EMaterialConversionOutcome outcome = isSourceToonFeatureLoss
@@ -180,14 +199,16 @@ public static partial class SerializedMaterialImporter
                 ConversionReport = conversionReport,
             };
         }
-        catch (Exception ex) when ((isSourceToonConversion || isLilToon || requiresSourceBasicOutline) &&
+        catch (Exception ex) when ((isSourceToonConversion || isLilToon || isProceduralEye || requiresSourceBasicOutline) &&
             ex is not OperationCanceledException)
         {
             // A failed shader-specific conversion must not remove the material from the import.
             // The generic importer keeps the main texture and color, and the report records the failure.
             string shaderFamily = isLilToon
                 ? "lilToon"
-                : isSourceToonFeatureLoss ? "Poiyomi Pro downgrade" : "Poiyomi Toon";
+                : isProceduralEye
+                    ? "procedural eye"
+                    : isSourceToonFeatureLoss ? "Pro toon downgrade" : "Source toon";
             warnings.Add($"{shaderFamily} material conversion failed for '{document.Name}'. Falling back to generic Unity material import. {ex.Message}");
             Debug.LogWarning(warnings[^1]);
             try
@@ -311,7 +332,7 @@ public static partial class SerializedMaterialImporter
         string? specularSource = AddMappedTexture(document, resolver, warnings, textures, "_SpecularMap", "_SpecularMap");
         string? metallicSource = AddMappedTexture(document, resolver, warnings, textures, "_PBRMetallicMaps", "_MochieMetallicMaps", "_RGBAMetallicMaps", "_MetallicGlossMap");
         string? smoothnessSource = AddMappedTexture(document, resolver, warnings, textures, "_PBRSmoothnessMaps", "_RGBASmoothnessMaps", "_SmoothnessTex", "_MochieMetallicMaps", "_MetallicGlossMap");
-        string? clearCoatSource = AddMappedTexture(document, resolver, warnings, textures, "_SourceClearCoatMaps", "_ClearCoatMaps");
+        string? clearCoatSource = AddMappedTexture(document, resolver, warnings, textures, "_ClearCoatMaskMaps", "_ClearCoatMaps");
         string? detailMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailMask", "_DetailMask");
         string? detailTexSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailTex", "_DetailTex");
         string? detailNormalSource = AddMappedTexture(document, resolver, warnings, textures, "_DetailNormalMap", "_DetailNormalMap");
@@ -364,7 +385,7 @@ public static partial class SerializedMaterialImporter
         ApplySourceToonMeshTextureTransform(material, document, specularSource, "_SpecularMap");
         ApplySourceToonTextureTransform(material, document, metallicSource, "_PBRMetallicMaps", null, diagnostics);
         ApplySourceToonTextureTransform(material, document, smoothnessSource, "_PBRSmoothnessMaps", null, diagnostics);
-        ApplySourceToonTextureTransform(material, document, clearCoatSource, "_SourceClearCoatMaps", null, diagnostics);
+        ApplySourceToonTextureTransform(material, document, clearCoatSource, "_ClearCoatMaskMaps", null, diagnostics);
         ApplySourceToonMeshTextureTransform(material, document, detailMaskSource, "_DetailMask");
         ApplySourceToonMeshTextureTransform(material, document, detailTexSource, "_DetailTex");
         ApplySourceToonMeshTextureTransform(material, document, detailNormalSource, "_DetailNormalMap");
@@ -410,7 +431,7 @@ public static partial class SerializedMaterialImporter
             diagnostics,
             warnings);
 
-        // Most rendering properties authored by Poiyomi Pro are the same
+        // Most rendering properties authored by the Pro toon shader are the same
         // public Toon modules. The normalizer has already removed active
         // Pro-exclusive groups, so preserve every remaining common feature.
         ApplySourceToonSurfaceFeatures(material, document, resolver, diagnostics, warnings, sourceVersion);
@@ -485,7 +506,8 @@ public static partial class SerializedMaterialImporter
         List<XRTexture?> textures = [main, bump];
 
         string? alphaSource = AddMappedTexture(document, resolver, warnings, textures, "_AlphaMask", "_AlphaMask");
-        string? colorAdjustSource = AddMappedTexture(document, resolver, warnings, textures, "_MainColorAdjustTexture", "_MainColorAdjustMask", "_MainGradationTex");
+        string? colorAdjustSource = AddMappedTexture(document, resolver, warnings, textures, "_MainColorAdjustTexture", "_MainColorAdjustMask");
+        AddMappedTexture(document, resolver, warnings, textures, "_MainGradationTex", "_MainGradationTex");
         string? shadowColorSource = AddMappedTexture(document, resolver, warnings, textures, "_ShadowColorTex", "_ShadowColorTex");
         string? aoSource = AddMappedTexture(document, resolver, warnings, textures, "_LightingAOMaps", "_ShadowStrengthMask");
         string? shadowMaskSource = AddMappedTexture(document, resolver, warnings, textures, "_LightingShadowMasks", "_ShadowBorderMask", "_ShadowBlurMask");
@@ -671,6 +693,14 @@ public static partial class SerializedMaterialImporter
             GetFloat(document, "_LightDataAOStrengthA")));
         MapFloat(document, material, "_LightDataAOStrengthR", "_LightDataAOStrengthR");
         MapFloat(document, material, "_LightingShadowMaskStrengthR", "_LightingShadowMaskStrengthR");
+        // The source defaults are 1 for the R strength and 0 for the other channels.
+        SetVector4(material, "_LightingShadowMaskStrengths", new Vector4(
+            GetFloat(document, "_LightingShadowMaskStrengthR", 1.0f),
+            GetFloat(document, "_LightingShadowMaskStrengthG"),
+            GetFloat(document, "_LightingShadowMaskStrengthB"),
+            GetFloat(document, "_LightingShadowMaskStrengthA")));
+        SetInt(material, "_LightDataAOGlobalMaskBlendTypeR", GetInt(document, "_LightDataAOGlobalMaskBlendTypeR", 2));
+        SetInt(material, "_LightDataShadowMaskGlobalMaskBlendTypeR", GetInt(document, "_LightDataShadowMaskGlobalMaskBlendTypeR", 2));
 
         MapVector4(document, material, "_EmissionColor", "_EmissionColor");
         SetInt(material, "_EmissionColorThemeIndex", SourceToonEnumMapper.Identity(document, "_EmissionColorThemeIndex", 0, 0, 12, diagnostics));
@@ -728,7 +758,8 @@ public static partial class SerializedMaterialImporter
 
         MapVector4(document, material, "_BackFaceColor", "_BackFaceColor");
         MapFloat(document, material, "_BackFaceEmission", "_BackFaceEmission", "_BackFaceEmissionStrength");
-        MapFloat(document, material, "_BackFaceAlpha", "_BackFaceAlpha", "_BackFaceReplaceAlpha");
+        // The source replace-alpha toggle is not an alpha multiplier. BindSourceToonBackFaceOptions binds it.
+        SetFloat(material, "_BackFaceAlpha", 1.0f);
 
         MapVector4(document, material, "_GlitterColor", "_GlitterColor");
         MapFloat(document, material, "_GlitterSize", "_GlitterSize");
@@ -790,7 +821,7 @@ public static partial class SerializedMaterialImporter
                 $"Source PBR option '{unsupportedSourceBrdfOption}' on '{document.Name}' uses the approximate Uber shading path.",
                 unsupportedSourceBrdfOption));
         }
-        SetInt(material, "_PBRMochiePackedMasksEnabled", mochieBrdfEnabled ? 1 : 0);
+        SetInt(material, "_PBRPackedMasksEnabled", mochieBrdfEnabled ? 1 : 0);
         SetFloat(material, "_PBRReflectionStrength", mochieBrdfEnabled &&
             document.TryGetFloat("_MochieReflectionStrength", out float mochieReflectionStrength)
                 ? mochieReflectionStrength
@@ -864,21 +895,21 @@ public static partial class SerializedMaterialImporter
 
         SetInt(material, "_PBRSmoothnessMapsChannel", smoothnessChannel);
         SetFloat(material, "_PBRSmoothnessMapInvert", smoothnessInvert ? 1.0f : 0.0f);
-        SetVector4(material, "_SourceMochieSettings", new Vector4(
+        SetVector4(material, "_SpecularAASettings", new Vector4(
             mochieBrdfEnabled && document.TryGetPositive("_MochieGSAAEnabled") ? 1.0f : 0.0f,
             document.TryGetFloat("_PoiGSAAVariance", out float gsaaVariance) ? gsaaVariance : 0.15f,
             document.TryGetFloat("_PoiGSAAThreshold", out float gsaaThreshold) ? gsaaThreshold : 0.1f,
             mochieBrdfEnabled && document.TryGetPositive("_Specular2ndLayer") ? 1.0f : 0.0f));
-        SetVector4(material, "_SourceMochieSecond", new Vector4(
+        SetVector4(material, "_SecondSpecularSettings", new Vector4(
             document.TryGetFloat("_MochieRoughnessMultiplier2", out float secondSmoothness) ? secondSmoothness : 1.0f,
             document.TryGetFloat("_MochieSpecularStrength2", out float secondStrength) ? secondStrength : 0.0f,
             document.TryGetFloat("_IgnoreCastedShadows", out float ignoreShadows) ? ignoreShadows : 0.0f,
             mochieBrdfEnabled && unsupportedSourceBrdfOption is null ? 1.0f : 0.0f));
-        SetVector4(material, "_SourceMochieReflection", new Vector4(
+        SetVector4(material, "_ReflectionResponse", new Vector4(
             GetFloat(document, "_RefSpecFresnelStrength", 1.0f),
             GetFloat(document, "_SFExposureOcclusion"),
             0.0f, 0.0f));
-        SetVector4(material, "_SourceMochieReflectionTint",
+        SetVector4(material, "_ReflectionTint",
             document.TryGetVector("_MochieReflectionTint", out Vector4 reflectionTint)
                 ? reflectionTint : Vector4.One);
     }
@@ -978,30 +1009,41 @@ public static partial class SerializedMaterialImporter
 
     private static void ApplyLilToonColorAdjustmentProperties(XRMaterial material, SerializedMaterialDocument document)
     {
-        if (TryGetLilToonHsvgAdjustments(document, out float saturation, out float brightness))
+        // The HSVG vector multiplies saturation and value and raises the color to the gamma
+        // power. The Uber saturation and brightness controls are offsets from a factor of 1.
+        if (TryGetLilToonHsvgAdjustments(document, out float saturation, out float brightness, out float gamma))
         {
             SetFloat(material, "_Saturation", saturation);
             SetFloat(material, "_MainBrightness", brightness);
+            SetFloat(material, "_MainGamma", gamma);
         }
 
         if (document.TryGetFloat("_MainGradationStrength", out float gradationStrength) &&
             MathF.Abs(gradationStrength) > 0.0001f)
         {
-            SetFloat(material, "_MainBrightness", gradationStrength);
+            SetFloat(material, "_ColorGradingToggle", 1.0f);
+            SetFloat(material, "_MainGradationStrength", gradationStrength);
         }
     }
 
-    private static bool TryGetLilToonHsvgAdjustments(SerializedMaterialDocument document, out float saturation, out float brightness)
+    private static bool TryGetLilToonHsvgAdjustments(
+        SerializedMaterialDocument document,
+        out float saturation,
+        out float brightness,
+        out float gamma)
     {
         saturation = 0.0f;
         brightness = 0.0f;
+        gamma = 1.0f;
         if (!document.TryGetVector("_MainTexHSVG", out Vector4 hsvg))
             return false;
 
         saturation = hsvg.Y - 1.0f;
         brightness = hsvg.Z - 1.0f;
+        gamma = hsvg.W > 0.0f ? hsvg.W : 1.0f;
         return MathF.Abs(saturation) > 0.0001f ||
-               MathF.Abs(brightness) > 0.0001f;
+               MathF.Abs(brightness) > 0.0001f ||
+               MathF.Abs(gamma - 1.0f) > 0.0001f;
     }
 
     private static void ApplySourceToonFeatureState(
@@ -1057,17 +1099,24 @@ public static partial class SerializedMaterialImporter
                 ["_ShadingEnabled"],
                 ["VIGNETTE_MASKED"]));
 
-        // Poiyomi commonly serializes non-zero alpha-mask controls even when
+        // The source toon shader commonly serializes non-zero alpha-mask controls even when
         // the material has no alpha-mask texture. Unity samples the shader's
         // default white texture in that case, so enabling an engine feature
         // (and a needless sampler/variant) changes no authored behavior.
         material.SetUberFeatureEnabled("alpha-masks", alphaSource is not null);
 
+        // "_MainColorAdjustToggle" is the color adjust section toggle (keyword COLOR_GRADING_HDR), which
+        // controls hue, saturation, and brightness. "_ColorGradingToggle" only enables the grading
+        // subsection, so a material can keep it at 0 while its saturation and brightness apply.
         material.SetUberFeatureEnabled("color-adjustments",
             SourceToonFeatureStateResolver.IsEnabled(
                 document,
-                colorAdjustSource is not null || document.TryGetPositive("_MainHueShiftToggle"),
-                ["_ColorGradingToggle"],
+                colorAdjustSource is not null ||
+                document.TryGetPositive("_MainHueShiftToggle") ||
+                document.TryGetPositive("_ColorGradingToggle"),
+                document.HasAnyProperty("_MainColorAdjustToggle")
+                    ? ["_MainColorAdjustToggle"]
+                    : ["_ColorGradingToggle"],
                 ["COLOR_GRADING_HDR"]));
 
         material.SetUberFeatureEnabled("material-ao",
@@ -1243,7 +1292,7 @@ public static partial class SerializedMaterialImporter
 
         material.SetUberFeatureEnabled("color-adjustments",
             colorAdjustSource is not null ||
-            TryGetLilToonHsvgAdjustments(document, out _, out _) ||
+            TryGetLilToonHsvgAdjustments(document, out _, out _, out _) ||
             document.TryGetPositive("_MainGradationStrength"));
 
         material.SetUberFeatureEnabled("material-ao",
@@ -1317,14 +1366,8 @@ public static partial class SerializedMaterialImporter
         material.PassSet = conversion.PassSet;
         material.AlphaCutoff = document.TryGetFloat("_Cutoff", out float authoredCutoff)
             ? Math.Clamp(authoredCutoff, 0.0f, 1.0f)
-            : conversion.Preset switch
-            {
-                SourceToonRenderPreset.Cutout => 0.5f,
-                SourceToonRenderPreset.TransClipping => 0.01f,
-                SourceToonRenderPreset.Fade => 0.002f,
-                _ => 0.0f,
-            };
-        SetFloat(material, "_SourceAlphaClip", 1.0f);
+            : SourceToonRenderStateConverter.GetPresetCutoff(conversion.Preset);
+        SetFloat(material, "_AlphaClipAllModes", 1.0f);
 
         // Synchronize opacity uniforms/shader family before restoring the
         // source-authored fixed-function state verbatim.
@@ -1334,6 +1377,11 @@ public static partial class SerializedMaterialImporter
             material.RenderOptions = basePass.RenderOptions;
             material.RenderPass = basePass.RenderPass;
         }
+
+        // The transparency mode sets a generic shader blend mode. Set the mode of the preset, so that the
+        // transparent cutout and fade presets discard below the cutoff. Alpha to coverage keeps the cutout mode.
+        if (conversion.TransparencyMode != ETransparencyMode.AlphaToCoverage)
+            UberRenderPresets.SetShaderMode(material, SourceToonRenderStateConverter.ToUberPreset(conversion.Preset));
 
         material.TransparentSortPriority = conversion.PassSet.QueuePriority;
         if (SourceToonRenderStateConverter.IsHornsSoftOutlineSource(document))
@@ -2006,7 +2054,7 @@ public static partial class SerializedMaterialImporter
             "UNITYMAT0004",
             SourceImportDiagnosticSeverity.Info,
             SourceImportDiagnosticCategory.MaterialDowngrade,
-            $"Poiyomi shader family for '{Path.GetFileName(sourcePath)}' was inferred from '{context.GuidIndex.NormalizePortablePath(targetPath)}'.",
+            $"Source toon shader family for '{Path.GetFileName(sourcePath)}' was inferred from '{context.GuidIndex.NormalizePortablePath(targetPath)}'.",
             sourcePath,
             "m_Shader");
         return true;

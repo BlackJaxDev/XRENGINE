@@ -19,6 +19,7 @@ public enum EMeshRenderingPathIntent
 /// Callers configure one command and do not encode traditional/meshlet details.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
 public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 {
     public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -148,9 +149,18 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     /// Returns the pass index that backend operations emitted by this command should use.
     /// </summary>
     internal int ResolveRenderGraphPassIndex()
-        => _resolvedRenderGraphPassIndex != int.MinValue
+    {
+        if (!string.IsNullOrWhiteSpace(RenderGraphPassName))
+        {
+            int activePassIndex = ResolveActiveRenderGraphPassIndex(RenderGraphPassName!);
+            if (activePassIndex != int.MinValue)
+                return activePassIndex;
+        }
+
+        return _resolvedRenderGraphPassIndex != int.MinValue
             ? _resolvedRenderGraphPassIndex
             : RenderPass;
+    }
 
     /// <summary>
     /// Declares textures sampled by dynamically selected mesh material variants in this pass.
@@ -285,7 +295,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         EMeshSubmissionStrategy meshSubmissionStrategy = ResolveEffectiveMeshSubmissionStrategy();
         bool forceMeshletDebugDisplay = ShouldForceMeshletDebugDisplay(meshSubmissionStrategy);
         if (forceMeshletDebugDisplay)
-            meshSubmissionStrategy = ResolveMeshletDebugDisplayStrategy();
+            meshSubmissionStrategy = GpuBvhDebugSettings.ResolveMeshletDebugDisplayStrategy();
 
         if (IsMeshletRequested(meshSubmissionStrategy))
         {
@@ -408,11 +418,6 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             ? EMeshSubmissionStrategy.CpuDirect
             : EMeshSubmissionStrategy.GpuIndirectInstrumented;
     }
-
-    private static EMeshSubmissionStrategy ResolveMeshletDebugDisplayStrategy()
-        => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging
-            ? EMeshSubmissionStrategy.GpuMeshletInstrumented
-            : EMeshSubmissionStrategy.GpuMeshletZeroReadback;
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {

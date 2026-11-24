@@ -22,13 +22,14 @@ UberBaseVertexOutput uberBaseVertex(UberBaseVertexInput input)
 float4 uberBaseFragment(UberBaseVertexOutput input, bool frontFace : SV_IsFrontFace) : SV_Target0
 {
     UberBaseMaterialParameters material = uberBaseResolveMaterial();
-    UberBaseMesh mesh = uberBaseMesh(input, frontFace);
+    UberBaseMesh mesh = uberBaseMesh(material, input, frontFace);
     mesh.worldNormal = uberBaseSampleNormal(material, mesh, XRE_UBER_BASE_FEATURES, uberBaseTime());
     float4 base = uberBaseSampleColor(material, mesh, uberBaseTime());
     float alpha = uberBaseSampleAlpha(material, mesh, base.a, XRE_UBER_BASE_FEATURES, uberBaseTime());
     if (!uberBaseCovered(material, alpha)) discard;
-    float3 rms = uberBaseSampleRms(material, mesh, XRE_UBER_BASE_FEATURES, uberBaseTime());
-    float3 color = uberBaseForwardLighting(mesh, base.rgb, rms, input.position.xy, uberBasePipelineFlags());
+    UberBaseSpecular specular = uberBaseSampleSpecular(material, mesh, XRE_UBER_BASE_FEATURES, uberBaseTime());
+    float3 color = uberBaseForwardLighting(material, XRE_UBER_BASE_FEATURES, mesh, base.rgb, specular,
+        input.position.xy, uberBasePipelineFlags());
     color += uberBaseSampleEmission(material, mesh, XRE_UBER_BASE_FEATURES, uberBaseTime());
     return float4(color, uberBaseOutputAlpha(material, alpha));
 }

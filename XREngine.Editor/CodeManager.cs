@@ -1177,12 +1177,94 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
     #region Launcher Code Generation
 
+    /// <summary>
+    /// The line that a development launcher which reads the published archives writes at startup.
+    /// </summary>
+    internal const string DevelopmentArchiveLauncherStartupMessage =
+        "Development build: this launcher reads the published archives. It is not a production build.";
+
     internal static string ComposeLauncherDefineConstantsForTests(BuildSettings settings)
         => ComposeLauncherDefineConstants(settings);
+
+    /// <summary>
+    /// True when the launcher is a non-AOT development build that reads the published archives. The
+    /// <see cref="BuildSettings.DevelopmentLauncherReadsArchives"/> option or the development-archive define constant
+    /// selects it. A NativeAOT launcher never uses it.
+    /// </summary>
+    internal static bool UsesDevelopmentArchiveLauncher(BuildSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (settings.PublishLauncherAsNativeAot)
+            return false;
+
+        return settings.DevelopmentLauncherReadsArchives
+            || ContainsDefineConstant(settings.LauncherDefineConstants, XRRuntimeEnvironment.DevelopmentArchivesDefineConstant);
+    }
+
+    /// <summary>
+    /// Stops a non-AOT launcher that lists a published define constant. A published build is a production build, and
+    /// production builds must use NativeAOT. Non-AOT tests of the archives use
+    /// <see cref="BuildSettings.DevelopmentLauncherReadsArchives"/>.
+    /// </summary>
+    /// <param name="settings">The build settings.</param>
+    /// <exception cref="InvalidOperationException">A non-AOT launcher lists <c>XRE_PUBLISHED</c> or <c>XRE_AOT_RUNTIME</c>.</exception>
+    internal static void ValidateLauncherDefineConstants(BuildSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (settings.PublishLauncherAsNativeAot)
+            return;
+
+        string? published = ContainsDefineConstant(settings.LauncherDefineConstants, XRRuntimeEnvironment.PublishedDefineConstant)
+            ? XRRuntimeEnvironment.PublishedDefineConstant
+            : ContainsDefineConstant(settings.LauncherDefineConstants, XRRuntimeEnvironment.AotRuntimeDefineConstant)
+                ? XRRuntimeEnvironment.AotRuntimeDefineConstant
+                : null;
+        if (published is null)
+            return;
+
+        string settingsAsset = settings.FilePath
+            ?? Engine.CurrentProject?.BuildSettingsPath
+            ?? $"Config/{XRProject.BuildSettingsFileName}";
+        throw new InvalidOperationException(
+            $"The launcher defines {published} (build settings '{settingsAsset}'), but {nameof(BuildSettings.PublishLauncherAsNativeAot)} is off. " +
+            $"Production published builds must use NativeAOT: enable {nameof(BuildSettings.PublishLauncherAsNativeAot)}. " +
+            $"For non-AOT testing of the archives, enable {nameof(BuildSettings.DevelopmentLauncherReadsArchives)} and remove " +
+            $"{published} from {nameof(BuildSettings.LauncherDefineConstants)} (or from --define-constants).");
+    }
+
+    /// <summary>The separators that the C# compiler accepts between define constants.</summary>
+    private static readonly char[] DefineConstantSeparators = [';', ',', ' ', '\t', '\r', '\n'];
+
+    private static bool ContainsDefineConstant(string? constants, string name)
+    {
+        if (string.IsNullOrWhiteSpace(constants))
+            return false;
+
+        foreach (string token in constants.Split(DefineConstantSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (string.Equals(token, name, StringComparison.Ordinal))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static string RemoveDefineConstant(string constants, string name)
+    {
+        List<string> kept = [];
+        foreach (string token in constants.Split(DefineConstantSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!string.Equals(token, name, StringComparison.Ordinal))
+                kept.Add(token);
+        }
+
+        return string.Join(';', kept);
+    }
 
     private static string ComposeLauncherDefineConstants(BuildSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        ValidateLauncherDefineConstants(settings);
 
         string rendererBackendConstants = settings.RendererBackendPackage switch
         {
@@ -1202,6 +1284,11 @@ internal partial class CodeManager : XRSingleton<CodeManager>
             ? rendererBackendConstants
             : $"{settings.LauncherDefineConstants};{rendererBackendConstants}";
 
+        // A NativeAOT launcher is a published build. It never takes the development-archive constant, also when the
+        // project lists that constant by hand.
+        if (settings.PublishLauncherAsNativeAot)
+            requestedConstants = RemoveDefineConstant(requestedConstants, XRRuntimeEnvironment.DevelopmentArchivesDefineConstant);
+
         // BuildProjectFile passes DefineConstants as a global MSBuild property so
         // referenced engine projects receive the published-build symbols. Global
         // properties are immutable during child-project evaluation, so include the
@@ -1210,7 +1297,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         return XRRuntimeEnvironment.ComposeDefineConstants(
             requestedConstants,
             includePublishedBuild: settings.PublishLauncherAsNativeAot,
-            includeAotRuntime: settings.PublishLauncherAsNativeAot);
+            includeAotRuntime: settings.PublishLauncherAsNativeAot,
+            includeDevelopmentArchives: UsesDevelopmentArchiveLauncher(settings));
     }
 
     internal static string BuildLauncherProgramSourceForTests(
@@ -1278,6 +1366,9 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);");
         sb.AppendLine("#elif XRE_PUBLISHED");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Published);");
+        sb.AppendLine("#elif XRE_DEVELOPMENT_ARCHIVES");
+        sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.DevelopmentArchives);");
+        sb.AppendLine($"        Console.WriteLine(\"{DevelopmentArchiveLauncherStartupMessage}\");");
         sb.AppendLine("#else");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
         sb.AppendLine("#endif");
@@ -1310,7 +1401,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine();
         sb.AppendLine($"        string commonAssetsArchivePath = ResolvePublishedArchivePath(\"{escapedContentFolder}\", \"{escapedCommonAssetsArchive}\");");
         sb.AppendLine();
-        sb.AppendLine("#if XRE_PUBLISHED");
+        sb.AppendLine("#if XRE_PUBLISHED || XRE_DEVELOPMENT_ARCHIVES");
         sb.AppendLine("        if (!File.Exists(archivePath))");
         sb.AppendLine("        {");
         sb.AppendLine("            Console.Error.WriteLine($\"Config archive '{archivePath}' not found.\");");
@@ -1343,6 +1434,8 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("        {");
         sb.AppendLine("#if XRE_PUBLISHED");
         sb.AppendLine($"            startup = LoadRequiredPublishedAsset<GameStartupSettings>(archivePath, \"{escapedStartup}\");");
+        sb.AppendLine("#elif XRE_DEVELOPMENT_ARCHIVES");
+        sb.AppendLine($"            throw new InvalidOperationException($\"Development archive build: the required startup settings '{escapedStartup}' did not load from config archive '{{archivePath}}'. Re-cook the content.\");");
         sb.AppendLine("#else");
         sb.AppendLine("            Console.Error.WriteLine(\"Failed to load startup settings.\");");
         sb.AppendLine("            return;");

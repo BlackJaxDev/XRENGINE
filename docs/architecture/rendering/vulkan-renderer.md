@@ -659,11 +659,21 @@ CPU readback or replace the requested GPU-driven submission path.
 
 ### The Render Graph
 
-`VulkanRenderGraphCompiler.cs` handles dependency-aware pass ordering:
+`VulkanRenderGraphCompiler.cs` caches compiled graphs. It calls the backend-neutral `RenderGraphCompiler` (`XREngine.Runtime.Rendering/RenderGraph/RenderGraphCompiler.cs`) for the order and the batches:
 
-- **Topological sort** of render pass metadata based on resource dependencies
-- **Pass batching** — groups compatible passes that share the same stage and attachment signature into `VulkanCompiledPassBatch` objects for reduced render pass transitions
+- **Topological sort** of render pass metadata based on resource dependencies. Independent components keep their declaration order.
+- **Pass batching** — groups compatible passes that share the same stage and attachment signature into `RenderGraphPassBatch` objects for reduced render pass transitions. `RenderGraphAttachmentCompatibility` owns the rules, so OpenGL validation and the Workbench use the same batches.
 - **Scheduling identity** — frame ops are sorted by `(SchedulingIdentity, PassOrder, OriginalIndex)` to maintain deterministic ordering while respecting dependencies
+
+#### Plan Diagnostics
+
+`VulkanRenderer` implements `IRenderGraphPlanDiagnosticsSource` (`VulkanRenderer.PlanDiagnostics.cs`). `GetPlanSnapshot(instance)` converts the newest published `VulkanRenderGraphPlan` into a backend-neutral `RenderGraphPlanSnapshot`:
+
+- Pass order, batches, submissions, and synchronization edges come from the compiled graph.
+- Barriers come from the frozen `VulkanBarrierPlan`. The plan keeps a resource name table (`DiagnosticResourceNames`) so tools can name image and swapchain barriers. Recording does not read the table.
+- Alias groups come from the physical image groups of the resource generation that owns the plan. A group with more than one logical resource shares one allocation.
+
+The renderer plans one pipeline instance at a time. It keeps the newest snapshot of each instance in a weak table and rebuilds a snapshot only when a new plan is published. A call with no new plan does not allocate. `OpenGLRenderer` implements the same interface with the recorded pass order of `XRRenderPipelineInstance.ExecutionTrace`, and `RenderGraphOfflinePlanner` plans metadata with no renderer. The editor Render Pipeline Workbench shows these snapshots in its Execution view. `RenderGraphPlanSnapshot.OrderViolations` lists dependency edges whose consumer runs before its producer; a Vulkan plan has none, and an OpenGL recorded order has them when the pass metadata does not match the command order.
 
 ### Frame Operations (FrameOps)
 
@@ -1011,6 +1021,31 @@ partial scene operations are never submitted. Warm requests do not consume the
 cold-work allowance. A persistent no-progress watchdog reports stalled requests
 instead of retrying indefinitely. This budget does not bound every other stage
 of scene publication or command recording.
+
+Each accepted desktop PresentNow frame records the distinct textures that it requires, with the
+streaming generation of each (`VulkanRequiredTextureReferenceSet`). The required-upload manifest
+is built from this set. Both hold at most `VulkanAcceptedFramePlan.RequiredTextureCapacity`
+(65,536) textures, separately from the 4,096 upload operations of `UploadCapacity`. An Advanced
+frame requires every texture of its canonical scene publication, so a crowd of imported avatars
+can require more than 10,000 textures. A hash index finds a texture that is already in the set,
+so the cost of each texture does not grow with the texture count. A frame that requires more
+textures fails with `FramePlanCapacityExceeded lane=Upload`, and `vulkan-present-now.log` shows
+the stall.
+
+The shared mesh request queue (`VulkanMeshOperationRequestQueue`) counts each request in one
+fixed lane, selected from the request's frame-operation context kind:
+
+| Lane | Capacity | Context kinds |
+|---|---|---|
+| `MainScene` | 1,536 | `MainViewport`, `OpenXrEye`, `SceneCapture`, `LightProbeCapture`, `DiagnosticCapture` |
+| `Shadow` | 4,096 | `Shadow` |
+| `Ui` | 256 | `UiPreview` |
+| `TerminalComposition` | 256 | `OpenXrMirror`, `Unknown` |
+
+A scene capture, such as a mirror, draws the same scene geometry as the main view, so it shares
+the `MainScene` lane with the main view. The accepted frame plan also counts these contexts in
+its main-scene lane. A request that does not fit its lane fails the frame with
+`FramePlanCapacityExceeded lane=<lane> meshLane=<lane>`.
 
 Set `XRE_VULKAN_VALIDATE_SPIRV=1` to validate generated and cached modules with
 `spirv-val --target-env vulkan1.4`; a missing validator fails the compile or cache

@@ -12,12 +12,15 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// own normal evaluation path, with a generic override material left as fallback.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
     public class VPRC_ForwardDepthNormalPrePass : ViewportRenderCommand
     {
         private IReadOnlyList<int> _renderPasses = [];
         private bool _gpuDispatch;
         private EMeshSubmissionStrategy? _meshSubmissionStrategy;
         private int _resolvedRenderGraphPassIndex = int.MinValue;
+        private string? _cachedTargetName;
+        private string? _cachedPassName;
 
         public void SetOptions(IReadOnlyList<int> renderPasses, bool gpuDispatch)
         {
@@ -63,8 +66,9 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (commands is null)
                 return;
 
-            using var renderGraphPassScope = _resolvedRenderGraphPassIndex != int.MinValue
-                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(_resolvedRenderGraphPassIndex)
+            int resolvedPassIndex = ResolveRenderGraphPassIndex(rs.CurrentRenderTargetBinding?.Name);
+            using var renderGraphPassScope = resolvedPassIndex != int.MinValue
+                ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(resolvedPassIndex)
                 : null;
 
             // Resolve the active mesh submission strategy once per execution so the prepass
@@ -107,7 +111,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                             pass,
                             static command => command is IRenderCommandMesh mesh && IsGpuPathCpuFallbackMesh(mesh));
                     }
-                    commands.RenderGPU(pass, prepassStrategy, _resolvedRenderGraphPassIndex,
+                    commands.RenderGPU(pass, prepassStrategy, resolvedPassIndex,
                         authoredIndexed ? EAuthoredIndexedCpuReplayPolicy.MeshesOnly : EAuthoredIndexedCpuReplayPolicy.None);
                 }
                 else
@@ -117,6 +121,24 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
 
             ActivePipelineInstance.MarkForwardContactPrePassAvailable();
+        }
+
+        private int ResolveRenderGraphPassIndex(string? targetName)
+        {
+            if (!string.IsNullOrWhiteSpace(targetName))
+            {
+                if (!string.Equals(_cachedTargetName, targetName, System.StringComparison.Ordinal))
+                {
+                    _cachedTargetName = targetName;
+                    _cachedPassName = $"ForwardDepthNormalPrePass_{targetName}";
+                }
+
+                int activePassIndex = ResolveActiveRenderGraphPassIndex(_cachedPassName!);
+                if (activePassIndex != int.MinValue)
+                    return activePassIndex;
+            }
+
+            return _resolvedRenderGraphPassIndex;
         }
 
         private static bool IsGpuPathCpuFallbackMesh(IRenderCommandMesh meshCommand)

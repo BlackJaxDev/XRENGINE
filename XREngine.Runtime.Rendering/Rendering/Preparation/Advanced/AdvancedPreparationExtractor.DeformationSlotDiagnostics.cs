@@ -125,6 +125,7 @@ public sealed partial class AdvancedPreparationExtractor
                 totals.Append(" prep.").Append(reason).Append('=').Append(count);
         }
         XREngine.Rendering.Commands.AdvancedTextureSourceMismatchDiagnostics.AppendTotals(totals);
+        AppendDeformationLevelSummary(totals);
 
         Debug.WriteAuxiliaryLog(
             DeformationSlotDiagnosticsLogFileName,

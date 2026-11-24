@@ -24,9 +24,19 @@ public class UnitTestingRenderSettings
 
     /// <summary>
     /// Sets the <c>AdvancedSkinnedVirtualGeometry</c> engine setting: with <see cref="VirtualGeometry"/>
-    /// on, skinned meshlet draws also get the cluster cut. False (the default) keeps them at full detail.
+    /// on, skinned meshlet draws also get the cluster cut. True (the default) matches the engine
+    /// default; false keeps skinned draws at full detail.
     /// </summary>
-    public bool SkinnedVirtualGeometry { get; set; }
+    public bool SkinnedVirtualGeometry { get; set; } = true;
+
+    /// <summary>
+    /// Sets the <c>AdvancedSkinnedPosedClusterBounds</c> engine setting: with
+    /// <see cref="SkinnedVirtualGeometry"/> on, true (the default) bounds each skinned cluster group
+    /// by its posed bone box, so distant parts of a skinned draw get coarser clusters and clusters
+    /// outside the view are culled; false uses one distance per skinned draw and culls no skinned
+    /// cluster.
+    /// </summary>
+    public bool SkinnedPosedClusterBounds { get; set; } = true;
 
     /// <summary>
     /// Sets the <c>AdvancedSkinnedDeformationLod</c> engine setting: with <see cref="SkinnedVirtualGeometry"/>
@@ -40,6 +50,20 @@ public class UnitTestingRenderSettings
     /// threshold in render pixels of projected error.
     /// </summary>
     public float VirtualGeometryPixelThreshold { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Sets the <c>AdvancedGeometryPages</c> engine setting: with <see cref="VirtualGeometry"/> on,
+    /// models imported with geometry pages (<c>GenerateStreamingPages</c>) draw their clusters from
+    /// the pages. False (the default) draws from the meshlet tables.
+    /// </summary>
+    public bool GeometryPages { get; set; }
+
+    /// <summary>
+    /// Sets the <c>AdvancedGeometryStreaming</c> engine setting: with <see cref="GeometryPages"/> on,
+    /// static paged models keep only their root pages resident and stream the finer pages that the
+    /// cluster cut requests. False (the default) keeps every page resident.
+    /// </summary>
+    public bool GeometryStreaming { get; set; }
     public UnitTestingOpenGLRenderSettings OpenGL { get; set; } = new();
     public UnitTestingVulkanRenderSettings Vulkan { get; set; } = new();
 }

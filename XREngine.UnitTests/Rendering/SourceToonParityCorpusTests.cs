@@ -189,11 +189,11 @@ public sealed class SourceToonParityCorpusTests
         string catalogPath = FindRepositoryFile(
             "XREngine.Editor",
             "Importers",
-            "Poiyomi",
+            "SourceToon",
             "Catalogs",
-            "poiyomi-toon-9.3.64.json");
+            "source-toon-9.3.64.json");
         string hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(catalogPath))).ToLowerInvariant();
-        hash.ShouldBe("d9ce662fed87308e0a841906d4e523032b24c629e66d2aa0de730755783fc663");
+        hash.ShouldBe("119ed2efb8f180d301eff81caac3227188d734147ca6dd81fe9ddc950e247a8f");
 
         using JsonDocument catalog = JsonDocument.Parse(File.ReadAllText(catalogPath));
         JsonElement[] properties = [.. catalog.RootElement.GetProperty("properties").EnumerateArray()];

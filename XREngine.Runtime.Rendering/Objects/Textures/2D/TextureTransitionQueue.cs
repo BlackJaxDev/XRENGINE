@@ -21,7 +21,8 @@ internal sealed class TextureTransitionQueue
         string reason,
         JobPriority priority,
         TextureUploadPriorityClass uploadPriorityClass,
-        out CancellationTokenSource? previousPendingLoadCts)
+        out CancellationTokenSource? previousPendingLoadCts,
+        bool requestDriven = false)
     {
         previousPendingLoadCts = null;
         lock (record.Sync)
@@ -30,6 +31,16 @@ internal sealed class TextureTransitionQueue
             // finalizer owns the native identity until that fence signals.
             if (record.PendingSparseTransitionResult is { ExposureDeferred: true })
                 return false;
+
+            // A request-driven promotion comes from a snapshot. A cancel can remove the request after
+            // the snapshot and before this point. The cancel writes the live request fields under this
+            // lock, so a check here admits only a promotion that a live request still needs. A cancel
+            // after this point sees the pending request-driven transition and cancels it.
+            if (requestDriven
+                && !TextureResidencyPolicy.RequestCoversTarget(record.RequestedMaxDimension, record.PreviewReady, pendingMaxDimension))
+            {
+                return false;
+            }
 
             previousPendingLoadCts = record.PendingLoadCts;
             record.PendingLoadCts = cts;
@@ -44,6 +55,7 @@ internal sealed class TextureTransitionQueue
             record.PendingTransitionReason = reason;
             record.PendingTransitionPriority = priority;
             record.PendingTransitionUploadPriorityClass = uploadPriorityClass;
+            record.PendingTransitionRequestDriven = requestDriven;
             record.PendingSparseTransitionRequest = default;
             record.PendingSparseTransitionResult = null;
             record.UploadGeneration++;
@@ -93,6 +105,7 @@ internal sealed class TextureTransitionQueue
         record.PendingTransitionReason = string.Empty;
         record.PendingTransitionPriority = JobPriority.Low;
         record.PendingTransitionUploadPriorityClass = TextureUploadPriorityClass.Background;
+        record.PendingTransitionRequestDriven = false;
     }
 
     public static void CancelPendingLoad(CancellationTokenSource? cts)

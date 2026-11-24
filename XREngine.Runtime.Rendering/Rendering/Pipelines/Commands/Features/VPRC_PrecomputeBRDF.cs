@@ -4,6 +4,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 
 /// <summary>Initializes this pipeline's GPU BRDF lookup before PBR consumers run.</summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
 public sealed class VPRC_PrecomputeBRDF : ViewportRenderCommand
 {
     protected override void Execute()
@@ -19,7 +20,8 @@ public sealed class VPRC_PrecomputeBRDF : ViewportRenderCommand
                 return;
         }
 
-        if (ParentPipeline?.TryGetRenderPassIndex(nameof(VPRC_PrecomputeBRDF), out int passIndex) != true)
+        int passIndex = ResolveActiveRenderGraphPassIndex(nameof(VPRC_PrecomputeBRDF));
+        if (passIndex == int.MinValue)
         {
             Debug.RenderingWarningEvery("BRDF.MissingPassMetadata", TimeSpan.FromSeconds(5),
                 "BRDF lookup initialization requires its declared graphics pass.");

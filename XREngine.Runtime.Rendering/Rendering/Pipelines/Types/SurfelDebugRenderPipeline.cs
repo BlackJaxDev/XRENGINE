@@ -47,6 +47,7 @@ public enum ESurfelDebugVisualization
 /// A minimal render pipeline for debugging and visualizing SurfelGI information.
 /// Supports visualization of transform IDs and surfel positions without post-processing overhead.
 /// </summary>
+[RenderPipelineScriptBase("SurfelDebug")]
 public sealed class SurfelDebugRenderPipeline : RenderPipeline
 {
     public const string SceneShaderPath = "Scene3D";
@@ -202,6 +203,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
     {
         ViewportRenderCommandContainer container = new(this);
         var ifElse = container.Add<VPRC_IfElse>();
+        ifElse.Label = "Viewport or FBO target";
         ifElse.ConditionEvaluator = () => State.WindowViewport is not null
             && RuntimeEngine.Rendering.State.RenderingTargetOutputFBO is null;
         ifElse.TrueCommands = CreateViewportTargetCommands();
@@ -276,6 +278,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
 
             // Visualization selection
             var visualizationSwitch = c.Add<VPRC_Switch>();
+            visualizationSwitch.Label = "Visualization mode";
             visualizationSwitch.SwitchEvaluator = () => (int)VisualizationMode;
             visualizationSwitch.Cases = new Dictionary<int, ViewportRenderCommandContainer>
             {
@@ -296,6 +299,7 @@ public sealed class SurfelDebugRenderPipeline : RenderPipeline
             using (c.AddUsing<VPRC_BindOutputFBO>())
             {
                 var outputChoice = c.Add<VPRC_Switch>();
+                outputChoice.Label = "Visualization output";
                 outputChoice.SwitchEvaluator = () => (int)VisualizationMode;
                 outputChoice.Cases = new Dictionary<int, ViewportRenderCommandContainer>
                 {

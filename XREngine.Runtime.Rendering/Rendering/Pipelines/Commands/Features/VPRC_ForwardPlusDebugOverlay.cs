@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// camera component UI without rebuilding the command chain.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
 public sealed class VPRC_ForwardPlusDebugOverlay : ViewportRenderCommand
 {
     // GLSL fragment shader. Uses one input vertex attribute (FragPos) like the other
@@ -194,6 +195,7 @@ void main()
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
 
+    [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
     public string? DestinationFBOName { get; set; }
 
     public override string GpuProfilingName

@@ -81,9 +81,11 @@ public static partial class EditorUnitTests
                 }
                 else
                 {
+                    // The clones share the template textures. A copied texture keeps the loading
+                    // placeholder that it had at clone time and never streams.
                     root = slotParent is null
-                        ? SceneNodePrefabUtility.CloneHierarchy(template)
-                        : SceneNodePrefabUtility.CloneHierarchyAttached(template, slot);
+                        ? SceneNodePrefabUtility.CloneHierarchy(template, shareTextures: true)
+                        : SceneNodePrefabUtility.CloneHierarchyAttached(template, slot, shareTextures: true);
                     root.Name = $"{template.Name} Crowd {index + 1}";
                     if (slotParent is null)
                         root.Parent = slot;
@@ -109,8 +111,8 @@ public static partial class EditorUnitTests
         /// <summary>
         /// Builds the crowd on a long-running worker thread and then calls <paramref name="onAppThread"/>
         /// on the app thread with the avatars and their detached slot nodes. Each clone is a full
-        /// serializer copy of the avatar and can take more than a minute for a large avatar. On the app
-        /// thread, twelve clones stop scene updates for many minutes and the desktop frame stops presenting.
+        /// serializer copy of the avatar and can take many seconds for a large avatar. On the app
+        /// thread, twelve clones would stop scene updates and the desktop frame would stop presenting.
         /// The template and the clones are not attached to a scene or world while the worker runs, so no
         /// other thread reads or changes them. The callback attaches the slot nodes.
         /// </summary>

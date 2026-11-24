@@ -243,7 +243,7 @@ float3 XR_ADV_AuthoredTexturedNormal(uint word, XRAdvancedSurface surface)
             heights[4], heights[5], heights[6], heights[7], controls.y);
     }
     else sample = authoredTexturedRgbNormal(XR_ADV_SampleTexture2DGrad(reference,
-        surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy).rgb);
+        surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy));
     return authoredTexturedMappedNormal(sample, surface.shadingNormal, surface.tangent, surface.bitangent,
         surface.worldPositionDx, surface.worldPositionDy, surface.texCoord0Dx, surface.texCoord0Dy);
 }

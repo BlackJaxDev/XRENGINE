@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using XREngine.Rendering.Meshlets;
 
 namespace XREngine.Rendering.Commands;
 
@@ -59,6 +60,33 @@ public sealed class AdvancedGeometryDatabase
     public AdvancedImmutableByteArena MeshletVertexIndexArena { get; }
 
     public AdvancedImmutableByteArena MeshletTriangleWordArena { get; }
+
+    /// <summary>
+    /// The pool slots and page table of the geometries that draw from geometry pages
+    /// (<see cref="EAdvancedGeometryFlags.StreamedPages"/>). The publisher reserves pages when it
+    /// registers such a geometry and retires them with the geometry record.
+    /// </summary>
+    public AdvancedGeometryPagePool PagePool { get; } = new();
+
+    /// <summary>
+    /// The geometry page feedback of completed GPU frames. The backend adds each frame after the
+    /// GPU finishes it, and the publisher drains it into <see cref="StreamingManager"/> before each
+    /// streaming update.
+    /// </summary>
+    public MeshletPageFeedbackQueue StreamingFeedback { get; } = new();
+
+    /// <summary>
+    /// The residency manager of the streamed geometry pages, or null until the publisher registers
+    /// the first streamed geometry (see <see cref="GetOrCreateStreamingManager"/>).
+    /// </summary>
+    public MeshletPageStreamingManager? StreamingManager { get; private set; }
+
+    /// <summary>
+    /// Returns the residency manager of <see cref="PagePool"/>, and creates it with
+    /// <paramref name="policy"/> on the first call. Only the publisher thread calls it.
+    /// </summary>
+    public MeshletPageStreamingManager GetOrCreateStreamingManager(MeshletPageResidencyPolicy policy)
+        => StreamingManager ??= new MeshletPageStreamingManager(PagePool, policy);
 
     public bool TryAddStatic(
         ReadOnlySpan<byte> vertices,
@@ -704,6 +732,7 @@ public sealed class AdvancedGeometryDatabase
             Residency = EAdvancedGeometryResidency.Resident,
             MissingBehavior = EAdvancedMissingGeometryBehavior.SkipDraw,
             CookedLayoutVersion = registration.CookedLayoutVersion,
+            Flags = (uint)registration.GeometryFlags,
         };
 
     /// <summary>
@@ -715,7 +744,15 @@ public sealed class AdvancedGeometryDatabase
     private static bool ValidateClusterHierarchy(in AdvancedGeometryRegistration registration, int triangleWordCount)
     {
         if (registration.ClusterLevel0Count == 0u)
-            return registration.ClusterHierarchyWordOffset == 0u;
+            return registration.ClusterHierarchyWordOffset == 0u &&
+                (registration.GeometryFlags & EAdvancedGeometryFlags.StreamedPages) == 0;
+
+        // A geometry with geometry pages has the stream header and the skin header before its
+        // cluster records.
+        if ((registration.GeometryFlags & EAdvancedGeometryFlags.StreamedPages) != 0 &&
+            registration.ClusterHierarchyWordOffset <
+                AdvancedPublishedMeshletLayout.StreamHeaderWords + AdvancedPublishedMeshletLayout.SkinHeaderWords)
+            return false;
 
         return registration.ClusterLevel0Count <= registration.MeshletCount &&
             (ulong)registration.ClusterHierarchyWordOffset +

@@ -9,6 +9,8 @@
 // XR_ADV_TASK_MESHLETS_PER_GROUP is defined in VisibilityInterface.glslinc,
 // because the preparation shaders also use it.
 
+#include "Advanced/Visibility/VisibilityStreamedGeometry.glslinc"
+
 // Task-to-mesh payload: the visibility payload row and the surviving global
 // meshlet indices in lane order. 132 bytes.
 struct XRAdvancedVisibilityTaskPayload
@@ -141,6 +143,30 @@ uint XR_ADV_ClassifyVisibilityMeshlet(
     return XR_ADV_MESHLET_CULL_NONE;
 }
 
+// Loads the descriptor of one meshlet of a draw. A geometry with geometry pages
+// reads it from the page of the cluster; another geometry reads the meshlet
+// descriptor table. The caller has checked that meshletIndex is inside the
+// draw's meshlet range and the descriptor table. Returns false when the page
+// data is not readable.
+bool XR_ADV_LoadDrawMeshlet(
+    XRAdvancedGeometryRecord geometry,
+    XRAdvancedStreamedGeometry streamed,
+    uint meshletIndex,
+    out XRAdvancedVisibilityMeshletDescriptor meshlet)
+{
+    if (!streamed.valid)
+    {
+        meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
+        return true;
+    }
+    XRAdvancedStreamedCluster cluster;
+    bool loaded = XR_ADV_LoadStreamedCluster(
+        streamed, meshletIndex - min(meshletIndex, geometry.meshletFirst), cluster) &&
+        meshletIndex >= geometry.meshletFirst;
+    meshlet = cluster.descriptor;
+    return loaded;
+}
+
 // The meshlet history of a view is trusted only while the view has temporal
 // history. A camera cut, a teleport or a first frame clears that flag, so the
 // early task stage then draws every frustum and cone survivor of its draws.
@@ -247,19 +273,36 @@ bool XR_ADV_MeshletSphereOccluded(vec4 sphere, XRAdvancedViewRecord view)
 // locked group borders make the cut crack free.
 //
 // Skinned draws (XR_ADV_CLUSTER_LOD_CUT_SKINNED): the cooked group spheres are
-// bind pose, so they do not bound the posed clusters. Every group of a skinned
-// draw instead uses one distance for the whole draw: the distance from the
-// nearer eye to the draw's posed bounding spheres (instance record and
-// visibility candidate), less the blendshape margin. One distance with errors that grow from
-// child to parent keeps the cut consistent, so it stays crack free. The bound is
-// per draw, not per cluster, so a large draw refines everywhere as its nearest
-// part does.
+// bind pose, so they do not bound the posed clusters. A skinned draw whose GPU
+// deformation ran this frame and whose geometry has skin tables bounds each
+// group by its posed box: the group's bind sphere (plus the blendshape margin)
+// moved by each bone of the group's bone list (world-space palette rows), with
+// the box around the moved spheres. A linearly blended vertex lies in the
+// convex hull of its bones' moved positions, and the box (convex) holds that
+// hull. A group's bone list holds the lists of the groups below it and the
+// cooked spheres grow from child to parent, so the box of a parent holds the
+// box of each child: the distance to the box never grows from child to parent,
+// and the cut stays consistent and crack free. Other skinned draws use one
+// distance for the whole draw: the distance from the nearer eye to the draw's
+// posed bounding spheres (instance record and visibility candidate), less the
+// blendshape margin.
 #define XR_ADV_MESHLET_CULL_LOD 6u
 #ifndef XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD
 #define XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD 1.0
 #endif
+// The ideal cut of geometry streaming uses the threshold times this factor. A
+// smaller factor asks for finer pages earlier.
+#ifndef XR_ADV_STREAMING_PREFETCH
+#define XR_ADV_STREAMING_PREFETCH 0.5
+#endif
 #define XR_ADV_CLUSTER_RECORD_WORDS 2u
 #define XR_ADV_CLUSTER_GROUP_RECORD_WORDS 8u
+// Cluster skin record: bone list offset (relative to the cluster records) and
+// bone count (low 16 bits; the cook's flags in the high 16 bits).
+#define XR_ADV_CLUSTER_SKIN_RECORD_WORDS 2u
+// Longest bone list that one posed bound evaluates; a longer list is treated
+// as unreadable.
+#define XR_ADV_SKINNED_BOUND_MAX_BONES 1024u
 #define XR_ADV_CLUSTER_VIEW_FLAG_STEREO_LEFT (1u << 2u)
 #define XR_ADV_CLUSTER_VIEW_FLAG_STEREO_RIGHT (1u << 3u)
 
@@ -277,12 +320,19 @@ struct XRAdvancedClusterCutState
     float pixelScale;
     float nearDistance;
     // Distance from the eye to the draw bound that every group of a skinned
-    // draw uses. Negative: each group uses its own sphere (static draws).
+    // draw uses. Negative: each group uses its own sphere (static draws) or its
+    // posed box (posed skinned draws).
     float sharedDistance;
     // Minimum cluster level of a skinned draw whose deformation job deformed
     // only the vertices of this level and coarser. Groups finer than this level
     // count as refined enough. Zero: no clamp.
     uint clampLevel;
+    // Posed skinned draw: groups and clusters use posed boxes from the skin
+    // tables and the palette rows that start at matrix paletteMatrixBase.
+    bool posed;
+    uint skinRecordWordBase;
+    uint paletteMatrixBase;
+    float margin;
 };
 
 // Pixels for one world unit of error at distance 1 for one view: the larger
@@ -309,13 +359,15 @@ uint XR_ADV_ClusterCutPartnerView(uint viewIndex, uint viewFlags)
     return viewIndex;
 }
 
-// Builds the cut state of one draw. The cut is active only for a static
-// meshlet draw (or, with XR_ADV_CLUSTER_LOD_CUT_SKINNED, a skinned meshlet
-// draw) of a hierarchy geometry whose tables fit in the triangle-word table.
-// Without it the draw keeps every meshlet of its payload range. A skinned draw
-// also needs XR_ADV_ClusterCutUseDrawBound.
-XRAdvancedClusterCutState XR_ADV_ClusterCutState(
-    XRAdvancedGpuHandle geometryHandle,
+// Builds the cut state of one draw from its geometry record. The cut is active
+// only for a static meshlet draw (or, with XR_ADV_CLUSTER_LOD_CUT_SKINNED, a
+// skinned meshlet draw) of a hierarchy geometry whose tables fit in the
+// triangle-word table. Without it the draw keeps every meshlet of its payload
+// range. A skinned draw also needs XR_ADV_ClusterCutUseDrawBound.
+// geometryValid is false when the draw's geometry handle did not resolve.
+XRAdvancedClusterCutState XR_ADV_ClusterCutStateForGeometry(
+    XRAdvancedGeometryRecord geometry,
+    bool geometryValid,
     uint producer,
     uint viewIndex,
     XRAdvancedViewRecord view)
@@ -333,6 +385,10 @@ XRAdvancedClusterCutState XR_ADV_ClusterCutState(
     cut.nearDistance = max(view.cameraPositionAndNear.w, 1.0e-4);
     cut.sharedDistance = -1.0;
     cut.clampLevel = 0u;
+    cut.posed = false;
+    cut.skinRecordWordBase = 0u;
+    cut.paletteMatrixBase = 0u;
+    cut.margin = 0.0;
 #if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
     if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
         producer != XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
@@ -341,11 +397,8 @@ XRAdvancedClusterCutState XR_ADV_ClusterCutState(
     if (producer != XR_ADV_VIS_PRODUCER_STATIC_MESHLET)
         return cut;
 #endif
-    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
-        geometryHandle, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
-    if (geometryDense == XR_ADV_INVALID_DENSE_INDEX)
+    if (!geometryValid)
         return cut;
-    XRAdvancedGeometryRecord geometry = XR_ADV_LoadGeometry(geometryDense);
     if (geometry.reservedLayout0 == 0u || geometry.reservedLayout0 > geometry.meshletCount)
         return cut;
     uint clusterWordBase = geometry.meshletTriangleWords.elementOffset + geometry.reservedLayout1;
@@ -365,6 +418,23 @@ XRAdvancedClusterCutState XR_ADV_ClusterCutState(
     cut.eye1 = XR_ADV_Views.records[partner].cameraPositionAndNear.xyz;
     cut.pixelScale = max(XR_ADV_ClusterCutPixelScale(viewIndex), XR_ADV_ClusterCutPixelScale(partner));
     return cut;
+}
+
+// Builds the cut state of one draw from its geometry handle. See
+// XR_ADV_ClusterCutStateForGeometry.
+XRAdvancedClusterCutState XR_ADV_ClusterCutState(
+    XRAdvancedGpuHandle geometryHandle,
+    uint producer,
+    uint viewIndex,
+    XRAdvancedViewRecord view)
+{
+    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+        geometryHandle, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
+    bool geometryValid = geometryDense != XR_ADV_INVALID_DENSE_INDEX;
+    XRAdvancedGeometryRecord geometry;
+    if (geometryValid)
+        geometry = XR_ADV_LoadGeometry(geometryDense);
+    return XR_ADV_ClusterCutStateForGeometry(geometry, geometryValid, producer, viewIndex, view);
 }
 
 #if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
@@ -409,6 +479,7 @@ void XR_ADV_ClusterCutUseDrawBound(
 
     cut.sharedDistance = cut.nearDistance;
     float nearest = -1.0;
+    bool deformedThisFrame = false;
     uint drawDense = XR_ADV_ResolveVisibilityHandle(
         payload.draw, VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
     if (drawDense != XR_ADV_INVALID_DENSE_INDEX)
@@ -418,6 +489,10 @@ void XR_ADV_ClusterCutUseDrawBound(
             drawRecord.instance, VisibilityInstanceLookupSegment, XR_ADV_DIAGNOSTIC_INSTANCE);
         if (instanceDense != XR_ADV_INVALID_DENSE_INDEX)
             nearest = XR_ADV_ClusterCutSphereDistance(XR_ADV_LoadInstance(instanceDense).boundsSphere, cut);
+        // An active prepared deformation means the GPU skinned this draw this
+        // frame, so its palette rows and payload.paletteOffset are current.
+        XRAdvancedPreparedDrawDeformationRecord prepared;
+        deformedThisFrame = XR_ADV_TryLoadPreparedDrawDeformation(drawDense, drawRecord, prepared);
     }
 
     float margin = 0.0;
@@ -445,7 +520,122 @@ void XR_ADV_ClusterCutUseDrawBound(
     if (nearest < 0.0 || isnan(margin) || isinf(margin) || margin < 0.0 || margin >= 3.0e38)
         return;
     cut.sharedDistance = max(nearest - margin * draw.maxScale, cut.nearDistance);
+
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
+    // Posed path: the skin header (the word right before the cluster records)
+    // holds the offset of the cluster skin records, zero without skin tables.
+    uint wordCount = uint(XR_ADV_VisibilityMeshletTriangleWords.records.length());
+    if (!deformedThisFrame || cut.clusterWordBase == 0u || cut.clusterWordBase > wordCount)
+        return;
+    uint skinRelative = XR_ADV_VisibilityMeshletTriangleWords.records[cut.clusterWordBase - 1u];
+    uint skinBase = cut.clusterWordBase + skinRelative;
+    if (skinRelative == 0u || skinBase < cut.groupWordBase ||
+        skinBase + cut.geometryMeshletCount * XR_ADV_CLUSTER_SKIN_RECORD_WORDS > wordCount ||
+        payload.paletteOffset >= uint(XR_ADV_VisibilitySkinPalettes.rows.length()) / 3u)
+        return;
+    cut.posed = true;
+    cut.sharedDistance = -1.0;
+    cut.skinRecordWordBase = skinBase;
+    cut.paletteMatrixBase = payload.paletteOffset;
+    cut.margin = margin;
+#endif
 }
+
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
+// Box (world space) around a bind sphere moved by each bone of one bone list,
+// and the largest axis scale of those bones. A list with no bones uses the
+// draw's identity matrix (palette matrix 0). The radius grows by the
+// blendshape margin before the move. Returns false when the list or a palette
+// row lies outside its table, or the list is longer than the loop limit.
+bool XR_ADV_SkinnedBoneListBox(
+    uint listWord,
+    uint boneCount,
+    vec4 bindSphere,
+    XRAdvancedClusterCutState cut,
+    out vec3 boxMinimum,
+    out vec3 boxMaximum,
+    out float maxScale)
+{
+    boxMinimum = vec3(3.402823e38);
+    boxMaximum = vec3(-3.402823e38);
+    maxScale = 0.0;
+    uint wordCount = uint(XR_ADV_VisibilityMeshletTriangleWords.records.length());
+    uint rowCount = uint(XR_ADV_VisibilitySkinPalettes.rows.length());
+    if (boneCount > XR_ADV_SKINNED_BOUND_MAX_BONES ||
+        listWord + boneCount < listWord || listWord + boneCount > wordCount ||
+        any(isnan(bindSphere)) || any(isinf(bindSphere)) || bindSphere.w < 0.0)
+        return false;
+    float radius = bindSphere.w + cut.margin;
+    vec4 center = vec4(bindSphere.xyz, 1.0);
+    uint loopCount = max(boneCount, 1u);
+    for (uint i = 0u; i < loopCount; ++i)
+    {
+        uint matrixIndex = cut.paletteMatrixBase +
+            (boneCount == 0u ? 0u : XR_ADV_VisibilityMeshletTriangleWords.records[listWord + i] + 1u);
+        uint row = matrixIndex * 3u;
+        if (matrixIndex < cut.paletteMatrixBase || row + 2u >= rowCount)
+            return false;
+        vec4 row0 = XR_ADV_VisibilitySkinPalettes.rows[row + 0u];
+        vec4 row1 = XR_ADV_VisibilitySkinPalettes.rows[row + 1u];
+        vec4 row2 = XR_ADV_VisibilitySkinPalettes.rows[row + 2u];
+        vec3 moved = vec3(dot(row0, center), dot(row1, center), dot(row2, center));
+        // Upper bound of the largest singular value of the 3x3 part A (columns
+        // c0, c1, c2): Gershgorin on A^T A gives
+        // sigma_max^2 <= max_i(|c_i|^2 + sum_{j != i} |c_i . c_j|).
+        // It is exact for translate-rotate-scale matrices (the columns are
+        // orthogonal) and stays conservative when a matrix has shear.
+        vec3 column0 = vec3(row0.x, row1.x, row2.x);
+        vec3 column1 = vec3(row0.y, row1.y, row2.y);
+        vec3 column2 = vec3(row0.z, row1.z, row2.z);
+        float d01 = abs(dot(column0, column1));
+        float d02 = abs(dot(column0, column2));
+        float d12 = abs(dot(column1, column2));
+        float scale = sqrt(max(max(
+            dot(column0, column0) + d01 + d02,
+            dot(column1, column1) + d01 + d12),
+            dot(column2, column2) + d02 + d12));
+        if (any(isnan(moved)) || any(isinf(moved)) || isnan(scale) || isinf(scale))
+            return false;
+        boxMinimum = min(boxMinimum, moved - vec3(radius * scale));
+        boxMaximum = max(boxMaximum, moved + vec3(radius * scale));
+        maxScale = max(maxScale, scale);
+    }
+    return true;
+}
+
+// Distance from the nearer eye to a world box (zero inside it).
+float XR_ADV_ClusterCutBoxDistance(vec3 boxMinimum, vec3 boxMaximum, XRAdvancedClusterCutState cut)
+{
+    vec3 outside0 = max(max(boxMinimum - cut.eye0, cut.eye0 - boxMaximum), vec3(0.0));
+    vec3 outside1 = max(max(boxMinimum - cut.eye1, cut.eye1 - boxMaximum), vec3(0.0));
+    return min(length(outside0), length(outside1));
+}
+
+// The posed world sphere around one skinned cluster: its bind sphere moved by
+// the cluster's own bones (cluster skin record). False when the record or a
+// palette row is unreadable; the caller then keeps the cluster.
+bool XR_ADV_SkinnedClusterWorldSphere(
+    uint meshletIndex,
+    vec4 bindSphere,
+    XRAdvancedClusterCutState cut,
+    out vec4 sphere)
+{
+    sphere = vec4(0.0);
+    uint cluster = meshletIndex - cut.geometryMeshletFirst;
+    if (!cut.posed || meshletIndex < cut.geometryMeshletFirst || cluster >= cut.geometryMeshletCount)
+        return false;
+    uint recordWord = cut.skinRecordWordBase + cluster * XR_ADV_CLUSTER_SKIN_RECORD_WORDS;
+    uint listWord = cut.clusterWordBase + XR_ADV_VisibilityMeshletTriangleWords.records[recordWord + 0u];
+    uint boneCount = XR_ADV_VisibilityMeshletTriangleWords.records[recordWord + 1u] & 0xFFFFu;
+    vec3 boxMinimum;
+    vec3 boxMaximum;
+    float maxScale;
+    if (!XR_ADV_SkinnedBoneListBox(listWord, boneCount, bindSphere, cut, boxMinimum, boxMaximum, maxScale))
+        return false;
+    sphere = vec4((boxMinimum + boxMaximum) * 0.5, length(boxMaximum - boxMinimum) * 0.5);
+    return true;
+}
+#endif
 #endif
 
 // Projected error in render pixels of one group's simplified bound. The bound
@@ -477,6 +667,25 @@ float XR_ADV_ClusterGroupProjectedError(
     if (cut.clampLevel != 0u &&
         XR_ADV_VisibilityMeshletTriangleWords.records[word + 5u] < cut.clampLevel)
         return 0.0;
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
+    if (cut.posed)
+    {
+        // Group record words 6 and 7: bone list offset (relative to the
+        // cluster records) and bone count. The error is in mesh units, so the
+        // largest bone scale converts it to world units.
+        if (word + 8u > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()))
+            return 3.402823e38;
+        uint listWord = cut.clusterWordBase + XR_ADV_VisibilityMeshletTriangleWords.records[word + 6u];
+        uint boneCount = XR_ADV_VisibilityMeshletTriangleWords.records[word + 7u];
+        vec3 boxMinimum;
+        vec3 boxMaximum;
+        float boneScale;
+        if (!XR_ADV_SkinnedBoneListBox(listWord, boneCount, sphere, cut, boxMinimum, boxMaximum, boneScale))
+            return 3.402823e38;
+        return error * boneScale * cut.pixelScale /
+            max(XR_ADV_ClusterCutBoxDistance(boxMinimum, boxMaximum, cut), cut.nearDistance);
+    }
+#endif
     if (cut.sharedDistance >= 0.0)
         return error * draw.maxScale * cut.pixelScale / max(cut.sharedDistance, cut.nearDistance);
     vec3 center = (vec4(sphere.xyz, 1.0) * draw.world).xyz;
@@ -505,6 +714,116 @@ bool XR_ADV_ClusterInCut(
         return false;
     return refined < 0 ||
         XR_ADV_ClusterGroupProjectedError(uint(refined), cut, draw) <= threshold;
+}
+
+// The result of the streamed cut for one cluster of a geometry that draws from
+// geometry pages.
+struct XRAdvancedStreamedCutResult
+{
+    // The cluster is in the cut with residency: draw it.
+    bool draw;
+    // The page of the cluster's group is in the ideal cut, not resident, and
+    // its group sphere is in the view frustum: request it.
+    bool request;
+    // The page of the cluster's group is resident and drawn or in the ideal
+    // cut: set its touch bit.
+    bool touch;
+    uint groupPage;
+    uint groupSlot;
+    uint band;
+    uint priority;
+    float pixelScale;
+};
+
+// The cut of a geometry with geometry pages. With R(G) true when the page of
+// group G is resident and err(G) the projected error, the cluster draws when
+//   R(group) && err(group) > t && (refined < 0 || err(refined) <= t || !R(refined)).
+// A parent cluster therefore stays drawn while the finer group that it was made
+// from is not resident. Residency is closed toward the roots (a resident page
+// has resident dependencies, and root pages are always resident), so exactly
+// one cluster covers each point of the mesh. When every page is resident, the
+// rule is the same as XR_ADV_ClusterInCut.
+//
+// The ideal cut is the cut with every page resident, at the prefetch threshold
+// tp = t * XR_ADV_STREAMING_PREFETCH:
+//   err(group) > tp && (refined < 0 || err(refined) <= tp).
+// A cluster in the ideal cut requests the page of its group when that page is
+// not resident, and touches the slot of its group when it is. The band is
+// foreground when err(group) > t, because the cover that draws now has at least
+// that error, and prefetch otherwise. The priority is err(group) / t in 1/64
+// steps. The pixel scale is the projected error of one unit of mesh-space
+// error for this group, so the CPU can rank the dependencies of the page.
+XRAdvancedStreamedCutResult XR_ADV_StreamedClusterCut(
+    uint meshletIndex,
+    XRAdvancedClusterCutState cut,
+    XRAdvancedMeshletDrawCullState draw,
+    XRAdvancedStreamedGeometry streamed,
+    XRAdvancedViewRecord view)
+{
+    XRAdvancedStreamedCutResult result;
+    result.draw = false;
+    result.request = false;
+    result.touch = false;
+    result.groupPage = XR_ADV_PAGE_NOT_RESIDENT;
+    result.groupSlot = XR_ADV_PAGE_NOT_RESIDENT;
+    result.band = XR_ADV_STREAMING_BAND_PREFETCH;
+    result.priority = 0u;
+    result.pixelScale = 0.0;
+
+    // A streamed cluster with an unreadable record draws nothing: its level-0
+    // page may not be resident, so the level-0 rule of XR_ADV_ClusterInCut does
+    // not apply.
+    uint cluster = meshletIndex - cut.geometryMeshletFirst;
+    uint recordWord = cut.clusterWordBase + cluster * XR_ADV_CLUSTER_RECORD_WORDS;
+    if (meshletIndex < cut.geometryMeshletFirst || cluster >= cut.geometryMeshletCount ||
+        recordWord + 2u > cut.groupWordBase)
+        return result;
+    uint group = XR_ADV_VisibilityMeshletTriangleWords.records[recordWord + 0u];
+    int refined = int(XR_ADV_VisibilityMeshletTriangleWords.records[recordWord + 1u]);
+
+    result.groupPage = XR_ADV_StreamedClusterGlobalPage(streamed, cluster);
+    result.groupSlot = XR_ADV_StreamedPageSlot(result.groupPage);
+    bool groupResident = result.groupSlot != XR_ADV_PAGE_NOT_RESIDENT;
+
+    const float threshold = float(XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD);
+    const float prefetchThreshold = threshold * float(XR_ADV_STREAMING_PREFETCH);
+    float groupError = XR_ADV_ClusterGroupProjectedError(group, cut, draw);
+    float refinedError = 0.0;
+    bool refinedResident = false;
+    if (refined >= 0)
+    {
+        refinedError = XR_ADV_ClusterGroupProjectedError(uint(refined), cut, draw);
+        refinedResident = XR_ADV_StreamedPageSlot(
+            XR_ADV_StreamedGroupGlobalPage(streamed, uint(refined))) != XR_ADV_PAGE_NOT_RESIDENT;
+    }
+
+    result.draw = groupResident && groupError > threshold &&
+        (refined < 0 || refinedError <= threshold || !refinedResident);
+    bool ideal = groupError > prefetchThreshold &&
+        (refined < 0 || refinedError <= prefetchThreshold);
+    result.touch = groupResident && (result.draw || ideal);
+    if (!ideal || groupResident || result.groupPage == XR_ADV_PAGE_NOT_RESIDENT)
+        return result;
+
+    // Request only for a group sphere in the view frustum.
+    uint word = cut.groupWordBase + group * XR_ADV_CLUSTER_GROUP_RECORD_WORDS;
+    if (word + 5u > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()))
+        return result;
+    vec4 sphere = vec4(
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 0u]),
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 1u]),
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 2u]),
+        uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 3u]));
+    float meshError = uintBitsToFloat(XR_ADV_VisibilityMeshletTriangleWords.records[word + 4u]);
+    vec4 worldSphere = vec4((vec4(sphere.xyz, 1.0) * draw.world).xyz, sphere.w * draw.maxScale);
+    if (!XR_ADV_MeshletSphereInsideFrustum(worldSphere, view.viewProjectionUnjittered))
+        return result;
+
+    result.request = true;
+    result.band = groupError > threshold ? XR_ADV_STREAMING_BAND_FOREGROUND : XR_ADV_STREAMING_BAND_PREFETCH;
+    result.priority = uint(clamp(groupError / threshold * 64.0, 0.0, 65535.0));
+    result.pixelScale = meshError > 0.0 && meshError < 3.0e38 ? groupError / meshError : 0.0;
+    return result;
 }
 #endif
 

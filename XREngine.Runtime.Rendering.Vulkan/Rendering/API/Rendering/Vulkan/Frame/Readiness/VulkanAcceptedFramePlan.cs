@@ -18,6 +18,15 @@ internal sealed class VulkanAcceptedFramePlan
     internal const int MainSceneCapacity = 8192;
     internal const int ShadowCapacity = 4096;
     internal const int UploadCapacity = 4096;
+    /// <summary>
+    /// The maximum number of distinct textures that one accepted frame can require: the
+    /// required-texture set and the required-upload manifest that is built from it. This is
+    /// separate from <see cref="UploadCapacity"/>, which counts upload operations. An Advanced
+    /// frame requires every texture of the canonical scene publication, and a crowd of 12
+    /// imported avatars publishes more than 10,000 textures. The value matches the row count that
+    /// the Vulkan Advanced resource descriptor arrays request.
+    /// </summary>
+    internal const int RequiredTextureCapacity = 65536;
     internal const int DependencyCapacity = 16384;
     private const int DependencyIndexCapacity = DependencyCapacity * 2;
     private const int DependencyIndexMask = DependencyIndexCapacity - 1;
@@ -29,7 +38,7 @@ internal sealed class VulkanAcceptedFramePlan
     private readonly FrameOp[] _staticOperations = new FrameOp[StaticCapacity];
     private readonly FrameOp[] _dynamicUiOperations = new FrameOp[UiCapacity];
     private readonly FrameOp[] _textureUploadOperations = new FrameOp[UploadCapacity];
-    private readonly VulkanRequiredTextureReferenceSet _requiredTextureSet = new(UploadCapacity);
+    private readonly VulkanRequiredTextureReferenceSet _requiredTextureSet = new(RequiredTextureCapacity);
     private readonly VulkanBindlessMaterialTextureReceipt[] _bindlessTextureReceipts =
         new VulkanBindlessMaterialTextureReceipt[UploadCapacity];
     private readonly GPUMaterialTextureReference[] _bindlessDescriptorReferences =

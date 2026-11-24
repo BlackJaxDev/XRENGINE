@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Numerics;
+using XREngine.Components;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
@@ -9,6 +10,7 @@ using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Gaussian.Baking;
 using XREngine.Rendering.Models.Gaussian.Baking.Views;
 using XREngine.Rendering.PostProcessing;
+using XREngine.Rendering.Residency;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
@@ -47,6 +49,7 @@ internal sealed class BakeViewCapture
     private readonly int _height;
     private readonly CancellationToken _cancellationToken;
     private readonly IBakeViewSink? _sink;
+    private readonly IReadOnlyList<TextureResidencyHandle>? _residencyHandles;
     private readonly TaskCompletionSource<float[][]> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly float[][] _views;
     private readonly Stopwatch _warmupTime = new();
@@ -69,7 +72,8 @@ internal sealed class BakeViewCapture
         int width,
         int height,
         CancellationToken cancellationToken,
-        IBakeViewSink? sink = null)
+        IBakeViewSink? sink = null,
+        IReadOnlyList<TextureResidencyHandle>? residencyHandles = null)
     {
         _world = world;
         _targets = targets;
@@ -80,6 +84,7 @@ internal sealed class BakeViewCapture
         _height = height;
         _cancellationToken = cancellationToken;
         _sink = sink;
+        _residencyHandles = residencyHandles;
         _views = sink is null ? new float[poses.Count][] : [];
     }
 
@@ -234,6 +239,8 @@ internal sealed class BakeViewCapture
         for (int i = 0; i < _targets.Length; i++)
         {
             RenderInfo3D target = _targets[i];
+            if (target.Owner is XRComponent { IsActiveInHierarchy: false })
+                continue;
             if (!target.IsVisible || !target.ShouldRender)
                 continue;
 
@@ -365,12 +372,30 @@ internal sealed class BakeViewCapture
     {
         pendingMeshes = 0;
         pendingPrograms = false;
+        bool pendingTextures = XRTexture2D.ActiveProgressiveUploadCount > 0 ||
+                               XRTexture2D.QueuedProgressiveUploadCount > 0 ||
+                               TextureResidencyRequests.Shared.AreStreamedTexturesImporting ||
+                               HasPendingResidencyHandles(_residencyHandles);
         if (!((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRendererStartupWarmupBackendCapability>(out var warmup) || warmup is null)
-            return false;
+            return pendingTextures;
 
         pendingMeshes = warmup.PendingStartupWorkCount;
         pendingPrograms = warmup.HasPendingAsyncPrograms;
-        return pendingMeshes > 0 || pendingPrograms;
+        return pendingMeshes > 0 || pendingPrograms || pendingTextures;
+    }
+
+    private static bool HasPendingResidencyHandles(IReadOnlyList<TextureResidencyHandle>? handles)
+    {
+        if (handles is null || handles.Count == 0)
+            return false;
+
+        for (int i = 0; i < handles.Count; i++)
+        {
+            if (handles[i].State == ETextureResidencyRequestState.Pending)
+                return true;
+        }
+
+        return false;
     }
 
     private static void FlipRows(float[] rgba, int width, int height)

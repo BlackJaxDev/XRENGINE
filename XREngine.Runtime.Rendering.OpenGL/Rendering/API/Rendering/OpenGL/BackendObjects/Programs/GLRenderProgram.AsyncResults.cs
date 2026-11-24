@@ -70,7 +70,7 @@ namespace XREngine.Rendering.OpenGL
                         continue;
                     }
 
-                    program.Link(nonBlocking: true);
+                    program.Link(nonBlocking: true, allowSynchronousFallbackFromPoll: true);
                     long now = Stopwatch.GetTimestamp();
                     if (!program.HasPendingAsyncWork)
                         program.UnregisterPendingAsyncProgram();

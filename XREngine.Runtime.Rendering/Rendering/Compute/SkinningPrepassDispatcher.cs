@@ -438,6 +438,53 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
     }
 
+    /// <summary>
+    /// Runs compute deformation for live surface splat emission and returns the deformed vertex buffers that this
+    /// render frame produced. The splat compute pass reads the skinned positions, normals, and tangents of each
+    /// submesh, so it needs output of the current frame, not output that an earlier frame left in the buffers.
+    /// </summary>
+    internal bool TryRunForLiveSurfaceSplats(
+        XRMeshRenderer renderer,
+        out XRMeshRenderer.SkinnedOutputResourceSnapshot outputs,
+        out string? diagnostic)
+    {
+        ArgumentNullException.ThrowIfNull(renderer);
+        outputs = default;
+        diagnostic = null;
+        if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
+        {
+            diagnostic = "The active backend does not expose canonical compute deformation buffers.";
+            return false;
+        }
+
+        DeformationInvocationScope invocationScope = ActiveProducerAttemptId == 0UL
+            ? PushDeformationInvocation()
+            : default;
+        using (invocationScope)
+        {
+            Run(renderer, forceSkinning: true, forceBlendshapes: true);
+
+            lock (_syncRoot)
+            {
+                if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
+                    !resources.HasCurrentFrameOutput(State.RenderFrameId))
+                {
+                    diagnostic = "Compute deformation did not produce output for the current render frame.";
+                    return false;
+                }
+
+                outputs = renderer.CaptureSkinnedOutputResources();
+                if (outputs.Positions is null && outputs.Interleaved is null)
+                {
+                    diagnostic = "Compute deformation output contains no position buffer.";
+                    return false;
+                }
+
+                return true;
+            }
+        }
+    }
+
     private sealed partial class RendererResources
     {
         /// <summary>History sequence of the frame that last dispatched changed input, or zero when it is not tracked.</summary>

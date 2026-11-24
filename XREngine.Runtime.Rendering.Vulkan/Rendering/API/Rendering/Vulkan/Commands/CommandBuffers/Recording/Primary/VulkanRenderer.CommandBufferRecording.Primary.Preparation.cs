@@ -529,6 +529,12 @@ namespace XREngine.Rendering.Vulkan
                             drawSlot,
                             prewarmReason);
                         frameDataManifest.End();
+                        // The program, buffers, or descriptors of one draw are not ready yet.
+                        // This is the same transient state that a draw-time preparation
+                        // failure reports, so it uses the same frame retry. An unclassified
+                        // failure latches a PresentNow renderer as terminal.
+                        recordingState.FailureKind =
+                            EVulkanCommandRecordingFailureKind.RetryFrame;
                         recordingState.RecordingDeferredReason =
                             $"Mesh frame-data reservation deferred before command recording for " +
                             $"mesh '{meshRenderer.Mesh?.Name ?? "<unnamed mesh>"}', slot {drawSlot}: {prewarmReason}";
@@ -2747,9 +2753,16 @@ namespace XREngine.Rendering.Vulkan
                 scratch, pipelineRetirementGeneration);
             if (pipelineVariantManifest.IsWarmForPipelineGeneration(
                     pipelineRetirementGeneration))
+            {
+                PrewarmDrawReadinessRequests(
+                    ref recordingState,
+                    pipelineVariantManifest,
+                    pendingRequirements: null,
+                    admissionComplete: true);
                 return TryAssociatePrimaryMeshTaskPipelines(
                     ref recordingState,
                     pipelineVariantManifest);
+            }
 
             HashSet<int> pendingRequirements =
                 scratch.PipelineDeferredRequirementIndices;
@@ -2785,6 +2798,7 @@ namespace XREngine.Rendering.Vulkan
                 scratch.PipelinePrewarmInitialScanComplete;
             int firstPendingRequirementIndex = -1;
             string firstPendingReason = string.Empty;
+            bool anyPendingNotRetryable = false;
             long sliceStart = Stopwatch.GetTimestamp();
             bool foregroundRequired =
                 recordingState.Policy.FreshSerialRecording &&
@@ -2807,7 +2821,7 @@ namespace XREngine.Rendering.Vulkan
                             pipelineVariantManifest.Requirements[
                                 requirementIndex],
                             out bool optionalDeferred,
-                            out _,
+                            out bool requirementRetryable,
                             out string pendingReason);
                         int opIndex = pipelineVariantManifest.Requirements[
                             requirementIndex].OpIndex;
@@ -2829,6 +2843,8 @@ namespace XREngine.Rendering.Vulkan
                         {
                             optionalRequirements.Remove(requirementIndex);
                             pendingRequirements.Add(requirementIndex);
+                            if (!requirementRetryable)
+                                anyPendingNotRetryable = true;
                             if (firstPendingRequirementIndex < 0)
                             {
                                 firstPendingRequirementIndex = requirementIndex;
@@ -2858,6 +2874,12 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.PipelineDeferredOperationIndices,
                 optionalRequirements,
                 pipelineVariantManifest);
+
+            PrewarmDrawReadinessRequests(
+                ref recordingState,
+                pipelineVariantManifest,
+                pendingRequirements,
+                initialScanComplete);
 
             if (!initialScanComplete || pendingRequirements.Count > 0)
             {
@@ -2900,6 +2922,15 @@ namespace XREngine.Rendering.Vulkan
                     pendingRequirements.Count,
                     firstPendingRequirementIndex,
                     firstPendingReason);
+                // A retryable pending pipeline is still compiling, or its shader or layout
+                // dependencies are being replaced after a material or program change. The next
+                // frame admits it again, so this is a frame retry. A pipeline that failed for
+                // a reason that a retry cannot clear needs a state change, as at the other
+                // admission sites. An unclassified failure latches a PresentNow renderer as
+                // terminal.
+                recordingState.FailureKind = anyPendingNotRetryable
+                    ? EVulkanCommandRecordingFailureKind.RecoverAfterStateChange
+                    : EVulkanCommandRecordingFailureKind.RetryFrame;
                 return false;
             }
 
@@ -3106,6 +3137,9 @@ namespace XREngine.Rendering.Vulkan
                     out string targetReason))
             {
                 optionalDeferred = !requirement.Required;
+                // The target is prepared again after a swapchain or framebuffer change, and the readiness
+                // watchdog bounds a retry that never clears, so a target that is not ready yet is retryable.
+                retryable = true;
                 pendingReason = targetReason;
                 return false;
             }
@@ -3218,6 +3252,9 @@ namespace XREngine.Rendering.Vulkan
                     out string targetReason))
             {
                 optionalDeferred = !requirement.Required;
+                // The target is prepared again after a swapchain or framebuffer change, and the readiness
+                // watchdog bounds a retry that never clears, so a target that is not ready yet is retryable.
+                retryable = true;
                 pendingReason = targetReason;
                 return false;
             }

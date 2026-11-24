@@ -5,6 +5,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// The current implementation is a named memory barrier marker over existing renderer synchronization primitives.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Synchronization)]
     public sealed class VPRC_Fence : ViewportRenderCommand
     {
         private EMemoryBarrierMask _mask =

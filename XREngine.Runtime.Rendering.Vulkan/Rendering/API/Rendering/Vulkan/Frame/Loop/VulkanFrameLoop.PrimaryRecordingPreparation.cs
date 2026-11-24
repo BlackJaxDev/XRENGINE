@@ -3112,7 +3112,7 @@ internal sealed partial class VulkanFrameLoop
                 {
                     if (renderer.Mesh?.HasSkinning == true)
                         renderer.MeshRenderer.PushBoneMatricesToGPU();
-                    if (renderer.Mesh?.HasBlendshapes == true)
+                    if (renderer.Mesh?.HasBlendshapeDeformation == true)
                         renderer.MeshRenderer.PushBlendshapeWeightsToGPU();
                 }
             }

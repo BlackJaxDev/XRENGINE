@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Renders surfel debug visualization (circles or grid heatmap) using the buffers from VPRC_SurfelGIPass.
 /// </summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
 public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
 {
     private const uint CulledCommandFloats = 1u;
@@ -29,11 +30,17 @@ public class VPRC_SurfelDebugVisualization : ViewportRenderCommand
 
     public EVisualizationMode Mode { get; set; } = EVisualizationMode.SurfelCircles;
 
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string AlbedoTextureName { get; set; } = DefaultRenderPipeline.AlbedoOpacityTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string TransformIdTextureName { get; set; } = DefaultRenderPipeline.TransformIdTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string HDRSceneTextureName { get; set; } = DefaultRenderPipeline.HDRSceneTextureName;
+    [RenderResourceName(ERenderResourceNameKind.Texture)]
     public string OutputTextureName { get; set; } = "SurfelDebugOutput";
 
     protected override void Execute()

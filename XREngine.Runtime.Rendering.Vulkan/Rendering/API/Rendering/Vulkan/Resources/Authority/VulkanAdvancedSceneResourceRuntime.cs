@@ -12,7 +12,25 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed partial class VulkanAdvancedSceneResourceRuntime
 {
-    private const uint RequestedDescriptorCapacity = 1024u;
+    /// <summary>
+    /// The number of rows that the runtime requests for each resource descriptor array (2D,
+    /// 2D array and cube sampled images, and samplers) of one frame slot. One publication uses
+    /// one row per physical texture record, and each later publication in the same frame slot
+    /// appends its rows after the earlier ones. A crowd of 12 imported avatars publishes more
+    /// than 10,000 textures, so 1,024 rows rejected the scene every frame.
+    /// <see cref="ResolveDescriptorCapacity"/> lowers the value to the device limits.
+    /// </summary>
+    private const uint RequestedDescriptorCapacity = 65536u;
+    /// <summary>
+    /// The number of sampled-image arrays in the resource set (2D, 2D array and cube). All three
+    /// arrays have the full capacity, so they share the sampled-image limits of the device.
+    /// </summary>
+    private const uint SampledImageArrayCount = 3u;
+    /// <summary>
+    /// The per-stage descriptors that the capacity leaves for the other sets of an Advanced
+    /// pipeline layout (storage buffers, storage images and pass inputs).
+    /// </summary>
+    private const uint ReservedPerStageDescriptors = 64u;
     /// <summary>
     /// Maximum distinct native publication realizations retained by one frame
     /// slot. This bounds publication ownership, not mesh-request capacity.
@@ -1168,7 +1186,10 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             lookupSlice,
             fallbackTableSlice,
             lookupSegments,
-            VulkanAdvancedNativeShadingKernelFamilies.Create(snapshot.MaterialPayloads.Kernels));
+            VulkanAdvancedNativeShadingKernelFamilies.Create(snapshot.MaterialPayloads.Kernels),
+            sharedGeometry.PagePool,
+            sharedGeometry.PageTable,
+            snapshot.GeometryPayloads.StreamingFeedback);
         // The sealed preflight is charged only once the complete publication,
         // including both descriptor updates, is visible. Failed retries cannot
         // leak logical capacity even though the arena itself remains monotonic.
@@ -3443,21 +3464,40 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
     private static ulong GetResidentEnd(in VulkanFrameDataSlice slice)
         => slice.IsValid ? checked(slice.Offset + slice.Length) : 0u;
 
+    /// <summary>
+    /// Returns the row count of each resource descriptor array: <see cref="RequestedDescriptorCapacity"/>,
+    /// lowered so that the resource set layout and the pipeline layouts that use it stay inside
+    /// the device limits. The three sampled-image arrays count together against the sampled-image
+    /// limits, and the per-stage limits keep <see cref="ReservedPerStageDescriptors"/> for the
+    /// other sets. The shaders declare their arrays with the same count
+    /// (<c>XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY</c>).
+    /// </summary>
     private static uint ResolveDescriptorCapacity(
         in PhysicalDeviceProperties properties)
     {
+        PhysicalDeviceLimits limits = properties.Limits;
         uint capacity = RequestedDescriptorCapacity;
-        uint[] limits =
-        [
-            properties.Limits.MaxDescriptorSetSampledImages,
-            properties.Limits.MaxPerStageDescriptorSampledImages,
-            properties.Limits.MaxDescriptorSetSamplers,
-            properties.Limits.MaxPerStageDescriptorSamplers,
-        ];
-        for (int index = 0; index < limits.Length; ++index)
-            if (limits[index] != 0u)
-                capacity = Math.Min(capacity, limits[index]);
+        capacity = LimitCapacity(capacity, limits.MaxDescriptorSetSampledImages, 0u, SampledImageArrayCount);
+        capacity = LimitCapacity(capacity, limits.MaxPerStageDescriptorSampledImages, ReservedPerStageDescriptors, SampledImageArrayCount);
+        capacity = LimitCapacity(capacity, limits.MaxPerStageResources, ReservedPerStageDescriptors, SampledImageArrayCount);
+        capacity = LimitCapacity(capacity, limits.MaxDescriptorSetSamplers, 0u, 1u);
+        capacity = LimitCapacity(capacity, limits.MaxPerStageDescriptorSamplers, 0u, 1u);
         return capacity;
+    }
+
+    /// <summary>
+    /// Lowers <paramref name="capacity"/> so that <paramref name="arrayCount"/> arrays of that
+    /// many rows, plus <paramref name="reserved"/> other descriptors, fit in <paramref name="limit"/>.
+    /// A zero limit means that the device reports no limit. A limit at or below the reservation
+    /// gives zero, so the runtime reports descriptor indexing as unavailable.
+    /// </summary>
+    private static uint LimitCapacity(uint capacity, uint limit, uint reserved, uint arrayCount)
+    {
+        if (limit == 0u)
+            return capacity;
+        if (limit <= reserved)
+            return 0u;
+        return Math.Min(capacity, (limit - reserved) / arrayCount);
     }
 
     private bool SetUnavailable(

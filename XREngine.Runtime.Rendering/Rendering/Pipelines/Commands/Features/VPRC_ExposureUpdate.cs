@@ -7,6 +7,7 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
     public class VPRC_ExposureUpdate : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -27,11 +28,13 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// This is the texture that exposure will be calculated from.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string HDRSceneTextureName { get; set; } = DefaultRenderPipeline.HDRSceneTextureName;
 
         /// <summary>
         /// The 1x1 texture that stores the current exposure value when using GPU auto exposure.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AutoExposureTextureName { get; set; } = DefaultRenderPipeline.AutoExposureTextureName;
 
         /// <summary>
@@ -256,13 +259,16 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             ReportVrAutoExposurePolicy(exposurePolicy, sourceTexture, exposurePolicyReason);
 
+            // The epoch that the capture of this frame recorded. A reset from a later discontinuity does not apply to it.
+            ulong? frameCameraEpoch = ResolveFrameCameraEpoch(viewport);
+
             if (Shaders.Compilation.WebPipelineRasterProgram.IsActive)
             {
                 XRTexture2D exposure = ActivePipelineInstance.GetTexture<XRTexture2D>(AutoExposureTextureName)
                     ?? throw new InvalidOperationException("WebGPU.AutoExposure.OutputMissing: automatic exposure requires its declared GPU history target.");
                 if (renderer?.SupportsGpuAutoExposure != true)
                     throw new NotSupportedException("WebGPU.AutoExposure.Unavailable: the selected renderer has no GPU exposure producer.");
-                grading.UpdateExposureGpu(sourceTexture, exposure, false, GpuProgramBinding ?? "auto-exposure");
+                grading.UpdateExposureGpu(sourceTexture, exposure, false, GpuProgramBinding ?? "auto-exposure", frameCameraEpoch);
                 // A warming producer marks the entire renderer frame pending.
                 // Let that frame retry through its normal GPU lifecycle.
                 return;
@@ -275,7 +281,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     if (TryConsumeSharedAutoExposure(renderer, grading, exposureTexture))
                         return;
 
-                    grading.UpdateExposureGpu(sourceTexture, exposureTexture, GenerateMipmapsHere);
+                    grading.UpdateExposureGpu(sourceTexture, exposureTexture, GenerateMipmapsHere, null, frameCameraEpoch);
                     if (grading.UseGpuAutoExposureThisFrame)
                     {
                         PublishSharedAutoExposure(renderer, exposureTexture);
@@ -302,7 +308,19 @@ namespace XREngine.Rendering.Pipelines.Commands
                 //Debug.Out($"[ExposureUpdate] GPU auto exposure not supported, using CPU path");
             }
 
-            grading.UpdateExposure(sourceTexture, GenerateMipmapsHere);
+            grading.UpdateExposure(sourceTexture, GenerateMipmapsHere, frameCameraEpoch);
+        }
+
+        /// <summary>
+        /// Gets the camera history epoch that the desktop view history ledger recorded at the capture of this frame,
+        /// or null if the frame has no desktop view history (for example a stereo or capture pass).
+        /// </summary>
+        private ulong? ResolveFrameCameraEpoch(XRViewport? viewport)
+        {
+            ulong sequence = ActivePipelineInstance.RenderState.ViewHistorySequenceId;
+            return viewport is not null && sequence != 0UL && viewport.TryGetCapturedCameraEpoch(sequence, out ulong epoch)
+                ? epoch
+                : null;
         }
 
         /// <summary>
@@ -436,15 +454,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         private int ResolvePassIndex(string passName)
-        {
-            if (ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true)
-                return passIndex;
-
-            return RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline
-                ?.TryGetRenderPassIndex(passName, out passIndex) == true
-                ? passIndex
-                : int.MinValue;
-        }
+            => ResolveActiveRenderGraphPassIndex(passName);
 
         internal override void DescribeRenderPass(RenderGraphDescribeContext context)
         {

@@ -615,6 +615,15 @@ namespace XREngine.Audio
             get => GetSampleOffset();
             set => SetSampleOffset(value);
         }
+
+        /// <summary>
+        /// Reads the playback clock of this source from the transport. See <see cref="IAudioTransport.TryGetPlaybackClock"/>.
+        /// </summary>
+        /// <param name="sampleFrame">The position in sample frames from the start of the first queued buffer.</param>
+        /// <param name="latencyNanoseconds">The output latency in nanoseconds.</param>
+        /// <returns>False if the transport cannot report a clock.</returns>
+        public bool TryGetPlaybackClock(out long sampleFrame, out long latencyNanoseconds)
+            => ParentListener.ActiveTransport.TryGetPlaybackClock(_transportHandle, out sampleFrame, out latencyNanoseconds);
         #endregion
 
         public enum ESourceState
@@ -666,7 +675,9 @@ namespace XREngine.Audio
             ParentListener.ActiveTransport.Play(_transportHandle);
             unchecked { _playbackCommandVersion++; }
             _sourceState = ESourceState.Playing;
-            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Playing));
+            // The state name is a new string, so make it only while diagnostics record.
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Playing));
         }
         /// <summary>
         /// Stops the source from playing.
@@ -677,7 +688,9 @@ namespace XREngine.Audio
             ParentListener.ActiveTransport.Stop(_transportHandle);
             unchecked { _playbackCommandVersion++; }
             _sourceState = ESourceState.Stopped;
-            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Stopped));
+            // The state name is a new string, so make it only while diagnostics record.
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Stopped));
         }
         /// <summary>
         /// Pauses the source.
@@ -688,7 +701,9 @@ namespace XREngine.Audio
             ParentListener.ActiveTransport.Pause(_transportHandle);
             unchecked { _playbackCommandVersion++; }
             _sourceState = ESourceState.Paused;
-            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Paused));
+            // The state name is a new string, so make it only while diagnostics record.
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Paused));
         }
         /// <summary>
         /// Sets the source to play from the beginning (initial state).
@@ -705,7 +720,9 @@ namespace XREngine.Audio
                 _sampleOffset = 0;
             }
             _sourceState = ESourceState.Initial;
-            AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Initial));
+            // The state name is a new string, so make it only while diagnostics record.
+            if (AudioDiagnostics.Enabled)
+                AudioDiagnostics.RecordSourceStateChange(Handle, prev.ToString(), nameof(ESourceState.Initial));
         }
         #endregion
 

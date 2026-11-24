@@ -46,6 +46,17 @@ vec3 XR_ADV_FresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// Fresnel weight for image-based and ambient light. Indirect light arrives from the whole
+// hemisphere, so a rough surface does not reach full reflectance at a grazing view. The
+// roughness term caps the grazing value at max(1 - roughness, F0). Without the cap, the
+// (1 - F) diffuse weight falls to zero where N.V reaches zero. Interpolated normals of
+// coarse meshes face away from the camera near silhouette edges, so the cap also keeps
+// those edges from turning black.
+vec3 XR_ADV_FresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 // Shading flag 64 selects the Jimenez multi-bounce approximation.
 vec3 XR_ADV_DiffuseOcclusion(uint flags, float ambientOcclusion, vec3 albedo)
 {

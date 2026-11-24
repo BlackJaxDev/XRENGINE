@@ -48,9 +48,13 @@ float3 authoredTexturedMappedNormal(float3 sampledNormal, float3 normalWS,
         return N;
     return normalize(mapped);
 }
-float3 authoredTexturedRgbNormal(float3 sample)
+float3 authoredTexturedRgbNormal(float4 sample)
 {
-    float3 normal = sample * 2.0 - 1.0;
+    float3 normal = sample.rgb * 2.0 - 1.0;
+    // A BC5 normal map samples with alpha 0 (view swizzle R, G, 0, 0) and stores
+    // only X and Y, so Z is rebuilt from them.
+    if (sample.a < 0.5)
+        normal.z = sqrt(clamp(1.0 - dot(normal.xy, normal.xy), 0.0, 1.0));
     normal.y = -normal.y;
     return normal;
 }

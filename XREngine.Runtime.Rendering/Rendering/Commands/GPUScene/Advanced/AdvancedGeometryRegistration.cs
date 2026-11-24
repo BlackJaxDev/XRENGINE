@@ -43,6 +43,13 @@ public readonly record struct AdvancedGeometryRegistration(
     /// </summary>
     public uint LevelCoverIndexCount { get; init; }
 
+    /// <summary>
+    /// The bits that the database copies into <see cref="AdvancedGeometryRecord.Flags"/>. A
+    /// registration with <see cref="EAdvancedGeometryFlags.StreamedPages"/> must be a cluster
+    /// hierarchy geometry whose triangle-word stream holds the page block.
+    /// </summary>
+    public EAdvancedGeometryFlags GeometryFlags { get; init; }
+
     public static AdvancedGeometryRegistration Create(
         uint vertexCount,
         uint indexCount,

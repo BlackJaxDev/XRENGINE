@@ -179,6 +179,16 @@ public static partial class RuntimeEngine
                 private double _textureSlowTransitionMilliseconds = 8.0;
                 private double _textureSlowQueueWaitMilliseconds = 100.0;
                 private double _textureUploadFrameBudgetMilliseconds = 2.0;
+                private int _textureStreamingCutsceneMaxTransitionsPerFrame = 6;
+                private int _textureStreamingCutsceneMaxPromotionsPerFrame = 4;
+                private int _textureStreamingCutsceneMaxPromotionMegabytesPerFrame = 96;
+                private int _textureStreamingCutscenePromotionCooldownFrames = 2;
+                private int _textureStreamingCutscenePromotionFadeFrames = 12;
+                private int _textureStreamingBudgetProfileFadeFrames = 30;
+                private int? _textureStreamingDecodeConcurrency;
+                private int? _textureStreamingUploadsPerFrame;
+                private int? _textureStreamingMaxUploadsPerFrame;
+                private double _textureStreamingFrameToleranceMilliseconds = 2.0;
 
                 /// <summary>
                 /// Whether to enable frame logging for performance profiling.
@@ -313,6 +323,129 @@ public static partial class RuntimeEngine
                 {
                     get => _textureUploadFrameBudgetMilliseconds;
                     set => SetField(ref _textureUploadFrameBudgetMilliseconds, Math.Clamp(value, 0.1, 100.0));
+                }
+
+                /// <summary>
+                /// Maximum number of texture residency transitions that one frame queues while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: maximum residency transitions (promotions and demotions) queued in one frame. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutsceneMaxTransitionsPerFrame
+                {
+                    get => _textureStreamingCutsceneMaxTransitionsPerFrame;
+                    set => SetField(ref _textureStreamingCutsceneMaxTransitionsPerFrame, Math.Clamp(value, 1, 64));
+                }
+
+                /// <summary>
+                /// Maximum number of texture promotions that one frame queues while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: maximum promotions queued in one frame. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutsceneMaxPromotionsPerFrame
+                {
+                    get => _textureStreamingCutsceneMaxPromotionsPerFrame;
+                    set => SetField(ref _textureStreamingCutsceneMaxPromotionsPerFrame, Math.Clamp(value, 1, 64));
+                }
+
+                /// <summary>
+                /// Maximum megabytes that the promotions of one frame add while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: maximum megabytes that the promotions of one frame add. The VRAM budget fit still applies. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutsceneMaxPromotionMegabytesPerFrame
+                {
+                    get => _textureStreamingCutsceneMaxPromotionMegabytesPerFrame;
+                    set => SetField(ref _textureStreamingCutsceneMaxPromotionMegabytesPerFrame, Math.Clamp(value, 1, 1024));
+                }
+
+                /// <summary>
+                /// Frames after a promotion before a texture that is not visible can promote again, while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: frames after a promotion before a texture that is not visible can promote again. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutscenePromotionCooldownFrames
+                {
+                    get => _textureStreamingCutscenePromotionCooldownFrames;
+                    set => SetField(ref _textureStreamingCutscenePromotionCooldownFrames, Math.Clamp(value, 0, 600));
+                }
+
+                /// <summary>
+                /// Frames over which a promoted texture fades in its new mips while the
+                /// <see cref="ETextureStreamingBudgetProfile.Cutscene"/> profile is active. A long fade makes a
+                /// texture that loaded for a cutscene jump look late. Provisional default.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Cutscene texture streaming profile: frames over which a promoted texture fades in its new mips. Provisional default; profile before you change it.")]
+                public int TextureStreamingCutscenePromotionFadeFrames
+                {
+                    get => _textureStreamingCutscenePromotionFadeFrames;
+                    set => SetField(ref _textureStreamingCutscenePromotionFadeFrames, Math.Clamp(value, 0, 600));
+                }
+
+                /// <summary>
+                /// Frames over which the texture streaming limits fade from one budget profile to the other.
+                /// Zero changes the limits in one frame.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Frames over which texture streaming limits fade between the Default and Cutscene budget profiles. Zero changes them in one frame.")]
+                public int TextureStreamingBudgetProfileFadeFrames
+                {
+                    get => _textureStreamingBudgetProfileFadeFrames;
+                    set => SetField(ref _textureStreamingBudgetProfileFadeFrames, Math.Clamp(value, 0, 600));
+                }
+
+                /// <summary>
+                /// The number of texture decodes that can run at the same time. Null selects the automatic value: a base from
+                /// the process affinity and the execution topology reservation (at least 2), which frame-time feedback
+                /// raises while decodes wait and lowers only on evidence.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: decodes that can run at the same time. Leave null for the automatic value (topology base of at least 2, adjusted by frame-time feedback); set a value to pin it.")]
+                public int? TextureStreamingDecodeConcurrency
+                {
+                    get => _textureStreamingDecodeConcurrency;
+                    set => SetField(ref _textureStreamingDecodeConcurrency, value is int count ? Math.Clamp(count, 1, 32) : null);
+                }
+
+                /// <summary>
+                /// The number of texture items that each streaming lane does in one render frame. The OpenGL lane counts whole
+                /// resident applies and sparse transitions; the Vulkan lane counts transfer chunks (a mip level or 4 MB of
+                /// rows). Null selects the adaptive limit, which the frame-time feedback controller sets.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: items in one render frame for each lane (OpenGL: resident applies; Vulkan: transfer chunks). Leave null for the adaptive limit from measured cost and frame time; set a value to pin it.")]
+                public int? TextureStreamingUploadsPerFrame
+                {
+                    get => _textureStreamingUploadsPerFrame;
+                    set => SetField(ref _textureStreamingUploadsPerFrame, value is int count ? Math.Clamp(count, 1, 64) : null);
+                }
+
+                /// <summary>
+                /// The highest adaptive number of texture items in one render frame for each lane, at most the built-in bound
+                /// of 16. Null uses the built-in bound.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: the highest adaptive items in one render frame for each lane, 1 to 16 (the built-in bound). Leave null for the built-in bound.")]
+                public int? TextureStreamingMaxUploadsPerFrame
+                {
+                    get => _textureStreamingMaxUploadsPerFrame;
+                    set => SetField(ref _textureStreamingMaxUploadsPerFrame, value is int count ? Math.Clamp(count, 1, 16) : null);
+                }
+
+                /// <summary>
+                /// The time, in milliseconds, that texture streaming work can add to a render frame above the normal
+                /// frame budget. The adaptive upload limits keep frames inside this tolerance.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Texture streaming: milliseconds that streaming work can add to a frame above the normal frame budget. The adaptive upload limits keep frames inside it.")]
+                public double TextureStreamingFrameToleranceMilliseconds
+                {
+                    get => _textureStreamingFrameToleranceMilliseconds;
+                    set => SetField(ref _textureStreamingFrameToleranceMilliseconds, Math.Clamp(value, 0.1, 50.0));
                 }
 
                 /// <summary>
@@ -656,6 +789,7 @@ public static partial class RuntimeEngine
                 private bool _preferNVStereo = true;
                 private EVrViewRenderMode _vrViewRenderMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrViewRenderMode;
                 private EVrRenderPipeline _vrRenderPipeline = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrRenderPipeline;
+                private string _vrRenderPipelineScript = string.Empty;
                 private EVrMirrorMode _vrMirrorMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrMirrorMode;
                 private bool _renderWindowsWhileInVR = true;
                 private bool _vrMirrorComposeFromEyeTextures = true;
@@ -1940,11 +2074,13 @@ public static partial class RuntimeEngine
 
                 /// <summary>
                 /// When true, non-essential mesh LOD levels stay out of the GPU mesh atlas until the
-                /// GPU LOD-select pass requests them. LOD0 and each command's own mesh always stay resident,
-                /// so selection clamps to the nearest resident level while finer/coarser data streams in.
+                /// GPU LOD-select pass requests them. The lowest LOD and each command's own mesh always stay
+                /// resident, so selection clamps to the nearest resident level while finer data streams in.
+                /// The request drain reads a GPU buffer, so it is a CPU readback. It uploads only levels whose
+                /// CPU mesh is resident; it never loads a LOD payload.
                 /// </summary>
                 [Category("LOD Streaming")]
-                [Description("When true, defers non-essential mesh LOD atlas uploads until the GPU LOD-select pass requests them. LOD0 and each command's own mesh always stay resident.")]
+                [Description("When true, defers non-essential mesh LOD atlas uploads until the GPU LOD-select pass requests them. The lowest LOD and each command's own mesh always stay resident.")]
                 public bool StreamMeshLodsOnDemand
                 {
                     get => _streamMeshLodsOnDemand;
@@ -2395,6 +2531,21 @@ public static partial class RuntimeEngine
                 {
                     get => _vrRenderPipeline;
                     set => SetField(ref _vrRenderPipeline, value);
+                }
+
+                /// <summary>
+                /// Gets or sets an optional <c>.xrs</c> pipeline script for VR eye output. The script must derive from the
+                /// pipeline type of <see cref="VrRenderPipeline"/>. The eye pipeline applies the overlays and settings of
+                /// the script. A script with errors, or one with a different base type, renders no XR output and reports
+                /// a diagnostic. An empty value uses the plain family pipeline.
+                /// </summary>
+                [Category("VR")]
+                [DisplayName("VR Render Pipeline Script")]
+                [Description("Optional .xrs script that derives from the VR Render Pipeline family, such as 'derive Rvc;' with patches. The eye pipeline applies its overlays and settings. The base arguments of the script are ignored; the eye topology selects them. A script with errors or a different base type renders no XR output and reports a diagnostic. Leave empty to use the plain family pipeline.")]
+                public string VrRenderPipelineScript
+                {
+                    get => _vrRenderPipelineScript;
+                    set => SetField(ref _vrRenderPipelineScript, value?.Trim() ?? string.Empty);
                 }
 
                 /// <summary>
@@ -2932,20 +3083,19 @@ public static partial class RuntimeEngine
                     set => SetField(ref _advancedVirtualGeometry, value);
                 }
 
-                private bool _advancedSkinnedVirtualGeometry;
+                private bool _advancedSkinnedVirtualGeometry = true;
 
                 /// <summary>
                 /// With <see cref="AdvancedVirtualGeometry"/> on, skinned meshlet draws of models cooked
                 /// with a cluster hierarchy also get the cluster cut, with the same
-                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. Until posed cluster bounds exist,
-                /// every cluster of a skinned draw uses one distance, from the draw's posed bounds. Off
-                /// (the default) keeps skinned draws at level 0 while static draws keep the cut. It is off
-                /// by default because layered clothing (for example stockings over skin) can show the
-                /// layer under it when the two meshes simplify independently. Read once with
+                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. On by default. The skinned cook
+                /// locks vertices where clothing layers touch other skinned meshes, so a layer (for
+                /// example stockings over skin) keeps its shape against the mesh under it. Off keeps
+                /// skinned draws at level 0 while static draws keep the cut. Read once with
                 /// <see cref="AdvancedVirtualGeometry"/>.
                 /// </summary>
                 [Category("Advanced")]
-                [Description("With Advanced virtual geometry on, skinned meshlet draws also get the cluster cut (one distance per draw). Off by default. Read once at the first Advanced frame.")]
+                [Description("With Advanced virtual geometry on, skinned meshlet draws also get the cluster cut. On by default. Read once at the first Advanced frame.")]
                 public bool AdvancedSkinnedVirtualGeometry
                 {
                     get => _advancedSkinnedVirtualGeometry;
@@ -2969,6 +3119,119 @@ public static partial class RuntimeEngine
                 {
                     get => _advancedSkinnedDeformationLod;
                     set => SetField(ref _advancedSkinnedDeformationLod, value);
+                }
+
+                private bool _advancedSkinnedPosedClusterBounds = true;
+
+                /// <summary>
+                /// With <see cref="AdvancedSkinnedVirtualGeometry"/> on, chooses how the cluster cut
+                /// of a skinned draw measures distance. On (the default): each cluster group of a
+                /// skinned draw that the GPU deformed this frame is bounded by its own posed box, made
+                /// from its bones' current matrices, so distant parts of the draw get coarser clusters
+                /// and clusters outside the view are culled. Off: every cluster of a skinned draw uses
+                /// one distance, from the nearest point of the draw's bounds, and no skinned cluster is
+                /// culled. Use off to compare or to rule out the posed bounds. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With skinned virtual geometry on, bound each skinned cluster group by its posed bone box (finer distance and frustum culling per cluster). Off uses one distance per skinned draw. On by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedPosedClusterBounds
+                {
+                    get => _advancedSkinnedPosedClusterBounds;
+                    set => SetField(ref _advancedSkinnedPosedClusterBounds, value);
+                }
+
+                private bool _advancedGeometryPages;
+
+                /// <summary>
+                /// With <see cref="AdvancedVirtualGeometry"/> on, cluster hierarchy geometry that was
+                /// imported with geometry pages (the <c>BuildStreamingPages</c> meshlet setting) draws
+                /// its clusters from the pages: the import attaches the cooked pages to the meshlet
+                /// payload, the publisher writes the page images to slots of the geometry page pool
+                /// (see <see cref="AdvancedGeometryPagePoolMiB"/>), and the meshlet task and mesh
+                /// stages and the surface reconstruction read the cluster descriptors, triangles and
+                /// static vertices from the pool through the page table. Every page stays resident
+                /// unless <see cref="AdvancedGeometryStreaming"/> is also on. Off by default.
+                /// Read once with <see cref="AdvancedVirtualGeometry"/>; the import reads it when it
+                /// attaches the pages.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With Advanced virtual geometry on, cluster hierarchy models imported with geometry pages draw their clusters from the pages. Every page stays resident unless geometry streaming is on. Off by default. Read once at the first Advanced frame.")]
+                public bool AdvancedGeometryPages
+                {
+                    get => _advancedGeometryPages;
+                    set => SetField(ref _advancedGeometryPages, value);
+                }
+
+                private int _advancedGeometryPagePoolMiB = 512;
+
+                /// <summary>
+                /// The size of the geometry page pool of <see cref="AdvancedGeometryPages"/>, in MiB
+                /// (16 to 2048). The pool holds one 128 KiB page image per slot, so 512 MiB holds
+                /// 4096 pages. A geometry whose pages do not fit in the free slots draws from its
+                /// meshlet arenas instead, and the publisher logs it. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Size of the Advanced geometry page pool in MiB (16 to 2048). Each 128 KiB slot holds one geometry page. Read once at the first Advanced frame.")]
+                public int AdvancedGeometryPagePoolMiB
+                {
+                    get => _advancedGeometryPagePoolMiB;
+                    set => SetField(ref _advancedGeometryPagePoolMiB, Math.Clamp(value, 16, 2048));
+                }
+
+                private bool _advancedGeometryStreaming;
+
+                /// <summary>
+                /// With <see cref="AdvancedGeometryPages"/> on, streams the pages of static cluster
+                /// hierarchy geometry. The publisher makes only the root pages of each geometry
+                /// resident. The meshlet task stage requests the missing pages of the cluster cut and
+                /// marks the resident pages that it uses. The publisher reads these requests from the
+                /// GPU, loads the pages into free pool slots within the upload budget (see
+                /// <see cref="AdvancedGeometryStreamingUploadMiBPerFrame"/>), and evicts the pages that
+                /// were not used for the longest time when the pool is full. A group whose finer pages
+                /// are not resident draws at the finest resident level. Skinned geometry keeps every
+                /// page resident. Off by default. Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With Advanced geometry pages on, streams the pages of static cluster hierarchy models: only the root pages stay resident, and the cluster cut requests the finer pages that it needs. Off by default. Read once at the first Advanced frame.")]
+                public bool AdvancedGeometryStreaming
+                {
+                    get => _advancedGeometryStreaming;
+                    set => SetField(ref _advancedGeometryStreaming, value);
+                }
+
+                private int _advancedGeometryStreamingUploadMiBPerFrame = 4;
+
+                /// <summary>
+                /// The largest number of MiB of page images that one publication loads into the page
+                /// pool with <see cref="AdvancedGeometryStreaming"/> on (1 to 64). Each page is 128 KiB,
+                /// so 4 MiB loads at most 32 pages. The first load of a publication is always allowed.
+                /// Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Upload budget of Advanced geometry streaming in MiB per publication (1 to 64). Read once at the first Advanced frame.")]
+                public int AdvancedGeometryStreamingUploadMiBPerFrame
+                {
+                    get => _advancedGeometryStreamingUploadMiBPerFrame;
+                    set => SetField(ref _advancedGeometryStreamingUploadMiBPerFrame, Math.Clamp(value, 1, 64));
+                }
+
+                private int _advancedGeometryPageRequestCapacity = 4096;
+
+                /// <summary>
+                /// The number of page requests that the GPU can write in one frame with
+                /// <see cref="AdvancedGeometryStreaming"/> on (256 to 65536). Each request is 16 bytes.
+                /// The task stage writes each missing page only once per frame. When more pages are
+                /// missing, the GPU counts the overflow and the page is requested again in a later
+                /// frame. Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Number of geometry page requests the GPU can write per frame with Advanced geometry streaming on (256 to 65536). Read once at the first Advanced frame.")]
+                public int AdvancedGeometryPageRequestCapacity
+                {
+                    get => _advancedGeometryPageRequestCapacity;
+                    set => SetField(ref _advancedGeometryPageRequestCapacity, Math.Clamp(value, 256, 65536));
                 }
 
                 private float _advancedVirtualGeometryPixelThreshold = 1.0f;

@@ -24,6 +24,11 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private bool? _meshCastsShadows = null;
 
+        /// <summary>
+        /// Explicit shadow-receive override applied to every managed mesh (<c>null</c> means no override).
+        /// </summary>
+        private bool? _meshReceivesShadows = null;
+
         #endregion
 
         #region Mesh ownership defaults
@@ -57,6 +62,24 @@ namespace XREngine.Components.Scene.Mesh
                 if (value.HasValue)
                     foreach (var m in Meshes)
                         m.RenderInfo.CastsShadows = value.Value;
+            }
+        }
+
+        /// <summary>
+        /// When non-null, sets shadow receiving for all meshes owned by this component.
+        /// The setter writes the value to the render infos of the current meshes. Meshes that the
+        /// component builds later copy the value into their new render infos. An importer can therefore
+        /// set it while runtime mesh building is suppressed and the component has no meshes yet.
+        /// </summary>
+        public bool? MeshReceivesShadows
+        {
+            get => _meshReceivesShadows;
+            set
+            {
+                SetField(ref _meshReceivesShadows, value);
+                if (value.HasValue)
+                    foreach (var m in Meshes)
+                        m.RenderInfo.ReceivesShadows = value.Value;
             }
         }
 
@@ -298,6 +321,8 @@ namespace XREngine.Components.Scene.Mesh
                 ri3d.Layer = _meshLayer;
             if (_meshCastsShadows.HasValue)
                 ri3d.CastsShadows = _meshCastsShadows.Value;
+            if (_meshReceivesShadows.HasValue)
+                ri3d.ReceivesShadows = _meshReceivesShadows.Value;
         }
 
         /// <summary>

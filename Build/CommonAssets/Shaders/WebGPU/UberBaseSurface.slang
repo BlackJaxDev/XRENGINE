@@ -63,6 +63,26 @@ struct UberBaseMaterialParameters
     float2 _EmissionScrollingSpeed;
     float _EmissionScrollingEnabled;
     float _EmissionScrollingVertexColor;
+    // Imported source controls. The material capture writes zero for an absent
+    // animated control, as an unset desktop uniform reads zero.
+    int _BackfaceNormalControl;
+    int _FlipBackfaceNormals;
+    float _AlphaClipAllModes;
+    float _WorldAmbientOcclusionStrength;
+    int _BumpMapFlipGreen;
+    int _LightModel;
+    int _PBRPackedMasksEnabled;
+    int _PBRMetallicMapsReflectionMaskChannel;
+    int _PBRMetallicMapsSpecularMaskChannel;
+    float _PBRReflectionStrength;
+    float _PBRReflectionMaskInvert;
+    float _PBRSpecularMaskInvert;
+    float4 _SpecularAASettings;
+    float4 _SecondSpecularSettings;
+    float4 _ReflectionResponse;
+    float4 _ReflectionTint;
+    float4 _AdditiveLightSettings;
+    float4 _AdditiveLightColor;
 };
 
 struct UberBaseMesh
@@ -87,6 +107,35 @@ struct UberBaseFrame
     float3 bitangent;
     float3 normal;
 };
+
+// Specular inputs from Uber/UberShader.frag buildSurfacePbrData. The rms value
+// is the (perceptual roughness, metallic, direct specular intensity) triple
+// for the engine light functions. The source Mochie lobes also read the
+// separate masks and the packed smoothness sample.
+struct UberBaseSpecular
+{
+    float3 rms;
+    float specularMask;
+    float reflectionMask;
+    float packedSmoothness;
+};
+
+// Returns the sign for the geometric normal on this face. An imported source
+// with back-face normals keeps the front normal on back faces unless the
+// source also asks for a flip.
+float uberBaseNormalFacing(UberBaseMaterialParameters material, bool frontFace)
+{
+    float facing = frontFace ? 1.0 : -1.0;
+    return material._BackfaceNormalControl == 0 || material._FlipBackfaceNormals != 0 ? facing : 1.0;
+}
+
+// Returns the sign for the imported tangent and bitangent on this face. Only a
+// source that flips its back-face normals also flips the tangent frame.
+float uberBaseFrameFacing(UberBaseMaterialParameters material, bool frontFace)
+{
+    float facing = frontFace ? 1.0 : -1.0;
+    return material._BackfaceNormalControl != 0 && material._FlipBackfaceNormals != 0 ? facing : 1.0;
+}
 
 float2 uberBasePolarUv(float3 direction)
 {
@@ -165,6 +214,16 @@ float3 uberBaseUnpackNormal(float4 sample, float scale)
     return float3(xy, sqrt(1.0 - saturate(dot(xy, xy))));
 }
 
+// Decodes an RGB normal-map sample with the material scale. A source that
+// stores the opposite green convention negates Y after the decode.
+float3 uberBaseUnpackMaterialNormal(UberBaseMaterialParameters material, float4 sample)
+{
+    float3 normal = uberBaseUnpackNormal(sample, material._BumpScale);
+    if (material._BumpMapFlipGreen != 0)
+        normal.y = -normal.y;
+    return normal;
+}
+
 float3 uberBaseSobelNormal(float tl, float t, float tr, float l,
     float r, float bl, float b, float br, float scale)
 {
@@ -173,10 +232,10 @@ float3 uberBaseSobelNormal(float tl, float t, float tr, float l,
     return normalize(float3(float2(slopeX, slopeY) * scale, 1.0));
 }
 
+// Transforms the decoded tangent normal by the frame. The desktop source does
+// not clamp or normalize the tangent normal before this transform.
 float3 uberBaseMappedNormal(float3 tangentNormal, UberBaseFrame frame)
 {
-    tangentNormal.z = max(tangentNormal.z, 0.001);
-    tangentNormal = normalize(tangentNormal);
     return normalize(frame.tangent * tangentNormal.x + frame.bitangent * tangentNormal.y
         + frame.normal * tangentNormal.z);
 }
@@ -215,29 +274,65 @@ float uberBaseAlpha(UberBaseMaterialParameters material, uint features, float ba
         }
     }
     alpha = saturate(alpha + material._AlphaMod);
-    return material._AlphaForceOpaque > 0.5 ? 1.0 : alpha;
+    // A source alpha clip keeps the authored alpha for its cutoff test. Its
+    // force-opaque control changes only coverage and the final output alpha.
+    return material._AlphaClipAllModes <= 0.5 && material._AlphaForceOpaque > 0.5 ? 1.0 : alpha;
 }
 
-float3 uberBaseRms(UberBaseMaterialParameters material, uint features,
+// Returns true when a source alpha clip with force-opaque replaces the alpha
+// for the coverage test and for the final output.
+bool uberBaseForcesSourceOpacity(UberBaseMaterialParameters material)
+{
+    return material._AlphaClipAllModes > 0.5 && material._AlphaForceOpaque > 0.5;
+}
+
+// Reads one packed-mask channel. Channel 4 selects a constant one.
+float uberBasePackedMaskChannel(float4 sample, int channel)
+{
+    return channel == 4 ? 1.0 : sample[clamp(channel, 0, 3)];
+}
+
+UberBaseSpecular uberBaseSpecular(UberBaseMaterialParameters material, uint features,
     float4 metallicSample, float4 smoothnessSample, float4 specularSample)
 {
+    UberBaseSpecular result;
     float metallic = 0.0;
     float roughness = clamp(1.0 - material._SpecularSmoothness, 0.04, 1.0);
     float specularMask = 1.0;
+    result.reflectionMask = 1.0;
+    result.packedSmoothness = 0.0;
+    bool packedMasks = false;
     if ((features & UberBaseAdvancedSpecular) != 0u)
     {
+        // Packed masks read the reflection and specular strengths from two
+        // channels of the metallic map. Each invert applies after its strength.
+        packedMasks = material._PBRPackedMasksEnabled != 0;
+        if (packedMasks)
+        {
+            result.reflectionMask = uberBasePackedMaskChannel(metallicSample,
+                material._PBRMetallicMapsReflectionMaskChannel) * material._PBRReflectionStrength;
+            specularMask = uberBasePackedMaskChannel(metallicSample,
+                material._PBRMetallicMapsSpecularMaskChannel) * material._SpecularStrength;
+            if (material._PBRReflectionMaskInvert > 0.5) result.reflectionMask = 1.0 - result.reflectionMask;
+            if (material._PBRSpecularMaskInvert > 0.5) specularMask = 1.0 - specularMask;
+        }
         metallic = metallicSample[clamp(material._PBRMetallicMapsMetallicChannel, 0, 3)];
         if (material._PBRMetallicMapInvert > 0.5) metallic = 1.0 - metallic;
         metallic = saturate(metallic * material._PBRMetallicMultiplier);
         float smoothness = smoothnessSample[clamp(material._PBRSmoothnessMapsChannel, 0, 3)];
         if (material._PBRSmoothnessMapInvert > 0.5) smoothness = 1.0 - smoothness;
+        result.packedSmoothness = smoothness;
         roughness = clamp(1.0 - smoothness * material._PBRRoughnessMultiplier, 0.04, 1.0);
-        specularMask = saturate(max(max(specularSample.r, specularSample.g), max(specularSample.b, specularSample.a)));
+        specularMask *= saturate(max(max(specularSample.r, specularSample.g), max(specularSample.b, specularSample.a)));
     }
-    // The admitted realistic source resets F0 after buildSurfacePbrData, then
-    // returns zero from calculateAdvancedSpecular. SpecularTint does not reach
-    // either final lobe in this specialization. Preserve that source behavior.
-    return float3(roughness, metallic, max(material._SpecularStrength * specularMask, 0.0));
+    // The source rebuilds F0 from the final base color after buildSurfacePbrData,
+    // and calculateAdvancedSpecular returns zero for the admitted specular type.
+    // Thus the specular tint reaches only the source Mochie direct lobe.
+    // Packed masks already include the specular strength in the mask.
+    result.specularMask = specularMask;
+    result.rms = float3(roughness, metallic,
+        packedMasks ? max(specularMask, 0.0) : max(material._SpecularStrength * specularMask, 0.0));
+    return result;
 }
 
 float2 uberBaseEmissionUv(UberBaseMaterialParameters material, UberBaseMesh mesh, float time)
@@ -258,14 +353,17 @@ float3 uberBaseEmissionColor(UberBaseMaterialParameters material, uint features,
         ? emissionSample.rgb * material._EmissionColor.rgb * material._EmissionStrength : float3(0.0);
 }
 
+// The cutout mode and a source alpha clip both reject fragments below the
+// cutoff. A forced-opaque source alpha clip always passes this test.
 bool uberBaseCovered(UberBaseMaterialParameters material, float alpha)
 {
-    return material._Mode != 1 || alpha >= material._Cutoff;
+    float coverageAlpha = uberBaseForcesSourceOpacity(material) ? 1.0 : alpha;
+    return !((material._Mode == 1 || material._AlphaClipAllModes > 0.5) && coverageAlpha < material._Cutoff);
 }
 
 float uberBaseOutputAlpha(UberBaseMaterialParameters material, float alpha)
 {
-    return material._Mode == 0 || material._Mode == 1 ? 1.0 : alpha;
+    return material._Mode == 0 || material._Mode == 1 || uberBaseForcesSourceOpacity(material) ? 1.0 : alpha;
 }
 
 #endif

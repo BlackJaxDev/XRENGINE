@@ -38,6 +38,7 @@ namespace XREngine.Rendering.Pipelines.Commands
     /// Persistence/recycling, non-linear grids, and ray-traced irradiance integration are subsequent steps.
     /// </summary>
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
     public class VPRC_SurfelGIPass : ViewportRenderCommand
     {
         private static void LogGuardFailure(string location, string reason)
@@ -140,15 +141,22 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public float CurrentCellSize { get; private set; }
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AlbedoTextureName { get; set; } = DefaultRenderPipeline.AlbedoOpacityTextureName;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string TransformIdTextureName { get; set; } = DefaultRenderPipeline.TransformIdTextureName;
 
         public int SourceRenderPassIndex { get; set; } = (int)EDefaultRenderPass.OpaqueDeferred;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = "SurfelGITexture";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string CompositeQuadFBOName { get; set; } = "SurfelGICompositeFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         [StructLayout(LayoutKind.Sequential)]

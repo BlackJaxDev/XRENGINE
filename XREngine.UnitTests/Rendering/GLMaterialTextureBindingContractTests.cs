@@ -75,7 +75,7 @@ public sealed class GLMaterialTextureBindingContractTests
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Programs/GLRenderProgram.Samplers.cs");
 
-        source.ShouldContain("TryResolveSamplerTextureUnit(location, texture, textureUnit, samplerName, out int resolvedTextureUnit)");
+        source.ShouldContain("TryResolveSamplerTextureUnit(location, texture, textureUnit, samplerName, out int resolvedTextureUnit, out bool reusedExistingUnit)");
         source.ShouldContain("if (location < 0)");
         source.ShouldContain("return false;");
         source.ShouldContain("TryFindFreeSamplerTextureUnit(samplerName, out resolvedTextureUnit)");

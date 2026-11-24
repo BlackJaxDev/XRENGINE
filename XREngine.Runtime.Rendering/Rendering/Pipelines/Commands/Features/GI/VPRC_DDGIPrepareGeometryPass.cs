@@ -8,6 +8,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 
 /// <summary>Builds triangle geometry for DDGI independently of the mesh submission strategy.</summary>
 [RenderPipelineScriptCommand]
+[RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true)]
 public sealed class VPRC_DDGIPrepareGeometryPass : VPRC_DDGIComputePass
 {
     protected override bool ShouldExecuteThisFrame()

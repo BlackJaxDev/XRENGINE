@@ -34,6 +34,13 @@ internal sealed partial class VulkanCommandRuntime
     /// Each dispatch reads the command block of this view, so it launches only the work groups of
     /// this view's tiles. The other family's kernels are not dispatched.
     /// </summary>
+    /// <remarks>
+    /// The dispatches have no barrier between them. They stay race free because every pixel has
+    /// one writer (ShadeNativeOpaque.comp): the background pass owns uncovered pixels and covered
+    /// pixels whose material does not resolve, and a resolved pixel belongs to its own kernel's
+    /// dispatch only. Synchronization validation tracks whole images, not texels, so it still
+    /// reports write-after-write between these dispatches.
+    /// </remarks>
     private void RecordNativeKernelDispatches(CommandBuffer commandBuffer, in VulkanAdvancedNativeComputeClosure closure,
         in VulkanAdvancedComputePipeline shade, ref VulkanAdvancedNativeShadingPushConstants push, ulong parameterAddress,
         UInt128 kernels)
@@ -241,8 +248,9 @@ internal sealed partial class VulkanCommandRuntime
             push, payload.Request.HiddenAreaEllipses.ForView(closure.ViewIndex), closure.UsesMultisampleVisibility);
         RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.Background,
             in backgroundPush, tilesX, tilesY, 1, "Advanced.Background", NativeBackgroundGpuProfilerPath);
-        // Background initializes every pixel and shading then overwrites the covered pixels,
-        // so this barrier orders a real write-after-write.
+        // Background initializes every pixel. It is the final writer of uncovered pixels and of
+        // covered pixels whose material does not resolve; shading then overwrites the pixels
+        // whose material resolves, so this barrier orders a real write-after-write.
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
 
         // Classification and graphics preparation meet only at shading. The

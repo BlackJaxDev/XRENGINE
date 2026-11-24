@@ -216,6 +216,17 @@ float3 XR_ADV_FresnelSchlick(float cosTheta, float3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+// Fresnel weight for image-based and ambient light. Indirect light arrives from the whole
+// hemisphere, so a rough surface does not reach full reflectance at a grazing view. The
+// roughness term caps the grazing value at max(1 - roughness, F0). Without the cap, the
+// (1 - F) diffuse weight falls to zero where N.V reaches zero. Interpolated normals of
+// coarse meshes face away from the camera near silhouette edges, so the cap also keeps
+// those edges from turning black.
+float3 XR_ADV_FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
+{
+    return F0 + (max(float3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
 // GTAO attenuates only the image-based specular lobe.  This approximation is
 // monotonic in AO and preserves a fully visible reflection at AO=1.
 float XR_ADV_SpecularOcclusion(float NoV, float ambientOcclusion, float roughness)
@@ -782,7 +793,7 @@ void XR_ADV_EvaluateProbeIbl(
     float3 F0 = lerp(float3(0.04), albedo, metallic);
     float3 F = engineSurface
         ? XR_ADV_EngineSurfaceIndirectFresnel(NoV, F0, roughness, specularIntensity)
-        : XR_ADV_FresnelSchlick(NoV, F0);
+        : XR_ADV_FresnelSchlickRoughness(NoV, F0, roughness);
     diffuseIndirect = irradiance * albedo / PI * (float3(1.0) - F) * (1.0 - metallic);
     float2 brdf = XR_ADV_IntegrateSpecularBrdf(NoV, roughness);
     specularIndirect = prefiltered * (F * brdf.x + brdf.y);
@@ -1035,7 +1046,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         if ((u_Push.flags & 32u) == 0u)
         {
             float3 F0 = lerp(float3(0.04), base.rgb, metallic);
-            float3 F = XR_ADV_FresnelSchlick(max(dot(N, V), 0.0), F0);
+            float3 F = XR_ADV_FresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
             color += XR_ADV_WorldAmbient(viewIndex) * base.rgb *
                 (float3(1.0) - F) * (1.0 - metallic) * ambientOcclusion;
         }

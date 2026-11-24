@@ -198,6 +198,8 @@ internal sealed class VulkanGpuDiagnosticReadbackSidecar
                 node.Strategy == global::XREngine.Data.Rendering.EMeshSubmissionStrategy.GpuMeshletZeroReadback &&
                 node.Decoder is EGpuDiagnosticReadbackDecoder.SubmissionValidation or
                     EGpuDiagnosticReadbackDecoder.MeshletVisibility,
+            EVulkanGpuDiagnosticReadbackPurpose.CounterSample =>
+                node.Decoder == EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters,
             _ => false,
         };
 

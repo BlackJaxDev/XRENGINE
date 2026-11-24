@@ -11,7 +11,7 @@ public static partial class SerializedMaterialImporter
     private static void BindSourceToonFlipbook(XRMaterial material, SerializedMaterialDocument document)
     {
         bool enabled = document.TryGetPositive("_EnableFlipbook");
-        SetInt(material, "_SourceFlipbook", enabled ? 1 : 0);
+        SetInt(material, "_FlipbookToonModel", enabled ? 1 : 0);
         if (!enabled)
             return;
 
@@ -48,18 +48,18 @@ public static partial class SerializedMaterialImporter
         if (MathF.Abs(scale.X + sides.Y + sides.X) < 0.0000001f ||
             MathF.Abs(scale.Y + sides.W + sides.Z) < 0.0000001f)
             throw new SourceVisualImportException("Active flipbook bounds have zero width or height.");
-        SetVector4(material, "_SourceFlipbookLayout", new Vector4(scale.X, scale.Y, position.X, position.Y));
-        SetVector4(material, "_SourceFlipbookSides", sides);
-        SetVector4(material, "_SourceFlipbookOptions", new Vector4(
+        SetVector4(material, "_FlipbookLayout", new Vector4(scale.X, scale.Y, position.X, position.Y));
+        SetVector4(material, "_FlipbookSides", sides);
+        SetVector4(material, "_FlipbookOptions", new Vector4(
             GetFloat(document, "_FlipbookAlpha", 1), GetFloat(document, "_FlipbookColorReplaces"),
             GetFloat(document, "_FlipbookIntensityControlsAlpha"), GetFloat(document, "_FlipbookAspectRatioMode")));
-        SetVector4(material, "_SourceFlipbookMotion", new Vector4(
+        SetVector4(material, "_FlipbookMotion", new Vector4(
             GetFloat(document, "_FlipbookRotation"), GetFloat(document, "_FlipbookRotationSpeed"),
             GetFloat(document, "_FlipbookSymmetryMode"), GetFloat(document, "_FlipbookTiled")));
-        SetVector4(material, "_SourceFlipbookFlags", new Vector4(
+        SetVector4(material, "_FlipbookFlags", new Vector4(
             GetFloat(document, "_FlipbookStartAndEnd"), GetFloat(document, "_FlipbookHueSelectOrShift"),
             GetFloat(document, "_FlipbookMaskChannel"), 0));
-        SetVector4(material, "_SourceFlipbookHue", new Vector4(
+        SetVector4(material, "_FlipbookHue", new Vector4(
             GetFloat(document, "_FlipbookHueShiftEnabled"), GetFloat(document, "_FlipbookHueShift"),
             GetFloat(document, "_FlipbookHueShiftSpeed"), GetFloat(document, "_FlipbookHueShiftColorSpace")));
         foreach ((string name, float fallback) in new (string, float)[] {

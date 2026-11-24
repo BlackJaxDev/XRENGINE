@@ -359,7 +359,6 @@ namespace XREngine.Rendering
         {
             bool useMeshDeform = DeformMeshRenderer is not null && _meshDeformInfluences is not null;
 
-            BaseVersion ver;
             if (!useMeshDeform && RuntimeEngine.Rendering.State.IsDirectionalCascadeInstancedLayeredShadowPass)
                 return RuntimeEngine.Rendering.State.IsDirectionalCascadeAtlasGroupedShadowPass
                     ? GetDirectionalCascadeAtlasInstancedVersion()
@@ -377,6 +376,28 @@ namespace XREngine.Rendering
                 !forceNoStereo &&
                 RuntimeEngine.Rendering.State.IsStereoPass &&
                 (requiresOvrMultiview || CanUseVrSpecificVersions());
+            return SelectViewVersion(stereoPass, useMeshDeform, requiresOvrMultiview);
+        }
+
+        /// <summary>
+        /// Gets the version that a stereo (headset) pass draws, or null when no headset or emulated VR output is active or
+        /// the stereo pass draws the mono version. The draw readiness query checks this version too, because the eyes do not
+        /// draw the mono version.
+        /// </summary>
+        internal BaseVersion? GetActiveStereoVersionForReadiness()
+        {
+            if (!ForceOvrMultiview && !CanUseVrSpecificVersions())
+                return null;
+
+            bool useMeshDeform = DeformMeshRenderer is not null && _meshDeformInfluences is not null;
+            BaseVersion stereo = SelectViewVersion(stereoPass: true, useMeshDeform, ForceOvrMultiview);
+            BaseVersion mono = SelectViewVersion(stereoPass: false, useMeshDeform, requiresOvrMultiview: false);
+            return ReferenceEquals(stereo, mono) ? null : stereo;
+        }
+
+        private BaseVersion SelectViewVersion(bool stereoPass, bool useMeshDeform, bool requiresOvrMultiview)
+        {
+            BaseVersion ver;
             if (!stereoPass)
                 return useMeshDeform
                     ? GetMeshDeformDefaultVersion()
@@ -1526,6 +1547,161 @@ namespace XREngine.Rendering
 
             reason = apiObject is null ? "NoApiObject" : "NoPreparationState";
             return apiObject is not null;
+        }
+
+        /// <summary>
+        /// Prepares this renderer on the active render backend before a LOD selection can use it, and tells if it can draw
+        /// now. Call it on the render thread, inside a window renderer scope. With no render host installed, nothing can
+        /// draw, so the renderer counts as ready. With a host but no current renderer (for example, a render-thread job
+        /// drain outside a window frame), it does no backend work and gives false, so the caller checks again later.
+        /// </summary>
+        /// <param name="reason">The preparation stage result, for example "Ready" or "ProgramsPending".</param>
+        public bool TryPrewarmForLodSelection(out string reason)
+        {
+            if (!RuntimeRenderingHostServices.HasConcreteHost)
+            {
+                reason = "NoRenderHost";
+                return true;
+            }
+
+            if (!RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
+            {
+                reason = "NotRenderThread";
+                return false;
+            }
+
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null || !renderer.AcceptsBackendWork)
+            {
+                reason = "NoActiveRenderer";
+                return false;
+            }
+
+            AbstractRenderAPIObject? apiObject = renderer.GetOrCreateAPIRenderObject(GetVersion(false));
+            if (apiObject is IRenderPreparationState preparationState)
+                return preparationState.TryPrewarmForSelection(out reason);
+
+            reason = apiObject is null ? "NoApiObject" : "NoPreparationState";
+            return apiObject is not null;
+        }
+
+        /// <summary>
+        /// True when <see cref="QueryDrawReadiness"/> can ask the backend now: no render host is installed, or the caller
+        /// is on the render thread inside a scope with a current renderer that accepts backend work. A render-thread job
+        /// drain outside a window frame has no current renderer, so a caller that polls must keep its last result then.
+        /// </summary>
+        public static bool CanQueryDrawReadinessNow
+            => !RuntimeRenderingHostServices.HasConcreteHost ||
+               (RuntimeRenderingHostServices.FrameTiming.IsRenderThread &&
+                AbstractRenderer.Current is { AcceptsBackendWork: true });
+
+        /// <summary>
+        /// Starts the non-blocking backend preparation of a draw of this renderer with <paramref name="material"/> and gives
+        /// the state of the program link and, on backends that use them, the graphics pipelines of the passes of
+        /// <paramref name="view"/> (see <see cref="IRenderPreparationState.QueryDrawReadiness"/>). Call it on the render
+        /// thread, inside a window renderer scope, for example from a render-thread coroutine. It never waits for a link or a
+        /// compile.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// When a headset or emulated VR output is active, the eyes draw the stereo version of the renderer, so the query also
+        /// checks that version (with no view filter, because the eye passes belong to the headset pipeline) and gives the
+        /// combined state (<see cref="RenderDrawReadinessCombiner"/>).
+        /// </para>
+        /// <para>
+        /// With no render host installed, no backend exists and no draw can be skipped, so the state is
+        /// <see cref="ERenderDrawReadiness.Ready"/> (reason "NoRenderHost"), as for <see cref="TryPrewarmForLodSelection"/>.
+        /// Off the render thread, with no current renderer that accepts backend work, or before the backend made an object
+        /// for the version, it does no backend work and gives <see cref="ERenderDrawReadiness.NotStarted"/>, so the caller
+        /// checks again later. A backend object that does not report the state gives
+        /// <see cref="ERenderDrawReadiness.NotSupported"/>.
+        /// </para>
+        /// </remarks>
+        /// <param name="material">The material of the draw, or null for <see cref="Material"/>.</param>
+        /// <param name="renderOptionsOverride">The render options override of the renderable, or null.</param>
+        /// <param name="view">The render pipeline instance of the view that must draw it, or null for no view filter.</param>
+        /// <param name="reason">The reason of the state, for diagnostics.</param>
+        public ERenderDrawReadiness QueryDrawReadiness(
+            XRMaterial? material,
+            RenderingParameters? renderOptionsOverride,
+            XRRenderPipelineInstance? view,
+            out string reason)
+        {
+            if (!RuntimeRenderingHostServices.HasConcreteHost)
+            {
+                reason = "NoRenderHost";
+                return ERenderDrawReadiness.Ready;
+            }
+
+            if (!RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
+            {
+                reason = "NotRenderThread";
+                return ERenderDrawReadiness.NotStarted;
+            }
+
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null || !renderer.AcceptsBackendWork)
+            {
+                reason = "NoActiveRenderer";
+                return ERenderDrawReadiness.NotStarted;
+            }
+
+            ERenderDrawReadiness state = QueryVersionDrawReadiness(
+                renderer,
+                GetVersion(true),
+                new RenderDrawReadinessQuery(material, renderOptionsOverride, view, Stereo: false),
+                out reason);
+            if (GetActiveStereoVersionForReadiness() is not { } stereoVersion)
+                return state;
+
+            ERenderDrawReadiness stereoState = QueryVersionDrawReadiness(
+                renderer,
+                stereoVersion,
+                new RenderDrawReadinessQuery(material, renderOptionsOverride, View: null, Stereo: true),
+                out string stereoReason);
+            return RenderDrawReadinessCombiner.Combine(state, reason, stereoState, stereoReason, out reason);
+        }
+
+        private static ERenderDrawReadiness QueryVersionDrawReadiness(
+            AbstractRenderer renderer,
+            BaseVersion version,
+            in RenderDrawReadinessQuery query,
+            out string reason)
+        {
+            AbstractRenderAPIObject? apiObject = renderer.GetOrCreateAPIRenderObject(version);
+            if (apiObject is IRenderPreparationState preparationState)
+                return preparationState.QueryDrawReadiness(query, out reason);
+
+            if (apiObject is null)
+            {
+                reason = "the render backend made no object for this renderer yet";
+                return ERenderDrawReadiness.NotStarted;
+            }
+
+            reason = "the render backend object of this renderer does not report draw readiness";
+            return ERenderDrawReadiness.NotSupported;
+        }
+
+        /// <summary>
+        /// Ends the draw readiness work of this renderer on the active backend (for example the Vulkan pipeline prewarm
+        /// requests) for the mono version and, when it exists, the stereo version. Call it on the render thread when the
+        /// caller stops asking. It makes no backend object: a version with no object has nothing to end.
+        /// </summary>
+        public void EndDrawReadinessQueries()
+        {
+            if (!RuntimeRenderingHostServices.HasConcreteHost || AbstractRenderer.Current is not { } renderer)
+                return;
+
+            EndVersionDrawReadiness(renderer, GetVersion(true));
+            if (GetActiveStereoVersionForReadiness() is { } stereoVersion)
+                EndVersionDrawReadiness(renderer, stereoVersion);
+        }
+
+        private static void EndVersionDrawReadiness(AbstractRenderer renderer, BaseVersion version)
+        {
+            if (renderer.TryGetAPIRenderObject(version, out AbstractRenderAPIObject? apiObject) &&
+                apiObject is IRenderPreparationState preparationState)
+                preparationState.EndDrawReadinessQueries();
         }
 
         /// <summary>
@@ -3641,7 +3817,12 @@ namespace XREngine.Rendering
 
         private bool _boneSeedDiagnosticsLogged;
 
-        internal void RefreshBoneMatricesFromRenderState()
+        /// <summary>
+        /// Reads the current render matrix of each utilized bone, writes the updated bone and
+        /// skin-palette entries, and marks the skinned output dirty so the next frame dispatches
+        /// deformation with the latest pose.
+        /// </summary>
+        public void RefreshBoneMatricesFromRenderState()
         {
             BoneResourceSnapshot resources = CaptureBoneResources();
             XRDataBuffer? boneMatrices = resources.BoneMatrices;

@@ -10,6 +10,10 @@ namespace XREngine.Animation
         public PropAnimVector3(int frameCount, float FPS, bool looped, bool useKeyframes)
             : base(frameCount, FPS, looped, useKeyframes) { }
 
+        /// <inheritdoc />
+        public override void WriteSampleToStore(float second, AnimationValueStore store, in AnimSlot slot)
+            => store.SetVector3(slot.TypeIndex, GetSampleValue(second));
+
         protected override Vector3 LerpValues(Vector3 t1, Vector3 t2, float time) => Vector3.Lerp(t1, t2, time);
         protected override float[] GetComponents(Vector3 value) => [value.X, value.Y, value.Z];
         protected override Vector3 ScaleValue(Vector3 value, float scale) => value * scale;

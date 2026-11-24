@@ -5,6 +5,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Geometry;
 using XREngine.Rendering.Meshlets;
 using XREngine.Scene.Transforms;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Models
 {
@@ -13,14 +14,100 @@ namespace XREngine.Rendering.Models
     /// </summary>
     [XRAssetInspector("XREngine.Editor.AssetEditors.SubMeshInspector")]
     [MemoryPackable(GenerateType.NoGenerate)]
-    public partial class SubMesh : XRAsset
+    public partial class SubMesh : XRAsset, IPostCookedBinaryDeserialize, ICookedBinaryWriteScope
     {
         private SortedSet<SubMeshLOD> _lods = new(new LODSorter());
         private MeshOptimizerSubMeshSettings _meshOptimizer = new();
         private string _importedEntityIdentity = string.Empty;
         private bool _importedEntityIdentityIsStable;
+        private int _cookedCodecVersion;
+        private bool _cookedCodecVersionRead;
+        private List<SubMeshLOD>? _cookedWriteView;
+        private int _cookedWriteDepth;
         public string ImportedEntityIdentity { get => _importedEntityIdentity; set => SetField(ref _importedEntityIdentity, value ?? string.Empty); }
         public bool ImportedEntityIdentityIsStable { get => _importedEntityIdentityIsStable; set => SetField(ref _importedEntityIdentityIsStable, value); }
+
+        /// <summary>
+        /// The version of the cooked sub-mesh payload that gave this sub-mesh: 0 for an editor sub-mesh, 1 for an older generic
+        /// cooked payload with all LODs inline, and <see cref="SubMeshCookedCodec.CodecVersion"/> for a payload with a LOD
+        /// table and separate LOD entries. Only a version 2 sub-mesh can have LODs that are not resident.
+        /// </summary>
+        [YamlIgnore]
+        [MemoryPackIgnore]
+        public int CookedCodecVersion
+        {
+            get => _cookedCodecVersion;
+            internal set => SetField(ref _cookedCodecVersion, value);
+        }
+
+        /// <summary>True if at least one LOD has a separate cooked payload that is not resident now.</summary>
+        public bool HasNonResidentLods
+        {
+            get
+            {
+                foreach (SubMeshLOD lod in _lods)
+                    if (lod.IsPayloadDeferred && lod.Mesh is null)
+                        return true;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// The per-sub-mesh version marker of a generic cooked stream. A write in a <see cref="SubMeshLodPayloadCookSink"/>
+        /// scope gives <see cref="SubMeshCookedCodec.CodecVersion"/>; any other write (a snapshot or a clone) keeps
+        /// <see cref="CookedCodecVersion"/>. An older generic payload has no marker, so its sub-mesh is version 1.
+        /// </summary>
+        private int CookedBinaryCodecVersion
+        {
+            get => _cookedWriteView is not null ? SubMeshCookedCodec.CodecVersion : _cookedCodecVersion;
+            set
+            {
+                _cookedCodecVersion = value;
+                _cookedCodecVersionRead = true;
+            }
+        }
+
+        /// <summary>
+        /// Completes a generic cooked read. With no version marker the payload is the older form with every LOD inline,
+        /// version 1. A version 2 sub-mesh follows <see cref="SubMeshLodPayloads.LoadPolicy"/> for its separate LODs.
+        /// </summary>
+        void IPostCookedBinaryDeserialize.OnPostCookedBinaryDeserialize()
+        {
+            if (!_cookedCodecVersionRead && _cookedCodecVersion == 0)
+                _cookedCodecVersion = 1;
+            if (_cookedCodecVersion == SubMeshCookedCodec.CodecVersion && SubMeshLodPayloads.LoadPolicy == ELodPayloadLoadPolicy.All)
+                SubMeshCookedCodec.LoadSeparateLods(Name, [.. _lods]);
+        }
+
+        /// <summary>
+        /// Opens the split view of the LODs for a generic cooked write while a <see cref="SubMeshLodPayloadCookSink"/> is
+        /// open: the coarsest LOD stays inline, each other LOD goes to the sink as a separate entry, and each LOD carries its
+        /// descriptor. With no sink (a snapshot or a clone), the stream writes the live LODs inline with their descriptors.
+        /// </summary>
+        IDisposable? ICookedBinaryWriteScope.BeginCookedBinaryWrite()
+        {
+            if (SubMeshLodPayloadCookSink.Current is not { } sink)
+                return null;
+            if (_cookedWriteDepth == 0)
+                _cookedWriteView = SubMeshCookedCodec.CreateSplitView(this, sink);
+            // Count the scope only after the view exists, so a failed view leaves no open scope behind.
+            _cookedWriteDepth++;
+            return new CookedWriteScope(this);
+        }
+
+        private sealed class CookedWriteScope(SubMesh owner) : IDisposable
+        {
+            private bool _disposed;
+
+            public void Dispose()
+            {
+                if (_disposed)
+                    return;
+                _disposed = true;
+                if (--owner._cookedWriteDepth == 0)
+                    owner._cookedWriteView = null;
+            }
+        }
 
         private int? _importedSourceMaterialSlot;
         private int? _importedRendererMaterialSlot;
@@ -60,7 +147,7 @@ namespace XREngine.Rendering.Models
         /// </summary>
         private List<SubMeshLOD> CookedBinaryLODs
         {
-            get => [.. _lods];
+            get => _cookedWriteView ?? [.. _lods];
             set => ReplaceLODs(value);
         }
 

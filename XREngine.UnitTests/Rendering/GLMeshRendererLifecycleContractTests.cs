@@ -210,9 +210,9 @@ public sealed class GLMeshRendererLifecycleContractTests
         queueSource.ShouldContain("_programLinkGate.Wait();");
         queueSource.ShouldContain("_programLinkGate.Release();");
         queueSource.ShouldContain("serialized shared-context program link/status");
-        queueSource.ShouldContain("bool allowLinkDeferral = ShouldAllowLinkDeferral(");
-        queueSource.ShouldContain("summary.SourceBytes < LargeSourceLinkDeferralThresholdBytes");
-        queueSource.ShouldContain("allowDeferred: allowLinkDeferral");
+        queueSource.ShouldContain("phase: \"worker=source-link-completion-poll\"");
+        queueSource.ShouldContain("allowDeferred: false,");
+        queueSource.ShouldNotContain("allowDeferred: allowLinkDeferral");
         queueSource.ShouldContain("publishing a failed async result without querying final status");
         queueSource.ShouldContain("deferring completion polling at background priority so faster shader programs can link first.");
         queueSource.ShouldContain("SharedContextAbandonedLinkMarker");
@@ -265,7 +265,7 @@ public sealed class GLMeshRendererLifecycleContractTests
         string selectorSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Pipelines/OpenGLShaderLinkBackendSelector.cs");
 
         linkSource.ShouldContain("LargeSourceSharedContextPreferenceThresholdBytes = 128 * 1024");
-        linkSource.ShouldContain("ShouldPreferSharedContextForLargeSource(Hash, inputs)");
+        linkSource.ShouldContain("ShouldPreferSharedContextForLargeSource(inputs);");
         linkSource.ShouldContain("PreferSharedContextForLargeSource: preferSharedContextForLargeSource");
 
         selectorSource.ShouldContain("PreferSharedContextForLargeSource");
@@ -273,13 +273,15 @@ public sealed class GLMeshRendererLifecycleContractTests
     }
 
     [Test]
-    public void GLRenderProgram_AbandonedSharedContextLinksAvoidDeferredCompletionPolling()
+    public void GLRenderProgram_AbandonedSharedContextLinksStopSourceCompilationWithoutRetry()
     {
         string linkSource = ReadGlRenderProgramLinkingSources();
 
-        linkSource.ShouldContain("DriverParallelSourceTimeouts");
-        linkSource.ShouldContain("programId={abandonedProgramId} leaked to avoid blocking GL cleanup calls");
-        linkSource.ShouldContain("shared-context source link stalled; leaving fallback material active");
+        linkSource.ShouldContain("private void AbandonSharedContextSourceBuild(uint abandonedProgramId)");
+        linkSource.ShouldContain("native compilation did not complete; source compilation stopped until process restart");
+        linkSource.ShouldContain("No retry or GL cleanup was submitted for the unfinished build.");
+        linkSource.ShouldNotContain("DriverParallelSourceTimeouts");
+        linkSource.ShouldNotContain("shared-context source link stalled; retrying");
         linkSource.ShouldNotContain("RenderThreadDriverParallelRetryHashes");
         linkSource.ShouldNotContain("DeferredAsyncLinkCleanups.Enqueue(new DeferredAsyncLinkCleanup(Renderer, abandonedProgramId, []));");
     }

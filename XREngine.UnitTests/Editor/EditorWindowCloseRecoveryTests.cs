@@ -58,8 +58,13 @@ public sealed class EditorWindowCloseRecoveryTests
         registerDraw.ShouldBeGreaterThan(initialize);
     }
 
+    /// <summary>
+    /// Checks the close policy when rendering works: a close request with no dirty assets
+    /// closes at once (automated session shutdown depends on this), and a close request with
+    /// dirty assets opens the save confirmation.
+    /// </summary>
     [Test]
-    public void WindowCloseRequest_AlwaysBeginsConfirmationWhenRenderingIsAvailable()
+    public void WindowCloseRequest_ClosesWithoutDirtyAssetsAndConfirmsOtherwise()
     {
         string source = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.ImGui.cs");
         int handlerStart = source.IndexOf(
@@ -70,9 +75,21 @@ public sealed class EditorWindowCloseRecoveryTests
         beginPromptStart.ShouldBeGreaterThan(handlerStart);
 
         string handlerBody = source[handlerStart..beginPromptStart];
-        handlerBody.ShouldContain("XRAsset[] dirtyAssets = Engine.Assets?.DirtyAssets.Values.ToArray() ?? [];");
-        handlerBody.ShouldContain("BeginClosePrompt(window, dirtyAssets);");
-        handlerBody.ShouldNotContain("dirtyAssets.Length == 0");
+        int renderFailureBypass = handlerBody.IndexOf("ShouldBypassClosePromptForRenderFailure(", StringComparison.Ordinal);
+        int collectDirtyAssets = handlerBody.IndexOf(
+            "XRAsset[] dirtyAssets = Engine.Assets?.DirtyAssets.Values.ToArray() ?? [];",
+            StringComparison.Ordinal);
+        int cleanCloseCheck = handlerBody.IndexOf("if (dirtyAssets.Length == 0)", StringComparison.Ordinal);
+        int cleanCloseAllow = handlerBody.IndexOf("return Engine.WindowCloseRequestResult.Allow;", Math.Max(0, cleanCloseCheck), StringComparison.Ordinal);
+        int beginPrompt = handlerBody.IndexOf("BeginClosePrompt(window, dirtyAssets);", StringComparison.Ordinal);
+        int deferClose = handlerBody.IndexOf("return Engine.WindowCloseRequestResult.Defer;", Math.Max(0, beginPrompt), StringComparison.Ordinal);
+
+        renderFailureBypass.ShouldBeGreaterThanOrEqualTo(0);
+        collectDirtyAssets.ShouldBeGreaterThan(renderFailureBypass);
+        cleanCloseCheck.ShouldBeGreaterThan(collectDirtyAssets);
+        cleanCloseAllow.ShouldBeGreaterThan(cleanCloseCheck);
+        beginPrompt.ShouldBeGreaterThan(cleanCloseAllow);
+        deferClose.ShouldBeGreaterThan(beginPrompt);
     }
 
     private static string ReadWorkspaceFile(string relativePath)

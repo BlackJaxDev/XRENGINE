@@ -14,8 +14,8 @@ uniform vec2 _UvTileDiscardGrid;
 uniform vec2 _UvTileDiscardRange;
 uniform int _UDIMDiscardMode;
 uniform int _UDIMDiscardUV;
-//@property(name="_SourceUdimFlipV", display="Source UDIM V Conversion", mode=static, default="0.0")
-uniform float _SourceUdimFlipV;
+//@property(name="_UdimFlipV", display="UDIM Flip V", mode=static, default="0.0")
+uniform float _UdimFlipV;
 uniform float _UDIMDiscardRow0_0;
 uniform float _UDIMDiscardRow0_1;
 uniform float _UDIMDiscardRow0_2;
@@ -49,10 +49,18 @@ uniform vec4 _TouchGlowColor;
 //@property(name="_InternalParallaxStrength", display="Internal Parallax", mode=animated, range=[0,1])
 uniform float _InternalParallaxStrength;
 uniform vec4 _InternalParallaxParams;
-//@property(name="_ProceduralMode", display="Procedural Mode", mode=animated, enum="0:Off|1:CRT|2:Gameboy|3:Voronoi|4:Truchet")
+//@property(name="_ProceduralMode", display="Procedural Mode", mode=animated, enum="0:Off|1:CRT|2:Gameboy|3:Voronoi|4:Truchet|6:Eye")
 uniform int _ProceduralMode;
 uniform vec4 _ProceduralParams;
 uniform vec4 _ProceduralColor;
+//@property(name="_ProceduralEyeParams0", display="Eye Parallax (distance scale, parallax, slit pupil, smoke size)", mode=animated, default="vec4(1.0, 1.0, 1.0, 0.5)")
+uniform vec4 _ProceduralEyeParams0;
+//@property(name="_ProceduralEyeParams1", display="Eye Pupil (size, thickness, hue shift, hue speed)", mode=animated, default="vec4(0.5, 0.5, 0.0, 0.0)")
+uniform vec4 _ProceduralEyeParams1;
+//@property(name="_ProceduralEyeParams2", display="Eye Rings (count, thickness, size)", mode=animated, default="vec4(10.0, 0.1, 1.0, 0.0)")
+uniform vec4 _ProceduralEyeParams2;
+//@property(name="_ProceduralEyeParams3", display="Eye Vignette (thickness, falloff, transparency, dither scale)", mode=animated, default="vec4(0.4, 0.15, 0.0, 0.0)")
+uniform vec4 _ProceduralEyeParams3;
 //@property(name="_VideoTexture", display="Video Texture", slot=texture)
 uniform sampler2D _VideoTexture;
 uniform vec4 _VideoTexture_ST;

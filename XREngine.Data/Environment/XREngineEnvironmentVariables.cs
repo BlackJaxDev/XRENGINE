@@ -493,6 +493,13 @@ public static class XREngineEnvironmentVariables
     public const string VulkanTargetTrace = "XRE_VULKAN_TARGET_TRACE";
     public const string VulkanIndirectTrace = "XRE_VULKAN_INDIRECT_TRACE";
     public const string VulkanCounterDiagnostics = "XRE_VULKAN_COUNTER_DIAGNOSTICS";
+    /// <summary>
+    /// Render frames between two delayed copies of the Advanced visibility counters under
+    /// submission strategies that are not instrumented. "1" copies every frame. Unset or "0"
+    /// turns the copies off. The MCP tool set_advanced_visibility_counter_sampling changes
+    /// the value while the editor runs.
+    /// </summary>
+    public const string AdvancedVisibilityCounterSampling = "XRE_ADVANCED_VISIBILITY_COUNTER_SAMPLING";
     public const string VulkanDescriptorTrace = "XRE_VULKAN_DESCRIPTOR_TRACE";
     public const string OpenXrVulkanTrace = "XRE_OPENXR_VULKAN_TRACE";
     public const string OpenXrVulkanMirrorFbo = "XRE_OPENXR_VULKAN_MIRROR_FBO";

@@ -490,7 +490,7 @@ values, and descriptor metadata remain available for diagnostics. The bounded
 opaque Standard converter also converts its ordinary `_Color` RGB tint in a
 Linear project.
 
-The importer sets `_SourceCubeMap` for enabled source cubemaps. Both native
+The importer sets `_CubeMapToonModel` for enabled source cubemaps. Both native
 Advanced shading and canonical Uber shading apply that cubemap to base color
 before diffuse lighting and PBR evaluation. Its emission remains separate and
 is added once. The source light-mask blend uses `min(mask, lightMask)`. Generic
@@ -519,7 +519,7 @@ Environmental rim conversion uses the source `_EnableEnvironmentalRim` flag.
 When it is disabled, the converted `_RimEnviroIntensity` is zero. A saved
 intensity can remain in the source material after its module is disabled;
 enabling another shared PBR feature must not activate that value.
-Enabled source rim uses `_SourceEnviroRim` and the selected reflection probes.
+Enabled source rim uses `_EnviroRimSettings` and the selected reflection probes.
 It samples the prefiltered probe in the world-normal direction without box
 parallax correction. The source blur maps to the native prefilter mip range.
 The source view rim, brightness threshold, base color, mask channel, mask UV,
@@ -547,7 +547,7 @@ materials use the full camera ambient occlusion result, including GTAO. Set the
 AO mode, strength, and enabled state in the camera post-processing settings.
 Both native Advanced and forward Uber shading apply camera diffuse AO to
 source indirect light, wrapped light, and environment rim lighting. Camera
-specular occlusion also affects Mochie and clear-coat probe reflections.
+specular occlusion also affects toon-specular and clear-coat probe reflections.
 Direct light and emission remain separate. Source material AO maps remain
 separate. A camera with AO
 disabled supplies neutral occlusion, so this default does not darken the material.
@@ -638,7 +638,7 @@ Poiyomi Pro-authored materials use a separate, explicitly lossy path. Unlocked
 and optimizer-locked Pro signatures are classified, normalized to the common
 Toon property surface, and reported as `Downgraded`. Active Pro-only Grab Pass,
 refraction, blur, touch-effect, Pro integration, Pro vertex, and Pro authoring
-groups are discarded with `POIPRO0002` warnings. This is a migration aid, not
+groups are discarded with `TOONLOSS0002` warnings. This is a migration aid, not
 Poiyomi Pro support or a parity claim. See
 [Poiyomi Toon Material Conversion](../rendering/poiyomi-toon-material-conversion.md#lossy-poiyomi-pro-downgrade).
 
@@ -651,8 +651,9 @@ loading or executing Unity, VRChat, or package assemblies:
   stiffness, gravity, immobile, radius, limits, curves, collider lists, and
   referenced transforms;
 - PhysBone sphere, capsule, and plane colliders;
-- position, rotation, and scale constraints with source weights and affected
-  axes;
+- avatar SDK position, rotation, scale, parent, aim, and look-at constraints, and
+  the native constraint components of the same types (see
+  [Constraints](#constraints));
 - avatar descriptor view position, lip-sync mode, viseme blendshapes, and
   eye-look metadata;
 - animator controller, layer, mask, expression-menu, and parameter references
@@ -677,6 +678,39 @@ The unit-world physics-chain fixture switch does not disable imported chains.
 Restoring an avatar root transform does not reset particle history. For static
 image comparisons, save and disable the imported chains, take a new baseline,
 then restore their enabled states after the comparison.
+
+### Constraints
+
+Each avatar SDK constraint `MonoBehaviour` and each native constraint
+component becomes one `WeightedTransformConstraintComponent`. The avatar SDK
+converts native constraints to its own constraints field by field, so both
+families use the same settings. `Mode` selects the solve:
+
+| Source type | Mode | Notes |
+|---|---|---|
+| Position, Rotation, Scale | `Match` | The constraint-level offset is added to the weighted source pose. The position offset is in the target's parent space. The scale offset multiplies the source scale. |
+| Parent | `Parent` | Each source has its own offset. The position offset is in the source's space (source rotation and scale apply), as for a child of the source. Scale is not changed. |
+| Aim, LookAt | `Aim` | The aim axis points at the weighted source position. The up axis turns toward the world-up direction. Look-at aims the forward axis, uses scene up and `Roll`, or turns +Y toward the up transform. |
+
+The importer reads the weight, the locked state, the affected axes, the rest
+pose (position, rotation, and scale), Solve In Local Space, Freeze To World, and
+Rebake Offsets When Unfrozen. Sources with a weight of zero stay in the source
+list. An avatar SDK source list can hold more than 16 sources; the importer also
+reads `overflowList`. Source coordinates convert to engine coordinates.
+
+Constraints run in the late tick group, after animation and the physics chains.
+After the full prefab hierarchy exists, the importer calculates
+`ExecutionOrder` for every constraint: a constraint that reads a transform that
+another constraint moves (a source, a world-up transform, or, for a world-space
+solve, an ancestor of one of these or of the target) solves later in the same
+frame. A constraint with dependents recalculates the world matrices of its
+target subtree right after it writes the target. Dependencies that form a cycle
+are ignored, and diagnostic `SRCCONSTRAINT0002` reports them.
+
+Limitations: the importer applies only the enabled state from prefab-instance
+overrides to constraints, does not bind animation curves to constraint properties
+(for example source weights), and does not move a constraint before the physics
+chains when the avatar SDK runtime would solve it before its own physics chains.
 
 Pipeline-manager components are intentionally ignored. Unknown
 `MonoBehaviour` documents are summarized with script identity, local file ID,

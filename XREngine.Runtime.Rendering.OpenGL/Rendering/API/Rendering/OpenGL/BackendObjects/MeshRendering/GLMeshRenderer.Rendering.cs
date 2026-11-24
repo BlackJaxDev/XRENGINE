@@ -665,7 +665,7 @@ namespace XREngine.Rendering.OpenGL
                     material.SetUniforms(mat);
                     if (uniformSourceMaterial is not null)
                     {
-                        // Keep Poiyomi vertex-effect parameters out of the lightweight
+                        // Keep source toon vertex-effect parameters out of the lightweight
                         // fallback program. Only the source render state and the fragment
                         // inputs needed for a stable textured preview are transferred.
                         Renderer.ApplyRenderParameters(bindingMaterial.Data.RenderOptions);
@@ -681,6 +681,16 @@ namespace XREngine.Rendering.OpenGL
                 vtx!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
                 mat!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
                 mat!.Uniform(EditorHighlightFragmentSourceAdapter.FlagsUniformName, editorHighlightBits);
+                MeshRenderer.EnterResourcePublicationLease();
+                try
+                {
+                    if (!MeshRenderer.TryPrepareUdimTriangleCoverage(Mesh, bindingMaterial.Data, publishInactive: false, out failureReason))
+                        return false;
+                }
+                finally
+                {
+                    MeshRenderer.ExitResourcePublicationLease();
+                }
                 PublishTypedBindingPublishers(
                     bindingMaterial.Data.BindingPublishers,
                     vtx!.Data,

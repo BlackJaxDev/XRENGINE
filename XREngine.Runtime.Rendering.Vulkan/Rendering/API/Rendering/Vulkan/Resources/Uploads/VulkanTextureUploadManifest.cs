@@ -3,7 +3,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Frozen set of uploads required by one PresentNow frame.</summary>
 internal sealed class VulkanTextureUploadManifest
 {
-    private const int Capacity = VulkanAcceptedFramePlan.UploadCapacity;
+    private const int Capacity = VulkanAcceptedFramePlan.RequiredTextureCapacity;
     private const int IndexCapacity = Capacity * 2;
     private const int IndexMask = IndexCapacity - 1;
     private readonly VulkanTextureUploadTicket[] _tickets = new VulkanTextureUploadTicket[Capacity];

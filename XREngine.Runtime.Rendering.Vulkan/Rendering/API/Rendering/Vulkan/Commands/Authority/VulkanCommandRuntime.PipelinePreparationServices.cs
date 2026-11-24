@@ -127,6 +127,15 @@ internal sealed partial class VulkanCommandRuntime
             ResourceRuntime.PipelineManager.SharedGraphicsPipelineRetirementGeneration;
         RefreshPipelineAdmissionForRetirement(
             recordingState.RecordingScratch, pipelineRetirementGeneration);
+
+        // While the view warms up, this gate can hold the frame before the primary admission runs. Prewarm the draw
+        // readiness requests here too, so their pipelines compile in parallel with the view's own pipelines. The normal
+        // admission did not run yet, so its mesh-task results are not known.
+        PrewarmDrawReadinessRequests(
+            ref recordingState,
+            manifest,
+            pendingRequirements: null,
+            admissionComplete: false);
         for (int index = 0; index < manifest.Requirements.Count; index++)
         {
             VulkanPipelineVariantRequirement requirement = manifest.Requirements[index];

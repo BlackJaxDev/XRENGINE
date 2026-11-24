@@ -184,7 +184,7 @@ public static class BakeMotionSelector
     /// Returns true when the component and every node from its node up to <paramref name="root"/> are active, as for a
     /// component that the engine plays. The content does not have to be in a world.
     /// </summary>
-    internal static bool IsEnabled(XRComponent component, SceneNode root)
+    public static bool IsEnabled(XRComponent component, SceneNode root)
     {
         if (!component.IsActive)
             return false;

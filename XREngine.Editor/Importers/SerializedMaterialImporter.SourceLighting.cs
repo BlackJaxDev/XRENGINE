@@ -33,27 +33,27 @@ public static partial class SerializedMaterialImporter
             return;
         }
 
-        SetInt(material, "_SourceLightMode", 1);
-        SetVector4(material, "_SourceLightSettings", new Vector4(
+        SetInt(material, "_LightModel", 1);
+        SetVector4(material, "_ToonLightSettings", new Vector4(
             GetFloat(document, "_Unlit_Intensity", 1.0f),
             GetFloat(document, "_LightingCastedShadows", 1.0f),
             GetFloat(document, "_PPLightingMultiplier", 1.0f),
             GetFloat(document, "_PPLightingAddition")));
-        SetVector4(material, "_SourceAdditiveSettings", new Vector4(
+        SetVector4(material, "_AdditiveLightSettings", new Vector4(
             GetFloat(document, "_LightingAdditiveEnable", 1.0f),
             GetFloat(document, "_DisableDirectionalInAdd", 1.0f),
             GetFloat(document, "_LightingAdditiveLimited", 1.0f),
             GetFloat(document, "_LightingAdditiveLimit", 1.0f)));
-        SetVector4(material, "_SourceAdditiveColor", new Vector4(
+        SetVector4(material, "_AdditiveLightColor", new Vector4(
             GetFloat(document, "_LightingAdditiveMonochromatic"),
             GetFloat(document, "_LightingAdditivePassthrough"),
             GetInt(document, "_LightingAdditiveType"),
             GetFloat(document, "_LightingAdditiveCastedShadows", 1.0f)));
-        SetVector4(material, "_SourceAdditiveGradient", new Vector4(
+        SetVector4(material, "_AdditiveLightGradient", new Vector4(
             GetFloat(document, "_LightingAdditiveGradientStart"),
             GetFloat(document, "_LightingAdditiveGradientEnd", 0.5f),
             0.0f, 0.0f));
-        SetVector4(material, "_SourceWrappedColor",
+        SetVector4(material, "_WrappedLightColor",
             document.TryGetVector("_LightingWrappedColor", out Vector4 wrappedColor)
                 ? wrappedColor : Vector4.One);
         if (shadingMode == 1)

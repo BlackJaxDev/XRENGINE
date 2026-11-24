@@ -8,7 +8,7 @@ public static class AdvancedSceneColorContract
     public const string SceneColorSnapshotResourceName = "AdvancedShading.SceneColorSnapshot";
     public const string SceneColorSamplerName = "AdvancedSceneColorSnapshot";
     public const string SourceOrderedSnapshotResourceName = "AdvancedShading.SourceOrderedSceneColorSnapshot";
-    public const string SourceOrderedSamplerName = "_SourceSceneColor";
+    public const string SourceOrderedSamplerName = "_SceneColorTexture";
 
     /// <summary>
     /// Determines whether a dedicated scene color copy is required based on active refractive draws.

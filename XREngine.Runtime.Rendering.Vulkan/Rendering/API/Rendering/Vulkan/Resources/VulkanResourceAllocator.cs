@@ -38,6 +38,9 @@ internal sealed class VulkanResourceAllocator
     private readonly Dictionary<string, VulkanPhysicalBufferGroup> _resourceToPhysicalBufferGroup = new(StringComparer.OrdinalIgnoreCase);
     private VulkanTransientAttachmentPlan _transientAttachmentPlan = VulkanTransientAttachmentPlan.Baseline;
 
+    /// <summary>Gets the transient attachment plan of the current allocation. Diagnostics read its summary.</summary>
+    internal VulkanTransientAttachmentPlan TransientAttachmentPlan => _transientAttachmentPlan;
+
     public IReadOnlyDictionary<string, VulkanImageAllocation> LogicalTextureAllocations => _logicalTextureAllocations;
     public IReadOnlyDictionary<string, VulkanBufferAllocation> LogicalBufferAllocations => _logicalBufferAllocations;
     public IReadOnlyDictionary<VulkanAliasGroupKey, VulkanImageAliasGroup> AliasGroups => _aliasGroups;

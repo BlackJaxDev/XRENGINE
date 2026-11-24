@@ -52,6 +52,84 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline? pipel
         return new PostProcessCategoryBuilder(definition);
     }
 
+    /// <summary>Returns true when the builder declares stage <paramref name="key"/>.</summary>
+    public bool HasStage(string key)
+        => _stages.ContainsKey(key);
+
+    /// <summary>Removes stage <paramref name="key"/> and its category entries. Derived pipeline overlays use it.</summary>
+    /// <returns>True when the stage existed.</returns>
+    internal bool RemoveStage(string key)
+    {
+        if (!_stages.Remove(key))
+            return false;
+
+        foreach (CategoryDefinition category in _categories.Values)
+            category.StageKeys.Remove(key);
+        return true;
+    }
+
+    /// <summary>Moves stage <paramref name="key"/> from each category to category <paramref name="categoryKey"/>.</summary>
+    /// <returns>True when the stage existed.</returns>
+    internal bool MoveStageToCategory(string key, string categoryKey)
+    {
+        if (!_stages.ContainsKey(key))
+            return false;
+
+        foreach (CategoryDefinition category in _categories.Values)
+            category.StageKeys.Remove(key);
+
+        CategoryDefinition target = Category(categoryKey).Definition;
+        target.StageKeys.Add(key);
+        return true;
+    }
+
+    /// <summary>
+    /// Changes the default value of parameter <paramref name="parameterName"/> of stage <paramref name="key"/>. A custom
+    /// parameter gets a copy with the new default. Any other name becomes a uniform customization.
+    /// </summary>
+    /// <param name="key">The stage key.</param>
+    /// <param name="parameterName">The parameter or uniform name.</param>
+    /// <param name="convert">Converts the value to the type of the current default, or to the given type when the current default is null.</param>
+    /// <returns>True when the stage existed.</returns>
+    internal bool OverrideParameterDefault(string key, string parameterName, Func<Type?, object?> convert)
+    {
+        if (!_stages.TryGetValue(key, out StageDefinition? stage))
+            return false;
+
+        for (int i = 0; i < stage.CustomParameters.Count; i++)
+        {
+            CustomParameterDefinition custom = stage.CustomParameters[i];
+            if (!string.Equals(custom.Name, parameterName, StringComparison.Ordinal))
+                continue;
+
+            object value = convert(custom.DefaultValue?.GetType()) ?? custom.DefaultValue!;
+            stage.CustomParameters[i] = new CustomParameterDefinition
+            {
+                Name = custom.Name,
+                DisplayName = custom.DisplayName,
+                Kind = custom.Kind,
+                DefaultValue = value,
+                IsColor = custom.IsColor,
+                Min = custom.Min,
+                Max = custom.Max,
+                Step = custom.Step,
+                EnumOptions = custom.EnumOptions,
+                VisibilityCondition = custom.VisibilityCondition,
+                EditorSection = custom.EditorSection,
+            };
+            return true;
+        }
+
+        if (!stage.Customizations.TryGetValue(parameterName, out UniformCustomization? customization))
+        {
+            customization = new UniformCustomization();
+            stage.Customizations[parameterName] = customization;
+        }
+
+        customization.DefaultValue = convert(customization.DefaultValue?.GetType());
+        return true;
+    }
+
     internal RenderPipelinePostProcessSchema Build()
     {
         if (_stages.Count == 0)
@@ -447,6 +525,8 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline? pipel
 
         internal PostProcessCategoryBuilder(CategoryDefinition definition)
             => _definition = definition;
+
+        internal CategoryDefinition Definition => _definition;
 
         public PostProcessCategoryBuilder Describe(string? description)
         {

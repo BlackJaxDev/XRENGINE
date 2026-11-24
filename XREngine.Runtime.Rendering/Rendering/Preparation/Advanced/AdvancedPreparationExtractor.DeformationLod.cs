@@ -11,9 +11,9 @@ public sealed partial class AdvancedPreparationExtractor
     /// Draw flags of paths that read the deformed vertices of a skinned draw without the clamped
     /// cluster cut and without the level cover range of the visibility payload: transparency,
     /// the depth-writing masked raster, the decal buffer pass, the editor highlight stencil draw,
-    /// wireframe, and non-canonical raster state. The directional shadow raster draws the
-    /// payload index range, which is the level cover of a clamped draw, so shadow casters can
-    /// use deformation level of detail.
+    /// wireframe, and the CPU fallback. The directional shadow raster draws the payload index
+    /// range, which is the level cover of a clamped draw, so shadow casters can use deformation
+    /// level of detail. <see cref="ChooseDeformationLevel"/> checks the cull state separately.
     /// </summary>
     private const GPUIndirectRenderFlags ExcludedDeformationLodFlags =
         GPUIndirectRenderFlags.Transparent |
@@ -21,7 +21,6 @@ public sealed partial class AdvancedPreparationExtractor
         GPUIndirectRenderFlags.SurfaceDecal |
         GPUIndirectRenderFlags.EditorHighlightMask |
         GPUIndirectRenderFlags.Wireframe |
-        GPUIndirectRenderFlags.NonCanonicalRasterState |
         GPUIndirectRenderFlags.CpuFallbackOnly;
 
     private readonly Vector3[] _deformationLodEyes = new Vector3[RenderFrameViewSet.MaxViewCount];
@@ -74,23 +73,42 @@ public sealed partial class AdvancedPreparationExtractor
         bool physicsStateCaptured,
         in PhysicsChainGpuRendererOutputState physicsState)
     {
-        if (_deformationLodEyeCount == 0 ||
-            (command.Flags & (uint)ExcludedDeformationLodFlags) != 0u ||
-            !geometry.IsResident ||
-            !geometry.HasClusterHierarchy ||
-            geometry.MeshletCount <= geometry.DrawMeshletCount ||
-            !geometry.MeshletDescriptors.IsValid ||
+        // The view check comes after the geometry checks, so that the diagnostics also show the
+        // geometry state of a cluster cut session without deformation level of detail.
+        uint excludedFlags = command.Flags & (uint)ExcludedDeformationLodFlags;
+        if (excludedFlags != 0u)
+            return NoteDeformationLevelGate(ClassifyExcludedDrawFlags(excludedFlags));
+        // A double-sided draw sets NonCanonicalRasterState, but the visibility payload carries its
+        // cull mode, and the raster draws it through the same cluster cut and index range as a
+        // back-face culled draw. Front-face and all-face culling keep level 0.
+        if ((command.Flags & (uint)GPUIndirectRenderFlags.NonCanonicalRasterState) != 0u &&
+            (command.Flags & (uint)GPUIndirectRenderFlags.DoubleSided) == 0u)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.ExcludedCullState);
+        if (!geometry.IsResident)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.GeometryNotResident);
+        if (geometry.MeshletCount == 0u)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoMeshlets);
+        if (!geometry.HasClusterHierarchy)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoClusterHierarchy);
+        if (geometry.MeshletCount <= geometry.DrawMeshletCount)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoCoarserLevels);
+        if (!geometry.MeshletDescriptors.IsValid ||
             !geometry.MeshletVertexIndices.IsValid ||
-            !geometry.MeshletTriangleWords.IsValid ||
-            mesh.MeshletPayload is not { HasDeformationOrder: true } payload ||
-            payload.DeformationVertexOrder.Length != mesh.VertexCount ||
-            !publication.Transforms.TryGet(draw.CurrentTransform, out AdvancedTransformRecord transform))
-            return 0u;
+            !geometry.MeshletTriangleWords.IsValid)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.MeshletBuffersInvalid);
+        if (mesh.MeshletPayload is not { HasDeformationOrder: true } payload)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoDeformationOrder);
+        if (payload.DeformationVertexOrder.Length != mesh.VertexCount)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.DeformationOrderMismatch);
+        if (_deformationLodEyeCount == 0)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoViews);
+        if (!publication.Transforms.TryGet(draw.CurrentTransform, out AdvancedTransformRecord transform))
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoTransform);
 
         // A GPU physics draw needs the committed proxy box that contains its patched sphere.
         bool physicsBoundsUsable = hasPhysicsBounds && physicsStateCaptured && physicsState.CpuSpatialBoundsValid;
         if (hasPhysicsBounds && !physicsBoundsUsable)
-            return 0u;
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.PhysicsBoundsUnusable);
 
         float maxScale = AdvancedDeformationLevelSelector.MaxAxisScale(in transform.World);
         float distance = AdvancedDeformationLevelSelector.DrawDistance(
@@ -108,11 +126,32 @@ public sealed partial class AdvancedPreparationExtractor
             maxScale,
             _deformationLodPixelScale,
             AdvancedVirtualGeometryPolicy.PixelThreshold);
-        return level != 0u &&
-            payload.DeformationPrefixCounts[(int)level] != 0u &&
-            HasPublishedLevelCover(in geometry, payload, level)
-                ? level
-                : 0u;
+        if (level == 0u)
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.SelectedLevelZero);
+        if (payload.DeformationPrefixCounts[(int)level] == 0u ||
+            !HasPublishedLevelCover(in geometry, payload, level))
+            return NoteDeformationLevelGate(EAdvancedDeformationLevelGate.NoPrefixOrCover);
+        NoteDeformationLevelGate(EAdvancedDeformationLevelGate.Chosen, level);
+        return level;
+    }
+
+    /// <summary>
+    /// Returns the gate outcome of the first excluded flag in <paramref name="excludedFlags"/>,
+    /// in the order of <see cref="ExcludedDeformationLodFlags"/>.
+    /// </summary>
+    private static EAdvancedDeformationLevelGate ClassifyExcludedDrawFlags(uint excludedFlags)
+    {
+        if ((excludedFlags & (uint)GPUIndirectRenderFlags.Transparent) != 0u)
+            return EAdvancedDeformationLevelGate.ExcludedTransparent;
+        if ((excludedFlags & (uint)GPUIndirectRenderFlags.FragmentDepth) != 0u)
+            return EAdvancedDeformationLevelGate.ExcludedFragmentDepth;
+        if ((excludedFlags & (uint)GPUIndirectRenderFlags.SurfaceDecal) != 0u)
+            return EAdvancedDeformationLevelGate.ExcludedSurfaceDecal;
+        if ((excludedFlags & (uint)GPUIndirectRenderFlags.EditorHighlightMask) != 0u)
+            return EAdvancedDeformationLevelGate.ExcludedEditorHighlight;
+        if ((excludedFlags & (uint)GPUIndirectRenderFlags.Wireframe) != 0u)
+            return EAdvancedDeformationLevelGate.ExcludedWireframe;
+        return EAdvancedDeformationLevelGate.ExcludedCpuFallback;
     }
 
     /// <summary>

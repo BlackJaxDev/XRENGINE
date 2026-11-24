@@ -123,7 +123,7 @@ long app-thread job runs (for example a benchmark spawn). Call the static
 and the longest deferral.
 
 Set `XRE_MCP_REQUEST_TRACE=1` before editor startup to trace single-request
-`invoke_method` calls. The trace records the JSON-RPC ID, tool and target
+`invoke_method` calls, or `XRE_MCP_REQUEST_TRACE=all` to trace every tool call. The trace records the JSON-RPC ID, tool and target
 type/method names, request milestones, elapsed time, and managed thread ID. It
 does not record method arguments, object data, headers, or credentials. The
 server keeps the latest 512 milestones and writes each milestone to the MCP
@@ -294,7 +294,7 @@ Authorization: Bearer <McpServerAuthToken>
 
 - Browser-origin requests are checked against `McpServerCorsAllowlist`.
 - Payloads larger than `McpServerMaxRequestBytes` are rejected.
-- Requests that exceed `McpServerRequestTimeoutMs` are canceled.
+- Requests that exceed `McpServerRequestTimeoutMs` are canceled. A synchronous tool, for example `import_third_party_asset`, does not observe the timeout and can finish after it. The server then still sends the result, and the request log line shows `after_timeout_ms`.
 - If `McpServerReadOnly` is enabled, mutating tools are blocked.
 - `McpServerAllowedTools` and `McpServerDeniedTools` can be used to enforce per-tool policy.
 - If `McpServerRateLimitEnabled` is enabled, per-client requests above quota return `429` with `Retry-After`.
@@ -703,6 +703,14 @@ The edits enter Undo and do not save assets.
 | `create_primitive_shape` | Create a visible primitive shape node with a default material in the active scene. |
 | `create_scene` | Create a new scene in the active world. |
 | `create_scene_node` | Create a scene node in the active world/scene. |
+| `create_world` | Create a new world with one empty visible scene and make it the active world. save_world writes it to disk. |
+| `cutscene_add_track` | Add a track to the cutscene asset of a director. track_type is transform, camera_cut, camera_property, property, animation_clip, or simulation_control. target_node_id is the node that the track acts on. Each clip has start and duration in seconds, and optional clip_offset, speed, and extrapolation (None, Hold). Curves have times in clip seconds, values (1 number per key for float curves, 3 for position and scale, 4 for rotation as x,y,z,w), and interpolation (Linear or Step). A transform clip uses position, rotation, and scale. A camera_cut clip uses camera_node_id (default: target_node_id). A camera_property clip uses field_of_view. A property clip uses float_curve, vector3_curve, or quaternion_curve with component_type and member_path on the track. An animation_clip clip uses animation_clip_path. A simulation_control track has no clips and uses simulation_policy, warm_up_seconds, and seed. |
+| `cutscene_create_asset` | Create an empty cutscene asset with a duration and assign it to the CutsceneDirectorComponent of a node. The tool adds the director when the node has none. The asset replaces the current asset of the director and is not saved until cutscene_save_asset. |
+| `cutscene_open` | Open a cutscene. In edit mode this starts a preview that restores the scene when it closes. In play mode this opens a director. Uses asset_path (edit mode only), node_id of a node with a CutsceneDirectorComponent, the selected node, or the only director in the world. Set close to true to end the open cutscene. |
+| `cutscene_play` | Play or pause the open cutscene. A negative rate plays backward. At the end of the range the state becomes Paused. |
+| `cutscene_save_asset` | Save the cutscene asset of a director. A new asset goes to asset_folder (default Cutscenes) of the game assets. An asset that has a file is saved to that file. |
+| `cutscene_seek` | Move the open cutscene to a time in seconds. The tool evaluates the tracks before it returns, and the result is limited to the cutscene range. The transforms flush later in the same frame, so a capture after this call shows the new time. |
+| `cutscene_status` | Read the open cutscene: position and duration in seconds, transport state, rate, mode (preview, director, or closed), diagnostics, the open readiness (readyForInstantSeek, pending T0 loads, the T0 draw program states on the active backend (pending, not started, compiling, ready, failed, and not supported), the proxy draw and material counts, and whether the open sequence finished), and the audio clock (clock mode, fallback, mute, last heard-minus-clock difference in ms, read count, hard resync count, and output latency in ms). |
 | `delete_game_asset` | Delete a file or directory from the game project's assets directory. |
 | `delete_game_script` | Delete a .cs script file from the game project's assets directory. |
 | `delete_scene` | Delete a scene from the active world. |
@@ -723,6 +731,7 @@ The edits enter Undo and do not save assets.
 | `find_nodes_by_type` | Find scene nodes that have a component type. |
 | `focus_node_in_view` | Focus the editor camera on a scene node. |
 | `get_advanced_profile_diagnostics` | Get the selected viewport's Advanced capability, blocker, executable-stage, realized-resource, per-view, and captured GPU-counter evidence. |
+| `get_advanced_visibility_counters` | Return the newest completed Advanced visibility counter values for each output and view, including payloadOverflow and decodeOutOfBounds, plus the sampling state. Instrumented strategies copy the counters every frame. Other strategies copy them only while set_advanced_visibility_counter_sampling is on. |
 | `get_assembly_types` | List all types in a specific loaded assembly. |
 | `get_asset_dependencies` | List all assets referenced/embedded by a given asset. Specify by asset GUID or file path. |
 | `get_asset_info` | Get detailed info about a loaded asset by ID or path. |
@@ -752,6 +761,7 @@ The edits enter Undo and do not save assets.
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
 | `get_model_material_bindings` | Read model source slots, assigned materials, legacy and surface texture bindings, source paths, and sampling metadata. Native Uber preflight does not prove GPU execution. Does not decode textures or read GPU pixels. |
 | `get_network_runtime_measurements` | Read high-rate send, receive, pose application, and relay scope counters plus admission and rejection status. |
+| `get_node_bounds` | Return the world-space bounding box of the renderable meshes on a node and its descendants, in the current pose. Scripts use it to place cameras relative to an object. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
 | `get_openxr_runtime_diagnostics` | Read the current OpenXR session summary, exact submission ownership ledger and deferred swapchain retirement counters. Does not wait for GPU completion. |
@@ -759,6 +769,8 @@ The edits enter Undo and do not save assets.
 | `get_prefab_structure` | Get the node hierarchy for a prefab source or variant. |
 | `get_renderer_reload_status` | Return active backend generation, reload state, counters, timings, and the last actionable error. |
 | `get_render_capabilities` | Get renderer capability flags (GPU, extensions, ray tracing). |
+| `get_render_graph_plan` | Get the latest backend render-graph plan of the selected viewport's pipeline instance: pass order, batches, barriers, resource lifetimes, alias groups, and reorders. |
+| `get_render_pipeline_structure` | Get the command tree of the selected viewport's render pipeline: command types, labels, anchor ids, patch targets, overlay markers, derived overlays, and post-process stages. |
 | `get_render_profiler_stats` | Return the latest render-profiler counters, including Vulkan frame lifecycle timings and command-buffer cache state. |
 | `get_render_state` | Get current rendering pipeline and camera state. |
 | `get_s13a_identity_manifest` | Copy the selected viewport pipeline's published canonical resident identities and pass membership on demand. Fixture keys remain null where stable source hierarchy ownership is unavailable. |
@@ -808,7 +820,7 @@ The edits enter Undo and do not save assets.
 | `list_loaded_assets` | List assets currently loaded by the asset manager. |
 | `list_local_players` | List local player controllers, viewports, and input presence. |
 | `list_prefabs` | List loaded prefab assets. |
-| `list_render_pipeline_resources` | List live render-pipeline textures and framebuffers for the selected viewport. |
+| `list_render_pipeline_resources` | List live render-pipeline textures and framebuffers for the selected viewport, plus the logical resources of the layout with lifetime, producer passes, consumer passes, and estimated size. |
 | `list_scenes` | List scenes in the active world. |
 | `list_scene_nodes` | List scene nodes in the active world/scene. |
 | `list_tags` | List tags on a node or across the active world. |
@@ -859,6 +871,7 @@ The edits enter Undo and do not save assets.
 | `select_node` | Select one or more scene nodes in the editor. |
 | `select_node_by_name` | Select scene nodes by display name. |
 | `set_active_scene` | Set a scene as active (first in scene list). |
+| `set_advanced_visibility_counter_sampling` | Set how often the Advanced pipeline copies its per-view visibility counters under submission strategies that are not instrumented. The copy is delayed until the frame completes, so it adds no GPU or CPU wait. 0 turns sampling off and 1 samples every frame. Read the values with get_advanced_visibility_counters. |
 | `set_asset_import_options` | Set a third-party import option property and save it. |
 | `set_camera_post_process_parameter` | Set one declared camera post-process parameter. Read get_camera_post_process first for exact keys, types, ranges and enum values. Applies only to the selected camera. |
 | `set_camera_tsr_render_scale` | Set the selected camera's TSR render scale from 0.5 to 1.0; omit scale to restore the global setting. Takes effect when TSR is active. Resource and history changes are applied by the next frame publication. |
@@ -894,6 +907,7 @@ The edits enter Undo and do not save assets.
 | `transaction_commit` | Commit an MCP transaction and discard its rollback snapshot. |
 | `transaction_rollback` | Rollback an MCP transaction by restoring the snapshot captured at begin. |
 | `undo` | Undo the most recent editor change. |
+| `validate_render_pipeline` | Run the render pipeline validator on the selected viewport's pipeline, or load and validate an .xrs script file without installing it. Returns script load problems and validator problems. |
 | `validate_scene` | Validate a scene for common hierarchy issues. |
 | `validate_scene_integrity` | Perform deep integrity validation on a scene hierarchy (null roots, parent mismatches, cycles, duplicate IDs, world binding issues). |
 | `watch_property` | Watch a property for changes on an XRBase object. Returns a watch_id for polling, or retrieves accumulated changes when watch_id is provided. |

@@ -11,6 +11,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Lighting, DoesGpuWork = true, ConsumesStages = new[] { XREngine.Rendering.PostProcessing.CommonPostProcessStages.StageKeys.AmbientOcclusion })]
     public class VPRC_GTAOPass : ViewportRenderCommand, IDeclaredAoResourceProvider
     {
         private static void Log(string message)
@@ -22,21 +23,34 @@ namespace XREngine.Rendering.Pipelines.Commands
         private string GTAOBlurShaderName()
             => Stereo ? "GTAOBlurStereo.fs" : "GTAOBlur.fs";
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string FinalIntensityTextureName { get; set; } = "AmbientOcclusionTexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RawIntensityTextureName { get; set; } = "GTAORawTexture";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string IntermediateIntensityTextureName { get; set; } = "GTAOBlurIntermediateTexture";
         public string InputSamplerName { get; set; } = "GTAOInputTexture";
 
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string GenerationFBOName { get; set; } = "AmbientOcclusionFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string BlurFBOName { get; set; } = "AmbientOcclusionBlurFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string BlurIntermediateFBOName { get; set; } = "GTAOBlurIntermediateFBO";
+        [RenderResourceName(ERenderResourceNameKind.FrameBuffer)]
         public string OutputFBOName { get; set; } = "GBufferFBO";
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string NormalTextureName { get; set; } = "Normal";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthViewTextureName { get; set; } = "DepthView";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string AlbedoTextureName { get; set; } = "AlbedoOpacity";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string RMSETextureName { get; set; } = "RMSE";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string TransformIdTextureName { get; set; } = "TransformId";
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string DepthStencilTextureName { get; set; } = "DepthStencil";
         public string[] DependentFboNames { get; set; } = Array.Empty<string>();
 
@@ -47,6 +61,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// result in a separate pass. Null keeps full-resolution inputs and the upsampling
         /// vertical blur.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? ReducedInputDepthTextureName { get; set; }
 
         /// <summary>
@@ -55,6 +70,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// rebuilds each tap position from a few projection terms (<c>DepthViewIsLinear</c>). The blur
         /// passes keep the raw reduced depth, because their depth weights use raw depth differences.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? ReducedInputLinearDepthTextureName { get; set; }
 
         // Largest GTAO step radius, in full-resolution pixels.

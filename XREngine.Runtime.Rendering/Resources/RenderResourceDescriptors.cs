@@ -125,6 +125,27 @@ public readonly record struct RenderResourceSizePolicy(
     /// <returns>A new instance of <see cref="RenderResourceSizePolicy"/> with the specified custom scaling factors.</returns>
     public static RenderResourceSizePolicy Custom(float scaleX, float scaleY)
         => new(RenderResourceSizeClass.Custom, scaleX, scaleY);
+
+    /// <summary>
+    /// Resolves the size in pixels for a profile. A relative size is at least one pixel. A custom size returns zero,
+    /// because its owner computes it.
+    /// </summary>
+    public (uint Width, uint Height) Resolve(RenderPipelineResourceProfile profile)
+        => SizeClass switch
+        {
+            RenderResourceSizeClass.AbsolutePixels => (Width, Height),
+            RenderResourceSizeClass.InternalResolution => (Scale(profile.InternalWidth, ScaleX, RoundUpDivisor), Scale(profile.InternalHeight, ScaleY, RoundUpDivisor)),
+            RenderResourceSizeClass.WindowResolution => (Scale(profile.DisplayWidth, ScaleX, RoundUpDivisor), Scale(profile.DisplayHeight, ScaleY, RoundUpDivisor)),
+            _ => (0u, 0u),
+        };
+
+    private static uint Scale(uint extent, float scale, uint divisor)
+    {
+        extent = Math.Max(1u, extent);
+        return divisor > 1u
+            ? (extent + divisor - 1u) / divisor
+            : (uint)Math.Max(1, (int)MathF.Round(extent * scale));
+    }
 }
 
 /// <summary>

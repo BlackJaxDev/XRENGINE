@@ -1162,7 +1162,8 @@ internal unsafe partial class VkMeshRenderer
 				bindings,
 				drawUniformSlot: 0,
 				usesSharedMaterialTier: false,
-				bindingSnapshot);
+				bindingSnapshot,
+				programOverride: program);
 		}
 
 		// The enqueue-time binding publication already fingerprints exact sampler,

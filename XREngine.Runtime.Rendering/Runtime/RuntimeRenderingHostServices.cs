@@ -112,6 +112,13 @@ public static class RuntimeRenderingHostServices
     public static IRuntimeRenderWorkServices Work
         => _work ?? ThrowMissingCapability<IRuntimeRenderWorkServices>("render work scheduling");
 
+    /// <summary>Gets the work scheduling services when a host installed them. It does not throw.</summary>
+    internal static bool TryGetWork(out IRuntimeRenderWorkServices? work)
+    {
+        work = _work;
+        return work is not null;
+    }
+
     /// <summary>
     /// Required asset and texture IO.
     /// </summary>
@@ -136,7 +143,12 @@ public static class RuntimeRenderingHostServices
     public static IRuntimeRenderBackendInteropServices BackendInterop
         => _backendInterop ?? ThrowMissingCapability<IRuntimeRenderBackendInteropServices>("renderer backend interop");
 
-    internal static bool HasConcreteHost => _current is not UninstalledRuntimeRenderingHostServices;
+    /// <summary>
+    /// True if a host installed concrete rendering services. False in a headless process or a test with no render host,
+    /// where no renderer backend exists and no render-thread coroutine runs. The value changes when a host installs or
+    /// removes its services, normally one time at startup. Any thread can read it. It does not throw.
+    /// </summary>
+    public static bool HasConcreteHost => _current is not UninstalledRuntimeRenderingHostServices;
 
     /// <summary>
     /// Explicitly installs inactive desktop/XR presentation policy for offscreen composition.

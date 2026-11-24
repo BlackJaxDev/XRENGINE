@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
@@ -11,6 +12,18 @@ namespace XREngine.Rendering.Pipelines.Commands
         public const string SceneShaderPath = "Scene3D";
         private bool _shouldExecute = true;
         private bool _executeInShadowPass = false;
+        private string? _anchorId;
+
+        /// <summary>
+        /// Gets or sets the stable id that derived pipeline patches use to find this command, such as
+        /// <c>post.bloom</c>. Built-in pipelines keep each id, or record a rename in
+        /// <see cref="RenderPipeline.AnchorAliases"/>, when they change their chains.
+        /// </summary>
+        public string? AnchorId
+        {
+            get => _anchorId;
+            set => SetField(ref _anchorId, string.IsNullOrWhiteSpace(value) ? null : value);
+        }
 
         [YamlIgnore]
         public ViewportRenderCommandContainer? CommandContainer { get; internal set; }
@@ -150,6 +163,17 @@ namespace XREngine.Rendering.Pipelines.Commands
         }
 
         /// <summary>
+        /// Adds each nested command container that this command owns to <paramref name="results"/>.
+        /// Flow commands override this so tools can walk branches, cases, and loop bodies without reflection.
+        /// The order is stable: it is the order that tools show.
+        /// </summary>
+        /// <param name="results">The list that receives the child containers. The method does not clear it.</param>
+        public virtual void CollectChildContainers(List<RenderCommandChildContainer> results)
+        {
+            // Commands without nested containers add nothing.
+        }
+
+        /// <summary>
         /// Describes the render pass for this command in the render graph.
         /// Derived classes can override this method to provide specific render pass descriptions.
         /// </summary>
@@ -158,6 +182,57 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             // Default commands do not contribute metadata; derived commands can override.
         }
+
+        /// <summary>
+        /// Returns the active resource generation's render-graph metadata when present,
+        /// or falls back to the owning pipeline's default metadata.
+        /// </summary>
+        protected IReadOnlyCollection<RenderPassMetadata>? ResolveActiveRenderGraphMetadata()
+        {
+            XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            if (activeInstance?.ActiveGeneration?.PassMetadata is { Count: > 0 } generationMetadata)
+                return generationMetadata;
+
+            RenderPipeline? pipeline = ParentPipeline ?? activeInstance?.Pipeline;
+            return pipeline?.PassMetadata is { Count: > 0 } pipelineMetadata
+                ? pipelineMetadata
+                : null;
+        }
+
+        /// <summary>
+        /// Resolves a named render-graph pass index from the active resource generation so
+        /// profile-dependent pass declarations stay aligned with backend scheduling.
+        /// </summary>
+        protected int ResolveActiveRenderGraphPassIndex(string passName, out bool hasRenderGraphMetadata)
+        {
+            XRRenderPipelineInstance? activeInstance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+            if (activeInstance?.ActiveGeneration?.PassMetadata is { Count: > 0 })
+            {
+                hasRenderGraphMetadata = true;
+                return activeInstance.TryGetActiveRenderPassIndex(passName, out int activePassIndex)
+                    ? activePassIndex
+                    : int.MinValue;
+            }
+
+            RenderPipeline? pipeline = ParentPipeline ?? activeInstance?.Pipeline;
+            if (pipeline?.PassMetadata is { Count: > 0 })
+            {
+                hasRenderGraphMetadata = true;
+                return pipeline.TryGetRenderPassIndex(passName, out int fallbackPassIndex)
+                    ? fallbackPassIndex
+                    : int.MinValue;
+            }
+
+            hasRenderGraphMetadata = false;
+            return int.MinValue;
+        }
+
+        /// <summary>
+        /// Resolves a named render-graph pass index from the active resource generation,
+        /// returning <see cref="int.MinValue"/> when no matching pass exists.
+        /// </summary>
+        protected int ResolveActiveRenderGraphPassIndex(string passName)
+            => ResolveActiveRenderGraphPassIndex(passName, out _);
 
         /// <summary>
         /// Creates a render graph resource name for a color attachment based on the provided framebuffer name.

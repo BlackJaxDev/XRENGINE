@@ -133,6 +133,10 @@ jobs:
         shell: pwsh
         run: ./Tools/Dependencies/Build-Meshoptimizer.ps1 -Rid win-x64
 
+      - name: Build patched GLFW
+        shell: pwsh
+        run: ./Tools/Dependencies/Build-Glfw.ps1 -Rid win-x64
+
       - name: Publish Windows applications
         shell: pwsh
         run: |

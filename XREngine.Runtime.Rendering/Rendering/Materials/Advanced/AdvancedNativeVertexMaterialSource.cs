@@ -33,7 +33,7 @@ public static class AdvancedNativeVertexMaterialSource
     /// <summary>Whether generic skin/morph would supply a different normal domain from canonical aggregate geometry.</summary>
     public static bool RequiresCanonicalDeformationSource(XRMesh mesh)
         => mesh.HasSkinning && RuntimeEngine.Rendering.Settings.AllowSkinning ||
-           mesh.HasBlendshapes && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
+           mesh.HasBlendshapeDeformation && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
 
     /// <summary>Resolves an auxiliary only through the same verified source material and local function closure.</summary>
     public static bool TryResolveAuxiliary(XRMaterial material, IShaderProgramArtifactResolver? resolver,

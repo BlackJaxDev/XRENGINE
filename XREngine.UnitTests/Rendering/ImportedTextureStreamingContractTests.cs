@@ -102,7 +102,7 @@ public sealed class ImportedTextureStreamingContractTests
         assetManagerSource.ShouldContain("ThirdPartyCacheCodecRegistry.FindByAuthorityRole(");
         assetManagerSource.ShouldContain("if (codec is not null && !codec.IsCacheUsable(cachePath))");
         assetManagerSource.ShouldContain("if (IsCacheAssetFresh(cachePath, normalizedPath, assetType))\n                return cachePath;");
-        assetManagerSource.ShouldContain("QueueFeatureCacheImport(normalizedPath, cachePath, assetType, cacheVariantKey);");
+        assetManagerSource.ShouldContain("QueueFeatureCacheImport(normalizedPath, cachePath, assetType, resolvedVariantKey);");
 
         // Cache read and write decisions other than a hit or a write are logged.
         assetManagerSource.ShouldContain("\"[ThirdPartyCache] Cache read {0} for {1} '{2}'. reason={3}; detail={4}\"");
@@ -111,8 +111,8 @@ public sealed class ImportedTextureStreamingContractTests
         assetManagerSource.ShouldNotContain("cache warmup suppressed during active imported-model scope");
 
         streamingSource.ShouldContain("if (XRTexture2D.HasAssetExtensionInternal(authorityPath))");
-        streamingSource.ShouldContain("return new AssetTextureStreamingSource(authorityPath, originalSourcePath);");
-        streamingSource.ShouldContain("return new ThirdPartyTextureStreamingSource(authorityPath);");
+        streamingSource.ShouldContain("return new AssetTextureStreamingSource(authorityPath, originalSourcePath, usage);");
+        streamingSource.ShouldContain("return new ThirdPartyTextureStreamingSource(authorityPath, usage);");
     }
 
     [Test]
@@ -478,13 +478,14 @@ public sealed class ImportedTextureStreamingContractTests
         string validationSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Uploads/VulkanImportedTextureUploadValidation.cs");
         string commandBufferSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Transfers/VulkanRenderer.TextureUploadRecording.cs");
 
-        // The pending upload is sized from the logical layout of the applied
-        // resident data, not from the currently published image.
-        imageTextureSource.ShouldContain("XRTexture2D.ApplyResidentDataForVulkanPublication(texture, residentData, includeMipChain);");
-        imageTextureSource.ShouldContain("uploadLayout = NormalizeLayout(DescribeTexture());");
-        imageTextureSource.ShouldContain("Extent3D extent = uploadLayout.Extent;");
-        imageTextureSource.ShouldContain("uint mipLevels = Math.Max(uploadLayout.MipLevels, 1u);");
-        imageTextureSource.ShouldContain("uint arrayLayers = Math.Max(uploadLayout.ArrayLayers, 1u);");
+        // The pending upload is sized from the resident data and its publication
+        // plan, not from the currently published image or the texture's live data.
+        imageTextureSource.ShouldContain("texture.CreateImportedResidentPublicationPlan(residentData, includeMipChain);");
+        imageTextureSource.ShouldContain("Math.Max(residentData.Mipmaps[0].Width, 1u),");
+        imageTextureSource.ShouldContain("Math.Max(residentData.Mipmaps[0].Height, 1u), 1u);");
+        imageTextureSource.ShouldContain(": includeMipChain ? (uint)residentData.Mipmaps.Length : 1u;");
+        imageTextureSource.ShouldContain("uint arrayLayers = 1u;");
+        imageTextureSource.ShouldNotContain("ApplyResidentDataForVulkanPublication");
         imageTextureSource.ShouldContain("TextureLayout publishedLayout = new(");
         imageTextureSource.ShouldContain("Math.Max(pendingUpload.ArrayLayers, 1u)");
 

@@ -49,7 +49,10 @@ internal sealed class EditorSerializedPrefabAssetLoadingServices(
             return scene;
         }
 
-        if (!string.Equals(normalizedExtension, PrefabExtension, StringComparison.OrdinalIgnoreCase)
+        // A scene file imports as a prefab only when the options name the scene root object to take from it.
+        bool isScenePrefab = string.Equals(normalizedExtension, SceneExtension, StringComparison.OrdinalIgnoreCase)
+            && importOptions is ModelImportOptions { SourceSceneRootName.Length: > 0 };
+        if ((!string.Equals(normalizedExtension, PrefabExtension, StringComparison.OrdinalIgnoreCase) && !isScenePrefab)
             || assetType != typeof(XRPrefabSource))
         {
             return _fallback.Load(filePath, extension, assetType, importOptions, importContext, targetAsset);
@@ -74,7 +77,9 @@ internal sealed class EditorSerializedPrefabAssetLoadingServices(
             options.SourceProjectRootOverride,
             context.CancellationToken,
             progress: (progress, _) => options.ProgressCallback?.Invoke(progress),
-            fbxBackend: ResolvePrefabFbxBackend(options.FbxBackend));
+            fbxBackend: ResolvePrefabFbxBackend(options.FbxBackend),
+            allowPartialImport: options.AllowPartialSourceImport,
+            sceneRootName: options.SourceSceneRootName);
         context.CancellationToken.ThrowIfCancellationRequested();
 
         if (conversion.RootNode is null)

@@ -136,6 +136,7 @@ void main()
         coordinates.localPosition = VisibilityCoverageLocalPosition;
         coordinates.color = VisibilityCoverageColor;
         coordinates.frontFacing = gl_FrontFacing;
+        coordinates.pixel = gl_FragCoord.xy;
         coordinates.time = uintBitsToFloat(coverageView.renderTimeBits);
         vec4 baseColor;
         vec3 edgeEmission;
@@ -147,10 +148,13 @@ void main()
             if (!XR_ADV_KeepAlphaToCoverageSample(baseColor.a, UBER_F(_Cutoff), alphaFwidth, int(XR_ADV_ViewMsaaSampleCount(coverageView))))
                 discard;
         }
-        else if ((UBER_I(_Mode) == 1 || UBER_F(_SourceAlphaClip) > 0.5) &&
-            baseColor.a < UBER_F(_Cutoff))
+        else
         {
-            discard;
+            int blendMode = UBER_I(_Mode);
+            bool alphaClipMode = blendMode == 1 || blendMode == 2 || blendMode == 5 ||
+                UBER_F(_AlphaClipAllModes) > 0.5;
+            if (alphaClipMode && baseColor.a < UBER_F(_Cutoff))
+                discard;
         }
     }
     else

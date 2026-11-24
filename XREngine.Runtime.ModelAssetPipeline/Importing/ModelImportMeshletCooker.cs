@@ -1,5 +1,7 @@
 ﻿using XREngine.Rendering.Meshlets;
 using XREngine.Rendering.Models.Caching;
+using System.IO.Hashing;
+using System.Runtime.InteropServices;
 using System.Text;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Scene;
@@ -52,6 +54,11 @@ public static class ModelImportMeshletCooker
         int payloadCount = 0;
         int generatedLodCount = 0;
         ClusterHierarchyTotals hierarchyTotals = default;
+        // The page file of this model, opened on the first mesh that builds streaming pages.
+        ModelImportMeshletPageCache? pageCache = null;
+        StreamingPageTotals pageTotals = default;
+        // Clothing-layer locks of the skinned meshes, computed once on the first skinned cook miss.
+        Dictionary<XRMesh, byte[]>? contactLocks = null;
 
         for (int subMeshIndex = 0; subMeshIndex < ordered.Count; subMeshIndex++)
         {
@@ -86,11 +93,16 @@ public static class ModelImportMeshletCooker
                 ImportedEntityKey entityKey = new(
                     $"{ownerIdentity}/lod:{lodIndex}",
                     isStable: subMesh.ImportedEntityIdentityIsStable);
-                cache?.TryAttach(
+                bool attached = cache?.TryAttach(
                     mesh,
                     entityKey.Value,
                     subMesh.MeshOptimizer.Meshlets,
-                    subMesh.MeshOptimizer.Lods);
+                    subMesh.MeshOptimizer.Lods) ?? false;
+                if (!attached && mesh.HasSkinning && subMesh.MeshOptimizer.Meshlets is { Enabled: true, BuildClusterHierarchy: true })
+                {
+                    contactLocks ??= SkinnedLayerContactLocks.Compute(CollectSkinnedMeshes(ordered));
+                    mesh.SetClusterHierarchyContactLocks(contactLocks.TryGetValue(mesh, out byte[]? locks) ? locks : null);
+                }
                 long cookCountBefore = MeshOptimizerIntegration.MeshletBuildInvocationCount;
                 MeshletPayload payload = mesh.GetOrCreateMeshletPayload(
                     subMesh.MeshOptimizer.Meshlets,
@@ -98,6 +110,8 @@ public static class ModelImportMeshletCooker
                     entityKey.Value);
                 payload.ValidatePortablePayload();
                 cache?.Record(payload);
+                if (subMesh.MeshOptimizer.Meshlets.BuildStreamingPages && payload.HasClusterHierarchy)
+                    CookStreamingPages(cache, ref pageCache, ref pageTotals, mesh, payload, entityKey.Value);
                 payloadCount++;
                 meshletCount += payload.Meshlets.Length;
                 if (payload.HasClusterHierarchy)
@@ -109,14 +123,18 @@ public static class ModelImportMeshletCooker
                         hierarchyTotals.SkinnedVertices += MeshOptimizerIntegration.LastClusterHierarchyStats.SkinnedVertexCount;
                         hierarchyTotals.MorphLockedVertices += MeshOptimizerIntegration.LastClusterHierarchyStats.MorphLockedVertexCount;
                         hierarchyTotals.NonFiniteCentroids += MeshOptimizerIntegration.LastClusterHierarchyStats.NonFiniteCentroidCount;
+                        hierarchyTotals.ContactLockedVertices += MeshOptimizerIntegration.LastClusterHierarchyStats.ContactLockedVertexCount;
                     }
                 }
+                mesh.SetClusterHierarchyContactLocks(null);
                 lodIndex++;
             }
         }
 
         if (cache is not null)
             SavePayloadCache(cache);
+        if (pageCache is not null)
+            SavePageCache(stableModelIdentity, pageCache, pageTotals);
 
         cookStopwatch.Stop();
         if (hierarchyTotals.PayloadCount > 0)
@@ -148,6 +166,7 @@ public static class ModelImportMeshletCooker
         public long MorphClusters;
         public long SkinnedVertices;
         public long MorphLockedVertices;
+        public long ContactLockedVertices;
         public long NonFiniteCentroids;
         /// <summary>Triangles of the skinned payloads by hierarchy level (index 0 = original geometry).</summary>
         public long[]? SkinnedLevelTriangles;
@@ -243,6 +262,7 @@ public static class ModelImportMeshletCooker
                 $"maxClusterBones={totals.MaxClusterBones} morphClusters={totals.MorphClusters} " +
                 $"skinnedVertices={totals.SkinnedVertices} morphLockedVertices={totals.MorphLockedVertices} " +
                 $"lockedShare={(totals.SkinnedVertices == 0 ? 0.0 : (double)totals.MorphLockedVertices / totals.SkinnedVertices):P1} " +
+                $"contactLockedVertices={totals.ContactLockedVertices} " +
                 $"nonFiniteCentroids={totals.NonFiniteCentroids} levelTriangles={levelTriangles} (vertex counts only for payloads cooked in this process)");
 
             // The share of the skinned source vertices that an instance clamped at each level deforms.
@@ -267,6 +287,149 @@ public static class ModelImportMeshletCooker
             $"containment={checks.ContainmentFailures}/{checks.ContainmentChecks} (failures/checks) " +
             $"borderRejected={checks.BorderRejections}/{checks.BorderChecks} (rejected simplifications/checks) " +
             $"ended empty={checks.EndedEmpty} noReduction={checks.EndedNoReduction} nonFiniteError={checks.EndedNonFiniteError}");
+    }
+
+    /// <summary>Totals of the streaming page cooks of one model, for the cook summary.</summary>
+    private struct StreamingPageTotals
+    {
+        public int Meshes;
+        public int Hits;
+        public int Cooked;
+        public int Failed;
+        public int Skipped;
+        /// <summary>Meshes whose pages were attached to the payload, for drawing from pages.</summary>
+        public int Attached;
+        public MeshletPageSetStats Stats;
+    }
+
+    /// <summary>
+    /// Builds or reuses the streaming pages of one cluster hierarchy payload. A static mesh packs
+    /// its vertices first, because its pages hold page-local copies of them; the hash of the packed
+    /// vertices makes stored pages stale when any vertex attribute changes. A skinned mesh gets
+    /// topology pages without vertices. A mesh whose groups do not fit in pages is logged and keeps
+    /// the unpaged payload. While the <c>AdvancedGeometryPages</c> engine setting is on, the cooked or
+    /// stored pages are also attached to the payload, so the Advanced renderer draws the mesh from
+    /// them.
+    /// </summary>
+    private static void CookStreamingPages(
+        ModelImportMeshletPayloadCache? payloadCache,
+        ref ModelImportMeshletPageCache? pageCache,
+        ref StreamingPageTotals totals,
+        XRMesh mesh,
+        MeshletPayload payload,
+        string sourceMeshIdentity)
+    {
+        totals.Meshes++;
+        if (payloadCache is null)
+        {
+            // The page file sits next to the payload file, so there is nowhere to write it.
+            totals.Skipped++;
+            return;
+        }
+
+        if (pageCache is null)
+        {
+            pageCache = ModelImportMeshletPageCache.Open(payloadCache.FilePath);
+            if (pageCache.LoadFailure is { } failure)
+                Debug.WriteAuxiliaryLog("meshlet-cache.log", $"[ClusterPages] unreadable file {pageCache.FilePath}; cooking. {failure}");
+        }
+
+        AdvancedDeformedVertex[] packed = payload.HasClusterSkinning ? [] : new AdvancedDeformedVertex[mesh.VertexCount];
+        if (packed.Length > 0)
+            AdvancedPackedVertexCodec.Pack(mesh, 0u, packed, 0u);
+        ulong vertexHash = packed.Length == 0 ? 0UL : XxHash64.HashToUInt64(MemoryMarshal.AsBytes(packed.AsSpan()));
+        bool attach = RuntimeEngine.Rendering.Settings.AdvancedGeometryPages;
+        if (pageCache.TryUse(sourceMeshIdentity, payload.FreshnessHash, vertexHash, out _))
+        {
+            totals.Hits++;
+            if (attach)
+                AttachStoredPages(pageCache, payload, sourceMeshIdentity, ref totals);
+            return;
+        }
+
+        MeshletPageSet set;
+        try
+        {
+            set = MeshletPageBuilder.Build(payload, packed);
+        }
+        catch (InvalidDataException exception)
+        {
+            totals.Failed++;
+            Debug.WriteAuxiliaryLog("meshlet-cache.log", $"[ClusterPages] mesh={sourceMeshIdentity} notPaged reason={exception.Message}");
+            return;
+        }
+
+        pageCache.Record(sourceMeshIdentity, payload.FreshnessHash, vertexHash, set);
+        if (attach)
+        {
+            payload.AttachStreamingPages(set);
+            totals.Attached++;
+        }
+        totals.Cooked++;
+        totals.Stats += set.Stats;
+        MeshletPageSetStats stats = set.Stats;
+        Debug.WriteAuxiliaryLog(
+            "meshlet-cache.log",
+            $"[ClusterPagesMesh] mesh={sourceMeshIdentity} kind={(payload.HasClusterSkinning ? "skinnedTopology" : "static")} " +
+            $"pages={stats.PageCount} rootPages={stats.RootPageCount} clusters={stats.ClusterCount} groups={stats.GroupCount} " +
+            $"pageBytes={stats.PageBytes} rootPageBytes={stats.RootPageBytes} " +
+            $"rootShare={(stats.PageBytes == 0 ? 0.0 : (double)stats.RootPageBytes / stats.PageBytes):P1} " +
+            $"fill={stats.AverageFill:P1} pageVertices={stats.PageVertexCount} sourceVertices={mesh.VertexCount} " +
+            $"dependencies={stats.DependencyCount} maxDependencies={stats.MaxDependencies}");
+    }
+
+    /// <summary>
+    /// Reads the stored pages of a mesh from the page file and attaches them to its payload, so the
+    /// Advanced publisher can draw the mesh from its pages. A damaged blob leaves the payload without
+    /// pages; the mesh then draws from its meshlet tables.
+    /// </summary>
+    private static void AttachStoredPages(
+        ModelImportMeshletPageCache pageCache,
+        MeshletPayload payload,
+        string sourceMeshIdentity,
+        ref StreamingPageTotals totals)
+    {
+        try
+        {
+            payload.AttachStreamingPages(pageCache.ReadPageSet(sourceMeshIdentity));
+            totals.Attached++;
+        }
+        catch (InvalidDataException exception)
+        {
+            totals.Failed++;
+            Debug.WriteAuxiliaryLog("meshlet-cache.log", $"[ClusterPages] mesh={sourceMeshIdentity} notAttached reason={exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Writes the page file when it changed, and one summary line for the model to
+    /// meshlet-cache.log: the paged meshes, the stored and cooked page totals, and the root page
+    /// bytes. The root pages stay resident, so their share is the floor of the streamed memory.
+    /// </summary>
+    private static void SavePageCache(string modelIdentity, ModelImportMeshletPageCache pageCache, StreamingPageTotals totals)
+    {
+        bool written = false;
+        string? failure = null;
+        try
+        {
+            written = pageCache.SaveIfChanged();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or OverflowException)
+        {
+            // A failed write costs only a page cook on the next import.
+            failure = $"{exception.GetType().Name}: {exception.Message}";
+        }
+
+        long fileBytes = File.Exists(pageCache.FilePath) ? new FileInfo(pageCache.FilePath).Length : -1L;
+        MeshletPageSetStats stats = totals.Stats;
+        string failureText = failure is null ? string.Empty : $" writeFailure={failure}";
+        Debug.WriteAuxiliaryLog(
+            "meshlet-cache.log",
+            $"[ClusterPages] model={modelIdentity} formatVersion={MeshletPageFormat.Version} cookVersion={MeshletPageBuilder.CookVersion} " +
+            $"meshes={totals.Meshes} stored={totals.Hits} cooked={totals.Cooked} failed={totals.Failed} skipped={totals.Skipped} attached={totals.Attached} " +
+            $"cookedPages={stats.PageCount} cookedRootPages={stats.RootPageCount} cookedPageBytes={stats.PageBytes} " +
+            $"cookedRootPageBytes={stats.RootPageBytes} fill={stats.AverageFill:P1} maxDependencies={stats.MaxDependencies} " +
+            $"file={Path.GetFileName(pageCache.FilePath)} fileBytes={fileBytes} written={written}{failureText}");
     }
 
     private static ModelImportMeshletPayloadCache? OpenPayloadCache(string stableModelIdentity)
@@ -297,6 +460,21 @@ public static class ModelImportMeshletCooker
             "meshlet-cache.log",
             $"[MeshletCache] file={Path.GetFileName(cache.FilePath)} stored={cache.StoredCount} hits={cache.HitCount} " +
             $"misses={cache.MissCount} rejected={cache.RejectedCount} written={written}{(failure is null ? string.Empty : $" writeFailure={failure}")}");
+    }
+
+    /// <summary>
+    /// Returns the distinct meshes of every LOD of the skinned sub-meshes, the surfaces that
+    /// <see cref="SkinnedLayerContactLocks"/> compares for clothing layers.
+    /// </summary>
+    private static List<XRMesh> CollectSkinnedMeshes(List<SubMesh> subMeshes)
+    {
+        var meshes = new List<XRMesh>();
+        var seen = new HashSet<XRMesh>(ReferenceEqualityComparer.Instance);
+        foreach (SubMesh subMesh in subMeshes)
+            foreach (SubMeshLOD lod in subMesh.LODs)
+                if (lod.Mesh is { HasSkinning: true } mesh && seen.Add(mesh))
+                    meshes.Add(mesh);
+        return meshes;
     }
 
     /// <summary>
@@ -405,6 +583,7 @@ public static class ModelImportMeshletCooker
             SplitFactor = source.SplitFactor, FillWeight = source.FillWeight, OptimizeMeshlets = source.OptimizeMeshlets,
             OptimizeLevel = source.OptimizeLevel, ComputeBounds = source.ComputeBounds, EncodeMeshlets = source.EncodeMeshlets,
             EncodeVertexReferences = source.EncodeVertexReferences, BuildClusterHierarchy = source.BuildClusterHierarchy,
+            BuildStreamingPages = source.BuildStreamingPages,
         };
 
     private static MeshLodGenerationSettings Clone(MeshLodGenerationSettings source)

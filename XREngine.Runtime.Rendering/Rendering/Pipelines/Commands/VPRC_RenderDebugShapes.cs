@@ -8,6 +8,7 @@ using XREngine.Scene;
 namespace XREngine.Rendering.Pipelines.Commands
 {
     [RenderPipelineScriptCommand]
+    [RenderCommandInfo(ERenderCommandCategory.Debug, DoesGpuWork = true)]
     public class VPRC_RenderDebugShapes : ViewportRenderCommand
     {
         public override void DescribeRequirements(RenderPipelineRequirements requirements)
@@ -91,10 +92,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         private int ResolveRenderGraphPassIndex()
         {
-            if (!string.IsNullOrWhiteSpace(RenderGraphPassName) &&
-                ParentPipeline?.TryGetRenderPassIndex(RenderGraphPassName, out int passIndex) == true)
+            if (!string.IsNullOrWhiteSpace(RenderGraphPassName))
             {
-                return passIndex;
+                int passIndex = ResolveActiveRenderGraphPassIndex(RenderGraphPassName!);
+                if (passIndex != int.MinValue)
+                    return passIndex;
             }
 
             return DepthTested

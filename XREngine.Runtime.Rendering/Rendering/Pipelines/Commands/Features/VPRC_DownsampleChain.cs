@@ -5,6 +5,7 @@ using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
+    [RenderCommandInfo(ERenderCommandCategory.PostProcess, DoesGpuWork = true)]
     public sealed class VPRC_DownsampleChain : ViewportRenderCommand
     {
         private const string CopyShaderCode = """
@@ -74,7 +75,9 @@ void main()
         private uint _cachedHeight;
         private int _cachedMaxMip = -1;
 
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string InputTextureName { get; set; } = string.Empty;
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string OutputTextureName { get; set; } = "DownsampleChainTexture";
         public int MaxMipLevel { get; set; } = 4;
         public bool UseThreshold { get; set; }

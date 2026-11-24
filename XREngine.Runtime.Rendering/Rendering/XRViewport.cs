@@ -61,6 +61,24 @@ namespace XREngine.Rendering
         private CameraComponent? _cameraComponent = null;
 
         /// <summary>
+        /// The owners that claimed the camera of this viewport, in claim order. The last entry wins.
+        /// </summary>
+        private readonly List<CameraClaim> _cameraClaims = [];
+
+        /// <summary>
+        /// The camera component that the viewport uses when no claim is left.
+        /// While a claim exists, a write to <see cref="CameraComponent"/> stores its value here.
+        /// </summary>
+        private CameraComponent? _unclaimedCameraComponent;
+
+        private volatile bool _releasingCameraClaim;
+
+        /// <summary>The cameras that hold a record of a pipeline that this viewport kept for them during a claim.</summary>
+        private readonly List<XRCamera> _claimBorrowCameras = [];
+
+        private readonly record struct CameraClaim(object Owner, CameraComponent Camera);
+
+        /// <summary>
         /// The local player controller associated with this viewport.
         /// Used to link input handling and player-specific rendering (e.g., split-screen scenarios).
         /// </summary>
@@ -395,6 +413,10 @@ namespace XREngine.Rendering
         internal void DiscardUnresolvedDesktopFrameViewHistory(ulong sequence)
             => _frameViewHistoryLedger.DiscardUnresolved(sequence);
 
+        /// <summary>Gets the camera history epoch that the capture of a desktop output sequence recorded.</summary>
+        internal bool TryGetCapturedCameraEpoch(ulong sequence, out ulong epoch)
+            => _frameViewHistoryLedger.TryGetCapturedCameraEpoch(sequence, out epoch);
+
         /// <summary>
         /// Gets a bounded, allocation-free snapshot of this viewport's desktop
         /// temporal-history ownership state.
@@ -625,7 +647,158 @@ namespace XREngine.Rendering
         public CameraComponent? CameraComponent
         {
             get => _cameraComponent;
-            set => SetField(ref _cameraComponent, value);
+            set
+            {
+                // A claim keeps the viewport camera. The new value becomes the camera that returns when the last claim ends.
+                if (_cameraClaims.Count > 0)
+                {
+                    _unclaimedCameraComponent = value;
+                    ResizeCameraComponentUI();
+                    return;
+                }
+
+                SetField(ref _cameraComponent, value);
+            }
+        }
+
+        /// <summary>True while at least one owner holds a claim on the camera of this viewport.</summary>
+        [YamlIgnore]
+        public bool HasCameraClaim => _cameraClaims.Count > 0;
+
+        /// <summary>
+        /// Makes a camera the camera of this viewport and keeps it there until the owner releases the claim.
+        /// The latest claim wins. A second call from the same owner replaces the camera of that owner and makes it the latest.
+        /// While a claim exists, a write to <see cref="CameraComponent"/> does not change the camera.
+        /// The write is kept and takes effect when the last claim ends.
+        /// </summary>
+        /// <param name="owner">The object that holds the claim. Use the same object to release it.</param>
+        /// <param name="camera">The camera to show.</param>
+        public void ClaimCamera(object owner, CameraComponent camera)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            ArgumentNullException.ThrowIfNull(camera);
+            if (_destroyed)
+                return;
+
+            if (_cameraClaims.Count == 0)
+                _unclaimedCameraComponent = _cameraComponent;
+            else
+                RemoveCameraClaim(owner);
+
+            _cameraClaims.Add(new CameraClaim(owner, camera));
+            MarkClaimBorrowBeforePublish(camera);
+            SetField(ref _cameraComponent, camera, nameof(CameraComponent));
+        }
+
+        /// <summary>
+        /// Removes the claim of an owner. If another claim is left, its camera shows.
+        /// If no claim is left, the camera from before the first claim returns.
+        /// A call for an owner without a claim does nothing.
+        /// </summary>
+        /// <param name="owner">The object that holds the claim.</param>
+        public void ReleaseCameraClaim(object owner)
+        {
+            ArgumentNullException.ThrowIfNull(owner);
+            // The previous camera of a claim stays active until the next camera is set, and it must not request its own pipeline.
+            bool released = false;
+            XRCamera? claimedCamera = _cameraClaims.Count > 0 ? _cameraComponent?.Camera : null;
+            _releasingCameraClaim = true;
+            try
+            {
+                released = RemoveCameraClaim(owner);
+                if (released)
+                    ApplyCameraAfterClaimRelease();
+            }
+            finally
+            {
+                _releasingCameraClaim = false;
+            }
+
+            // The kept pipeline can belong to a camera of the claim. The camera that returns must use its own pipeline.
+            // If that camera owns the kept pipeline, this call does nothing.
+            if (!released || _cameraClaims.Count != 0)
+                return;
+
+            ResetExposureAfterClaimRelease(claimedCamera);
+
+            if (SetRenderPipelineFromCamera && !_destroyed)
+                SynchronizeRenderPipelineFromActiveCamera();
+
+            // A frame that is in progress can still render the claimed camera, so the record must stay until that frame ends.
+            if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
+                ClearClaimBorrowsIfUnclaimed();
+            else
+                RuntimeEngine.EnqueueRenderThreadTask(
+                    ClearClaimBorrowsIfUnclaimed,
+                    $"XRViewport.ClearClaimBorrows[{Index}]",
+                    RenderThreadJobKind.RenderPipelineResource);
+        }
+
+        /// <summary>
+        /// The end of the last claim is a cut back to the returning camera. The cameras of the claim drop the exposure resets
+        /// that no frame used, and the returning camera starts from its own metered exposure, not from the exposure that the
+        /// claimed cameras left in this viewport. It does not allocate.
+        /// </summary>
+        private void ResetExposureAfterClaimRelease(XRCamera? claimedCamera)
+        {
+            claimedCamera?.ClearAutoExposureReset();
+            lock (_claimBorrowCameras)
+                for (int i = 0; i < _claimBorrowCameras.Count; i++)
+                    _claimBorrowCameras[i].ClearAutoExposureReset();
+
+            if (ActiveCamera is not { } returning)
+                return;
+
+            returning.ClearAutoExposureReset();
+            returning.ResetAutoExposureHistory();
+        }
+
+        private void ApplyCameraAfterClaimRelease()
+        {
+            // A camera that was destroyed during the claim cannot come back.
+            while (_cameraClaims.Count > 0 && IsCameraDestroyed(_cameraClaims[^1].Camera))
+                _cameraClaims.RemoveAt(_cameraClaims.Count - 1);
+
+            CameraComponent? next;
+            if (_cameraClaims.Count > 0)
+            {
+                next = _cameraClaims[^1].Camera;
+                MarkClaimBorrowBeforePublish(next);
+            }
+            else
+            {
+                next = _unclaimedCameraComponent is { } fallback && !IsCameraDestroyed(fallback) ? fallback : null;
+                _unclaimedCameraComponent = null;
+            }
+            SetField(ref _cameraComponent, next, nameof(CameraComponent));
+        }
+
+        /// <summary>
+        /// The camera component that supplies the screen-space UI of this viewport.
+        /// A claim changes the camera that shows the scene. It does not change the UI,
+        /// so the editor UI and the player HUD stay on the viewport while a claim exists.
+        /// </summary>
+        public CameraComponent? ScreenSpaceUserInterfaceCamera
+            => _cameraClaims.Count > 0 && _unclaimedCameraComponent is { } unclaimed && !IsCameraDestroyed(unclaimed)
+                ? unclaimed
+                : _cameraComponent;
+
+        private bool IsCameraClaimActive
+            => _cameraClaims.Count > 0 || _releasingCameraClaim;
+
+        private static bool IsCameraDestroyed(CameraComponent camera)
+            => camera.IsDestroyed || camera.IsDestroyQueued || camera.SceneNode is not { IsDestroyed: false, IsDestroyQueued: false };
+
+        private bool RemoveCameraClaim(object owner)
+        {
+            for (int i = 0; i < _cameraClaims.Count; i++)
+            {
+                if (!ReferenceEquals(_cameraClaims[i].Owner, owner))
+                    continue;
+                _cameraClaims.RemoveAt(i);
+                return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -727,7 +900,7 @@ namespace XREngine.Rendering
                 if (!SetRenderPipelineFromCamera || ActiveCamera is not { } camera)
                     return _renderPipeline.Pipeline;
 
-                RenderPipeline configuredPipeline = camera.GetOrCreateRenderPipeline();
+                RenderPipeline configuredPipeline = ResolveCameraRenderPipeline(camera);
                 if (!ReferenceEquals(_renderPipeline.AssignedPipeline, configuredPipeline))
                     _renderPipeline.RequestPipelineChange(configuredPipeline, this);
                 return configuredPipeline;
@@ -824,7 +997,66 @@ namespace XREngine.Rendering
         }
 
         private void SynchronizeRenderPipelineFromActiveCamera()
-            => _renderPipeline.RequestPipelineChange(ActiveCamera?.GetOrCreateRenderPipeline(), this);
+            => _renderPipeline.RequestPipelineChange(
+                ActiveCamera is { } camera ? ResolveCameraRenderPipeline(camera) : null,
+                this);
+
+        /// <summary>
+        /// Gets the pipeline that this viewport uses for a camera. A camera that a claim shows, and that has no
+        /// authored pipeline, uses the current pipeline of the viewport if the camera would use the same type.
+        /// This keeps a camera cut cheap. It changes no pipeline of any camera. Without a claim, the camera supplies the pipeline.
+        /// </summary>
+        private RenderPipeline ResolveCameraRenderPipeline(XRCamera camera)
+        {
+            RenderPipeline own = camera.GetOrCreateRenderPipeline();
+            if (!IsCameraClaimActive || camera.AssignedRenderPipeline is not null)
+                return own;
+
+            RenderPipeline? current = _renderPipeline.EffectiveRequestedPipeline;
+            if (current is null || ReferenceEquals(current, own) || current.GetType() != own.GetType())
+                return own;
+
+            NoteClaimBorrow(camera, current);
+            return current;
+        }
+
+        /// <summary>
+        /// Records the kept pipeline on a claimed camera before other threads can see that camera on this viewport.
+        /// A render read then never finds the camera without its record.
+        /// </summary>
+        private void MarkClaimBorrowBeforePublish(CameraComponent camera)
+        {
+            if (SetRenderPipelineFromCamera)
+                ResolveCameraRenderPipeline(camera.Camera);
+        }
+
+        private void NoteClaimBorrow(XRCamera camera, RenderPipeline pipeline)
+        {
+            if (ReferenceEquals(camera.ClaimBorrowedPipeline, pipeline))
+                return;
+
+            camera.NoteClaimBorrowedPipeline(pipeline);
+            lock (_claimBorrowCameras)
+                if (!_claimBorrowCameras.Contains(camera))
+                    _claimBorrowCameras.Add(camera);
+        }
+
+        private void ClearClaimBorrowsIfUnclaimed()
+        {
+            // A new claim can start before this queued call runs. That claim needs the records.
+            if (_cameraClaims.Count == 0)
+                ClearClaimBorrows();
+        }
+
+        private void ClearClaimBorrows()
+        {
+            lock (_claimBorrowCameras)
+            {
+                for (int i = 0; i < _claimBorrowCameras.Count; i++)
+                    _claimBorrowCameras[i].NoteClaimBorrowedPipeline(null);
+                _claimBorrowCameras.Clear();
+            }
+        }
 
         /// <summary>
         /// Completes the viewport-facing half of an applied render-thread pipeline transition.
@@ -999,6 +1231,20 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Returns the mesh submission strategy that this viewport captures in its frame package:
+        /// <see cref="MeshSubmissionStrategyOverride"/> or the process-wide requested strategy.
+        /// While the active camera shows the Advanced meshlet ID view, a GPU indexed strategy
+        /// becomes a GPU meshlet strategy, so the view gets meshlet producers. See
+        /// <see cref="AdvancedRenderPipeline.ResolveMeshletViewSubmissionStrategy"/>.
+        /// </summary>
+        internal EMeshSubmissionStrategy ResolveRequestedMeshSubmissionStrategy()
+            => AdvancedRenderPipeline.ResolveMeshletViewSubmissionStrategy(
+                _renderPipeline.Pipeline,
+                ActiveCamera,
+                MeshSubmissionStrategyOverride ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy());
+
+        /// <summary>
         /// When true, objects outside the camera's view frustum are culled (excluded from rendering).
         /// This is a major performance optimization for typical rendering scenarios.
         /// Set to false to disable frustum culling, useful for:
@@ -1139,6 +1385,9 @@ namespace XREngine.Rendering
             _renderPipeline.RequestTerminalTeardown();
             _frameViewHistoryLedger.Clear();
             AssociatedPlayer = null;
+            _cameraClaims.Clear();
+            _unclaimedCameraComponent = null;
+            ClearClaimBorrows();
             CameraComponent = null;
             ScreenSpaceUserInterfaceOverride = null;
             Camera = null;
@@ -1655,8 +1904,7 @@ namespace XREngine.Rendering
                 dimensions.InternalWidth,
                 dimensions.InternalHeight,
                 excludeProjectiveMirrors,
-                MeshSubmissionStrategyOverride ??
-                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy());
+                ResolveRequestedMeshSubmissionStrategy());
             CollectVisibleStageTimings.EndPath(ECollectVisiblePath.PackagePrepare, packagePathStart, 0);
         }
 
@@ -2516,18 +2764,6 @@ namespace XREngine.Rendering
                 using RuntimeTimerFrame.ScopedRenderDeltaOverride renderDeltaScope =
                     PushSceneRenderDeltaScope(consumeSkippedDelta: IsDesktopFacingOutput() && !shadowPass);
 
-                // Visibility-driven compute deformation (skinning/blendshapes).
-                // This runs on the render thread and uses the swapped (rendering) command buffers.
-                // Skip when 3D scene rendering is suppressed, because the stale commands do not
-                // need new skinning. Shadow views and outputs that do not own the deformation
-                // only read the results of the owning output. A two-pass VR eye uses this mono
-                // path, so it passes its eye identity, not the stereo flag.
-                var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-                if (!RuntimeEngine.Rendering.State.IsVulkan &&
-                    !Suppress3DSceneRendering &&
-                    SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
-                    SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
-
                 LastRenderedTargetFBO = targetFbo;
                 _ = Interlocked.Increment(ref _sceneRenderSequenceId);
                 bool tracksDesktopHistory = !Suppress3DSceneRendering && !shadowPass && IsDesktopFacingOutput();
@@ -2595,6 +2831,18 @@ namespace XREngine.Rendering
                         return false;
                     }
                     frozenDesktopView = capturedView;
+                }
+
+                // Visibility-driven compute deformation (skinning/blendshapes) for OpenGL. It runs after
+                // history acceptance so rejected frames do not latch cached deformation outputs. Vulkan
+                // records its deformation producer inside the frame at the first raster consumer.
+                var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+                if (!RuntimeEngine.Rendering.State.IsVulkan &&
+                    !Suppress3DSceneRendering &&
+                    SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
+                {
+                    using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
+                        SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
                 }
                 bool recorded;
                 bool outputCompletionAuthoringStarted;
@@ -3218,7 +3466,7 @@ namespace XREngine.Rendering
             {
                 if (s_vpResolveUIDiagCount < 5)
                 {
-                    Debug.Rendering($"[VP:ResolveUI] null/inactive: CamComp={CameraComponent?.GetHashCode()} ui={ui?.GetHashCode()} active={ui?.IsActive} VP[{Index}]");
+                    Debug.Rendering($"[VP:ResolveUI] null/inactive: CamComp={ScreenSpaceUserInterfaceCamera?.GetHashCode()} ui={ui?.GetHashCode()} active={ui?.IsActive} VP[{Index}]");
                     s_vpResolveUIDiagCount++;
                 }
                 return null;
@@ -3248,7 +3496,7 @@ namespace XREngine.Rendering
             if (ScreenSpaceUserInterfaceOverride is { } ownedUi)
                 return ownedUi.IsActive && ownedUi.IsScreenSpace ? ownedUi : null;
 
-            var camComp = CameraComponent;
+            var camComp = ScreenSpaceUserInterfaceCamera;
             if (camComp is null)
                 return null;
 
@@ -3313,7 +3561,7 @@ namespace XREngine.Rendering
             out IRuntimeScreenSpaceUserInterface? userInterface)
         {
             userInterface = AllowUIRender
-                ? ScreenSpaceUserInterfaceOverride ?? CameraComponent?.GetUserInterfaceOverlay()
+                ? ScreenSpaceUserInterfaceOverride ?? ScreenSpaceUserInterfaceCamera?.GetUserInterfaceOverlay()
                 : null;
             return userInterface is { IsActive: true, IsScreenSpace: true };
         }
@@ -3585,13 +3833,27 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Reapplies this viewport's aspect ratio when its active camera replaces its lens parameters.
+        /// </summary>
+        internal void SynchronizeAspectRatioFromCamera(XRCamera camera)
+        {
+            if (_destroyed || !ReferenceEquals(ActiveCamera, camera))
+                return;
+
+            if (_region.Width <= 0 || _region.Height <= 0)
+                return;
+
+            SetAspectRatioToCamera();
+        }
+
+        /// <summary>
         /// Updates the selected UI overlay canvas dimensions to match the viewport.
         /// Called internally when the viewport resizes or its UI owner changes.
         /// Ensures screen-space UI elements are correctly positioned and scaled.
         /// </summary>
         private void ResizeCameraComponentUI()
         {
-            var overlay = ScreenSpaceUserInterfaceOverride ?? CameraComponent?.GetUserInterfaceOverlay();
+            var overlay = ScreenSpaceUserInterfaceOverride ?? ScreenSpaceUserInterfaceCamera?.GetUserInterfaceOverlay();
             if (overlay is null)
                 return;
 
