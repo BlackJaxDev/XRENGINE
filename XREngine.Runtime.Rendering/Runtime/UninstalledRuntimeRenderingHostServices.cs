@@ -152,6 +152,7 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     public bool CpuSocUseAvx2 => RuntimeRenderingHostServiceDefaults.CpuSocUseAvx2;
     public bool CpuSocDebugVisualization => RuntimeRenderingHostServiceDefaults.CpuSocDebugVisualization;
     public bool CpuSocDebugForceVisible => RuntimeRenderingHostServiceDefaults.CpuSocDebugForceVisible;
+    public bool GPURenderDispatch => RuntimeRenderingHostServiceDefaults.GPURenderDispatch;
     public ECpuSceneCullingStructure CpuSceneCullingStructure => RuntimeRenderingHostServiceDefaults.CpuSceneCullingStructure;
     public ETwoPlayerPreference TwoPlayerViewportPreference => RuntimeRenderingHostServiceDefaults.TwoPlayerViewportPreference;
     public EThreePlayerPreference ThreePlayerViewportPreference => RuntimeRenderingHostServiceDefaults.ThreePlayerViewportPreference;

@@ -50,7 +50,11 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
     AdvancedVisibilityFamilyReservation Reservation = default,
     VkBufferHandle MeshletHistoryBuffer = default,
     ulong MeshletHistoryByteLength = 0u,
-    VulkanNativeBufferRange SkinPalettes = default)
+    VulkanNativeBufferRange SkinPalettes = default,
+    VkBufferHandle GeometryPageRequestsBuffer = default,
+    ulong GeometryPageRequestsByteLength = 0u,
+    VkBufferHandle GeometryPageFeedbackBitsBuffer = default,
+    ulong GeometryPageFeedbackBitsByteLength = 0u)
 {
     /// <summary>Byte length of one <c>VkDrawIndexedIndirectCommand</c> in the argument streams.</summary>
     internal const uint IndexedIndirectArgumentByteLength = 20u;
@@ -81,7 +85,9 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
                 LateMeshArguments.IsValid && LateMeshPayloads.IsValid &&
                 LateIndexedGroupCounts.IsValid &&
                 BoundsRoutes.IsValid && ViewCount != 0u &&
-                RangeCapacity != 0u;
+                RangeCapacity != 0u &&
+                GeometryPageRequestsBuffer.Handle != 0 && GeometryPageRequestsByteLength != 0u &&
+                GeometryPageFeedbackBitsBuffer.Handle != 0 && GeometryPageFeedbackBitsByteLength != 0u;
             if (!descriptorBackingValid)
                 return false;
             if (IndexedInstanceGroupCount > PayloadCapacity)

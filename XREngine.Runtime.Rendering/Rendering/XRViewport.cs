@@ -1231,6 +1231,20 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Returns the mesh submission strategy that this viewport captures in its frame package:
+        /// <see cref="MeshSubmissionStrategyOverride"/> or the process-wide requested strategy.
+        /// While the active camera shows the Advanced meshlet ID view, a GPU indexed strategy
+        /// becomes a GPU meshlet strategy, so the view gets meshlet producers. See
+        /// <see cref="AdvancedRenderPipeline.ResolveMeshletViewSubmissionStrategy"/>.
+        /// </summary>
+        internal EMeshSubmissionStrategy ResolveRequestedMeshSubmissionStrategy()
+            => AdvancedRenderPipeline.ResolveMeshletViewSubmissionStrategy(
+                _renderPipeline.Pipeline,
+                ActiveCamera,
+                MeshSubmissionStrategyOverride ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy());
+
+        /// <summary>
         /// When true, objects outside the camera's view frustum are culled (excluded from rendering).
         /// This is a major performance optimization for typical rendering scenarios.
         /// Set to false to disable frustum culling, useful for:
@@ -1890,8 +1904,7 @@ namespace XREngine.Rendering
                 dimensions.InternalWidth,
                 dimensions.InternalHeight,
                 excludeProjectiveMirrors,
-                MeshSubmissionStrategyOverride ??
-                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy());
+                ResolveRequestedMeshSubmissionStrategy());
             CollectVisibleStageTimings.EndPath(ECollectVisiblePath.PackagePrepare, packagePathStart, 0);
         }
 

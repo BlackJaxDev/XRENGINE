@@ -365,13 +365,21 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
             ? RenderPipelineRequest.AdvancedOffscreenCapture(OffscreenIntent, outputId: _outputIdentity)
             : RenderPipelineRequest.OffscreenCapture();
         _viewport ??= new XRViewport(null, width, height);
+        // The output request below declares an internal extent equal to the
+        // allocated texture size. Turn off the automatic internal-resolution
+        // policy before the pipeline and camera are assigned: assigning a
+        // pipeline applies its anti-aliasing scale (for example the TSR render
+        // scale) to the viewport, and a scaled internal extent makes Vulkan
+        // reject every writer receipt of this capture.
+        _viewport.AllowAutomaticInternalResolution = false;
         // Capture resolution controls sampling density, not the source camera's
         // projection. Its shared lens must remain read-only on this viewport.
         _viewport.AllowCameraAspectRatioUpdates = false;
         // Assigning a camera normally adopts its main-view pipeline. This owner
         // must keep its explicit offscreen family before any camera assignment.
         _viewport.SetRenderPipelineFromCamera = false;
-        if (_viewport.Width != width || _viewport.Height != height)
+        if (_viewport.Width != width || _viewport.Height != height ||
+            _viewport.InternalWidth != (int)width || _viewport.InternalHeight != (int)height)
             _viewport.Resize(width, height, setInternalResolution: true,
                 internalResolutionWidth: checked((int)width),
                 internalResolutionHeight: checked((int)height));
@@ -382,7 +390,6 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         _viewport.AutomaticallyCollectVisible = false;
         _viewport.AutomaticallySwapBuffers = false;
         _viewport.AllowUIRender = false;
-        _viewport.AllowAutomaticInternalResolution = false;
         _viewport.CullWithFrustum = true;
         ConfigureCaptureViewport(_viewport);
         _allocatedWidth = width;

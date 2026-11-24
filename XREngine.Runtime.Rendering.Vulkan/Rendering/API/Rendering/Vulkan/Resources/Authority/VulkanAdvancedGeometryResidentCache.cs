@@ -21,13 +21,23 @@ internal sealed class VulkanAdvancedGeometryResidentCache
     private readonly object _gate = new();
     private readonly VulkanResourceRuntime _resources;
     private readonly Entry[] _entries = new Entry[Capacity];
+    private readonly VulkanAdvancedGeometryPageResources _pages;
     private ulong _nextIdentity;
     private ulong _useSerial;
     private ulong _residentBytes;
     private int _allocationCount;
 
     internal VulkanAdvancedGeometryResidentCache(VulkanResourceRuntime resources)
-        => _resources = resources ?? throw new ArgumentNullException(nameof(resources));
+    {
+        _resources = resources ?? throw new ArgumentNullException(nameof(resources));
+        _pages = new VulkanAdvancedGeometryPageResources(resources);
+    }
+
+    /// <summary>Native bytes of the geometry page pool and page table buffers.</summary>
+    internal ulong PageResidentBytes
+    {
+        get { lock (_gate) return _pages.ResidentBytes; }
+    }
 
     /// <summary>Native allocation bytes that remain live, including queued retirement.</summary>
     internal ulong ResidentBytes
@@ -120,9 +130,23 @@ internal sealed class VulkanAdvancedGeometryResidentCache
                 (meshletVertexIndicesNew ? VulkanAdvancedGeometryPublication.MeshletVertexIndicesPin : 0) |
                 (meshletTriangleWordsNew ? VulkanAdvancedGeometryPublication.MeshletTriangleWordsPin : 0));
 
+            // The page pool slots are written before the page table that names them is bound.
+            if (!_pages.TryPrepare(frameSlot, databaseEpoch, snapshot, context,
+                    out VulkanFrameDataSlice pagePool, out VulkanFrameDataSlice pageTable,
+                    out bool pageTableNewlyPinned, out failure, out reason))
+            {
+                RollbackNewPinsNoLock(frameSlot, preparedSlices, newlyPinned);
+                return false;
+            }
+
             result = new VulkanAdvancedGeometryPublication(
                 preparedSlices[0], preparedSlices[1], preparedSlices[2], preparedSlices[3],
-                preparedSlices[4], preparedSlices[5], preparedSlices[6], newlyPinned);
+                preparedSlices[4], preparedSlices[5], preparedSlices[6], newlyPinned)
+            {
+                PagePool = pagePool,
+                PageTable = pageTable,
+                PageTableNewlyPinned = pageTableNewlyPinned,
+            };
             failure = EVulkanAdvancedSceneResourceFailure.None;
             reason = "Ready";
             return true;
@@ -139,6 +163,7 @@ internal sealed class VulkanAdvancedGeometryResidentCache
         {
             for (int index = 0; index < _entries.Length; ++index)
                 _entries[index].FrameSlotPins &= ~pin;
+            _pages.ReleaseFrameSlot(frameSlot);
             RetireSupersededUnpinnedEntriesNoLock();
             ReapRetiredNoLock();
         }
@@ -153,7 +178,7 @@ internal sealed class VulkanAdvancedGeometryResidentCache
     {
         if (frameSlot is < 0 or >= 64)
             throw new ArgumentOutOfRangeException(nameof(frameSlot));
-        if (publication.NewlyPinnedStreams == 0u)
+        if (publication.NewlyPinnedStreams == 0u && !publication.PageTableNewlyPinned)
             return;
 
         Span<VulkanFrameDataSlice> slices = stackalloc VulkanFrameDataSlice[]
@@ -164,7 +189,12 @@ internal sealed class VulkanAdvancedGeometryResidentCache
             publication.MeshletTriangleWords,
         };
         lock (_gate)
-            RollbackNewPinsNoLock(frameSlot, slices, publication.NewlyPinnedStreams);
+        {
+            if (publication.PageTableNewlyPinned)
+                _pages.RollbackTablePin(frameSlot, publication.PageTable);
+            if (publication.NewlyPinnedStreams != 0u)
+                RollbackNewPinsNoLock(frameSlot, slices, publication.NewlyPinnedStreams);
+        }
     }
 
     /// <summary>Queues every cached allocation for normal lifetime-tracked retirement.</summary>
@@ -178,6 +208,7 @@ internal sealed class VulkanAdvancedGeometryResidentCache
                 entry.FrameSlotPins = 0u;
                 RetireNoLock(ref entry, "AdvancedGeometry.CacheShutdown");
             }
+            _pages.RetireAll();
             ReapRetiredNoLock();
         }
     }

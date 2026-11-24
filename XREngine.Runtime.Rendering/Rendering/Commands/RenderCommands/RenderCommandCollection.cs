@@ -761,8 +761,7 @@ namespace XREngine.Rendering.Commands
                     AssignedPipeline: AdvancedRenderPipeline,
                     ActiveGeneration: not null,
                 } &&
-                (viewport.MeshSubmissionStrategyOverride ??
-                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy()) ==
+                viewport.ResolveRequestedMeshSubmissionStrategy() ==
                 EMeshSubmissionStrategy.GpuIndirectZeroReadback;
 
         private readonly Lock _lock = new();
@@ -898,7 +897,7 @@ namespace XREngine.Rendering.Commands
 
             XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
             if (pipeline?.RequiresGpuMeshSubmissionPublication == true ||
-                submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented ||
+                _updatingMeshSubmissionStrategy is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented ||
                 RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
                 submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuIndirectZeroReadback or EMeshSubmissionStrategy.GpuIndirectInstrumented)
                 scene?.RequestMeshSubmissionPublication();

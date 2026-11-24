@@ -24,6 +24,8 @@ internal sealed class VulkanMeshOperationRequestQueue
     // as the accepted frame plan's shadow lane, so a frame that the plan can
     // accept never overflows here. One skinned avatar with many submeshes casts
     // into every directional cascade and needs more than 3K shadow requests.
+    // Scene captures, such as a mirror, draw the same scene geometry as the
+    // main view, so they count against the main-scene lane (see ResolveLane).
     /// <summary>
     /// Declared immutable frame-manifest capacity. This is not the background
     /// scheduling slice and cannot be tuned to hide readiness bugs.
@@ -470,12 +472,25 @@ internal sealed class VulkanMeshOperationRequestQueue
             : Capacity;
     }
 
-    private static EVulkanMeshRequestLane ResolveLane(in VulkanMeshRenderRequest request)
+    /// <summary>
+    /// Selects the capacity lane that counts one mesh request. Every context
+    /// that draws scene geometry from a camera, including mirror and probe
+    /// scene captures, uses the main-scene lane. The accepted frame plan also
+    /// counts these contexts in its main-scene lane. A mirror capture of a
+    /// large scene therefore shares the main-scene capacity with the main view
+    /// and does not overflow the small terminal lane. The terminal lane keeps
+    /// only OpenXR mirror composition and unknown contexts.
+    /// </summary>
+    internal static EVulkanMeshRequestLane ResolveLane(in VulkanMeshRenderRequest request)
         => request.Context.ContextKind switch
         {
             EVulkanFrameOpContextKind.Shadow => EVulkanMeshRequestLane.Shadow,
             EVulkanFrameOpContextKind.UiPreview => EVulkanMeshRequestLane.Ui,
-            EVulkanFrameOpContextKind.MainViewport or EVulkanFrameOpContextKind.OpenXrEye => EVulkanMeshRequestLane.MainScene,
+            EVulkanFrameOpContextKind.MainViewport or
+            EVulkanFrameOpContextKind.OpenXrEye or
+            EVulkanFrameOpContextKind.SceneCapture or
+            EVulkanFrameOpContextKind.LightProbeCapture or
+            EVulkanFrameOpContextKind.DiagnosticCapture => EVulkanMeshRequestLane.MainScene,
             _ => EVulkanMeshRequestLane.TerminalComposition,
         };
 

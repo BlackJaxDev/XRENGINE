@@ -43,7 +43,9 @@ public readonly record struct EngineMaterialVariantKey(
             (Target != ShaderCompileTarget.WebGPUWgsl || Pass != "outline" ||
              VertexProfile != "position-normal-uv4-color-v1" ||
              OutputProfile is not ("linear-hdr-v1" or "linear-hdr-alpha-mask-v1" or
-                 "linear-hdr-dissolve-v1" or "linear-hdr-alpha-mask-dissolve-v1")))
+                 "linear-hdr-dissolve-v1" or "linear-hdr-alpha-mask-dissolve-v1" or
+                 "linear-hdr-flipbook-v1" or "linear-hdr-alpha-mask-flipbook-v1" or
+                 "linear-hdr-dissolve-flipbook-v1" or "linear-hdr-alpha-mask-dissolve-flipbook-v1")))
             throw new ArgumentException("UberOutlineV1 requires its exact outline pass, vertex layout, and authored coverage profile.");
         if (Semantic == EngineMaterialSemanticIdentity.StandardLitTextureV1 &&
             (Target != ShaderCompileTarget.WebGPUWgsl ||

@@ -30,6 +30,7 @@ public partial class MirrorCaptureComponent : XRComponent, IRenderable
     private bool _retirementQueued;
     private bool _configurationDirty;
     private bool _capacityWarning;
+    private bool _traditionalDisplayInAdvancedViewWarning;
     private string? _lastCaptureFailure;
     private long _completedCaptures;
 
@@ -116,6 +117,25 @@ public partial class MirrorCaptureComponent : XRComponent, IRenderable
         {
             if (_retirementRequested)
                 return false;
+            // A shadow pass draws depth from a light camera. That camera does not
+            // look at the mirror, so it gets no capture bank. Without this check
+            // the directional light's shadow camera takes a bank, and its capture
+            // work runs in every desktop frame. The native display stays a shadow
+            // caster while it is shown, as in a normal view.
+            if (passes.IsShadowPass)
+                return UseAdvancedCapturePipeline && _nativeDisplay.Enabled;
+            // The traditional display is a CPU-only draw in the opaque forward
+            // pass. An Advanced view submits only canonical scene draws in its
+            // opaque passes, and rejects its whole frame package when one draw has
+            // no canonical submission. The desktop then never presents. Do not
+            // add the traditional display to an Advanced view, and do not start
+            // captures for it. Set UseAdvancedCapturePipeline for such views.
+            if (!UseAdvancedCapturePipeline &&
+                source.GetConfiguredRenderPipeline() is AdvancedRenderPipeline)
+            {
+                WarnTraditionalDisplayInAdvancedView();
+                return false;
+            }
             int index = FindOrRequestCamera(source);
             if (index < 0 || _configurationDirty)
                 return false;
@@ -143,6 +163,15 @@ public partial class MirrorCaptureComponent : XRComponent, IRenderable
             }
             return false;
         }
+    }
+    private void WarnTraditionalDisplayInAdvancedView()
+    {
+        if (_traditionalDisplayInAdvancedViewWarning)
+            return;
+        _traditionalDisplayInAdvancedViewWarning = true;
+        Debug.RenderingWarning(
+            $"Mirror '{SceneNode.Name}' uses the traditional display, which an AdvancedRenderPipeline view cannot submit. " +
+            $"The mirror is not shown in that view. Set {nameof(UseAdvancedCapturePipeline)} to true.");
     }
     private int FindOrRequestCamera(XRCamera source)
     {

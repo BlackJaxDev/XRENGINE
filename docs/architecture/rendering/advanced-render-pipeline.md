@@ -1081,6 +1081,20 @@ texture slots: albedo, normal, metallic-roughness, emissive, opacity, and occlus
 - Only the native opaque kernels read the texture. The Native Uber path, the Default
   pipeline, and the WebGPU shading contracts ignore it.
 
+### Indirect diffuse Fresnel
+
+The native opaque kernel weights the world ambient term and probe diffuse by
+`1 - F`. `F` comes from `XR_ADV_FresnelSchlickRoughness` (`StandardPBR.glslinc`, and
+the same function in the WebGPU `AdvancedShadeLighting.slang`). It caps the grazing
+reflectance at `max(1 - roughness, F0)`, as the forward and Default pipeline shaders do.
+Probe specular uses the same `F` with the split-sum lookup.
+
+Do not use the plain Schlick Fresnel for these terms. At `N.V = 0` it gives `F = 1`,
+which removes all indirect diffuse light. Interpolated vertex normals of coarse meshes
+can face away from the camera near silhouette edges. For example, the arch edges of the
+Sponza aisle vaults have normals smoothed across a hard edge. With the plain Fresnel,
+surfaces in shadow get a black band along those edges.
+
 ### General debug shapes
 
 `ModelComponent` copies its `RenderBounds` setting into each new runtime mesh.
@@ -1172,6 +1186,17 @@ in front of `VisibilityRaster.mesh`.
   counter receipt reports these counts under the instrumented strategies
   (`GpuMeshletInstrumented`, `GpuIndirectInstrumented`). Late-raster task work
   is not counted, because the counter copy runs before the late raster.
+- Under other strategies, `AdvancedVisibilityCounterSampling` turns on the
+  same per-view counter copy every N render frames. Set N at launch with
+  `XRE_ADVANCED_VISIBILITY_COUNTER_SAMPLING` or while the editor runs with the
+  MCP tool `set_advanced_visibility_counter_sampling`. 0 (the default) turns
+  the copy off and 1 copies every frame. The copy uses the same delayed
+  readback ring as the instrumented copy: the CPU reads it only after the
+  graphics timeline passes the frame, so it adds no wait. The MCP tool
+  `get_advanced_visibility_counters` returns the newest values per output and
+  view, with `payloadOverflow` and `decodeOutOfBounds` named. Each sample
+  counts as a diagnostic readback and map in the render statistics, so keep
+  sampling off for strict zero-readback validation.
 - The delayed diagnostic readback ring keeps its last quarter of slots for the
   per-view counter receipts. The per-bin copies request thousands of slots per
   second; without the reserved slots they took every slot and the counter
@@ -1293,10 +1318,18 @@ When they are off, no pass, buffer, program or allocation exists for them.
   `VPRC_AdvancedRenderStage` requests the `MeshletId` shading debug view while the
   pipeline selects no other view. Native shading then writes a color from a hash
   of the global meshlet index in the visibility identity instead of the material
-  result, so a meshlet keeps its color from frame to frame. Pixels of indexed
-  producers (CPU-direct, GPU indirect, and indexed ranges of meshlet frames such
-  as parallax ranges) have no meshlet and are neutral grey. The submission strategy does not change. It works
-  for each view, so stereo eyes show it too.
+  result, so a meshlet keeps its color from frame to frame. Only meshlet producers
+  write a meshlet index. While the view is on, the output captures a GPU meshlet
+  strategy in its frame package instead of a GPU indexed strategy
+  (`AdvancedRenderPipeline.ResolveMeshletViewSubmissionStrategy`, called through
+  `XRViewport.ResolveRequestedMeshSubmissionStrategy`). The strategy is
+  `GpuMeshletZeroReadback`, or `GpuMeshletInstrumented` when GPU indirect debug
+  logging is on. Other outputs and the process-wide strategy do not change. The
+  switch needs a Vulkan renderer that reports a meshlet path, and it does not
+  change CPU-direct submission. Pixels of indexed producers (CPU-direct output,
+  outputs without a meshlet path, and indexed ranges of meshlet frames such as
+  parallax ranges) have no meshlet and are neutral grey. It works for each view,
+  so stereo eyes show it too.
 - **Occlusion-culled bounds** (`Occlusion-Culled Bounds`). After native opaque
   shading, the optional kernel `OcclusionCulledBounds.comp` draws box edges into
   the shaded HDR color of each view, and marks those pixels reactive so temporal
