@@ -15,6 +15,31 @@ public sealed record AdvancedGpuCounterReadback(
     uint ViewId,
     uint[] Values)
 {
+    /// <summary>
+    /// Gets the meshlets and fragments that the visibility raster dropped because their
+    /// payload did not fit: a meshlet index outside the draw's meshlet range, meshlet
+    /// vertex or triangle ranges past the end of their buffers, or a fragment whose draw,
+    /// primitive, producer, origin, or view did not encode into the visibility word.
+    /// The counter copy runs between the early and the late raster, so a receipt holds
+    /// only the events of the stages before that point.
+    /// </summary>
+    public uint PayloadOverflow
+        => IsVisibilityReceipt && Values.Length > 6 ? Values[6] : 0u;
+
+    /// <summary>
+    /// Gets the reads that the visibility stages found out of bounds and skipped: a
+    /// payload index past the payload buffer, a draw, geometry, material, or transform
+    /// handle that did not resolve, a skinned meshlet without prepared deformation, or a
+    /// vertex index past its vertex buffer. The counter copy runs between the early and
+    /// the late raster, so a receipt holds only the events of the stages before that point.
+    /// </summary>
+    public uint DecodeOutOfBounds
+        => IsVisibilityReceipt && Values.Length > 8 ? Values[8] : 0u;
+
+    /// <summary>Gets the unsupported displacement count from a completed visibility receipt.</summary>
+    public uint UnsupportedDisplacement
+        => IsVisibilityReceipt && Values.Length > 10 ? Values[10] : 0u;
+
     /// <summary>Gets rejected chain-bound routes from a completed visibility receipt.</summary>
     public uint PhysicsChainBoundsRouteRejected
         => IsVisibilityReceipt && Values.Length > 11 ? Values[11] : 0u;

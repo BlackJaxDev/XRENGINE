@@ -1186,6 +1186,17 @@ in front of `VisibilityRaster.mesh`.
   counter receipt reports these counts under the instrumented strategies
   (`GpuMeshletInstrumented`, `GpuIndirectInstrumented`). Late-raster task work
   is not counted, because the counter copy runs before the late raster.
+- Under other strategies, `AdvancedVisibilityCounterSampling` turns on the
+  same per-view counter copy every N render frames. Set N at launch with
+  `XRE_ADVANCED_VISIBILITY_COUNTER_SAMPLING` or while the editor runs with the
+  MCP tool `set_advanced_visibility_counter_sampling`. 0 (the default) turns
+  the copy off and 1 copies every frame. The copy uses the same delayed
+  readback ring as the instrumented copy: the CPU reads it only after the
+  graphics timeline passes the frame, so it adds no wait. The MCP tool
+  `get_advanced_visibility_counters` returns the newest values per output and
+  view, with `payloadOverflow` and `decodeOutOfBounds` named. Each sample
+  counts as a diagnostic readback and map in the render statistics, so keep
+  sampling off for strict zero-readback validation.
 - The delayed diagnostic readback ring keeps its last quarter of slots for the
   per-view counter receipts. The per-bin copies request thousands of slots per
   second; without the reserved slots they took every slot and the counter
