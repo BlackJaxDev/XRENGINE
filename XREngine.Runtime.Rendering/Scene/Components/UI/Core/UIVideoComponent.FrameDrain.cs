@@ -480,11 +480,42 @@ namespace XREngine.Rendering.UI
                 return;
 
             string? uploadError = null;
-            if (_gpuVideoActions?.UploadVideoFrame(frame, VideoTexture, out uploadError) == true)
+            IVideoFrameGpuActions? actions = _gpuVideoActions;
+            if (actions?.UploadVideoFrame(frame, VideoTexture, out uploadError) == true)
+            {
+                if (!_firstVideoUploadLogged)
+                    LogFirstVideoUpload(frame, actions);
+                return;
+            }
+
+            ReportVideoUploadFailure(uploadError, actions);
+        }
+
+        /// <summary>Logs the first successful frame upload of the current uploader.</summary>
+        private void LogFirstVideoUpload(DecodedVideoFrame frame, IVideoFrameGpuActions actions)
+        {
+            _firstVideoUploadLogged = true;
+            VideoStreamingDiagnostics.Info(
+                $"[AV Video] First frame uploaded: {frame.Width}x{frame.Height} via '{actions.GetType().Name}' " +
+                $"after {_videoUploadFailures.FailureCount} failed uploads.");
+        }
+
+        /// <summary>
+        /// Logs a failed frame upload in every build. The reporter limits the output,
+        /// so a failure on every frame cannot flood the log.
+        /// </summary>
+        private void ReportVideoUploadFailure(string? uploadError, IVideoFrameGpuActions? actions)
+        {
+            string error = string.IsNullOrWhiteSpace(uploadError)
+                ? "The uploader returned no error text."
+                : uploadError;
+            VideoFrameUploadFailureReporter failures = _videoUploadFailures;
+            if (!failures.RecordFailure(error, out long unreportedBefore))
                 return;
 
-            if (!string.IsNullOrWhiteSpace(uploadError))
-                Debug.UIWarning(uploadError);
+            VideoStreamingDiagnostics.Warning(
+                $"[AV Video] Frame upload failed via '{actions?.GetType().Name ?? "<none>"}' " +
+                $"(failure {failures.FailureCount}, {unreportedBefore} not logged since the last report): {error}");
         }
 
         // ═══════════════════════════════════════════════════════════════

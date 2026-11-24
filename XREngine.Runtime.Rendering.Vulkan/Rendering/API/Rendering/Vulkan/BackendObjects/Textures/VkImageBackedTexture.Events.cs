@@ -397,11 +397,18 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// Called when the engine texture is resized. Destroys all Vulkan resources so they
     /// will be recreated with the new dimensions on the next <see cref="Generate"/> call.
     /// </summary>
+    /// <remarks>
+    /// The resize also clears an earlier generation failure. That failure, for example an
+    /// out-of-memory error, applied to the old dimensions, so the next <see cref="Generate"/>
+    /// call tries once with the new dimensions. A failure at the same dimensions still blocks
+    /// later retries until the next resize.
+    /// </remarks>
     private void OnTextureResized()
     {
         if (IsApplyingImportedUploadMetadata)
             return;
         Destroy();
+        ResetGenerationFailure();
         _layoutInitialized = false;
         _currentImageLayout = ImageLayout.Undefined;
         InvalidateTextureData();

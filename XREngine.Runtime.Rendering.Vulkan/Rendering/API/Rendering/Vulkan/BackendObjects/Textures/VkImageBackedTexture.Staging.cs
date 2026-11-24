@@ -43,29 +43,6 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
     }
 
-    protected bool UploadStagingBytesToImage(
-        ReadOnlySpan<byte> data,
-        uint mipLevel,
-        uint baseArrayLayer,
-        uint layerCount,
-        Extent3D extent)
-    {
-        if (data.IsEmpty)
-            return false;
-        if (!BackendContext.Resources.TryAcquireSynchronousFrameDataArenaLease(out VulkanSynchronousFrameDataArenaLease lease))
-            throw new InvalidOperationException("The Vulkan synchronous frame-data arena is unavailable for a texture upload.");
-        using (lease)
-        {
-            if (!lease.Arena.TryAllocateWrite(0, EVulkanFrameDataLane.TransferUpload, data, 16, out VulkanFrameDataSlice slice))
-                throw new InvalidOperationException($"Vulkan frame-data arena rejected {data.Length:N0} texture staging bytes for slot 0.");
-
-            CopyBufferToImage(slice, lease, mipLevel, baseArrayLayer, layerCount, extent);
-            if (!lease.TryComplete(slice))
-                throw new InvalidOperationException("Vulkan synchronous texture upload did not complete its frame-data staging slot.");
-            return true;
-        }
-    }
-
     /// <summary>
     /// Acquires a pooled whole-buffer staging resource for an imported upload
     /// whose lifetime spans an independently fenced transfer submission.

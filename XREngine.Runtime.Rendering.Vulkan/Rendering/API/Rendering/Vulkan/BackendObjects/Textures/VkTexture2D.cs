@@ -254,51 +254,203 @@ internal unsafe sealed class VkTexture2D(VulkanBackendObjectContext backendConte
     }
 
     /// <summary>
-    /// Uploads raw packed pixel data (e.g. RGB24 video frames) into the texture
-    /// via a Vulkan staging buffer, bypassing the engine's mipmap/DataSource path.
+    /// Uploads one packed RGB24 video frame to mip 0, bypassing the engine's mipmap/DataSource path.
     /// <para>
     /// The image is (re-)created if the dimensions have changed, then:
     /// <list type="number">
-    ///   <item>A persistently mapped frame-data upload slice is allocated and filled.</item>
-    ///   <item>The image is transitioned to <c>TransferDstOptimal</c>.</item>
-    ///   <item><c>vkCmdCopyBufferToImage</c> copies from the staging buffer to mip 0.</item>
-    ///   <item>The image is transitioned to <c>ShaderReadOnlyOptimal</c>.</item>
-    ///   <item>The frame slot retains the arena slice until its accepted GPU work completes.</item>
+    ///   <item>The RGB24 texels are written to a synchronous frame-data staging slice in the image's byte order, and the host writes are flushed.</item>
+    ///   <item>One synchronous command session records a barrier to <c>TransferDstOptimal</c>,
+    ///   <c>vkCmdCopyBufferToImage</c> from the staging slice to mip 0, and a barrier to <c>ShaderReadOnlyOptimal</c>.</item>
+    ///   <item>After the session completes, the tracked layout becomes <c>ShaderReadOnlyOptimal</c>.</item>
+    ///   <item>The texture is marked as uploaded, so descriptor preparation does not push stale CPU mip data over the frame.</item>
     /// </list>
     /// </para>
     /// </summary>
-    /// <param name="pixelData">Raw packed pixel bytes (e.g. RGB24).</param>
+    /// <remarks>
+    /// Call this on the render thread, after the caller has confirmed that this generation
+    /// admits synchronous resource uploads. The session is one graphics-queue submission
+    /// that waits for its fence, the same path as other synchronous texture uploads. The
+    /// image is therefore in its shader-read layout before the frame that samples it is
+    /// submitted, and no in-flight frame command buffer is reused. The first barrier orders
+    /// the copy after earlier queue work that samples the image.
+    /// <para>
+    /// All staging steps complete before the session records a barrier. A failure before
+    /// the submission therefore leaves the image and its tracked layout unchanged, so the
+    /// draw that samples the image does not see a transfer layout.
+    /// </para>
+    /// </remarks>
+    /// <param name="pixelData">Packed RGB24 texels: <paramref name="width"/> x <paramref name="height"/> x 3 bytes.</param>
     /// <param name="width">Frame width in pixels.</param>
     /// <param name="height">Frame height in pixels.</param>
+    /// <param name="failureReason">The reason for a failed upload, or <c>null</c> when the upload succeeds.</param>
     /// <returns><c>true</c> if the upload succeeded.</returns>
-    internal bool UploadVideoFrameData(ReadOnlySpan<byte> pixelData, uint width, uint height)
+    /// <exception cref="InvalidOperationException">Thrown when the synchronous command session fails to begin, submit, or complete.</exception>
+    internal bool UploadVideoFrameData(ReadOnlySpan<byte> pixelData, uint width, uint height, out string? failureReason)
     {
+        failureReason = null;
         if (!BackendContext.IsDeviceOperational)
+        {
+            failureReason = "The Vulkan device is not operational.";
             return false;
+        }
 
-        if (pixelData.IsEmpty || width == 0 || height == 0)
+        if (width == 0 || height == 0)
+        {
+            failureReason = $"The video frame size {width}x{height} is not valid.";
             return false;
+        }
 
-        // Ensure the image object exists and is the right size.
+        ulong expectedSourceBytes = (ulong)width * height * 3UL;
+        if ((ulong)pixelData.Length != expectedSourceBytes)
+        {
+            failureReason = $"The RGB24 video frame has {pixelData.Length} bytes, but {width}x{height} needs {expectedSourceBytes} bytes.";
+            return false;
+        }
+
         // Resize the engine-side texture so that Generate() creates the
         // correct Vulkan image dimensions.
         if (Data.Width != width || Data.Height != height)
             Data.Resize(width, height);
 
-        Generate();
+        try
+        {
+            Generate();
+        }
+        catch (VulkanOutOfMemoryException ex)
+        {
+            failureReason = $"The Vulkan image for the {width}x{height} video frame could not be allocated: {ex.Message}";
+            return false;
+        }
 
         if (Image.Handle == 0)
+        {
+            failureReason = $"The Vulkan image for texture '{Data.Name ?? GetDescribingName()}' was not created.";
             return false;
+        }
 
+        if (ResolvedExtent.Width != width || ResolvedExtent.Height != height)
+        {
+            failureReason = $"The Vulkan image is {ResolvedExtent.Width}x{ResolvedExtent.Height}, but the video frame is {width}x{height}.";
+            return false;
+        }
 
-        // Map â†’ memcpy â†’ unmap.
+        if (!VulkanRgb24TexelWriter.TryGetDestinationBytesPerTexel(ResolvedFormat, out uint destinationBytesPerTexel))
+        {
+            failureReason = $"The Vulkan image format {ResolvedFormat} cannot receive RGB24 video frames.";
+            return false;
+        }
 
-        // Transition â†’ copy â†’ transition.
-        TransitionImageLayout(_currentImageLayout, ImageLayout.TransferDstOptimal);
-        Extent3D extent = new(width, height, 1);
-        _ = UploadStagingBytesToImage(pixelData, 0, 0, 1, extent);
-        TransitionImageLayout(ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+        ulong stagingBytes = (ulong)width * height * destinationBytesPerTexel;
+        if (stagingBytes > int.MaxValue)
+        {
+            failureReason = $"The video frame staging upload is too large for the frame-data arena: {stagingBytes:N0} bytes.";
+            return false;
+        }
 
+        if (!BackendContext.Resources.TryAcquireSynchronousFrameDataArenaLease(out VulkanSynchronousFrameDataArenaLease lease))
+        {
+            failureReason = "The Vulkan synchronous frame-data arena is busy or unavailable for a video frame upload.";
+            return false;
+        }
+
+        using (lease)
+        {
+            if (!lease.Arena.TryAllocate(0, EVulkanFrameDataLane.TransferUpload, stagingBytes, 16, out VulkanFrameDataSlice slice))
+            {
+                failureReason = $"The Vulkan frame-data arena rejected {stagingBytes:N0} video frame staging bytes.";
+                return false;
+            }
+
+            bool uploaded = false;
+            try
+            {
+                if (!TryWriteRgb24Staging(pixelData, lease.Arena, slice, out failureReason))
+                    return false;
+
+                SubmitVideoFrameCopy(lease.Arena, slice, new Extent3D(width, height, 1));
+                uploaded = true;
+            }
+            finally
+            {
+                // Discard the staged bytes of a failed upload. A slot that a submitted
+                // command still owns is not writable, so the reset leaves it unchanged.
+                if (!uploaded)
+                    _ = lease.Arena.TryResetFrameSlot(0, slice.Generation, submissionCompletionProven: false);
+            }
+        }
+
+        // A resize invalidates the texture data. This upload replaces the CPU mip path,
+        // so publish the new contents instead of letting descriptor preparation push
+        // the CPU mip data over the frame.
+        MarkUploaded();
         return true;
+    }
+
+    /// <summary>
+    /// Writes RGB24 texels to <paramref name="slice"/> in the image's byte order and flushes the host writes.
+    /// </summary>
+    private bool TryWriteRgb24Staging(
+        ReadOnlySpan<byte> rgb24PixelData,
+        VulkanFrameDataArena arena,
+        in VulkanFrameDataSlice slice,
+        out string? failureReason)
+    {
+        if (!arena.TryBeginWrite(slice, out VulkanFrameDataWriteScope scope))
+        {
+            failureReason = "The Vulkan frame-data arena could not map the video frame staging slice.";
+            return false;
+        }
+
+        bool written;
+        using (scope)
+            written = VulkanRgb24TexelWriter.TryWrite(rgb24PixelData, scope.Bytes, ResolvedFormat);
+
+        if (!written)
+        {
+            failureReason = $"The RGB24 video frame could not be written in the {ResolvedFormat} byte order.";
+            return false;
+        }
+
+        if (!arena.TryFlushHostWrites(slice))
+        {
+            failureReason = "The Vulkan frame-data arena could not publish the video frame staging writes.";
+            return false;
+        }
+
+        failureReason = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Records the transfer barrier, the copy to mip 0, and the shader-read barrier in one
+    /// synchronous command session, waits for it, and then publishes the shader-read layout.
+    /// </summary>
+    /// <remarks>
+    /// If the session throws before the queue accepts the submission, the GPU runs no barrier,
+    /// so the tracked layout keeps its earlier value. After the queue accepts the submission, the
+    /// GPU runs the three commands even if the wait or its bookkeeping then fails. So the method
+    /// also publishes the shader-read layout on that failure, before the exception continues.
+    /// It does not publish the layout after a device loss, because the GPU possibly did not run
+    /// the barriers, and the images of a lost device are not used again.
+    /// </remarks>
+    private void SubmitVideoFrameCopy(VulkanFrameDataArena arena, in VulkanFrameDataSlice slice, Extent3D extent)
+    {
+        using VulkanSynchronousResourceCommandSession session = ResourceCommandPort.Begin("VkTexture2D.UploadVideoFrameData");
+        RecordWholeImageLayoutTransition(session, CurrentImageLayout, ImageLayout.TransferDstOptimal);
+        RecordCopyBufferToImage(session, slice, 0, 0, 1, extent);
+        ImageLayout sampledLayout = RecordWholeImageLayoutTransition(session, ImageLayout.TransferDstOptimal, ImageLayout.ShaderReadOnlyOptimal);
+
+        try
+        {
+            // The wait proves completion and reopens the staging slot for the next upload.
+            session.CompleteAndWait(arena, slice);
+        }
+        catch when (session.NativeSubmissionAccepted && BackendContext.IsDeviceOperational)
+        {
+            PublishWholeImageLayout(sampledLayout);
+            throw;
+        }
+
+        PublishWholeImageLayout(sampledLayout);
     }
 }
