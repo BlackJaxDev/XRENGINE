@@ -1081,6 +1081,20 @@ texture slots: albedo, normal, metallic-roughness, emissive, opacity, and occlus
 - Only the native opaque kernels read the texture. The Native Uber path, the Default
   pipeline, and the WebGPU shading contracts ignore it.
 
+### Indirect diffuse Fresnel
+
+The native opaque kernel weights the world ambient term and probe diffuse by
+`1 - F`. `F` comes from `XR_ADV_FresnelSchlickRoughness` (`StandardPBR.glslinc`, and
+the same function in the WebGPU `AdvancedShadeLighting.slang`). It caps the grazing
+reflectance at `max(1 - roughness, F0)`, as the forward and Default pipeline shaders do.
+Probe specular uses the same `F` with the split-sum lookup.
+
+Do not use the plain Schlick Fresnel for these terms. At `N.V = 0` it gives `F = 1`,
+which removes all indirect diffuse light. Interpolated vertex normals of coarse meshes
+can face away from the camera near silhouette edges. For example, the arch edges of the
+Sponza aisle vaults have normals smoothed across a hard edge. With the plain Fresnel,
+surfaces in shadow get a black band along those edges.
+
 ### General debug shapes
 
 `ModelComponent` copies its `RenderBounds` setting into each new runtime mesh.
