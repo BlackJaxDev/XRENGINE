@@ -103,7 +103,7 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             RetainUnexpectedRequiredStageFailure(exception.Message);
             throw new RequiredRenderCommandException(
-                $"Required Advanced stage '{Stage}' failed during authoring.", exception);
+                $"Required Advanced stage '{Stage}' failed during authoring: {exception.Message}", exception);
         }
     }
 

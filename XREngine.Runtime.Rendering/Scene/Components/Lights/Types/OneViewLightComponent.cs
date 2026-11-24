@@ -243,7 +243,10 @@ namespace XREngine.Components.Capture.Lights.Types
                 shadowPipeline.ClearColor = GetShadowMapClearColor();
 
             if (!viewport.TryRender(ShadowMap, null, null, true, ShadowMap.Material))
+            {
                 RejectBrowserShadowRender();
+                DeferAtomicFrameForDeclinedShadowRender(viewport);
+            }
         }
 
         protected virtual ColorF4 GetShadowMapClearColor()

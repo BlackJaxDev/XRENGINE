@@ -444,7 +444,7 @@ namespace XREngine.Components
             //}
             //_screenRenderDiagCount++;
 
-            _renderPipeline.Render(
+            bool completed = _renderPipeline.TryRender(
                 VisualScene2D,
                 Camera2D,
                 null,
@@ -453,6 +453,12 @@ namespace XREngine.Components
                 null,
                 false,
                 false);
+            // An atomic host presents only complete frames. When the canvas chain declines
+            // (for example, its batch buffers await creation), defer the whole frame, so the
+            // host does not present the scene without its screen-space UI.
+            if (!completed && AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
+                throw new RenderResourcePreparationPendingException(_renderPipeline.LastRenderDeclineReason
+                    ?? "UI.Canvas.ScreenSpacePending: the screen-space canvas command chain did not execute.");
         }
 
         private int _screenSwapDiagCount = 0;
