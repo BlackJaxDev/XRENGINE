@@ -2107,17 +2107,11 @@ namespace XREngine.Rendering
                 AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
 */
             var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
-            if (World?.VisualScene?.GPUCommands is { } gpuScene)
+            TryFinalizePreparedCanonicalFramePackageAfterWorldSwap(commandCollection);
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.SwapBuffers.MeshCommands"))
             {
-                // The world swap can publish a new canonical scene on another thread (for example
-                // while the OpenXR eyes swap on the collect thread). Without the boundary, the
-                // package can capture publication N and the identity check can then read N+1, which
-                // rejects the whole package.
-                using Lock.Scope publicationBoundary = gpuScene.EnterAdvancedPublicationBoundary();
-                FinalizeAndSwapMeshCommands(commandCollection);
+                commandCollection.SwapBuffers();
             }
-            else
-                FinalizeAndSwapMeshCommands(commandCollection);
 
             WriteDeferredPassCountDiagnostic("SwapBuffers", commandCollection, ActiveCamera, renderingBuffer: true);
 
@@ -2152,21 +2146,6 @@ namespace XREngine.Rendering
                 _pendingExactOutputCommandCollection = null;
                 _renderingExactOutputCollectionGeneration = 0UL;
                 _renderingExactOutputCommandCollection = null;
-            }
-        }
-
-        /// <summary>
-        /// Captures the current canonical scene publication into the prepared frame package of
-        /// <paramref name="commandCollection"/>, then swaps its command buffers. The swap checks
-        /// each primary command identity against the captured publication, so
-        /// <see cref="SwapBuffers"/> calls this inside the GPU scene's publication boundary.
-        /// </summary>
-        private void FinalizeAndSwapMeshCommands(RenderCommandCollection commandCollection)
-        {
-            TryFinalizePreparedCanonicalFramePackageAfterWorldSwap(commandCollection);
-            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.SwapBuffers.MeshCommands"))
-            {
-                commandCollection.SwapBuffers();
             }
         }
 
