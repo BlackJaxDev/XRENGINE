@@ -1007,8 +1007,12 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement colorAttachment = EnsureTextureAttachment(
             SourceOrderedSceneCopyTextureName,
             CreateSourceOrderedSceneCopyTexture);
+        // The copy is an array texture in mono too, so its consumers sample one array layout.
+        // Multiview attaches all layers (-1). A one-layer copy attaches layer 0 explicitly,
+        // because a backend without layered attachments (WebGPU) admits only one layer.
+        int layer = colorAttachment is XRTexture2DArray { Depth: 1u } ? 0 : -1;
         return new XRFrameBuffer((colorAttachment, EFrameBufferAttachment.ColorAttachment0,
-            0, -1))
+            0, layer))
         {
             ForceOvrMultiview = Stereo,
             Name = SourceOrderedSceneCopyFBOName,

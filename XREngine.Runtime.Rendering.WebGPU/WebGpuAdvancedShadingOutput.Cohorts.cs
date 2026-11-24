@@ -178,11 +178,13 @@ internal sealed partial class WebGpuAdvancedShadingOutput
         if (WebGpuAdvancedUberBaseContract.GetRejection(in material, snapshot.MaterialPayloads) is { } uberReason)
             throw Invalid("UberBaseUnsupported", uberReason);
         bool mirror = material.MaterialLayoutHash == WebGpuAdvancedShadingParameters.MirrorHash;
-        uint words = mirror ? MaterialBindingLayouts.ProjectiveMirror.RowWordCount : MaterialBindingLayouts.OpaqueDeferred.RowWordCount;
+        // Read the row size and texture slot count from the live canonical layout, so a layout change
+        // (for example, the standard opacity and occlusion slots) does not leave a stale count here.
+        MaterialBindingLayout layout = mirror ? MaterialBindingLayouts.ProjectiveMirror : MaterialBindingLayouts.OpaqueDeferred;
         if ((!mirror && !WebGpuAdvancedStandardMaterialContract.IsStandard(in material)) ||
-            material.ConstantWordCount != words || material.ConstantWordOffset > snapshot.MaterialPayloads.ConstantWords.Length ||
+            material.ConstantWordCount != layout.RowWordCount || material.ConstantWordOffset > snapshot.MaterialPayloads.ConstantWords.Length ||
             material.ConstantWordCount > snapshot.MaterialPayloads.ConstantWords.Length - material.ConstantWordOffset ||
-            material.TextureReferenceCount != (mirror ? 3u : 4u))
+            material.TextureReferenceCount != (uint)layout.Textures.Count)
             throw Invalid("MaterialLayoutUnsupported", "the material payload is not the complete canonical native schema");
         ReadOnlySpan<AdvancedMaterialTextureBinding> bindings = snapshot.MaterialPayloads.TextureBindings;
         if (material.TextureReferenceOffset > bindings.Length || material.TextureReferenceCount > bindings.Length - material.TextureReferenceOffset)

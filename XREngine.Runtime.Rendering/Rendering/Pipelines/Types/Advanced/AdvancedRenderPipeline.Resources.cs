@@ -393,7 +393,8 @@ public partial class AdvancedRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TransparentSceneCopyTextureName)
             .Factory(CreateTransparentSceneCopyFBO).Add();
         builder.FrameBuffer(SourceOrderedSceneCopyFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, SourceOrderedSceneCopyTextureName)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, SourceOrderedSceneCopyTextureName, layerIndex: layers > 1u ? -1 : 0)
             .Factory(CreateSourceOrderedSceneCopyFBO).Add();
         builder.FrameBuffer(TransparentAccumulationFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
