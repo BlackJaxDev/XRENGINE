@@ -3803,18 +3803,22 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (inputInterface is not InputInterface input)
             return;
         base.RegisterInput(input);
-        input.RegisterKeyEvent(EKey.F12, EButtonInputType.Pressed, TakeScreenshot);
         input.RegisterKeyEvent(EKey.F11, EButtonInputType.Pressed, ToggleEditorImGuiOverlay);
-        input.RegisterKeyEvent(EKey.Number1, EButtonInputType.Pressed, SetTransformTranslation);
-        input.RegisterKeyEvent(EKey.Number2, EButtonInputType.Pressed, SetTransformRotation);
-        input.RegisterKeyEvent(EKey.Number3, EButtonInputType.Pressed, SetTransformScale);
+
+        // Pick mode: 1 selects points, 2 selects lines, 3 selects faces.
+        input.RegisterKeyEvent(EKey.Number1, EButtonInputType.Pressed, SetPickModePoints);
+        input.RegisterKeyEvent(EKey.Number2, EButtonInputType.Pressed, SetPickModeLines);
+        input.RegisterKeyEvent(EKey.Number3, EButtonInputType.Pressed, SetPickModeFaces);
+
+        // Transform gizmo: 4 translates, 5 rotates, 6 scales.
+        input.RegisterKeyEvent(EKey.Number4, EButtonInputType.Pressed, SetTransformTranslation);
+        input.RegisterKeyEvent(EKey.Number5, EButtonInputType.Pressed, SetTransformRotation);
+        input.RegisterKeyEvent(EKey.Number6, EButtonInputType.Pressed, SetTransformScale);
+
         input.RegisterKeyEvent(EKey.F1, EButtonInputType.Pressed, SetTransformModeWorld);
         input.RegisterKeyEvent(EKey.F2, EButtonInputType.Pressed, SetTransformModeLocal);
         input.RegisterKeyEvent(EKey.F3, EButtonInputType.Pressed, SetTransformModeParent);
         input.RegisterKeyEvent(EKey.F4, EButtonInputType.Pressed, SetTransformModeScreen);
-        input.RegisterKeyEvent(EKey.F5, EButtonInputType.Pressed, SetPickModeFaces);
-        input.RegisterKeyEvent(EKey.F6, EButtonInputType.Pressed, SetPickModeLines);
-        input.RegisterKeyEvent(EKey.F7, EButtonInputType.Pressed, SetPickModePoints);
         input.RegisterKeyEvent(EKey.F8, EButtonInputType.Pressed, ToggleRenderUIThroughPipeline);
         
         // Debug camera mode controls
