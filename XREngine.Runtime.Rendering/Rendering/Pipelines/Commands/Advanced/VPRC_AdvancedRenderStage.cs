@@ -429,11 +429,7 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
         // selects no other view.
         XRCamera? debugCamera = ActivePipelineInstance.RenderState.SceneCamera
             ?? ActivePipelineInstance.RenderState.RenderingCamera;
-        EAdvancedShadingDebugView shadingDebugView =
-            pipeline.ShadingDebugView == EAdvancedShadingDebugView.Disabled &&
-            GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(debugCamera, pipeline)
-                ? EAdvancedShadingDebugView.MeshletId
-                : pipeline.ShadingDebugView;
+        EAdvancedShadingDebugView shadingDebugView = pipeline.ResolveShadingDebugView(debugCamera);
         string rawMetadata = packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.MetadataMultisample;
         string rawSelection = packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.SelectionMultisample;
         request = new(

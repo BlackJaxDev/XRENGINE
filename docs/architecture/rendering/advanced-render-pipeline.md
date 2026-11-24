@@ -1293,10 +1293,18 @@ When they are off, no pass, buffer, program or allocation exists for them.
   `VPRC_AdvancedRenderStage` requests the `MeshletId` shading debug view while the
   pipeline selects no other view. Native shading then writes a color from a hash
   of the global meshlet index in the visibility identity instead of the material
-  result, so a meshlet keeps its color from frame to frame. Pixels of indexed
-  producers (CPU-direct, GPU indirect, and indexed ranges of meshlet frames such
-  as parallax ranges) have no meshlet and are neutral grey. The submission strategy does not change. It works
-  for each view, so stereo eyes show it too.
+  result, so a meshlet keeps its color from frame to frame. Only meshlet producers
+  write a meshlet index. While the view is on, the output captures a GPU meshlet
+  strategy in its frame package instead of a GPU indexed strategy
+  (`AdvancedRenderPipeline.ResolveMeshletViewSubmissionStrategy`, called through
+  `XRViewport.ResolveRequestedMeshSubmissionStrategy`). The strategy is
+  `GpuMeshletZeroReadback`, or `GpuMeshletInstrumented` when GPU indirect debug
+  logging is on. Other outputs and the process-wide strategy do not change. The
+  switch needs a Vulkan renderer that reports a meshlet path, and it does not
+  change CPU-direct submission. Pixels of indexed producers (CPU-direct output,
+  outputs without a meshlet path, and indexed ranges of meshlet frames such as
+  parallax ranges) have no meshlet and are neutral grey. It works for each view,
+  so stereo eyes show it too.
 - **Occlusion-culled bounds** (`Occlusion-Culled Bounds`). After native opaque
   shading, the optional kernel `OcclusionCulledBounds.comp` draws box edges into
   the shaded HDR color of each view, and marks those pixels reactive so temporal

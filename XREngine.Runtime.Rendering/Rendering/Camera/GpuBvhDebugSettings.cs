@@ -181,6 +181,16 @@ namespace XREngine.Rendering
             return AbstractRenderer.Current?.SupportsMeshletDispatch() == true;
         }
 
+        /// <summary>
+        /// Returns the GPU meshlet strategy that a pass or output uses while the meshlet debug
+        /// display forces meshlet submission. The instrumented strategy is selected only when
+        /// GPU indirect debug logging is on, because it reads counters back to the CPU.
+        /// </summary>
+        public static EMeshSubmissionStrategy ResolveMeshletDebugDisplayStrategy()
+            => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging
+                ? EMeshSubmissionStrategy.GpuMeshletInstrumented
+                : EMeshSubmissionStrategy.GpuMeshletZeroReadback;
+
         // No GPU uniforms to push; the corresponding pipeline command reads
         // these properties directly when issuing debug visualization passes.
         public override void SetUniforms(XRRenderProgram program) { }

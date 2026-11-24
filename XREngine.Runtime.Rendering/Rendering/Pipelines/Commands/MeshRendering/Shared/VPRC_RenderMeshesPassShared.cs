@@ -295,7 +295,7 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         EMeshSubmissionStrategy meshSubmissionStrategy = ResolveEffectiveMeshSubmissionStrategy();
         bool forceMeshletDebugDisplay = ShouldForceMeshletDebugDisplay(meshSubmissionStrategy);
         if (forceMeshletDebugDisplay)
-            meshSubmissionStrategy = ResolveMeshletDebugDisplayStrategy();
+            meshSubmissionStrategy = GpuBvhDebugSettings.ResolveMeshletDebugDisplayStrategy();
 
         if (IsMeshletRequested(meshSubmissionStrategy))
         {
@@ -418,11 +418,6 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
             ? EMeshSubmissionStrategy.CpuDirect
             : EMeshSubmissionStrategy.GpuIndirectInstrumented;
     }
-
-    private static EMeshSubmissionStrategy ResolveMeshletDebugDisplayStrategy()
-        => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging
-            ? EMeshSubmissionStrategy.GpuMeshletInstrumented
-            : EMeshSubmissionStrategy.GpuMeshletZeroReadback;
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
