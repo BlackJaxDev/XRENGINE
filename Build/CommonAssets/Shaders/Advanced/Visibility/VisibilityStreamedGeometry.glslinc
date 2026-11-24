@@ -1,0 +1,471 @@
+#ifndef XR_ADVANCED_VISIBILITY_STREAMED_GEOMETRY_GLSLINC
+#define XR_ADVANCED_VISIBILITY_STREAMED_GEOMETRY_GLSLINC
+
+// Reads the cluster data of a geometry that draws from geometry pages.
+// Include after VisibilityInterface.glslinc.
+//
+// A cluster hierarchy geometry with the StreamedPages geometry flag
+// (EAdvancedGeometryFlags) keeps its cluster and group records, so the cluster
+// cut reads them as for any hierarchy geometry. The descriptors, meshlet vertex
+// indices, triangle bytes and (for a static mesh) the vertices of its clusters
+// come from page images in the geometry page pool:
+//
+// - The stream header, two words before the cluster records in the
+//   triangle-word stream, holds the word offset of the page block, relative to
+//   the first cluster record.
+// - Page block word 0: the page count. Word 1: the cluster count, which must be
+//   the meshlet count of the geometry. Word 2: the first page of the geometry
+//   in the page table. Word 3: the group count.
+// - Then one word for each cluster, in published meshlet order:
+//   (page << 8) | page-local cluster.
+// - Then one word for each group, in published group order: the
+//   geometry-local page that holds the group. The streamed cut uses it to test
+//   whether the finer group of a cluster is resident.
+// - The page table gives the pool slot of each page, or
+//   XR_ADV_PAGE_NOT_RESIDENT. A slot holds one page image (MeshletPageFormat)
+//   at word slot * XR_ADV_PAGE_WORDS of the pool. An image has an 8-word
+//   header, then 20-word descriptors, meshlet vertex index words, triangle
+//   bytes and, for a static page, 16-word packed vertices. The descriptor
+//   offsets are relative to the start of their sections. A static page names
+//   page-local vertices; a skinned topology page names source vertices and
+//   holds no vertices.
+//
+// Every read checks its offset against the page bounds and the table length.
+// A failed check, or a page that is not resident, returns false, and the
+// caller then skips the cluster. Only the Vulkan backend binds the page pool;
+// on other backends no geometry is streamed.
+
+#define XR_ADV_GEOMETRY_FLAG_STREAMED_PAGES 1u
+#define XR_ADV_PAGE_MAGIC 0x47505258u
+#define XR_ADV_PAGE_FORMAT_VERSION 1u
+#define XR_ADV_PAGE_WORDS 32768u
+#define XR_ADV_PAGE_MAX_CLUSTERS 256u
+#define XR_ADV_PAGE_HEADER_WORDS 8u
+#define XR_ADV_PAGE_DESCRIPTOR_WORDS 20u
+#define XR_ADV_PAGE_VERTEX_WORDS 16u
+#define XR_ADV_PAGE_FLAG_SKINNED_TOPOLOGY 1u
+#define XR_ADV_PAGE_NOT_RESIDENT 0xFFFFFFFFu
+#define XR_ADV_PAGE_BLOCK_HEADER_WORDS 4u
+// Words between the stream header and the first cluster record: the stream
+// header and the skin header.
+#define XR_ADV_STREAM_HEADER_DISTANCE 2u
+
+// The page block of one geometry. Word indices are absolute indices in the
+// triangle-word table.
+struct XRAdvancedStreamedGeometry
+{
+    bool valid;
+    uint clusterWordBase;
+    uint pageCount;
+    uint firstPage;
+    uint clusterMapWord;
+    uint clusterCount;
+    uint groupMapWord;
+    uint groupCount;
+};
+
+// One cluster in its page: the descriptor with page-local offsets, the pool
+// word of the page slot, and the page-local word positions of the sections
+// that the descriptor offsets use.
+struct XRAdvancedStreamedCluster
+{
+    uint page;
+    uint slot;
+    uint pageWord;
+    uint localCluster;
+    bool skinnedTopology;
+    uint vertexIndexWord;
+    uint triangleByte;
+    uint vertexWord;
+    uint pageVertexCount;
+    XRAdvancedVisibilityMeshletDescriptor descriptor;
+};
+
+uint XR_ADV_StreamedWordCount()
+{
+    return uint(XR_ADV_VisibilityMeshletTriangleWords.records.length());
+}
+
+uint XR_ADV_StreamedWord(uint word)
+{
+    return XR_ADV_VisibilityMeshletTriangleWords.records[word];
+}
+
+#if defined(XR_ADV_BACKEND_VULKAN)
+uint XR_ADV_PageTableLength()
+{
+    return uint(XR_ADV_VisibilityGeometryPageTable.slots.length());
+}
+
+uint XR_ADV_PageTableEntry(uint page)
+{
+    return XR_ADV_VisibilityGeometryPageTable.slots[page];
+}
+
+uint XR_ADV_PagePoolSlotCount()
+{
+    return uint(XR_ADV_VisibilityGeometryPagePool.words.length()) / XR_ADV_PAGE_WORDS;
+}
+
+uint XR_ADV_PagePoolWord(uint word)
+{
+    return XR_ADV_VisibilityGeometryPagePool.words[word];
+}
+#else
+uint XR_ADV_PageTableLength() { return 0u; }
+uint XR_ADV_PageTableEntry(uint page) { return XR_ADV_PAGE_NOT_RESIDENT; }
+uint XR_ADV_PagePoolSlotCount() { return 0u; }
+uint XR_ADV_PagePoolWord(uint word) { return 0u; }
+#endif
+
+// Returns the pool slot of a registered page, or XR_ADV_PAGE_NOT_RESIDENT when
+// the page is outside the table, not resident, or names a slot outside the pool.
+uint XR_ADV_PageSlot(uint globalPage)
+{
+    if (globalPage >= XR_ADV_PageTableLength())
+        return XR_ADV_PAGE_NOT_RESIDENT;
+    uint slot = XR_ADV_PageTableEntry(globalPage);
+    return slot < XR_ADV_PagePoolSlotCount() ? slot : XR_ADV_PAGE_NOT_RESIDENT;
+}
+
+// Geometry streaming feedback. A shader that defines
+// XR_ADV_ENABLE_GEOMETRY_STREAMING_FEEDBACK (the visibility task stage) writes
+// page requests and touch bits. The CPU clears both buffers before the early
+// raster and reads them back after the late raster:
+// - A touch bit marks a pool slot whose page the frame drew or had in its ideal
+//   cut. The streaming manager does not evict a page that was touched recently.
+// - A request names a page that is in the ideal cut but not resident. The
+//   request bit of the page lets only the first lane write the request, so one
+//   page gets one request per frame across clusters, draws, views and both
+//   raster passes.
+// A request buffer without entries (the sentinel that the backend binds while
+// streaming is off) turns the feedback off.
+#define XR_ADV_STREAMING_BAND_OCCLUDED 0u
+#define XR_ADV_STREAMING_BAND_PREFETCH 1u
+#define XR_ADV_STREAMING_BAND_FOREGROUND 2u
+
+#if defined(XR_ADV_BACKEND_VULKAN) && defined(XR_ADV_ENABLE_GEOMETRY_STREAMING_FEEDBACK)
+bool XR_ADV_StreamingFeedbackEnabled()
+{
+    return XR_ADV_VisibilityGeometryPageRequests.entries.length() > 0;
+}
+
+uint XR_ADV_StreamingTouchWordCount()
+{
+    return (XR_ADV_PagePoolSlotCount() + 31u) / 32u;
+}
+
+// Sets the touch bit of a pool slot. The plain read first skips the atomic for a
+// bit that another lane already set.
+void XR_ADV_StreamingTouchSlot(uint slot)
+{
+    if (!XR_ADV_StreamingFeedbackEnabled() || slot >= XR_ADV_PagePoolSlotCount())
+        return;
+    uint word = slot >> 5u;
+    uint bit = 1u << (slot & 31u);
+    if (word >= uint(XR_ADV_VisibilityGeometryPageFeedbackBits.words.length()) ||
+        (XR_ADV_VisibilityGeometryPageFeedbackBits.words[word] & bit) != 0u)
+        return;
+    atomicOr(XR_ADV_VisibilityGeometryPageFeedbackBits.words[word], bit);
+}
+
+// Writes one request for a global page, unless another lane already requested
+// it in this frame. A request past the buffer capacity counts as an overflow;
+// the page is requested again in a later frame.
+void XR_ADV_StreamingRequestPage(uint globalPage, uint band, uint priority, float pixelScale)
+{
+    if (!XR_ADV_StreamingFeedbackEnabled() || globalPage >= XR_ADV_PageTableLength())
+        return;
+    uint word = XR_ADV_StreamingTouchWordCount() + (globalPage >> 5u);
+    uint bit = 1u << (globalPage & 31u);
+    if (word >= uint(XR_ADV_VisibilityGeometryPageFeedbackBits.words.length()) ||
+        (XR_ADV_VisibilityGeometryPageFeedbackBits.words[word] & bit) != 0u)
+        return;
+    if ((atomicOr(XR_ADV_VisibilityGeometryPageFeedbackBits.words[word], bit) & bit) != 0u)
+        return;
+    uint index = atomicAdd(XR_ADV_VisibilityGeometryPageRequests.count, 1u);
+    if (index < uint(XR_ADV_VisibilityGeometryPageRequests.entries.length()))
+    {
+        XR_ADV_VisibilityGeometryPageRequests.entries[index] = uvec4(
+            globalPage, (band << 16u) | min(priority, 0xFFFFu), floatBitsToUint(pixelScale), 0u);
+    }
+    else
+    {
+        atomicAdd(XR_ADV_VisibilityGeometryPageRequests.overflow, 1u);
+    }
+}
+#else
+bool XR_ADV_StreamingFeedbackEnabled() { return false; }
+void XR_ADV_StreamingTouchSlot(uint slot) { }
+void XR_ADV_StreamingRequestPage(uint globalPage, uint band, uint priority, float pixelScale) { }
+#endif
+
+// Reads one word of a resident page. localWord must be below XR_ADV_PAGE_WORDS.
+uint XR_ADV_PageWord(XRAdvancedStreamedCluster cluster, uint localWord)
+{
+    return XR_ADV_PagePoolWord(cluster.pageWord + localWord);
+}
+
+// Reads the page block of a geometry. The result is not valid when the
+// geometry has no StreamedPages flag or its block does not fit in the table.
+XRAdvancedStreamedGeometry XR_ADV_StreamedGeometry(XRAdvancedGeometryRecord geometry)
+{
+    XRAdvancedStreamedGeometry streamed;
+    streamed.valid = false;
+    streamed.clusterWordBase = 0u;
+    streamed.pageCount = 0u;
+    streamed.firstPage = 0u;
+    streamed.clusterMapWord = 0u;
+    streamed.clusterCount = 0u;
+    streamed.groupMapWord = 0u;
+    streamed.groupCount = 0u;
+    if ((geometry.flags & XR_ADV_GEOMETRY_FLAG_STREAMED_PAGES) == 0u ||
+        geometry.reservedLayout0 == 0u ||
+        geometry.reservedLayout1 < XR_ADV_STREAM_HEADER_DISTANCE)
+        return streamed;
+
+    uint wordCount = XR_ADV_StreamedWordCount();
+    uint clusterWordBase = geometry.meshletTriangleWords.elementOffset + geometry.reservedLayout1;
+    if (clusterWordBase < geometry.meshletTriangleWords.elementOffset || clusterWordBase > wordCount)
+        return streamed;
+    uint blockRelative = XR_ADV_StreamedWord(clusterWordBase - XR_ADV_STREAM_HEADER_DISTANCE);
+    uint block = clusterWordBase + blockRelative;
+    if (blockRelative == 0u || block < clusterWordBase ||
+        block > wordCount - min(wordCount, XR_ADV_PAGE_BLOCK_HEADER_WORDS))
+        return streamed;
+
+    uint pageCount = XR_ADV_StreamedWord(block);
+    uint clusterCount = XR_ADV_StreamedWord(block + 1u);
+    uint firstPage = XR_ADV_StreamedWord(block + 2u);
+    uint groupCount = XR_ADV_StreamedWord(block + 3u);
+    uint clusterMapWord = block + XR_ADV_PAGE_BLOCK_HEADER_WORDS;
+    if (pageCount == 0u || pageCount > 0x00FFFFFFu ||
+        firstPage == XR_ADV_PAGE_NOT_RESIDENT ||
+        firstPage > 0xFFFFFFFFu - pageCount ||
+        clusterCount != geometry.meshletCount ||
+        clusterCount > wordCount - clusterMapWord ||
+        groupCount > wordCount - clusterMapWord - clusterCount)
+        return streamed;
+
+    streamed.valid = true;
+    streamed.clusterWordBase = clusterWordBase;
+    streamed.pageCount = pageCount;
+    streamed.firstPage = firstPage;
+    streamed.clusterMapWord = clusterMapWord;
+    streamed.clusterCount = clusterCount;
+    streamed.groupMapWord = clusterMapWord + clusterCount;
+    streamed.groupCount = groupCount;
+    return streamed;
+}
+
+// The global page (page table entry) of a geometry-local cluster, or
+// XR_ADV_PAGE_NOT_RESIDENT when the cluster or its map word is out of range.
+uint XR_ADV_StreamedClusterGlobalPage(XRAdvancedStreamedGeometry streamed, uint cluster)
+{
+    if (!streamed.valid || cluster >= streamed.clusterCount)
+        return XR_ADV_PAGE_NOT_RESIDENT;
+    uint page = XR_ADV_StreamedWord(streamed.clusterMapWord + cluster) >> 8u;
+    return page < streamed.pageCount ? streamed.firstPage + page : XR_ADV_PAGE_NOT_RESIDENT;
+}
+
+// The global page (page table entry) of a group, or XR_ADV_PAGE_NOT_RESIDENT
+// when the group or its map word is out of range.
+uint XR_ADV_StreamedGroupGlobalPage(XRAdvancedStreamedGeometry streamed, uint group)
+{
+    if (!streamed.valid || group >= streamed.groupCount)
+        return XR_ADV_PAGE_NOT_RESIDENT;
+    uint page = XR_ADV_StreamedWord(streamed.groupMapWord + group);
+    return page < streamed.pageCount ? streamed.firstPage + page : XR_ADV_PAGE_NOT_RESIDENT;
+}
+
+// The pool slot of a global page, or XR_ADV_PAGE_NOT_RESIDENT. Accepts
+// XR_ADV_PAGE_NOT_RESIDENT as the page.
+uint XR_ADV_StreamedPageSlot(uint globalPage)
+{
+    return globalPage == XR_ADV_PAGE_NOT_RESIDENT ? XR_ADV_PAGE_NOT_RESIDENT : XR_ADV_PageSlot(globalPage);
+}
+
+// Finds the page of a geometry-local cluster and its pool slot, checks the
+// page header and the cluster's ranges in the page, and loads its descriptor.
+// Returns false when the page is not resident.
+bool XR_ADV_LoadStreamedCluster(
+    XRAdvancedStreamedGeometry streamed,
+    uint cluster,
+    out XRAdvancedStreamedCluster result)
+{
+    result.page = 0u;
+    result.slot = XR_ADV_PAGE_NOT_RESIDENT;
+    result.pageWord = 0u;
+    result.localCluster = 0u;
+    result.skinnedTopology = false;
+    result.vertexIndexWord = 0u;
+    result.triangleByte = 0u;
+    result.vertexWord = 0u;
+    result.pageVertexCount = 0u;
+    result.descriptor = XRAdvancedVisibilityMeshletDescriptor(
+        vec4(0.0), 0u, 0u, 0u, 0u, vec4(0.0), vec4(0.0), 0u, 0u, 0u, 0u);
+    if (!streamed.valid || cluster >= streamed.clusterCount)
+        return false;
+
+    uint map = XR_ADV_StreamedWord(streamed.clusterMapWord + cluster);
+    uint page = map >> 8u;
+    uint localCluster = map & 0xFFu;
+    if (page >= streamed.pageCount)
+        return false;
+
+    uint slot = XR_ADV_PageSlot(streamed.firstPage + page);
+    if (slot == XR_ADV_PAGE_NOT_RESIDENT)
+        return false;
+    result.slot = slot;
+    result.pageWord = slot * XR_ADV_PAGE_WORDS;
+
+    uint versionAndFlags = XR_ADV_PageWord(result, 1u);
+    uint counts = XR_ADV_PageWord(result, 2u);
+    uint descriptorOffset = XR_ADV_PageWord(result, 4u);
+    uint vertexIndexOffset = XR_ADV_PageWord(result, 5u);
+    uint triangleOffset = XR_ADV_PageWord(result, 6u);
+    uint vertexOffset = XR_ADV_PageWord(result, 7u);
+    uint pageClusterCount = counts & 0xFFFFu;
+    if (XR_ADV_PageWord(result, 0u) != XR_ADV_PAGE_MAGIC ||
+        (versionAndFlags & 0xFFFFu) != XR_ADV_PAGE_FORMAT_VERSION ||
+        localCluster >= pageClusterCount ||
+        pageClusterCount > XR_ADV_PAGE_MAX_CLUSTERS ||
+        ((descriptorOffset | vertexIndexOffset | triangleOffset | vertexOffset) & 3u) != 0u ||
+        descriptorOffset / 4u > XR_ADV_PAGE_WORDS ||
+        vertexIndexOffset / 4u > XR_ADV_PAGE_WORDS ||
+        triangleOffset / 4u > XR_ADV_PAGE_WORDS ||
+        vertexOffset / 4u > XR_ADV_PAGE_WORDS)
+        return false;
+
+    uint descriptorWord = descriptorOffset / 4u + localCluster * XR_ADV_PAGE_DESCRIPTOR_WORDS;
+    if (descriptorWord + XR_ADV_PAGE_DESCRIPTOR_WORDS > XR_ADV_PAGE_WORDS)
+        return false;
+    XRAdvancedVisibilityMeshletDescriptor descriptor;
+    descriptor.boundsSphere = uintBitsToFloat(uvec4(
+        XR_ADV_PageWord(result, descriptorWord + 0u),
+        XR_ADV_PageWord(result, descriptorWord + 1u),
+        XR_ADV_PageWord(result, descriptorWord + 2u),
+        XR_ADV_PageWord(result, descriptorWord + 3u)));
+    descriptor.vertexOffset = XR_ADV_PageWord(result, descriptorWord + 4u);
+    descriptor.triangleByteOffset = XR_ADV_PageWord(result, descriptorWord + 5u);
+    descriptor.vertexCount = XR_ADV_PageWord(result, descriptorWord + 6u);
+    descriptor.triangleCount = XR_ADV_PageWord(result, descriptorWord + 7u);
+    descriptor.cone = uintBitsToFloat(uvec4(
+        XR_ADV_PageWord(result, descriptorWord + 8u),
+        XR_ADV_PageWord(result, descriptorWord + 9u),
+        XR_ADV_PageWord(result, descriptorWord + 10u),
+        XR_ADV_PageWord(result, descriptorWord + 11u)));
+    descriptor.coneApex = uintBitsToFloat(uvec4(
+        XR_ADV_PageWord(result, descriptorWord + 12u),
+        XR_ADV_PageWord(result, descriptorWord + 13u),
+        XR_ADV_PageWord(result, descriptorWord + 14u),
+        XR_ADV_PageWord(result, descriptorWord + 15u)));
+    descriptor.packedCone = XR_ADV_PageWord(result, descriptorWord + 16u);
+    descriptor.reserved0 = 0u;
+    descriptor.reserved1 = 0u;
+    descriptor.reserved2 = 0u;
+
+    // The meshlet limits of the portable profile bound the counts, so the sums
+    // below cannot wrap.
+    if (descriptor.vertexCount > 256u || descriptor.triangleCount > 256u ||
+        descriptor.vertexOffset > XR_ADV_PAGE_WORDS ||
+        descriptor.triangleByteOffset > XR_ADV_PAGE_WORDS * 4u)
+        return false;
+    uint vertexIndexWord = vertexIndexOffset / 4u + descriptor.vertexOffset;
+    uint triangleByte = triangleOffset + descriptor.triangleByteOffset;
+    if (vertexIndexWord + descriptor.vertexCount > XR_ADV_PAGE_WORDS ||
+        (triangleByte + descriptor.triangleCount * 3u + 3u) / 4u > XR_ADV_PAGE_WORDS)
+        return false;
+
+    bool skinnedTopology = ((versionAndFlags >> 16u) & XR_ADV_PAGE_FLAG_SKINNED_TOPOLOGY) != 0u;
+    uint pageVertexCount = counts >> 16u;
+    uint vertexWord = vertexOffset / 4u;
+    if (!skinnedTopology && pageVertexCount * XR_ADV_PAGE_VERTEX_WORDS > XR_ADV_PAGE_WORDS - vertexWord)
+        return false;
+
+    result.page = page;
+    result.localCluster = localCluster;
+    result.skinnedTopology = skinnedTopology;
+    result.vertexIndexWord = vertexIndexWord;
+    result.triangleByte = triangleByte;
+    result.vertexWord = vertexWord;
+    result.pageVertexCount = skinnedTopology ? 0u : pageVertexCount;
+    result.descriptor = descriptor;
+    return true;
+}
+
+// The meshlet vertex index of one cluster vertex: a page-local vertex of a
+// static page, or a source vertex of a skinned topology page.
+uint XR_ADV_StreamedVertexIndex(XRAdvancedStreamedCluster cluster, uint clusterVertex)
+{
+    return XR_ADV_PageWord(cluster, cluster.vertexIndexWord + clusterVertex);
+}
+
+// The three cluster-local vertices of one triangle of the cluster.
+uvec3 XR_ADV_StreamedTriangle(XRAdvancedStreamedCluster cluster, uint triangle)
+{
+    uint byteIndex = cluster.triangleByte + triangle * 3u;
+    uvec3 bytes = uvec3(byteIndex, byteIndex + 1u, byteIndex + 2u);
+    return uvec3(
+        (XR_ADV_PageWord(cluster, bytes.x >> 2u) >> ((bytes.x & 3u) * 8u)) & 0xFFu,
+        (XR_ADV_PageWord(cluster, bytes.y >> 2u) >> ((bytes.y & 3u) * 8u)) & 0xFFu,
+        (XR_ADV_PageWord(cluster, bytes.z >> 2u) >> ((bytes.z & 3u) * 8u)) & 0xFFu);
+}
+
+// Loads a page-local vertex of a static page. Returns false when the index is
+// outside the page's vertex section.
+bool XR_ADV_LoadStreamedVertex(
+    XRAdvancedStreamedCluster cluster,
+    uint pageVertex,
+    out XRAdvancedVisibilityPackedVertex vertex)
+{
+    vertex = XRAdvancedVisibilityPackedVertex(
+        vec3(0.0), 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u);
+    if (cluster.skinnedTopology || pageVertex >= cluster.pageVertexCount)
+        return false;
+    uint word = cluster.vertexWord + pageVertex * XR_ADV_PAGE_VERTEX_WORDS;
+    vertex.position = uintBitsToFloat(uvec3(
+        XR_ADV_PageWord(cluster, word + 0u),
+        XR_ADV_PageWord(cluster, word + 1u),
+        XR_ADV_PageWord(cluster, word + 2u)));
+    vertex.normalOct = XR_ADV_PageWord(cluster, word + 3u);
+    vertex.tangentOctAndSign = XR_ADV_PageWord(cluster, word + 4u);
+    vertex.texCoord0Half = XR_ADV_PageWord(cluster, word + 5u);
+    vertex.texCoord1Half = XR_ADV_PageWord(cluster, word + 6u);
+    vertex.color0Rgba8 = XR_ADV_PageWord(cluster, word + 7u);
+    vertex.color1Rgba8 = XR_ADV_PageWord(cluster, word + 8u);
+    vertex.custom0 = XR_ADV_PageWord(cluster, word + 9u);
+    vertex.sourceVertex = XR_ADV_PageWord(cluster, word + 10u);
+    vertex.flags = XR_ADV_PageWord(cluster, word + 11u);
+    vertex.texCoord2Half = XR_ADV_PageWord(cluster, word + 12u);
+    vertex.texCoord3Half = XR_ADV_PageWord(cluster, word + 13u);
+    vertex.reserved2 = XR_ADV_PageWord(cluster, word + 14u);
+    vertex.reserved3 = XR_ADV_PageWord(cluster, word + 15u);
+    return true;
+}
+
+// The source vertex of one cluster vertex. A static page stores it in the
+// page-local vertex (sourceVertex); a skinned topology page stores it as the
+// meshlet vertex index.
+bool XR_ADV_StreamedSourceVertex(
+    XRAdvancedStreamedCluster cluster,
+    uint clusterVertex,
+    out uint sourceVertex)
+{
+    sourceVertex = 0u;
+    if (clusterVertex >= cluster.descriptor.vertexCount)
+        return false;
+    uint index = XR_ADV_StreamedVertexIndex(cluster, clusterVertex);
+    if (cluster.skinnedTopology)
+    {
+        sourceVertex = index;
+        return true;
+    }
+    if (index >= cluster.pageVertexCount)
+        return false;
+    sourceVertex = XR_ADV_PageWord(
+        cluster, cluster.vertexWord + index * XR_ADV_PAGE_VERTEX_WORDS + 10u);
+    return true;
+}
+
+#endif

@@ -946,7 +946,12 @@ public sealed partial class AdvancedGpuScenePublisher
         if (textureRefresh && hasGlobalResources &&
             (resourceMutation || !_resourcePublisher.CanApplyStagedTextureRefreshes()))
             return false;
-        bool requiresCommit = resourceMutation || textureRefresh || !publicationRetained;
+        // Streaming loads and evictions change the page table without a row change. The retained
+        // publication holds the old table, so a new publication must capture it.
+        bool pageTableChanged = publicationRetained &&
+            Database.TryGetPublicationSnapshot(in candidate, out AdvancedGpuScenePublicationSnapshot retainedSnapshot) &&
+            HasGeometryPageTableChanged(retainedSnapshot);
+        bool requiresCommit = resourceMutation || textureRefresh || pageTableChanged || !publicationRetained;
         // The full plan repeats the global preflight; it has no other effect.
         if (hasGlobalResources && requiresCommit && !_committedSubmissionRowsValid)
             return false;

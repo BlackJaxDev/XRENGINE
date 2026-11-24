@@ -185,11 +185,22 @@ void main()
     XRAdvancedTransformRecord transform = XR_ADV_LoadTransform(transformDense);
     XRAdvancedMeshletDrawCullState drawState = XR_ADV_MeshletDrawCullState(
         transform.world, payload.cullMode, XR_ADV_VIS_PRODUCER_STATIC_MESHLET);
+    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+        payload.geometry, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
+    bool geometryValid = geometryDense != XR_ADV_INVALID_DENSE_INDEX;
+    XRAdvancedGeometryRecord geometry;
+    XRAdvancedStreamedGeometry streamed;
+    streamed.valid = false;
+    if (geometryValid)
+    {
+        geometry = XR_ADV_LoadGeometry(geometryDense);
+        streamed = XR_ADV_StreamedGeometry(geometry);
+    }
 #if defined(XR_ADV_CLUSTER_LOD_CUT)
     // The same cut as the meshlet task stage: only clusters in the cut reach the
     // occlusion test.
-    XRAdvancedClusterCutState cut = XR_ADV_ClusterCutState(
-        payload.geometry, XR_ADV_VIS_PRODUCER_STATIC_MESHLET, viewIndex, view);
+    XRAdvancedClusterCutState cut = XR_ADV_ClusterCutStateForGeometry(
+        geometry, geometryValid, XR_ADV_VIS_PRODUCER_STATIC_MESHLET, viewIndex, view);
 #endif
     bool historyTrusted = XR_ADV_MeshletViewHistoryValid(view);
     uint previousSet = XR_ADV_MeshletHistoryParity(viewIndex);
@@ -203,10 +214,21 @@ void main()
             meshletIndex >= XR_ADV_MESHLET_HISTORY_MESHLET_CAPACITY)
             break;
 #if defined(XR_ADV_CLUSTER_LOD_CUT)
-        if (cut.applies && !XR_ADV_ClusterInCut(meshletIndex, cut, drawState))
+        if (cut.applies && streamed.valid)
+        {
+            if (!XR_ADV_StreamedClusterCut(meshletIndex, cut, drawState, streamed, view).draw)
+                continue;
+        }
+        else if (cut.applies && !XR_ADV_ClusterInCut(meshletIndex, cut, drawState))
+        {
             continue;
+        }
 #endif
-        XRAdvancedVisibilityMeshletDescriptor meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
+        // The task stage reads the descriptor from the same place: the page of
+        // a geometry with geometry pages, or the descriptor table.
+        XRAdvancedVisibilityMeshletDescriptor meshlet;
+        if (!XR_ADV_LoadDrawMeshlet(geometry, streamed, meshletIndex, meshlet))
+            continue;
         uint reason = XR_ADV_ClassifyVisibilityMeshlet(
             meshlet,
             drawState,

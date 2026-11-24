@@ -559,6 +559,217 @@ compaction keeps it valid. `MeshletCount` counts every level, and
 payloads, deformation ranges and deformation witnesses use `DrawMeshletCount`,
 so a draw renders only level 0 unless the cluster cut below is on.
 
+### Cluster streaming pages
+
+`MeshletGenerationSettings.BuildStreamingPages` (off by default; the
+unit-testing world sets it for each model with `GenerateStreamingPages`, which
+needs `GenerateClusterHierarchy`) packs the clusters of a cluster hierarchy
+payload into fixed-size geometry pages for geometry streaming.
+`MeshletPageBuilder` runs after the hierarchy cook. It does not change the
+payload, and the payload hashes do not include the setting.
+
+- A page is 128 KiB (`MeshletPageFormat.PageBytes`) and holds at most 256
+  clusters. It holds one or more whole groups of one mesh, so a group never
+  crosses a page. The root groups (`SimplifiedError == float.MaxValue`) of every
+  level go to root pages of their own. The other groups of each level are sorted
+  by the Morton code of their sphere center and fill pages in that order. A page
+  holds groups of one level only. The root pages are the first pages.
+- The page tables (`MeshletPageTable`) hold the clusters in page order
+  (`ClusterOrder` maps each one back to its payload meshlet), the cluster records,
+  the group records with the page of each group in `Reserved0`, one
+  `MeshletPageRecord` per page (first cluster, cluster count, dependency range)
+  and the dependency table. A page depends on the pages that hold a parent of one
+  of its groups (the group of any cluster whose refined group is in the page).
+  Every dependency is a page of a coarser level or a root page.
+- A page image (`MeshletPageFormat`) starts with a 32-byte `MeshletPageHeader`,
+  then the `AdvancedMeshletDescriptor` of each cluster (with offsets local to the
+  page), the vertex indices, the triangle bytes and, for a static page, the
+  page-local `AdvancedDeformedVertex` copies of the vertices that its clusters
+  use. A skinned payload gets skinned topology pages: their vertex indices are
+  source vertex indices, and they hold no vertices. Each section is 16-byte
+  aligned.
+- `MeshletPageBuilder.Validate` checks every page set before the cook keeps it:
+  the cluster order is a permutation, every group is in exactly one page with its
+  clusters together, root and level rules, the exact dependency lists, the image
+  offsets, and that every decoded triangle names the same source vertices as the
+  payload triangle.
+- With the portable meshlet limits (64 vertices and 124 triangles for each
+  cluster) and at most about 21 clusters in a group, a static group needs at
+  most about 99 KiB, so every group of a runtime-compatible payload fits in a
+  page. A mesh that does not fit is logged (`[ClusterPages] ... notPaged`) and
+  keeps only its payload.
+
+`ModelImportMeshletPageCache` stores the pages of one model in
+`model-meshlets/<hash>.xrpages`, next to the `<hash>.xrmeshlets` payload file.
+The file has a header, an index (protected by a 64-bit xxHash) with one entry
+for each paged mesh, and the page blobs at 4 KiB-aligned offsets. Each blob is
+the Brotli-compressed page image, or the raw image when compression does not
+make it smaller, with a 32-bit xxHash of the image. An entry is used only when
+the payload freshness hash and the hash of the packed vertex data match, so a
+change to any vertex attribute cooks the pages again. The cook writes one
+`[ClusterPagesMesh]` line for each cooked mesh and one `[ClusterPages]` line for
+each model to `meshlet-cache.log`, with the page count, the root page bytes and
+the average page fill.
+
+#### Drawing from geometry pages
+
+The engine setting `AdvancedGeometryPages` (off by default; the unit-testing
+world sets it with `Rendering.GeometryPages`) makes the Vulkan Advanced path draw
+cluster hierarchy geometry from its pages. It needs `AdvancedVirtualGeometry`, and
+`AdvancedVirtualGeometryPolicy.GeometryPagesEnabled` latches it with the other
+virtual geometry settings. Without `AdvancedGeometryStreaming` (see
+[Streaming geometry pages](#streaming-geometry-pages)) every page stays resident.
+The geometry also keeps its meshlet tables and its canonical vertex and index
+streams, which the shadow, decal and fallback paths read.
+
+- The import attaches the cooked or stored pages of a mesh to its payload
+  (`MeshletPayload.AttachStreamingPages`) while the setting is on. The
+  `[ClusterPages]` line counts them as `attached`.
+- `AdvancedPublishedMeshletLayout` adds a page block after the hierarchy tables
+  of the triangle-word stream. The stream header, two words before the cluster
+  records, holds the word offset of the page block relative to the first cluster
+  record (zero without pages); the skin header stays one word before the
+  cluster records. The page block has a four-word header (the page count, the
+  cluster count, the first page of the geometry in the page table, and the
+  group count), one word for each cluster in published meshlet order
+  (`(page << 8) | page-local cluster`), and one word for each group (the
+  geometry-local page of the group). The page images are not in the stream. The geometry record gets
+  `EAdvancedGeometryFlags.StreamedPages`.
+- `AdvancedGeometryPagePool` (`AdvancedGeometryDatabase.PagePool`) owns a fixed
+  number of 128 KiB slots and the page table, which maps each registered page to
+  a slot or to not resident (`0xFFFFFFFF`). `AdvancedGeometryPagePoolMiB`
+  (default 512, range 16 to 2048, read once with the other settings) sets the
+  slot count. When the publisher registers a geometry with pages, it reserves a
+  contiguous range of page table entries and one slot for each page, and writes
+  the first page into the page block. A geometry whose pages do not fit in the
+  free slots registers without `StreamedPages` and draws from its meshlet arenas;
+  the publisher logs a warning and counts it in `GeometryPagePoolRejectCount`.
+- A tombstoned geometry retires its pages with the generation of the tombstoning
+  publication. Its page table entries read not resident from that publication,
+  and its slots and entries return to the free lists only when
+  `AdvancedSharedGpuSceneDatabase` reclaims that generation, so a frame in flight
+  never reads a slot that is written again. A partial registration that rolls
+  back frees its pages at once.
+- Each sealed publication captures the page table
+  (`AdvancedGeometryPublicationSnapshot.PageTable` and `PageTableVersion`).
+  `VulkanAdvancedGeometryPageResources`, owned by the resident geometry cache,
+  keeps one pool buffer and a small set of page table buffers. When the pool
+  version changes, it writes every slot whose image changed into the pool
+  buffer before it binds a table that names the slot. A table buffer is pinned
+  by the frame slots that bind it and is written again only after they
+  complete. The buffers prefer device-local host-visible memory and fall back
+  to system memory with a warning. The pool and the table bind at visibility
+  bindings 73 and 74; an empty pool or table binds a 16-byte sentinel.
+- `VisibilityStreamedGeometry.glslinc` reads these tables. It finds the slot of
+  a page through the page table and reads the page at word
+  `slot * 32768` of the pool. A page that is outside the table, not resident, or
+  names a slot outside the pool makes the cluster read fail, and the stage skips
+  the cluster. The meshlet task stage
+  tests the cluster cut from the cluster and group records, and then loads the
+  descriptor of a cluster in the cut from its page. Every hierarchy draw now
+  loads its descriptor after the cut test. The mesh stage reads the vertex
+  indices, the triangle bytes and, for a static page, the page-local vertices
+  from the page. A deformed draw reads the deformation output at the source
+  vertex. `PrimitiveAccess.glslinc` decodes the triangle from the same page and
+  returns its source vertices, so shading reads the canonical vertices of the
+  triangle that the raster drew. `OcclusionCulledBounds.comp` also reads the
+  descriptor from the page.
+- The visibility ID, the producers and the meshlet history keep the global
+  meshlet index, because the geometry keeps its meshlet range, also while its
+  pages stream.
+
+#### Streaming geometry pages
+
+The engine setting `AdvancedGeometryStreaming` (off by default; the unit-testing
+world sets it with `Rendering.GeometryStreaming`) streams the pages of static
+cluster hierarchy geometry. It needs `AdvancedGeometryPages`, and
+`AdvancedVirtualGeometryPolicy.GeometryStreamingEnabled` latches it with the
+other virtual geometry settings. Skinned topology pages always stay resident.
+Only the meshlet task stage writes page requests, so pages stream only for
+draws that use the `StaticMeshlet` producer: the mesh submission strategy must
+be a meshlet strategy (for example `ForceMeshSubmissionStrategy` or
+`XRE_FORCE_MESH_SUBMISSION_STRATEGY` set to `GpuMeshletZeroReadback`). The
+automatic strategy resolves to `CpuDirect` or a GPU indirect strategy. These
+draw the canonical index stream and write no page requests, so only the root
+pages of their geometry are resident.
+
+- Registration: the publisher reserves page table entries for every page of a
+  static paged geometry, but slots only for its root pages
+  (`AdvancedGeometryPagePool.TryReserve(pages, residentPageCount, out range)`).
+  It then registers the geometry with `MeshletPageStreamingManager`
+  (`AdvancedGeometryDatabase.StreamingManager`). A tombstoned or rolled-back
+  geometry is removed from the manager before its range retires.
+- Streamed cut (`XR_ADV_StreamedClusterCut` in `VisibilityMeshletCulling.glslinc`):
+  a cluster draws when its group's page is resident, its group error projects
+  above the threshold, and it is a level-0 cluster, or the group it was made
+  from projects at or below the threshold, or that group's page is not
+  resident. So a region without its finer pages draws the finest resident
+  level, and the cut never draws two levels over one point, because residency
+  is closed toward the root pages. The meshlet task stage and
+  `OcclusionCulledBounds.comp` use this rule for streamed geometry.
+- Feedback (task stage only, `XR_ADV_ENABLE_GEOMETRY_STREAMING_FEEDBACK`): the
+  ideal cut uses the threshold times `XR_ADV_STREAMING_PREFETCH` (0.5), so pages
+  load before they are needed. A cluster in the ideal cut whose page is missing
+  and whose group sphere is in the frustum writes one request (global page,
+  band, priority, pixel scale) to binding 75. The request bit of the page in
+  binding 76 removes duplicates in one frame, and requests past the buffer
+  capacity count as overflow. A resident page that draws, or that the ideal cut
+  needs, sets the touch bit of its slot in binding 76. The band is foreground
+  when the group error projects above the threshold, otherwise prefetch. The
+  priority is the projected error over the threshold, times 64.
+- Readback: `VulkanAdvancedVisibilityResourceRuntime` owns one request buffer
+  (16-byte header and `AdvancedGeometryPageRequestCapacity` entries, default
+  4096) and one feedback-bit buffer (touch words for the pool, then request
+  words for up to 2^20 page table entries) for each frame slot. They prefer
+  device-local host-visible memory. The primary command buffer ends with a
+  shader-write to host-read barrier. When the visibility runtime prepares a
+  frame slot again, the slot's earlier submission is complete, so it reads the
+  requests and the touch words of that frame, adds them to
+  `MeshletPageFeedbackQueue` (`AdvancedGeometryDatabase.StreamingFeedback`),
+  and clears the words that the frame could write. With streaming off, and for
+  shadow views, both bindings use a 16-byte sentinel; a request buffer without
+  entries turns the feedback writes off.
+- Residency update: in each publication, after the acknowledged tombstones are
+  reclaimed, the publisher drains the queue into the manager and runs
+  `MeshletPageStreamingManager.Update`. The update adds the missing dependency
+  chain of each requested page, sorts the requests by band and priority, and
+  loads pages within `AdvancedGeometryStreamingUploadMiBPerFrame` (default 4
+  MiB; the first load is always allowed). When no slot is free, it evicts the
+  resident page with the oldest touch frame that has no resident child page,
+  is not a root page and was not touched in the current frame. A prefetch load
+  evicts only pages untouched for 120 frames, a foreground load also pages
+  untouched for 8 frames, and no load evicts a page loaded for a higher band.
+  An evicted slot retires with the next publication sequence
+  (`AdvancedSharedGpuSceneDatabase.NextPublicationSequence`) and returns to the
+  free list when that generation is reclaimed.
+- A page table change makes the next publication commit, also when no row
+  changed: the unchanged-row gate and the reuse check compare the pool version
+  with the `PageTableVersion` of the retained publication.
+- `MeshletPageStreamingManager.Telemetry` counts the resident pages and bytes,
+  the requests, overflows, loads, evictions and failed pages. A page whose image
+  is missing or too large fails once, with a warning, and is not requested
+  again.
+- Every two seconds the publisher writes one `[GeometryStreaming]` rendering
+  log line: the resident pages and MiB, the used pool slots, the requests of the
+  last update by band, the total loads, evictions, overflows and failed pages,
+  the feedback frames that the queue accepted and dropped, and the registered
+  geometries with the total registrations, removals and released pages. A
+  `feedbackFrames` count that does not grow means that no GPU feedback reaches
+  the manager.
+- A removed geometry releases its resident pages without an eviction. This
+  occurs when the publisher replaces the geometry of a draw, for example when
+  the drawn mesh changes. The new geometry starts again from its root pages. In
+  the log, `releasedPages` then grows while `evictions` does not.
+- The shadow routing flags of a draw (`CastShadow`, `ReceiveShadows`,
+  `ShadowCasterDynamic` and `SharedOpaqueShadow`) are not part of its geometry
+  signature. The content update writes them to the draw record in place, so a
+  change of the shadow pass state does not replace the geometry or release its
+  pages.
+- Every two seconds the Vulkan visibility runtime writes one
+  `[GeometryStreamingFeedback]` rendering log line with the raw feedback of one
+  frame slot: the request count and overflow, the set touch bits, the bit words,
+  the request capacity, and the feedback reads that failed.
+
 ### Cluster cut (Advanced virtual geometry)
 
 The engine setting `AdvancedVirtualGeometry` (off by default; the unit-testing

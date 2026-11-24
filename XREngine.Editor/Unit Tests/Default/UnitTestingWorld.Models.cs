@@ -168,6 +168,7 @@ public static partial class EditorUnitTests
                     {
                         Enabled = true,
                         BuildClusterHierarchy = model.GenerateClusterHierarchy,
+                        BuildStreamingPages = model.GenerateClusterHierarchy && model.GenerateStreamingPages,
                     },
                     Lods = new MeshLodGenerationSettings
                     {
