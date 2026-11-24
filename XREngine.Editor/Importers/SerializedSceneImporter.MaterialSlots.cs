@@ -75,10 +75,11 @@ internal static partial class SerializedSceneImporter
         (FbxSemanticDocument semantic, FbxGeometryDocument geometry) =
             state.Context.FbxSourceDocuments.GetGeometrySnapshot(modelPath);
         // One material can fill several slots of a model, and each connection is its own slot.
-        Dictionary<string, Dictionary<string, List<int>>> slotsByModelName = new(StringComparer.Ordinal);
-        Dictionary<string, int> slotCountsByModelName = new(StringComparer.Ordinal);
-        Dictionary<(string Model, string Material), int> namedSlotUses = [];
-        Dictionary<string, long> modelIdsByName = new(StringComparer.Ordinal);
+        // The slot data is keyed by FBX model ID, because sibling models can have the same name.
+        Dictionary<long, Dictionary<string, List<int>>> slotsByModelId = [];
+        Dictionary<long, List<string>> slotMaterialNamesByModelId = [];
+        Dictionary<(SceneNode Node, string Material), int> namedSlotUses = [];
+        Dictionary<string, List<long>> modelIdsByName = new(StringComparer.Ordinal);
         Dictionary<long, List<long>> geometryIdsByModelId = [];
 
         foreach (FbxConnection connection in semantic.Connections)
@@ -94,9 +95,10 @@ internal static partial class SerializedSceneImporter
             if (source.Category is not (FbxObjectCategory.Geometry or FbxObjectCategory.Material))
                 continue;
 
-            if (modelIdsByName.TryGetValue(model.DisplayName, out long previousId) && previousId != modelId)
-                throw new SourceVisualImportException($"FBX model name '{model.DisplayName}' is not unique for material-slot mapping.");
-            modelIdsByName[model.DisplayName] = modelId;
+            if (!modelIdsByName.TryGetValue(model.DisplayName, out List<long>? namedModelIds))
+                modelIdsByName[model.DisplayName] = namedModelIds = [];
+            if (!namedModelIds.Contains(modelId))
+                namedModelIds.Add(modelId);
 
             if (source.Category == FbxObjectCategory.Geometry && geometry.TryGetMeshGeometry(sourceId, out _))
             {
@@ -107,13 +109,14 @@ internal static partial class SerializedSceneImporter
 
             if (source.Category != FbxObjectCategory.Material)
                 continue;
-            if (!slotsByModelName.TryGetValue(model.DisplayName, out Dictionary<string, List<int>>? slots))
-                slotsByModelName[model.DisplayName] = slots = new(StringComparer.Ordinal);
+            if (!slotsByModelId.TryGetValue(modelId, out Dictionary<string, List<int>>? slots))
+                slotsByModelId[modelId] = slots = new(StringComparer.Ordinal);
+            if (!slotMaterialNamesByModelId.TryGetValue(modelId, out List<string>? slotMaterialNames))
+                slotMaterialNamesByModelId[modelId] = slotMaterialNames = [];
             if (!slots.TryGetValue(source.DisplayName, out List<int>? namedSlots))
                 slots[source.DisplayName] = namedSlots = [];
-            int slotCount = slotCountsByModelName.GetValueOrDefault(model.DisplayName);
-            namedSlots.Add(slotCount);
-            slotCountsByModelName[model.DisplayName] = slotCount + 1;
+            namedSlots.Add(slotMaterialNames.Count);
+            slotMaterialNames.Add(source.DisplayName);
         }
 
         Dictionary<long, List<int>> rendererSlotsByModelId = [];
@@ -121,10 +124,12 @@ internal static partial class SerializedSceneImporter
         {
             string modelName = node.Name ?? string.Empty;
             string materialName = subMesh.ImportedSourceMaterialName ?? string.Empty;
-            if (!modelIdsByName.TryGetValue(modelName, out long modelId))
+            if (!modelIdsByName.TryGetValue(modelName, out List<long>? candidateModelIds))
                 throw new SourceVisualImportException($"Imported renderer '{modelName}' has no unique FBX source model.");
+            long modelId = ResolveSlotSourceModel(
+                modelName, candidateModelIds, slotMaterialNamesByModelId, geometryIdsByModelId);
 
-            slotsByModelName.TryGetValue(modelName, out Dictionary<string, List<int>>? slots);
+            slotsByModelId.TryGetValue(modelId, out Dictionary<string, List<int>>? slots);
             slots ??= new Dictionary<string, List<int>>(StringComparer.Ordinal);
 
             int sourceSlot;
@@ -143,8 +148,8 @@ internal static partial class SerializedSceneImporter
             else if (slots.TryGetValue(materialName, out List<int>? namedSlots))
             {
                 // Assimp gives each material connection its own mesh, in connection order.
-                int use = namedSlotUses.GetValueOrDefault((modelName, materialName));
-                namedSlotUses[(modelName, materialName)] = use + 1;
+                int use = namedSlotUses.GetValueOrDefault((node, materialName));
+                namedSlotUses[(node, materialName)] = use + 1;
                 sourceSlot = namedSlots[Math.Min(use, namedSlots.Count - 1)];
             }
             else
@@ -159,7 +164,10 @@ internal static partial class SerializedSceneImporter
                     !geometry.TryGetMeshGeometry(geometryIds[0], out FbxMeshGeometry mesh))
                     throw new SourceVisualImportException(
                         $"FBX renderer '{modelName}' needs one unambiguous mesh geometry for material-slot order.");
-                rendererSlots = ReadRendererMaterialOrder(mesh, Math.Max(1, slotCountsByModelName.GetValueOrDefault(modelName)), modelName);
+                int slotCount = slotMaterialNamesByModelId.TryGetValue(modelId, out List<string>? slotMaterialNames)
+                    ? slotMaterialNames.Count
+                    : 0;
+                rendererSlots = ReadRendererMaterialOrder(mesh, Math.Max(1, slotCount), modelName);
                 rendererSlotsByModelId.Add(modelId, rendererSlots);
             }
 
@@ -175,6 +183,50 @@ internal static partial class SerializedSceneImporter
             subMesh.ImportedSourceMaterialSlot = sourceSlot;
             subMesh.ImportedRendererMaterialSlot = rendererSlot;
         }
+    }
+
+    /// <summary>
+    /// Selects the FBX model that supplies the material slots for an imported renderer. The importer
+    /// finds a renderer's model by name, and sibling models can have the same name. If several models
+    /// have the name, they must have the same material connections in the same order and the same mesh
+    /// geometry. Then each of them gives the same slot mapping, so the first model is returned. If they
+    /// are different, the name cannot identify the correct slots, so the import stops.
+    /// </summary>
+    private static long ResolveSlotSourceModel(
+        string modelName,
+        List<long> candidateModelIds,
+        Dictionary<long, List<string>> slotMaterialNamesByModelId,
+        Dictionary<long, List<long>> geometryIdsByModelId)
+    {
+        long firstModelId = candidateModelIds[0];
+        slotMaterialNamesByModelId.TryGetValue(firstModelId, out List<string>? firstMaterials);
+        geometryIdsByModelId.TryGetValue(firstModelId, out List<long>? firstGeometry);
+        for (int index = 1; index < candidateModelIds.Count; index++)
+        {
+            long modelId = candidateModelIds[index];
+            slotMaterialNamesByModelId.TryGetValue(modelId, out List<string>? materials);
+            geometryIdsByModelId.TryGetValue(modelId, out List<long>? geometryIds);
+            if (!HaveSameItems(firstMaterials, materials) || !HaveSameItems(firstGeometry, geometryIds))
+                throw new SourceVisualImportException($"FBX model name '{modelName}' is not unique for material-slot mapping.");
+        }
+
+        return firstModelId;
+    }
+
+    /// <summary>Compares two optional lists item by item. A missing list is equal to an empty list.</summary>
+    private static bool HaveSameItems<T>(List<T>? first, List<T>? second)
+    {
+        int firstCount = first?.Count ?? 0;
+        if (firstCount != (second?.Count ?? 0))
+            return false;
+
+        for (int index = 0; index < firstCount; index++)
+        {
+            if (!EqualityComparer<T>.Default.Equals(first![index], second![index]))
+                return false;
+        }
+
+        return true;
     }
 
     private static List<int> ReadRendererMaterialOrder(FbxMeshGeometry mesh, int materialCount, string modelName)
