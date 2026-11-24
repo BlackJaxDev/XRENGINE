@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// Renders every hovered or selected primary scene mesh into an un-occluded
 /// silhouette mask at output resolution so occluded silhouettes can be drawn dotted.
 /// </summary>
+[RenderCommandInfo(ERenderCommandCategory.Scene, DoesGpuWork = true)]
 [RenderPipelineScriptCommand]
 public sealed class VPRC_RenderEditorHighlightSilhouette : ViewportRenderCommand
 {
