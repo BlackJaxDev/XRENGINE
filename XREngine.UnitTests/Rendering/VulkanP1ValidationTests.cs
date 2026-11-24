@@ -460,15 +460,18 @@ public sealed class VulkanP1ValidationTests
         string eyeSource = ReadWorkspaceFile(vulkanRoot + "Frame/Loop/Authority/VulkanFrameLoop.OpenXR.EyeRendering.cs").Replace("\r\n", "\n");
         string preparationSource = ReadWorkspaceFile(vulkanRoot + "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Preparation.cs").Replace("\r\n", "\n");
         string swapchainSource = ReadWorkspaceFile(vulkanRoot + "Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Swapchain.cs").Replace("\r\n", "\n");
+        // The foreground eye freeze builds the immutable recording input,
+        // including the swapchain recording target of the external image.
         string eyeRecord = SliceBetween(
             eyeSource,
-            "private bool TryRecordPreparedOpenXrEyeSwapchainCommandBuffer",
+            "private bool TryFreezeOpenXrEyeRecordWorkerInput(",
             "VulkanPreparedPrimaryCommandInput commandInput = new(");
 
         recordingTarget.ShouldContain("ImageLayout InitialColorLayout");
         // The direct eye target starts from the layout that the submission
         // tracker holds for the external OpenXR image.
-        eyeRecord.ShouldContain("_commandRuntime.Synchronization.TryGetSubmittedImageLayout(\n            targetContext.Image,\n            in colorRange,\n            out ImageLayout trackedTargetLayout);");
+        eyeRecord.ShouldContain("ImageLayout trackedTargetLayout;");
+        eyeRecord.ShouldContain("_commandRuntime.Synchronization.TryGetSubmittedImageLayout(\n                targetContext.Image,\n                in colorRange,\n                out trackedTargetLayout);");
         eyeRecord.ShouldContain("targetContext.DepthAspect,\n            trackedTargetLayout,\n            ImageEverPresentedAtRecordStart: false);");
 
         preparationSource.ShouldContain("recordingState.InitialSwapchainColorLayout = recordingState.SwapchainTarget.IsValid\n                ? recordingState.SwapchainTarget.InitialColorLayout");

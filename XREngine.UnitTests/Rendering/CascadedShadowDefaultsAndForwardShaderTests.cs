@@ -132,7 +132,13 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("float sceneViewDepth = abs(scenePosVS.z);");
         source.ShouldContain("if (!XRENGINE_TryProjectContactShadowWorldPos(samplePosWS, viewProjectionMatrix, sampleUv))");
         source.ShouldContain("vec4 sampleClip = viewProjectionMatrix * vec4(worldPos, 1.0);");
-        source.ShouldContain("vec3 sceneNormalWS = XRENGINE_DecodeContactShadowNormal(texture(sceneNormal, sampleUvClamped).rg);");
+        // The screen-space normal-aware march body is shared through a ShadowFilterBodies macro.
+        // Each sampler overload reads the scene normal through its fetch helper.
+        source.ShouldContain("#pragma snippet \"ShadowFilterBodies\"");
+        source.ShouldContain("XRENGINE_SHADOW_BODY_SampleContactShadowScreenSpaceWithNormal");
+        source.ShouldContain("vec4 XRENGINE_FetchContactShadowNormal(sampler2D shadowMap, vec2 uv, float layer)");
+        string filterBodiesSource = LoadShaderSource("Snippets/ShadowFilterBodies.glsl");
+        filterBodiesSource.ShouldContain("vec3 sceneNormalWS = XRENGINE_DecodeContactShadowNormal(XRENGINE_FetchContactShadowNormal(sceneNormal, sampleUvClamped, layer).rg);");
         source.ShouldContain("normalWeight = mix(1.0, 0.35, sameSurfaceNormal * shallowHit);");
         source.ShouldContain("float normalOffset = max(contactNormalOffset, min(max(receiverOffset, compareBias * 2.0), contactDistance * 0.25));");
     }
@@ -158,7 +164,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("float relThreshold = max(texelRel, r16fRel);");
         source.ShouldContain("float compareBias = lightDist * relThreshold;");
         source.ShouldContain("float biasedLightDist = lightDist - compareBias;");
-        source.ShouldContain("(texture(shadowMap, normalize(fragToLight)).r * farPlaneDist - biasedLightDist) / max(farPlaneDist, 0.001)");
+        source.ShouldContain("(XRENGINE_FetchShadowCubeDepth(shadowSlot, normalize(receiver.FragToLight)) * receiver.FarPlaneDist - receiver.BiasedLightDist) / max(receiver.FarPlaneDist, 0.001)");
     }
 
     [Test]
@@ -213,19 +219,22 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     public void ForwardPointShadowSampling_AppliesContactShadowsAsSeparateMultiplier()
     {
         string source = LoadShaderSource("Snippets/ForwardLighting.glsl");
-        int pointStart = source.IndexOf("float XRENGINE_ReadShadowMapPointLegacySampler", System.StringComparison.Ordinal);
+        // The legacy point path prepares the receiver (including its contact term) in one
+        // function and applies the filtered cubemap depth test in the next one.
+        int pointStart = source.IndexOf("bool XRENGINE_PreparePointLegacyShadowReceiver(", System.StringComparison.Ordinal);
         pointStart.ShouldBeGreaterThanOrEqualTo(0);
 
-        int spotStart = source.IndexOf("float XRENGINE_ReadShadowMapPointLegacySlot", pointStart, System.StringComparison.Ordinal);
-        spotStart.ShouldBeGreaterThan(pointStart);
+        int readStart = source.IndexOf("float XRENGINE_ReadShadowMapPointLegacySlot(", pointStart, System.StringComparison.Ordinal);
+        readStart.ShouldBeGreaterThan(pointStart);
 
-        string pointBody = source[pointStart..spotStart];
+        string pointBody = source[pointStart..readStart];
         pointBody.ShouldContain("float contact = 1.0;");
         pointBody.ShouldContain("XRENGINE_SampleForwardContactShadowScreenSpace(");
-        pointBody.ShouldContain("XRENGINE_SampleContactShadowCube(");
+        pointBody.ShouldContain("XRENGINE_SamplePointContactShadowCubeSlot(");
+        pointBody.ShouldContain("receiver.Contact = contact;");
         pointBody.ShouldContain("The cubemap supplies large-scale visibility");
         pointBody.ShouldContain("shadow = XRENGINE_SampleShadowCubeFiltered(");
-        pointBody.ShouldContain("shadowI0.w) * contact;");
+        pointBody.ShouldContain("shadowI0.w) * receiver.Contact;");
     }
 
     [Test]
@@ -655,7 +664,8 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         source.ShouldContain("return preferredCascaded ?? cascadedFallback ?? preferredFallback ?? fallback;");
         source.ShouldNotContain("XRViewport?[] vrViewports");
         source.ShouldContain("private bool HasCascadedDirectionalShadowViewport(");
-        source.ShouldContain("bool wantsDesktopCascades = HasCascadedDirectionalShadowViewport(");
+        // A collect frame with no rendering desktop viewport keeps the desktop source retained.
+        source.ShouldContain("bool wantsDesktopCascades = !_desktopShadowSourceRetainedForCollect && HasCascadedDirectionalShadowViewport(");
         source.ShouldContain("bool wantsHmdCascades = HasCascadedDirectionalShadowViewport(");
         source.ShouldContain("includeSuppressed: false);");
         source.ShouldContain("includeSuppressed: true);");
@@ -683,7 +693,10 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         cascadeSource.ShouldNotContain("DirectionalCascadeSourceKind");
         cascadeSource.ShouldContain("internal bool PublishedCascadesMatchCamera(XRCamera? camera)");
         cascadeSource.ShouldContain("private int CopyCascadeSourceFrusta(ShadowRequestSource source, XRCamera primaryCamera, Span<Frustum> destination)");
-        cascadeSource.ShouldContain("if (source == ShadowRequestSource.Hmd && RuntimeEngine.VRState.IsInVR)");
+        // The HMD source fits eye frusta for a headset session or for emulated eyes that opt in.
+        cascadeSource.ShouldContain("if (source == ShadowRequestSource.Hmd && IsHmdCascadeSourceActive)");
+        cascadeSource.ShouldContain("internal static bool IsHmdCascadeSourceActive");
+        cascadeSource.ShouldContain("=> RuntimeEngine.VRState.IsInVR ||");
         cascadeSource.ShouldContain("AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.LeftEyeViewport");
         cascadeSource.ShouldContain("AddCascadeSourceViewportFrustum(RuntimeEngine.VRState.RightEyeViewport");
         cascadeSource.ShouldContain("TryAddHmdCombinedCascadeSourceFrustum(world, destination, ref count);");

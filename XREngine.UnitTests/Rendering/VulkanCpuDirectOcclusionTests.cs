@@ -195,7 +195,8 @@ public sealed class VulkanCpuDirectOcclusionTests
         string openXrEyeRendering = ReadExactWorkspaceFile(VulkanRoot + "Frame/Loop/Authority/VulkanFrameLoop.OpenXR.EyeRendering.cs");
         string openXrMirrorPreview = ReadExactWorkspaceFile(VulkanRoot + "Frame/Loop/Authority/VulkanFrameLoop.OpenXR.MirrorPreview.cs");
         string openXrPrewarm = ReadExactWorkspaceFile(VulkanRoot + "Frame/Loop/Authority/VulkanFrameLoop.OpenXR.PrewarmValidation.cs");
-        openXrEyeRendering.ShouldContain("CommandChainSchedule? commandChainSchedule =\n            RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync\n                ? null\n                : TryBuildOpenXrEyeCommandChainSchedule(");
+        openXrEyeRendering.ShouldContain("CommandChainSchedule? commandChainSchedule;");
+        openXrEyeRendering.ShouldContain("commandChainSchedule =\n                RuntimeEngine.EffectiveSettings.GpuOcclusionCullingMode == EOcclusionCullingMode.CpuQueryAsync\n                    ? null\n                    : TryBuildOpenXrEyeCommandChainSchedule(");
         openXrMirrorPreview.ShouldContain("allowExternalSwapchainTarget: true");
         openXrPrewarm.ShouldContain("RebaseFrameOpResourcesToActiveResourcePlan(ops);");
         openXrPrewarm.ShouldContain("RebaseFrameOpTargetsToActiveResourcePlan");

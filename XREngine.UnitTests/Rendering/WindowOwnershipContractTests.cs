@@ -591,14 +591,15 @@ public sealed class WindowOwnershipContractTests
     {
         string previewService = ReadWorkspaceFile("XREngine.Editor/Rendering/EditorTexturePreviewService.cs");
         string materialInspector = ReadWorkspaceFile("XREngine.Editor/AssetEditors/XRMaterialInspector.cs");
-        string renderPipelineInspector = ReadWorkspaceFile("XREngine.Editor/AssetEditors/RenderPipelineInspector.cs");
+        // The render pipeline workbench owns the render texture preview.
+        string renderTexturePreviewPanel = ReadWorkspaceFile("XREngine.Editor/RenderPipelineWorkbench/RenderTexturePreviewPanel.cs");
         string viewportPanel = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.ViewportPanel.cs");
 
         previewService.ShouldContain("if (!Engine.IsRenderThread)");
         previewService.ShouldContain("EditorRendererCapabilityResolver.TryGet");
         previewService.ShouldContain("capability.TryGetTexturePreviewHandle");
         materialInspector.ShouldContain("EditorTexturePreviewService.TryGetHandle(");
-        renderPipelineInspector.ShouldContain("EditorTexturePreviewService.TryGetHandle(");
+        renderTexturePreviewPanel.ShouldContain("EditorTexturePreviewService.TryGetHandle(");
         viewportPanel.ShouldContain("EditorTexturePreviewService.TryGetHandle(");
     }
 

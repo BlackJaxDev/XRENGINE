@@ -559,9 +559,16 @@ public sealed class VulkanP0ValidationTests
         source.ShouldContain("Vulkan.AutoExposure.PlannerMip0Fallback2DArray");
         source.ShouldContain("program.Uniform(\"SmallestMip\", sampledSmallestMip);");
         source.ShouldContain("meteringMip = Math.Clamp(sampledSmallestMip - offset, 0, sampledSmallestMip);");
-        source.ShouldContain("exposureLayoutManagedByRenderGraph = vkExposure.UsesAllocatorImage;");
-        source.ShouldContain("Vulkan.AutoExposure.PlannerExposureGraphBarriers");
-        source.ShouldContain("if (!exposureLayoutManagedByRenderGraph && GetOrCreateAPIRenderObject(exposureTex");
+        // A planner-backed (allocator) exposure image keeps its render-graph layout.
+        // Only a standalone exposure image gets the out-of-band layout transitions.
+        string prepareStorage = SliceMethod(source, "private bool PrepareExposureImageForStorage(XRTexture2D exposureTex)");
+        string finishStorage = SliceMethod(source, "private void FinishExposureImageStorage(XRTexture2D exposureTex, bool managedByRenderGraph)");
+        source.ShouldContain("bool exposureLayoutManagedByRenderGraph = PrepareExposureImageForStorage(exposureTex);");
+        source.ShouldContain("FinishExposureImageStorage(exposureTex, exposureLayoutManagedByRenderGraph);");
+        prepareStorage.ShouldContain("if (vkExposure.UsesAllocatorImage)");
+        prepareStorage.ShouldContain("Vulkan.AutoExposure.PlannerExposureGraphBarriers");
+        prepareStorage.ShouldContain("return true;");
+        finishStorage.ShouldContain("if (managedByRenderGraph ||");
 
         readbackSource.ShouldContain("LogPlannerMipReadbackFallback");
         readbackSource.ShouldContain("Vulkan.LuminanceReadback.PlannerMip0Fallback2D");
@@ -1208,7 +1215,8 @@ public sealed class VulkanP0ValidationTests
         meshRendererSource.ShouldContain("GeneratedProgramCacheEntry");
         meshRendererSource.ShouldContain("DestroyGeneratedPrograms();");
 
-        string ensureProgram = SliceMethod(pipelineSource, "private bool EnsureProgram(XRMaterial material)");
+        // EnsureProgram also takes optional editor highlight output parameters, so match the stable prefix.
+        string ensureProgram = SliceMethod(pipelineSource, "private bool EnsureProgram(XRMaterial material");
         ensureProgram.ShouldContain("_programCache.TryGetValue");
         ensureProgram.ShouldContain("BuildGeneratedProgramIdentity");
         ensureProgram.ShouldContain("GenerateVertexShader");
@@ -1325,7 +1333,8 @@ public sealed class VulkanP0ValidationTests
         string linkingSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Linking.cs");
         string meshPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
 
-        shaderSource.ShouldContain("Task.Run(() => BuildCpuArtifact");
+        // CPU shader builds run on the dedicated low-priority compile lanes, not on the draw thread.
+        shaderSource.ShouldContain("VulkanShaderCompileScheduler.Run(() => BuildCpuArtifact");
         shaderSource.ShouldContain("TryGenerateFromAsyncCompile");
 
         // The public link entry passes the async flag through the compilation

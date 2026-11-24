@@ -55,7 +55,12 @@ public sealed class VulkanPhase3AcceptanceContractTests
         table.MaterialDirtyRange.IndexCount.ShouldBe(1u);
         ReadUInt(table.Buffer, 2u, 0u).ShouldBe(7u);
         ReadUInt(table.Buffer, 2u, 1u).ShouldBe(8u);
-        ReadUInt(table.Buffer, 2u, 4u).ShouldBe(2u);
+        // The row layout places Flags after the packed texture handle indices.
+        // Read its word offset from the layout so new texture slots do not break this check.
+        uint flagsWordOffset = GPUMaterialTable.MaterialLayout.PackedMembers
+            .Single(static member => member.Name == "Flags")
+            .WordOffset;
+        ReadUInt(table.Buffer, 2u, flagsWordOffset).ShouldBe(2u);
         table.ActiveTextureHandles.ShouldBeEmpty();
 
         string material = Read(

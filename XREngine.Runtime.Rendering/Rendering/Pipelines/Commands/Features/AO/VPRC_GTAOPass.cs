@@ -61,6 +61,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// result in a separate pass. Null keeps full-resolution inputs and the upsampling
         /// vertical blur.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? ReducedInputDepthTextureName { get; set; }
 
         /// <summary>
@@ -69,6 +70,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// rebuilds each tap position from a few projection terms (<c>DepthViewIsLinear</c>). The blur
         /// passes keep the raw reduced depth, because their depth weights use raw depth differences.
         /// </summary>
+        [RenderResourceName(ERenderResourceNameKind.Texture)]
         public string? ReducedInputLinearDepthTextureName { get; set; }
 
         // Largest GTAO step radius, in full-resolution pixels.

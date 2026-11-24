@@ -391,6 +391,8 @@ public sealed class AdvancedAttributeReconstructionContractTests
             "Build/CommonAssets/Shaders/Advanced/Reconstruction/ReconstructSurface.glslinc");
         string interfaceSource = SourceContractWorkspace.ReadFile(
             "Build/CommonAssets/Shaders/Advanced/Reconstruction/ReconstructionInterface.glslinc");
+        string primitiveAccess = SourceContractWorkspace.ReadFile(
+            "Build/CommonAssets/Shaders/Advanced/Reconstruction/PrimitiveAccess.glslinc");
         string reference = SourceContractWorkspace.ReadFile(
             "Build/CommonAssets/Shaders/Advanced/Reconstruction/ReconstructionReference.comp");
         string debug = SourceContractWorkspace.ReadFile(
@@ -411,9 +413,10 @@ public sealed class AdvancedAttributeReconstructionContractTests
         reconstruction.ShouldContain(
             "XR_ADV_SURFACE_CONSERVATIVE_MIP");
         reconstruction.ShouldContain("XR_ADV_TryLoadVertex(");
-        reconstruction.ShouldContain("if (!deformed)");
-        reconstruction.ShouldContain("XR_ADV_PreSkinnedCurrentVertices.records");
-        reconstruction.ShouldContain("XR_ADV_PreSkinnedPreviousVertices.records");
+        primitiveAccess.ShouldContain("bool XR_ADV_TryLoadVertex(");
+        primitiveAccess.ShouldContain("if (!deformed)");
+        primitiveAccess.ShouldContain("XR_ADV_PreSkinnedCurrentVertices.records");
+        primitiveAccess.ShouldContain("XR_ADV_PreSkinnedPreviousVertices.records");
         reconstruction.ShouldContain(
             "geometry.fallbackGeometry");
         reconstruction.ShouldContain(
@@ -425,8 +428,10 @@ public sealed class AdvancedAttributeReconstructionContractTests
         reconstruction.ShouldContain(
             "XR_ADV_SampleTexture2DLod");
         interfaceSource.ShouldContain(
+            "#include \"PrimitiveAccess.glslinc\"");
+        primitiveAccess.ShouldContain(
             "XR_ADV_PreSkinnedCurrentVertices");
-        interfaceSource.ShouldContain(
+        primitiveAccess.ShouldContain(
             "XR_ADV_ReconstructionMeshlets");
         interfaceSource.ShouldContain(
             "#include \"Advanced/Visibility/VisibilityInterface.glslinc\"");
@@ -439,7 +444,7 @@ public sealed class AdvancedAttributeReconstructionContractTests
             "Non-production full-screen reference");
         debug.ShouldContain("DebugView == 15u");
         debug.ShouldContain("DebugView == 16u");
-        (surface + reconstruction + interfaceSource)
+        (surface + reconstruction + interfaceSource + primitiveAccess)
             .ShouldNotContain("GBuffer", Case.Insensitive);
     }
 

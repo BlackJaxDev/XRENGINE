@@ -163,10 +163,9 @@ public static class AdvancedVirtualGeometryPolicy
     /// </summary>
     public static string TaskPreamble
         => Enabled
-            ? "#define XR_ADV_CLUSTER_LOD_CUT 1\n#define XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD " +
-              PixelThreshold.ToString("0.0###", CultureInfo.InvariantCulture) + "\n" +
-              (SkinnedEnabled ? "#define XR_ADV_CLUSTER_LOD_CUT_SKINNED 1\n" : string.Empty) +
-              (SkinnedPosedBoundsEnabled ? "#define XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED 1\n" : string.Empty)
+            ? $"#define XR_ADV_CLUSTER_LOD_CUT 1\n#define XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD {PixelThreshold.ToString("0.0###", CultureInfo.InvariantCulture)}\n" +
+              $"{(SkinnedEnabled ? "#define XR_ADV_CLUSTER_LOD_CUT_SKINNED 1\n" : string.Empty)}" +
+              $"{(SkinnedPosedBoundsEnabled ? "#define XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED 1\n" : string.Empty)}"
             : string.Empty;
 
     private static void Latch()

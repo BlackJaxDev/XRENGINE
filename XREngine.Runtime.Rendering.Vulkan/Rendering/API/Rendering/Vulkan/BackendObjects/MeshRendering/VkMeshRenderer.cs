@@ -1272,7 +1272,7 @@ internal unsafe partial class VkMeshRenderer(
         XRFrameBuffer? effectiveTarget = producer.Target;
         SampleCountFlags rasterizationSamples = ResolveRasterizationSamples(effectiveTarget);
         VulkanFixedFunctionStateSnapshot producerState = producer.FixedFunctionState;
-        bool alphaToCoverageEnabled = producerState.AlphaToCoverageEnabled;
+        bool alphaToCoverageEnabled = producerState.AlphaToCoverageEnabled && rasterizationSamples != SampleCountFlags.Count1Bit;
 
         XRRenderPipelineInstance? currentPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         bool explicitCameraScope = RuntimeEngine.Rendering.State.RenderingPipelineState?.HasRenderingCameraScope == true;

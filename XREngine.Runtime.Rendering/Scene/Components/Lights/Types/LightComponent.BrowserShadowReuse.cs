@@ -30,6 +30,20 @@ public abstract partial class LightComponent
         SetField(ref _browserCachedShadowFrame, 0UL, publishNotifications: false);
     }
 
+    /// <summary>
+    /// Defers the whole frame on an atomic host (WebGPU) when a nested shadow viewport declined its render.
+    /// A declined viewport can already have recorded part of its pass, such as the depth clear. That recording
+    /// marks the shadow map as produced in this frame, so the receiver would accept and present a cleared or
+    /// partial map. Hosts without atomic frame authoring keep the previous map and render the frame.
+    /// </summary>
+    /// <param name="viewport">The shadow viewport whose render declined.</param>
+    private protected static void DeferAtomicFrameForDeclinedShadowRender(XRViewport viewport)
+    {
+        if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
+            throw new RenderResourcePreparationPendingException(viewport.RenderPipelineInstance.LastRenderDeclineReason
+                ?? "Shadow.ProducerPending: the shadow viewport command chain did not execute.");
+    }
+
     /// <summary>Returns the currently owned receiver image, if this light has an admitted browser shadow.</summary>
     private XRTexture? GetBrowserShadowReceiver()
         => this switch

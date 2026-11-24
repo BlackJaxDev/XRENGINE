@@ -452,7 +452,11 @@ public sealed class VulkanDesktopPlanStabilityTests
         recoverySource.ShouldContain("CreateRecoveryCommandEncoder().ClearColorImage(");
         recoverySource.ShouldContain("TryRecordRejectedDesktopRecoveryOverlay");
         recoverySource.ShouldContain("submittedCommandBufferCount");
-        recoverySource.ShouldContain("new(0.06f, 0.015f, 0.08f, 1.0f)");
+        // The dark purple recovery clear is a diagnostic option. Without it, the
+        // clear uses the startup presentation color so that the frame does not flash.
+        recoverySource.ShouldContain("RenderDiagnosticsFlags.DebugRetryRecoveryClear");
+        recoverySource.ShouldContain("new ColorF4(0.06f, 0.015f, 0.08f, 1.0f)");
+        recoverySource.ShouldContain("RuntimeEngine.StartupPresentationClearColor");
         policy.ShouldContain("DeferredInitializationClear");
         policy.ShouldContain("public bool ShouldClearBeforePresent");
         recoverySource.ShouldNotContain("TryRecreateSwapchainNow(\"Command buffer recording deferred");

@@ -228,13 +228,18 @@ public sealed class ProbeGridLookupTests
     }
 
     [Test]
-    public void ForwardLighting_ProbeAmbientMultipliesGlobalAmbient()
+    public void ForwardLighting_ProbeAmbientUsesIrradianceAndFallbackUsesGlobalAmbient()
     {
         string source = ReadShaderFile("Build/CommonAssets/Shaders/Snippets/ForwardLighting.glsl");
 
+        // Without probes, forward ambient falls back to the world ambient color.
         source.ShouldContain("const float XRENGINE_MIN_FORWARD_AMBIENT_FALLBACK = 0.08;");
         source.ShouldContain("return XRENGINE_ResolveForwardAmbientFallback() * albedo * diffuseAO;");
-        source.ShouldContain("vec3 diffuse = GlobalAmbient * irradianceColor * albedo;");
+
+        // Probe convolution stores irradiance that does not depend on world ambient,
+        // so the probe diffuse term does not multiply GlobalAmbient again.
+        source.ShouldContain("vec3 diffuse = irradianceColor * albedo;");
+        source.ShouldNotContain("vec3 diffuse = GlobalAmbient * irradianceColor * albedo;");
     }
 
     [Test]

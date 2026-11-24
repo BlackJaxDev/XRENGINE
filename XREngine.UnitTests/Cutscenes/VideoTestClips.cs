@@ -202,8 +202,7 @@ internal static unsafe class VideoTestClips
             "#EXT-X-VERSION:3\n" +
             "#EXT-X-TARGETDURATION:2\n" +
             "#EXT-X-MEDIA-SEQUENCE:0\n" +
-            "#EXTINF:2.0,\n" +
-            Path.GetFileName(segment) + "\n");
+            $"#EXTINF:2.0,\n{Path.GetFileName(segment)}\n");
         return path;
     }
 

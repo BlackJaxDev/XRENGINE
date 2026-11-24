@@ -35,10 +35,13 @@ public partial class AdvancedRenderPipeline
     /// True when the profile omits the visibility selection image. The visibility framebuffer
     /// then has two color attachments (identity, metadata) and depth-stencil, and the raster
     /// discards its selection output. Multisample visibility always keeps the image, because
-    /// its resolve and shading passes read the selection samples.
+    /// its resolve and shading passes read the selection samples. Visibility debug output also
+    /// keeps the image, because the decoded debug view reads it. This check makes the layout
+    /// valid for every feature mask, also when a mask sets the omit bit and the debug bit together.
     /// </summary>
     internal static bool OmitsVisibilitySelection(RenderPipelineResourceProfile profile)
         => (profile.FeatureMask & VisibilitySelectionOmittedFeatureBit) != 0UL &&
+            (profile.FeatureMask & (ulong)AdvancedVisibilityResourceFeature.DebugOutput) == 0UL &&
             !(profile.AntiAliasingMode == EAntiAliasingMode.Msaa && profile.MsaaSampleCount > 1u);
 
     // Forward late/debug consumers retain the existing probe-array contract.
@@ -390,7 +393,8 @@ public partial class AdvancedRenderPipeline
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TransparentSceneCopyTextureName)
             .Factory(CreateTransparentSceneCopyFBO).Add();
         builder.FrameBuffer(SourceOrderedSceneCopyFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, SourceOrderedSceneCopyTextureName)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, SourceOrderedSceneCopyTextureName, layerIndex: layers > 1u ? -1 : 0)
             .Factory(CreateSourceOrderedSceneCopyFBO).Add();
         builder.FrameBuffer(TransparentAccumulationFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)

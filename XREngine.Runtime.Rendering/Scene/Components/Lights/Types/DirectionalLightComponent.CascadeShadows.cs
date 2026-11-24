@@ -5886,6 +5886,8 @@ namespace XREngine.Components.Lights
                     DirectionalShadowConsumptionTelemetry.Count(EDirectionalShadowConsumptionCounter.LegacyPrimaryRenders);
                     GenerateMomentShadowMipmapsIfNeeded();
                 }
+                else
+                    DeferAtomicFrameForDeclinedShadowRender(primaryViewport);
             }
 
             if (shadowMaterial is null)

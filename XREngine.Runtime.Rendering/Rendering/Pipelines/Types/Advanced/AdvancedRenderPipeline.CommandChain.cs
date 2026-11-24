@@ -78,13 +78,23 @@ public partial class AdvancedRenderPipeline
                 AppendAdvancedAmbientOcclusionCommands(commands);
                 break;
             case EAdvancedRenderStage.NativeOpaqueShading:
-                AppendAdvancedBackgroundCommands(commands);
+                // The background and late passes draw CPU-direct meshes into
+                // ForwardPassFBO, which has the internal resolution. Push the internal
+                // render area so the draw viewport matches that target. Without it, the
+                // passes keep the full output area that is active at this point. When
+                // the render scale is below 1 (for example in the OpenXR eyes), those
+                // meshes are then scaled away from the opaque scene.
+                using (commands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))
+                    AppendAdvancedBackgroundCommands(commands);
                 AppendAdvancedGlobalIlluminationCommands(commands);
                 break;
             case EAdvancedRenderStage.LatePasses:
-                AppendAdvancedLatePassCommands(commands);
-                AppendAdvancedPhysicsDebugCommands(commands);
-                AppendAdvancedDebugShapeCommands(commands);
+                using (commands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))
+                {
+                    AppendAdvancedLatePassCommands(commands);
+                    AppendAdvancedPhysicsDebugCommands(commands);
+                    AppendAdvancedDebugShapeCommands(commands);
+                }
                 break;
             case EAdvancedRenderStage.TemporalAndPostProcessing:
                 AppendAdvancedPostProcessCommands(commands);
