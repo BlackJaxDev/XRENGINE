@@ -99,6 +99,8 @@ Temporary references are allowed **only when the associated todo document is act
   - `feature/`: a new feature implementation.
   - `regression/`: an investigation and fix for a feature that worked before.
   - `experimental/`: research work that the user can discard.
+  - `docs/`: documentation changes only.
+- When the work on a branch or worktree is merged or otherwise resolved, suggest that the user delete it locally, remotely, or both. Do not delete a branch or worktree until the user confirms.
 - Pull requests explain what changed, why, validation, risks, and necessary follow-ups in plain English. Describe the work without crediting the assistant. Keep any required contribution disclosure in the separate contribution acceptance record.
 
 ## Repository And Commands
