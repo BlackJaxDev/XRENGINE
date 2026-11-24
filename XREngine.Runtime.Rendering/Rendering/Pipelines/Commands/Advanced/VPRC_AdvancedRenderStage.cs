@@ -471,6 +471,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             BackendReadyPackage = ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage,
             FroxelDepthSlices = pipeline.FroxelDepthSlices,
             MsaaSampleCount = samples,
+            AntiAliasingFilterMode = RenderPipeline.ResolveEffectiveAntiAliasingFilterModeForFrame(),
             SampleEncoding = sampleEncoding,
             HasAuthoredBackground = ActivePipelineInstance.ActiveMeshRenderCommands.HasRenderingCommands((int)EDefaultRenderPass.Background),
             EnableAuthoredDecals = frozenAuthoredDecals,

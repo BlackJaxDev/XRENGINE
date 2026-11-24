@@ -1,0 +1,2 @@
+2da60a0d48bb59a634111e71b02b123791442fc3a4b8d17e5ddf1f540a1a7dec  local-agent-broker-0.3.0-win-x64.zip
+4bacd67150aac67e3e570cf2f9c43fd4b9e0e84c36dea46be20c9f6b9b66f0c4  LocalAgentBroker.Orchestration.0.3.0.nupkg

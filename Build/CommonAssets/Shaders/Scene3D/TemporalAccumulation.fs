@@ -33,6 +33,7 @@ uniform float ReactiveLumaThreshold;
 uniform float DepthDiscontinuityScale;
 uniform float ConfidencePower;
 uniform int DebugMode;
+uniform int AntiAliasingFilterMode;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
@@ -112,6 +113,50 @@ vec3 SampleCurrentReconstruction(sampler2D tex, vec2 uv, vec2 texelSize)
         texture(tex, uv + vec2(-1.0f,  1.0f) * texelSize).rgb +
         texture(tex, uv + vec2( 1.0f,  1.0f) * texelSize).rgb;
     return (center + axial * 2.0f + diagonal) * (1.0f / 16.0f);
+}
+
+// Integrates the 1D tent kernel W(x) = 1 - |x| on [-1, 1] over interval [aIn, bIn].
+float Tent1DIntegral(float aIn, float bIn)
+{
+    float a = clamp(aIn, -1.0f, 1.0f);
+    float b = clamp(bIn, -1.0f, 1.0f);
+    if (b <= a)
+        return 0.0f;
+    return (b - 0.5f * b * abs(b)) - (a - 0.5f * a * abs(a));
+}
+
+// Integrates the 2x2 bilinear tent kernel W(x, y) = (1 - |x|)(1 - |y|) across
+// the overlapping 3x3 texel squares around the continuous UV coordinate.
+vec3 SampleTent2x2(sampler2D tex, vec2 uv)
+{
+    ivec2 extent = max(textureSize(tex, 0), ivec2(1));
+    vec2 position = clamp(uv, vec2(0.0f), vec2(1.0f)) * vec2(extent);
+    ivec2 centerPixel = ivec2(floor(position));
+    float wx[3];
+    float wy[3];
+    for (int i = -1; i <= 1; ++i)
+    {
+        wx[i + 1] = Tent1DIntegral(float(centerPixel.x + i) - position.x,
+            float(centerPixel.x + i + 1) - position.x);
+        wy[i + 1] = Tent1DIntegral(float(centerPixel.y + i) - position.y,
+            float(centerPixel.y + i + 1) - position.y);
+    }
+
+    vec3 colorSum = vec3(0.0f);
+    float weightSum = 0.0f;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            float weight = wx[x + 1] * wy[y + 1];
+            if (weight <= 1e-6f)
+                continue;
+            ivec2 samplePixel = clamp(centerPixel + ivec2(x, y), ivec2(0), extent - ivec2(1));
+            colorSum += texelFetch(tex, samplePixel, 0).rgb * weight;
+            weightSum += weight;
+        }
+    }
+    return colorSum / max(weightSum, 1e-6f);
 }
 
 // ── Clip toward AABB center (Karis 2014) ──────────────────────────
@@ -218,8 +263,20 @@ void main()
     vec2 historyUV = uv - velocity * 0.5f + PreviousJitterUv - CurrentJitterUv;
 
     vec3 currentColorRaw = texture(TemporalColorInput, uv).rgb;
-    vec3 currentColorFiltered = SampleCurrentReconstruction(TemporalColorInput, uv, TexelSize);
-    vec3 currentColor = mix(currentColorRaw, currentColorFiltered, 0.18f);
+    vec3 currentColor;
+    if (AntiAliasingFilterMode == 1)
+    {
+        currentColor = currentColorRaw;
+    }
+    else if (AntiAliasingFilterMode == 2)
+    {
+        currentColor = SampleTent2x2(TemporalColorInput, uv);
+    }
+    else
+    {
+        vec3 currentColorFiltered = SampleCurrentReconstruction(TemporalColorInput, uv, TexelSize);
+        currentColor = mix(currentColorRaw, currentColorFiltered, 0.18f);
+    }
     vec3 currentYCoCg = RGBToYCoCg(currentColor);
     float currentLuma = currentYCoCg.x;
 
@@ -237,8 +294,14 @@ void main()
         float historyDepth = texture(HistoryDepth, historyUV).r;
         if (abs(historyDepth - currentDepth) <= DepthRejectThreshold)
         {
-            // Proper bicubic Catmull-Rom reconstruction on history only
-            vec3 historyRGB = SampleHistoryCatmullRom(HistoryColor, historyUV, TexelSize);
+            vec3 historyRGB;
+            if (AntiAliasingFilterMode == 1)
+                historyRGB = texture(HistoryColor, historyUV).rgb;
+            else if (AntiAliasingFilterMode == 2)
+                historyRGB = SampleTent2x2(HistoryColor, historyUV);
+            else
+                // Proper bicubic Catmull-Rom reconstruction on history only
+                historyRGB = SampleHistoryCatmullRom(HistoryColor, historyUV, TexelSize);
             historyYCoCg = RGBToYCoCg(historyRGB);
             historyStats = texture(HistoryExposureVariance, historyUV).rg;
         }
@@ -312,16 +375,19 @@ void main()
     vec3 accumulated = mix(currentYCoCg, clippedHistory, historyWeight);
     vec3 result = YCoCgToRGB(accumulated);
 
-    // Post-resolve sharpening: inject current frame's high-frequency detail
-    // to counteract the inherent softening of temporal accumulation.
-    vec3 neighbors =
-        texture(TemporalColorInput, uv + vec2(-1.0f, 0.0f) * TexelSize).rgb +
-        texture(TemporalColorInput, uv + vec2( 1.0f, 0.0f) * TexelSize).rgb +
-        texture(TemporalColorInput, uv + vec2(0.0f, -1.0f) * TexelSize).rgb +
-        texture(TemporalColorInput, uv + vec2(0.0f,  1.0f) * TexelSize).rgb;
-    vec3 highFreq = currentColorRaw - neighbors * 0.25f;
-    float sharpenStrength = 0.14f * (1.0f - historyWeight) * (1.0f - 0.5f * reactiveMask);
-    result += highFreq * sharpenStrength;
+    // Post-resolve sharpening runs only for Default filtering so Box1x1 and
+    // Tent2x2 preserve their exact kernel responses.
+    if (AntiAliasingFilterMode == 0)
+    {
+        vec3 neighbors =
+            texture(TemporalColorInput, uv + vec2(-1.0f, 0.0f) * TexelSize).rgb +
+            texture(TemporalColorInput, uv + vec2( 1.0f, 0.0f) * TexelSize).rgb +
+            texture(TemporalColorInput, uv + vec2(0.0f, -1.0f) * TexelSize).rgb +
+            texture(TemporalColorInput, uv + vec2(0.0f,  1.0f) * TexelSize).rgb;
+        vec3 highFreq = currentColorRaw - neighbors * 0.25f;
+        float sharpenStrength = 0.14f * (1.0f - historyWeight) * (1.0f - 0.5f * reactiveMask);
+        result += highFreq * sharpenStrength;
+    }
 
     OutColor = vec4(max(result, vec3(0.0f)), 1.0f);
     OutExposureVariance = vec2(updatedExposure, updatedVariance);

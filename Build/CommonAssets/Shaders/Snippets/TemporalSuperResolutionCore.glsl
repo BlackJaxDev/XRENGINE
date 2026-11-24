@@ -52,6 +52,16 @@ vec2 TsrClampUvToTexels(vec2 uv, vec2 texelSize)
     return clamp(uv, halfTexel, vec2(1.0) - halfTexel);
 }
 
+// Integrates the 1D tent kernel W(x) = 1 - |x| on [-1, 1] over interval [aIn, bIn].
+float TsrTent1DIntegral(float aIn, float bIn)
+{
+    float a = clamp(aIn, -1.0, 1.0);
+    float b = clamp(bIn, -1.0, 1.0);
+    if (b <= a)
+        return 0.0;
+    return (b - 0.5 * b * abs(b)) - (a - 0.5 * a * abs(a));
+}
+
 bool TsrCanSampleHistory(bool historyReady, vec2 historyUv)
 {
     return historyReady && TsrIsValidUv(historyUv);

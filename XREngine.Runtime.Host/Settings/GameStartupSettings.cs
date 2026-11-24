@@ -508,6 +508,7 @@ namespace XREngine
 
         // Full cascade settings (Project > Engine, user can override)
         private OverrideableSetting<EAntiAliasingMode> _antiAliasingModeOverride = new();
+        private OverrideableSetting<EAntiAliasingFilterMode> _antiAliasingFilterModeOverride = new();
         private OverrideableSetting<uint> _msaaSampleCountOverride = new();
         private OverrideableSetting<EVSyncMode> _vSyncOverride = new();
         private OverrideableSetting<EGlobalIlluminationMode> _globalIlluminationModeOverride = new();
@@ -875,6 +876,19 @@ namespace XREngine
         {
             get => _antiAliasingModeOverride;
             set => SetField(ref _antiAliasingModeOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for the anti-aliasing reconstruction filter used by MSAA, TSR, and TAA.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Can be further overridden by user settings.
+        /// </summary>
+        [Category("Quality Overrides")]
+        [Description("Project override for the anti-aliasing reconstruction filter (Default, Box1x1, Tent2x2) used by MSAA, TSR, and TAA.")]
+        public OverrideableSetting<EAntiAliasingFilterMode> AntiAliasingFilterModeOverride
+        {
+            get => _antiAliasingFilterModeOverride;
+            set => SetField(ref _antiAliasingFilterModeOverride, value ?? new());
         }
 
         /// <summary>

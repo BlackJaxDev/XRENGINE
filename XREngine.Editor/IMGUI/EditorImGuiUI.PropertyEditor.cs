@@ -5629,6 +5629,8 @@ public static partial class EditorImGuiUI
             {
                 nameof(UserSettings.AntiAliasingModeOverride) when owner is UserSettings or GameStartupSettings
                     => Engine.EffectiveSettings.AntiAliasingMode,
+                nameof(UserSettings.AntiAliasingFilterModeOverride) when owner is UserSettings or GameStartupSettings
+                    => Engine.EffectiveSettings.AntiAliasingFilterMode,
                 nameof(UserSettings.MsaaSampleCountOverride) when owner is UserSettings or GameStartupSettings
                     => Engine.EffectiveSettings.MsaaSampleCount,
                 _ => setting.BoxedValue,

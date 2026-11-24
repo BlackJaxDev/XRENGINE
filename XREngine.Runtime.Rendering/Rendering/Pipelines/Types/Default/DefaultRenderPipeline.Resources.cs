@@ -905,6 +905,13 @@ public partial class DefaultRenderPipeline
             .When(predicate)
             .Add();
 
+        Texture(builder, ForwardPassMsaaColorTextureName, internalSize, SampledColorAttachment,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,
+            CreateForwardPassMsaaColorTexture)
+            .Samples(samples)
+            .When(UsesMsaaTargets)
+            .Add();
+
         Texture(builder, ForwardPassMsaaDepthStencilTextureName, internalSize, SampledDepthStencilAttachment,
             EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248, ESizedInternalFormat.Depth24Stencil8,
             CreateForwardPassMsaaDepthStencilTexture)
@@ -1557,24 +1564,12 @@ public partial class DefaultRenderPipeline
     {
         RenderPipelineResourcePredicate msaa = UsesMsaaTargets;
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
-        uint samples = Math.Max(1u, builder.Profile.MsaaSampleCount);
-
-        builder.RenderBuffer(ForwardPassMsaaColorRenderBufferName)
-            .Size(internalSize)
-            .Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment)
-            .Storage(ERenderBufferStorage.Rgba16f)
-            .Samples(samples)
-            .DefaultAttachment(EFrameBufferAttachment.ColorAttachment0)
-            .Factory(CreateForwardPassMsaaColorRenderBuffer)
-            .When(msaa)
-            .Add();
 
         builder.FrameBuffer(ForwardPassMsaaFBOName)
             .Size(internalSize)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-            .Color(0, ForwardPassMsaaColorRenderBufferName)
+            .Color(0, ForwardPassMsaaColorTextureName)
             .DepthStencil(ForwardPassMsaaDepthStencilTextureName)
             .Factory(CreateForwardPassMsaaFBO)
             .When(msaa)

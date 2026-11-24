@@ -270,35 +270,76 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
     }
 
     ivec2 historyExtent = textureSize(TsrHistoryColor, 0).xy;
-    vec2 position = historyUv * vec2(historyExtent) - 0.5;
-    ivec2 basePixel = ivec2(floor(position));
-    vec2 fraction = fract(position);
-    // Validate each actual bilinear history contributor. A matching neighbor
-    // must not admit the wider, incompatible Catmull-Rom color footprint.
-    for (int y = 0; y < 2; ++y)
-    for (int x = 0; x < 2; ++x)
+    if (AntiAliasingFilterMode == 2)
     {
-        float weight = (x == 0 ? 1.0 - fraction.x : fraction.x)
-            * (y == 0 ? 1.0 - fraction.y : fraction.y);
-        if (weight <= 1e-6)
-            continue;
-        ivec2 pixel = basePixel + ivec2(x, y);
-        if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, historyExtent)))
-            continue;
-        vec2 depthUv = (vec2(pixel) + 0.5) / vec2(historyExtent) + previousJitter;
-        if (!TsrIsValidUv(depthUv))
-            continue;
-        bool matching = TsrHistoryFootprintMatchesPlane(depthUv, background,
-            predictedNdc, depthPlane, depthTolerance, stationary);
-        if (!matching)
-            continue;
-        vec4 metadata = TsrLoadHistoryMetadata(pixel);
-        if (any(isnan(metadata)) || any(isinf(metadata))
-            || (metadata.y > 0.001 && metadata.y < 0.999))
-            continue;
-        color += TsrLoadHistoryColor(pixel).rgb * weight;
-        age += clamp(metadata.x, 0.0, 32.0) * weight;
-        support += weight;
+        vec2 tentPosition = clamp(historyUv, vec2(0.0), vec2(1.0)) * vec2(historyExtent);
+        ivec2 centerPixel = ivec2(floor(tentPosition));
+        float wx[3];
+        float wy[3];
+        for (int i = -1; i <= 1; ++i)
+        {
+            wx[i + 1] = TsrTent1DIntegral(float(centerPixel.x + i) - tentPosition.x,
+                float(centerPixel.x + i + 1) - tentPosition.x);
+            wy[i + 1] = TsrTent1DIntegral(float(centerPixel.y + i) - tentPosition.y,
+                float(centerPixel.y + i + 1) - tentPosition.y);
+        }
+        for (int y = -1; y <= 1; ++y)
+        for (int x = -1; x <= 1; ++x)
+        {
+            float weight = wx[x + 1] * wy[y + 1];
+            if (weight <= 1e-6)
+                continue;
+            ivec2 pixel = centerPixel + ivec2(x, y);
+            if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, historyExtent)))
+                continue;
+            vec2 depthUv = (vec2(pixel) + 0.5) / vec2(historyExtent) + previousJitter;
+            if (!TsrIsValidUv(depthUv))
+                continue;
+            bool matching = TsrHistoryFootprintMatchesPlane(depthUv, background,
+                predictedNdc, depthPlane, depthTolerance, stationary);
+            if (!matching)
+                continue;
+            vec4 metadata = TsrLoadHistoryMetadata(pixel);
+            if (any(isnan(metadata)) || any(isinf(metadata))
+                || (metadata.y > 0.001 && metadata.y < 0.999))
+                continue;
+            color += TsrLoadHistoryColor(pixel).rgb * weight;
+            age += clamp(metadata.x, 0.0, 32.0) * weight;
+            support += weight;
+        }
+    }
+    else
+    {
+        vec2 position = historyUv * vec2(historyExtent) - 0.5;
+        ivec2 basePixel = ivec2(floor(position));
+        vec2 fraction = fract(position);
+        // Validate each actual bilinear history contributor. A matching neighbor
+        // must not admit the wider, incompatible Catmull-Rom color footprint.
+        for (int y = 0; y < 2; ++y)
+        for (int x = 0; x < 2; ++x)
+        {
+            float weight = (x == 0 ? 1.0 - fraction.x : fraction.x)
+                * (y == 0 ? 1.0 - fraction.y : fraction.y);
+            if (weight <= 1e-6)
+                continue;
+            ivec2 pixel = basePixel + ivec2(x, y);
+            if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, historyExtent)))
+                continue;
+            vec2 depthUv = (vec2(pixel) + 0.5) / vec2(historyExtent) + previousJitter;
+            if (!TsrIsValidUv(depthUv))
+                continue;
+            bool matching = TsrHistoryFootprintMatchesPlane(depthUv, background,
+                predictedNdc, depthPlane, depthTolerance, stationary);
+            if (!matching)
+                continue;
+            vec4 metadata = TsrLoadHistoryMetadata(pixel);
+            if (any(isnan(metadata)) || any(isinf(metadata))
+                || (metadata.y > 0.001 && metadata.y < 0.999))
+                continue;
+            color += TsrLoadHistoryColor(pixel).rgb * weight;
+            age += clamp(metadata.x, 0.0, 32.0) * weight;
+            support += weight;
+        }
     }
     color /= max(support, 1e-6);
     age /= max(support, 1e-6);

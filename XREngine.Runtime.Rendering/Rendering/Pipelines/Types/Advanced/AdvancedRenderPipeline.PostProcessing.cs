@@ -530,6 +530,7 @@ public partial class AdvancedRenderPipeline
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
+        program.Uniform("AntiAliasingFilterMode", (int)ResolveEffectiveAntiAliasingFilterModeForFrame());
     }
 
     private void ApplyBrightPassProgramBindings(XRRenderProgram program)
@@ -631,6 +632,7 @@ public partial class AdvancedRenderPipeline
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
+        program.Uniform("AntiAliasingFilterMode", (int)ResolveEffectiveAntiAliasingFilterModeForFrame());
     }
 
     private static bool _loggedVolumetricFogScatterLightsOnce;

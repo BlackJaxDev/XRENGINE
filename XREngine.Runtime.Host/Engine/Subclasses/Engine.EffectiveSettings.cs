@@ -644,6 +644,16 @@ namespace XREngine
                     UserSettings?.AntiAliasingModeOverride);
 
             /// <summary>
+            /// Gets the effective anti-aliasing reconstruction filter for MSAA, TSR, and TAA.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static EAntiAliasingFilterMode AntiAliasingFilterMode
+                => OverrideableSettingExtensions.ResolveCascade(
+                    RuntimeEngine.Rendering.Settings.AntiAliasingFilterMode,
+                    GameSettings?.AntiAliasingFilterModeOverride,
+                    UserSettings?.AntiAliasingFilterModeOverride);
+
+            /// <summary>
             /// Gets the effective MSAA sample count.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>

@@ -19,18 +19,21 @@ public partial class OpenGLRenderer
         if (buffers.PreparedRenderFrame != request.RenderFrameId || buffers.PreparedPublication != request.Publication.PublicationGeneration ||
             buffers.PreparedMaterialSurfaceExports != request.RequiresMaterialSurfaceExports ||
             buffers.PreparedSuppressBaselineDiffuse != request.SuppressBaselineDiffuse ||
-            buffers.PreparedShadingDiagnosticsDisabled != closure.ShadingDiagnosticsAliased)
+            buffers.PreparedShadingDiagnosticsDisabled != closure.ShadingDiagnosticsAliased ||
+            buffers.PreparedAntiAliasingFilterMode != request.AntiAliasingFilterMode)
         {
             buffers.EnsureCapacity(closure.Width, closure.Height, views, depthSlices);
             buffers.UploadPushConstants(closure.Width, closure.Height, views, depthSlices, _advancedSceneUploader?.LightCount ?? 0u,
                 request.RequireNativeOutput, request.EnableBuiltInAmbientOcclusion, request.EnableLightProbesAndIbl, request.RequiresMaterialSurfaceExports,
                 request.SuppressBaselineDiffuse, closure.ShadingDiagnosticsAliased,
-                request.ShadingDebugView, request.MsaaSampleCount > 1u && request.HasAuthoredBackground);
+                request.ShadingDebugView, request.MsaaSampleCount > 1u && request.HasAuthoredBackground,
+                request.MsaaSampleCount > 1u && request.AntiAliasingFilterMode == EAntiAliasingFilterMode.Tent2x2);
             buffers.PreparedRenderFrame = request.RenderFrameId;
             buffers.PreparedPublication = request.Publication.PublicationGeneration;
             buffers.PreparedMaterialSurfaceExports = request.RequiresMaterialSurfaceExports;
             buffers.PreparedSuppressBaselineDiffuse = request.SuppressBaselineDiffuse;
             buffers.PreparedShadingDiagnosticsDisabled = closure.ShadingDiagnosticsAliased;
+            buffers.PreparedAntiAliasingFilterMode = request.AntiAliasingFilterMode;
         }
         bool multisample = request.MsaaSampleCount > 1u;
         Span<uint> raw = stackalloc uint[5];
@@ -55,7 +58,8 @@ public partial class OpenGLRenderer
             {
                 EAdvancedRenderStage.AmbientOcclusion => DispatchAmbientOcclusion(buffers, view, tilesX, tilesY, out reason),
                 EAdvancedRenderStage.WorkClassification => DispatchClassification(buffers, view, tilesX, tilesY, out reason),
-                EAdvancedRenderStage.NativeOpaqueShading => DispatchNativeOpaque(buffers, view, tilesX, tilesY, depthSlices, multisample, out reason),
+                EAdvancedRenderStage.NativeOpaqueShading => DispatchNativeOpaque(buffers, view, closure.Width, closure.Height, tilesX, tilesY, depthSlices, multisample,
+                    multisample && request.AntiAliasingFilterMode == EAntiAliasingFilterMode.Tent2x2, out reason),
                 _ => UnsupportedNativeStage(out reason),
             };
         }
@@ -110,7 +114,7 @@ public partial class OpenGLRenderer
         reason = "Ready"; return true;
     }
 
-    private bool DispatchNativeOpaque(OpenGLAdvancedNativeBufferStorage buffers, uint view, uint tilesX, uint tilesY, uint depthSlices, bool multisample, out string reason)
+    private bool DispatchNativeOpaque(OpenGLAdvancedNativeBufferStorage buffers, uint view, uint width, uint height, uint tilesX, uint tilesY, uint depthSlices, bool multisample, bool msaaTent2x2, out string reason)
     {
         if (GenericToAPI<GLRenderProgram>(_advancedBuildFroxelsProgram) is not { } froxels ||
             GenericToAPI<GLRenderProgram>(_advancedShadeBackgroundProgram) is not { } background ||
@@ -130,8 +134,11 @@ public partial class OpenGLRenderer
         {
             // Each invocation owns one pixel and resolves every sample once;
             // per-material indirect lists cannot represent mixed-surface pixels.
+            // Tent2x2 emits a 14x14 output tile per 16x16 workgroup with a 1px apron.
+            uint msaaDispatchX = msaaTent2x2 ? DivideRoundUp(width, 14u) : tilesX;
+            uint msaaDispatchY = msaaTent2x2 ? DivideRoundUp(height, 14u) : tilesY;
             buffers.BindPushConstants(view, 0u);
-            RawGL.DispatchCompute(tilesX, tilesY, 1u);
+            RawGL.DispatchCompute(msaaDispatchX, msaaDispatchY, 1u);
             RawGL.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit | MemoryBarrierMask.FramebufferBarrierBit);
             reason = "Ready";
             return true;

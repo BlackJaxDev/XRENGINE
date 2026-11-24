@@ -597,7 +597,8 @@ public partial class DefaultRenderPipeline
                 ForwardPassFBOName,
                 colorAttachmentCount: 1,
                 resolveDepthStencil: true,
-                depthViewTextureName: ForwardPassMsaaDepthViewTextureName);
+                depthViewTextureName: ForwardPassMsaaDepthViewTextureName,
+                colorViewTextureName: ForwardPassMsaaColorTextureName);
             msaaResolve.TrueCommands = resolveCmds;
         }
 

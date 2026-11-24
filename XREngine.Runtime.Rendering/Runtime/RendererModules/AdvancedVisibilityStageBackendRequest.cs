@@ -50,6 +50,9 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// <summary>Render time frozen with the authored stage family.</summary>
     public float RenderTimeSeconds { get; init; }
 
+    /// <summary>Anti-aliasing reconstruction filter applied by multisample opaque shading.</summary>
+    public EAntiAliasingFilterMode AntiAliasingFilterMode { get; init; }
+
     /// <summary>
     /// True when the native opaque shading stage also records the RVC shadelet
     /// telemetry kernel after its last view. It is not part of the family identity.

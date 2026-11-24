@@ -1,10 +1,15 @@
+using XREngine.Components.Physics;
+using XREngine.Data.Tools;
+
 namespace XREngine.Scene.Physics.Jolt;
 
 /// <summary>
 /// Explicit Jolt construction adapter. Jolt-native objects remain behind neutral contracts.
 /// </summary>
-internal sealed class JoltBackendService(JoltScene scene) : IPhysicsBackendService
+internal sealed class JoltBackendService(JoltScene scene) : IPhysicsBackendService, IPhysicsConvexHullInstaller
 {
+    public void PrepareAndAttach(StaticRigidBodyComponent component, IReadOnlyList<CoACD.ConvexHullMesh> hulls)
+        => JoltConvexHullInstaller.PrepareAndAttach(component, hulls);
     public PhysicsCharacterControllerCapabilities CharacterControllerCapabilities
         => PhysicsCharacterControllerCapabilities.DisplacementInput
             | PhysicsCharacterControllerCapabilities.VelocityInput

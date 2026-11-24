@@ -765,15 +765,8 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         if (fbo.Targets is not { Length: 2 } targets)
             return false;
 
-        var (colorTarget, colorAttachment, mipLevel, layerIndex) = targets[0];
-        if (colorAttachment != EFrameBufferAttachment.ColorAttachment0
-            || mipLevel != 0
-            || layerIndex != -1
-            || colorTarget is not XRRenderBuffer renderBuffer
-            || renderBuffer.Type != GetForwardMsaaColorFormat())
-            return false;
-
-        return HasTextureAttachment(targets[1], ForwardPassMsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
+        return HasTextureAttachment(targets[0], ForwardPassMsaaColorTextureName, EFrameBufferAttachment.ColorAttachment0)
+            && HasTextureAttachment(targets[1], ForwardPassMsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
     }
 
     private bool NeedsRecreatePostProcessOutputFbo(XRFrameBuffer fbo)
@@ -1437,6 +1430,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     public const string ForwardPassFBOName = "ForwardPassFBO";
     public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
     public const string ForwardPassMsaaColorRenderBufferName = "ForwardPassMSAAColor";
+    public const string ForwardPassMsaaColorTextureName = "ForwardPassMSAAColor";
     public const string SceneCopyFBOName = "SceneCopyFBO";
     public const string TransparentSceneCopyFBOName = "TransparentSceneCopyFBO";
     public const string DeferredTransparencyBlurFBOName = "DeferredTransparencyBlurFBO";

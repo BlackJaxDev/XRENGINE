@@ -119,6 +119,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public XRViewport? LastWindowViewport { get; private set; }
     public bool? EffectiveOutputHDRThisFrame { get; private set; }
     public EAntiAliasingMode? EffectiveAntiAliasingModeThisFrame { get; private set; }
+    public EAntiAliasingFilterMode? EffectiveAntiAliasingFilterModeThisFrame { get; private set; }
     public uint? EffectiveMsaaSampleCountThisFrame { get; private set; }
     public float? EffectiveTsrRenderScaleThisFrame { get; private set; }
     /// <summary>

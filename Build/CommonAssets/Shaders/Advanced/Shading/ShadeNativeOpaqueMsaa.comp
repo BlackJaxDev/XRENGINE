@@ -52,6 +52,13 @@ XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
 #include "ShadeNativeOpaqueEvaluator.glslinc"
 
 const uint XR_ADV_VIEW_FLAG_REVERSED_DEPTH = 1u << 1u;
+// Matches MsaaTent2x2ResolveFlag in Vulkan and OpenGL native shading dispatch.
+const uint XR_ADV_SHADING_MSAA_TENT_2X2 = 1u << 29u;
+
+// Stores up to 8 fp16-packed (rgb, covered) samples per pixel for the 16x16
+// workgroup (14x14 output tile + 1-pixel apron on every side). 16,384 bytes
+// fits within the guaranteed Vulkan minimum compute shared-memory limit.
+shared uvec2 s_TentSamples[256 * 8];
 
 bool XR_ADV_MsaaDepthIsValid(float depth)
 {
@@ -63,12 +70,54 @@ bool XR_ADV_MsaaDepthIsCloser(float candidate, float current, bool reversedDepth
     return reversedDepth ? candidate > current : candidate < current;
 }
 
-void XR_ADV_StoreUncoveredMsaaPixel(uvec2 pixel, uint viewIndex)
+vec2 XR_ADV_StandardMsaaSamplePosition(int sampleCount, int sampleIndex)
+{
+    if (sampleCount == 2)
+        return sampleIndex == 0 ? vec2(0.75, 0.75) : vec2(0.25, 0.25);
+    if (sampleCount == 4)
+    {
+        const vec2 offsets4[4] = vec2[4](
+            vec2(0.375, 0.125),
+            vec2(0.875, 0.375),
+            vec2(0.125, 0.625),
+            vec2(0.625, 0.875));
+        return offsets4[clamp(sampleIndex, 0, 3)];
+    }
+    if (sampleCount == 8)
+    {
+        const vec2 offsets8[8] = vec2[8](
+            vec2(0.5625, 0.3125),
+            vec2(0.4375, 0.6875),
+            vec2(0.8125, 0.5625),
+            vec2(0.3125, 0.1875),
+            vec2(0.1875, 0.8125),
+            vec2(0.0625, 0.4375),
+            vec2(0.6875, 0.9375),
+            vec2(0.9375, 0.0625));
+        return offsets8[clamp(sampleIndex, 0, 7)];
+    }
+    return vec2(0.5);
+}
+
+uvec2 XR_ADV_PackTentSample(vec3 radiance, float covered)
+{
+    vec3 clamped = clamp(radiance, vec3(0.0), vec3(65504.0));
+    return uvec2(packHalf2x16(clamped.rg), packHalf2x16(vec2(clamped.b, covered)));
+}
+
+vec4 XR_ADV_UnpackTentSample(uvec2 packed)
+{
+    vec2 rg = unpackHalf2x16(packed.x);
+    vec2 ba = unpackHalf2x16(packed.y);
+    return vec4(rg, ba);
+}
+
+void XR_ADV_StoreUncoveredMsaaPixel(uvec2 pixel, uint viewIndex, vec3 radiance, float coverage)
 {
     imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex),
-        vec4(max(u_Push.backgroundColor.rgb, vec3(0.0)), 0.0));
+        vec4(max(radiance, vec3(0.0)), clamp(coverage, 0.0, 1.0)));
     imageStore(Velocity, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
-    imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
+    imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(coverage > 1e-4 ? 1.0 : 0.0));
     if (XR_ADV_StoresShadingDiagnostics())
         imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(0u));
     if (!XR_ADV_ExportsMaterialSurfaceInputs()) return;
@@ -83,26 +132,29 @@ void main()
 #if defined(XR_ADV_SHADING_ADDRESS_ROOT_VERSION)
     u_Push = XR_ADV_LoadShadingParameters();
 #endif
-    uvec2 pixel = gl_GlobalInvocationID.xy;
     uint viewIndex = u_Push.viewIndex;
-    if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount)
-        return;
+    bool useTent2x2 = (u_Push.flags & XR_ADV_SHADING_MSAA_TENT_2X2) != 0u;
+    ivec2 pixelCoord = useTent2x2
+        ? ivec2(gl_WorkGroupID.xy * 14u) + ivec2(gl_LocalInvocationID.xy) - ivec2(1, 1)
+        : ivec2(gl_GlobalInvocationID.xy);
+    bool inBounds = all(greaterThanEqual(pixelCoord, ivec2(0))) &&
+        all(lessThan(pixelCoord, ivec2(u_Push.screenExtent))) &&
+        viewIndex < u_Push.viewCount;
 
-    ivec3 rawCoordinate = ivec3(pixel, int(viewIndex));
     int sampleCount = textureSamples(RawVisibilityIdentity);
-    if (sampleCount <= 0)
+    vec3 backgroundColor = max(u_Push.backgroundColor.rgb, vec3(0.0));
+    uint tid = gl_LocalInvocationID.y * 16u + gl_LocalInvocationID.x;
+    uint sampleBase = tid * 8u;
+    uvec2 packedBackground = XR_ADV_PackTentSample(backgroundColor, 0.0);
+    bool reversedDepth = false;
+    if (viewIndex < u_Push.viewCount)
     {
-        XR_ADV_StoreUncoveredMsaaPixel(pixel, viewIndex);
-        return;
+        XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+        reversedDepth = (view.flags & XR_ADV_VIEW_FLAG_REVERSED_DEPTH) != 0u ||
+            view.depthParams.w != 0.0;
     }
 
-    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
-    bool reversedDepth = (view.flags & XR_ADV_VIEW_FLAG_REVERSED_DEPTH) != 0u ||
-        view.depthParams.w != 0.0;
     float nearestDepth = reversedDepth ? 0.0 : 1.0;
-    float ambientOcclusion = texelFetch(
-        AmbientOcclusion, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
-
     int coveredCount = 0;
     vec3 radianceSum = vec3(0.0);
     float reactive = 0.0;
@@ -112,73 +164,168 @@ void main()
     XRAdvancedOpaqueSampleResult firstResult = XR_ADV_NeutralOpaqueSampleResult();
     XRAdvancedOpaqueSampleResult nearestResult = firstResult;
 
-    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+    if (inBounds && sampleCount > 0)
     {
-        uvec2 identity = texelFetch(
-            RawVisibilityIdentity, rawCoordinate, sampleIndex).rg;
-        if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID)
-            continue;
+        uvec2 pixel = uvec2(pixelCoord);
+        ivec3 rawCoordinate = ivec3(pixelCoord, int(viewIndex));
+        float ambientOcclusion = texelFetch(
+            AmbientOcclusion, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
 
-        uint metadata = texelFetch(
-            RawVisibilityMetadata, rawCoordinate, sampleIndex).r;
-        uint selection = texelFetch(
-            RawVisibilitySelection, rawCoordinate, sampleIndex).r;
-        float depth = texelFetch(
-            RawVisibilityDepth, rawCoordinate, sampleIndex).r;
-        vec2 samplePosition = texelFetch(
-            RawVisibilitySamplePosition, rawCoordinate, sampleIndex).rg;
-
-        XRAdvancedOpaqueSampleResult sampleResult;
-        XR_ADV_EvaluateNativeOpaqueSample(
-            pixel,
-            viewIndex,
-            identity,
-            metadata,
-            depth,
-            vec2(pixel) + samplePosition,
-            ambientOcclusion,
-            false,
-            0u,
-            false,
-            sampleResult);
-
-        radianceSum += max(sampleResult.radiance, vec3(0.0));
-        reactive = max(reactive, sampleResult.reactive);
-        uvec4 tuple = uvec4(identity, metadata, selection);
-        if (coveredCount == 0)
+        for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
         {
-            firstTuple = tuple;
-            firstResult = sampleResult;
+            uvec2 identity = texelFetch(
+                RawVisibilityIdentity, rawCoordinate, sampleIndex).rg;
+            if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID)
+            {
+                if (useTent2x2 && sampleIndex < 8)
+                    s_TentSamples[sampleBase + uint(sampleIndex)] = packedBackground;
+                continue;
+            }
+
+            uint metadata = texelFetch(
+                RawVisibilityMetadata, rawCoordinate, sampleIndex).r;
+            uint selection = texelFetch(
+                RawVisibilitySelection, rawCoordinate, sampleIndex).r;
+            float depth = texelFetch(
+                RawVisibilityDepth, rawCoordinate, sampleIndex).r;
+            vec2 samplePosition = texelFetch(
+                RawVisibilitySamplePosition, rawCoordinate, sampleIndex).rg;
+
+            XRAdvancedOpaqueSampleResult sampleResult;
+            XR_ADV_EvaluateNativeOpaqueSample(
+                pixel,
+                viewIndex,
+                identity,
+                metadata,
+                depth,
+                vec2(pixel) + samplePosition,
+                ambientOcclusion,
+                false,
+                0u,
+                false,
+                sampleResult);
+
+            vec3 clampedRadiance = max(sampleResult.radiance, vec3(0.0));
+            radianceSum += clampedRadiance;
+            if (useTent2x2 && sampleIndex < 8)
+                s_TentSamples[sampleBase + uint(sampleIndex)] = XR_ADV_PackTentSample(clampedRadiance, 1.0);
+
+            reactive = max(reactive, sampleResult.reactive);
+            uvec4 tuple = uvec4(identity, metadata, selection);
+            if (coveredCount == 0)
+            {
+                firstTuple = tuple;
+                firstResult = sampleResult;
+            }
+            else
+                mixedVisibility = mixedVisibility || any(notEqual(tuple, firstTuple));
+            ++coveredCount;
+
+            // Match ResolveAdvancedMsaaVisibility.frag exactly: only a finite
+            // normalized depth participates, strict comparison preserves the first
+            // sample on ties, and every chosen sidecar comes from this same sample.
+            if (XR_ADV_MsaaDepthIsValid(depth) &&
+                (!foundNearest || XR_ADV_MsaaDepthIsCloser(depth, nearestDepth, reversedDepth)))
+            {
+                foundNearest = true;
+                nearestDepth = depth;
+                nearestResult = sampleResult;
+            }
+        }
+    }
+
+    if (useTent2x2)
+    {
+        barrier();
+
+        // Only the 14x14 interior threads of each 16x16 workgroup emit output
+        // pixels; the 1-pixel apron threads only populate s_TentSamples.
+        bool isInterior = inBounds &&
+            gl_LocalInvocationID.x > 0u && gl_LocalInvocationID.x < 15u &&
+            gl_LocalInvocationID.y > 0u && gl_LocalInvocationID.y < 15u;
+        if (isInterior)
+        {
+            if (sampleCount <= 0)
+            {
+                XR_ADV_StoreUncoveredMsaaPixel(uvec2(pixelCoord), viewIndex, backgroundColor, 0.0);
+            }
+            else
+            {
+                int tentSamples = min(sampleCount, 8);
+                vec3 colorSum = vec3(0.0);
+                float coveredWeight = 0.0;
+                float totalWeight = 0.0;
+
+                for (int oy = -1; oy <= 1; ++oy)
+                {
+                    for (int ox = -1; ox <= 1; ++ox)
+                    {
+                        ivec2 neighborPixel = pixelCoord + ivec2(ox, oy);
+                        if (any(lessThan(neighborPixel, ivec2(0))) ||
+                            any(greaterThanEqual(neighborPixel, ivec2(u_Push.screenExtent))))
+                            continue;
+
+                        uint neighborLx = uint(int(gl_LocalInvocationID.x) + ox);
+                        uint neighborLy = uint(int(gl_LocalInvocationID.y) + oy);
+                        uint neighborBase = (neighborLy * 16u + neighborLx) * 8u;
+                        ivec3 neighborCoord = ivec3(neighborPixel, int(viewIndex));
+
+                        for (int s = 0; s < tentSamples; ++s)
+                        {
+                            vec4 sampleData = XR_ADV_UnpackTentSample(s_TentSamples[neighborBase + uint(s)]);
+                            vec2 samplePos = sampleData.a > 0.5
+                                ? clamp(texelFetch(RawVisibilitySamplePosition, neighborCoord, s).rg, vec2(0.0), vec2(1.0))
+                                : XR_ADV_StandardMsaaSamplePosition(sampleCount, s);
+                            vec2 delta = vec2(float(ox), float(oy)) + (samplePos - vec2(0.5));
+                            float wx = 1.0 - abs(delta.x);
+                            float wy = 1.0 - abs(delta.y);
+                            if (wx <= 0.0 || wy <= 0.0)
+                                continue;
+
+                            float w = wx * wy;
+                            colorSum += sampleData.rgb * w;
+                            coveredWeight += sampleData.a * w;
+                            totalWeight += w;
+                        }
+                    }
+                }
+
+                float invWeight = 1.0 / max(totalWeight, 1e-6);
+                vec3 resolvedRadiance = colorSum * invWeight;
+                float resolvedCoverage = clamp(coveredWeight * invWeight, 0.0, 1.0);
+                if (coveredCount == 0)
+                {
+                    XR_ADV_StoreUncoveredMsaaPixel(uvec2(pixelCoord), viewIndex, resolvedRadiance, resolvedCoverage);
+                }
+                else
+                {
+                    XRAdvancedOpaqueSampleResult result = foundNearest ? nearestResult : firstResult;
+                    result.radiance = resolvedRadiance;
+                    result.opacity = resolvedCoverage;
+                    bool partialCoverage = coveredCount != sampleCount || resolvedCoverage < 0.999;
+                    result.reactive = (partialCoverage || mixedVisibility) ? 1.0 : reactive;
+                    XR_ADV_StoreOpaqueSampleResult(uvec2(pixelCoord), viewIndex, result);
+                }
+            }
+        }
+    }
+    else if (inBounds)
+    {
+        if (sampleCount <= 0 || coveredCount == 0)
+        {
+            XR_ADV_StoreUncoveredMsaaPixel(uvec2(pixelCoord), viewIndex, backgroundColor, 0.0);
         }
         else
-            mixedVisibility = mixedVisibility || any(notEqual(tuple, firstTuple));
-        ++coveredCount;
-
-        // Match ResolveAdvancedMsaaVisibility.frag exactly: only a finite
-        // normalized depth participates, strict comparison preserves the first
-        // sample on ties, and every chosen sidecar comes from this same sample.
-        if (XR_ADV_MsaaDepthIsValid(depth) &&
-            (!foundNearest || XR_ADV_MsaaDepthIsCloser(depth, nearestDepth, reversedDepth)))
         {
-            foundNearest = true;
-            nearestDepth = depth;
-            nearestResult = sampleResult;
+            XRAdvancedOpaqueSampleResult result = foundNearest ? nearestResult : firstResult;
+            float inverseSampleCount = 1.0 / float(sampleCount);
+            float coverage = float(coveredCount) * inverseSampleCount;
+            result.radiance = radianceSum * inverseSampleCount +
+                backgroundColor * (1.0 - coverage);
+            result.opacity = coverage;
+            bool partialCoverage = coveredCount != sampleCount;
+            result.reactive = (partialCoverage || mixedVisibility) ? 1.0 : reactive;
+            XR_ADV_StoreOpaqueSampleResult(uvec2(pixelCoord), viewIndex, result);
         }
     }
-
-    if (coveredCount == 0)
-    {
-        XR_ADV_StoreUncoveredMsaaPixel(pixel, viewIndex);
-        return;
-    }
-
-    XRAdvancedOpaqueSampleResult result = foundNearest ? nearestResult : firstResult;
-    float inverseSampleCount = 1.0 / float(sampleCount);
-    float coverage = float(coveredCount) * inverseSampleCount;
-    result.radiance = radianceSum * inverseSampleCount +
-        max(u_Push.backgroundColor.rgb, vec3(0.0)) * (1.0 - coverage);
-    result.opacity = coverage;
-    bool partialCoverage = coveredCount != sampleCount;
-    result.reactive = (partialCoverage || mixedVisibility) ? 1.0 : reactive;
-    XR_ADV_StoreOpaqueSampleResult(pixel, viewIndex, result);
 }

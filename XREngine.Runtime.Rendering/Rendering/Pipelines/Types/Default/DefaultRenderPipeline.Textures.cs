@@ -573,6 +573,24 @@ public partial class DefaultRenderPipeline
         };
     }
 
+    private XRTexture CreateForwardPassMsaaColorTexture()
+    {
+        XRTexture2D t = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba16f,
+            EPixelFormat.Rgba,
+            EPixelType.HalfFloat);
+        t.Resizable = false;
+        t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        t.MultiSampleCount = MsaaSampleCount;
+        t.FixedSampleLocations = true;
+        t.MinFilter = ETexMinFilter.Nearest;
+        t.MagFilter = ETexMagFilter.Nearest;
+        t.Name = ForwardPassMsaaColorTextureName;
+        t.SamplerName = ForwardPassMsaaColorTextureName;
+        return t;
+    }
+
     private XRTexture CreateForwardPassMsaaDepthStencilTexture()
     {
         XRTexture2D t = XRTexture2D.CreateFrameBufferTexture(

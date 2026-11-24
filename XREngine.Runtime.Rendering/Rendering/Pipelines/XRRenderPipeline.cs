@@ -851,6 +851,14 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     /// <summary>
+    /// Resolves the effective anti-aliasing reconstruction filter for the current frame.
+    /// </summary>
+    /// <returns>The effective anti-aliasing reconstruction filter for the current frame.</returns>
+    internal static EAntiAliasingFilterMode ResolveEffectiveAntiAliasingFilterModeForFrame()
+        => TryCurrentPipeline?.EffectiveAntiAliasingFilterModeThisFrame
+            ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingFilterMode;
+
+    /// <summary>
     /// Resolves the effective MSAA sample count for the current frame, considering the current render pipeline instance and rendering state.
     /// </summary>
     /// <returns>The effective MSAA sample count for the current frame.</returns>

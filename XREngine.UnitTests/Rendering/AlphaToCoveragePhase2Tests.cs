@@ -432,12 +432,12 @@ public sealed class AlphaToCoveragePhase2Tests
     [Test]
     public void ForwardPassMsaaColorBuffer_UsesHdrSceneFormat()
     {
-        string pipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
-        pipelineFboSource.ShouldContain("private ERenderBufferStorage GetForwardMsaaColorFormat()");
-        pipelineFboSource.ShouldContain("=> ERenderBufferStorage.Rgba16f;");
+        string pipelineTexturesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.Textures.cs").Replace("\r\n", "\n");
+        pipelineTexturesSource.ShouldContain("private XRTexture CreateForwardPassMsaaColorTexture()");
+        pipelineTexturesSource.ShouldContain("EPixelInternalFormat.Rgba16f");
 
         string pipelineSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs");
-        pipelineSource.ShouldContain("renderBuffer.Type != GetForwardMsaaColorFormat())");
+        pipelineSource.ShouldContain("HasTextureAttachment(targets[0], ForwardPassMsaaColorTextureName, EFrameBufferAttachment.ColorAttachment0)");
 
         string advancedPipelineFboSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.FBOs.cs").Replace("\r\n", "\n");
         advancedPipelineFboSource.ShouldContain("private ERenderBufferStorage GetForwardMsaaColorFormat()");

@@ -1080,13 +1080,11 @@ public partial class DefaultRenderPipeline
 
     private XRFrameBuffer CreateForwardPassMsaaFBO()
     {
-        XRRenderBuffer colorBuffer = TryCurrentPipeline?.GetRenderBuffer(ForwardPassMsaaColorRenderBufferName)
-            ?? throw new InvalidOperationException($"Missing declared renderbuffer '{ForwardPassMsaaColorRenderBufferName}'.");
-
+        IFrameBufferAttachement colorAttach = EnsureTextureAttachment(ForwardPassMsaaColorTextureName, CreateForwardPassMsaaColorTexture);
         IFrameBufferAttachement depthAttach = EnsureTextureAttachment(ForwardPassMsaaDepthStencilTextureName, CreateForwardPassMsaaDepthStencilTexture);
 
         XRFrameBuffer fbo = new(
-            (colorBuffer, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+            (colorAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (depthAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
             Name = ForwardPassMsaaFBOName
@@ -1386,17 +1384,6 @@ public partial class DefaultRenderPipeline
     private ERenderBufferStorage GetForwardMsaaColorFormat()
         // ForwardPassMSAAFBO always resolves into HDRSceneTex, which is fixed at RGBA16F.
         => ERenderBufferStorage.Rgba16f;
-
-    private XRRenderBuffer CreateForwardPassMsaaColorRenderBuffer()
-    {
-        XRRenderBuffer colorBuffer = new(InternalWidth, InternalHeight, GetForwardMsaaColorFormat(), MsaaSampleCount)
-        {
-            FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
-            Name = ForwardPassMsaaColorRenderBufferName
-        };
-        colorBuffer.Allocate();
-        return colorBuffer;
-    }
 
     private XRFrameBuffer CreateDepthPreloadFBO()
     {

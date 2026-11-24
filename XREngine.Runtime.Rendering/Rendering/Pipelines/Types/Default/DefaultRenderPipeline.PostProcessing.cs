@@ -839,6 +839,7 @@ public partial class DefaultRenderPipeline
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
+        program.Uniform("AntiAliasingFilterMode", (int)ResolveEffectiveAntiAliasingFilterModeForFrame());
     }
 
     private void BrightPassFBO_SettingUniforms(XRRenderProgram program)
@@ -936,5 +937,6 @@ public partial class DefaultRenderPipeline
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
+        program.Uniform("AntiAliasingFilterMode", (int)ResolveEffectiveAntiAliasingFilterModeForFrame());
     }
 }

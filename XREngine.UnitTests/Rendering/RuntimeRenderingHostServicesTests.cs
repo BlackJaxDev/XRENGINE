@@ -841,6 +841,7 @@ public sealed class RuntimeRenderingHostServicesTests
         public bool IsPlayModeTransitioning => false;
         public string PlayModeStateName => "Stopped";
         public EAntiAliasingMode DefaultAntiAliasingMode => EAntiAliasingMode.None;
+        public EAntiAliasingFilterMode DefaultAntiAliasingFilterMode => EAntiAliasingFilterMode.Default;
         public uint DefaultMsaaSampleCount => 1u;
         public bool DefaultOutputHDR => false;
         public float DefaultTsrRenderScale => 1.0f;

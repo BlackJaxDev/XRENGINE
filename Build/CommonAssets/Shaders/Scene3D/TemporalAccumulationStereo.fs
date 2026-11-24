@@ -34,6 +34,7 @@ uniform float ReactiveLumaThreshold;
 uniform float DepthDiscontinuityScale;
 uniform float ConfidencePower;
 uniform int DebugMode;
+uniform int AntiAliasingFilterMode;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
@@ -88,6 +89,51 @@ vec3 SampleCurrentReconstruction(sampler2DArray tex, vec2 uv)
         texture(tex, EyeUv(uv + vec2(-1.0,  1.0) * TexelSize)).rgb +
         texture(tex, EyeUv(uv + vec2( 1.0,  1.0) * TexelSize)).rgb;
     return (center + axial * 2.0 + diagonal) * (1.0 / 16.0);
+}
+
+// Integrates the 1D tent kernel W(x) = 1 - |x| on [-1, 1] over interval [aIn, bIn].
+float Tent1DIntegral(float aIn, float bIn)
+{
+    float a = clamp(aIn, -1.0, 1.0);
+    float b = clamp(bIn, -1.0, 1.0);
+    if (b <= a)
+        return 0.0;
+    return (b - 0.5 * b * abs(b)) - (a - 0.5 * a * abs(a));
+}
+
+// Integrates the 2x2 bilinear tent kernel W(x, y) = (1 - |x|)(1 - |y|) across
+// the overlapping 3x3 texel squares of the active multiview layer.
+vec3 SampleTent2x2(sampler2DArray tex, vec2 uv)
+{
+    ivec2 extent = max(textureSize(tex, 0).xy, ivec2(1));
+    int layer = int(gl_ViewID_OVR);
+    vec2 position = clamp(uv, vec2(0.0), vec2(1.0)) * vec2(extent);
+    ivec2 centerPixel = ivec2(floor(position));
+    float wx[3];
+    float wy[3];
+    for (int i = -1; i <= 1; ++i)
+    {
+        wx[i + 1] = Tent1DIntegral(float(centerPixel.x + i) - position.x,
+            float(centerPixel.x + i + 1) - position.x);
+        wy[i + 1] = Tent1DIntegral(float(centerPixel.y + i) - position.y,
+            float(centerPixel.y + i + 1) - position.y);
+    }
+
+    vec3 colorSum = vec3(0.0);
+    float weightSum = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            float weight = wx[x + 1] * wy[y + 1];
+            if (weight <= 1e-6)
+                continue;
+            ivec2 samplePixel = clamp(centerPixel + ivec2(x, y), ivec2(0), extent - ivec2(1));
+            colorSum += texelFetch(tex, ivec3(samplePixel, layer), 0).rgb * weight;
+            weightSum += weight;
+        }
+    }
+    return colorSum / max(weightSum, 1e-6);
 }
 
 vec2 FindClosestVelocity(vec2 uv)
@@ -172,7 +218,13 @@ void main()
 
     vec4 currentSample = texture(TemporalColorInput, EyeUv(uv));
     vec3 currentColorRaw = currentSample.rgb;
-    vec3 currentColor = mix(currentColorRaw, SampleCurrentReconstruction(TemporalColorInput, uv), 0.18);
+    vec3 currentColor;
+    if (AntiAliasingFilterMode == 1)
+        currentColor = currentColorRaw;
+    else if (AntiAliasingFilterMode == 2)
+        currentColor = SampleTent2x2(TemporalColorInput, uv);
+    else
+        currentColor = mix(currentColorRaw, SampleCurrentReconstruction(TemporalColorInput, uv), 0.18);
     vec3 currentYCoCg = RGBToYCoCg(currentColor);
     float currentLuma = currentYCoCg.x;
 
@@ -192,7 +244,10 @@ void main()
         float historyDepth = texture(HistoryDepth, EyeUv(historySampleUv)).r;
         if (abs(historyDepth - currentDepth) <= DepthRejectThreshold)
         {
-            historyYCoCg = RGBToYCoCg(texture(HistoryColor, EyeUv(historySampleUv)).rgb);
+            vec3 historyRgb = AntiAliasingFilterMode == 2
+                ? SampleTent2x2(HistoryColor, historySampleUv)
+                : texture(HistoryColor, EyeUv(historySampleUv)).rgb;
+            historyYCoCg = RGBToYCoCg(historyRgb);
             historyStats = texture(HistoryExposureVariance, EyeUv(historySampleUv)).rg;
         }
         else

@@ -178,6 +178,7 @@ internal sealed partial class VulkanFrameLoop
             request.HasAuthoredBackground)
         {
             RenderTimeSeconds = request.RenderTimeSeconds,
+            AntiAliasingFilterMode = request.AntiAliasingFilterMode,
             AmbientOcclusionMultiBounce = request.AmbientOcclusionMultiBounce,
             AmbientOcclusionSpecularUsesVisibility = request.AmbientOcclusionSpecularUsesVisibility,
             RecordRvcShadeletTelemetry = request.RecordRvcShadeletTelemetry,

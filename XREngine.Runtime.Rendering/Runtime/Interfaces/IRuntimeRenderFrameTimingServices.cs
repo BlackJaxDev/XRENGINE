@@ -280,6 +280,11 @@ public interface IRuntimeRenderFrameTimingServices
     EAntiAliasingMode DefaultAntiAliasingMode { get; }
 
     /// <summary>
+    /// Gets the default anti-aliasing reconstruction filter used by MSAA, TSR, and TAA.
+    /// </summary>
+    EAntiAliasingFilterMode DefaultAntiAliasingFilterMode { get; }
+
+    /// <summary>
     /// Gets whether NVIDIA DLSS super resolution is enabled by the effective host settings.
     /// </summary>
     bool EnableNvidiaDlss { get; }

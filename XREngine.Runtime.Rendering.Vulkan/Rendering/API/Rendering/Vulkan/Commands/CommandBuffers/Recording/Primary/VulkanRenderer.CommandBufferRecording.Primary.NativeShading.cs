@@ -26,6 +26,8 @@ internal sealed partial class VulkanCommandRuntime
     private const uint NativeDecalBufferShadingFlag = 1u << 16;
     // Matches XR_ADV_CLASSIFICATION_PIXEL_COUNTERS in ClassifyTiles.comp.
     private const uint ClassificationPixelCountersFlag = 1u << 30;
+    // Matches XR_ADV_SHADING_MSAA_TENT_2X2 in ShadeNativeOpaqueMsaa.comp.
+    private const uint MsaaTent2x2ResolveFlag = 1u << 29;
 
     /// <summary>
     /// Records one indirect dispatch for each dense shading kernel in <paramref name="kernels"/>.
@@ -144,6 +146,7 @@ internal sealed partial class VulkanCommandRuntime
                 payload.Request.AdvancedEdgeHalfRateShading, payload.Request.AdvancedEdgeHalfRateRadius,
                 payload.Request.AdvancedEdgeHalfRateDebugTint, closure.UsesMultisampleVisibility) |
             (payload.Request.DecalBufferEnabled && closure.HasDecalBuffer ? NativeDecalBufferShadingFlag : 0u) |
+            (closure.UsesMultisampleVisibility && payload.Request.AntiAliasingFilterMode == EAntiAliasingFilterMode.Tent2x2 ? MsaaTent2x2ResolveFlag : 0u) |
             (closure.ShadingDiagnosticsPlaceholder ? ShadingDiagnosticsDisabledFlag : 0u), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
@@ -303,10 +306,14 @@ internal sealed partial class VulkanCommandRuntime
             {
                 // MSAA must shade every covered sample at its own position.
                 // Classification is pixel-granular and would omit edge materials,
-                // so the MS variant performs one full-screen dispatch.
+                // so the MS variant performs one full-screen dispatch. Tent2x2
+                // emits a 14x14 output tile per 16x16 workgroup with a 1px apron.
+                bool useTent2x2 = payload.Request.AntiAliasingFilterMode == EAntiAliasingFilterMode.Tent2x2;
+                uint msaaDispatchX = useTent2x2 ? DivideRoundUp(width, 14) : tilesX;
+                uint msaaDispatchY = useTent2x2 ? DivideRoundUp(height, 14) : tilesY;
                 push = push with { KernelIndex = 0u };
                 PushNativeConstants(state.CommandBuffer, shade, in push, parameterAddress);
-                Api.CmdDispatch(state.CommandBuffer, tilesX, tilesY, 1u);
+                Api.CmdDispatch(state.CommandBuffer, msaaDispatchX, msaaDispatchY, 1u);
             }
             else
                 RecordNativeKernelDispatches(state.CommandBuffer, in closure, shade, ref push, parameterAddress, standardKernels);

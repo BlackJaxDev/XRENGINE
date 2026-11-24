@@ -37,6 +37,9 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// <summary>Render time frozen with this authored visibility family.</summary>
     internal float RenderTimeSeconds { get; init; }
 
+    /// <summary>Anti-aliasing reconstruction filter applied by multisample opaque shading.</summary>
+    internal EAntiAliasingFilterMode AntiAliasingFilterMode { get; init; }
+
     /// <summary>Applies the multi-bounce approximation to occluded diffuse light.</summary>
     internal bool AmbientOcclusionMultiBounce { get; init; }
 

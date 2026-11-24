@@ -540,6 +540,7 @@ public static partial class RuntimeEngine
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
                 private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Tsr;
+                private EAntiAliasingFilterMode _antiAliasingFilterMode = EAntiAliasingFilterMode.Default;
                 private float _tsrRenderScale = 0.75f;
                 private bool _enableNvidiaDlss = false;
                 private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;
@@ -1152,6 +1153,17 @@ public static partial class RuntimeEngine
                         if (!SetField(ref _antiAliasingMode, value))
                             return;
                     }
+                }
+
+                /// <summary>
+                /// Selects the reconstruction filter applied by MSAA, TSR, and TAA passes.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Selects the reconstruction filter (Default, Box1x1, Tent2x2) used by MSAA, TSR, and TAA.")]
+                public EAntiAliasingFilterMode AntiAliasingFilterMode
+                {
+                    get => _antiAliasingFilterMode;
+                    set => SetField(ref _antiAliasingFilterMode, value);
                 }
 
                 /// <summary>

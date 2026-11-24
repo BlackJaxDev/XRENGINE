@@ -1499,6 +1499,8 @@ Keep the full-overdraw pass mono-only (`!Stereo`) and after post-process resourc
 
 The default AA mode (`EngineSettings.AntiAliasingMode`) is `Tsr`, and the default `TsrRenderScale` is 0.75. TSR renders each axis at 75 percent of the output size and upscales to the output size. At 1.0, TSR renders at full resolution and acts as temporal anti-aliasing. A view without TSR history (for example a Default-pipeline per-eye OpenXR eye) keeps its full internal size. A camera `AntiAliasingModeOverride` or `TsrRenderScaleOverride` replaces these values for one camera.
 
+`AntiAliasingFilterMode` (`EAntiAliasingFilterMode`: `Default`, `Box1x1`, `Tent2x2`) selects the reconstruction filter for `Msaa`, `Tsr`, and `Taa` through the `UserSettings` > `GameStartupSettings` > `EngineSettings` cascade. `Default` keeps each mode's built-in filter. `Box1x1` uses a 1x1 box footprint with no wider neighbor overlap or post-resolve sharpen. `Tent2x2` applies a 2x2 bilinear tent kernel across neighboring MSAA subpixel samples (in `ShadeNativeOpaqueMsaa.comp`, `AdvancedShadeMsaaResolve.wgsl`, and `ResolveColorFromTextureMS.fs`) and across overlapping 3x3 texel squares in TAA and TSR.
+
 `DLAA` is a first-class AA mode in the default render pipeline. It requests the existing NVIDIA DLSS vendor path at native internal resolution, bypasses the in-engine FXAA/SMAA/TSR post-AA chain, and fails visibly when the DLSS runtime or compatible NVIDIA path is unavailable.
 
 `MFAA` is not exposed as a selectable engine AA mode. NVIDIA MFAA is a driver-side enhancement for MSAA rather than an OpenGL/Vulkan render-pipeline pass the engine can require. Use `MSAA` in XRENGINE and enable MFAA in the NVIDIA driver when testing that path; do not label plain MSAA as MFAA in engine diagnostics.
