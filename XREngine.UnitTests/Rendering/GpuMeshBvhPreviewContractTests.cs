@@ -304,7 +304,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         rendererSource.ShouldContain("internal static void RenderQueued(");
         rendererSource.ShouldNotContain("PushRenderGraphPassIndex(");
         int baseOverlay = overlaySource.IndexOf("BvhDebugOverlayLayer.Base", StringComparison.Ordinal);
-        int debugShapes = overlaySource.IndexOf("RuntimeEngine.Rendering.Debug.RenderShapes(DepthTested);", StringComparison.Ordinal);
+        int debugShapes = overlaySource.IndexOf("RuntimeEngine.Rendering.Debug.RenderShapes(DepthTested, renderPointLines);", StringComparison.Ordinal);
         int highlightOverlay = overlaySource.IndexOf("BvhDebugOverlayLayer.Highlight", StringComparison.Ordinal);
         baseOverlay.ShouldBeGreaterThanOrEqualTo(0);
         debugShapes.ShouldBeGreaterThan(baseOverlay);
@@ -315,11 +315,11 @@ public sealed class GpuMeshBvhPreviewContractTests
         engineDebugSource.ShouldContain("public static void RenderOverlayBox(");
         string cpuOverlayDraw = Slice(
             engineDebugSource,
-            "public static void RenderShapes(bool depthTested)",
+            "public static void RenderShapes(bool depthTested, bool renderPointLines = true)",
             "private static DebugPrimitiveSceneState ResolveDebugPrimitiveSceneState",
             StringComparison.Ordinal);
         int cpuBaseOverlay = cpuOverlayDraw.IndexOf("scene.BaseOverlayLines.Render();", StringComparison.Ordinal);
-        int ordinaryDebugShapes = cpuOverlayDraw.IndexOf("scene.Visualizer.Render();", StringComparison.Ordinal);
+        int ordinaryDebugShapes = cpuOverlayDraw.IndexOf("scene.Visualizer.Render(renderPointLines);", StringComparison.Ordinal);
         int cpuHighlightOverlay = cpuOverlayDraw.IndexOf("scene.HighlightOverlayLines.Render();", StringComparison.Ordinal);
         cpuBaseOverlay.ShouldBeGreaterThanOrEqualTo(0);
         ordinaryDebugShapes.ShouldBeGreaterThan(cpuBaseOverlay);
@@ -331,7 +331,7 @@ public sealed class GpuMeshBvhPreviewContractTests
             "private static void ResetStencilState",
             StringComparison.Ordinal);
         int ensureResources = immediate.IndexOf("EnsureResources(visualizedLines)", StringComparison.Ordinal);
-        int prepareRenderer = immediate.IndexOf("_linesRenderer!.TryPrepareForRendering(forceNoStereo: true)", StringComparison.Ordinal);
+        int prepareRenderer = immediate.IndexOf("_linesRenderer!.TryPrepareForRendering()", StringComparison.Ordinal);
         int dispatch = immediate.IndexOf("_computeProgram.DispatchCompute(", StringComparison.Ordinal);
         int draw = immediate.IndexOf("_linesRenderer.Render(", StringComparison.Ordinal);
         ensureResources.ShouldBeGreaterThanOrEqualTo(0);

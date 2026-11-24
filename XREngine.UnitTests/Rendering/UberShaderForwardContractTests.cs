@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using Shouldly;
@@ -72,9 +73,12 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         normalizedSource.ShouldContain("DirLight dirLight = DirectionalLights[i];");
         normalizedSource.ShouldContain("shadow = XRENGINE_ReadShadowMapDir(i, dirLight, mesh.worldPos, mesh.vertexNormal, geometricNDotL);");
         normalizedSource.ShouldContain("XRENGINE_CalculateDirectPbrLightWithViewDir(\n            dirLight.Base.Color,");
-        source.ShouldContain("calculateForwardPlusPointLightPbr");
-        source.ShouldContain("calculatePointLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, PointLights[i])");
-        source.ShouldContain("calculateSpotLightPbr(mesh, normal, shadowNormal, baseColor, rms, pbr.F0, i, SpotLights[i])");
+        // One local-light loop reads Forward+ tile lights or the regular point and spot arrays.
+        source.ShouldContain("bool trySelectUberLocalLight(int ordinal, int pointCount, int baseIndex, out UberLocalLight selected)");
+        source.ShouldContain("ForwardPlusLocalLight light = ForwardPlusLocalLights[lightIndex];");
+        source.ShouldContain("PointLight light = PointLights[selected.sourceIndex];");
+        source.ShouldContain("SpotLight light = SpotLights[selected.sourceIndex];");
+        source.ShouldContain("vec3 localLighting = calculateUberLocalLighting(mesh, mesh.worldNormal,");
         source.ShouldContain("XRENGINE_ReadShadowMapDir");
         source.ShouldContain("return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], mesh.worldPos, mesh.vertexNormal, geometricNDotL);");
         source.ShouldNotContain("return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], worldPos, normal, max(nDotL, 0.0));");
@@ -89,7 +93,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         uniforms.ShouldContain("uniform float RenderTime;");
         uniforms.ShouldContain("#define u_Time RenderTime");
         uniforms.ShouldNotContain("uniform float Time;");
-        uniforms.ShouldContain("#ifndef XRENGINE_UBER_MVP_FRAGMENT");
+        uniforms.ShouldContain("#if !defined(XRENGINE_UBER_MVP_FRAGMENT) || defined(XRENGINE_UBER_DISABLE_FORWARD_LIGHTING)");
         uniforms.ShouldContain("uniform float ScreenWidth;");
         uniforms.ShouldContain("uniform float ScreenHeight;");
     }
@@ -108,17 +112,24 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     public void UberShaderFragment_LocalShadowVisibilityUsesGeometricReceiverNormal()
     {
         string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
+        string compactSource = CollapseWhitespace(source);
 
-        source.ShouldContain("vec3 shadowNormal = mesh.vertexNormal;");
         source.ShouldContain("shadow = XRENGINE_ReadShadowMapDir(i, dirLight, mesh.worldPos, mesh.vertexNormal, geometricNDotL);");
         source.ShouldContain("return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], mesh.worldPos, mesh.vertexNormal, geometricNDotL);");
-        source.ShouldContain("XRENGINE_ReadShadowMapPoint(lightIndex, light, shadowNormal, mesh.worldPos)");
-        source.ShouldContain("XRENGINE_ReadShadowMapSpot(lightIndex, light, shadowNormal, mesh.worldPos, lightDir)");
-        source.ShouldContain("XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], mesh.vertexNormal, mesh.worldPos)");
-        source.ShouldContain("XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], mesh.vertexNormal, mesh.worldPos, lightToPosN)");
+        compactSource.ShouldContain("XRENGINE_ReadShadowMapPoint(light.sourceIndex, PointLights[light.sourceIndex], mesh.vertexNormal, mesh.worldPos)");
+        compactSource.ShouldContain("XRENGINE_ReadShadowMapSpot(light.sourceIndex, SpotLights[light.sourceIndex], mesh.vertexNormal, mesh.worldPos, direction)");
+        compactSource.ShouldContain("XRENGINE_ReadShadowMapPoint(sourceIndex, PointLights[sourceIndex], mesh.vertexNormal, mesh.worldPos)");
+        compactSource.ShouldContain("XRENGINE_ReadShadowMapSpot(sourceIndex, SpotLights[sourceIndex], mesh.vertexNormal, mesh.worldPos, direction)");
         source.ShouldNotContain("return XRENGINE_ReadShadowMapDir(0, DirectionalLights[0], worldPos, normal, max(nDotL, 0.0));");
-        source.ShouldNotContain("XRENGINE_ReadShadowMapPoint(lightIndex, light, normal, mesh.worldPos)");
-        source.ShouldNotContain("XRENGINE_ReadShadowMapSpot(lightIndex, light, normal, mesh.worldPos, lightDir)");
+
+        // Every local point and spot shadow read uses the geometric receiver normal,
+        // not the normal-mapped shading normal.
+        MatchCollection localShadowReads = Regex.Matches(
+            compactSource,
+            @"XRENGINE_ReadShadowMap(?:Point|Spot)\((?<index>[^,()]+), (?<light>[^,()]+), (?<normal>[^,()]+), mesh\.worldPos");
+        localShadowReads.Count.ShouldBeGreaterThan(0);
+        foreach (Match localShadowRead in localShadowReads)
+            localShadowRead.Groups["normal"].Value.ShouldBe("mesh.vertexNormal", localShadowRead.Value);
     }
 
     [Test]
@@ -154,8 +165,9 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         string normalizedSource = source.Replace("\r\n", "\n");
 
         normalizedSource.ShouldContain("mesh.worldNormal = mesh.vertexNormal;");
-        normalizedSource.ShouldContain("#if !defined(XRENGINE_UBER_DISABLE_NORMAL_MAP) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)");
-        normalizedSource.ShouldContain("#if !defined(XRENGINE_UBER_DISABLE_DETAIL_TEXTURES) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)");
+        // The normal map and detail normal share one tangent-space block that the
+        // depth/normal and shadow pre-passes exclude.
+        normalizedSource.ShouldContain("#if (!defined(XRENGINE_UBER_DISABLE_NORMAL_MAP) || !defined(XRENGINE_UBER_DISABLE_DETAIL_TEXTURES)) && !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)\n    vec3 tangentNormal = calculateTangentNormal(mesh);\n    tangentNormal = applyDetailTangentNormal(mesh, tangentNormal);");
         normalizedSource.ShouldContain("#elif defined(XRENGINE_DEPTH_NORMAL_PREPASS)\n    Normal = XRENGINE_EncodeNormal(mesh.worldNormal);");
     }
 
@@ -164,8 +176,10 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
     {
         string source = LoadShaderSource(Path.Combine("Uber", "UberShader.frag"));
 
-        source.ShouldContain("vec3 calculateStylizedAdditionalLighting(ToonMesh mesh, vec3 baseColor, vec3 normal)");
-        source.ShouldContain("fragData.finalColor += calculateStylizedAdditionalLighting(mesh, fragData.baseColor, mesh.worldNormal);");
+        source.ShouldContain("vec3 calculateStylizedAdditionalDirectionalLighting(ToonMesh mesh, vec3 baseColor, vec3 normal)");
+        source.ShouldContain("directionalLighting = calculateStylizedAdditionalDirectionalLighting(mesh,");
+        source.ShouldContain("vec3 calculateUberLocalLighting(ToonMesh mesh, vec3 normal, vec3 baseColor,");
+        source.ShouldContain("fragData.finalColor = primaryStylizedLighting + (directionalLighting + localLighting);");
         source.ShouldNotContain("fragData.finalColor += calculateForwardDirectLighting(mesh, fragData.baseColor, mesh.worldNormal, surfacePbr, true);");
         source.ShouldContain("case 5: // Flat");
         source.ShouldContain("finalLight = light.color * shadow;");
@@ -178,7 +192,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
 
         source.ShouldContain("switch (_LightingDirectionMode)");
         source.ShouldContain("switch (_LightingColorMode)");
-        source.ShouldContain("if (_LightingIgnoreAmbientColor > 0.0 && _LightingMode != 0)");
+        source.ShouldContain("if (_LightModel == 0 && _LightingIgnoreAmbientColor > 0.0 && _LightingMode != 0)");
         source.ShouldContain("light.indirectColor = mix(light.indirectColor, neutralAmbient, saturate(_LightingIgnoreAmbientColor));");
         source.ShouldContain("vec3 shadowColor = _LightingShadowColor;");
         source.ShouldContain("if (_LightingWrappedNormalization > 0.5)");
@@ -197,8 +211,9 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         string flipbook = LoadShaderSource(Path.Combine("Uber", "flipbook.glsl"));
 
         source.ShouldContain("pbr.specularColor *= max(specTex.rgb * _SpecularTint.rgb, vec3(0.0));");
-        source.ShouldContain("fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr);");
-        source.ShouldContain("mesh.worldNormal = applyDetailNormal(mesh, mesh.worldNormal);");
+        source.ShouldContain("fragData.finalColor += calculateAdvancedSpecular(mesh, mesh.worldNormal, light, surfacePbr, fragData.baseColor);");
+        source.ShouldContain("tangentNormal = applyDetailTangentNormal(mesh, tangentNormal);");
+        source.ShouldContain("mesh.worldNormal = normalize(mesh.TBN * tangentNormal);");
         source.ShouldContain("emissionUV += mesh.vertexColor.rg * _EmissionScrollingVertexColor;");
         source.ShouldContain("vec3 matcapNormal = normalize(mix(mesh.vertexNormal, normal, saturate(_MatcapNormal)));");
         source.ShouldContain("if (_RimBlendMode == 0)");
@@ -593,7 +608,7 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
         source.ShouldContain("layout(location = 12) in vec4 FragColor0;");
         source.ShouldContain("layout(location = 20) in vec3 FragPosLocal;");
         source.ShouldContain("mesh.viewDir = normalize(u_CameraPosition - FragPos);");
-        source.ShouldContain("mesh.TBN = computeImportedOrFallbackWorldTbn(mesh.vertexNormal, FragTan, FragBinorm, mesh.worldPos, mesh.uv[0]);");
+        CollapseWhitespace(source).ShouldContain("mesh.TBN = computeImportedOrFallbackWorldTbn(mesh.vertexNormal, FragTan * frameFacing, FragBinorm * frameFacing, mesh.worldPos, mesh.uv[0]);");
     }
 
     [Test]
@@ -933,6 +948,12 @@ public sealed class UberShaderForwardContractTests : GpuTestBase
 
         return File.ReadAllText(fullPath).Replace("\r\n", "\n", StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Replaces each run of whitespace with one space, so that source checks do not depend on line wrapping.
+    /// </summary>
+    private static string CollapseWhitespace(string source)
+        => Regex.Replace(source, @"\s+", " ");
 
     private static string ReadWorkspaceFile(string relativePath)
     {

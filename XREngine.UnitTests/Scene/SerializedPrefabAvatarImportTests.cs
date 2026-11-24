@@ -180,7 +180,11 @@ public sealed class SerializedPrefabAvatarImportTests
     [Test]
     public void DuplicateSiblingExport_UsesSourceNamesAndPersistentGenerationTwoIdentities()
     {
-        const string modelGuid = "99999999999999999999999999999991";
+        // The prefab holds one instance (fileID 1000) of the model. The model objects get the
+        // identity that the prefab file gives its inherited objects: the prefab GUID and a local
+        // fileID derived from the generation-2 model fileID and the instance fileID.
+        const string prefabGuid = "99999999999999999999999999999992";
+        const long prefabInstanceFileId = 1000L;
         SceneNode root = SerializedSceneImporter.ImportPrefab(
             ResolveFixturePath("Assets", "DuplicateSiblingAvatar.prefab"));
 
@@ -196,32 +200,32 @@ public sealed class SerializedPrefabAvatarImportTests
 
         AssertSourceIdentity(
             root,
-            modelGuid,
-            919132149155446097L,
-            -8679921383154817045L);
+            prefabGuid,
+            InheritedFileId(919132149155446097L, prefabInstanceFileId),
+            InheritedFileId(-8679921383154817045L, prefabInstanceFileId));
         AssertSourceIdentity(
             children[0],
-            modelGuid,
-            -7579103995338469470L,
-            3196138216412401344L);
+            prefabGuid,
+            InheritedFileId(-7579103995338469470L, prefabInstanceFileId),
+            InheritedFileId(3196138216412401344L, prefabInstanceFileId));
         AssertSourceIdentity(
             children[1],
-            modelGuid,
-            -4808815610696325722L,
-            4351210694208761930L);
+            prefabGuid,
+            InheritedFileId(-4808815610696325722L, prefabInstanceFileId),
+            InheritedFileId(4351210694208761930L, prefabInstanceFileId));
 
         children[0].GetComponent<ModelComponent>().ShouldNotBeNull().ID.ShouldBe(
             new SourceAssetIdentity
             {
-                AssetGuid = modelGuid,
-                LocalFileId = 6384671596192732850L,
+                AssetGuid = prefabGuid,
+                LocalFileId = InheritedFileId(6384671596192732850L, prefabInstanceFileId),
                 ObjectKind = SourceAssetObjectKind.Renderer,
             }.ToPersistentID());
         children[1].GetComponent<ModelComponent>().ShouldNotBeNull().ID.ShouldBe(
             new SourceAssetIdentity
             {
-                AssetGuid = modelGuid,
-                LocalFileId = -651623331918672479L,
+                AssetGuid = prefabGuid,
+                LocalFileId = InheritedFileId(-651623331918672479L, prefabInstanceFileId),
                 ObjectKind = SourceAssetObjectKind.Renderer,
             }.ToPersistentID());
     }
@@ -481,6 +485,13 @@ public sealed class SerializedPrefabAvatarImportTests
             }
         }
     }
+
+    /// <summary>
+    /// Calculates the local fileID that a prefab file gives an object inherited from a prefab instance.
+    /// The value is the source fileID XOR the instance fileID, with the sign bit cleared.
+    /// </summary>
+    private static long InheritedFileId(long sourceFileId, long prefabInstanceFileId)
+        => (sourceFileId ^ prefabInstanceFileId) & long.MaxValue;
 
     private static void AssertSourceIdentity(
         SceneNode node,

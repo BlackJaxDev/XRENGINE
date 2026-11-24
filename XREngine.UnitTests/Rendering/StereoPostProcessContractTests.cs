@@ -205,7 +205,7 @@ public sealed class StereoPostProcessContractTests
 
         source.ShouldContain("ResolveBloomMipRegion(width, height, 1)");
         source.ShouldContain("PushRenderArea(copyRegion)");
-        source.ShouldContain("Stereo,\n                        copyRegion);");
+        source.ShouldContain("Stereo,\n                    copyRegion);");
         source.ShouldContain("Stereo,\n                    rect);");
         source.ShouldContain("ValidateBloomWriteFboContract");
         source.ShouldContain("layerIndex != -1");

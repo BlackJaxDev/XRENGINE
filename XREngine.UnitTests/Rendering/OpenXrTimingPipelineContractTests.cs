@@ -1781,8 +1781,13 @@ public sealed class OpenXrTimingPipelineContractTests
         editorImGui.ShouldContain("ShouldSuppressEditorImGuiForRuntimeVrView");
         editorImGui.ShouldContain("!EditorUnitTests.Toggles.AllowEditingInVR");
         editorImGui.ShouldContain("Engine.Input.SetUIInputCaptured(false)");
-        hostServices.ShouldContain("output.OutputKind == EFrameOutputKind.DesktopScene && output.RenderPhaseSceneRendered");
-        hostServices.ShouldContain("if (autoSkipWhenOverBudget && ShouldHoldDesktopOutputForVrPressure(frameId, manifest))");
+        // The frame-output statistics check for a recent rendered desktop output
+        // without copying the last manifest.
+        hostServices.ShouldContain("RuntimeEngine.Rendering.Stats.FrameOutputs.HasRecentRenderedDesktopOutput(viewKind)");
+        frameOutputs.ShouldContain("output.OutputKind == EFrameOutputKind.DesktopScene && output.RenderPhaseSceneRendered");
+        hostServices.ShouldContain(
+            "if (autoSkipWhenOverBudget &&\n" +
+            "                ShouldHoldDesktopOutputForVrPressure(frameId, RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest))");
         hostServices.ShouldContain("if (ShouldKeepIndependentDesktopLive(mode))");
         hostServices.ShouldContain("autoSkipWhenOverBudget = false;");
         hostServices.ShouldContain("private bool ShouldKeepIndependentDesktopLive(EVrMirrorMode mode)");
@@ -2525,16 +2530,13 @@ public sealed class OpenXrTimingPipelineContractTests
         // prewarm paths drain before they reuse resources.
         CountOccurrences(vulkanOpenXr, "DrainRetiredResourcesFromCompletedSubmittedFrameSlots();")
             .ShouldBeGreaterThanOrEqualTo(4);
+        // Eye recording and mirror recording each drain completed texture upload
+        // publications immediately after the retired-resource drain.
         CountOccurrences(
                 vulkanOpenXr,
                 "DrainRetiredResourcesFromCompletedSubmittedFrameSlots();\n" +
                 "                ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(")
-            .ShouldBeGreaterThanOrEqualTo(1);
-        CountOccurrences(
-                vulkanOpenXr,
-                "DrainRetiredResourcesFromCompletedSubmittedFrameSlots();\n" +
-                "            ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(")
-            .ShouldBeGreaterThanOrEqualTo(1);
+            .ShouldBeGreaterThanOrEqualTo(2);
 
         string resourcePressure = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.OpenXR.ResourcesPressure.cs");

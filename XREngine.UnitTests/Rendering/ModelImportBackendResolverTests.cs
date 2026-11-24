@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering.Models;
@@ -69,7 +71,14 @@ public sealed class ModelImportBackendResolverTests
         first.ResolverPolicyVersion.ShouldBe(ModelImportBackendResolver.PolicyVersion);
         CandidateIds(first).ShouldBe(new[] { ModelImportBackendIds.NativeGltf, ModelImportBackendIds.Assimp });
         first.CandidateListHash.ShouldBe(second.CandidateListHash);
-        first.CandidateListHash.ShouldBe("a26bfad72664e7fe1935d599f600362413724343bd0f94cec5ce8b51f3f8f1ad");
+        // The hash covers the ordered candidate ids and their implementation
+        // versions. A version bump must change the hash so that old cache
+        // variants are not reused, so the expected value uses the live constants.
+        string canonicalCandidates =
+            $"2;{ModelImportBackendIds.NativeGltf.Length}:{ModelImportBackendIds.NativeGltf}@{ModelImportBackendVersions.NativeGltf};"
+            + $"{ModelImportBackendIds.Assimp.Length}:{ModelImportBackendIds.Assimp}@{ModelImportBackendVersions.Assimp};";
+        string expectedHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonicalCandidates))).ToLowerInvariant();
+        first.CandidateListHash.ShouldBe(expectedHash);
         first.CandidateListHash.Length.ShouldBe(64);
         first.CandidateListHash.ShouldBe(first.CandidateListHash.ToLowerInvariant());
     }

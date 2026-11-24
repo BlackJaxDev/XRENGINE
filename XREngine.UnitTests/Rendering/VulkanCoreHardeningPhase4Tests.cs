@@ -377,9 +377,12 @@ public sealed class VulkanCoreHardeningPhase4Tests
         int fence = resources.IndexOf("tracker.FenceResourceRecordingAdmission(key, owner);", StringComparison.Ordinal);
         int publish = resources.IndexOf("Lifetime.PublishTrackingDependenciesBeforeRetirement(key);", fence, StringComparison.Ordinal);
         publish.ShouldBeGreaterThan(fence);
+        // The DXGI image ring records its fixed ownership-transfer commands once, at
+        // creation, in a command pool that it owns. It does not record frame work.
         AssertRawVulkanCallOnlyIn(
             "BeginCommandBuffer(",
-            "Commands/Authority/VulkanCommandRuntime.cs");
+            "Commands/Authority/VulkanCommandRuntime.cs",
+            DxgiImageRingRelativePath);
     }
 
     [Test]
@@ -452,9 +455,12 @@ public sealed class VulkanCoreHardeningPhase4Tests
         descriptors.ShouldContain("RemoveRetiredDescriptorSetsForPoolNoLock(");
         retirementQueue.ShouldContain("internal HashSet<ulong> AllPipelineHandles");
         retirementQueue.ShouldContain("internal HashSet<VulkanPinnedResourceGeneration> AllImageViewHandles");
+        // The DXGI image ring allocates its ownership-transfer command buffers from its
+        // own command pool and frees them when the ring is disposed.
         AssertRawVulkanCallOnlyIn(
             "AllocateCommandBuffers(",
-            "Commands/Authority/VulkanCommandRuntime.LifetimeNativeServices.cs");
+            "Commands/Authority/VulkanCommandRuntime.LifetimeNativeServices.cs",
+            DxgiImageRingRelativePath);
     }
 
     [Test]
@@ -475,6 +481,13 @@ public sealed class VulkanCoreHardeningPhase4Tests
         wrapper.ShouldContain("session.Encoder.BlitImage(");
         wrapper.ShouldNotContain("Api.CmdPipelineBarrier(");
     }
+
+    /// <summary>
+    /// Path of the DXGI present-path image ring, relative to the Vulkan source root.
+    /// The ring owns a private command pool for its pre-recorded queue-family
+    /// ownership transfers, so it is a permitted raw command-buffer call site.
+    /// </summary>
+    private const string DxgiImageRingRelativePath = "Frame/Output/Dxgi/VulkanDxgiImageRing.cs";
 
     private static void AssertRawVulkanCallOnlyIn(string token, params string[] allowedRelativePaths)
     {

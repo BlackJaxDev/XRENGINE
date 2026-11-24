@@ -165,11 +165,12 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string publicationSource = ReadWorkspaceFile(VulkanRoot + "RenderGraph/Authority/VulkanResourcePlannerPublicationReader.cs");
 
         fingerprintSource.ShouldContain("ComputeReferencedProgramBufferResourceFingerprint(bindings)");
-        bufferResolutionSource.ShouldContain("TryResolvePipelineResourceBuffer(binding, out buffer)");
-        bufferResolutionSource.ShouldContain("pipeline.TryGetBuffer(name, out XRDataBuffer? buffer)");
+        bufferResolutionSource.ShouldContain("TryResolvePipelineResourceBuffer(binding, out buffer, out retainedPipelineBuffer)");
+        // Pipeline buffers are retained for the binding so that they stay alive until the descriptor write.
+        bufferResolutionSource.ShouldContain("pipeline.TryRetainBufferBinding(name, out XRDataBuffer? buffer)");
         bufferResolutionSource.ShouldContain("IsDescriptorCompatibleBufferTarget(descriptorType, buffer.Target)");
-        bufferResolutionSource.ShouldContain("TryResolveProgramBoundBuffer(binding, out buffer)");
-        bufferResolutionSource.ShouldContain("_program.TryGetBoundBuffer(binding.Binding");
+        bufferResolutionSource.ShouldContain("TryResolveProgramBoundBuffer(binding, out buffer, programOverride)");
+        bufferResolutionSource.ShouldContain("program.TryGetBoundBuffer(binding.Binding");
         fingerprintSource.ShouldContain("_program.TryGetBoundBuffer(binding.Binding");
         bufferResolutionSource.ShouldContain("private static bool IsOptionalPipelineStorageBuffer(DescriptorBindingInfo binding)");
         bufferResolutionSource.ShouldContain("binding.Requirement == EVulkanDescriptorBindingRequirement.Optional");

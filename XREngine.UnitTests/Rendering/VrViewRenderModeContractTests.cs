@@ -991,7 +991,7 @@ public sealed class VrViewRenderModeContractTests
         openXrFrameLifecycle.ShouldContain("ReleaseOpenXrStereoViewportPipelineForExternalEyes");
         openXrFrameLifecycle.ShouldContain("ApplyOpenXrEyeCameraRenderSettings");
         openXrFrameLifecycle.ShouldContain("ResolveOpenXrEyeAntiAliasingMode");
-        openXrFrameLifecycle.ShouldContain("eyeCamera.AntiAliasingModeOverride = antiAliasingMode");
+        openXrFrameLifecycle.ShouldContain("eyeCamera.AntiAliasingModeOverride = antiAliasingOverride");
         openXrFrameLifecycle.ShouldContain("EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain");
         openXrFrameLifecycle.ShouldContain("collectViewport = _openXrStereoViewport");
         openXrFrameLifecycle.ShouldContain("collectViewport.RenderPipeline = leftEyePipeline");
@@ -1003,8 +1003,10 @@ public sealed class VrViewRenderModeContractTests
         openXrState.ShouldContain("_openXrStereoViewport");
         openXrState.ShouldContain("_openXrStereoRenderPipeline");
         openXrState.ShouldContain("_pendingXrFrameUsesTrueSinglePassStereo");
-        vulkanOpenXrState.ShouldContain("_vulkanStereoColorArray");
-        vulkanOpenXrState.ShouldContain("_vulkanStereoDepthArray");
+        // Each stereo pair (wide and inset) owns one target set with its color and depth arrays.
+        vulkanOpenXrState.ShouldContain("_vulkanStereoTargets");
+        vulkanOpenXrState.ShouldContain("public XRTexture2DArray? ColorArray;");
+        vulkanOpenXrState.ShouldContain("public XRTexture2DArray? DepthArray;");
         openXrState.ShouldContain("GetOrCreateOpenXrStereoPipeline");
         xrViewport.ShouldContain("meshRenderCommandsOverride: MeshRenderCommandsOverride");
         pushViewportRenderArea.ShouldContain("if (UseInternalResolution)");
@@ -1051,8 +1053,8 @@ public sealed class VrViewRenderModeContractTests
         string vulkanOpenXrMirrorRequest = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/OpenXR/VulkanRenderer.OpenXrEyeMirrorRenderRequest.cs");
         openXr.ShouldContain("if (!trueSinglePassStereo)");
-        AssertTrueStereoPublishDoesNotFlipY(openXr, "GetTrueStereoSwapchainLabel(0, leftImageIndex)");
-        AssertTrueStereoPublishDoesNotFlipY(openXr, "GetTrueStereoSwapchainLabel(1, rightImageIndex)");
+        AssertTrueStereoPublishDoesNotFlipY(openXr, "GetTrueStereoSwapchainLabel(leftView, leftImageIndex)");
+        AssertTrueStereoPublishDoesNotFlipY(openXr, "GetTrueStereoSwapchainLabel(rightView, rightImageIndex)");
         vulkanOpenXr.ShouldContain("TryBlitTextureArrayLayerToOpenXrSwapchainImage");
         vulkanOpenXr.ShouldContain("BaseArrayLayer = sourceLayer");
         vulkanOpenXrMirrorRequest.ShouldContain("bool RendersExternalSwapchainTarget = true");

@@ -158,7 +158,7 @@ public sealed class AdvancedPreparationIntegrationContractTests
         early.ShouldContain("XR_ADV_VisibilityDeferredIndices.records");
         early.ShouldContain("viewProjectionUnjittered");
         early.ShouldContain("candidateIncludesSelectedView(candidate.ViewMask)");
-        late.ShouldContain("deferredIndex >= boundedDeferredCount");
+        late.ShouldContain("if (invocation < boundedDeferredCount)");
         late.ShouldContain("XR_ADV_VisibilityCounters.lateDraws");
         late.ShouldContain("XR_ADV_VisibilityLateVisibleIndices.records");
         // The view record keeps the reversed-depth marker in depthParams.w.
