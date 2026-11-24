@@ -41,7 +41,10 @@ lighting remains active.
 
 ## Presets And Fixed State
 
-The importer maps all nine serialized `_Mode` values independently. Render queue
+The importer maps each of the nine serialized `_Mode` values to an Uber render
+preset (see [Uber Material Authoring](uber-material-authoring.md#render-presets)).
+The preset gives the default blend factors, depth write, alpha cutoff, and the
+Uber `_Mode` value. Authored source values replace those defaults. Render queue
 and queue priority are preserved separately from transparency classification.
 RGB and alpha blend factors and operations, depth write/test, culling, color
 mask, polygon offset, alpha-to-coverage, fog opt-out, and common/front/back
@@ -90,15 +93,15 @@ effects such as GrabPass and applies the override to final coverage and output.
 Verified source surfaces with a queue above 2500 use the ordered late pass.
 The base draw keeps its authored blend, depth, and stencil state, and its sort
 priority is the source queue minus 3000. An active, verified named GrabPass uses
-the `_SourceSceneColor` array sampler. The pipeline copies linear HDR scene
+the `_SceneColorTexture` array sampler. The pipeline copies linear HDR scene
 color before the first such draw and binds the matching view layer. The shader
 divides absolute framebuffer coordinates by the full copy extent, including
 views with a nonzero viewport origin. It uses source alpha and Fresnel before
 the late opaque override, blends scene
 color into base color before decals, matcaps, and rim, and then lights the
 result. The blend uses the source shader blend factor table: `_GrabSrcBlend` and
-`_GrabDstBlend` map to `_SourceGrabSrcBlend` and `_SourceGrabDstBlend` (indices
-0 to 10). Source toon refraction maps to `_SourceRefraction*`. The shader moves the
+`_GrabDstBlend` map to `_SceneGrabSrcBlend` and `_SceneGrabDstBlend` (indices
+0 to 10). Source toon refraction maps to `_SceneRefraction*`. The shader moves the
 scene-color sample by the view-space normal, multiplied by `(index - 1)`,
 `(1 - N.V)`, half the vertical projection scale, and the inverse camera distance
 (at least 1). Chromatic aberration samples green at `offset * (1 - aberration)`
@@ -148,6 +151,19 @@ section toggle is absent. The forward and native Uber shaders apply the source
 order: hue shift, then saturation, then brightness. Brightness scales the color
 by `1 + _MainBrightness` and clamps it to 0 through 1. The adjustment texture
 masks each step (R hue, G brightness, B saturation).
+
+## Post-Processing Stage
+
+The source post-processing section converts to `_PostProcessSettings`
+(enabled, brightness, contrast, saturation) and `_PostProcessHue` (hue,
+lightness, HDR, hue color space). The forward and native Uber shaders apply it
+to the lit color before emission is added, in the source order: hue shift,
+saturation, sRGB-to-linear HDR curve, contrast around mid gray, brightness
+multiply, and lightness add. Splats use the native path. A locked source shader
+decides the section with its `#define POSTPROCESS` line, because the material
+toggle can be stale; otherwise `_PostProcess` or the `POSTPROCESS` keyword
+decides. The post-processing mask and posterization have no Uber equivalent;
+the importer reports a warning and converts the rest.
 
 ## Locked Shader Reconciliation And Cooked Textures
 

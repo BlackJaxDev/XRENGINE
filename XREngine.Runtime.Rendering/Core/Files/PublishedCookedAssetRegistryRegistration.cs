@@ -20,6 +20,8 @@ public static class RenderingPublishedCookedAssetRegistration
             static () => new UnlitPublishedImageEntry());
         CookedBinarySerializer.RegisterRuntimeFactory(typeof(UnlitPublishedMipEntry),
             static () => new UnlitPublishedMipEntry());
+        CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedTextureArrayProfile),
+            static () => new PublishedTextureArrayProfile());
         CookedBinarySerializer.RegisterRuntimeFactory(typeof(PublishedAuthoredTexturedMaterial),
             static () => new PublishedAuthoredTexturedMaterial());
         CookedBinarySerializer.RegisterRuntimeFactory(typeof(XREngine.Components.Capture.Lights.PublishedRetainedLightProbeComponent),

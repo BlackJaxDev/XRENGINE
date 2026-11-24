@@ -25,6 +25,8 @@ readonly buffer XRAdvancedReconstructionIndexTable
 } XR_ADV_ReconstructionIndices;
 
 #if !defined(XR_ADV_INDEXED_ONLY)
+#include "Advanced/Visibility/VisibilityStreamedGeometry.glslinc"
+
 uint XR_ADV_ReconstructionTriangleByte(uint byteIndex)
 {
     uint word = XR_ADV_ReconstructionMeshletTriangles.records[byteIndex >> 2u];
@@ -70,6 +72,24 @@ bool XR_ADV_TryPrimitiveVertices(
         meshletIndex - geometry.meshletFirst >= geometry.meshletCount ||
         meshletIndex >= uint(XR_ADV_ReconstructionMeshlets.records.length()))
         return false;
+
+    // A geometry with geometry pages: the raster drew the cluster from its
+    // page, so shading reads the same triangle from the same page. The page
+    // gives the source vertices of the triangle (a static page through the
+    // sourceVertex field of its page-local vertices).
+    XRAdvancedStreamedGeometry streamed = XR_ADV_StreamedGeometry(geometry);
+    if (streamed.valid)
+    {
+        XRAdvancedStreamedCluster cluster;
+        if (!XR_ADV_LoadStreamedCluster(streamed, meshletIndex - geometry.meshletFirst, cluster) ||
+            localPrimitive >= cluster.descriptor.triangleCount)
+            return false;
+        uvec3 clusterVertices = XR_ADV_StreamedTriangle(cluster, localPrimitive);
+        return all(lessThan(clusterVertices, uvec3(cluster.descriptor.vertexCount))) &&
+            XR_ADV_StreamedSourceVertex(cluster, clusterVertices.x, vertices.x) &&
+            XR_ADV_StreamedSourceVertex(cluster, clusterVertices.y, vertices.y) &&
+            XR_ADV_StreamedSourceVertex(cluster, clusterVertices.z, vertices.z);
+    }
     XRAdvancedReconstructionMeshlet descriptor =
         XR_ADV_ReconstructionMeshlets.records[meshletIndex];
     if (localPrimitive >= descriptor.triangleCount)

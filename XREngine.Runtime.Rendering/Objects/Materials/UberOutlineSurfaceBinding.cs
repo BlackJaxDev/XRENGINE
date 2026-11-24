@@ -97,17 +97,17 @@ public sealed class UberOutlineSurfaceBinding
                 }
         for (int index = 0; index < _profile.TextureBindings.Length; index++)
         {
-            XRTexture2D texture = _profile.TextureBindings[index].Texture;
+            XRTexture texture = _profile.TextureBindings[index].Texture;
             try
             {
-                // This is a value-type capture. It validates current image/sampler state while allowing
-                // supported live sampler changes to flow through ordinary resource generations.
-                PublishedStandardLitTextureSettings settings = PublishedStandardLitTextureSettings.Capture(texture);
-                if (settings.EnableComparison)
+                if (texture is XRTexture2DArray array)
                 {
-                    reason = "UberOutline.ComparisonSamplerUnsupported: canonical outline images require ordinary filtering samplers.";
-                    return false;
+                    // Each layer is a static image. The array samples all layers through one sampler.
+                    foreach (XRTexture2D layer in array.Textures)
+                        if (!TryValidateImage(layer, out reason)) return false;
                 }
+                else if (!TryValidateImage((XRTexture2D)texture, out reason))
+                    return false;
             }
             catch (InvalidDataException exception)
             {
@@ -126,6 +126,19 @@ public sealed class UberOutlineSurfaceBinding
         }
         reason = null;
         return true;
+    }
+
+    /// <summary>
+    /// Validates one static image. This is a value-type capture: it checks the current image and
+    /// sampler state, and supported live sampler changes still flow through ordinary resource generations.
+    /// </summary>
+    private static bool TryValidateImage(XRTexture2D texture, out string? reason)
+    {
+        PublishedStandardLitTextureSettings settings = PublishedStandardLitTextureSettings.Capture(texture);
+        reason = settings.EnableComparison
+            ? "UberOutline.ComparisonSamplerUnsupported: canonical outline images require ordinary filtering samplers."
+            : null;
+        return reason is null;
     }
 
     private bool MatchesParameters(ShaderVar[] parameters)
@@ -255,6 +268,13 @@ public sealed class UberOutlineSurfaceBinding
             if (feature.Id == "alpha-masks") features |= UberOutlineMaterialProfile.AlphaMasks;
             if (feature.Id == "dissolve") features |= UberOutlineMaterialProfile.Dissolve;
         }
+        // In the outline pass the source texture-array flipbook changes only the
+        // coverage alpha, and only in its final-alpha mode. Other modes change only
+        // color and emission, which the outline output does not read.
+        if (IsFeatureEnabled(source, "texture-array-flipbook") &&
+            ResolveIntControl(source, "_FlipbookToonModel") != 0 &&
+            ResolveIntControl(source, "_FlipbookAlphaControlsFinalAlpha") == 1)
+            features |= UberOutlineMaterialProfile.FlipbookAlpha;
         foreach (string id in source.ActiveUberVariant.EnabledFeatures)
             if (!TryAdmitFeature(id, out reason)) return false;
         foreach (string id in source.RequestedUberVariant.EnabledFeatures)
@@ -294,16 +314,6 @@ public sealed class UberOutlineSurfaceBinding
                 reason = $"UberOutline.EngineUniformOverrideUnsupported: '{parameter.Name}' replaces a coupled engine view or transform input whose authored override this lowering does not model.";
                 return false;
             }
-        }
-        // In the outline pass the source texture-array flipbook changes only the
-        // coverage alpha, and only in its final-alpha mode. This lowering does not
-        // bind the flipbook array, so that mode requires a separate qualified operation.
-        if (IsFeatureEnabled(source, "texture-array-flipbook") &&
-            ResolveIntControl(source, "_SourceFlipbook") != 0 &&
-            ResolveIntControl(source, "_FlipbookAlphaControlsFinalAlpha") == 1)
-        {
-            reason = "UberOutline.FlipbookAlphaUnsupported: a source texture-array flipbook that controls the final alpha changes outline coverage, and this lowering does not bind the flipbook array.";
-            return false;
         }
         reason = null;
         return true;

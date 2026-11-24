@@ -13,14 +13,14 @@ This report is generated from the pinned source catalog and the engine-owned wid
 
 | Catalog state | Runtime support statement | Count |
 | --- | --- | ---: |
-| animationLocking / missing | Preserved inactive; `POI0006` reports the absent runtime mapping | 5 |
+| animationLocking / missing | Preserved inactive; `TOON0006` reports the absent runtime mapping | 5 |
 | compatibilityAlias / notApplicable | Catalog/editor data; no runtime conversion required | 1 |
 | inspectorOnly / notApplicable | Catalog/editor data; no runtime conversion required | 87 |
 | integration / preservedInactive | Preserved inactive; unavailable integration is reported | 194 |
 | internalData / notApplicable | Catalog/editor data; no runtime conversion required | 758 |
-| renderState / missing | Preserved inactive; `POI0006` reports the absent runtime mapping | 216 |
+| renderState / missing | Preserved inactive; `TOON0006` reports the absent runtime mapping | 216 |
 | renderState / nativeEquivalent | Exact or reviewed native mapping | 7 |
-| runtime / missing | Preserved inactive; `POI0006` reports the absent runtime mapping | 2319 |
+| runtime / missing | Preserved inactive; `TOON0006` reports the absent runtime mapping | 2319 |
 | runtime / nativeEquivalent | Exact or reviewed native mapping | 149 |
 
 Every runtime-visible source value is retained in the versioned descriptor even when its runtime mapping is inactive.

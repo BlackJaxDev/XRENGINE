@@ -11,9 +11,9 @@ public static class SourceMultilayerFlatDirection
     public static bool IsRequired(XRMaterial? material)
         => material is not null &&
             material.Parameter<ShaderInt>("_LightingMode") is { Value: 1 } &&
-            material.Parameter<ShaderInt>("_SourceLightMode") is { Value: 1 } &&
+            material.Parameter<ShaderInt>("_LightModel") is { Value: 1 } &&
             material.IsUberFeatureEnabled("advanced-stylized-lighting", false) &&
-            material.Parameter<ShaderVector4>("_SourceMultilayerOptions") is
+            material.Parameter<ShaderVector4>("_MultilayerOptions") is
             { Value: var options } && options.Y > 0.5f;
 
     /// <summary>Returns true when a retained flat direction can be used.</summary>
@@ -31,7 +31,7 @@ public static class SourceMultilayerFlatDirection
         direction = Vector4.Zero;
         if (material is null || !IsRequired(material))
             return true;
-        if (material.Parameter<ShaderVector4>("_SourceMultilayerFlatAxis") is not
+        if (material.Parameter<ShaderVector4>("_MultilayerFlatAxis") is not
                 { Value: var axis })
             return false;
         Vector3 worldAxis = Vector3.TransformNormal(new Vector3(axis.X, axis.Y, axis.Z),

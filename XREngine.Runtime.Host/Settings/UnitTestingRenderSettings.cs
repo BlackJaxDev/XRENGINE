@@ -50,6 +50,20 @@ public class UnitTestingRenderSettings
     /// threshold in render pixels of projected error.
     /// </summary>
     public float VirtualGeometryPixelThreshold { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Sets the <c>AdvancedGeometryPages</c> engine setting: with <see cref="VirtualGeometry"/> on,
+    /// models imported with geometry pages (<c>GenerateStreamingPages</c>) draw their clusters from
+    /// the pages. False (the default) draws from the meshlet tables.
+    /// </summary>
+    public bool GeometryPages { get; set; }
+
+    /// <summary>
+    /// Sets the <c>AdvancedGeometryStreaming</c> engine setting: with <see cref="GeometryPages"/> on,
+    /// static paged models keep only their root pages resident and stream the finer pages that the
+    /// cluster cut requests. False (the default) keeps every page resident.
+    /// </summary>
+    public bool GeometryStreaming { get; set; }
     public UnitTestingOpenGLRenderSettings OpenGL { get; set; } = new();
     public UnitTestingVulkanRenderSettings Vulkan { get; set; } = new();
 }

@@ -6,7 +6,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Editor.MaterialAuthoring;
 
 /// <summary>
-/// Native adapter for Unity/Poiyomi render-state properties used by the pinned
+/// Native adapter for source toon render-state properties used by the pinned
 /// `_Mode` action graph. Raw imported values are retained in editor metadata
 /// while executable state is written to base/add/outline render options.
 /// </summary>

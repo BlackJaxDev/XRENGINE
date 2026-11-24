@@ -18,7 +18,7 @@ struct OutlineObjectUniforms
 
 struct OutlineMaterialUniforms
 {
-    uint OutlineFeatures; // 1: authored alpha masks; 2: authored dissolve
+    uint OutlineFeatures; // 1: authored alpha masks; 2: authored dissolve; 4: source flipbook final alpha
     float4 _MainTex_ST;
     float2 _MainTexPan;
     int _MainTexUV;
@@ -91,16 +91,38 @@ struct OutlineMaterialUniforms
     float2 _DissolveEdgeTexturePan;
     int _DissolveEdgeTextureUV;
     float _DissolveCutoff;
-    float4 _SourceDissolveParams;
+    float4 _DissolveSettings;
     float4 _DissolveTextureColor;
     // Imported source controls. An absent animated control reads zero, as an
     // unset desktop uniform reads zero.
-    float _SourceAlphaClip;
-    int _SourceBackfaceNormals;
+    float _AlphaClipAllModes;
+    int _BackfaceNormalControl;
     int _FlipBackfaceNormals;
-    int _SourceOutlineBasic;
+    int _OutlineBasicModel;
     float _OutlinesMaxDistance;
     float _OutlineFixWidth;
+    // Source texture-array flipbook controls. The outline reads only the inputs
+    // of the final-alpha path.
+    float _FlipbookFPS;
+    float _FlipbookFrameOffset;
+    float4 _FlipbookLayout;
+    float4 _FlipbookSides;
+    float4 _FlipbookOptions;
+    float4 _FlipbookMotion;
+    float4 _FlipbookFlags;
+    float4 _FlipbookMask_ST;
+    float4 _FlipbookColor;
+    float4 _FlipbookScaleOffset;
+    float2 _FlipbookMaskPan;
+    float2 _FlipbookTexArrayPan;
+    float2 _FlipbookCrossfadeRange;
+    int _FlipbookMaskUV;
+    int _FlipbookTexArrayUV;
+    float _FlipbookManualFrameControl;
+    float _FlipbookCurrentFrame;
+    float _FlipbookStartFrame;
+    float _FlipbookEndFrame;
+    float _FlipbookCrossfadeEnabled;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<OutlineViewUniforms> view;
@@ -128,6 +150,12 @@ struct OutlineMaterialUniforms
 [[vk::binding(15, 2)]] SamplerState _DissolveEdgeGradientSampler;
 [[vk::binding(16, 2)]] Texture2D<float4> _DissolveEdgeTexture;
 [[vk::binding(17, 2)]] SamplerState _DissolveEdgeTextureSampler;
+#endif
+#ifdef XRE_OUTLINE_FLIPBOOK
+[[vk::binding(18, 2)]] Texture2DArray<float4> _FlipbookTexArray;
+[[vk::binding(19, 2)]] SamplerState _FlipbookTexArraySampler;
+[[vk::binding(20, 2)]] Texture2D<float4> _FlipbookMask;
+[[vk::binding(21, 2)]] SamplerState _FlipbookMaskSampler;
 #endif
 
 struct OutlineVertexInput
@@ -173,7 +201,7 @@ OutlineVertexOutput uberOutlineVertex(OutlineVertexInput input)
 {
     float3 position = input.position;
     float3 normal = input.normal;
-    bool basic = material._SourceOutlineBasic != 0;
+    bool basic = material._OutlineBasicModel != 0;
     if (basic)
     {
         // The basic source outline moves along the unnormalized normal by the
@@ -332,7 +360,7 @@ float calculateAlpha(float4 baseColor, OutlineVertexOutput input, float3 normal,
     alpha = saturate(alpha + material._AlphaMod);
     // A source alpha clip keeps the authored alpha. Its force-opaque control
     // changes only the coverage alpha.
-    if (material._SourceAlphaClip <= 0.5 && material._AlphaForceOpaque > 0.5)
+    if (material._AlphaClipAllModes <= 0.5 && material._AlphaForceOpaque > 0.5)
         alpha = 1.0;
     return alpha;
 }
@@ -381,7 +409,7 @@ bool applyDissolve(OutlineVertexOutput input, float3 normal, float3 viewDirectio
             basicMask = 1.0 - basicMask;
         float3 result = sourceBasicDissolve(noise, detail, basicMask, material._DissolveProgress,
             material._DissolveEdgeWidth, material._DissolveDetailStrength, material._DissolveInvert,
-            material._SourceDissolveParams, view.u_Time);
+            material._DissolveSettings, view.u_Time);
         float2 dissolvedUV = getUV(material._DissolveEdgeTextureUV, input, normal, viewDirection)
             * material._DissolveEdgeTexture_ST.xy + material._DissolveEdgeTexture_ST.zw + material._DissolveEdgeTexturePan * sourceTime;
         float4 dissolvedColor = _DissolveEdgeTexture.Sample(_DissolveEdgeTextureSampler, dissolvedUV) * material._DissolveTextureColor;
@@ -470,6 +498,107 @@ bool applyDissolve(OutlineVertexOutput input, float3 normal, float3 viewDirectio
 }
 #endif
 
+#ifdef XRE_OUTLINE_FLIPBOOK
+float flipbookRemainder(float value, float divisor)
+{
+    return value - trunc(value / divisor) * divisor;
+}
+
+// Rotates as the GLSL mat2(c, s, -s, c) * value product in the desktop source.
+float2 flipbookRotate(float2 value, float c, float s)
+{
+    return float2(c * value.x - s * value.y, s * value.x + c * value.y);
+}
+
+// Returns the coverage alpha after the source flipbook. Port of the final-alpha
+// path of Uber/source_flipbook.glsl. The desktop outline pass runs that file as a
+// shadow pass, so the flipbook changes only the alpha, and only in final-alpha
+// mode. The admitted feature bit guarantees that mode. The caller supplies the
+// engine UVs and their derivatives; placement math runs in source UV space.
+float applySourceFlipbookAlpha(float2 uv, float2 dx, float2 dy, float mask, float time, float alpha)
+{
+    uv.y = 1.0 - uv.y;
+    dx.y = -dx.y;
+    dy.y = -dy.y;
+    float4 placement = material._FlipbookLayout;
+    float4 options = material._FlipbookOptions;
+    float4 motion = material._FlipbookMotion;
+    float4 flags = material._FlipbookFlags;
+    float4 sides = material._FlipbookSides * float4(-1.0, 1.0, -1.0, 1.0);
+    uint width;
+    uint height;
+    uint layers;
+    _FlipbookTexArray.GetDimensions(width, height, layers);
+    float3 dimensions = float3(float(width), float(height), float(layers));
+    float2 scale = placement.xy;
+    if (options.w > 0.5)
+    {
+        float2 ratio = dimensions.xy / max(options.w < 1.5
+            ? max(dimensions.x, dimensions.y) : min(dimensions.x, dimensions.y), 1.0);
+        scale *= ratio;
+    }
+    if (motion.z > 0.5 && motion.z < 1.5)
+    {
+        float signX = uv.x < 0.5 ? -1.0 : 1.0;
+        uv.x = abs(uv.x - 0.5) + 0.5;
+        dx.x *= signX;
+        dy.x *= signX;
+    }
+    else if (motion.z > 1.5 && uv.x < 0.5)
+        uv.x += 0.5;
+    float2 center = placement.zw + (sides.xz + sides.yw) * 0.5;
+    float angle = radians(motion.x + time * 2.0 * motion.y);
+    float c = cos(angle);
+    float s = sin(angle);
+    float2 extent = scale + sides.yw - sides.xz;
+    if (any(abs(extent) <= float2(1.0e-7)))
+        return alpha;
+    uv = (flipbookRotate(uv - center, c, s) + center - placement.zw - sides.xz + scale * 0.5) / extent;
+    dx = flipbookRotate(dx, c, s) / extent;
+    dy = flipbookRotate(dy, c, s) / extent;
+    float edge = 1.0;
+    if (motion.w < 0.5 || motion.w > 1.5)
+    {
+        float2 edgeUV = motion.w > 1.5 ? frac(uv) : uv;
+        float2 edgeWidth = abs(dx) + abs(dy) + float2(1.0e-7);
+        float2 factor = (1.0 - abs(edgeUV * 2.0 - 1.0)) / edgeWidth;
+        edge = saturate(min(factor.x, factor.y));
+    }
+    float count = dimensions.z;
+    float start = material._FlipbookStartFrame;
+    if (flags.x > 0.5)
+        count = min(max(start, material._FlipbookEndFrame), count) - max(0.0, start);
+    if (count <= 0.0)
+        return alpha;
+    float frame = 0.0;
+    if (material._FlipbookManualFrameControl > 0.5)
+        frame = flipbookRemainder(material._FlipbookCurrentFrame, count);
+    else if (material._FlipbookFPS != 0.0)
+        frame = flipbookRemainder(time * material._FlipbookFPS + material._FlipbookFrameOffset, count) +
+            (flags.x > 0.5 ? start : 0.0);
+    float4 st = material._FlipbookScaleOffset;
+    uv = uv * st.xy + st.zw + material._FlipbookTexArrayPan * time * 0.05;
+    dx *= st.xy;
+    dy *= st.xy;
+    // Explicit gradients keep these reads valid in non-uniform control flow.
+    // The layer is a whole number, so the WGSL integer layer conversion selects
+    // the same layer as the GLSL rounding.
+    float4 sampleValue = _FlipbookTexArray.SampleGrad(_FlipbookTexArraySampler, float3(uv, floor(frame)), dx, dy);
+    if (material._FlipbookCrossfadeEnabled > 0.5)
+    {
+        float wrap = count + (flags.x > 0.5 ? max(start, 0.0) : 0.0);
+        float2 range = material._FlipbookCrossfadeRange;
+        float blend = smoothstep(range.x, max(range.y, range.x + 1.0e-7), frac(frame));
+        float4 nextValue = _FlipbookTexArray.SampleGrad(_FlipbookTexArraySampler,
+            float3(uv, floor(flipbookRemainder(frame + 1.0, wrap))), dx, dy);
+        sampleValue = lerp(sampleValue, nextValue, blend);
+    }
+    float sampledAlpha = (options.z > 0.5 ? max(max(sampleValue.r, sampleValue.g), sampleValue.b) : sampleValue.a) * edge;
+    float flipbookAlpha = saturate(sampledAlpha * material._FlipbookColor.a * saturate(options.x));
+    return lerp(alpha, flipbookAlpha, mask);
+}
+#endif
+
 [shader("fragment")]
 float4 uberOutlineFragment(OutlineVertexOutput input, bool frontFacing : SV_IsFrontFace) : SV_Target0
 {
@@ -477,10 +606,26 @@ float4 uberOutlineFragment(OutlineVertexOutput input, bool frontFacing : SV_IsFr
     // An imported source with back-face normals keeps the front normal on back
     // faces unless it also asks for a flip. The rim and UV modes 4 and 6 read it.
     float facing = frontFacing ? 1.0 : -1.0;
-    float normalFacing = material._SourceBackfaceNormals == 0 || material._FlipBackfaceNormals != 0 ? facing : 1.0;
+    float normalFacing = material._BackfaceNormalControl == 0 || material._FlipBackfaceNormals != 0 ? facing : 1.0;
     float3 normal = normalize(input.worldNormal) * normalFacing;
     float4 baseColor = calculateBaseColor(input, normal, viewDirection);
     float alpha = calculateAlpha(baseColor, input, normal, viewDirection);
+#ifdef XRE_OUTLINE_FLIPBOOK
+    if ((material.OutlineFeatures & 4u) != 0u)
+    {
+        // The flipbook runs after the alpha masks and before the dissolve, as in
+        // the desktop source. The derivatives and the implicit mask read run here,
+        // in uniform control flow, before the flipbook's varying branches.
+        float2 flipbookUV = getUV(material._FlipbookTexArrayUV, input, normal, viewDirection);
+        float2 flipbookDx = ddx(flipbookUV);
+        float2 flipbookDy = ddy(flipbookUV);
+        float2 flipbookMaskUV = getUV(material._FlipbookMaskUV, input, normal, viewDirection)
+            * material._FlipbookMask_ST.xy + material._FlipbookMask_ST.zw + material._FlipbookMaskPan * view.u_Time * 0.05;
+        float4 flipbookMask = _FlipbookMask.Sample(_FlipbookMaskSampler, flipbookMaskUV);
+        int maskChannel = clamp(int(material._FlipbookFlags.z), 0, 3);
+        alpha = applySourceFlipbookAlpha(flipbookUV, flipbookDx, flipbookDy, flipbookMask[maskChannel], view.u_Time, alpha);
+    }
+#endif
     bool dissolveDiscard = false;
 #ifdef XRE_OUTLINE_DISSOLVE
     if ((material.OutlineFeatures & 2u) != 0u)
@@ -488,10 +633,10 @@ float4 uberOutlineFragment(OutlineVertexOutput input, bool frontFacing : SV_IsFr
 #endif
     // The coverage test runs after the dissolve. A forced-opaque source alpha
     // clip passes the test and keeps full outline coverage.
-    float coverageAlpha = material._SourceAlphaClip > 0.5 && material._AlphaForceOpaque > 0.5 ? 1.0 : alpha;
-    bool coverageDiscard = (material._Mode == 1 || material._SourceAlphaClip > 0.5) && coverageAlpha < material._Cutoff;
+    float coverageAlpha = material._AlphaClipAllModes > 0.5 && material._AlphaForceOpaque > 0.5 ? 1.0 : alpha;
+    bool coverageDiscard = (material._Mode == 1 || material._AlphaClipAllModes > 0.5) && coverageAlpha < material._Cutoff;
 
-    bool basic = material._SourceOutlineBasic != 0;
+    bool basic = material._OutlineBasicModel != 0;
     float2 uv = textureUV(getUV(material._OutlineTextureUV, input, normal, viewDirection), material._OutlineTexture_ST, material._OutlineTexturePan);
     float2 maskUV = textureUV(getUV(material._OutlineMaskUV, input, normal, viewDirection), material._OutlineMask_ST, material._OutlineMaskPan);
     float4 textureColor = _OutlineTexture.Sample(_OutlineTextureSampler, uv);

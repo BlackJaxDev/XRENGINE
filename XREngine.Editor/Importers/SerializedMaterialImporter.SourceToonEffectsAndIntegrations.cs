@@ -142,7 +142,7 @@ public static partial class SerializedMaterialImporter
         MapInt(document, material, "_UDIMDiscardMode", "_UDIMDiscardMode");
         MapInt(document, material, "_UDIMDiscardUV", "_UDIMDiscardUV");
         // Serialized Unity models import with FlipUVs. Source tile rows use the pre-flip V coordinate.
-        SetFloat(material, "_SourceUdimFlipV", 1.0f);
+        SetFloat(material, "_UdimFlipV", 1.0f);
         bool activeUdimCell = false;
         for (int row = 0; row < 4; ++row)
         {
@@ -255,7 +255,7 @@ public static partial class SerializedMaterialImporter
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.IntegrationUnavailable,
                 MaterialConversionDiagnosticSeverity.Warning,
-                "Beat Saber data was authored, but the pinned Poiyomi source exposes no engine-independent runtime provider contract. The state was retained without fabricating input.",
+                "Beat Saber data was authored, but the pinned source toon shader exposes no engine-independent runtime provider contract. The state was retained without fabricating input.",
                 "_BeatSaberEnabled"));
         }
     }

@@ -166,7 +166,7 @@ bool applyDissolve(vec2 noiseUV, vec2 detailUV, vec2 maskUV, vec2 edgeBaseUV, ve
         if (_DissolveMaskInvert > 0.5) mask = 1.0 - mask;
         vec3 result = xrSourceBasicDissolve(noise, detail, mask, _DissolveProgress,
             _DissolveEdgeWidth, _DissolveDetailStrength, _DissolveInvert,
-            _SourceDissolveParams, u_Time);
+            _DissolveSettings, u_Time);
         vec2 dissolvedUV = edgeBaseUV * _DissolveEdgeTexture_ST.xy +
             _DissolveEdgeTexture_ST.zw + _DissolveEdgeTexturePan * sourceTime;
         vec4 dissolvedColor = texture(_DissolveEdgeTexture, dissolvedUV) * _DissolveTextureColor;

@@ -823,8 +823,8 @@
             "type": "f32"
           },
           {
-            "name": "U_SourceBackfaceNormals_0",
-            "provider": "_SourceBackfaceNormals",
+            "name": "_BackfaceNormalControl_0",
+            "provider": "_BackfaceNormalControl",
             "offset": 352,
             "bytes": 4,
             "type": "i32"
@@ -837,8 +837,8 @@
             "type": "i32"
           },
           {
-            "name": "U_SourceAlphaClip_0",
-            "provider": "_SourceAlphaClip",
+            "name": "_AlphaClipAllModes_0",
+            "provider": "_AlphaClipAllModes",
             "offset": 360,
             "bytes": 4,
             "type": "f32"
@@ -858,15 +858,15 @@
             "type": "i32"
           },
           {
-            "name": "U_SourceLightMode_0",
-            "provider": "_SourceLightMode",
+            "name": "_LightModel_0",
+            "provider": "_LightModel",
             "offset": 372,
             "bytes": 4,
             "type": "i32"
           },
           {
-            "name": "_PBRMochiePackedMasksEnabled_0",
-            "provider": "_PBRMochiePackedMasksEnabled",
+            "name": "_PBRPackedMasksEnabled_0",
+            "provider": "_PBRPackedMasksEnabled",
             "offset": 376,
             "bytes": 4,
             "type": "i32"
@@ -907,43 +907,43 @@
             "type": "f32"
           },
           {
-            "name": "U_SourceMochieSettings_0",
-            "provider": "_SourceMochieSettings",
+            "name": "U_SpecularAASettings_0",
+            "provider": "_SpecularAASettings",
             "offset": 400,
             "bytes": 16,
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceMochieSecond_0",
-            "provider": "_SourceMochieSecond",
+            "name": "U_SecondSpecularSettings_0",
+            "provider": "_SecondSpecularSettings",
             "offset": 416,
             "bytes": 16,
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceMochieReflection_0",
-            "provider": "_SourceMochieReflection",
+            "name": "_ReflectionResponse_0",
+            "provider": "_ReflectionResponse",
             "offset": 432,
             "bytes": 16,
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceMochieReflectionTint_0",
-            "provider": "_SourceMochieReflectionTint",
+            "name": "_ReflectionTint_0",
+            "provider": "_ReflectionTint",
             "offset": 448,
             "bytes": 16,
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceAdditiveSettings_0",
-            "provider": "_SourceAdditiveSettings",
+            "name": "_AdditiveLightSettings_0",
+            "provider": "_AdditiveLightSettings",
             "offset": 464,
             "bytes": 16,
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceAdditiveColor_0",
-            "provider": "_SourceAdditiveColor",
+            "name": "_AdditiveLightColor_0",
+            "provider": "_AdditiveLightColor",
             "offset": 480,
             "bytes": 16,
             "type": "vec4<f32>"

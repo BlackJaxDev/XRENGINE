@@ -142,6 +142,16 @@ for this case and does not evaluate `smoothstep` with equal limits.
 An absent source outline mask binds white. The outline texture remains a
 separate color and alpha sampler.
 
+The browser outline companion uses `WebGPU/UberOutline.slang`. Each cooked
+variant name lists its active coverage features in this order: alpha masks,
+dissolve, and source flipbook alpha. A source texture-array flipbook in
+final-alpha mode changes the outline coverage alpha, so that variant binds
+`_FlipbookTexArray` and `_FlipbookMask` and runs the alpha path of
+`source_flipbook.glsl`. The other flipbook modes change only color and
+emission, and the outline output does not read them. The outline cook keeps
+each source texture array and its layer settings in
+`PublishedTextureArrayProfile`.
+
 `ShadeNativeUber.glslinc` supplies the shared native evaluator for mono, MSAA,
 and overflow repair. It implements the supported toon lighting, normals, material
 AO, specular controls, cubemap reflections, layered matcaps, rim, emission,
@@ -149,7 +159,7 @@ glitter, color themes, and the supported decal operations.
 Reconstructed UV, normal, tangent, and position changes supply compute texture
 footprints. The current evaluator visits all lights that affect the view.
 
-Active Mochie imports use the source metallic and smoothness multipliers.
+Active toon-specular imports use the source metallic and smoothness multipliers.
 Packed green is smoothness. The source invert control determines inversion.
 Packed blue controls probe reflection and packed alpha controls direct specular.
 Their strengths and invert controls remain independent. The opt-in packed-mask
@@ -165,13 +175,24 @@ in the 64-byte packed vertex. Missing UV2 and UV3 remain zero, as in the forward
 shader. Active vertex UDIM discard remains an explicit unsupported operation in
 native visibility. The native visibility raster has no alpha-to-coverage output.
 An alpha-to-coverage material with an alpha cutoff test (`_Mode` 1 or
-`_SourceAlphaClip`, which the importer sets for alpha-to-coverage sources)
+`_AlphaClipAllModes`, which the importer sets for alpha-to-coverage sources)
 publishes a masked row. Its coverage keeps fragments with alpha at or above
 `_Cutoff`. On a single-sample target this matches the forward path, which also
 tests the cutoff. On a multisample target the masked edge is hard instead of a
 partial sample mask. An alpha-to-coverage material without a cutoff test stays
 unsupported (`UnsupportedResourceBinding`). The forward Vulkan path preserves the
 material alpha-to-coverage state for both single-sample and multisample targets.
+A single sample can still reject a fragment with zero alpha;
+the sample count must not silently disable the authored coverage state.
+Native coverage applies the surface-extension alpha dither with the same 8x8
+table as the forward shader. The raster passes use the fragment position, and
+native shading uses the pixel center, so both passes make the same decision.
+Dither with `_AlphaClipAllModes` routes an opaque draw to masked publication.
+Per-splat Gaussian shading uses the splat index in place of the pixel, so the
+dither keeps or drops whole splats.
+Distance fade, fresnel alpha, angular alpha, and depth alpha need view, model,
+and scene-depth data that native coverage does not have. The native encoder
+refuses those materials with a diagnostic reason.
 A view stores frozen render-time bits
 at byte offset 940 without changing its 944-byte stride.
 
@@ -208,8 +229,8 @@ values. Detail-normal composition follows the separate normal contract below.
 
 ### Source Direct Specular And Rim
 
-Supported Mochie materials select the source BRDF with
-`_SourceMochieSecond.w`. `_PBRMochiePackedMasksEnabled` controls packed-mask
+Supported toon-specular materials select the source BRDF with
+`_SecondSpecularSettings.w`. `_PBRPackedMasksEnabled` controls packed-mask
 sampling independently. The canonical and native Uber paths share
 `Uber/source_shading.glsl`. They use the packed smoothness channel, source
 multipliers, dielectric Fresnel, material occlusion, and cast-shadow control.
@@ -218,19 +239,19 @@ second lobe uses its own smoothness and strength. It combines with the first
 lobe by component-wise maximum. The packed specular mask includes source
 strength once. Inactive stylized-specular controls do not select its shape.
 
-`_SourceMochieSettings` holds GSAA enable, variance, threshold, and second-layer
-enable. `_SourceMochieSecond` holds second-layer smoothness, strength,
+`_SpecularAASettings` holds GSAA enable, variance, threshold, and second-layer
+enable. `_SecondSpecularSettings` holds second-layer smoothness, strength,
 cast-shadow bypass, and adapter enable. These values remain material-row data.
 
-The source style-0 rim uses `_SourceRimSettings` for enable, inversion, power,
-and normal selection. `_SourceRimColorSettings` holds base-color mix, brightness,
+The source style-0 rim uses `_RimShapeSettings` for enable, inversion, power,
+and normal selection. `_RimColorSettings` holds base-color mix, brightness,
 and blend mode. The source rim changes base color before lighting and metallic
 Fresnel construction. Its emission remains separate. Engine-authored materials
 retain their existing specular and rim paths.
 
 The importer reports enabled source controls that this adapter cannot represent
-with `POI0010` and retains the existing native Uber approximation for that effect.
-These include anisotropic or split-mask Mochie sampling, non-default PBR normal
+with `TOON0010` and retains the existing native Uber approximation for that effect.
+These include anisotropic or split-mask toon-specular sampling, non-default PBR normal
 selection, PBR global masks and tint themes, other rim styles, and active rim
 shadow, alpha, mask, hue, or pan modifiers. The material retains native Uber
 identity and its packed-mask contract. Source light selection and clearcoat use
@@ -238,7 +259,7 @@ separate adapters, described below.
 
 ### Source Light Selection And Clearcoat
 
-`SerializedMaterialImporter.SourceLighting` binds `_SourceLightMode` as an
+`SerializedMaterialImporter.SourceLighting` binds `_LightModel` as an
 independent opt-in flag. `_LightingColorMode` keeps the source enum: 0 selects
 Poi Custom and 2 selects UTS2. The shared shader evaluates these modes against
 linear world SH and the primary directional color. Source direction mode 0
@@ -254,24 +275,24 @@ disabled, the engine supplies constant effective world ambient through the
 three A.w values. Forward uniforms and the Advanced environment record use the
 same value. World clone and interpolation preserve this contract.
 
-`_SourceLightSettings` holds unlit intensity, cast-shadow blend, final lighting
+`_ToonLightSettings` holds unlit intensity, cast-shadow blend, final lighting
 multiplier, and final lighting addition. Source color processing applies minimum
 brightness, monochromatic mixing, and light cap at the source stage. The source
-adapter is separate from Mochie specular. Source diffuse replacement preserves
+adapter is separate from toon specular. Source diffuse replacement preserves
 the independent probe specular contribution. Source shading modes 0, 2, and
 5 use their own texture-ramp, wrapped, and flat composition. Color-mode values
 and shading-mode values are separate enums. Wrapped shading consumes raw primary
 and ambient colors; flat shading does not add a diffuse ambient term.
 
-`_SourceAdditiveSettings` holds additive enable, additional-directional disable,
-limit enable, and luminance limit. `_SourceAdditiveColor` holds monochromatic
+`_AdditiveLightSettings` holds additive enable, additional-directional disable,
+limit enable, and luminance limit. `_AdditiveLightColor` holds monochromatic
 mixing, passthrough, additive type, and cast-shadow blend.
-`_SourceAdditiveGradient` holds gradient start and end. Point and spot lights
+`_AdditiveLightGradient` holds gradient start and end. Point and spot lights
 evaluate source Lambert, gradient, or material-shading composition per pixel.
 Both shader paths apply the source controls, directional suppression, and
 luminance limits. Engine light attenuation and light assignment remain in use.
 Unity vertex-light assignment and cookies require separate source data. The
-importer reports this boundary with `POI0010`.
+importer reports this boundary with `TOON0010`.
 
 Authored world SH is independent of reflection probe textures. The engine does
 not project captured probes into these coefficients or import Unity per-renderer
@@ -283,17 +304,17 @@ probe diffuse after the source lighting result. Zero enabled coefficients use
 the same rule. Probe specular and generic PBR retain their behavior. See
 [Probe Diffuse Composition](default-render-pipeline-notes.md#probe-diffuse-composition).
 
-Supported Mochie probe specular reads raw prefiltered radiance and applies source
+Supported toon-specular probe reflection reads raw prefiltered radiance and applies source
 Fresnel, surface reduction, exposure occlusion, reflection tint, mask, and
-strength once. `_SourceMochieReflection` holds Fresnel strength and exposure
-occlusion. `_SourceMochieReflectionTint` holds the linear tint. This source gate
+strength once. `_ReflectionResponse` holds Fresnel strength and exposure
+occlusion. `_ReflectionTint` holds the linear tint. This source gate
 is independent of source diffuse lighting. The forward evaluator replaces its
 prior probe term after overlays and rebuilds the lighting context. Both paths
 use the available prefilter mip count. Engine probe selection remains in use.
 `LightProbeComponent.ReflectionFilter` selects GGX or Unity realtime filtering;
 see the [probe producer contract](default-render-pipeline-notes.md).
 
-Source Mochie and clearcoat select the probe LOD after source GSAA, separately
+Toon specular and clearcoat select the probe LOD after source GSAA, separately
 for each probe. `UnityMip` outputs preserve source levels 0 through 6 and use
 LOD `6*r`. `PerceptualRoughness` outputs use the inverse of
 `r * (1.7 - 0.7 * r)` across their available mip range. The stable inverse is
@@ -313,13 +334,13 @@ activate a probe before assigning its static environment texture when automatic
 capture is disabled.
 
 `SerializedMaterialImporter.SourceClearCoat` binds the supported source GGX coat
-as a separate contribution. `_SourceClearCoat` holds enable, smoothness,
-reflection strength, and direct specular strength. `_SourceClearCoatGsaa` holds
+as a separate contribution. `_ClearCoatSettings` holds enable, smoothness,
+reflection strength, and direct specular strength. `_ClearCoatAASettings` holds
 GSAA enable, variance, threshold, and overall coat strength.
-`_SourceClearCoatReflection` holds Fresnel strength and exposure occlusion.
+`_ClearCoatReflection` holds Fresnel strength and exposure occlusion.
 The source dielectric Fresnel constant is 0.220916301.
 
-`_SourceClearCoatMaps` is linear data: R is the coat mask, G is smoothness, B is
+`_ClearCoatMaskMaps` is linear data: R is the coat mask, G is smoothness, B is
 the reflection mask, and A is the direct specular mask. The supported adapter
 uses UV0, the imported texture transform, vertex normals, and white tints. It
 uses source GSAA for both GGX and probe mip selection. Only probe sampling
@@ -338,13 +359,13 @@ addition and Z by multiplication, then apply TBN and normalize once.
 `SerializedMaterialImporter.SourceToonNormals` binds each texture's imported
 green-channel inversion as material state. It does not change shared texture
 bytes. Raw engine normal textures retain their RG decode convention.
-`_SourceBackfaceNormals` selects the source backface contract.
+`_BackfaceNormalControl` selects the source backface contract.
 `_FlipBackfaceNormals` then controls the whole tangent frame: N, T, and B flip
 together before normal sampling. A disabled flag preserves all three vectors.
 Native normal derivatives use the same frame. Engine-authored materials retain
 their existing normal-only backface rule.
 
-Imported matcaps use `_SourceMatcap` and per-layer source controls. Poiyomi 9.2
+Imported matcaps use `_MatcapToonModel` and per-layer source controls. Poiyomi 9.2
 smoothness selects an explicit mip from the texture size. The verified locked
 8.1.167 Emote shader disables smoothness and uses implicit texture gradients
 with the `_MainTex` sampler. Mask channel, mask inversion,
@@ -373,7 +394,7 @@ the renderer requests it asynchronously and defers the draw. A failed variant
 reports its failure through preparation diagnostics. The canonical source's
 disabled feature defaults must not replace authored material features.
 
-Poiyomi emission slots use `_SourceLayeredEmission`. Each slot multiplies its
+Poiyomi emission slots use `_EmissionToonModel`. Each slot multiplies its
 emission map RGB by the selected amount of base color and by the emission map
 alpha. The slot mask and strength then scale the result. Generic engine
 emission slots keep their base-color blend rule. The raster and native
@@ -402,7 +423,7 @@ unauthored source second rim.
 ### Source Glitter
 
 `SerializedMaterialImporter.SourceToonGlitter` binds enabled Poiyomi glitter
-with `_SourceGlitter = 1`. Frequency, degree range, contrast, layer count,
+with `_GlitterModel = 1`. Frequency, degree range, contrast, layer count,
 normal blend, surface color, and brightness retain their source values.
 Integer modes remain integers in native material rows. Mask UV selection,
 transform, pan, channel, and inversion remain independent of flake UVs.

@@ -26,7 +26,7 @@ XRAdvancedEncodedTextureReference XR_UBER_FlipbookReference;
 
 void XR_UBER_ApplyFlipbook(XRUberCoordinates c, bool shadowPass, inout vec4 base, inout vec3 emission)
 {
-    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_TEXTURE_ARRAY_FLIPBOOK) || UBER_I(_SourceFlipbook) == 0)
+    if (!XR_UBER_HasFeature(XR_UBER_FEATURE_TEXTURE_ARRAY_FLIPBOOK) || UBER_I(_FlipbookToonModel) == 0)
         return;
     if (shadowPass && UBER_I(_FlipbookAlphaControlsFinalAlpha) != 1)
         return;
@@ -37,6 +37,6 @@ void XR_UBER_ApplyFlipbook(XRUberCoordinates c, bool shadowPass, inout vec4 base
     vec4 mask = XR_UBER_CoverageTexture(UBER_T(_FlipbookMask), UBER_I(_FlipbookMaskUV),
         UBER_V(_FlipbookMask_ST), UBER_V(_FlipbookMaskPan).xy * 0.05, c, vec4(1.0));
     xrApplySourceFlipbook(uv, dx, dy, vec3(XR_ADV_Texture2DArraySize(XR_UBER_FlipbookReference)),
-        mask[clamp(int(UBER_V(_SourceFlipbookFlags).z), 0, 3)], c.time, shadowPass, base, emission);
+        mask[clamp(int(UBER_V(_FlipbookFlags).z), 0, 3)], c.time, shadowPass, base, emission);
 }
 #endif

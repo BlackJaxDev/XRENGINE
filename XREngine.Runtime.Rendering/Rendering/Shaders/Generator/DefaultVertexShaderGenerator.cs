@@ -441,7 +441,7 @@ namespace XREngine.Rendering.Shaders.Generator
             Line("uniform float _OutlineFixedSize;");
             Line("uniform float _OutlineUseVertexColors;");
             Line("uniform float _OutlineZOffset;");
-            Line("uniform int _SourceOutlineBasic;");
+            Line("uniform int _OutlineBasicModel;");
             Line("uniform float _OutlineFixWidth;");
             Line("uniform float _OutlinesMaxDistance;");
             Line("uniform sampler2D _OutlineMask;");
@@ -693,7 +693,7 @@ namespace XREngine.Rendering.Shaders.Generator
             if (hasNormals)
             {
                 Line("#if defined(XRENGINE_OUTLINE_PASS)");
-                Line("if (_SourceOutlineBasic != 0)");
+                Line("if (_OutlineBasicModel != 0)");
                 using (OpenBracketState())
                 {
                     Line($"float xreSourceOutlineMask = textureLod(_OutlineMask, {(_texCoordsUsed > 0 ? $"{ECommonBufferType.TexCoord}0" : "vec2(0.0f)")}, 0.0f).r;");
@@ -1307,7 +1307,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 if (_useNormals)
                 {
                     Line("#if defined(XRENGINE_OUTLINE_PASS)");
-                    Line("if (_SourceOutlineBasic == 0 && (_OutlineSpace == 2 || _OutlineFixedSize > 0.5f))");
+                    Line("if (_OutlineBasicModel == 0 && (_OutlineSpace == 2 || _OutlineFixedSize > 0.5f))");
                     using (OpenBracketState())
                     {
                         Line("vec2 xreOutlineScreen = max(vec2(ScreenWidth, ScreenHeight), vec2(1.0f));");

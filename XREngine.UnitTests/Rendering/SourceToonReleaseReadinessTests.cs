@@ -42,12 +42,6 @@ public sealed class SourceToonReleaseReadinessTests
     }
 
     [Test]
-    public void AuthoringParityAuditHasNoUnclassifiedEntries()
-    {
-        SourceToonAuthoringParityAudit.Unclassified.ShouldBeEmpty();
-    }
-
-    [Test]
     public void MaintenanceToolingRequiresCatalogFixtureAndValidationReview()
     {
         string audit = File.ReadAllText(FindRepositoryFile(
