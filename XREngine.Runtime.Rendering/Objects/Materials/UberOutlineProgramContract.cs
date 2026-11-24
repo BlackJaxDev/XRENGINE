@@ -6,16 +6,23 @@ namespace XREngine.Rendering;
 /// <summary>Cold-path admission for the exact verified canonical outline program and its complete reflected ABI.</summary>
 public static class UberOutlineProgramContract
 {
-    public const uint MaterialByteSize = 656;
-    public const int SourceMemberCount = 80;
+    public const uint MaterialByteSize = 848;
+    public const int SourceMemberCount = 100;
 
     /// <summary>
     /// Source index of the first member added for imported sources. An absent
-    /// parameter at or after this index reads zero, as an unset desktop uniform
-    /// reads zero. The binding still requires the source dissolve inputs when
-    /// the material selects the source basic dissolve type.
+    /// parameter from this index up to <see cref="FirstFlipbookIndex"/> reads zero,
+    /// as an unset desktop uniform reads zero. The binding still requires the source
+    /// dissolve inputs when the material selects the source basic dissolve type.
     /// </summary>
     public const int FirstSourceControlIndex = 72;
+
+    /// <summary>
+    /// Source index of the first source flipbook input. These inputs are active only
+    /// for <see cref="UberOutlineMaterialProfile.FlipbookAlpha"/>, and each one must
+    /// be present, because the source import writes all of them.
+    /// </summary>
+    public const int FirstFlipbookIndex = 80;
     private static readonly ShaderAbiMemberContract[] Members =
     [
         new("OutlineFeatures_0", "OutlineFeatures", 0, 4, "u32"),
@@ -99,6 +106,26 @@ public static class UberOutlineProgramContract
         new("U_SourceOutlineBasic_0", "_SourceOutlineBasic", 636, 4, "i32"),
         new("_OutlinesMaxDistance_0", "_OutlinesMaxDistance", 640, 4, "f32"),
         new("_OutlineFixWidth_0", "_OutlineFixWidth", 644, 4, "f32"),
+        new("_FlipbookFPS_0", "_FlipbookFPS", 648, 4, "f32"),
+        new("_FlipbookFrameOffset_0", "_FlipbookFrameOffset", 652, 4, "f32"),
+        new("U_SourceFlipbookLayout_0", "_SourceFlipbookLayout", 656, 16, "vec4<f32>"),
+        new("U_SourceFlipbookSides_0", "_SourceFlipbookSides", 672, 16, "vec4<f32>"),
+        new("U_SourceFlipbookOptions_0", "_SourceFlipbookOptions", 688, 16, "vec4<f32>"),
+        new("U_SourceFlipbookMotion_0", "_SourceFlipbookMotion", 704, 16, "vec4<f32>"),
+        new("U_SourceFlipbookFlags_0", "_SourceFlipbookFlags", 720, 16, "vec4<f32>"),
+        new("_FlipbookMask_ST_0", "_FlipbookMask_ST", 736, 16, "vec4<f32>"),
+        new("_FlipbookColor_0", "_FlipbookColor", 752, 16, "vec4<f32>"),
+        new("_FlipbookScaleOffset_0", "_FlipbookScaleOffset", 768, 16, "vec4<f32>"),
+        new("_FlipbookMaskPan_0", "_FlipbookMaskPan", 784, 8, "vec2<f32>"),
+        new("_FlipbookTexArrayPan_0", "_FlipbookTexArrayPan", 792, 8, "vec2<f32>"),
+        new("_FlipbookCrossfadeRange_0", "_FlipbookCrossfadeRange", 800, 8, "vec2<f32>"),
+        new("_FlipbookMaskUV_0", "_FlipbookMaskUV", 808, 4, "i32"),
+        new("_FlipbookTexArrayUV_0", "_FlipbookTexArrayUV", 812, 4, "i32"),
+        new("_FlipbookManualFrameControl_0", "_FlipbookManualFrameControl", 816, 4, "f32"),
+        new("_FlipbookCurrentFrame_0", "_FlipbookCurrentFrame", 820, 4, "f32"),
+        new("_FlipbookStartFrame_0", "_FlipbookStartFrame", 824, 4, "f32"),
+        new("_FlipbookEndFrame_0", "_FlipbookEndFrame", 828, 4, "f32"),
+        new("_FlipbookCrossfadeEnabled_0", "_FlipbookCrossfadeEnabled", 832, 4, "f32"),
     ];
     private static readonly ShaderAbiMemberContract[] ViewMembers =
     [
@@ -130,29 +157,34 @@ public static class UberOutlineProgramContract
             < 1 or > SourceMemberCount => false,
             >= 9 and <= 15 => (features & UberOutlineMaterialProfile.AlphaMasks) != 0,
             >= 44 and <= 74 => (features & UberOutlineMaterialProfile.Dissolve) != 0,
+            > FirstFlipbookIndex => (features & UberOutlineMaterialProfile.FlipbookAlpha) != 0,
             _ => true,
         };
 
     /// <summary>Returns true when an absent material parameter for this source field reads as zero.</summary>
     public static bool ReadsZeroWhenAbsent(int sourceIndex)
-        => sourceIndex is >= FirstSourceControlIndex and < SourceMemberCount;
+        => sourceIndex is >= FirstSourceControlIndex and < FirstFlipbookIndex;
 
     /// <summary>Returns true for the inputs that only the source basic dissolve type reads.</summary>
     public static bool IsSourceBasicDissolveInput(int sourceIndex)
         => sourceIndex is FirstSourceControlIndex or FirstSourceControlIndex + 1;
 
     public static EngineMaterialVariantKey Key(uint features)
+        => new(EngineMaterialSemanticIdentity.UberOutlineV1, ShaderCompileTarget.WebGPUWgsl,
+            "outline", "position-normal-uv4-color-v1", "linear-hdr" + FeatureSuffix(features) + "-v1");
+
+    /// <summary>Returns the cooked recipe name of the selected feature closure.</summary>
+    public static string ArtifactName(uint features)
+        => "engine-uber-outline" + FeatureSuffix(features);
+
+    /// <summary>Names the selected features in their fixed order: alpha mask, dissolve, flipbook.</summary>
+    private static string FeatureSuffix(uint features)
     {
-        string output = features switch
-        {
-            0 => "linear-hdr-v1",
-            1 => "linear-hdr-alpha-mask-v1",
-            2 => "linear-hdr-dissolve-v1",
-            3 => "linear-hdr-alpha-mask-dissolve-v1",
-            _ => throw new ArgumentOutOfRangeException(nameof(features)),
-        };
-        return new(EngineMaterialSemanticIdentity.UberOutlineV1, ShaderCompileTarget.WebGPUWgsl,
-            "outline", "position-normal-uv4-color-v1", output);
+        if ((features & ~UberOutlineMaterialProfile.SupportedFeatures) != 0)
+            throw new ArgumentOutOfRangeException(nameof(features));
+        return ((features & UberOutlineMaterialProfile.AlphaMasks) != 0 ? "-alpha-mask" : string.Empty) +
+            ((features & UberOutlineMaterialProfile.Dissolve) != 0 ? "-dissolve" : string.Empty) +
+            ((features & UberOutlineMaterialProfile.FlipbookAlpha) != 0 ? "-flipbook" : string.Empty);
     }
 
     /// <summary>Validates once at program installation; descriptor parsing and asset access never belong in draw validation.</summary>
@@ -160,12 +192,8 @@ public static class UberOutlineProgramContract
     {
         ArgumentNullException.ThrowIfNull(artifact);
         EngineMaterialVariantKey key = Key(features);
-        string name = features switch
-        {
-            0 => "engine-uber-outline", 1 => "engine-uber-outline-alpha-mask",
-            2 => "engine-uber-outline-dissolve", _ => "engine-uber-outline-alpha-mask-dissolve",
-        };
-        int textures = 3 + ((features & 1) != 0 ? 1 : 0) + ((features & 2) != 0 ? 5 : 0);
+        string name = ArtifactName(features);
+        int textures = UberOutlineMaterialProfile.RequiredTextureCount(features);
         if (artifact.DescriptorBytes.IsDefaultOrEmpty || artifact.Target != key.Target ||
             artifact.SourceLanguage != "Slang" || artifact.Name != name || artifact.Pass != key.Pass ||
             artifact.SemanticSchemaIdentity != "xrengine.engine.uber-outline.v1" ||
@@ -183,13 +211,14 @@ public static class UberOutlineProgramContract
                 !descriptor.RootElement.TryGetProperty("includes", out JsonElement includes) || includes.ValueKind != JsonValueKind.Array ||
                 !descriptor.RootElement.TryGetProperty("requiredFeatures", out JsonElement requiredFeatures) || requiredFeatures.ValueKind != JsonValueKind.Array)
                 throw Invalid();
-            int expectedDefines = ((features & 1) != 0 ? 1 : 0) + ((features & 2) != 0 ? 1 : 0);
+            int expectedDefines = System.Numerics.BitOperations.PopCount(features);
             if (defines.GetArrayLength() != expectedDefines ||
                 includes.GetArrayLength() != 0 || requiredFeatures.GetArrayLength() != 0)
                 throw Invalid();
             int defineIndex = 0;
-            if ((features & 1) != 0 && defines[defineIndex++].GetString() != "XRE_OUTLINE_ALPHA_MASKS") throw Invalid();
-            if ((features & 2) != 0 && defines[defineIndex].GetString() != "XRE_OUTLINE_DISSOLVE") throw Invalid();
+            if ((features & UberOutlineMaterialProfile.AlphaMasks) != 0 && defines[defineIndex++].GetString() != "XRE_OUTLINE_ALPHA_MASKS") throw Invalid();
+            if ((features & UberOutlineMaterialProfile.Dissolve) != 0 && defines[defineIndex++].GetString() != "XRE_OUTLINE_DISSOLVE") throw Invalid();
+            if ((features & UberOutlineMaterialProfile.FlipbookAlpha) != 0 && defines[defineIndex].GetString() != "XRE_OUTLINE_FLIPBOOK") throw Invalid();
         }
 
         ShaderVertexBufferLayout vertex = artifact.VertexBuffers[0];
@@ -206,14 +235,15 @@ public static class UberOutlineProgramContract
         for (int index = 0; index < textures; index++)
         {
             string samplerName = UberOutlineMaterialProfile.RequiredSamplerName(features, index);
-            uint binding = checked((uint)(index < 3 || (features & 1) != 0 && index == 3 ? index * 2 :
-                8 + (index - 3 - ((features & 1) != 0 ? 1 : 0)) * 2));
+            uint binding = UberOutlineMaterialProfile.RequiredTextureBinding(samplerName);
             // The basic source outline also reads the mask in the vertex stage.
             ShaderStageVisibility visibility = index == 2
                 ? ShaderStageVisibility.Vertex | ShaderStageVisibility.Fragment
                 : ShaderStageVisibility.Fragment;
-            Sampled(artifact, binding, samplerName, false, visibility);
-            Sampled(artifact, binding + 1, samplerName, true, visibility);
+            string textureType = samplerName == UberOutlineMaterialProfile.FlipbookArraySamplerName
+                ? "texture-2d-array-float" : "texture-2d-float";
+            Sampled(artifact, binding, samplerName, false, visibility, textureType);
+            Sampled(artifact, binding + 1, samplerName, true, visibility, textureType);
         }
         Limit(artifact, "maxVertexAttributes", 7);
         Limit(artifact, "maxVertexBuffers", 7);
@@ -244,11 +274,11 @@ public static class UberOutlineProgramContract
     }
 
     private static void Sampled(ShaderProgramArtifact artifact, uint binding, string name, bool sampler,
-        ShaderStageVisibility visibility)
+        ShaderStageVisibility visibility, string textureType)
     {
         ShaderStageResourceLayout resource = Binding(artifact, 2, binding);
         ShaderAbiResourceContract contract = resource.Contract;
-        if (resource.BindingType != (sampler ? "filtering-sampler" : "texture-2d-float") ||
+        if (resource.BindingType != (sampler ? "filtering-sampler" : textureType) ||
             resource.DynamicOffset || resource.RuntimeArray || resource.Visibility != visibility ||
             contract.Name != name || contract.PhysicalName != (sampler ? name + "Sampler_0" : name + "_0") ||
             contract.Kind != (sampler ? ShaderAbiResourceKind.Sampler : ShaderAbiResourceKind.SampledImage) ||
