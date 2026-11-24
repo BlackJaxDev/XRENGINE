@@ -422,14 +422,14 @@ public static class ModelImportMeshletCooker
 
         long fileBytes = File.Exists(pageCache.FilePath) ? new FileInfo(pageCache.FilePath).Length : -1L;
         MeshletPageSetStats stats = totals.Stats;
+        string failureText = failure is null ? string.Empty : $" writeFailure={failure}";
         Debug.WriteAuxiliaryLog(
             "meshlet-cache.log",
             $"[ClusterPages] model={modelIdentity} formatVersion={MeshletPageFormat.Version} cookVersion={MeshletPageBuilder.CookVersion} " +
             $"meshes={totals.Meshes} stored={totals.Hits} cooked={totals.Cooked} failed={totals.Failed} skipped={totals.Skipped} attached={totals.Attached} " +
             $"cookedPages={stats.PageCount} cookedRootPages={stats.RootPageCount} cookedPageBytes={stats.PageBytes} " +
             $"cookedRootPageBytes={stats.RootPageBytes} fill={stats.AverageFill:P1} maxDependencies={stats.MaxDependencies} " +
-            $"file={Path.GetFileName(pageCache.FilePath)} fileBytes={fileBytes} written={written}" +
-            (failure is null ? string.Empty : $" writeFailure={failure}"));
+            $"file={Path.GetFileName(pageCache.FilePath)} fileBytes={fileBytes} written={written}{failureText}");
     }
 
     private static ModelImportMeshletPayloadCache? OpenPayloadCache(string stableModelIdentity)
