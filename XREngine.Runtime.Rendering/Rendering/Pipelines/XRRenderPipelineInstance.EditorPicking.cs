@@ -54,6 +54,7 @@ public sealed partial class XRRenderPipelineInstance
 
         PromoteSubmittedEditorPickingCandidate();
         AbortEditorPickingCandidate();
+        ReleaseStaleEditorPickingSource(package.CanonicalScenePublication.Sequence);
 
         if (package.State != EBackendReadyFramePackageState.Published ||
             !TryGetTexture(AdvancedRenderPipeline.EditorPickingIdentityTextureName,
@@ -95,6 +96,44 @@ public sealed partial class XRRenderPipelineInstance
                 ++_nextEditorPickingAuthoringToken;
             _editorPickingCandidateToken = _nextEditorPickingAuthoringToken;
         }
+    }
+
+    /// <summary>
+    /// The largest number of scene publications that a retained editor picking source may
+    /// fall behind the current frame package before the pipeline releases it.
+    /// </summary>
+    /// <remarks>
+    /// The source keeps a GPU publication lease, and the canonical scene tables cannot trim
+    /// their journals past a pinned publication. A pipeline that keeps rendering replaces its
+    /// source every submitted frame. A pipeline whose frames are not submitted (for example an
+    /// OpenXR eye that waits on a resource) keeps its old source, and without this bound its
+    /// lease would fill the shadow-table journal until every publication is rejected.
+    /// </remarks>
+    private const ulong MaxEditorPickingSourcePublicationAge = 64UL;
+
+    /// <summary>
+    /// Disposes the retained editor picking source when its native publication is more than
+    /// <see cref="MaxEditorPickingSourcePublicationAge"/> publications older than
+    /// <paramref name="currentPublicationSequence"/>. A picking request takes its own lease, so
+    /// a queued request stays valid. A later submitted frame publishes a new source.
+    /// </summary>
+    private void ReleaseStaleEditorPickingSource(ulong currentPublicationSequence)
+    {
+        if (currentPublicationSequence == 0UL)
+            return;
+
+        EditorPickingSourceReceipt stale;
+        lock (_editorPickingSync)
+        {
+            AdvancedGpuScenePublicationLease lease = _editorPickingSource.NativeLease;
+            if (!lease.IsValid ||
+                lease.Reference.Sequence + MaxEditorPickingSourcePublicationAge >= currentPublicationSequence)
+                return;
+
+            stale = _editorPickingSource;
+            _editorPickingSource = default;
+        }
+        stale.Dispose();
     }
 
     /// <summary>
