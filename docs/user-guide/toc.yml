@@ -28,6 +28,10 @@
   href: browser-game-builds.md
 - name: Shader Editor
   href: editor/shader-editor.md
+- name: Editor Keyboard Shortcuts
+  href: editor/keyboard-shortcuts.md
+- name: Window Video Recording
+  href: editor/window-recording.md
 - name: Prefab Workflow
   href: prefab-workflow.md
 - name: Job System
