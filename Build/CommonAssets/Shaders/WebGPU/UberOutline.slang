@@ -91,25 +91,25 @@ struct OutlineMaterialUniforms
     float2 _DissolveEdgeTexturePan;
     int _DissolveEdgeTextureUV;
     float _DissolveCutoff;
-    float4 _SourceDissolveParams;
+    float4 _DissolveSettings;
     float4 _DissolveTextureColor;
     // Imported source controls. An absent animated control reads zero, as an
     // unset desktop uniform reads zero.
-    float _SourceAlphaClip;
-    int _SourceBackfaceNormals;
+    float _AlphaClipAllModes;
+    int _BackfaceNormalControl;
     int _FlipBackfaceNormals;
-    int _SourceOutlineBasic;
+    int _OutlineBasicModel;
     float _OutlinesMaxDistance;
     float _OutlineFixWidth;
     // Source texture-array flipbook controls. The outline reads only the inputs
     // of the final-alpha path.
     float _FlipbookFPS;
     float _FlipbookFrameOffset;
-    float4 _SourceFlipbookLayout;
-    float4 _SourceFlipbookSides;
-    float4 _SourceFlipbookOptions;
-    float4 _SourceFlipbookMotion;
-    float4 _SourceFlipbookFlags;
+    float4 _FlipbookLayout;
+    float4 _FlipbookSides;
+    float4 _FlipbookOptions;
+    float4 _FlipbookMotion;
+    float4 _FlipbookFlags;
     float4 _FlipbookMask_ST;
     float4 _FlipbookColor;
     float4 _FlipbookScaleOffset;
@@ -201,7 +201,7 @@ OutlineVertexOutput uberOutlineVertex(OutlineVertexInput input)
 {
     float3 position = input.position;
     float3 normal = input.normal;
-    bool basic = material._SourceOutlineBasic != 0;
+    bool basic = material._OutlineBasicModel != 0;
     if (basic)
     {
         // The basic source outline moves along the unnormalized normal by the
@@ -360,7 +360,7 @@ float calculateAlpha(float4 baseColor, OutlineVertexOutput input, float3 normal,
     alpha = saturate(alpha + material._AlphaMod);
     // A source alpha clip keeps the authored alpha. Its force-opaque control
     // changes only the coverage alpha.
-    if (material._SourceAlphaClip <= 0.5 && material._AlphaForceOpaque > 0.5)
+    if (material._AlphaClipAllModes <= 0.5 && material._AlphaForceOpaque > 0.5)
         alpha = 1.0;
     return alpha;
 }
@@ -409,7 +409,7 @@ bool applyDissolve(OutlineVertexOutput input, float3 normal, float3 viewDirectio
             basicMask = 1.0 - basicMask;
         float3 result = sourceBasicDissolve(noise, detail, basicMask, material._DissolveProgress,
             material._DissolveEdgeWidth, material._DissolveDetailStrength, material._DissolveInvert,
-            material._SourceDissolveParams, view.u_Time);
+            material._DissolveSettings, view.u_Time);
         float2 dissolvedUV = getUV(material._DissolveEdgeTextureUV, input, normal, viewDirection)
             * material._DissolveEdgeTexture_ST.xy + material._DissolveEdgeTexture_ST.zw + material._DissolveEdgeTexturePan * sourceTime;
         float4 dissolvedColor = _DissolveEdgeTexture.Sample(_DissolveEdgeTextureSampler, dissolvedUV) * material._DissolveTextureColor;
@@ -520,11 +520,11 @@ float applySourceFlipbookAlpha(float2 uv, float2 dx, float2 dy, float mask, floa
     uv.y = 1.0 - uv.y;
     dx.y = -dx.y;
     dy.y = -dy.y;
-    float4 placement = material._SourceFlipbookLayout;
-    float4 options = material._SourceFlipbookOptions;
-    float4 motion = material._SourceFlipbookMotion;
-    float4 flags = material._SourceFlipbookFlags;
-    float4 sides = material._SourceFlipbookSides * float4(-1.0, 1.0, -1.0, 1.0);
+    float4 placement = material._FlipbookLayout;
+    float4 options = material._FlipbookOptions;
+    float4 motion = material._FlipbookMotion;
+    float4 flags = material._FlipbookFlags;
+    float4 sides = material._FlipbookSides * float4(-1.0, 1.0, -1.0, 1.0);
     uint width;
     uint height;
     uint layers;
@@ -606,7 +606,7 @@ float4 uberOutlineFragment(OutlineVertexOutput input, bool frontFacing : SV_IsFr
     // An imported source with back-face normals keeps the front normal on back
     // faces unless it also asks for a flip. The rim and UV modes 4 and 6 read it.
     float facing = frontFacing ? 1.0 : -1.0;
-    float normalFacing = material._SourceBackfaceNormals == 0 || material._FlipBackfaceNormals != 0 ? facing : 1.0;
+    float normalFacing = material._BackfaceNormalControl == 0 || material._FlipBackfaceNormals != 0 ? facing : 1.0;
     float3 normal = normalize(input.worldNormal) * normalFacing;
     float4 baseColor = calculateBaseColor(input, normal, viewDirection);
     float alpha = calculateAlpha(baseColor, input, normal, viewDirection);
@@ -622,7 +622,7 @@ float4 uberOutlineFragment(OutlineVertexOutput input, bool frontFacing : SV_IsFr
         float2 flipbookMaskUV = getUV(material._FlipbookMaskUV, input, normal, viewDirection)
             * material._FlipbookMask_ST.xy + material._FlipbookMask_ST.zw + material._FlipbookMaskPan * view.u_Time * 0.05;
         float4 flipbookMask = _FlipbookMask.Sample(_FlipbookMaskSampler, flipbookMaskUV);
-        int maskChannel = clamp(int(material._SourceFlipbookFlags.z), 0, 3);
+        int maskChannel = clamp(int(material._FlipbookFlags.z), 0, 3);
         alpha = applySourceFlipbookAlpha(flipbookUV, flipbookDx, flipbookDy, flipbookMask[maskChannel], view.u_Time, alpha);
     }
 #endif
@@ -633,10 +633,10 @@ float4 uberOutlineFragment(OutlineVertexOutput input, bool frontFacing : SV_IsFr
 #endif
     // The coverage test runs after the dissolve. A forced-opaque source alpha
     // clip passes the test and keeps full outline coverage.
-    float coverageAlpha = material._SourceAlphaClip > 0.5 && material._AlphaForceOpaque > 0.5 ? 1.0 : alpha;
-    bool coverageDiscard = (material._Mode == 1 || material._SourceAlphaClip > 0.5) && coverageAlpha < material._Cutoff;
+    float coverageAlpha = material._AlphaClipAllModes > 0.5 && material._AlphaForceOpaque > 0.5 ? 1.0 : alpha;
+    bool coverageDiscard = (material._Mode == 1 || material._AlphaClipAllModes > 0.5) && coverageAlpha < material._Cutoff;
 
-    bool basic = material._SourceOutlineBasic != 0;
+    bool basic = material._OutlineBasicModel != 0;
     float2 uv = textureUV(getUV(material._OutlineTextureUV, input, normal, viewDirection), material._OutlineTexture_ST, material._OutlineTexturePan);
     float2 maskUV = textureUV(getUV(material._OutlineMaskUV, input, normal, viewDirection), material._OutlineMask_ST, material._OutlineMaskPan);
     float4 textureColor = _OutlineTexture.Sample(_OutlineTextureSampler, uv);

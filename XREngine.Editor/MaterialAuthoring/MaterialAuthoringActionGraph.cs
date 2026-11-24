@@ -7,7 +7,7 @@ namespace XREngine.Editor.MaterialAuthoring;
 
 /// <summary>
 /// Parsed, typed representation of a Thry action list. The parser accepts the
-/// compact object notation emitted by the pinned Poiyomi catalog without
+/// compact object notation emitted by the pinned source toon catalog without
 /// treating it as executable code.
 /// </summary>
 public sealed class MaterialAuthoringActionGraph

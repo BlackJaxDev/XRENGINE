@@ -272,7 +272,7 @@ public sealed class UberOutlineSurfaceBinding
         // coverage alpha, and only in its final-alpha mode. Other modes change only
         // color and emission, which the outline output does not read.
         if (IsFeatureEnabled(source, "texture-array-flipbook") &&
-            ResolveIntControl(source, "_SourceFlipbook") != 0 &&
+            ResolveIntControl(source, "_FlipbookToonModel") != 0 &&
             ResolveIntControl(source, "_FlipbookAlphaControlsFinalAlpha") == 1)
             features |= UberOutlineMaterialProfile.FlipbookAlpha;
         foreach (string id in source.ActiveUberVariant.EnabledFeatures)

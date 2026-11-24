@@ -692,8 +692,8 @@
             "type": "f32"
           },
           {
-            "name": "U_SourceDissolveParams_0",
-            "provider": "_SourceDissolveParams",
+            "name": "_DissolveSettings_0",
+            "provider": "_DissolveSettings",
             "offset": 592,
             "bytes": 16,
             "type": "vec4<f32>"
@@ -706,15 +706,15 @@
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceAlphaClip_0",
-            "provider": "_SourceAlphaClip",
+            "name": "_AlphaClipAllModes_0",
+            "provider": "_AlphaClipAllModes",
             "offset": 624,
             "bytes": 4,
             "type": "f32"
           },
           {
-            "name": "U_SourceBackfaceNormals_0",
-            "provider": "_SourceBackfaceNormals",
+            "name": "_BackfaceNormalControl_0",
+            "provider": "_BackfaceNormalControl",
             "offset": 628,
             "bytes": 4,
             "type": "i32"
@@ -727,8 +727,8 @@
             "type": "i32"
           },
           {
-            "name": "U_SourceOutlineBasic_0",
-            "provider": "_SourceOutlineBasic",
+            "name": "_OutlineBasicModel_0",
+            "provider": "_OutlineBasicModel",
             "offset": 636,
             "bytes": 4,
             "type": "i32"
@@ -762,36 +762,36 @@
             "type": "f32"
           },
           {
-            "name": "U_SourceFlipbookLayout_0",
-            "provider": "_SourceFlipbookLayout",
+            "name": "_FlipbookLayout_0",
+            "provider": "_FlipbookLayout",
             "offset": 656,
             "bytes": 16,
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceFlipbookSides_0",
-            "provider": "_SourceFlipbookSides",
+            "name": "_FlipbookSides_0",
+            "provider": "_FlipbookSides",
             "offset": 672,
             "bytes": 16,
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceFlipbookOptions_0",
-            "provider": "_SourceFlipbookOptions",
+            "name": "_FlipbookOptions_0",
+            "provider": "_FlipbookOptions",
             "offset": 688,
             "bytes": 16,
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceFlipbookMotion_0",
-            "provider": "_SourceFlipbookMotion",
+            "name": "_FlipbookMotion_0",
+            "provider": "_FlipbookMotion",
             "offset": 704,
             "bytes": 16,
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceFlipbookFlags_0",
-            "provider": "_SourceFlipbookFlags",
+            "name": "_FlipbookFlags_0",
+            "provider": "_FlipbookFlags",
             "offset": 720,
             "bytes": 16,
             "type": "vec4<f32>"

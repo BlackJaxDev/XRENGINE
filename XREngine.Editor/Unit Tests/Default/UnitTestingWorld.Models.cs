@@ -583,8 +583,8 @@ public static partial class EditorUnitTests
                                     Debug.Meshes(
                                         $"[UnityPrefab] Import completed: {resolvedPath} " +
                                         $"({result.ModelCount} models, {result.MaterialCount} materials, " +
-                                        $"{result.SourceToonMaterialCount} Poiyomi-to-Uber conversions, " +
-                                        $"{result.SourceToonDowngradeCount} Poiyomi Pro downgrade(s))");
+                                        $"{result.SourceToonMaterialCount} toon-to-Uber conversions, " +
+                                        $"{result.SourceToonDowngradeCount} Pro toon downgrade(s))");
                                 }
                                 catch (Exception ex)
                                 {

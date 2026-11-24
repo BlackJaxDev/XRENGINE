@@ -53,7 +53,7 @@ public static partial class SerializedMaterialImporter
             document.TryGetPositive("_Refract");
         string? unsupportedReason = null;
         if (requiresSceneColor)
-            unsupportedReason = "The imported Poiyomi scene-color effect has no compatible Advanced late shader.";
+            unsupportedReason = "The imported source toon scene-color effect has no compatible Advanced late shader.";
         else if (options.BlendModeAllDrawBuffers?.Enabled != ERenderParamUsage.Enabled)
             unsupportedReason = "The source transparent pass does not enable blending.";
         else if (options.AlphaToCoverage == ERenderParamUsage.Enabled)
@@ -70,7 +70,7 @@ public static partial class SerializedMaterialImporter
             isOrderDependent: true,
             unsupportedReason: unsupportedReason)
         {
-            TemporalUnsupportedReason = "The imported Poiyomi material has no coverage-matching velocity and reactive shader variants for its geometry.",
+            TemporalUnsupportedReason = "The imported source toon material has no coverage-matching velocity and reactive shader variants for its geometry.",
         };
 
         diagnostics.Add(new MaterialConversionDiagnostic(

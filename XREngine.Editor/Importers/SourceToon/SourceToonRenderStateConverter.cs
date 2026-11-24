@@ -7,7 +7,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Converts verified Poiyomi Toon ShaderLab pass and fixed-function state into
+/// Converts verified source toon shader pass and fixed-function state into
 /// the engine's shared-authored-state material pass architecture.
 /// </summary>
 public static class SourceToonRenderStateConverter
@@ -98,7 +98,7 @@ public static class SourceToonRenderStateConverter
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
                 MaterialConversionDiagnosticSeverity.Info,
-                "Poiyomi's disabled Add pass is preserved, so no separate additive compatibility pass is requested; ordinary Forward+ base-pass lighting remains active.",
+                "The disabled source Add pass is preserved, so no separate additive compatibility pass is requested; ordinary Forward+ base-pass lighting remains active.",
                 "Add"));
         }
         else
@@ -106,7 +106,7 @@ public static class SourceToonRenderStateConverter
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.IntentionalNativeDifference,
                 MaterialConversionDiagnosticSeverity.Info,
-                "Poiyomi ForwardAdd lighting is folded into the single Forward+ base pass; its independently authored additive blend state is retained in the conversion report for diagnostics.",
+                "Source ForwardAdd lighting is folded into the single Forward+ base pass; its independently authored additive blend state is retained in the conversion report for diagnostics.",
                 "Add"));
         }
 
@@ -262,14 +262,14 @@ public static class SourceToonRenderStateConverter
         bool alphaToCoverage,
         ICollection<MaterialConversionDiagnostic> diagnostics)
     {
-        (int srcRgb, int dstRgb, int srcAlpha, int dstAlpha) = GetPresetBlend(preset);
+        ref readonly UberRenderPresetDefinition definition = ref UberRenderPresets.Get(ToUberPreset(preset));
         BlendMode blend = new()
         {
-            Enabled = RequiresBlending(preset) ? ERenderParamUsage.Enabled : ERenderParamUsage.Disabled,
-            RgbSrcFactor = MapBlendFactor(document, "_SrcBlend", srcRgb, diagnostics),
-            RgbDstFactor = MapBlendFactor(document, "_DstBlend", dstRgb, diagnostics),
-            AlphaSrcFactor = MapBlendFactor(document, "_SrcBlendAlpha", srcAlpha, diagnostics),
-            AlphaDstFactor = MapBlendFactor(document, "_DstBlendAlpha", dstAlpha, diagnostics),
+            Enabled = definition.Blend ? ERenderParamUsage.Enabled : ERenderParamUsage.Disabled,
+            RgbSrcFactor = MapBlendFactor(document, "_SrcBlend", definition.SourceFactor, diagnostics),
+            RgbDstFactor = MapBlendFactor(document, "_DstBlend", definition.DestinationFactor, diagnostics),
+            AlphaSrcFactor = MapBlendFactor(document, "_SrcBlendAlpha", EBlendingFactor.One, diagnostics),
+            AlphaDstFactor = MapBlendFactor(document, "_DstBlendAlpha", EBlendingFactor.One, diagnostics),
             RgbEquation = MapBlendOperation(document, "_BlendOp", 0, diagnostics),
             AlphaEquation = MapBlendOperation(document, "_BlendOpAlpha", 4, diagnostics),
         };
@@ -281,7 +281,7 @@ public static class SourceToonRenderStateConverter
                 document,
                 "_ZTest",
                 "_ZWrite",
-                PresetWritesDepth(preset),
+                definition.WritesDepth,
                 diagnostics),
             StencilTest = CreateStencil(document, "_Stencil", diagnostics),
             BlendModeAllDrawBuffers = blend,
@@ -304,10 +304,10 @@ public static class SourceToonRenderStateConverter
         options.BlendModeAllDrawBuffers = new BlendMode
         {
             Enabled = ERenderParamUsage.Enabled,
-            RgbSrcFactor = MapBlendFactor(document, "_AddSrcBlend", 1, diagnostics),
-            RgbDstFactor = MapBlendFactor(document, "_AddDstBlend", 1, diagnostics),
-            AlphaSrcFactor = MapBlendFactor(document, "_AddSrcBlendAlpha", 0, diagnostics),
-            AlphaDstFactor = MapBlendFactor(document, "_AddDstBlendAlpha", 1, diagnostics),
+            RgbSrcFactor = MapBlendFactor(document, "_AddSrcBlend", EBlendingFactor.One, diagnostics),
+            RgbDstFactor = MapBlendFactor(document, "_AddDstBlend", EBlendingFactor.One, diagnostics),
+            AlphaSrcFactor = MapBlendFactor(document, "_AddSrcBlendAlpha", EBlendingFactor.Zero, diagnostics),
+            AlphaDstFactor = MapBlendFactor(document, "_AddDstBlendAlpha", EBlendingFactor.One, diagnostics),
             RgbEquation = MapBlendOperation(document, "_AddBlendOp", 4, diagnostics),
             AlphaEquation = MapBlendOperation(document, "_AddBlendOpAlpha", 4, diagnostics),
         };
@@ -331,10 +331,10 @@ public static class SourceToonRenderStateConverter
             BlendModeAllDrawBuffers = new BlendMode
             {
                 Enabled = ERenderParamUsage.Enabled,
-                RgbSrcFactor = MapBlendFactor(document, "_OutlineSrcBlend", 1, diagnostics),
-                RgbDstFactor = MapBlendFactor(document, "_OutlineDstBlend", 0, diagnostics),
-                AlphaSrcFactor = MapBlendFactor(document, "_OutlineSrcBlendAlpha", 1, diagnostics),
-                AlphaDstFactor = MapBlendFactor(document, "_OutlineDstBlendAlpha", 0, diagnostics),
+                RgbSrcFactor = MapBlendFactor(document, "_OutlineSrcBlend", EBlendingFactor.One, diagnostics),
+                RgbDstFactor = MapBlendFactor(document, "_OutlineDstBlend", EBlendingFactor.Zero, diagnostics),
+                AlphaSrcFactor = MapBlendFactor(document, "_OutlineSrcBlendAlpha", EBlendingFactor.One, diagnostics),
+                AlphaDstFactor = MapBlendFactor(document, "_OutlineDstBlendAlpha", EBlendingFactor.Zero, diagnostics),
                 RgbEquation = MapBlendOperation(document, "_OutlineBlendOp", 0, diagnostics),
                 AlphaEquation = MapBlendOperation(document, "_OutlineBlendOpAlpha", 4, diagnostics),
             },
@@ -506,10 +506,12 @@ public static class SourceToonRenderStateConverter
     private static EBlendingFactor MapBlendFactor(
         SerializedMaterialDocument document,
         string property,
-        int fallback,
+        EBlendingFactor fallback,
         ICollection<MaterialConversionDiagnostic> diagnostics)
     {
-        int raw = GetInt(document, property, fallback);
+        if (!document.TryGetInt(property, out int raw))
+            return fallback;
+
         return raw switch
         {
             0 => EBlendingFactor.Zero,
@@ -589,7 +591,7 @@ public static class SourceToonRenderStateConverter
         diagnostics.Add(new MaterialConversionDiagnostic(
             MaterialConversionDiagnosticCodes.EnumValueOutOfRange,
             MaterialConversionDiagnosticSeverity.Warning,
-            $"Serialized enum value {raw.ToString(CultureInfo.InvariantCulture)} is not supported by the Poiyomi Toon mapping; using '{fallback}'.",
+            $"Serialized enum value {raw.ToString(CultureInfo.InvariantCulture)} is not supported by the source toon mapping; using '{fallback}'.",
             property));
         return fallback;
     }
@@ -599,14 +601,7 @@ public static class SourceToonRenderStateConverter
         if (alphaToCoverage)
             return ETransparencyMode.AlphaToCoverage;
 
-        return preset switch
-        {
-            SourceToonRenderPreset.Opaque => ETransparencyMode.Opaque,
-            SourceToonRenderPreset.Cutout or SourceToonRenderPreset.TransClipping => ETransparencyMode.Masked,
-            SourceToonRenderPreset.Transparent => ETransparencyMode.PremultipliedAlpha,
-            SourceToonRenderPreset.Additive => ETransparencyMode.Additive,
-            _ => ETransparencyMode.AlphaBlend,
-        };
+        return UberRenderPresets.Get(ToUberPreset(preset)).TransparencyMode;
     }
 
     private static int ResolveRenderPass(SourceToonRenderPreset preset, bool alphaToCoverage)
@@ -618,12 +613,6 @@ public static class SourceToonRenderStateConverter
         return (int)EDefaultRenderPass.TransparentForward;
     }
 
-    private static bool RequiresBlending(SourceToonRenderPreset preset)
-        => preset is not SourceToonRenderPreset.Opaque and not SourceToonRenderPreset.Cutout;
-
-    private static bool PresetWritesDepth(SourceToonRenderPreset preset)
-        => preset is SourceToonRenderPreset.Opaque or SourceToonRenderPreset.Cutout or SourceToonRenderPreset.TransClipping;
-
     private static int GetPresetQueue(SourceToonRenderPreset preset)
         => preset switch
         {
@@ -633,25 +622,28 @@ public static class SourceToonRenderStateConverter
             _ => TransparentQueue,
         };
 
-    private static float GetPresetCutoff(SourceToonRenderPreset preset)
-        => preset switch
-        {
-            SourceToonRenderPreset.Cutout => 0.5f,
-            SourceToonRenderPreset.TransClipping => 0.01f,
-            SourceToonRenderPreset.Fade => 0.002f,
-            _ => 0.0f,
-        };
+    /// <summary>
+    /// Returns the alpha cutoff that the source preset sets.
+    /// </summary>
+    public static float GetPresetCutoff(SourceToonRenderPreset preset)
+        => UberRenderPresets.Get(ToUberPreset(preset)).AlphaCutoff;
 
-    private static (int SrcRgb, int DstRgb, int SrcAlpha, int DstAlpha) GetPresetBlend(SourceToonRenderPreset preset)
+    /// <summary>
+    /// Returns the Uber render preset that matches a source render preset.
+    /// </summary>
+    public static EUberRenderPreset ToUberPreset(SourceToonRenderPreset preset)
         => preset switch
         {
-            SourceToonRenderPreset.TransClipping or SourceToonRenderPreset.Fade => (5, 10, 1, 1),
-            SourceToonRenderPreset.Transparent => (1, 10, 1, 1),
-            SourceToonRenderPreset.Additive => (1, 1, 1, 1),
-            SourceToonRenderPreset.SoftAdditive => (4, 1, 1, 1),
-            SourceToonRenderPreset.Multiplicative => (2, 0, 1, 1),
-            SourceToonRenderPreset.Multiplicative2X => (2, 3, 1, 1),
-            _ => (1, 0, 1, 1),
+            SourceToonRenderPreset.Opaque => EUberRenderPreset.Opaque,
+            SourceToonRenderPreset.Cutout => EUberRenderPreset.Cutout,
+            SourceToonRenderPreset.TransClipping => EUberRenderPreset.TransparentCutout,
+            SourceToonRenderPreset.Fade => EUberRenderPreset.Fade,
+            SourceToonRenderPreset.Transparent => EUberRenderPreset.Transparent,
+            SourceToonRenderPreset.Additive => EUberRenderPreset.Additive,
+            SourceToonRenderPreset.SoftAdditive => EUberRenderPreset.SoftAdditive,
+            SourceToonRenderPreset.Multiplicative => EUberRenderPreset.Multiply,
+            SourceToonRenderPreset.Multiplicative2X => EUberRenderPreset.Multiply2X,
+            _ => throw new ArgumentOutOfRangeException(nameof(preset), preset, "Unknown source render preset."),
         };
 
     private static bool IsSourcePassEnabled(SerializedMaterialDocument document, string passName)

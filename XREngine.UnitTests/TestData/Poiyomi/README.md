@@ -8,7 +8,7 @@ released under CC0-1.0.
 The corpus must not copy example avatars, materials, textures, icons, or other
 artwork from the Poiyomi repository. Tests that need the upstream shader source
 must consume a user-provided checkout at the commit pinned by
-`poiyomi-toon-9.3.64.json`; XRENGINE does not redistribute that shader.
+`source-toon-9.3.64.json`; XRENGINE does not redistribute that shader.
 
 The parity-validation corpus completes those fixture roles through
 `ParityCorpus/corpus-manifest.json`. The versioned manifest records:

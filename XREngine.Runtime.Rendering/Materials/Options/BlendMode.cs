@@ -1,4 +1,5 @@
-﻿using XREngine.Data.Core;
+﻿using System.ComponentModel;
+using XREngine.Data.Core;
 
 namespace XREngine.Rendering.Models.Materials
 {
@@ -17,6 +18,9 @@ namespace XREngine.Rendering.Models.Materials
         public bool IsDisable => Enabled == ERenderParamUsage.Disabled;
         public bool IsUnchanged => Enabled == ERenderParamUsage.Unchanged;
 
+        // The YAML writer omits default values. Each [DefaultValue] names the field initializer, so that a
+        // value of 0, such as Zero or Unchanged, is written and does not load as the initializer value.
+        [DefaultValue(ERenderParamUsage.Disabled)]
         public ERenderParamUsage Enabled
         {
             get => _enabled;
@@ -32,21 +36,25 @@ namespace XREngine.Rendering.Models.Materials
             get => _alphaEquation;
             set => SetField(ref _alphaEquation, value);
         }
+        [DefaultValue(EBlendingFactor.ConstantColor)]
         public EBlendingFactor RgbSrcFactor
         {
             get => _rgbSrcFactor;
             set => SetField(ref _rgbSrcFactor, value);
         }
+        [DefaultValue(EBlendingFactor.ConstantAlpha)]
         public EBlendingFactor AlphaSrcFactor
         {
             get => _alphaSrcFactor;
             set => SetField(ref _alphaSrcFactor, value);
         }
+        [DefaultValue(EBlendingFactor.ConstantColor)]
         public EBlendingFactor RgbDstFactor
         {
             get => _rgbDstFactor;
             set => SetField(ref _rgbDstFactor, value);
         }
+        [DefaultValue(EBlendingFactor.ConstantAlpha)]
         public EBlendingFactor AlphaDstFactor
         {
             get => _alphaDstFactor;

@@ -12,10 +12,17 @@ public static class NativeUberMaterialSourceEncoder
     private static readonly string[] EmissionUvs = ["_EmissionSlotUv0", "_EmissionSlotUv1", "_EmissionSlotUv2", "_EmissionSlotUv3"];
     private static readonly string[] EmissionModifiers = ["_EmissionSlotModifiers0", "_EmissionSlotModifiers1", "_EmissionSlotModifiers2", "_EmissionSlotModifiers3"];
     private static readonly string[] DecalBlendParams = ["_DecalBlendParams0", "_DecalBlendParams1", "_DecalBlendParams2", "_DecalBlendParams3"];
-    private static readonly string[] SourceDecalAlphaParams = ["_SourceDecalAlphaParams0", "_SourceDecalAlphaParams1", "_SourceDecalAlphaParams2", "_SourceDecalAlphaParams3"];
+    private static readonly string[] SourceDecalAlphaParams = ["_DecalAlphaParams0", "_DecalAlphaParams1", "_DecalAlphaParams2", "_DecalAlphaParams3"];
     private static readonly string[] DecalUvs = ["_DecalUvMode0", "_DecalUvMode1", "_DecalUvMode2", "_DecalUvMode3"];
     private static readonly string[] DecalModifiers = ["_DecalSlotModifiers0", "_DecalSlotModifiers1", "_DecalSlotModifiers2", "_DecalSlotModifiers3"];
     private static readonly string[] DecalFx = ["_DecalSlotFx0", "_DecalSlotFx1", "_DecalSlotFx2", "_DecalSlotFx3"];
+    private static readonly string[] MatcapParams = ["_MatcapSlotParams0", "_MatcapSlotParams1", "_MatcapSlotParams2", "_MatcapSlotParams3"];
+    private static readonly string[] MatcapExtras = ["_MatcapSlotExtra0", "_MatcapSlotExtra1", "_MatcapSlotExtra2", "_MatcapSlotExtra3"];
+    private static readonly string[] MatcapUvControls = ["_MatcapSlotUvControl0", "_MatcapSlotUvControl1", "_MatcapSlotUvControl2", "_MatcapSlotUvControl3"];
+    private static readonly string[] MatcapHues = ["_MatcapSlotHue0", "_MatcapSlotHue1", "_MatcapSlotHue2", "_MatcapSlotHue3"];
+    private static readonly string[] MatcapShapes = ["_MatcapSlotShape0", "_MatcapSlotShape1", "_MatcapSlotShape2", "_MatcapSlotShape3"];
+    private static readonly string[] MatcapAlphas = ["_MatcapSlotAlpha0", "_MatcapSlotAlpha1", "_MatcapSlotAlpha2", "_MatcapSlotAlpha3"];
+    private static readonly string[] MatcapHueSelects = ["_MatcapSlotHueSelect0", "_MatcapSlotHueSelect1", "_MatcapSlotHueSelect2", "_MatcapSlotHueSelect3"];
 
     /// <summary>Identifies source tile discard that requires all three triangle corners.</summary>
     public static bool RequiresPrimitiveTileDiscard(XRMaterial material)
@@ -45,6 +52,12 @@ public static class NativeUberMaterialSourceEncoder
             return true;
         if (UsesAlphaToCoverage(material))
             return true;
+        // Alpha dithering lowers alpha by an ordered threshold. With the all-modes alpha clip, the clip test
+        // then removes a pattern of pixels, so the opaque draw must use the masked raster.
+        if (material.IsUberFeatureEnabled("surface-extensions", false) &&
+            material.Parameter<ShaderFloat>("_AlphaDither") is { Value: > 0.5f } &&
+            material.Parameter<ShaderFloat>("_AlphaClipAllModes") is { Value: > 0.5f })
+            return true;
         return material.Parameter<ShaderInt>("_Mode") is { Value: 1 };
     }
 
@@ -56,11 +69,11 @@ public static class NativeUberMaterialSourceEncoder
     /// Identifies an active alpha cutoff test in the native coverage function
     /// (<c>NativeUberCoverage.glslinc</c>). The function keeps a fragment with alpha at or
     /// above <c>_Cutoff</c> when the blend mode is cutout (<c>_Mode</c> 1) or the source
-    /// alpha clip is on (<c>_SourceAlphaClip</c>). Otherwise it keeps every fragment.
+    /// alpha clip is on (<c>_AlphaClipAllModes</c>). Otherwise it keeps every fragment.
     /// </summary>
     private static bool HasAlphaCutoffTest(XRMaterial material)
         => material.Parameter<ShaderInt>("_Mode") is { Value: 1 } ||
-            material.Parameter<ShaderFloat>("_SourceAlphaClip") is { Value: > 0.5f };
+            material.Parameter<ShaderFloat>("_AlphaClipAllModes") is { Value: > 0.5f };
 
     public static bool TryEncode(
         XRMaterial material,
@@ -97,7 +110,7 @@ public static class NativeUberMaterialSourceEncoder
         if (UsesAlphaToCoverage(material) && !HasAlphaCutoffTest(material))
         {
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
-            reason = "Native Uber alpha-to-coverage requires an alpha cutoff test (_Mode 1 or _SourceAlphaClip).";
+            reason = "Native Uber alpha-to-coverage requires an alpha cutoff test (_Mode 1 or _AlphaClipAllModes).";
             return false;
         }
         uint features = 0u;
@@ -259,7 +272,7 @@ public static class NativeUberMaterialSourceEncoder
     private static bool ValidateModes(XRMaterial material, out string reason)
     {
         if (material.IsUberFeatureEnabled("texture-array-flipbook", false) &&
-            material.Parameter<ShaderInt>("_SourceFlipbook") is not { Value: 1 })
+            material.Parameter<ShaderInt>("_FlipbookToonModel") is not { Value: 1 })
         {
             reason = "Native Uber array flipbook requires the source playback contract.";
             return false;
@@ -275,22 +288,22 @@ public static class NativeUberMaterialSourceEncoder
             !Allowed(material, "_DissolveCoordinateSpace", [0, 1], out reason))
             return false;
         if (material.Parameter<ShaderInt>("_LightingMode") is { Value: 1 } &&
-            (material.Parameter<ShaderInt>("_SourceLightMode") is not { Value: 1 } ||
+            (material.Parameter<ShaderInt>("_LightModel") is not { Value: 1 } ||
              !material.IsUberFeatureEnabled("advanced-stylized-lighting", false)))
         {
             reason = "Native Uber multilayer lighting requires the source lighting contract.";
             return false;
         }
         if (material.Parameter<ShaderInt>("_LightingMode") is { Value: 1 } &&
-            material.Parameter<ShaderVector4>("_SourceMultilayerOptions") is { Value: var options } &&
+            material.Parameter<ShaderVector4>("_MultilayerOptions") is { Value: var options } &&
             options.Y is not (0f or 1f))
         {
             reason = "Native Uber multilayer lighting requires shadow mask type 0 or 1.";
             return false;
         }
-        if (!Allowed(material, "_SourceGlitter", [0, 1], out reason))
+        if (!Allowed(material, "_GlitterModel", [0, 1], out reason))
             return false;
-        if (material.IsUberFeatureEnabled("glitter", false) && IsNonZero(material, "_SourceGlitter") &&
+        if (material.IsUberFeatureEnabled("glitter", false) && IsNonZero(material, "_GlitterModel") &&
             (!Allowed(material, "_GlitterLayers", [1, 2, 3, 4, 5, 6, 7, 8], out reason) ||
              !Allowed(material, "_GlitterMode", [0, 1, 2], out reason) ||
              !Allowed(material, "_GlitterShape", [0], out reason) ||
@@ -305,6 +318,40 @@ public static class NativeUberMaterialSourceEncoder
                 !name.EndsWith("Uv", StringComparison.Ordinal)) continue;
             if (Allowed(material, name, [0, 1, 2, 3], out reason)) continue;
             return false;
+        }
+        reason = string.Empty;
+        return true;
+    }
+
+    /// <summary>
+    /// Rejects active matcap slots that use options the native matcap operation does not implement.
+    /// </summary>
+    /// <remarks>
+    /// The native operation supports the first three projections and only global mask 1 with the subtract blend.
+    /// It does not implement rotation, the circle mask, alpha options, or hue selection.
+    /// </remarks>
+    private static bool ValidateMatcapSlots(XRMaterial material, out string reason)
+    {
+        for (int slot = 0; slot < 4; ++slot)
+        {
+            Vector4 parameters = material.Parameter<ShaderVector4>(MatcapParams[slot])?.Value ?? Vector4.Zero;
+            if (parameters.X <= 0f)
+                continue;
+
+            Vector4 extra = material.Parameter<ShaderVector4>(MatcapExtras[slot])?.Value ?? Vector4.Zero;
+            Vector4 uvControl = material.Parameter<ShaderVector4>(MatcapUvControls[slot])?.Value ?? Vector4.Zero;
+            Vector4 hue = material.Parameter<ShaderVector4>(MatcapHues[slot])?.Value ?? Vector4.Zero;
+            Vector4 shape = material.Parameter<ShaderVector4>(MatcapShapes[slot])?.Value ?? Vector4.Zero;
+            Vector4 alpha = material.Parameter<ShaderVector4>(MatcapAlphas[slot])?.Value ?? Vector4.Zero;
+            bool hueSelect = hue.X > 0.5f && IsNonZero(material, MatcapHueSelects[slot]);
+            bool supportedGlobalMask = uvControl.Z == 0f || (uvControl.Z == 1f && uvControl.W == 1f);
+            if (extra.Z is not (0f or 1f or 2f) || !supportedGlobalMask ||
+                shape.X != 0f || shape.Y > 0.5f || alpha.X != 0f || alpha.Y > 0f || hueSelect)
+            {
+                reason = $"Native Uber active matcap slot {slot} has an unsupported projection, global mask, rotation, " +
+                    "circle mask, alpha option, or hue selection.";
+                return false;
+            }
         }
         reason = string.Empty;
         return true;
@@ -363,24 +410,27 @@ public static class NativeUberMaterialSourceEncoder
         {
             if (IsNonZero(material, "_MainTexDistortionStrength") ||
                 IsNonZero(material, "_NormalCorrectStrength") ||
-                IsNonZero(material, "_MainTexStochasticMode") ||
+                IsNonZero(material, "_MainTexStochastic") ||
+                IsNonZero(material, "_BumpMapStochastic") ||
+                IsNonZero(material, "_MainPixelMode") ||
+                IsNonZero(material, "_MainIgnoreTexAlpha") ||
                 IsNonZero(material, "_ColorMaskEnabled"))
             {
-                reason = "Native Uber surface distortion, normal correction, or color mask is active without a matching native operation.";
+                reason = "Native Uber surface distortion, normal correction, stochastic or pixel sampling, ignored main alpha, " +
+                    "or color mask is active without a matching native operation.";
                 return false;
             }
         }
-        if (IsNonZero(material, "_SourceSceneColorMode"))
+        if (IsNonZero(material, "_SceneColorMode"))
         {
             reason = "Native Uber has no ordered scene-color sample for this source surface.";
             return false;
         }
         if (material.IsUberFeatureEnabled("surface-extensions", false) &&
             (IsNonZero(material, "_DistanceFade") || IsNonZero(material, "_AlphaFresnel") ||
-             IsNonZero(material, "_AlphaAngular") || IsNonZero(material, "_AlphaDither") ||
-             IsNonZero(material, "_DepthAlphaEnabled")))
+             IsNonZero(material, "_AlphaAngular") || IsNonZero(material, "_DepthAlphaEnabled")))
         {
-            reason = "Native Uber distance, angle, dither, or depth alpha has no matching coverage operation.";
+            reason = "Native Uber distance, fresnel, angle, or depth alpha has no matching coverage operation.";
             return false;
         }
         if (material.IsUberFeatureEnabled("layered-matcap-rim", false) && IsNonZero(material, "_DepthRimStrength"))
@@ -396,7 +446,7 @@ public static class NativeUberMaterialSourceEncoder
             return false;
         }
         Vector4 rim2Shape = material.Parameter<ShaderVector4>("_Rim2Params")?.Value ?? Vector4.Zero;
-        Vector4 sourceRim2 = material.Parameter<ShaderVector4>("_SourceRim2Settings")?.Value ?? Vector4.Zero;
+        Vector4 sourceRim2 = material.Parameter<ShaderVector4>("_Rim2Settings")?.Value ?? Vector4.Zero;
         if (material.IsUberFeatureEnabled("layered-matcap-rim", false) &&
             (IsNonZero(material, "_Rim2Enable") ||
              rim2Shape.W > 0f && sourceRim2.X <= 0.5f))
@@ -435,6 +485,9 @@ public static class NativeUberMaterialSourceEncoder
             reason = "Native Uber active extended effect has no matching native operation.";
             return false;
         }
+        if (material.IsUberFeatureEnabled("layered-matcap-rim", false) &&
+            !ValidateMatcapSlots(material, out reason))
+            return false;
         for (int slot = 0; slot < 4; ++slot)
         {
             Vector4 decalBlend = material.Parameter<ShaderVector4>(DecalBlendParams[slot])?.Value ?? Vector4.Zero;

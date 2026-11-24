@@ -1,7 +1,7 @@
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Source evidence used to identify unlocked and optimizer-generated Poiyomi shaders.
+/// Source evidence used to identify unlocked and optimizer-generated source toon shaders.
 /// </summary>
 public sealed record SourceToonShaderMatchInput
 {

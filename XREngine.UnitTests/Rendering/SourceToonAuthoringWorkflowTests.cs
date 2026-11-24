@@ -61,10 +61,10 @@ public sealed class SourceToonAuthoringWorkflowTests
             MaterialAuthoringPersistentLinkGroup.CurrentVersion,
             Guid.NewGuid(),
             "Eyes",
-            "poiyomi/property/emission",
+            "uber/property/_EmissionStrength",
             [
-                new("Assets/a.xrm", "poiyomi-toon-9.3.64"),
-                new("Assets/b.xrm", "poiyomi-toon-9.3.64"),
+                new("Assets/a.xrm", "uber"),
+                new("Assets/b.xrm", "uber"),
             ]);
         source.AddOrReplace(group).ShouldBeNull();
 

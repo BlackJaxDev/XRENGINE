@@ -3,7 +3,7 @@ using System.Globalization;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// A semantic Poiyomi shader version.
+/// A semantic source toon shader version.
 /// </summary>
 public readonly record struct SourceToonShaderVersion(int Major, int Minor, int Patch)
 {

@@ -25,6 +25,9 @@ struct XRUberCoordinates
     vec4 color;
     bool frontFacing;
     float time;
+    // Window pixel of the sample. Raster stages use gl_FragCoord.xy, and the shading pass uses the
+    // pixel center, so that both stages read the same ordered dither cell.
+    vec2 pixel;
 };
 
 void XR_UBER_CoverageUv(
@@ -148,7 +151,7 @@ bool XR_UBER_ApplyDissolve(XRUberCoordinates coordinates, inout vec4 baseColor, 
         vec3 result = xrSourceBasicDissolve(noise, detail, mask,
             UBER_F(_DissolveProgress), UBER_F(_DissolveEdgeWidth),
             UBER_F(_DissolveDetailStrength), UBER_F(_DissolveInvert),
-            UBER_V(_SourceDissolveParams), coordinates.time);
+            UBER_V(_DissolveSettings), coordinates.time);
         vec4 dissolvedColor = XR_UBER_CoverageTexture(UBER_T(_DissolveEdgeTexture),
             UBER_I(_DissolveEdgeTextureUV), UBER_V(_DissolveEdgeTexture_ST),
             UBER_V(_DissolveEdgeTexturePan).xy * panTimeScale, coordinates, vec4(1.0)) *
@@ -233,6 +236,23 @@ bool XR_UBER_ApplyDissolve(XRUberCoordinates coordinates, inout vec4 baseColor, 
     return true;
 }
 
+// Returns the 8x8 ordered dither threshold of a pixel. The table matches uberBayerDither in the
+// forward Uber shader, so both paths discard the same pixels.
+float XR_UBER_BayerDither(vec2 pixel)
+{
+    const float bayer[64] = float[64](
+        0.015625, 0.765625, 0.203125, 0.953125, 0.06250, 0.81250, 0.25000, 1.00000,
+        0.515625, 0.265625, 0.703125, 0.453125, 0.56250, 0.31250, 0.75000, 0.50000,
+        0.140625, 0.890625, 0.078125, 0.828125, 0.18750, 0.93750, 0.12500, 0.87500,
+        0.640625, 0.390625, 0.578125, 0.328125, 0.68750, 0.43750, 0.62500, 0.37500,
+        0.046875, 0.796875, 0.234375, 0.984375, 0.03125, 0.78125, 0.21875, 0.96875,
+        0.546875, 0.296875, 0.734375, 0.484375, 0.53125, 0.28125, 0.71875, 0.46875,
+        0.171875, 0.921875, 0.109375, 0.859375, 0.15625, 0.90625, 0.09375, 0.84375,
+        0.671875, 0.421875, 0.609375, 0.359375, 0.65625, 0.40625, 0.59375, 0.34375);
+    ivec2 cell = ivec2(mod(floor(pixel), 8.0));
+    return bayer[cell.y * 8 + cell.x];
+}
+
 bool XR_UBER_ApplyCoverage(
     XRUberCoordinates coordinates,
     out vec4 baseColor,
@@ -253,7 +273,7 @@ bool XR_UBER_ApplyCoverage(
         vec2 tileDx;
         vec2 tileDy;
         XR_UBER_CoverageUv(coordinates, UBER_I(_UDIMDiscardUV), tileUv, tileDx, tileDy);
-        if (UBER_F(_SourceUdimFlipV) > 0.5)
+        if (UBER_F(_UdimFlipV) > 0.5)
             tileUv.y = 1.0 - tileUv.y;
         vec2 tile = floor(tileUv);
         if (all(greaterThanEqual(tile, vec2(0.0))) &&
@@ -315,7 +335,7 @@ bool XR_UBER_ApplyCoverage(
         else if (mode == 4) alpha = clamp(alpha - mask, 0.0, 1.0);
     }
     alpha = clamp(alpha + UBER_F(_AlphaMod), 0.0, 1.0);
-    if (UBER_F(_SourceAlphaClip) <= 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
+    if (UBER_F(_AlphaClipAllModes) <= 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
         alpha = 1.0;
 
     base.a = alpha;
@@ -332,11 +352,21 @@ bool XR_UBER_ApplyCoverage(
     vec3 dissolveEmission;
     bool keep = XR_UBER_ApplyDissolve(coordinates, baseColor, dissolveEmission);
     edgeEmission += dissolveEmission;
+    // Alpha dithering runs after decals and dissolve, as in the forward Uber shader. It lowers
+    // alpha by an ordered threshold, so the clip test below keeps a pattern of pixels.
+    if (XR_UBER_HasFeature(XR_UBER_FEATURE_SURFACE_EXTENSIONS) && UBER_F(_AlphaDither) > 0.5)
+    {
+        float dither = XR_UBER_BayerDither(coordinates.pixel) - UBER_F(_AlphaDitherBias);
+        baseColor.a = clamp(baseColor.a - dither * (1.0 - baseColor.a) * UBER_F(_AlphaDitherGradient), 0.0, 1.0);
+    }
     // Source ForceOpaque runs after decals and dissolve but before the clip test.
-    if (UBER_F(_SourceAlphaClip) > 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
+    if (UBER_F(_AlphaClipAllModes) > 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
         baseColor.a = 1.0;
-    return keep && ((blendMode != 1 && UBER_F(_SourceAlphaClip) <= 0.5) ||
-        baseColor.a >= UBER_F(_Cutoff));
+    // Modes 1 (cutout), 2 (fade), and 5 (transparent cutout) clip at the cutoff, as in the forward Uber shader.
+    // Imported source materials always clip at the cutoff.
+    bool alphaClipMode = blendMode == 1 || blendMode == 2 || blendMode == 5 ||
+        UBER_F(_AlphaClipAllModes) > 0.5;
+    return keep && (!alphaClipMode || baseColor.a >= UBER_F(_Cutoff));
 }
 
 bool XR_UBER_ApplyCoverage(

@@ -135,8 +135,8 @@ public sealed class SourceToonParityContractTests
         });
         SourceToonShaderMatchResult rejected = SourceToonShaderMatcher.Match(new()
         {
-            ShaderPath = "Assets/_PoiyomiShaders/Shaders/10/Poiyomi Toon.shader",
-            ShaderSource = "Shader \".poiyomi/Poiyomi Toon\" { // Poiyomi 10.0.0 }",
+            ShaderPath = "Assets/_PoiyomiShaders/Shaders/11.0/Poiyomi Toon.shader",
+            ShaderSource = "Shader \".poiyomi/Poiyomi Toon\" { // Poiyomi 11.0.0 }",
             PropertyNames = signature,
         });
 
@@ -193,8 +193,8 @@ public sealed class SourceToonParityContractTests
     {
         MaterialConversionDiagnostic[] diagnostics =
         [
-            new("POI9999", MaterialConversionDiagnosticSeverity.Warning, "Unknown value retained.", "_UnknownZ"),
-            new("POI9998", MaterialConversionDiagnosticSeverity.Warning, "Unknown value retained.", "_UnknownA"),
+            new("TOON9999", MaterialConversionDiagnosticSeverity.Warning, "Unknown value retained.", "_UnknownZ"),
+            new("TOON9998", MaterialConversionDiagnosticSeverity.Warning, "Unknown value retained.", "_UnknownA"),
         ];
         XRMaterial material = new() { Name = "Unknowns" };
         string source = Path.GetTempFileName();
@@ -271,9 +271,9 @@ public sealed class SourceToonParityContractTests
     [Test]
     public void SchemaHierarchyConditionsAndWidgets_HaveStableCompleteContracts()
     {
-        ShaderAuthoringSchema first = SourceToonAuthoringSchemaCatalog.GetOrCreate(
+        ShaderAuthoringSchema first = UberAuthoringSchemaCatalog.GetOrCreate(
             ShaderHelper.UberFragForward().GetUiManifest());
-        ShaderAuthoringSchema second = SourceToonAuthoringSchemaCatalog.GetOrCreate(
+        ShaderAuthoringSchema second = UberAuthoringSchemaCatalog.GetOrCreate(
             ShaderHelper.UberFragForward().GetUiManifest());
         first.Fingerprint.ShouldBe(second.Fingerprint);
         first.Version.ShouldBeGreaterThan(0);
