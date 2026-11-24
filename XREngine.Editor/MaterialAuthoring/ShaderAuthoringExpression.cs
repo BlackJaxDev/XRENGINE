@@ -360,9 +360,17 @@ public sealed class ShaderAuthoringExpression
 
             if (char.IsLetter(value) || value is '_' or '$')
             {
-                while (_position < source.Length &&
-                       (char.IsLetterOrDigit(source[_position]) || source[_position] is '_' or '.' or ':' or '$'))
+                // A prefixed operand, such as feature:layered-matcap-rim, can contain hyphens after its colon.
+                bool prefixed = false;
+                while (_position < source.Length)
+                {
+                    char current = source[_position];
+                    if (current == ':')
+                        prefixed = true;
+                    else if (!(char.IsLetterOrDigit(current) || current is '_' or '.' or '$' || (prefixed && current == '-')))
+                        break;
                     _position++;
+                }
                 string text = source[start.._position];
                 return text.ToLowerInvariant() switch
                 {

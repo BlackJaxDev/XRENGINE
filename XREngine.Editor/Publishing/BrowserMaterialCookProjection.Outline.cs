@@ -54,18 +54,23 @@ internal sealed partial class BrowserMaterialCookProjection
             }
             VerifyCanonicalOutlineSource(source);
             if (source.Textures.Count > UberOutlineMaterialProfile.MaximumSourceTextures ||
-                source.Textures.Any(static texture => texture is not null && texture.GetType() != typeof(XRTexture2D)))
-                throw OutlineUnsupported("TextureType", "the original source table requires at most 32 static XRTexture2D entries");
+                source.Textures.Any(static texture => texture is not null &&
+                    texture.GetType() != typeof(XRTexture2D) && texture.GetType() != typeof(XRTexture2DArray)))
+                throw OutlineUnsupported("TextureType", "the original source table requires at most 32 static XRTexture2D or XRTexture2DArray entries");
             (XRTexture?[] textures, MaterialSurfaceTextureBinding[] surfaceBindings) = CanonicalizeTextureAliases(source);
             UberOutlineTextureBinding[] complete = textures.Select((texture, slot) => (texture, slot))
                 .Where(static item => item.texture is not null)
-                .Select(static item => item.texture is XRTexture2D texture
-                    ? new UberOutlineTextureBinding(item.slot, texture.ResolveSamplerName(item.slot), texture,
-                        PublishedStandardLitTextureSettings.Capture(texture))
-                    : throw OutlineUnsupported("TextureType", "all source image slots require static XRTexture2D payloads"))
+                .Select(static item => item.texture switch
+                {
+                    XRTexture2D texture => new UberOutlineTextureBinding(item.slot, texture.ResolveSamplerName(item.slot), texture,
+                        PublishedStandardLitTextureSettings.Capture(texture)),
+                    // The array profile keeps each layer's settings; the cooked array payload omits them.
+                    XRTexture2DArray array => new UberOutlineTextureBinding(item.slot, array.ResolveSamplerName(item.slot), array,
+                        PublishedTextureArrayProfile.Capture(array)),
+                    _ => throw OutlineUnsupported("TextureType", "all source image slots require static XRTexture2D or XRTexture2DArray payloads"),
+                })
                 .ToArray();
-            int count = 3 + ((features & UberOutlineMaterialProfile.AlphaMasks) != 0 ? 1 : 0) +
-                ((features & UberOutlineMaterialProfile.Dissolve) != 0 ? 5 : 0);
+            int count = UberOutlineMaterialProfile.RequiredTextureCount(features);
             UberOutlineTextureBinding[] required = new UberOutlineTextureBinding[count];
             for (int index = 0; index < count; index++)
             {
@@ -78,6 +83,9 @@ internal sealed partial class BrowserMaterialCookProjection
                         match = binding;
                     }
                 required[index] = match ?? throw OutlineUnsupported("SamplerMissing", $"sampler '{name}' has no exact authored image");
+                Type expected = name == UberOutlineMaterialProfile.FlipbookArraySamplerName ? typeof(XRTexture2DArray) : typeof(XRTexture2D);
+                if (required[index].Texture.GetType() != expected)
+                    throw OutlineUnsupported("SamplerType", $"sampler '{name}' requires an exact {expected.Name} image");
             }
             UberOutlineMaterialProfile profile = new()
             {

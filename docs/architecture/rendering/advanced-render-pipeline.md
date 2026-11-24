@@ -1081,6 +1081,20 @@ texture slots: albedo, normal, metallic-roughness, emissive, opacity, and occlus
 - Only the native opaque kernels read the texture. The Native Uber path, the Default
   pipeline, and the WebGPU shading contracts ignore it.
 
+### Indirect diffuse Fresnel
+
+The native opaque kernel weights the world ambient term and probe diffuse by
+`1 - F`. `F` comes from `XR_ADV_FresnelSchlickRoughness` (`StandardPBR.glslinc`, and
+the same function in the WebGPU `AdvancedShadeLighting.slang`). It caps the grazing
+reflectance at `max(1 - roughness, F0)`, as the forward and Default pipeline shaders do.
+Probe specular uses the same `F` with the split-sum lookup.
+
+Do not use the plain Schlick Fresnel for these terms. At `N.V = 0` it gives `F = 1`,
+which removes all indirect diffuse light. Interpolated vertex normals of coarse meshes
+can face away from the camera near silhouette edges. For example, the arch edges of the
+Sponza aisle vaults have normals smoothed across a hard edge. With the plain Fresnel,
+surfaces in shadow get a black band along those edges.
+
 ### General debug shapes
 
 `ModelComponent` copies its `RenderBounds` setting into each new runtime mesh.
@@ -1172,6 +1186,17 @@ in front of `VisibilityRaster.mesh`.
   counter receipt reports these counts under the instrumented strategies
   (`GpuMeshletInstrumented`, `GpuIndirectInstrumented`). Late-raster task work
   is not counted, because the counter copy runs before the late raster.
+- Under other strategies, `AdvancedVisibilityCounterSampling` turns on the
+  same per-view counter copy every N render frames. Set N at launch with
+  `XRE_ADVANCED_VISIBILITY_COUNTER_SAMPLING` or while the editor runs with the
+  MCP tool `set_advanced_visibility_counter_sampling`. 0 (the default) turns
+  the copy off and 1 copies every frame. The copy uses the same delayed
+  readback ring as the instrumented copy: the CPU reads it only after the
+  graphics timeline passes the frame, so it adds no wait. The MCP tool
+  `get_advanced_visibility_counters` returns the newest values per output and
+  view, with `payloadOverflow` and `decodeOutOfBounds` named. Each sample
+  counts as a diagnostic readback and map in the render statistics, so keep
+  sampling off for strict zero-readback validation.
 - The delayed diagnostic readback ring keeps its last quarter of slots for the
   per-view counter receipts. The per-bin copies request thousands of slots per
   second; without the reserved slots they took every slot and the counter
@@ -1495,7 +1520,7 @@ always set, so a debug resource gated on one of those bits is always allocated.
   - Each failure has a reason (`EAdvancedTextureSourceMismatch`). The failure text starts with the reason name in brackets. `AdvancedTextureSourceMismatchDiagnostics` keeps process totals and the last reason. The MCP render pipeline readout shows them under the directional shadow lane (`sourceMismatch`), and the `XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS` `SUMMARY` line shows `srcMismatch.<reason>` totals.
 - Readiness is backend state that the canonical table generations do not cover. The Vulkan runtime keeps a texture readiness generation that advances when the encoded reference or a bound-image field (width, height, mip count, format class, flags, dimension) of any texture row changes.
 - Imported transparent materials draw in the late lane. `XRMaterial.ResolveAdvancedLatePassMetadata()` returns the explicit `AdvancedLatePassMetadata` when a material authors it. Otherwise it derives shared, immutable metadata from the transparency mode: `AlphaBlend`, `PremultipliedAlpha` and `Additive` in the `TransparentForward` pass become sorted alpha (each draw keeps the blend factors of its own render options, for example One, OneMinusSrcAlpha for premultiplied alpha), and `WeightedBlendedOit` in the weighted blended OIT pass becomes OIT. Without this, a premultiplied or additive material that has no authored metadata has no late pass and does not draw in the Advanced pipeline. The serialized material importer authors explicit metadata for imported source toon transparent materials, so they do not use this derivation. Derived metadata never requests the scene color snapshot, and it is not serialized, so no asset changes. A material that samples scene color must author its metadata.
-- A verified imported source surface can use `AdvancedLatePassMetadata.SourceSurfaceContract` to draw in source queue order after native opaque shading. The validator requires a canonical Uber Base pass, an imported queue above 2500, matching queue priority, and the supported pass options. The published frame package freezes the first scene-color consumer by sorted command index and stable key. One read scope holds that package while the late stage draws the prefix, copies the full HDR attachment to a dedicated Rgba16f array, and draws the suffix. The copy uses one layer on desktop and one layer per stereo eye. `_SourceSceneColor` samples the copied attachment with full framebuffer pixel coordinates and linear clamp filtering. The ordinary transparency copy is separate and cannot replace this source copy. A required source draw with an unsupported contract fails frame authoring; a missing render snapshot reports pending preparation.
+- A verified imported source surface can use `AdvancedLatePassMetadata.SourceSurfaceContract` to draw in source queue order after native opaque shading. The validator requires a canonical Uber Base pass, an imported queue above 2500, matching queue priority, and the supported pass options. The published frame package freezes the first scene-color consumer by sorted command index and stable key. One read scope holds that package while the late stage draws the prefix, copies the full HDR attachment to a dedicated Rgba16f array, and draws the suffix. The copy uses one layer on desktop and one layer per stereo eye. `_SceneColorTexture` samples the copied attachment with full framebuffer pixel coordinates and linear clamp filtering. The ordinary transparency copy is separate and cannot replace this source copy. A required source draw with an unsupported contract fails frame authoring; a missing render snapshot reports pending preparation.
 - A source-ordered command must have one primitive. The current command sorter and scene-color boundary cannot split different source materials inside one renderer. Admission rejects a multi-primitive source command before it draws.
 - Advanced frame admission checks each enabled primary mesh in passes 1, 3, and 4 against an exact compatible canonical submission in the same published package. It reports the missing count and the first pass, stable key, and reason before authoring. Supplemental and disabled Base draws do not require a primary submission. Verified source-ordered materials use pass 5 and the separate required source route.
 - The model importers resolve a material opacity: `Opacity` when present, otherwise one minus `TransparencyFactor` times `TransparentColor` (white when absent). A transparent color with a zero factor is opaque. An untextured material below the opaque threshold becomes lit forward glass (`LitColoredForward.fs`, opacity in `MatColor.a`). A textured blended material keeps `LitTexturedForward.fs` and gets `MaterialTransparency = 1 - opacity`; an unset uniform reads 0, so other users of that shader stay opaque. Imported blended materials use sorted alpha; weighted blended OIT needs the explicit Blended import option. Imported transparent surfaces cast no shadows and have no refraction.
@@ -1559,7 +1584,7 @@ UV0 through UV3. Visibility and directional shadows use the same tile selector.
 Missing or invalid classification rejects the triangle and increments
 the existing decode diagnostic counter.
 
-Serialized source toon materials set `_SourceUdimFlipV` because their Unity model
+Serialized source toon materials set `_UdimFlipV` because their Unity model
 import flips V. The flag selects the reflected tile codes for vertex-mode
 coverage and converts the interpolated V coordinate for pixel-mode coverage.
 Authored triangle coverage uses the same convention and includes it in its

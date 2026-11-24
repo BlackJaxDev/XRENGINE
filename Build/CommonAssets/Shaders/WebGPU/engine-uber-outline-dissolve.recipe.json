@@ -21,7 +21,7 @@
     "maxVertexBufferArrayStride": 72,
     "maxBindGroups": 3,
     "maxBindingsPerBindGroup": 16,
-    "maxUniformBufferBindingSize": 656,
+    "maxUniformBufferBindingSize": 848,
     "maxDynamicUniformBuffersPerPipelineLayout": 3,
     "maxUniformBuffersPerShaderStage": 3,
     "maxSampledTexturesPerShaderStage": 8,
@@ -176,7 +176,7 @@
         ],
         "owner": "Material",
         "frequency": "Material",
-        "bytes": 656,
+        "bytes": 848,
         "dynamic": true,
         "members": [
           {
@@ -691,8 +691,8 @@
             "type": "f32"
           },
           {
-            "name": "U_SourceDissolveParams_0",
-            "provider": "_SourceDissolveParams",
+            "name": "_DissolveSettings_0",
+            "provider": "_DissolveSettings",
             "offset": 592,
             "bytes": 16,
             "type": "vec4<f32>"
@@ -705,15 +705,15 @@
             "type": "vec4<f32>"
           },
           {
-            "name": "U_SourceAlphaClip_0",
-            "provider": "_SourceAlphaClip",
+            "name": "_AlphaClipAllModes_0",
+            "provider": "_AlphaClipAllModes",
             "offset": 624,
             "bytes": 4,
             "type": "f32"
           },
           {
-            "name": "U_SourceBackfaceNormals_0",
-            "provider": "_SourceBackfaceNormals",
+            "name": "_BackfaceNormalControl_0",
+            "provider": "_BackfaceNormalControl",
             "offset": 628,
             "bytes": 4,
             "type": "i32"
@@ -726,8 +726,8 @@
             "type": "i32"
           },
           {
-            "name": "U_SourceOutlineBasic_0",
-            "provider": "_SourceOutlineBasic",
+            "name": "_OutlineBasicModel_0",
+            "provider": "_OutlineBasicModel",
             "offset": 636,
             "bytes": 4,
             "type": "i32"
@@ -743,6 +743,146 @@
             "name": "_OutlineFixWidth_0",
             "provider": "_OutlineFixWidth",
             "offset": 644,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_FlipbookFPS_0",
+            "provider": "_FlipbookFPS",
+            "offset": 648,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_FlipbookFrameOffset_0",
+            "provider": "_FlipbookFrameOffset",
+            "offset": 652,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_FlipbookLayout_0",
+            "provider": "_FlipbookLayout",
+            "offset": 656,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_FlipbookSides_0",
+            "provider": "_FlipbookSides",
+            "offset": 672,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_FlipbookOptions_0",
+            "provider": "_FlipbookOptions",
+            "offset": 688,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_FlipbookMotion_0",
+            "provider": "_FlipbookMotion",
+            "offset": 704,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_FlipbookFlags_0",
+            "provider": "_FlipbookFlags",
+            "offset": 720,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_FlipbookMask_ST_0",
+            "provider": "_FlipbookMask_ST",
+            "offset": 736,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_FlipbookColor_0",
+            "provider": "_FlipbookColor",
+            "offset": 752,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_FlipbookScaleOffset_0",
+            "provider": "_FlipbookScaleOffset",
+            "offset": 768,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "_FlipbookMaskPan_0",
+            "provider": "_FlipbookMaskPan",
+            "offset": 784,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_FlipbookTexArrayPan_0",
+            "provider": "_FlipbookTexArrayPan",
+            "offset": 792,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_FlipbookCrossfadeRange_0",
+            "provider": "_FlipbookCrossfadeRange",
+            "offset": 800,
+            "bytes": 8,
+            "type": "vec2<f32>"
+          },
+          {
+            "name": "_FlipbookMaskUV_0",
+            "provider": "_FlipbookMaskUV",
+            "offset": 808,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_FlipbookTexArrayUV_0",
+            "provider": "_FlipbookTexArrayUV",
+            "offset": 812,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_FlipbookManualFrameControl_0",
+            "provider": "_FlipbookManualFrameControl",
+            "offset": 816,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_FlipbookCurrentFrame_0",
+            "provider": "_FlipbookCurrentFrame",
+            "offset": 820,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_FlipbookStartFrame_0",
+            "provider": "_FlipbookStartFrame",
+            "offset": 824,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_FlipbookEndFrame_0",
+            "provider": "_FlipbookEndFrame",
+            "offset": 828,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_FlipbookCrossfadeEnabled_0",
+            "provider": "_FlipbookCrossfadeEnabled",
+            "offset": 832,
             "bytes": 4,
             "type": "f32"
           }

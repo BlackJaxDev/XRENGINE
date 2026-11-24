@@ -1032,6 +1032,21 @@ so the cost of each texture does not grow with the texture count. A frame that r
 textures fails with `FramePlanCapacityExceeded lane=Upload`, and `vulkan-present-now.log` shows
 the stall.
 
+The shared mesh request queue (`VulkanMeshOperationRequestQueue`) counts each request in one
+fixed lane, selected from the request's frame-operation context kind:
+
+| Lane | Capacity | Context kinds |
+|---|---|---|
+| `MainScene` | 1,536 | `MainViewport`, `OpenXrEye`, `SceneCapture`, `LightProbeCapture`, `DiagnosticCapture` |
+| `Shadow` | 4,096 | `Shadow` |
+| `Ui` | 256 | `UiPreview` |
+| `TerminalComposition` | 256 | `OpenXrMirror`, `Unknown` |
+
+A scene capture, such as a mirror, draws the same scene geometry as the main view, so it shares
+the `MainScene` lane with the main view. The accepted frame plan also counts these contexts in
+its main-scene lane. A request that does not fit its lane fails the frame with
+`FramePlanCapacityExceeded lane=<lane> meshLane=<lane>`.
+
 Set `XRE_VULKAN_VALIDATE_SPIRV=1` to validate generated and cached modules with
 `spirv-val --target-env vulkan1.4`; a missing validator fails the compile or cache
 read visibly. Set `XRE_VULKAN_SHADER_DIAGNOSTICS_DIR` to retain hash-named GLSL

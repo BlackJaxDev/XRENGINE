@@ -16,7 +16,7 @@ public sealed partial class XRMaterialInspector
     private static readonly Vector4 AuthoringMatchColor = new(1.0f, 0.82f, 0.28f, 1.0f);
     private static readonly Vector4 AuthoringUnsupportedColor = new(0.95f, 0.48f, 0.34f, 1.0f);
 
-    private static bool DrawSourceToonAuthoringTree(
+    private static bool DrawUberAuthoringTree(
         XRMaterial material,
         XRShader fragmentShader,
         ShaderUiManifest manifest,
@@ -24,6 +24,7 @@ public sealed partial class XRMaterialInspector
         IReadOnlySet<string> unavailableFeatureIds,
         Dictionary<string, ShaderVar> parameterLookup,
         Dictionary<string, SamplerBindingEntry> samplerLookup,
+        bool showDisabledFeatures,
         ref bool variantChanged)
     {
         if (!manifest.PropertyLookup.ContainsKey("_LightingMapMode") &&
@@ -31,9 +32,10 @@ public sealed partial class XRMaterialInspector
             return false;
 
         Stopwatch drawTimer = Stopwatch.StartNew();
-        ShaderAuthoringSchema schema = SourceToonAuthoringSchemaCatalog.GetOrCreate(manifest);
+        ShaderAuthoringSchema schema = UberAuthoringSchemaCatalog.GetOrCreate(manifest);
         AuthoringInspectorState state = AuthoringStates.GetValue(material, static _ => new());
         state.Schema = schema;
+        state.ShowDisabledFeatures = showDisabledFeatures;
 
         DrawAuthoringToolbar(material, schema, state);
         DrawAuthoringWorkspaces(
@@ -44,7 +46,7 @@ public sealed partial class XRMaterialInspector
             state,
             ref variantChanged);
 
-        MaterialExpressionContext expressionContext = new(material, parameterLookup, samplerLookup);
+        MaterialExpressionContext expressionContext = new(material, parameterLookup, samplerLookup, featureLookup);
         Stopwatch buildTimer = Stopwatch.StartNew();
         state.Rows.Clear();
         state.MatchRows.Clear();
@@ -64,7 +66,7 @@ public sealed partial class XRMaterialInspector
         float rowHeight = ImGui.GetFrameHeightWithSpacing() + 2.0f;
         float childHeight = Math.Clamp(state.Rows.Count * rowHeight, 140.0f, 620.0f);
         if (ImGui.BeginChild(
-            $"PoiyomiAuthoringTree##{schema.Fingerprint}",
+            $"UberAuthoringTree##{schema.Fingerprint}",
             new Vector2(0.0f, childHeight),
             ImGuiChildFlags.Borders))
         {
@@ -124,7 +126,7 @@ public sealed partial class XRMaterialInspector
         AuthoringInspectorState state)
     {
         ImGui.SetNextItemWidth(MathF.Min(360.0f, ImGui.GetContentRegionAvail().X * 0.45f));
-        ImGui.InputTextWithHint("##PoiyomiAuthoringSearch", "Search labels, source names, IDs, tooltips...", ref state.Search, 256u);
+        ImGui.InputTextWithHint("##UberAuthoringSearch", "Search labels, property names, IDs, tooltips...", ref state.Search, 256u);
         ImGui.SameLine();
         if (ImGui.SmallButton("Previous") && state.MatchRows.Count > 0)
         {
@@ -146,14 +148,14 @@ public sealed partial class XRMaterialInspector
         }
 
         ImGui.SetNextItemWidth(MathF.Min(320.0f, ImGui.GetContentRegionAvail().X * 0.40f));
-        ImGui.InputTextWithHint("##PoiyomiExactLookup", "Exact source or semantic property...", ref state.ExactLookup, 256u);
+        ImGui.InputTextWithHint("##UberExactLookup", "Exact property name or semantic ID...", ref state.ExactLookup, 256u);
         ImGui.SameLine();
         if (ImGui.SmallButton("Reveal"))
         {
             ShaderAuthoringNode? exact = null;
             schema.PropertyLookup.TryGetValue(state.ExactLookup, out exact);
             if (exact is null)
-                schema.NodeLookup.TryGetValue(state.ExactLookup, out exact);
+                schema.TryGetNode(state.ExactLookup, out exact);
             state.ExactSemanticId = exact?.SemanticId;
             if (exact is not null)
             {
@@ -238,6 +240,13 @@ public sealed partial class XRMaterialInspector
         }
 
         if (node.Children.Count == 0)
+            return;
+
+        // A group of a disabled feature keeps its header, which holds the feature switch, and hides its content.
+        if (node.FeatureId is { } featureId &&
+            !searchActive &&
+            !state.ShowDisabledFeatures &&
+            !context.IsFeatureEnabled(featureId))
             return;
 
         bool expanded = node.Kind == EShaderAuthoringNodeKind.Root ||
@@ -395,7 +404,7 @@ public sealed partial class XRMaterialInspector
         {
             case EShaderAuthoringNodeKind.Section:
             case EShaderAuthoringNodeKind.Subsection:
-                DrawAuthoringGroup(schema, state, row);
+                DrawAuthoringGroup(material, featureLookup, unavailableFeatureIds, state, row, ref variantChanged);
                 break;
             case EShaderAuthoringNodeKind.Decorator:
                 DrawAuthoringDecorator(node);
@@ -425,9 +434,12 @@ public sealed partial class XRMaterialInspector
     }
 
     private static void DrawAuthoringGroup(
-        ShaderAuthoringSchema schema,
+        XRMaterial material,
+        IReadOnlyDictionary<string, ShaderUiFeature> featureLookup,
+        IReadOnlySet<string> unavailableFeatureIds,
         AuthoringInspectorState state,
-        AuthoringRow row)
+        AuthoringRow row,
+        ref bool variantChanged)
     {
         bool searchActive = !string.IsNullOrWhiteSpace(state.Search);
         bool expanded = searchActive ||
@@ -444,6 +456,19 @@ public sealed partial class XRMaterialInspector
             SetAuthoringNodeExpanded(state, row.Node, expanded);
         }
         ImGui.SameLine();
+        if (row.Node.FeatureId is { } featureId &&
+            featureLookup.TryGetValue(featureId, out ShaderUiFeature? feature))
+        {
+            bool featureEnabled = feature.Required || material.IsUberFeatureEnabled(feature.Id, feature.DefaultEnabled);
+            using (new ImGuiDisabledScope(feature.Required || unavailableFeatureIds.Contains(feature.Id)))
+            {
+                if (ImGui.Checkbox("##feature", ref featureEnabled))
+                    RequestUberFeatureState(material, featureLookup, feature, featureEnabled, ref variantChanged);
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(feature.Required ? "Required feature" : "Turn this feature on or off");
+            ImGui.SameLine();
+        }
         ImGui.TextColored(
             row.SearchMatch ? AuthoringMatchColor : AuthoringGroupColor,
             ResolveAuthoringLabel(row.Node, state));
@@ -715,12 +740,9 @@ public sealed partial class XRMaterialInspector
                 parameter?.GenericValue ?? sampler?.AssignedTexture);
 
         MaterialAuthoringMetadata metadata = MaterialAuthoringMetadataStore.Instance.Get(material);
-        bool included = !metadata.LocalOverrides.TryGetValue(
-            $"presetInclude:{node.SemanticId}",
-            out string? includedValue) ||
-            !string.Equals(includedValue, "false", StringComparison.OrdinalIgnoreCase);
+        bool included = IsIncludedInAuthoredPreset(metadata, node);
         if (ImGui.MenuItem("Include in authored preset", null, included))
-            metadata.LocalOverrides[$"presetInclude:{node.SemanticId}"] = (!included).ToString();
+            SetIncludedInAuthoredPreset(metadata, node, !included);
 
         if (ImGui.MenuItem("Copy property + references"))
             ImGui.SetClipboardText(CaptureAuthoringNodeClipboard(material, state.Schema!, node).Serialize());
@@ -762,6 +784,19 @@ public sealed partial class XRMaterialInspector
         }
         ImGui.EndPopup();
     }
+
+    /// <summary>
+    /// Reads the preset-include override of a node. A node without an override is included.
+    /// </summary>
+    private static bool IsIncludedInAuthoredPreset(MaterialAuthoringMetadata metadata, ShaderAuthoringNode node)
+        => !metadata.LocalOverrides.TryGetValue($"presetInclude:{node.SemanticId}", out string? value) ||
+           !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Writes the preset-include override of a node.
+    /// </summary>
+    private static void SetIncludedInAuthoredPreset(MaterialAuthoringMetadata metadata, ShaderAuthoringNode node, bool included)
+        => metadata.LocalOverrides[$"presetInclude:{node.SemanticId}"] = included.ToString();
 
     private static MaterialAuthoringClipboardPayload CaptureAuthoringNodeClipboard(
         XRMaterial material,
@@ -988,10 +1023,24 @@ public sealed partial class XRMaterialInspector
     private sealed class MaterialExpressionContext(
         XRMaterial material,
         Dictionary<string, ShaderVar> parameters,
-        Dictionary<string, SamplerBindingEntry> samplers) : IShaderAuthoringExpressionContext
+        Dictionary<string, SamplerBindingEntry> samplers,
+        IReadOnlyDictionary<string, ShaderUiFeature> features) : IShaderAuthoringExpressionContext
     {
+        /// <summary>
+        /// Returns true when the Uber feature is on. A required feature is always on.
+        /// </summary>
+        public bool IsFeatureEnabled(string featureId)
+            => !features.TryGetValue(featureId, out ShaderUiFeature? feature) ||
+               feature.Required ||
+               material.IsUberFeatureEnabled(feature.Id, feature.DefaultEnabled);
+
         public bool TryResolve(string operand, out ShaderAuthoringValue value)
         {
+            if (operand.StartsWith("feature:", StringComparison.OrdinalIgnoreCase))
+            {
+                value = new(IsFeatureEnabled(operand["feature:".Length..]));
+                return true;
+            }
             if (operand.StartsWith("texture:", StringComparison.OrdinalIgnoreCase))
                 operand = operand["texture:".Length..];
             if (parameters.TryGetValue(operand, out ShaderVar? parameter))
@@ -1035,17 +1084,11 @@ public sealed partial class XRMaterialInspector
                             EShaderUiPropertyMode.Static);
                 return true;
             }
-            if (operand.StartsWith("version:", StringComparison.OrdinalIgnoreCase))
-            {
-                string version = operand["version:".Length..];
-                value = new(version is "9.3" or "9.3.64" or "poiyomi-9.3.64");
-                return true;
-            }
             if (operand.StartsWith("cap:", StringComparison.OrdinalIgnoreCase))
             {
                 string capability = operand["cap:".Length..];
                 value = new(capability is
-                    "xrengine" or "poiyomi-9.3" or "opengl-4.6" or "vulkan" or
+                    "xrengine" or "opengl-4.6" or "vulkan" or
                     "texture-array" or "semantic-material-authoring");
                 return true;
             }
@@ -1063,6 +1106,7 @@ public sealed partial class XRMaterialInspector
     private sealed class AuthoringInspectorState
     {
         public ShaderAuthoringSchema? Schema;
+        public bool ShowDisabledFeatures;
         public string Search = string.Empty;
         public string ExactLookup = string.Empty;
         public string? ExactSemanticId;

@@ -90,6 +90,7 @@ public sealed partial class XRMaterialInspector
             }
         }
 
+        DrawUberRenderPreset(material);
         DrawUberBulkActions(material, uberManifest, visibleProperties);
         bool toolbarVariantChanged = false;
         DrawUberFeatureToolbar(material, uberManifest, featureLookup, unavailableFeatureIds, ref toolbarVariantChanged);
@@ -109,7 +110,7 @@ public sealed partial class XRMaterialInspector
         foreach (ShaderUiFeature feature in uberManifest.Features)
             DrawPendingUberFeatureResolution(material, feature, ref toolbarVariantChanged);
 
-        if (DrawSourceToonAuthoringTree(
+        if (DrawUberAuthoringTree(
             material,
             uberFragmentShader,
             uberManifest,
@@ -117,6 +118,7 @@ public sealed partial class XRMaterialInspector
             unavailableFeatureIds,
             parameterLookup,
             samplerLookup,
+            uiState.ShowDisabledUberFeatures,
             ref toolbarVariantChanged))
             return;
         List<ShaderUiProperty> categoryProperties = uiState.CategoryUberProperties;
@@ -576,6 +578,7 @@ public sealed partial class XRMaterialInspector
             return false;
 
         return property.HasExplicitMetadata &&
+               !property.IsHidden &&
                (property.Name.StartsWith("_", StringComparison.Ordinal) ||
             property.Name.Equals("AlphaCutoff", StringComparison.Ordinal));
     }
@@ -589,6 +592,32 @@ public sealed partial class XRMaterialInspector
             return feature.Category!;
 
         return "General";
+    }
+
+    /// <summary>
+    /// Turns an Uber feature on or off. Turning a feature on can first ask the user to resolve its dependencies
+    /// and conflicts.
+    /// </summary>
+    private static void RequestUberFeatureState(
+        XRMaterial material,
+        IReadOnlyDictionary<string, ShaderUiFeature> featureLookup,
+        ShaderUiFeature feature,
+        bool enabled,
+        ref bool variantChanged)
+    {
+        PendingUberFeatureResolution? pendingResolution = enabled
+            ? BuildPendingUberFeatureResolution(material, featureLookup, feature)
+            : null;
+
+        if (pendingResolution is null)
+        {
+            ClearPendingUberFeatureResolution(material, feature.Id);
+            variantChanged |= material.SetUberFeatureEnabled(feature.Id, enabled);
+        }
+        else
+        {
+            SetPendingUberFeatureResolution(material, pendingResolution);
+        }
     }
 
     private static void DrawUberFeatureToolbar(
@@ -619,22 +648,7 @@ public sealed partial class XRMaterialInspector
             using (new ImGuiDisabledScope(!available))
             {
                 if (ImGui.Button(feature.DisplayName, new Vector2(-1.0f, 0.0f)) && !feature.Required)
-                {
-                    bool toggled = !enabled;
-                    PendingUberFeatureResolution? pendingResolution = toggled
-                        ? BuildPendingUberFeatureResolution(material, featureLookup, feature)
-                        : null;
-
-                    if (pendingResolution is null)
-                    {
-                        ClearPendingUberFeatureResolution(material, feature.Id);
-                        variantChanged |= material.SetUberFeatureEnabled(feature.Id, toggled);
-                    }
-                    else
-                    {
-                        SetPendingUberFeatureResolution(material, pendingResolution);
-                    }
-                }
+                    RequestUberFeatureState(material, featureLookup, feature, !enabled, ref variantChanged);
             }
 
             if (feature.Required)
@@ -669,7 +683,8 @@ public sealed partial class XRMaterialInspector
 
     private static void DrawUberShaderParameterControl(XRMaterial material, ShaderVar parameter, ShaderUiProperty property)
     {
-        if (TryDrawUberToggleControl(material, parameter, property) ||
+        if (TryDrawUberComponentControls(material, parameter, property) ||
+            TryDrawUberToggleControl(material, parameter, property) ||
             TryDrawUberEnumControl(material, parameter, property) ||
             TryDrawUberRangeControl(material, parameter, property))
             return;
@@ -729,6 +744,105 @@ public sealed partial class XRMaterialInspector
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Parses a <c>components</c> annotation, such as <c>"Enabled:toggle|Width|Power"</c>. A <c>:toggle</c>
+    /// suffix shows the component as a check box.
+    /// </summary>
+    private static void ParseShaderUiComponents(string? source, out string[] labels, out bool[] toggles)
+    {
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            labels = [];
+            toggles = [];
+            return;
+        }
+
+        string[] parts = source.Split('|', StringSplitOptions.TrimEntries);
+        labels = new string[parts.Length];
+        toggles = new bool[parts.Length];
+        for (int index = 0; index < parts.Length; index++)
+        {
+            const string toggleSuffix = ":toggle";
+            string part = parts[index];
+            toggles[index] = part.EndsWith(toggleSuffix, StringComparison.OrdinalIgnoreCase);
+            labels[index] = toggles[index] ? part[..^toggleSuffix.Length].TrimEnd() : part;
+        }
+    }
+
+    /// <summary>
+    /// Draws one control for each named component of a packed vector property.
+    /// </summary>
+    private static bool TryDrawUberComponentControls(XRMaterial material, ShaderVar parameter, ShaderUiProperty property)
+    {
+        UberPropertyUiHints hints = GetUberPropertyHints(property);
+        if (hints.ComponentLabels.Length == 0)
+            return false;
+
+        Span<float> values = stackalloc float[4];
+        int dimensions;
+        switch (parameter)
+        {
+            case ShaderVector2 vector2:
+                vector2.Value.CopyTo(values);
+                dimensions = 2;
+                break;
+            case ShaderVector3 vector3:
+                vector3.Value.CopyTo(values);
+                dimensions = 3;
+                break;
+            case ShaderVector4 vector4:
+                vector4.Value.CopyTo(values);
+                dimensions = 4;
+                break;
+            default:
+                return false;
+        }
+
+        bool changed = false;
+        int count = Math.Min(dimensions, hints.ComponentLabels.Length);
+        for (int index = 0; index < count; index++)
+        {
+            string label = hints.ComponentLabels[index];
+            if (label.Length == 0)
+                continue;
+
+            ImGui.PushID(index);
+            if (hints.ComponentToggles[index])
+            {
+                bool enabled = values[index] >= 0.5f;
+                if (ImGui.Checkbox(label, ref enabled))
+                {
+                    values[index] = enabled ? 1.0f : 0.0f;
+                    changed = true;
+                }
+            }
+            else
+            {
+                ImGui.SetNextItemWidth(-ImGui.CalcTextSize(label).X - ImGui.GetStyle().ItemInnerSpacing.X);
+                changed |= ImGui.DragFloat(label, ref values[index], 0.01f);
+            }
+            ImGui.PopID();
+        }
+
+        if (!changed)
+            return true;
+
+        switch (parameter)
+        {
+            case ShaderVector2 vector2:
+                vector2.SetValue(new Vector2(values[0], values[1]));
+                break;
+            case ShaderVector3 vector3:
+                vector3.SetValue(new Vector3(values[0], values[1], values[2]));
+                break;
+            case ShaderVector4 vector4:
+                vector4.SetValue(new Vector4(values[0], values[1], values[2], values[3]));
+                break;
+        }
+        material.MarkDirty();
+        return true;
     }
 
     private static bool TryDrawUberToggleControl(XRMaterial material, ShaderVar parameter, ShaderUiProperty property)
@@ -977,7 +1091,8 @@ public sealed partial class XRMaterialInspector
         {
             ShaderUiEnumOption[] enumOptions = ParseShaderUiEnumOptions(key.EnumOptions);
             bool hasRange = TryParseShaderUiRange(key.Range, out ShaderUiNumericRange range);
-            return new UberPropertyUiHints(enumOptions, hasRange, range);
+            ParseShaderUiComponents(key.ComponentLabels, out string[] componentLabels, out bool[] componentToggles);
+            return new UberPropertyUiHints(enumOptions, hasRange, range, componentLabels, componentToggles);
         });
 
     private static void DrawUberVariantStatus(XRMaterial material)
@@ -1214,16 +1329,33 @@ public sealed partial class XRMaterialInspector
 
     private sealed class UberPropertyUiHints
     {
-        public UberPropertyUiHints(ShaderUiEnumOption[] enumOptions, bool hasRange, ShaderUiNumericRange range)
+        public UberPropertyUiHints(
+            ShaderUiEnumOption[] enumOptions,
+            bool hasRange,
+            ShaderUiNumericRange range,
+            string[] componentLabels,
+            bool[] componentToggles)
         {
             EnumOptions = enumOptions;
             HasRange = hasRange;
             Range = range;
+            ComponentLabels = componentLabels;
+            ComponentToggles = componentToggles;
         }
 
         public ShaderUiEnumOption[] EnumOptions { get; }
         public bool HasRange { get; }
         public ShaderUiNumericRange Range { get; }
+
+        /// <summary>
+        /// The label of each named vector component. The editor shows only the named components.
+        /// </summary>
+        public string[] ComponentLabels { get; }
+
+        /// <summary>
+        /// True for each component that the editor shows as a check box.
+        /// </summary>
+        public bool[] ComponentToggles { get; }
     }
 
     private sealed record PendingUberFeatureResolution(string FeatureId, string[] MissingDependencies, string[] ActiveConflicts);

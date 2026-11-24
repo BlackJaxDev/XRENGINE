@@ -109,7 +109,7 @@ void xrApplySourceGlitter(vec2 uv, vec2 dx, vec2 dy,
     vec2 position = (uv + XR_GLITTER_V2(_GlitterUVPanning) * time * 0.05) * frequency;
     dx *= frequency;
     dy *= frequency;
-    bool source10 = XR_GLITTER_I(_SourceGlitterVersion) == 100;
+    bool source10 = XR_GLITTER_I(_GlitterFlakeShading) == 100;
     vec2 footprint = abs(dx) + abs(dy);
 #ifdef XR_GLITTER_FRAGMENT_DERIVATIVES
     footprint = fwidth(position);

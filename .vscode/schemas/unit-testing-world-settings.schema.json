@@ -809,17 +809,25 @@
           "type": "boolean",
           "description": "Enables or disables SkinnedVirtualGeometry."
         },
-        "SkinnedDeformationLod": {
-          "type": "boolean",
-          "description": "Enables or disables SkinnedDeformationLod."
-        },
         "SkinnedPosedClusterBounds": {
           "type": "boolean",
           "description": "Enables or disables SkinnedPosedClusterBounds."
         },
+        "SkinnedDeformationLod": {
+          "type": "boolean",
+          "description": "Enables or disables SkinnedDeformationLod."
+        },
         "VirtualGeometryPixelThreshold": {
           "type": "number",
           "description": "Generated from VirtualGeometryPixelThreshold on UnitTestingRenderSettings."
+        },
+        "GeometryPages": {
+          "type": "boolean",
+          "description": "Enables or disables GeometryPages."
+        },
+        "GeometryStreaming": {
+          "type": "boolean",
+          "description": "Enables or disables GeometryStreaming."
         },
         "OpenGL": {
           "$ref": "#/definitions/UnitTestingOpenGLRenderSettings",
@@ -995,6 +1003,24 @@
           "$ref": "#/definitions/UnitTestCrowdBenchmarkMode",
           "markdownDescription": "Supported values: `UseRenderSettings`, `Triangles`, `ClusterCut`, `DeformationLod`.",
           "description": "Selects the Mode enum value."
+        }
+      }
+    },
+    "TranslationXYZ": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "X": {
+          "type": "number",
+          "description": "Generated from X on TranslationXYZ."
+        },
+        "Y": {
+          "type": "number",
+          "description": "Generated from Y on TranslationXYZ."
+        },
+        "Z": {
+          "type": "number",
+          "description": "Generated from Z on TranslationXYZ."
         }
       }
     },
@@ -1277,24 +1303,6 @@
         }
       }
     },
-    "TranslationXYZ": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "X": {
-          "type": "number",
-          "description": "Generated from X on TranslationXYZ."
-        },
-        "Y": {
-          "type": "number",
-          "description": "Generated from Y on TranslationXYZ."
-        },
-        "Z": {
-          "type": "number",
-          "description": "Generated from Z on TranslationXYZ."
-        }
-      }
-    },
     "ModelImportSettings": {
       "type": "object",
       "additionalProperties": false,
@@ -1411,6 +1419,10 @@
         "GenerateClusterHierarchy": {
           "type": "boolean",
           "description": "Cooks a cluster level-of-detail hierarchy for the meshlets of this model (level-0 meshlets plus coarser cluster levels with crack-free group borders). Off by default; the cook takes longer and the meshlet data is about twice the size. Renderers without cut selection draw only the level-0 meshlets."
+        },
+        "GenerateStreamingPages": {
+          "type": "boolean",
+          "description": "Packs the cluster hierarchy of this model into geometry pages for geometry streaming and writes them to a page file next to the meshlet cache. Requires . Off by default. The renderer still draws the unpaged meshlet payload."
         },
         "PostImportFlags": {
           "type": "string",

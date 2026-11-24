@@ -178,6 +178,8 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             }
 
             DescriptorSet descriptorSet = _lateDescriptorSets[descriptorIndex];
+            // Shadow views do not request geometry pages: the sentinel request buffer turns the
+            // feedback writes of the task stage off, and the cut draws the resident pages.
             VulkanAdvancedVisibilityResourceState descriptorState = family with
             {
                 MeshPayloads = members,
@@ -185,6 +187,10 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 RangeCounts = ranges,
                 IndirectArguments = arguments,
                 Counters = counters,
+                GeometryPageRequestsBuffer = _geometryFeedbackSentinelBuffer,
+                GeometryPageRequestsByteLength = GeometryFeedbackSentinelBytes,
+                GeometryPageFeedbackBitsBuffer = _geometryFeedbackSentinelBuffer,
+                GeometryPageFeedbackBitsByteLength = GeometryFeedbackSentinelBytes,
             };
             if (!TryUpdateDescriptorSet(descriptorSet, in descriptorState, out reason))
             {

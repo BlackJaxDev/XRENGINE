@@ -271,6 +271,7 @@ void main()
     shadeInput.materialIndex = packedMaterialFlags & 0xFFFFu;
     shadeInput.packedColor = surface.materialAndColor.y;
     shadeInput.cameraPosition = InverseViewMatrix[3].xyz;
+    // The splat index stands in for the pixel, so ordered alpha dither keeps or drops whole splats.
     shadeInput.pixel = uvec2(splatIndex & 0xFFFFu, splatIndex >> 16u);
 
     XRAdvancedOpaqueSampleResult shaded;

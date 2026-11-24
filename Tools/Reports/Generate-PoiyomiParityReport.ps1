@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string] $CatalogPath = "XREngine.Editor/Importers/Poiyomi/Catalogs/poiyomi-toon-9.3.64.json",
+    [string] $CatalogPath = "XREngine.Editor/Importers/SourceToon/Catalogs/source-toon-9.3.64.json",
     [string] $WidgetRegistryPath = "XREngine.Editor/MaterialAuthoring/ShaderAuthoringWidgetRegistry.cs",
     [string] $OutputPath = "docs/reference/rendering/poiyomi-toon-9.3.64-parity.md"
 )
@@ -65,7 +65,7 @@ foreach ($group in $catalog.properties | Group-Object classification, initialPar
     $support = switch ([string]$sample.initialParity) {
         'nativeEquivalent' { 'Exact or reviewed native mapping' }
         'preservedInactive' { 'Preserved inactive; unavailable integration is reported' }
-        'missing' { 'Preserved inactive; `POI0006` reports the absent runtime mapping' }
+        'missing' { 'Preserved inactive; `TOON0006` reports the absent runtime mapping' }
         default { 'Catalog/editor data; no runtime conversion required' }
     }
     $lines.Add("| $(Escape-Cell "$($sample.classification) / $($sample.initialParity)") | $support | $($group.Count) |")

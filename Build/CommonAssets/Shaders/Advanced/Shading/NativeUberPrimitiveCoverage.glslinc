@@ -93,7 +93,7 @@ bool XR_UBER_KeepOriginalTriangle(
     }
 
     uint shift = uint(clamp(UBER_I(_UDIMDiscardUV), 0, 3)) * 5u;
-    bool flipSourceV = UBER_F(_SourceUdimFlipV) > 0.5;
+    bool flipSourceV = UBER_F(_UdimFlipV) > 0.5;
     uint tiles0 = flipSourceV ? vertex0.reserved3 : vertex0.reserved2;
     uint tiles1 = flipSourceV ? vertex1.reserved3 : vertex1.reserved2;
     uint tiles2 = flipSourceV ? vertex2.reserved3 : vertex2.reserved2;

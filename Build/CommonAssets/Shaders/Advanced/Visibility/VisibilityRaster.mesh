@@ -176,20 +176,44 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
         return;
     }
 
-    XRAdvancedVisibilityMeshletDescriptor meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
-    uint meshletVertexOffset = geometry.meshletVertexIndices.elementOffset + meshlet.vertexOffset;
-    uint meshletTriangleByteBase = geometry.meshletTriangleWords.elementOffset * 4u;
-    uint meshletTriangleByteOffset = meshletTriangleByteBase + meshlet.triangleByteOffset;
-    uint triangleByteCount = meshlet.triangleCount * 3u;
-    uint triangleByteEnd = meshletTriangleByteOffset + triangleByteCount;
-    if (meshlet.vertexCount > XR_ADV_MESH_MAX_VERTICES || meshlet.triangleCount > XR_ADV_MESH_MAX_PRIMITIVES ||
-        meshletVertexOffset < geometry.meshletVertexIndices.elementOffset ||
-        meshletTriangleByteBase / 4u != geometry.meshletTriangleWords.elementOffset ||
-        meshletTriangleByteOffset < meshletTriangleByteBase ||
-        triangleByteEnd < meshletTriangleByteOffset || triangleByteEnd > 0xFFFFFFFCu ||
-        meshletVertexOffset > uint(XR_ADV_VisibilityMeshletVertexIndices.records.length()) ||
-        meshlet.vertexCount > uint(XR_ADV_VisibilityMeshletVertexIndices.records.length()) - meshletVertexOffset ||
-        ((triangleByteEnd + 3u) >> 2u) > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()) ||
+    // A geometry with geometry pages reads the cluster from its page: the
+    // descriptor, the meshlet vertex indices, the triangle bytes and, for a
+    // static page, the vertices. Another geometry reads the meshlet tables.
+    XRAdvancedStreamedGeometry streamed = XR_ADV_StreamedGeometry(geometry);
+    XRAdvancedStreamedCluster streamedCluster;
+    XRAdvancedVisibilityMeshletDescriptor meshlet;
+    uint meshletVertexOffset = 0u;
+    uint meshletTriangleByteOffset = 0u;
+    bool meshletRangesValid;
+    if (streamed.valid)
+    {
+        meshletRangesValid =
+            meshletIndex >= geometry.meshletFirst &&
+            XR_ADV_LoadStreamedCluster(streamed, meshletIndex - geometry.meshletFirst, streamedCluster);
+        meshlet = streamedCluster.descriptor;
+        meshletRangesValid = meshletRangesValid &&
+            meshlet.vertexCount <= XR_ADV_MESH_MAX_VERTICES &&
+            meshlet.triangleCount <= XR_ADV_MESH_MAX_PRIMITIVES;
+    }
+    else
+    {
+        meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
+        meshletVertexOffset = geometry.meshletVertexIndices.elementOffset + meshlet.vertexOffset;
+        uint meshletTriangleByteBase = geometry.meshletTriangleWords.elementOffset * 4u;
+        meshletTriangleByteOffset = meshletTriangleByteBase + meshlet.triangleByteOffset;
+        uint triangleByteCount = meshlet.triangleCount * 3u;
+        uint triangleByteEnd = meshletTriangleByteOffset + triangleByteCount;
+        meshletRangesValid =
+            meshlet.vertexCount <= XR_ADV_MESH_MAX_VERTICES && meshlet.triangleCount <= XR_ADV_MESH_MAX_PRIMITIVES &&
+            meshletVertexOffset >= geometry.meshletVertexIndices.elementOffset &&
+            meshletTriangleByteBase / 4u == geometry.meshletTriangleWords.elementOffset &&
+            meshletTriangleByteOffset >= meshletTriangleByteBase &&
+            triangleByteEnd >= meshletTriangleByteOffset && triangleByteEnd <= 0xFFFFFFFCu &&
+            meshletVertexOffset <= uint(XR_ADV_VisibilityMeshletVertexIndices.records.length()) &&
+            meshlet.vertexCount <= uint(XR_ADV_VisibilityMeshletVertexIndices.records.length()) - meshletVertexOffset &&
+            ((triangleByteEnd + 3u) >> 2u) <= uint(XR_ADV_VisibilityMeshletTriangleWords.records.length());
+    }
+    if (!meshletRangesValid ||
         !XR_ADV_HasVertexRanges(
             skinned,
             previousUsesPreviousBuffer,
@@ -220,7 +244,26 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
     uint localInvocation = gl_LocalInvocationID.x;
     for (uint vertex = localInvocation; vertex < meshlet.vertexCount; vertex += XR_ADV_MESH_GROUP_SIZE)
     {
-        uint localVertex = XR_ADV_VisibilityMeshletVertexIndices.records[meshletVertexOffset + vertex];
+        // localVertex is the source vertex. A static page names a page-local
+        // vertex, which holds its source vertex, so a deformed draw of a static
+        // page still reads the deformation output at the source vertex.
+        uint localVertex = 0u;
+        bool pageVertexValid = false;
+        XRAdvancedVisibilityPackedVertex pageVertex;
+        bool vertexIndexValid = true;
+        if (streamed.valid)
+        {
+            vertexIndexValid = XR_ADV_StreamedSourceVertex(streamedCluster, vertex, localVertex);
+            if (vertexIndexValid && !skinned)
+                pageVertexValid = XR_ADV_LoadStreamedVertex(
+                    streamedCluster,
+                    XR_ADV_StreamedVertexIndex(streamedCluster, vertex),
+                    pageVertex);
+        }
+        else
+        {
+            localVertex = XR_ADV_VisibilityMeshletVertexIndices.records[meshletVertexOffset + vertex];
+        }
         uint sourceVertexCount = skinned
             ? preparedDeformation.vertexCount
             : geometry.vertexCount;
@@ -229,7 +272,9 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
         uint previousBufferCount = previousUsesPreviousBuffer
             ? uint(XR_ADV_VisibilityPreviousVertices.records.length())
             : uint(XR_ADV_VisibilityCurrentVertices.records.length());
-        if (localVertex >= sourceVertexCount ||
+        if (!vertexIndexValid ||
+            (streamed.valid && !skinned && !streamedCluster.skinnedTopology && !pageVertexValid) ||
+            localVertex >= sourceVertexCount ||
             currentVertex < currentVertexBase ||
             previousVertex < previousVertexBase ||
             (!skinned && currentVertex >=
@@ -245,7 +290,9 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
 
         XRAdvancedVisibilityPackedVertex statik = skinned
             ? XR_ADV_VisibilityCurrentVertices.records[currentVertex]
-            : XR_ADV_VisibilityStaticVertices.records[currentVertex];
+            : pageVertexValid
+                ? pageVertex
+                : XR_ADV_VisibilityStaticVertices.records[currentVertex];
         XRAdvancedVisibilityPackedVertex current = skinned
             ? XR_ADV_VisibilityCurrentVertices.records[currentVertex]
             : statik;
@@ -300,9 +347,17 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
 
     for (uint primitive = localInvocation; primitive < meshlet.triangleCount; primitive += XR_ADV_MESH_GROUP_SIZE)
     {
-        uint byteIndex = meshletTriangleByteOffset + primitive * 3u;
-        uvec3 triangle = uvec3(XR_ADV_ReadVisibilityTriangleIndex(byteIndex),
-            XR_ADV_ReadVisibilityTriangleIndex(byteIndex + 1u), XR_ADV_ReadVisibilityTriangleIndex(byteIndex + 2u));
+        uvec3 triangle;
+        if (streamed.valid)
+        {
+            triangle = XR_ADV_StreamedTriangle(streamedCluster, primitive);
+        }
+        else
+        {
+            uint byteIndex = meshletTriangleByteOffset + primitive * 3u;
+            triangle = uvec3(XR_ADV_ReadVisibilityTriangleIndex(byteIndex),
+                XR_ADV_ReadVisibilityTriangleIndex(byteIndex + 1u), XR_ADV_ReadVisibilityTriangleIndex(byteIndex + 2u));
+        }
         gl_PrimitiveTriangleIndicesEXT[primitive] = all(lessThan(triangle, uvec3(meshlet.vertexCount))) ? triangle : uvec3(0u);
         gl_MeshPrimitivesEXT[primitive].gl_PrimitiveID = int(primitive);
     }

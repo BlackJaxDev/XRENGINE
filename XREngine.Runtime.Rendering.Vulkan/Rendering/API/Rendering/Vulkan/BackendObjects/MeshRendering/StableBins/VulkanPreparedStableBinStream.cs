@@ -293,7 +293,10 @@ internal sealed partial class VulkanPreparedStableBinStream
                 sceneState.MeshletDescriptors,
                 sceneState.MeshletVertexIndices,
                 sceneState.MeshletTriangleWords,
-                default);
+                default,
+                sceneState.GeometryPagePool,
+                sceneState.GeometryPageTable,
+                sceneState.GeometryStreamingFeedback);
             if (!_visibilityGeometrySources.HasValidSources)
             {
                 reason = "the empty visibility family has no retained descriptor geometry backing";
@@ -344,7 +347,10 @@ internal sealed partial class VulkanPreparedStableBinStream
             sceneState.MeshletDescriptors,
             sceneState.MeshletVertexIndices,
             sceneState.MeshletTriangleWords,
-            default);
+            default,
+            sceneState.GeometryPagePool,
+            sceneState.GeometryPageTable,
+            sceneState.GeometryStreamingFeedback);
         if (!_visibilityGeometrySources.HasValidSources)
         {
             reason = "the visibility geometry sources are incomplete";

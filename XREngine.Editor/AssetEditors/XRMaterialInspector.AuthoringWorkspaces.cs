@@ -169,7 +169,7 @@ public sealed partial class XRMaterialInspector
                 payload is not null)
             {
                 int compatible = payload.Values.Count(value =>
-                    schema.NodeLookup.TryGetValue(value.SemanticId, out ShaderAuthoringNode? node) &&
+                    schema.TryGetNode(value.SemanticId, out ShaderAuthoringNode? node) &&
                     node.ManifestProperty is { IsSampler: false });
                 tools.PendingPayload = payload;
                 tools.Status = $"{compatible}/{payload.Values.Count} values are compatible. Apply or dismiss.";
@@ -213,7 +213,7 @@ public sealed partial class XRMaterialInspector
         foreach (MaterialAuthoringPresetValue value in payload.Values)
         {
             if (!value.Included ||
-                !schema.NodeLookup.TryGetValue(value.SemanticId, out ShaderAuthoringNode? node) ||
+                !schema.TryGetNode(value.SemanticId, out ShaderAuthoringNode? node) ||
                 node.ManifestProperty is not ShaderUiProperty property ||
                 property.IsSampler ||
                 !parameterLookup.TryGetValue(property.Name, out ShaderVar? parameter))

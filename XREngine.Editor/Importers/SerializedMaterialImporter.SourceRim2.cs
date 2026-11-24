@@ -22,22 +22,22 @@ public static partial class SerializedMaterialImporter
         if (!document.TryGetPositive("_GlobalMaskTexturesEnable"))
             globalMask = 0;
 
-        SetVector4(material, "_SourceRim2Settings", new Vector4(
+        SetVector4(material, "_Rim2Settings", new Vector4(
             1.0f,
             GetFloat(document, "_Rim2LightingInvert"),
             GetFloat(document, "_Rim2Power", 1.0f),
             GetFloat(document, "_Is_NormalMapToRim2Light", 1.0f)));
-        SetVector4(material, "_SourceRim2ColorSettings", new Vector4(
+        SetVector4(material, "_Rim2ColorSettings", new Vector4(
             GetFloat(document, "_Rim2BaseColorMix"),
             GetFloat(document, "_Rim2Brightness", 1.0f),
             GetInt(document, "_RimPoi2BlendMode"),
             globalMask));
-        SetVector4(material, "_SourceRim2Strengths", new Vector4(
+        SetVector4(material, "_Rim2Strengths", new Vector4(
             GetFloat(document, "_Rim2BlendStrength", 1.0f),
             GetFloat(document, "_Rim2Strength"),
             GetInt(document, "_Rim2GlobalMaskBlendType", 2),
             GetInt(document, "_Rim2LightColorThemeIndex")));
-        SetVector4(material, "_SourceRim2Tint",
+        SetVector4(material, "_Rim2Tint",
             document.TryGetVector("_Rim2LightColor", out Vector4 tint) ? tint : Vector4.One);
 
         // The source branch changes the base color before lighting. The legacy

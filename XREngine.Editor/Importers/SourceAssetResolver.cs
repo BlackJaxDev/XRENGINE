@@ -53,7 +53,7 @@ public sealed class SourceAssetResolver
     }
 
     /// <summary>
-    /// Finds an original Poiyomi shader name from materials in the same Unity project.
+    /// Finds an original source toon shader name from materials in the same Unity project.
     /// Conflicting names for one GUID do not provide shader family evidence.
     /// </summary>
     public bool TryFindOriginalShaderName(string? shaderGuid, out string name, out string sourcePath)

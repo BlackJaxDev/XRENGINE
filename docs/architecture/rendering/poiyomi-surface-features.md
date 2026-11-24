@@ -16,7 +16,7 @@ absolute view-normal dot product, blends the curve by intensity, then applies
 inversion before it multiplies alpha. The source global-mask selection for this
 alpha effect is not bound by this shader path.
 
-Source toon imports set `_SourceAlphaClip`. This makes the authored cutoff apply to
+Source toon imports set `_AlphaClipAllModes`. This makes the authored cutoff apply to
 Fade and Transparent materials in the forward, depth, shadow, and selection
 coverage paths. Engine-authored transparent materials keep their existing
 cutoff behavior. The common coverage test runs before late alpha changes from

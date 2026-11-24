@@ -27,17 +27,17 @@ public static partial class SerializedMaterialImporter
             return;
         }
 
-        SetVector4(material, "_SourceClearCoat", new Vector4(
+        SetVector4(material, "_ClearCoatSettings", new Vector4(
             1.0f,
             GetFloat(document, "_ClearCoatSmoothness", 1.0f),
             GetFloat(document, "_ClearCoatReflectionStrength", 1.0f),
             GetFloat(document, "_ClearCoatSpecularStrength", 1.0f)));
-        SetVector4(material, "_SourceClearCoatGsaa", new Vector4(
+        SetVector4(material, "_ClearCoatAASettings", new Vector4(
             GetFloat(document, "_ClearCoatGSAAEnabled"),
             GetFloat(document, "_ClearCoatGSAAVariance", 0.15f),
             GetFloat(document, "_ClearCoatGSAAThreshold", 0.1f),
             GetFloat(document, "_ClearCoatStrength", 1.0f)));
-        SetVector4(material, "_SourceClearCoatReflection", new Vector4(
+        SetVector4(material, "_ClearCoatReflection", new Vector4(
             GetFloat(document, "_ClearcoatFresnelStrength"),
             GetFloat(document, "_ClearcoatExposureOcclusion"),
             0.0f,

@@ -731,6 +731,7 @@ The edits enter Undo and do not save assets.
 | `find_nodes_by_type` | Find scene nodes that have a component type. |
 | `focus_node_in_view` | Focus the editor camera on a scene node. |
 | `get_advanced_profile_diagnostics` | Get the selected viewport's Advanced capability, blocker, executable-stage, realized-resource, per-view, and captured GPU-counter evidence. |
+| `get_advanced_visibility_counters` | Return the newest completed Advanced visibility counter values for each output and view, including payloadOverflow and decodeOutOfBounds, plus the sampling state. Instrumented strategies copy the counters every frame. Other strategies copy them only while set_advanced_visibility_counter_sampling is on. |
 | `get_assembly_types` | List all types in a specific loaded assembly. |
 | `get_asset_dependencies` | List all assets referenced/embedded by a given asset. Specify by asset GUID or file path. |
 | `get_asset_info` | Get detailed info about a loaded asset by ID or path. |
@@ -870,6 +871,7 @@ The edits enter Undo and do not save assets.
 | `select_node` | Select one or more scene nodes in the editor. |
 | `select_node_by_name` | Select scene nodes by display name. |
 | `set_active_scene` | Set a scene as active (first in scene list). |
+| `set_advanced_visibility_counter_sampling` | Set how often the Advanced pipeline copies its per-view visibility counters under submission strategies that are not instrumented. The copy is delayed until the frame completes, so it adds no GPU or CPU wait. 0 turns sampling off and 1 samples every frame. Read the values with get_advanced_visibility_counters. |
 | `set_asset_import_options` | Set a third-party import option property and save it. |
 | `set_camera_post_process_parameter` | Set one declared camera post-process parameter. Read get_camera_post_process first for exact keys, types, ranges and enum values. Applies only to the selected camera. |
 | `set_camera_tsr_render_scale` | Set the selected camera's TSR render scale from 0.5 to 1.0; omit scale to restore the global setting. Takes effect when TSR is active. Resource and history changes are applied by the next frame publication. |

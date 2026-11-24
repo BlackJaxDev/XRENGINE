@@ -20,7 +20,7 @@ public static partial class SerializedMaterialImporter
             amount += GetFloat(document, "_DissolveAlpha" + index);
         SetFloat(material, "_DissolveProgress", Math.Clamp(amount, 0.0f, 1.0f));
         SetFloat(material, "_DissolveInvert", GetFloat(document, "_DissolveInvertNoise"));
-        SetVector4(material, "_SourceDissolveParams", new Vector4(
+        SetVector4(material, "_DissolveSettings", new Vector4(
             GetFloat(document, "_DissolveEdgeHardness", 0.5f),
             GetFloat(document, "_DissolveInvertDetailNoise"),
             GetFloat(document, "_DissolveDetailEdgeSmoothing"),

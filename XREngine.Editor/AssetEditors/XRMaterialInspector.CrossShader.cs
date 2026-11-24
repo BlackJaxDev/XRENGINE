@@ -65,7 +65,7 @@ public sealed partial class XRMaterialInspector
             ShaderAuthoringSchema? schema = null;
             if (TryGetUberMaterialManifest(material, out _, out _, out ShaderUiManifest? manifest) &&
                 manifest is not null)
-                schema = SourceToonAuthoringSchemaCatalog.GetOrCreate(manifest);
+                schema = UberAuthoringSchemaCatalog.GetOrCreate(manifest);
             targets.Add(new(material, schema));
         }
 
@@ -186,7 +186,7 @@ public sealed partial class XRMaterialInspector
     {
         value = default;
         if (target.Schema is null ||
-            !target.Schema.NodeLookup.TryGetValue(semanticId, out ShaderAuthoringNode? node) ||
+            !target.Schema.TryGetNode(semanticId, out ShaderAuthoringNode? node) ||
             node.ManifestProperty is not ShaderUiProperty property ||
             property.IsSampler ||
             (requiredType is not null &&
