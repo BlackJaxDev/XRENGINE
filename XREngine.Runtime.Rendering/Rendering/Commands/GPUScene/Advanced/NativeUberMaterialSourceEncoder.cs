@@ -69,11 +69,11 @@ public static class NativeUberMaterialSourceEncoder
     /// Identifies an active alpha cutoff test in the native coverage function
     /// (<c>NativeUberCoverage.glslinc</c>). The function keeps a fragment with alpha at or
     /// above <c>_Cutoff</c> when the blend mode is cutout (<c>_Mode</c> 1) or the source
-    /// alpha clip is on (<c>_SourceAlphaClip</c>). Otherwise it keeps every fragment.
+    /// alpha clip is on (<c>_AlphaClipAllModes</c>). Otherwise it keeps every fragment.
     /// </summary>
     private static bool HasAlphaCutoffTest(XRMaterial material)
         => material.Parameter<ShaderInt>("_Mode") is { Value: 1 } ||
-            material.Parameter<ShaderFloat>("_SourceAlphaClip") is { Value: > 0.5f };
+            material.Parameter<ShaderFloat>("_AlphaClipAllModes") is { Value: > 0.5f };
 
     public static bool TryEncode(
         XRMaterial material,
@@ -110,7 +110,7 @@ public static class NativeUberMaterialSourceEncoder
         if (UsesAlphaToCoverage(material) && !HasAlphaCutoffTest(material))
         {
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
-            reason = "Native Uber alpha-to-coverage requires an alpha cutoff test (_Mode 1 or _SourceAlphaClip).";
+            reason = "Native Uber alpha-to-coverage requires an alpha cutoff test (_Mode 1 or _AlphaClipAllModes).";
             return false;
         }
         uint features = 0u;

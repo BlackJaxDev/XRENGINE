@@ -119,7 +119,7 @@ float3 uberBaseForwardLighting(UberBaseMaterialParameters material,uint features
     bool shadows=(pipelineFlags&2u)!=0u;
     bool advancedSpecular=(features&UberBaseAdvancedSpecular)!=0u;
     // The source Mochie lobes replace the standard direct and probe specular terms.
-    bool mochie=advancedSpecular&&material._SourceMochieSecond.w>0.5;
+    bool mochie=advancedSpecular&&material._SecondSpecularSettings.w>0.5;
     float3 normal=mesh.worldNormal,viewDirection=mesh.viewDirection,color=float3(0.0);
     // Take the normal derivatives here, in uniform control flow, for the Mochie lobes.
     float3 normalDx=ddx(normal),normalDy=ddy(normal);
@@ -161,7 +161,7 @@ float3 uberBaseForwardLighting(UberBaseMaterialParameters material,uint features
     // Packed masks put the specular strength in the direct term only. The probe
     // term uses the reflection mask instead.
     float3 ambientRms=specular.rms;
-    if(advancedSpecular&&material._PBRMochiePackedMasksEnabled!=0)ambientRms.z=1.0;
+    if(advancedSpecular&&material._PBRPackedMasksEnabled!=0)ambientRms.z=1.0;
     float3 probeDiffuse,probeSpecular;
     float3 ambient=XRENGINE_CalculateAmbientPbrWithProbe(normal,mesh.worldPosition,albedo,viewDirection,
         ambientRms,ao,specular.reflectionMask,probeDiffuse,probeSpecular);
@@ -169,21 +169,21 @@ float3 uberBaseForwardLighting(UberBaseMaterialParameters material,uint features
 
     float metallic=specular.rms.y;
     float sourceSmoothness=specular.packedSmoothness*material._PBRRoughnessMultiplier;
-    float4 settings=material._SourceMochieSettings,second=material._SourceMochieSecond;
+    float4 settings=material._SpecularAASettings,second=material._SecondSpecularSettings;
     float3 primaryColor=lighting.lightCounts.x>0?lighting.directional0ColorIntensity.xyz*lighting.directional0ColorIntensity.w:float3(0.0);
     float nv=abs(dot(normal,viewDirection));
     float perceptual=uberBaseSourcePerceptualRoughness(sourceSmoothness,normalDx,normalDy,settings);
     float3 rawReflection=XRENGINE_SampleForwardRawPrefilter(normal,mesh.worldPosition,viewDirection,perceptual);
     float3 sourceReflection=uberBaseSourceMochieReflection(rawReflection,primaryColor,lerp(float3(0.04),albedo,metallic),
-        sourceSmoothness,specular.reflectionMask,nv,normalDx,normalDy,settings,material._SourceMochieReflection,
-        material._SourceMochieReflectionTint.rgb)*XRENGINE_ForwardSpecularOcclusion(nv,ao,perceptual);
+        sourceSmoothness,specular.reflectionMask,nv,normalDx,normalDy,settings,material._ReflectionResponse,
+        material._ReflectionTint.rgb)*XRENGINE_ForwardSpecularOcclusion(nv,ao,perceptual);
     ambient+=sourceReflection-probeSpecular;
 
     // Source light mode lights the primary directional with the source color
     // rules and can skip the additional lights.
-    bool sourceLights=material._SourceLightMode!=0;
-    float4 additive=material._SourceAdditiveSettings;
-    float additiveMonochrome=material._SourceAdditiveColor.x;
+    bool sourceLights=material._LightModel!=0;
+    float4 additive=material._AdditiveLightSettings;
+    float additiveMonochrome=material._AdditiveLightColor.x;
     float3 tint=material._SpecularTint.rgb;
     float sourcePrimaryVisibility=sourceLights&&uberBaseSourceLuminance(primaryColor)<=0.000001?1.0:primaryVisibility;
     float3 direct=float3(0.0);

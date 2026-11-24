@@ -175,7 +175,7 @@ in the 64-byte packed vertex. Missing UV2 and UV3 remain zero, as in the forward
 shader. Active vertex UDIM discard remains an explicit unsupported operation in
 native visibility. The native visibility raster has no alpha-to-coverage output.
 An alpha-to-coverage material with an alpha cutoff test (`_Mode` 1 or
-`_SourceAlphaClip`, which the importer sets for alpha-to-coverage sources)
+`_AlphaClipAllModes`, which the importer sets for alpha-to-coverage sources)
 publishes a masked row. Its coverage keeps fragments with alpha at or above
 `_Cutoff`. On a single-sample target this matches the forward path, which also
 tests the cutoff. On a multisample target the masked edge is hard instead of a

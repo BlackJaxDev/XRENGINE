@@ -65,24 +65,24 @@ struct UberBaseMaterialParameters
     float _EmissionScrollingVertexColor;
     // Imported source controls. The material capture writes zero for an absent
     // animated control, as an unset desktop uniform reads zero.
-    int _SourceBackfaceNormals;
+    int _BackfaceNormalControl;
     int _FlipBackfaceNormals;
-    float _SourceAlphaClip;
+    float _AlphaClipAllModes;
     float _WorldAmbientOcclusionStrength;
     int _BumpMapFlipGreen;
-    int _SourceLightMode;
-    int _PBRMochiePackedMasksEnabled;
+    int _LightModel;
+    int _PBRPackedMasksEnabled;
     int _PBRMetallicMapsReflectionMaskChannel;
     int _PBRMetallicMapsSpecularMaskChannel;
     float _PBRReflectionStrength;
     float _PBRReflectionMaskInvert;
     float _PBRSpecularMaskInvert;
-    float4 _SourceMochieSettings;
-    float4 _SourceMochieSecond;
-    float4 _SourceMochieReflection;
-    float4 _SourceMochieReflectionTint;
-    float4 _SourceAdditiveSettings;
-    float4 _SourceAdditiveColor;
+    float4 _SpecularAASettings;
+    float4 _SecondSpecularSettings;
+    float4 _ReflectionResponse;
+    float4 _ReflectionTint;
+    float4 _AdditiveLightSettings;
+    float4 _AdditiveLightColor;
 };
 
 struct UberBaseMesh
@@ -126,7 +126,7 @@ struct UberBaseSpecular
 float uberBaseNormalFacing(UberBaseMaterialParameters material, bool frontFace)
 {
     float facing = frontFace ? 1.0 : -1.0;
-    return material._SourceBackfaceNormals == 0 || material._FlipBackfaceNormals != 0 ? facing : 1.0;
+    return material._BackfaceNormalControl == 0 || material._FlipBackfaceNormals != 0 ? facing : 1.0;
 }
 
 // Returns the sign for the imported tangent and bitangent on this face. Only a
@@ -134,7 +134,7 @@ float uberBaseNormalFacing(UberBaseMaterialParameters material, bool frontFace)
 float uberBaseFrameFacing(UberBaseMaterialParameters material, bool frontFace)
 {
     float facing = frontFace ? 1.0 : -1.0;
-    return material._SourceBackfaceNormals != 0 && material._FlipBackfaceNormals != 0 ? facing : 1.0;
+    return material._BackfaceNormalControl != 0 && material._FlipBackfaceNormals != 0 ? facing : 1.0;
 }
 
 float2 uberBasePolarUv(float3 direction)
@@ -276,14 +276,14 @@ float uberBaseAlpha(UberBaseMaterialParameters material, uint features, float ba
     alpha = saturate(alpha + material._AlphaMod);
     // A source alpha clip keeps the authored alpha for its cutoff test. Its
     // force-opaque control changes only coverage and the final output alpha.
-    return material._SourceAlphaClip <= 0.5 && material._AlphaForceOpaque > 0.5 ? 1.0 : alpha;
+    return material._AlphaClipAllModes <= 0.5 && material._AlphaForceOpaque > 0.5 ? 1.0 : alpha;
 }
 
 // Returns true when a source alpha clip with force-opaque replaces the alpha
 // for the coverage test and for the final output.
 bool uberBaseForcesSourceOpacity(UberBaseMaterialParameters material)
 {
-    return material._SourceAlphaClip > 0.5 && material._AlphaForceOpaque > 0.5;
+    return material._AlphaClipAllModes > 0.5 && material._AlphaForceOpaque > 0.5;
 }
 
 // Reads one packed-mask channel. Channel 4 selects a constant one.
@@ -306,7 +306,7 @@ UberBaseSpecular uberBaseSpecular(UberBaseMaterialParameters material, uint feat
     {
         // Packed masks read the reflection and specular strengths from two
         // channels of the metallic map. Each invert applies after its strength.
-        packedMasks = material._PBRMochiePackedMasksEnabled != 0;
+        packedMasks = material._PBRPackedMasksEnabled != 0;
         if (packedMasks)
         {
             result.reflectionMask = uberBasePackedMaskChannel(metallicSample,
@@ -358,7 +358,7 @@ float3 uberBaseEmissionColor(UberBaseMaterialParameters material, uint features,
 bool uberBaseCovered(UberBaseMaterialParameters material, float alpha)
 {
     float coverageAlpha = uberBaseForcesSourceOpacity(material) ? 1.0 : alpha;
-    return !((material._Mode == 1 || material._SourceAlphaClip > 0.5) && coverageAlpha < material._Cutoff);
+    return !((material._Mode == 1 || material._AlphaClipAllModes > 0.5) && coverageAlpha < material._Cutoff);
 }
 
 float uberBaseOutputAlpha(UberBaseMaterialParameters material, float alpha)
