@@ -122,6 +122,7 @@ namespace XREngine.Rendering.OpenGL
             private GLDataBuffer? _lineIndicesBuffer;
             private GLDataBuffer? _pointIndicesBuffer;
             private readonly List<GLDataBuffer> _boundVertexArrayBuffers = [];
+            private readonly List<(string Name, int Location)> _boundAttributeLocations = [];
             private readonly List<uint> _boundVertexArrayBufferIds = [];
             private uint _boundTriangleIndicesBufferId;
             private uint _boundLineIndicesBufferId;

@@ -220,6 +220,7 @@ public static class XREngineEnvironmentVariables
     public const string ProfileWindowWidth = "XRE_PROFILE_WINDOW_WIDTH";
     public const string ProfileWindowHeight = "XRE_PROFILE_WINDOW_HEIGHT";
     public const string ShaderCacheMode = "XRE_SHADER_CACHE_MODE";
+    public const string UnityShaderTranslation = "XRE_UNITY_SHADER_TRANSLATION";
     public const string TextureCacheMode = "XRE_TEXTURE_CACHE_MODE";
     public const string TextureStreamingCacheWarmupEnabled = "XRE_TEXTURE_STREAMING_CACHE_WARMUP_ENABLED";
     public const string TextureCookCompression = "XRE_TEXTURE_COOK_COMPRESSION";

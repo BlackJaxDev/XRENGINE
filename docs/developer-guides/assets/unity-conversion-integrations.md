@@ -450,6 +450,8 @@ Current limits are important: the `.anim` path imports serialized clip curves, b
 
 Generic Unity materials import their common base color and main texture data when standard properties such as `_BaseColor`, `_Color`, `_BaseMap`, and `_MainTex` are present.
 
+Set `XRE_UNITY_SHADER_TRANSLATION=1` to translate the shader of a generic material instead. The importer converts the source `.shader` to engine GLSL and binds the material values and render state. If the translation fails, the importer uses the base color and main texture conversion. Translated materials do not support skinning or stereo yet. See [Unity Shader Translation](../rendering/unity-shader-translation.md#material-import).
+
 Recognized Poiyomi Toon 9.2.66, 9.2.79, and 9.3.64 and lilToon materials are converted to XRENGINE's forward-plus Uber shader path. The converter maps supported texture slots, scalar properties, color properties, feature toggles, transparency mode, alpha cutoff, culling mode, and texture transforms into engine material parameters.
 
 Supported conversion categories include:
@@ -763,3 +765,4 @@ for the schema and current limits. This reporting adds no runtime behavior.
 - [Unity Script Host](unity-script-host.md)
 - [Model Import](model-import.md)
 - [Poiyomi Toon Material Conversion](../rendering/poiyomi-toon-material-conversion.md)
+- [Unity Shader Translation](../rendering/unity-shader-translation.md)

@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Runtime.Net.Sockets\XREngine.Runtime.Net.Sockets.csproj" />
+    <ProjectReference Include="..\XREngine.ShaderTranslation\XREngine.ShaderTranslation.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.ImGui\XREngine.Runtime.Rendering.ImGui.csproj" />
     <ProjectReference Include="..\XREngine.Audio.OpenAL\XREngine.Audio.OpenAL.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.UI.Rive\XREngine.Runtime.UI.Rive.csproj" />

@@ -106,6 +106,7 @@
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Physics.Authoring\XREngine.Runtime.Physics.Authoring.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
+    <ProjectReference Include="..\XREngine.ShaderTranslation\XREngine.ShaderTranslation.csproj" />
     <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
   </ItemGroup>
 

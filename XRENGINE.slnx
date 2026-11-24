@@ -83,4 +83,5 @@
   <Project Path="XREngine.Runtime.MeshProcessing.Meshoptimizer/XREngine.Runtime.MeshProcessing.Meshoptimizer.csproj" />
   <Project Path="XREngine.Audio.WebAudio/XREngine.Audio.WebAudio.csproj" />
   <Project Path="XREngine.Runtime.Net.WebSockets/XREngine.Runtime.Net.WebSockets.csproj" />
+  <Project Path="XREngine.ShaderTranslation/XREngine.ShaderTranslation.csproj" />
 </Solution>

@@ -523,7 +523,7 @@ namespace XREngine.Rendering.OpenGL
                 var mesh = Mesh;
                 if (BuffersBound)
                 {
-                    if (ReferenceEquals(_boundVertexProgram, program) && !VertexArrayBindingsStale())
+                    if (VertexArrayMatchesProgram(program) && !VertexArrayBindingsStale())
                     {
                         Dbg("BindBuffers early-out: already bound", "Buffers");
                         RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.VaoBindSkips);
@@ -613,6 +613,7 @@ namespace XREngine.Rendering.OpenGL
                     }
                 }
                 CaptureVertexArrayBindingSnapshot();
+                CaptureAttributeLocationSnapshot(program);
 
                 using (RuntimeEngine.Profiler.Start("GLMeshRenderer.BindBuffers.UnbindVAO", ProfilerScopeKind.ConditionalLoop))
                 {
@@ -622,6 +623,53 @@ namespace XREngine.Rendering.OpenGL
                 BuffersBound = true;
                 _boundVertexProgram = program;
                 Dbg("BindBuffers: complete", "Buffers");
+            }
+
+            /// <summary>Records the program location of each vertex attribute that the VAO binds by name.</summary>
+            private void CaptureAttributeLocationSnapshot(GLRenderProgram program)
+            {
+                _boundAttributeLocations.Clear();
+                foreach (GLDataBuffer buffer in _bufferCache.Values)
+                {
+                    XRDataBuffer data = buffer.Data;
+                    if (data.Target != EBufferTarget.ArrayBuffer)
+                        continue;
+
+                    if (data.InterleavedAttributes.Length > 0)
+                    {
+                        foreach (InterleavedAttribute attribute in data.InterleavedAttributes)
+                            if (attribute.AttribIndexOverride is null && !string.IsNullOrWhiteSpace(attribute.AttributeName))
+                                _boundAttributeLocations.Add((attribute.AttributeName, program.GetAttributeLocation(attribute.AttributeName)));
+                    }
+                    else if (!data.BindingIndexOverride.HasValue && !string.IsNullOrWhiteSpace(data.AttributeName))
+                    {
+                        _boundAttributeLocations.Add((data.AttributeName, program.GetAttributeLocation(data.AttributeName)));
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Returns true when the attribute locations of the current VAO are also the locations of <paramref name="program"/>.
+            /// </summary>
+            /// <remarks>
+            /// One VAO serves all passes of the renderer. Generated vertex shaders pack their inputs, so a mesh without
+            /// tangents has <c>TexCoord0</c> at location 2. A material vertex shader can use other locations, for example
+            /// the fixed engine locations, where <c>TexCoord0</c> is at location 3. When a pass changes to a program with
+            /// other locations, the VAO must be bound again. The check uses cached attribute locations and does not allocate.
+            /// </remarks>
+            private bool VertexArrayMatchesProgram(GLRenderProgram program)
+            {
+                if (ReferenceEquals(_boundVertexProgram, program))
+                    return true;
+
+                for (int i = 0; i < _boundAttributeLocations.Count; i++)
+                {
+                    (string name, int location) = _boundAttributeLocations[i];
+                    if (program.GetAttributeLocation(name) != location)
+                        return false;
+                }
+
+                return true;
             }
 
             private void CaptureVertexArrayBindingSnapshot()

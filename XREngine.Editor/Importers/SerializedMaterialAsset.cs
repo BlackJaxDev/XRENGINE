@@ -58,5 +58,6 @@ public sealed class SerializedMaterialAsset : XRMaterial
         AlphaCutoff = imported.AlphaCutoff;
         TransparentSortPriority = imported.TransparentSortPriority;
         TransparentTechniqueOverride = imported.TransparentTechniqueOverride;
+        GenerateMissingMeshTangents = imported.GenerateMissingMeshTangents;
     }
 }

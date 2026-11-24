@@ -194,8 +194,10 @@ namespace XREngine.Rendering.OpenGL
                                 bindingIndex = Data.BindingIndexOverride.Value;
                             else if (!TryGetAttributeLocation(vertexProgram, out bindingIndex))
                             {
+                                // A program does not have to read every mesh buffer. Log each program and attribute one time.
                                 string programName = vertexProgram.Data?.Name ?? "<unnamed>";
-                                Debug.OpenGL($"[GLDataBuffer] Attribute '{Data.AttributeName}' missing in program '{programName}' while binding buffer '{GetDescribingName()}'.");
+                                if (_missingInterleavedLogs.TryAdd($"{vertexProgram.BindingId}:{programName}:{Data.AttributeName}", 0))
+                                    Debug.OpenGL($"[GLDataBuffer] Attribute '{Data.AttributeName}' missing in program '{programName}' while binding buffer '{GetDescribingName()}'.");
                                 return;
                             }
 
