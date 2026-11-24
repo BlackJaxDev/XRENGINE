@@ -1,8 +1,8 @@
 # Editor Keyboard Shortcuts
 
 The editor camera reads most shortcuts, so they work when the editor camera is the active
-pawn. The play mode and recording shortcuts read native window input, so they work in
-every game mode and when no pawn is possessed.
+pawn. The play mode, screenshot, and recording shortcuts read native window input, so they
+work with every pawn and game mode, and when no pawn is possessed.
 
 ## Camera
 
@@ -43,5 +43,5 @@ every game mode and when no pawn is possessed.
 | F9 | Turn debug camera mode on or off |
 | F10 | Update the stored frustum for debug camera mode |
 | F11 | Show or hide the ImGui editor overlay |
-| F12 | Take a screenshot |
+| F12 | Save each viewport of the window as a PNG in a new folder on the desktop |
 | Shift+F12 | Start or stop a window video recording. See [Window Video Recording](window-recording.md). |

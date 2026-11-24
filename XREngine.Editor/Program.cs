@@ -203,7 +203,9 @@ internal partial class Program
         // Start play mode controller
         EditorPlayModeController.Initialize();
 
-        // Shift+F12 records the focused editor window to an MP4 file.
+        // F12 saves a screenshot and Shift+F12 records the window to an MP4 file. Both read
+        // native window input, so they work with every pawn and game mode.
+        EditorWindowScreenshot.Initialize();
         EditorWindowVideoRecorder.Initialize();
 
         if (args.Any(
@@ -326,6 +328,7 @@ internal partial class Program
             smokeRun.FinishAfterRun();
             smokeRun.Dispose();
             EditorWindowVideoRecorder.Shutdown();
+            EditorWindowScreenshot.Shutdown();
             EditorImGuiUI.ShutdownToolbarIcons();
             WriteBootstrapTrace("Shutting down MCP host.");
             McpServerHost.Shutdown();

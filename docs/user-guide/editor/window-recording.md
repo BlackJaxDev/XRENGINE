@@ -3,8 +3,9 @@
 Press **Shift+F12** in an editor window to start a video recording of that window.
 Press **Shift+F12** again to stop it. **F12** without Shift still takes a screenshot.
 
-The shortcut reads native window input, so it works in edit mode, in play mode, and
-when a game mode owns input.
+The shortcut reads native window input, so it works in edit mode, in play mode, with
+every pawn, and when a game mode owns input. The **F12** screenshot shortcut works the
+same way.
 
 ## Status
 
