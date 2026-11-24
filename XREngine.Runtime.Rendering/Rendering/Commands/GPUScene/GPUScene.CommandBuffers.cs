@@ -49,6 +49,8 @@ namespace XREngine.Rendering.Commands
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers");
 
+            // The publication boundary comes before _lock (see _advancedPublicationBoundaryLock).
+            using Lock.Scope publicationBoundary = _advancedPublicationBoundaryLock.EnterScope();
             using (_lock.EnterScope())
             {
                 long currentVersion = System.Threading.Interlocked.Read(ref _updatingCommandsContentVersion);
@@ -637,6 +639,29 @@ namespace XREngine.Rendering.Commands
 
         /// <summary>Lock for thread-safe access to command buffers.</summary>
         private readonly Lock _lock = new();
+
+        /// <summary>
+        /// Keeps a canonical scene publication from landing inside a viewport's package swap.
+        /// <see cref="SwapCommandBuffers"/> holds it while it publishes publication N+1 and writes
+        /// the new draw identity into every shared mesh command. A viewport swap holds it while
+        /// it captures publication N into its frame package and then checks each primary command
+        /// identity against N. With the lock, the capture and the check see one publication.
+        /// </summary>
+        /// <remarks>
+        /// Lock order: take this lock first, then <see cref="_lock"/>. Never take this lock while
+        /// <see cref="_lock"/> is held. The lock is reentrant, so a swap that runs inside the world
+        /// swap on the same thread enters it again without a deadlock. Hold it only for the swap
+        /// work, never for eye recording or GPU waits.
+        /// </remarks>
+        private readonly Lock _advancedPublicationBoundaryLock = new();
+
+        /// <summary>
+        /// Enters the publication boundary for one viewport package swap: the canonical package
+        /// capture and the command buffer swap that checks the command identities. See
+        /// <see cref="_advancedPublicationBoundaryLock"/> for the lock order.
+        /// </summary>
+        internal Lock.Scope EnterAdvancedPublicationBoundary()
+            => _advancedPublicationBoundaryLock.EnterScope();
 
         /// <summary>Debug labels for meshes (for logging/debugging).</summary>
         private readonly ConcurrentDictionary<XRMesh, string> _meshDebugLabels = new();
