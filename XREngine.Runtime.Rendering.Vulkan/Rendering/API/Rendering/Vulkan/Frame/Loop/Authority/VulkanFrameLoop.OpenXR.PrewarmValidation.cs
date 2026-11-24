@@ -311,6 +311,12 @@ internal sealed partial class VulkanFrameLoop
         {
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(
                 frozen.AsSpan(0, frozenCount));
+            // The captured operations are abandoned: the caller receives no frozen array to
+            // submit or release. A producer that waits on one of their submission markers
+            // (for example a skin deformation receipt recorded by this eye's pipeline) must see
+            // a failed fence and record its work again. Without this step the marker stays
+            // AwaitingSubmission and the producer's output never becomes usable.
+            VulkanCommandSynchronizationState.FailAbandonedSubmissionMarkers(ops);
             throw;
         }
         finally
