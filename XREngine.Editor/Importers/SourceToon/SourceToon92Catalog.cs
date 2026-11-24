@@ -1,7 +1,7 @@
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Identifies the verified Poiyomi Toon sources used by the 9.2 material converter.
+/// Identifies the verified source toon shaders used by the 9.2 material converter.
 /// </summary>
 public static class SourceToon92Catalog
 {
@@ -32,7 +32,7 @@ public static class SourceToon92Catalog
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.RuntimeMappingMissing,
                 MaterialConversionDiagnosticSeverity.Warning,
-                $"Poiyomi 9.2 property '{property}' is active but has no native Uber mapping. Its value remains in the source descriptor.",
+                $"Source toon 9.2 property '{property}' is active but has no native Uber mapping. Its value remains in the source descriptor.",
                 property));
         }
 
@@ -42,7 +42,7 @@ public static class SourceToon92Catalog
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.RuntimeMappingMissing,
                 MaterialConversionDiagnosticSeverity.Warning,
-                "Poiyomi 9.2 anisotropic noise texture has no native Uber mapping. Its reference remains in the source descriptor.",
+                "Source toon 9.2 anisotropic noise texture has no native Uber mapping. Its reference remains in the source descriptor.",
                 "_AnisoNoiseMap"));
         }
     }

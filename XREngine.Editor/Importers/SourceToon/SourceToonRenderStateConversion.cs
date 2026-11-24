@@ -4,7 +4,7 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Complete render-state and pass-set result for an imported Poiyomi material.
+/// Complete render-state and pass-set result for an imported source toon material.
 /// </summary>
 public sealed record SourceToonRenderStateConversion
 {

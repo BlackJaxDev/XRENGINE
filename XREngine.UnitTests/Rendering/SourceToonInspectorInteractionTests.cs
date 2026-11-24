@@ -20,7 +20,7 @@ public sealed class SourceToonInspectorInteractionTests
     {
         _previousServices = RuntimeShaderServices.Current;
         RuntimeShaderServices.Current = new UberRuntimeShaderServices();
-        _schema = SourceToonAuthoringSchemaCatalog.GetOrCreate(
+        _schema = UberAuthoringSchemaCatalog.GetOrCreate(
             ShaderHelper.UberFragForward().GetUiManifest());
         _material = new()
         {

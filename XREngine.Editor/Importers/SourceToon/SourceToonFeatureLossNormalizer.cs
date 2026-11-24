@@ -89,7 +89,7 @@ public static class SourceToonFeatureLossNormalizer
             diagnostics.Add(new MaterialConversionDiagnostic(
                 MaterialConversionDiagnosticCodes.ProFeatureDiscarded,
                 MaterialConversionDiagnosticSeverity.Warning,
-                $"Active Poiyomi Pro-only feature group '{group}' was discarded during Toon downgrade.",
+                $"Active Pro-only feature group '{group}' was discarded during Toon downgrade.",
                 name));
         }
     }

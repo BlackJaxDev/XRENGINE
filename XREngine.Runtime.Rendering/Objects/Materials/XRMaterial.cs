@@ -1668,6 +1668,10 @@ namespace XREngine.Rendering
             }
 
             bool isUberMaterial = IsUberShaderMaterial();
+            // Rename earlier Uber names first, so that the merge below keeps their values instead of dropping them.
+            if (isUberMaterial)
+                MigrateLegacyUberParameterNames();
+
             Dictionary<string, ShaderUiProperty>? uberProperties = null;
             if (isUberMaterial && GetShader(EShaderType.Fragment) is XRShader uberFragmentShader)
             {

@@ -371,7 +371,7 @@ vec3 xrSourceGgxLobe(vec3 normal, vec3 view, vec3 light, vec3 f0,
     return radiance * term * fresnel * mask * tint * materialAo * castVisibility;
 }
 
-vec3 xrSourceMochieLobe(vec3 normal, vec3 view, vec3 light, vec3 baseColor,
+vec3 xrToonSpecularLobe(vec3 normal, vec3 view, vec3 light, vec3 baseColor,
     float metallic, float smoothness, float mask, vec3 tint, vec3 radiance,
     float materialAo, float shadowVisibility, vec3 normalDx, vec3 normalDy,
     vec4 settings, float ignoreShadows, bool directional)
@@ -398,7 +398,7 @@ vec3 xrSourceClearCoatReflection(vec3 rawRadiance, vec3 directColor,
         reflectionMask * materialAo;
 }
 
-vec3 xrSourceMochieReflection(vec3 rawRadiance, vec3 directColor,
+vec3 xrToonSpecularReflection(vec3 rawRadiance, vec3 directColor,
     vec3 f0, float smoothness, float reflectionMask, float materialAo,
     float nv, vec3 normalDx, vec3 normalDy, vec4 gsaa,
     vec4 reflectionSettings, vec3 tint)
@@ -416,16 +416,16 @@ vec3 xrSourceMochieReflection(vec3 rawRadiance, vec3 directColor,
         reflectionMask * materialAo * tint;
 }
 
-vec3 xrSourceMochieDirect(vec3 normal, vec3 view, vec3 light, vec3 baseColor,
+vec3 xrToonSpecularDirect(vec3 normal, vec3 view, vec3 light, vec3 baseColor,
     float metallic, float smoothness, float packedSmoothness, float mask, vec3 tint,
     vec3 radiance, float materialAo, float shadowVisibility, vec3 normalDx,
     vec3 normalDy, vec4 settings, vec4 second, bool directional)
 {
-    vec3 main = xrSourceMochieLobe(normal, view, light, baseColor, metallic,
+    vec3 main = xrToonSpecularLobe(normal, view, light, baseColor, metallic,
         smoothness, mask, tint, radiance, materialAo, shadowVisibility,
         normalDx, normalDy, settings, second.z, directional);
     if (settings.w <= 0.5 || second.y <= 0.0) return main;
-    vec3 extra = xrSourceMochieLobe(normal, view, light, baseColor, metallic,
+    vec3 extra = xrToonSpecularLobe(normal, view, light, baseColor, metallic,
         packedSmoothness * second.x, mask * second.y, tint, radiance, materialAo,
         shadowVisibility, normalDx, normalDy, settings, second.z, directional);
     return max(main, extra);

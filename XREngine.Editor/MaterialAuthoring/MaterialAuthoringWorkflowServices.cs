@@ -295,9 +295,14 @@ public sealed class MaterialAuthoringLocaleService
                 issues.Add(new(locale, key, "Locale value limit reached."));
                 break;
             }
-            if (!schema.NodeLookup.ContainsKey(key))
+            // A key with a legacy semantic ID prefix is stored with the current ID of its node.
+            if (schema.TryGetNode(key, out ShaderAuthoringNode? node))
+                destination[node.SemanticId] = value;
+            else
+            {
                 issues.Add(new(locale, key, "Translation key is not present in this schema."));
-            destination[key] = value;
+                destination[key] = value;
+            }
         }
         (authoringOverride ? _overrides : _imported)[locale] = destination;
         return issues;

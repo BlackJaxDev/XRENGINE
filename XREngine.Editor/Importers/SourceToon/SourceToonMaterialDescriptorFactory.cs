@@ -4,7 +4,7 @@ using System.Text;
 namespace XREngine.Scene.Importers.SourceToon;
 
 /// <summary>
-/// Normalizes unlocked and optimizer-renamed Unity material properties into stable Poiyomi identities.
+/// Normalizes unlocked and optimizer-renamed source material properties into stable source toon identities.
 /// </summary>
 public static class SourceToonMaterialDescriptorFactory
 {
@@ -22,7 +22,7 @@ public static class SourceToonMaterialDescriptorFactory
         ArgumentNullException.ThrowIfNull(match);
 
         if (!match.IsAccepted && !match.IsDowngradeSource)
-            throw new ArgumentException("A Poiyomi descriptor requires an accepted Toon match or an explicit Pro downgrade source.", nameof(match));
+            throw new ArgumentException("A source toon descriptor requires an accepted Toon match or an explicit Pro downgrade source.", nameof(match));
 
         string renameSuffix = ResolveRenameSuffix(document);
         Dictionary<string, SourceToonPropertyBinding> bindings = new(StringComparer.Ordinal);

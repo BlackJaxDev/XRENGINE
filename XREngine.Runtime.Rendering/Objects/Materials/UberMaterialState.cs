@@ -255,6 +255,24 @@ public sealed class UberMaterialAuthoredState : IEquatable<UberMaterialAuthoredS
         return new(Features, next);
     }
 
+    /// <summary>
+    /// Moves the authored state of a property to a new name.
+    /// When the new name already has a state, the state of the old name is removed and the new state is kept.
+    /// </summary>
+    public UberMaterialAuthoredState RenameProperty(string oldName, string newName)
+    {
+        int oldIndex = IndexOfProperty(oldName);
+        if (oldIndex < 0 || string.Equals(oldName, newName, StringComparison.Ordinal))
+            return this;
+
+        if (IndexOfProperty(newName) >= 0)
+            return ClearProperty(oldName);
+
+        UberMaterialPropertyState[] next = [.. Properties];
+        next[oldIndex] = next[oldIndex] with { Name = newName };
+        return new(Features, next);
+    }
+
     public UberMaterialAuthoredState SetPropertyStaticLiteral(string propertyName, string? staticLiteral)
     {
         if (string.IsNullOrWhiteSpace(propertyName))

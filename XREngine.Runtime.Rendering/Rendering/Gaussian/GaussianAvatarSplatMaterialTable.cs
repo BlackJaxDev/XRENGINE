@@ -475,6 +475,10 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         Span<uint> globalMaskMax = words.AsSpan(
             NativeUberMaterialSchema.ParameterWordOffset(NativeUberMaterialSchema.ParameterIndex("_GlobalMaskMax")), 4);
         globalMaskMax.Fill(BitConverter.SingleToUInt32Bits(1.0f));
+        _ = TryWriteGlslLiteralWords(
+            "vec4",
+            "vec4(0.0, 1.0, 1.0, 1.0)",
+            words.AsSpan(NativeUberMaterialSchema.ParameterWordOffset(NativeUberMaterialSchema.ParameterIndex("_SourcePostProcess")), 4));
     }
 
     private InternedMaterialEntry EncodeUberMaterial(XRMaterial material)
@@ -499,8 +503,8 @@ internal sealed class GaussianAvatarSplatMaterialTable : IDisposable
         if (isCanonicalNativeUber)
         {
             // Match NativeUberMaterialSourceEncoder.TryEncode directly so canonical NativeUberV1
-            // materials preserve composite source vectors (such as _SourceRimSettings,
-            // _SourceLightSettings, and _SourceMochieSettings) without manifest static-literal overrides.
+            // materials preserve composite source vectors (such as _RimShapeSettings,
+            // _ToonLightSettings, and _SpecularAASettings) without manifest static-literal overrides.
             SeedNativeUberVectorDefaults(words);
             foreach (ShaderVar? parameter in material.Parameters)
             {

@@ -62,6 +62,7 @@ void main()
         coordinates.localPosition = ShadowCoverageLocalPosition;
         coordinates.color = ShadowCoverageColor;
         coordinates.frontFacing = gl_FrontFacing;
+        coordinates.pixel = gl_FragCoord.xy;
         coordinates.time = uintBitsToFloat(
             XR_ADV_LoadView(0u).renderTimeBits);
         vec4 baseColor;

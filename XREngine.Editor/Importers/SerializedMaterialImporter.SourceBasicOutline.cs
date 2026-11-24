@@ -97,7 +97,7 @@ public static partial class SerializedMaterialImporter
             throw new SourceVisualImportException(
                 "Active source Basic outline requires a resolved linear-repeat '_OutlineMask' sampler with zero LOD bias.");
 
-        SetInt(material, "_SourceOutlineBasic", 1);
+        SetInt(material, "_OutlineBasicModel", 1);
         SetFloat(material, "_OutlineFixWidth", fixWidth);
         SetFloat(material, "_OutlinesMaxDistance", maxDistance);
     }

@@ -88,7 +88,7 @@ public sealed class SourceToonVisualPerformanceTests
     {
         JsonElement budgets = _corpus.RootElement.GetProperty("performanceBudgets");
         Stopwatch timer = Stopwatch.StartNew();
-        ShaderAuthoringSchema schema = SourceToonAuthoringSchemaCatalog.GetOrCreate(
+        ShaderAuthoringSchema schema = UberAuthoringSchemaCatalog.GetOrCreate(
             ShaderHelper.UberFragForward().GetUiManifest());
         timer.Stop();
         timer.Elapsed.TotalMilliseconds.ShouldBeLessThan(
@@ -212,7 +212,7 @@ public sealed class SourceToonVisualPerformanceTests
     [Test]
     public async Task CancellationAndLifecycleStressLeavesNoActiveWorkOrStaleState()
     {
-        ShaderAuthoringSchema schema = SourceToonAuthoringSchemaCatalog.GetOrCreate(
+        ShaderAuthoringSchema schema = UberAuthoringSchemaCatalog.GetOrCreate(
             ShaderHelper.UberFragForward().GetUiManifest());
         XRMaterial material = CreateMaximalMaterial();
         SourceToonInspectorInteractionHarness harness = new(schema, material);
