@@ -37,13 +37,27 @@ public sealed class McpViewportSequenceCaptureTests
 
         JsonElement schema = JsonSerializer.SerializeToElement(start.InputSchema);
         JsonElement properties = schema.GetProperty("properties");
-        properties.GetProperty("frame_count").GetProperty("type").GetString().ShouldBe("integer");
-        properties.GetProperty("duration_seconds").GetProperty("type").GetString().ShouldBe("number");
-        properties.GetProperty("frame_stride").GetProperty("type").GetString().ShouldBe("integer");
-        properties.GetProperty("capture_fps").GetProperty("type").GetString().ShouldBe("number");
-        properties.GetProperty("output_scale").GetProperty("type").GetString().ShouldBe("number");
-        properties.GetProperty("create_contact_sheet").GetProperty("type").GetString().ShouldBe("boolean");
-        properties.GetProperty("compute_frame_differences").GetProperty("type").GetString().ShouldBe("boolean");
+        // Nullable parameters publish a JSON Schema type union that also accepts null.
+        ReadSchemaTypes(properties.GetProperty("frame_count")).ShouldBe(new[] { "integer", "null" });
+        ReadSchemaTypes(properties.GetProperty("duration_seconds")).ShouldBe(new[] { "number", "null" });
+        ReadSchemaTypes(properties.GetProperty("frame_stride")).ShouldBe(new[] { "integer" });
+        ReadSchemaTypes(properties.GetProperty("capture_fps")).ShouldBe(new[] { "number", "null" });
+        ReadSchemaTypes(properties.GetProperty("output_scale")).ShouldBe(new[] { "number" });
+        ReadSchemaTypes(properties.GetProperty("create_contact_sheet")).ShouldBe(new[] { "boolean" });
+        ReadSchemaTypes(properties.GetProperty("compute_frame_differences")).ShouldBe(new[] { "boolean" });
+    }
+
+    /// <summary>
+    /// Reads the "type" keyword of one schema property. The registry writes a single string
+    /// for a non-nullable parameter and a string array for a nullable parameter.
+    /// </summary>
+    private static string[] ReadSchemaTypes(JsonElement property)
+    {
+        JsonElement type = property.GetProperty("type");
+        if (type.ValueKind == JsonValueKind.String)
+            return [type.GetString()!];
+
+        return type.EnumerateArray().Select(static element => element.GetString()!).ToArray();
     }
 
     [Test]

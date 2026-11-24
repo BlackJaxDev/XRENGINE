@@ -46,7 +46,7 @@ Scenes:
                             ExposureMode: "Artist"
                             AutoExposure: false
                             Exposure: 1
-                            Contrast: 1
+                            Contrast: 0
                             Gamma: 1
                             Hue: 1
                             Saturation: 1

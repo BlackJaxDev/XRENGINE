@@ -60,7 +60,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         arena.ShouldContain("internal const int MaximumFrameSlotCount = 10;");
         arena.ShouldContain("private const int MaxReservations = 131_072;");
         arena.ShouldContain("if ((uint)requiredFrameSlots > MaximumFrameSlotCount)");
-        arena.ShouldContain("_reservations.Count + _frequencyReservations.Count >= MaxReservations");
+        // The reservation bound counts live arena allocations. Plain and frequency
+        // auto-uniform reservations can share one allocation, so the key counts are not used.
+        arena.ShouldContain("_allocations.Count >= MaxReservations");
         arena.ShouldContain(
             "IncrementGeneration();");
         arena.ShouldContain(
@@ -2435,12 +2437,30 @@ public sealed class VulkanStablePacketAndDescriptorTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/ComputeDispatchSnapshot.cs");
         string uniformArrayPool = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.FrameUniformArrayPool.cs");
+        string bindingCapture = ReadWorkspaceFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.BindingCapture.cs");
 
+        // The program rents immediate snapshots from the binding capture workspace.
+        // The workspace pools them per render frame and returns no snapshot
+        // outside a published frame, so out-of-frame captures keep ownership.
         bindings.ShouldContain("RentFrameBindingSnapshot()");
-        bindings.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext");
+        bindings.ShouldContain("CurrentBindingCaptureWorkspace.RentImmediateFrameSnapshot()");
         bindings.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId");
-        bindings.ShouldContain("if (frameId == 0)");
-        bindings.ShouldContain("_frameBindingSnapshotPoolCursor = 0;");
+        int rentStart = bindingCapture.IndexOf(
+            "internal ComputeDispatchSnapshot? RentFrameSnapshot()",
+            StringComparison.Ordinal);
+        int rentEnd = bindingCapture.IndexOf(
+            "private BindingCaptureState PushBindingCapture()",
+            rentStart,
+            StringComparison.Ordinal);
+        rentStart.ShouldBeGreaterThanOrEqualTo(0);
+        rentEnd.ShouldBeGreaterThan(rentStart);
+        string rentFrameSnapshot = bindingCapture[rentStart..rentEnd];
+        rentFrameSnapshot.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null");
+        rentFrameSnapshot.ShouldContain("RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId");
+        rentFrameSnapshot.ShouldContain("if (frameId == 0)");
+        rentFrameSnapshot.ShouldContain("_frameSnapshotCursor = 0;");
+        rentFrameSnapshot.ShouldContain("IsFramePoolOwned = true");
         int captureStart = bindings.IndexOf(
             "private ComputeDispatchSnapshot CaptureComputeSnapshotNoLock()",
             StringComparison.Ordinal);
@@ -2515,7 +2535,11 @@ public sealed class VulkanStablePacketAndDescriptorTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/Records/PublishFramebufferForSamplingOp.cs");
 
         frameOp.ShouldContain("protected static bool TryRentForCurrentFrame<T>");
-        frameOp.ShouldContain("context.OperationWorkspace.TryRent(frameId, out reusable)");
+        // Operations rent from the context workspace. OpenXR eye and mirror contexts
+        // carry no workspace, so they rent from the published OpenXR captured workspace.
+        frameOp.ShouldContain("VulkanFrameOpWorkspace? workspace = ResolveRentWorkspace(context);");
+        frameOp.ShouldContain("return workspace.TryRent(frameId, out reusable);");
+        frameOp.ShouldContain("=> context.OperationWorkspace ??");
         frameOp.ShouldContain("internal abstract record FrameOp(int PassIndex");
         clearOp.ShouldContain("internal static ClearOp Rent(");
         computeOp.ShouldContain("internal static ComputeDispatchOp Rent(");

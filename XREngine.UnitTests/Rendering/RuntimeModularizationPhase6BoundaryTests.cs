@@ -86,6 +86,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
                 "XREngine.Runtime.CutsceneIntegration",
                 "XREngine.Runtime.Host",
                 "XREngine.Runtime.Diagnostics.Desktop",
+                "XREngine.Runtime.Imaging.Bc7Enc",
                 "XREngine.Runtime.Imaging.Magick",
                 "XREngine.Runtime.InputIntegration",
                 "XREngine.Runtime.IO.DirectStorage",

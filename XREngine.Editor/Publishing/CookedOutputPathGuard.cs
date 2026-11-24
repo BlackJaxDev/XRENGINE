@@ -877,23 +877,26 @@ public static class CookedOutputPathGuard
     }
 
     private static Regex CreateDrivePattern(string pathChar, int minimumParts, bool anchored)
-        => new((anchored ? "(?<![A-Za-z0-9])" : string.Empty) +
-            "[A-Za-z]:" + Separator + "(?:" + pathChar + "+" + Separator + "){" + minimumParts + ",}" + pathChar + "*",
+    {
+        string anchor = anchored ? "(?<![A-Za-z0-9])" : string.Empty;
+        return new Regex(
+            $$"""{{anchor}}[A-Za-z]:{{Separator}}(?:{{pathChar}}+{{Separator}}){{{minimumParts}},}{{pathChar}}*""",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    }
 
     /// <summary>
     /// A UNC path. The start must not follow a path character or a backslash, so an escaped separator inside a relative
     /// path (for example <c>Textures\\Wall\\a.png</c> in JSON) is not a server name.
     /// </summary>
     private static Regex CreateUncPattern(string pathChar)
-        => new(UncStart + "[A-Za-z0-9._$-]{2,}" + @"\\{1,2}" + pathChar + "{2,}" + @"\\{1,2}" + pathChar + "{2,}" +
-            "(?:" + Separator + pathChar + "+)*",
+        => new(
+            $$"""{{UncStart}}[A-Za-z0-9._$-]{2,}\\{1,2}{{pathChar}}{2,}\\{1,2}{{pathChar}}{2,}(?:{{Separator}}{{pathChar}}+)*""",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>A path in a Windows user profile folder: a drive, <c>Users</c> or <c>Documents and Settings</c>, and a user name.</summary>
     private static Regex CreateUserFolderPattern(string pathChar)
-        => new("[A-Za-z]:" + Separator + "(?i:users|documents and settings)" + Separator + pathChar + "{2,}" +
-            "(?:" + Separator + pathChar + "+)*",
+        => new(
+            $$"""[A-Za-z]:{{Separator}}(?i:users|documents and settings){{Separator}}{{pathChar}}{2,}(?:{{Separator}}{{pathChar}}+)*""",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>
@@ -903,8 +906,8 @@ public static class CookedOutputPathGuard
     /// FBX property code) can follow it directly.
     /// </summary>
     private static Regex CreateBinaryFilePattern(string nameChar, string nameEnd)
-        => new(@"(?<![A-Za-z0-9])[A-Za-z]:(?<s>\\\\|\\|/)(?:" + nameChar + @"{2,}\k<s>){2,}" + nameChar + "*?" + nameEnd +
-            @"\.[A-Za-z][A-Za-z0-9]{1,4}?",
+        => new(
+            $$"""(?<![A-Za-z0-9])[A-Za-z]:(?<s>\\\\|\\|/)(?:{{nameChar}}{2,}\k<s>){2,}{{nameChar}}*?{{nameEnd}}\.[A-Za-z][A-Za-z0-9]{1,4}?""",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static bool IsPathCharOrSeparator(char c, bool isUtf8View)

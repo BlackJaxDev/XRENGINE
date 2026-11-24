@@ -43,7 +43,7 @@ public sealed class LightProbeArrayReadinessTests
         // Each generation writes new output textures. The textures become
         // active only after the writer completed and the output is valid.
         iblSource.ShouldContain("XRTexture2D irradiance = CreateIrradianceTexture(_pendingIrradianceExtent);");
-        iblSource.ShouldContain("CreatePrefilterTexture(_pendingPrefilterExtent));");
+        iblSource.ShouldContain("CreatePrefilterTexture(_pendingPrefilterExtent, convention),");
         resolve.ShouldContain("if (!pending.IsWriterComplete())\n                return;");
         resolve.ShouldContain("if (!pending.OutputValid)");
         resolve.ShouldContain("IblTexturesValid = true;");

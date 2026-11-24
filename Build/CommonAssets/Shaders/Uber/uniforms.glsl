@@ -173,21 +173,34 @@ uniform float _AlphaPremultiply;
 
 //@feature(id="source-scene-color", name="Source Scene Color", default=off, cost=high)
 #ifndef XRENGINE_UBER_DISABLE_SOURCE_SCENE_COLOR
+// The importer sets the scene-color values from the source GrabPass. The inspector does not show them.
+//@property(name="_SceneColorTexture", slot=texture, hidden=true)
 uniform sampler2DArray _SceneColorTexture;
+//@property(name="_SceneColorMode", mode=static, hidden=true)
 uniform float _SceneColorMode;
+//@property(name="_SceneGrabColor", mode=static, hidden=true)
 uniform vec4 _SceneGrabColor;
+//@property(name="_SceneGrabBrightness", mode=static, hidden=true)
 uniform float _SceneGrabBrightness;
+//@property(name="_SceneGrabAddBrightness", mode=static, hidden=true)
 uniform float _SceneGrabAddBrightness;
+//@property(name="_SceneGrabBlendFactor", mode=static, hidden=true)
 uniform float _SceneGrabBlendFactor;
+//@property(name="_SceneGrabUseAlpha", mode=static, hidden=true)
 uniform float _SceneGrabUseAlpha;
 // Source shader blend factor-table indices (0 to 10) for the surface and scene-color terms.
+//@property(name="_SceneGrabSrcBlend", mode=static, hidden=true)
 uniform float _SceneGrabSrcBlend;
+//@property(name="_SceneGrabDstBlend", mode=static, hidden=true)
 uniform float _SceneGrabDstBlend;
 // Source toon GrabPass refraction: on/off, index of refraction (0 to 3), chromatic
 // aberration (0 to 1), and the facing falloff power (0 disables the falloff).
 uniform float _SceneRefractionEnabled;
+//@property(name="_SceneRefractionIndex", mode=static, hidden=true)
 uniform float _SceneRefractionIndex;
+//@property(name="_SceneRefractionChromaticAberration", mode=static, hidden=true)
 uniform float _SceneRefractionChromaticAberration;
+//@property(name="_SceneRefractionFresnelPower", mode=static, hidden=true)
 uniform float _SceneRefractionFresnelPower;
 #endif
 
@@ -719,8 +732,12 @@ uniform float _OutlineFixedSize;
 uniform float _OutlineUseVertexColors;
 //@property(name="_OutlineZOffset", display="Depth Offset", mode=animated, range=[-1,1])
 uniform float _OutlineZOffset;
+// The importer sets the basic outline values from the source outline. The inspector does not show them.
+//@property(name="_OutlineBasicModel", mode=static, hidden=true)
 uniform int _OutlineBasicModel;
+//@property(name="_OutlineFixWidth", mode=static, hidden=true)
 uniform float _OutlineFixWidth;
+//@property(name="_OutlinesMaxDistance", mode=static, hidden=true)
 uniform float _OutlinesMaxDistance;
 uniform vec4 _OutlineTexture_ST;
 uniform vec2 _OutlineTexturePan;
@@ -803,17 +820,29 @@ uniform vec4 _GlitterColor;
 uniform float _GlitterDensity;
 //@property(name="_GlitterSize", display="Size", mode=static, range=[0,1])
 uniform float _GlitterSize;
+// The importer sets the glitter randomization and audio values. The inspector does not show them.
+//@property(name="_GlitterRandomSize", mode=static, hidden=true)
 uniform int _GlitterRandomSize;
+//@property(name="_GlitterMinMaxSize", mode=static, hidden=true)
 uniform vec2 _GlitterMinMaxSize;
+//@property(name="_GlitterRandomColors", mode=static, hidden=true)
 uniform int _GlitterRandomColors;
+//@property(name="_GlitterRandomSaturation", mode=static, hidden=true)
 uniform vec2 _GlitterRandomSaturation;
+//@property(name="_GlitterRandomValue", mode=static, hidden=true)
 uniform vec2 _GlitterRandomValue;
+//@property(name="_GlitterGlobalMask", mode=static, hidden=true)
 uniform vec2 _GlitterGlobalMask;
 uniform int _GlitterColorThemeIndex;
+//@property(name="_GlitterHueControl", mode=static, hidden=true)
 uniform vec4 _GlitterHueControl;
+//@property(name="_GlitterAudioBands", mode=static, hidden=true)
 uniform vec4 _GlitterAudioBands;
+//@property(name="_GlitterAudioSizeRange", mode=static, hidden=true)
 uniform vec2 _GlitterAudioSizeRange;
+//@property(name="_GlitterAudioBrightnessRange", mode=static, hidden=true)
 uniform vec2 _GlitterAudioBrightnessRange;
+//@property(name="_GlitterAudioMaskRange", mode=static, hidden=true)
 uniform vec2 _GlitterAudioMaskRange;
 //@property(name="_GlitterSpeed", display="Scroll Speed", mode=animated, range=[0,10])
 uniform float _GlitterSpeed;

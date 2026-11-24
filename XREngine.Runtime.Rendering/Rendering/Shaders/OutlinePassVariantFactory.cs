@@ -75,6 +75,12 @@ public static partial class OutlinePassVariantFactory
         // pass-specific generated fragment instead of restoring the base source.
         variant.Shaders = [monoVertex, ovrVertex, nvVertex, fragment];
 
+        // Setting the shaders syncs the variant parameters to the uniforms of the
+        // outline shaders, and that sync can replace the array. Attach the source
+        // array again, so that the outline draw reads the same live ShaderVar
+        // instances as the source material.
+        variant.Parameters = sourceMaterial.Parameters;
+
         sourceMaterial.ShareUniformSourcesWith(variant);
         return variant;
     }

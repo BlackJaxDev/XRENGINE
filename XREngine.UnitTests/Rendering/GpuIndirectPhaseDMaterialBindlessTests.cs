@@ -47,14 +47,14 @@ public sealed class GpuIndirectPhaseDMaterialBindlessTests
             },
             new GPUMaterialTextureHandles(0x0000000200000001ul, 0ul, 0ul));
 
-        // std430 row: Albedo, Normal, RM, and Emissive handle indices, then
-        // Flags, then the vec4 constants aligned to a four-word boundary.
+        // std430 row: Albedo, Normal, RM, Emissive, and Opacity handle indices,
+        // then Flags, then the vec4 constants aligned to a four-word boundary.
         ReadUInt(table.Buffer, 2u, 0u).ShouldBe(1u);
         ReadUInt(table.Buffer, 2u, 1u).ShouldBe(0u);
         ReadUInt(table.Buffer, 2u, 2u).ShouldBe(0u);
         ReadUInt(table.Buffer, 2u, 3u).ShouldBe(0u);
-        ReadUInt(table.Buffer, 2u, 4u).ShouldBe(0x80000001u);
-        ReadUInt(table.Buffer, 2u, 5u).ShouldBe(0u);
+        ReadUInt(table.Buffer, 2u, 4u).ShouldBe(0u);
+        ReadUInt(table.Buffer, 2u, 5u).ShouldBe(0x80000001u);
         ReadUInt(table.Buffer, 2u, 6u).ShouldBe(0u);
         ReadUInt(table.Buffer, 2u, 7u).ShouldBe(0u);
         ReadFloat(table.Buffer, 2u, 8u).ShouldBe(0.25f, 0.000001f);

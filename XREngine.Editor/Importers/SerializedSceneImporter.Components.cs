@@ -419,7 +419,7 @@ internal static partial class SerializedSceneImporter
                     break;
                 case "m_ReceiveShadows":
                     if (TryParseBool(modification.Value, out bool receiveShadows))
-                        SetReceivesShadows(component, receiveShadows);
+                        component.MeshReceivesShadows = receiveShadows;
                     break;
                 case "m_UpdateWhenOffscreen":
                     if (TryParseBool(modification.Value, out bool updateWhenOffscreen))
@@ -647,7 +647,7 @@ internal static partial class SerializedSceneImporter
         component.Model = model;
         component.IsActive = meshRenderer.Enabled;
         component.MeshCastsShadows = meshRenderer.CastShadows;
-        SetReceivesShadows(component, meshRenderer.ReceiveShadows);
+        component.MeshReceivesShadows = meshRenderer.ReceiveShadows;
         return component;
     }
 
@@ -668,7 +668,7 @@ internal static partial class SerializedSceneImporter
         component.Model = model;
         component.IsActive = skinnedMeshRenderer.Enabled;
         component.MeshCastsShadows = skinnedMeshRenderer.CastShadows;
-        SetReceivesShadows(component, skinnedMeshRenderer.ReceiveShadows);
+        component.MeshReceivesShadows = skinnedMeshRenderer.ReceiveShadows;
         return component;
     }
 
@@ -2014,12 +2014,6 @@ internal static partial class SerializedSceneImporter
 
         transformFileId = null;
         return false;
-    }
-
-    private static void SetReceivesShadows(ModelComponent component, bool receivesShadows)
-    {
-        foreach (RenderableMesh mesh in component.Meshes)
-            mesh.RenderInfo.ReceivesShadows = receivesShadows;
     }
 
     private static T? GetOrAddComponent<T>(SceneNode node) where T : XRComponent

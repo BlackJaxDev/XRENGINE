@@ -60,11 +60,13 @@ internal static class VulkanMeshDrawFixedState
         BlendOp colorBlendOp, alphaBlendOp;
         BlendFactor srcColor, dstColor, srcAlpha, dstAlpha;
         BlendMode? matBlend = matOpts is not null ? VulkanMeshRenderingConventions.ResolveBlendMode(matOpts) : null;
+        // Alpha to coverage converts fragment alpha into a sample mask. A single-sample target has no
+        // coverage samples to mask, so each branch below turns it off for that target.
         bool requestedAlphaToCoverage = matOpts?.AlphaToCoverage == ERenderParamUsage.Enabled;
         if (matBlend is not null && matBlend.Enabled == ERenderParamUsage.Enabled)
         {
             blendEnabled = true;
-            alphaToCoverageEnabled = requestedAlphaToCoverage;
+            alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;
             colorBlendOp = VulkanMeshRenderingConventions.ToVulkanBlendOp(matBlend.RgbEquation);
             alphaBlendOp = VulkanMeshRenderingConventions.ToVulkanBlendOp(matBlend.AlphaEquation);
             srcColor = VulkanMeshRenderingConventions.ToVulkanBlendFactor(matBlend.RgbSrcFactor);
@@ -75,7 +77,7 @@ internal static class VulkanMeshDrawFixedState
         else if (matOpts is not null && (matBlend is null || matBlend.Enabled == ERenderParamUsage.Disabled))
         {
             blendEnabled = false;
-            alphaToCoverageEnabled = requestedAlphaToCoverage;
+            alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;
             colorBlendOp = BlendOp.Add;
             alphaBlendOp = BlendOp.Add;
             srcColor = BlendFactor.One;
@@ -86,7 +88,7 @@ internal static class VulkanMeshDrawFixedState
         else
         {
             blendEnabled = passState.BlendEnabled;
-            alphaToCoverageEnabled = passState.AlphaToCoverageEnabled;
+            alphaToCoverageEnabled = passState.AlphaToCoverageEnabled && rasterizationSamples != SampleCountFlags.Count1Bit;
             colorBlendOp = passState.ColorBlendOp;
             alphaBlendOp = passState.AlphaBlendOp;
             srcColor = passState.SrcColorBlendFactor;

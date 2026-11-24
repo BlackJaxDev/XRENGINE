@@ -289,10 +289,10 @@ public sealed class XRMeshAndMeshRendererVulkanParityContractTests
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader");
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Settings.CalculateBlendshapesInComputeShader || useComputeSkinning");
         bufferSource.ShouldContain("FilterRuntimeDeformationSourceBuffers");
-        bufferSource.ShouldContain("RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceCoreIndices.ToString())");
-        bufferSource.ShouldContain("RemoveCollectedBuffer($\"{ECommonBufferType.BoneMatrices}Buffer\")");
-        bufferSource.ShouldContain("RemoveCollectedBuffer($\"{ECommonBufferType.SkinPalette}Buffer\")");
-        bufferSource.ShouldContain("RemoveCollectedBuffer($\"{ECommonBufferType.BlendshapeWeights}Buffer\")");
+        bufferSource.ShouldContain("RemoveCollectedBuffer(nameof(ECommonBufferType.BoneInfluenceCoreIndices))");
+        bufferSource.ShouldContain("RemoveCollectedBuffer(nameof(ECommonBufferType.BoneMatrices) + \"Buffer\")");
+        bufferSource.ShouldContain("RemoveCollectedBuffer(nameof(ECommonBufferType.SkinPalette) + \"Buffer\")");
+        bufferSource.ShouldContain("RemoveCollectedBuffer(nameof(ECommonBufferType.BlendshapeWeights) + \"Buffer\")");
         bufferSource.ShouldContain("RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass");
         bufferSource.ShouldContain("blendshapeState.IsPrecombinedValidFor(mesh)");
         bufferSource.ShouldContain("AddMeshDeformSourceBuffers");

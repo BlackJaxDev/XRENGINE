@@ -186,7 +186,7 @@ public sealed class DirectionalShadowAtlasFallbackTests
         commandCollectionSource.ShouldContain("if (command.CullingVolume is AABB bounds)");
         directionalSource.ShouldContain("GetShadowCasterCommandSetSignature(");
         directionalSource.ShouldContain("primaryViewport.RenderPipelineInstance.MeshRenderCommands.ShadowCasterCommandSetSignature");
-        lightsSource.ShouldContain("directionalLight.GetShadowCasterCommandSetSignature(");
+        lightsSource.ShouldContain("Add(ref hash, light.GetShadowCasterCommandSetSignature(");
     }
 
     [Test]

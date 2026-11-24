@@ -108,10 +108,17 @@ public sealed class SerializedToonFeatureLossTests
             .ShouldBe(EMaterialConversionOutcome.ConvertedToSourceToon);
 
         XRMaterial material = result.Material.ShouldNotBeNull();
+        // The fixture has no ProjectSettings.asset file, so the importer uses linear color space
+        // and converts the RGB of the source color from sRGB. Alpha stays unchanged.
         material.Parameter<ShaderVector4>("_Color").ShouldNotBeNull().Value
-            .ShouldBe(new System.Numerics.Vector4(0.8f, 0.4f, 0.2f, 0.65f));
+            .ShouldBe(new System.Numerics.Vector4(
+                SourceToonColorSpaceNormalizer.GammaToLinear(0.8f),
+                SourceToonColorSpaceNormalizer.GammaToLinear(0.4f),
+                SourceToonColorSpaceNormalizer.GammaToLinear(0.2f),
+                0.65f));
+        // The imported mesh has a reflected V axis, so the V offset becomes 1 - scale.y - offset.y.
         material.Parameter<ShaderVector4>("_MainTex_ST").ShouldNotBeNull().Value
-            .ShouldBe(new System.Numerics.Vector4(2.0f, 3.0f, 0.25f, 0.5f));
+            .ShouldBe(new System.Numerics.Vector4(2.0f, 3.0f, 0.25f, -2.5f));
         material.Parameter<ShaderFloat>("_EmissionStrength").ShouldNotBeNull().Value
             .ShouldBe(2.0f, 0.0001f);
         material.Parameter<ShaderInt>("_ColorThemeIndex").ShouldNotBeNull().Value.ShouldBe(1);

@@ -95,8 +95,10 @@ public sealed class AlphaToCoveragePhase2Tests
         string vkMeshSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.cs");
         vkMeshSource.ShouldContain("SampleCountFlags RasterizationSamples");
         vkMeshSource.ShouldContain("bool AlphaToCoverageEnabled");
-        vkMeshSource.ShouldContain("bool requestedAlphaToCoverage = matOpts?.AlphaToCoverage == ERenderParamUsage.Enabled;");
-        vkMeshSource.ShouldContain("alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;");
+        // The fixed draw state resolves the material alpha-to-coverage request against the raster sample count.
+        string vkDrawStateSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanMeshDrawFixedState.cs");
+        vkDrawStateSource.ShouldContain("bool requestedAlphaToCoverage = matOpts?.AlphaToCoverage == ERenderParamUsage.Enabled;");
+        vkDrawStateSource.ShouldContain("alphaToCoverageEnabled = requestedAlphaToCoverage && rasterizationSamples != SampleCountFlags.Count1Bit;");
         vkMeshSource.ShouldContain("private static SampleCountFlags ResolveRasterizationSamples(XRFrameBuffer? target)");
 
         string vkPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Pipeline.cs");
@@ -161,7 +163,9 @@ public sealed class AlphaToCoveragePhase2Tests
         advancedPipelineFboSource.ShouldNotContain("fbo.SettingUniforms += BrightPassFBO_SettingUniforms;");
 
         string bloomPassSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/Features/VPRC_BloomPass.cs").Replace("\r\n", "\n");
-        bloomPassSource.ShouldContain("// Step 1: Copy HDR scene into bloom texture mip 0.");
+        // Bloom copies the raw HDR input into mip 0 with the plain copy shader, not a bright pass.
+        bloomPassSource.ShouldContain("Stereo ? \"BloomCopyStereo.fs\" : \"BloomCopy.fs\";");
+        bloomPassSource.ShouldContain("private bool CopyInputToMip0(XRQuadFrameBuffer mip0, XRTexture inputTexture)");
         bloomPassSource.ShouldContain("mip0.Render();");
     }
 
@@ -605,8 +609,8 @@ public sealed class AlphaToCoveragePhase2Tests
         string commandChainSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.CommandChain.cs").Replace("\r\n", "\n");
         commandChainSource.ShouldContain("Fog must composite after the late forward batches");
         commandChainSource.IndexOf("AppendMotionBlurAndDoF(fullSceneCommands);", StringComparison.Ordinal)
-            .ShouldBeLessThan(commandChainSource.IndexOf("AppendTemporalAccumulation(fullSceneCommands);", StringComparison.Ordinal));
-        commandChainSource.IndexOf("AppendTemporalAccumulation(fullSceneCommands);", StringComparison.Ordinal)
+            .ShouldBeLessThan(commandChainSource.IndexOf("AppendTemporalAccumulation(fullSceneCommands, \"post.temporal\");", StringComparison.Ordinal));
+        commandChainSource.IndexOf("AppendTemporalAccumulation(fullSceneCommands, \"post.temporal\");", StringComparison.Ordinal)
             .ShouldBeLessThan(commandChainSource.IndexOf("AppendPostTemporalForwardPasses(fullSceneCommands);", StringComparison.Ordinal));
         commandChainSource.IndexOf("AppendPostTemporalForwardPasses(fullSceneCommands);", StringComparison.Ordinal)
             .ShouldBeLessThan(commandChainSource.IndexOf("AppendVolumetricFog(fullSceneCommands);", StringComparison.Ordinal));

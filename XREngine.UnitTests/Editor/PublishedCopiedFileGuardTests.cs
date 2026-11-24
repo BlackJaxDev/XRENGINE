@@ -474,7 +474,7 @@ public sealed class PublishedCopiedFileGuardTests
         AssertEntryStripped(archive, "Shaders/common.glsl", (int)new FileInfo(leaking).Length);
 
         // A changed file in a current archive goes through the strip in the incremental repack.
-        File.WriteAllText(leaking, leakText + "// " + MachinePath("Other", "Work", "x.glsl") + "\n", Encoding.UTF8);
+        File.WriteAllText(leaking, $"{leakText}// {MachinePath("Other", "Work", "x.glsl")}\n", Encoding.UTF8);
         File.SetLastWriteTimeUtc(leaking, DateTime.UtcNow.AddMinutes(1));
         ProjectBuilder.PackFullCommonAssetsForTests(engine, intermediate, content, incremental: true);
         Encoding.UTF8.GetString(AssetPacker.GetAsset(archive, "Shaders/common.glsl")).ShouldNotContain("someone");

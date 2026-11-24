@@ -66,9 +66,10 @@ public sealed class DebugVisualizerSourceContractTests
         source.ShouldContain("private static readonly DebugPrimitiveSceneState _debug2D = new();");
         source.ShouldContain("RuntimeEngine.Rendering.State.RenderingScene is VisualScene2D");
 
-        string renderShapes = SliceMethod(source, "public static void RenderShapes(bool depthTested)");
+        string renderShapes = SliceMethod(source, "public static void RenderShapes(bool depthTested, bool renderPointLines = true)");
         renderShapes.ShouldContain("DebugPrimitiveSceneState scene = ResolveDebugPrimitiveSceneState();");
-        renderShapes.ShouldContain("scene.Visualizer.Render();");
+        renderShapes.ShouldContain("scene.DepthTestedVisualizer.Render();");
+        renderShapes.ShouldContain("scene.Visualizer.Render(renderPointLines);");
 
         string renderPoint = SliceMethod(source, "public static void RenderPoint");
         AssertContainsInOrder(

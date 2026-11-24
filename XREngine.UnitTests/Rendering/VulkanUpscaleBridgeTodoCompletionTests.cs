@@ -422,7 +422,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
     public void DefaultRenderPipelines_RequestVendorRenderScaleEveryFrame()
     {
         string pipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Default/DefaultRenderPipeline.cs").Replace("\r\n", "\n");
-        pipelineSource.ShouldContain("if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
+        pipelineSource.ShouldContain("if (allowVendorUpscale &&\n            !IsRenderingExternalSwapchainTarget() &&\n            TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
         pipelineSource.ShouldContain("if (mode == EAntiAliasingMode.Dlaa)\n            return 1.0f;");
         pipelineSource.ShouldContain("RequestedInternalResolution = 1.0f;");
         pipelineSource.ShouldContain("RequestedInternalResolution = vendorScale;");
@@ -430,7 +430,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         pipelineSource.ShouldContain("VendorUpscaleRuntime.GetXessRecommendedRenderScale(RuntimeEngine.Rendering.Settings)");
 
         string advancedPipelineSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/Advanced/AdvancedRenderPipeline.cs").Replace("\r\n", "\n");
-        advancedPipelineSource.ShouldContain("if (!IsRenderingExternalSwapchainTarget() && TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
+        advancedPipelineSource.ShouldContain("if (allowVendorUpscale &&\n            !IsRenderingExternalSwapchainTarget() &&\n            TryResolveVendorInternalResolutionScale(out float vendorScale))\n            return vendorScale;");
         advancedPipelineSource.ShouldContain("if (mode == EAntiAliasingMode.Dlaa)\n            return 1.0f;");
         advancedPipelineSource.ShouldContain("RequestedInternalResolution = 1.0f;");
         advancedPipelineSource.ShouldContain("RequestedInternalResolution = vendorScale;");
@@ -638,7 +638,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         installerSource.ShouldContain("\"sl.reflex.dll\",");
         installerSource.ShouldContain("\"sl.pcl.dll\",");
 
-        imguiPropertyEditorSource.ShouldContain("DrawInspectorMemberLabel(property, displayName, description, activeOverride);");
+        imguiPropertyEditorSource.ShouldContain("DrawInspectorMemberLabel(property, displayName, description, activeOverride,");
         imguiPropertyEditorSource.ShouldContain("if (!VendorUpscaleRuntime.AreDlssRuntimeLibrariesAvailable)");
         imguiPropertyEditorSource.ShouldContain("This DLSS setting will not do anything");
         imguiPropertyEditorSource.ShouldContain("IsNvidiaDlssFrameGenerationMember(member)");

@@ -174,7 +174,9 @@ public sealed class AdvancedRenderPipelineFrameContractTests
                 ((ulong)(
                 AdvancedClassificationResourceFeature.Standard |
                 AdvancedClassificationResourceFeature.DebugOutput) << 32) |
-                (1UL << 40));
+                (1UL << 40) |
+                // Debug overlays also declare the late-pass debug output image.
+                (1UL << 39));
     }
 
     [TestCase(

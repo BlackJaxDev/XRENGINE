@@ -134,7 +134,7 @@ public sealed class ShadowAtlasManagerPhaseTests
     }
 
     [Test]
-    public void DirectionalAtlas_VulkanUsesDepthOnlyContractWithoutChangingOpenGl()
+    public void DirectionalAtlas_VulkanAcceptsMomentEncodingsLikeOpenGl()
     {
         bool previousUseDirectionalShadowAtlas = RuntimeEngine.Rendering.Settings.UseDirectionalShadowAtlas;
         IRuntimeRenderingHostServices previousHost = RuntimeRenderingHostServices.Current;
@@ -159,14 +159,16 @@ public sealed class ShadowAtlasManagerPhaseTests
             light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
             light.CanUseDirectionalCascadeShadowAtlasForCurrentBackend(4).ShouldBeTrue();
 
+            // Advanced native receivers read directional shadows only from atlas records,
+            // so Vulkan must keep moment encodings on the atlas too.
             light.ShadowMapEncoding = EShadowMapEncoding.Variance2;
-            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
 
             light.ShadowMapEncoding = EShadowMapEncoding.ExponentialVariance2;
-            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
 
             light.ShadowMapEncoding = EShadowMapEncoding.ExponentialVariance4;
-            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeFalse();
+            light.UsesDirectionalShadowAtlasForCurrentEncoding.ShouldBeTrue();
         }
         finally
         {
@@ -203,7 +205,7 @@ public sealed class ShadowAtlasManagerPhaseTests
             CreateRequest(lights[1], EShadowProjectionType.SpotPrimary, 0, 512u, 128u, 10.0f, 2u),
         ];
 
-        ShadowAtlasFrameData first = RunFrame(manager, 1u, requests);
+        ShadowAtlasFrameData first = RunFrameWithRenderedResidentTiles(manager, 1u, requests);
         first.Metrics.ResidentTileCount.ShouldBe(4);
         first.Metrics.SkippedRequestCount.ShouldBe(0);
         first.LayoutGeneration.ShouldBeGreaterThan(0u);
@@ -211,7 +213,7 @@ public sealed class ShadowAtlasManagerPhaseTests
         AssertNoResidentOverlaps(first);
         Dictionary<ShadowRequestKey, AllocationSignature> firstLayout = CaptureLayout(first);
 
-        ShadowAtlasFrameData second = RunFrame(manager, 2u, requests);
+        ShadowAtlasFrameData second = RunFrameWithRenderedResidentTiles(manager, 2u, requests);
         second.Metrics.ResidentTileCount.ShouldBe(4);
         second.LayoutGeneration.ShouldBe(first.LayoutGeneration);
         second.PublicationGeneration.ShouldBeGreaterThan(first.PublicationGeneration);
@@ -753,8 +755,9 @@ public sealed class ShadowAtlasManagerPhaseTests
     [Test]
     public void SolveAllocations_AllocatesSixPointFacesIndependently()
     {
+        using GroupedPointFaceCapabilityScope capabilities = GroupedPointFaceCapabilityScope.Enable();
         ShadowAtlasManager manager = CreateManager(pageSize: 1024u, maxPages: 1);
-        PointLightComponent light = CreatePointLight(256u);
+        PointLightComponent light = CreateGroupedPointLight(256u);
         ShadowMapRequest[] requests = new ShadowMapRequest[PointLightComponent.ShadowFaceCount];
         for (int faceIndex = 0; faceIndex < requests.Length; faceIndex++)
         {
@@ -912,12 +915,13 @@ public sealed class ShadowAtlasManagerPhaseTests
     public void SolveAllocations_PublishesManyPointFaceGroupsWithLinearWorkCounters()
     {
         const int lightCount = 8;
+        using GroupedPointFaceCapabilityScope capabilities = GroupedPointFaceCapabilityScope.Enable();
         ShadowAtlasManager manager = CreateManager(pageSize: 2048u, maxPages: 1, maxRequests: lightCount * PointLightComponent.ShadowFaceCount);
         ShadowMapRequest[] requests = new ShadowMapRequest[lightCount * PointLightComponent.ShadowFaceCount];
         int requestIndex = 0;
         for (int lightIndex = 0; lightIndex < lightCount; lightIndex++)
         {
-            PointLightComponent light = CreatePointLight(128u);
+            PointLightComponent light = CreateGroupedPointLight(128u);
             for (int faceIndex = 0; faceIndex < PointLightComponent.ShadowFaceCount; faceIndex++)
             {
                 requests[requestIndex] = CreateRequest(
@@ -1246,6 +1250,18 @@ public sealed class ShadowAtlasManagerPhaseTests
     private static PointLightComponent CreatePointLight(uint resolution)
         => CreateActiveLight<PointLightComponent>(resolution);
 
+    /// <summary>
+    /// Creates a point light that renders its six atlas faces in one geometry-shader pass. The solver
+    /// publishes a point-face group only for a light that prepares grouped face collection, so the
+    /// light must not use sequential face rendering.
+    /// </summary>
+    private static PointLightComponent CreateGroupedPointLight(uint resolution)
+    {
+        PointLightComponent light = CreatePointLight(resolution);
+        light.ShadowRenderMode = EPointShadowRenderMode.GeometryShader;
+        return light;
+    }
+
     private static DirectionalLightComponent CreateDirectionalLight(uint resolution)
         => CreateActiveLight<DirectionalLightComponent>(resolution);
 
@@ -1291,6 +1307,49 @@ public sealed class ShadowAtlasManagerPhaseTests
         public void UnregisterTick(ETickGroup group, int order, WorldTick tick) { }
         public void AddDirtyRuntimeObject(RuntimeWorldObjectBase worldObject) { }
         public void EnqueueRuntimeWorldMatrixChange(RuntimeWorldObjectBase worldObject, Matrix4x4 worldMatrix) { }
+    }
+
+    /// <summary>
+    /// Sets the renderer capabilities that grouped point-face rendering needs: viewport and scissor
+    /// arrays, at least six viewports, and a geometry shader that writes the viewport index. The test
+    /// host has no renderer to report these values. <see cref="Dispose"/> writes back the previous values.
+    /// </summary>
+    private readonly struct GroupedPointFaceCapabilityScope : IDisposable
+    {
+        private readonly bool _previousViewportScissorArray;
+        private readonly bool _previousGeometryShaderViewportIndex;
+        private readonly int _previousMaxViewports;
+
+        private GroupedPointFaceCapabilityScope(
+            bool previousViewportScissorArray,
+            bool previousGeometryShaderViewportIndex,
+            int previousMaxViewports)
+        {
+            _previousViewportScissorArray = previousViewportScissorArray;
+            _previousGeometryShaderViewportIndex = previousGeometryShaderViewportIndex;
+            _previousMaxViewports = previousMaxViewports;
+        }
+
+        public static GroupedPointFaceCapabilityScope Enable()
+        {
+            GroupedPointFaceCapabilityScope scope = new(
+                RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray,
+                RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex,
+                RuntimeEngine.Rendering.State.MaxOpenGLViewports);
+            RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray = true;
+            RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex = true;
+            RuntimeEngine.Rendering.State.MaxOpenGLViewports = Math.Max(
+                RuntimeEngine.Rendering.State.MaxOpenGLViewports,
+                PointLightComponent.ShadowFaceCount);
+            return scope;
+        }
+
+        public void Dispose()
+        {
+            RuntimeEngine.Rendering.State.SupportsOpenGLViewportScissorArray = _previousViewportScissorArray;
+            RuntimeEngine.Rendering.State.SupportsOpenGLGeometryShaderViewportIndex = _previousGeometryShaderViewportIndex;
+            RuntimeEngine.Rendering.State.MaxOpenGLViewports = _previousMaxViewports;
+        }
     }
 
     private class ShadowAtlasTestRenderingHostServices : DispatchProxy
@@ -1360,6 +1419,24 @@ public sealed class ShadowAtlasManagerPhaseTests
             manager.Submit(requests[i]).ShouldBeTrue();
 
         manager.SolveAllocations();
+        manager.PublishFrameData();
+        return manager.PublishedFrameData;
+    }
+
+    /// <summary>
+    /// Solves one frame, records a completed render for each resident tile, and publishes the frame.
+    /// The test host has no renderer, so a real tile render declines and marks nothing. This helper
+    /// records the same completion that a successful atlas writer reports, so the published content
+    /// and publication generation change the same way as in a rendered frame.
+    /// </summary>
+    private static ShadowAtlasFrameData RunFrameWithRenderedResidentTiles(ShadowAtlasManager manager, ulong frameId, params ShadowMapRequest[] requests)
+    {
+        manager.BeginFrame(frameId, activeCameraCount: 1);
+        for (int i = 0; i < requests.Length; i++)
+            manager.Submit(requests[i]).ShouldBeTrue();
+
+        manager.SolveAllocations();
+        MarkResidentRequestsRendered(manager, requests);
         manager.PublishFrameData();
         return manager.PublishedFrameData;
     }
