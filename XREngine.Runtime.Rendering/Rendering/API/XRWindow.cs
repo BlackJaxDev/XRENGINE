@@ -484,6 +484,44 @@ namespace XREngine.Rendering
                     RenderThreadJobKind.RequiresGraphicsContext);
         }
 
+        /// <summary>
+        /// Sets the native window title. The backend accepts title changes only on the thread
+        /// that created the native window, so this method sends the change to that thread when
+        /// the caller runs on a different thread. <see cref="WindowTitle"/> shows the new value
+        /// after that thread applies it.
+        /// </summary>
+        public void RequestTitle(string title)
+        {
+            ArgumentNullException.ThrowIfNull(title);
+            if (_isDisposed || _isDisposing)
+                return;
+
+            if (IsNativeEventPumpExternallyOwned)
+            {
+                RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
+                    this,
+                    () => SetTitleOnWindowThread(title),
+                    "XRWindow.RequestTitle");
+                return;
+            }
+
+            if (RuntimeEngine.IsRenderThread)
+                SetTitleOnWindowThread(title);
+            else
+                RuntimeEngine.EnqueueRenderThreadTask(
+                    () => SetTitleOnWindowThread(title),
+                    "XRWindow.RequestTitle",
+                    RenderThreadJobKind.RequiresGraphicsContext);
+        }
+
+        private void SetTitleOnWindowThread(string title)
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+            WarnIfNotNativeWindowThread("Window.Title");
+            _desktopBackend?.RequestTitle(title);
+        }
+
         private void ResizeOnWindowThread(int width, int height)
         {
             if (_isDisposed || _isDisposing)

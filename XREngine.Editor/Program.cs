@@ -29,6 +29,7 @@ using XREngine.Editor.Importers.SerializedAssets;
 using XREngine.Editor.Mcp;
 using XREngine.Editor.Rendering.EditorHighlight;
 using XREngine.Editor.Settings;
+using XREngine.Editor.WindowRecording;
 using XREngine.Fbx;
 using XREngine.Native;
 using XREngine.Rendering;
@@ -202,6 +203,9 @@ internal partial class Program
         // Start play mode controller
         EditorPlayModeController.Initialize();
 
+        // Shift+F12 records the focused editor window to an MP4 file.
+        EditorWindowVideoRecorder.Initialize();
+
         if (args.Any(
                 argument => string.Equals(
                     argument,
@@ -321,6 +325,7 @@ internal partial class Program
         {
             smokeRun.FinishAfterRun();
             smokeRun.Dispose();
+            EditorWindowVideoRecorder.Shutdown();
             EditorImGuiUI.ShutdownToolbarIcons();
             WriteBootstrapTrace("Shutting down MCP host.");
             McpServerHost.Shutdown();

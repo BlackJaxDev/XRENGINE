@@ -28,6 +28,7 @@ using XREngine.Rendering.Picking;
 using XREngine.Rendering.UI;
 using XREngine.Runtime.InputIntegration;
 using XREngine.Editor.UI;
+using XREngine.Editor.WindowRecording;
 using XREngine.Scene;
 using XREngine.Scene.Components.Editing;
 using XREngine.Scene.Transforms;
@@ -3226,6 +3227,21 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         InvalidateView();
     }
 
+    /// <summary>
+    /// Takes a screenshot for <c>F12</c>. <c>Shift+F12</c> belongs to
+    /// <see cref="EditorWindowVideoRecorder"/>, which reads native window input, so this
+    /// handler skips the screenshot when Shift is down.
+    /// </summary>
+    private void OnScreenshotKeyPressed()
+    {
+        XRWindow? window = Viewport?.Window;
+        if (window is not null &&
+            EditorWindowVideoRecorder.IsToggleShortcut(EKey.F12, window.IsKeyPressed(EKey.ShiftLeft), window.IsKeyPressed(EKey.ShiftRight)))
+            return;
+
+        TakeScreenshot();
+    }
+
     public void FocusOnNode(SceneNode node, float durationSeconds = DefaultFocusDurationSeconds)
         => FocusOnNodes([node], durationSeconds);
 
@@ -3803,7 +3819,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (inputInterface is not InputInterface input)
             return;
         base.RegisterInput(input);
-        input.RegisterKeyEvent(EKey.F12, EButtonInputType.Pressed, TakeScreenshot);
+        input.RegisterKeyEvent(EKey.F12, EButtonInputType.Pressed, OnScreenshotKeyPressed);
         input.RegisterKeyEvent(EKey.F11, EButtonInputType.Pressed, ToggleEditorImGuiOverlay);
         input.RegisterKeyEvent(EKey.Number1, EButtonInputType.Pressed, SetTransformTranslation);
         input.RegisterKeyEvent(EKey.Number2, EButtonInputType.Pressed, SetTransformRotation);

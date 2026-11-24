@@ -25,6 +25,7 @@ These docs should stay practical: what the concept is, when to use it, which set
 - [Shader Editor](editor/shader-editor.md)
 - [Model Inspector](editor/model-inspector.md)
 - [Editor Notifications](editor/notifications.md)
+- [Window Video Recording](editor/window-recording.md)
 - [Prefab Workflow](prefab-workflow.md)
 - [Job System](job-system.md)
 
