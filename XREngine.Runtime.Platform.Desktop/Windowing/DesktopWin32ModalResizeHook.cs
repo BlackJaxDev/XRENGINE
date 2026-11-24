@@ -135,7 +135,7 @@ internal sealed class DesktopWin32ModalResizeHook : IDesktopInteractiveResizeHoo
 
     private static uint ResolveTimerIntervalMs()
     {
-        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Win32InteractiveResizeTimerMs);
+        string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.Win32InteractiveResizeTimerMs);
         if (uint.TryParse(raw, out uint interval) && interval is >= 1 and <= MaximumTimerIntervalMs)
             return interval;
         return 1;

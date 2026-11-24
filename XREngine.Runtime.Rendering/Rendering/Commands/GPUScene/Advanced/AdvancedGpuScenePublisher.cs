@@ -228,6 +228,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // passes the prepared verdict without a walk never patches rows of an earlier walk.
         _lastMovedRowPatchCount = 0;
         _movedRowCount = 0;
+        _resourcePublisher.ClearStagedTextureRefreshes();
+        ClearMaterialRebinds();
         _lastPublicationCommittedRetainedRows = false;
         _publicationStartMembershipGeneration = _registrationMembershipGeneration;
         _useRetainedIdentityGroups = false;
@@ -259,6 +261,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // the next publication. Reclaim acknowledged deltas here so a full
         // journal cannot prevent the transaction that would normally reclaim it.
         Database.ReclaimAcknowledgedTombstones();
+        // Page loads and evictions change the page table, which the publication below captures.
+        UpdateGeometryStreaming(frameId);
         AdvancedGlobalResourceCapture acceptedGlobalResources =
             globalResources.FrameId == frameId
                 ? globalResources
@@ -317,6 +321,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         // The full publication splits into plan, apply, and seal stages. The mark
         // is 0 outside the world swap section, so nothing records there.
         long fullMark = stageMark != 0L ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
+
+        // The full plan replaces changed texture records and material bindings
+        // through its own preflight.
+        _resourcePublisher.ClearStagedTextureRefreshes();
+        ClearMaterialRebinds();
 
         // Plans and submission sources are scratch closures, not publication leases.
         // Release the prior frame's references even if this boundary rejects early.
@@ -1039,9 +1048,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     in bounds,
                     in command,
                     out AdvancedGpuHandle replacementGeometry) ||
-                !Database.Scene.Geometry.Records.TryTombstone(
-                    registration.Geometry,
-                    _sequence) ||
+                !TryTombstoneGeometry(registration.Geometry) ||
                 !Database.Scene.Deformations.TryReplace(
                     registration.Deformation,
                     CreateDeformation(replacementGeometry, plan.MeshVertexCount),
@@ -1148,7 +1155,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             bool tombstoned =
                 Database.Scene.Draws.TryTombstone(registration.Draw, _sequence) &&
                 Database.Scene.Instances.TryTombstone(registration.Instance, _sequence) &&
-                Database.Scene.Geometry.Records.TryTombstone(registration.Geometry, _sequence) &&
+                TryTombstoneGeometry(registration.Geometry) &&
                 Database.Scene.Deformations.TryTombstone(registration.Deformation, _sequence) &&
                 Database.Scene.RenderStates.TryTombstone(registration.RenderState, _sequence) &&
                 Database.Scene.EditorIdentities.TryTombstone(registration.EditorIdentity, _sequence) &&
@@ -1506,6 +1513,22 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
            Database.Scene.Transforms.IsCurrent(registration.PreviousTransform) &&
            Database.Scene.Transforms.CanApply(0, 0, 2);
 
+    /// <summary>
+    /// Tombstones a geometry record in the publication that is being built, and retires its
+    /// geometry pages with the same publication generation. The page table entries read
+    /// not-resident from this publication, and the pool slots stay unchanged until every consumer
+    /// acknowledges it.
+    /// </summary>
+    private bool TryTombstoneGeometry(AdvancedGpuHandle geometry)
+    {
+        if (!Database.Scene.Geometry.Records.TryTombstone(geometry, _sequence))
+            return false;
+
+        UnregisterStreamedGeometry(geometry);
+        Database.Scene.Geometry.PagePool.RetireGeometry(geometry, _sequence);
+        return true;
+    }
+
     private void RollBackPartialRegistration(
         AdvancedGpuHandle currentTransform,
         AdvancedGpuHandle previousTransform,
@@ -1522,7 +1545,11 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         if (instance.IsValid)
             Database.Scene.Instances.TryRemoveImmediatelyBeforePublication(instance);
         if (geometry.IsValid)
+        {
             Database.Scene.Geometry.Records.TryRemoveImmediatelyBeforePublication(geometry);
+            UnregisterStreamedGeometry(geometry);
+            Database.Scene.Geometry.PagePool.ReleaseGeometry(geometry);
+        }
         if (deformation.IsValid)
             Database.Scene.Deformations.TryRemoveImmediatelyBeforePublication(deformation);
         if (renderState.IsValid)
@@ -1660,11 +1687,14 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             PrimitiveTopology = checked((uint)(mesh?.Type ?? EPrimitiveType.Triangles)),
             CoverageMode = (command.Flags & (uint)GPUIndirectRenderFlags.Transparent) != 0u ? 1u : 0u,
             CullMode = checked((uint)(renderOptions?.CullMode ?? ECullMode.Back)),
-            // Existing GPU draw flags occupy the low 24 bits. Native admission
-            // retains the actual command override's unsupported raster features.
-            // StructuralDrawFlags removes PrimaryDisabled (bit 24), so that draw
-            // flag cannot alias a raster-state flag in the high byte.
-            Flags = StructuralDrawFlags(command.Flags) | (uint)WebGpuAdvancedRasterStateContract.Capture(renderOptions),
+            // The low 24 bits hold the structural draw flags, and the high byte
+            // holds the native raster-state flags that admission reads
+            // (EAdvancedNativeRasterStateFlags). Draw flags at bit 24 and above
+            // (FragmentDepth, SurfaceDecal) use the same bit positions as raster
+            // flags, so the mask removes them here. ComputeStructuralSignature
+            // still hashes them from the command flags.
+            Flags = (StructuralDrawFlags(command.Flags) & ~RasterStateFlagMask) |
+                (uint)WebGpuAdvancedRasterStateContract.Capture(renderOptions),
         };
 
     private static AdvancedEditorIdentityRecord CreateEditorIdentity(
@@ -1687,12 +1717,21 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         };
     }
 
+    /// <summary>
+    /// Returns the draw flags that change the published geometry or render state of a draw. Editor
+    /// highlight, the disabled primary pass and the shadow routing flags (CastShadow,
+    /// ReceiveShadows, ShadowCasterDynamic and SharedOpaqueShadow) are removed: the content update
+    /// writes them to the draw record in place. SharedOpaqueShadow follows the shadow pass state of
+    /// the command each frame, so a structural flag would replace the geometry of the draw each
+    /// time that state changes.
+    /// </summary>
     private static uint StructuralDrawFlags(uint flags)
         => flags & ~((uint)GPUIndirectRenderFlags.EditorHighlightMask |
             (uint)GPUIndirectRenderFlags.PrimaryDisabled |
             (uint)GPUIndirectRenderFlags.CastShadow |
             (uint)GPUIndirectRenderFlags.ReceiveShadows |
-            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic);
+            (uint)GPUIndirectRenderFlags.ShadowCasterDynamic |
+            (uint)GPUIndirectRenderFlags.SharedOpaqueShadow);
 
     private static ulong ComputeStructuralSignature(
         in DrawMetadata command,

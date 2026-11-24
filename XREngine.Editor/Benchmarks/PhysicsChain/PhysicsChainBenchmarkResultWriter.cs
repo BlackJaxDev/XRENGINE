@@ -22,7 +22,7 @@ public static class PhysicsChainBenchmarkResultWriter
         resultPath = null;
         error = null;
 
-        string? configuredRoot = Environment.GetEnvironmentVariable(RunRootEnvironmentVariable);
+        string? configuredRoot = XREnvironment.GetValue(RunRootEnvironmentVariable);
         if (string.IsNullOrWhiteSpace(configuredRoot))
             return false;
 

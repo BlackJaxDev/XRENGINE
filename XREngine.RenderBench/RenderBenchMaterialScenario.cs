@@ -50,7 +50,7 @@ internal static class RenderBenchMaterialScenario
         };
         try
         {
-            Environment.SetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY", "GpuIndirectZeroReadback");
+            XREnvironment.SetProcessValue(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy, "GpuIndirectZeroReadback");
             // One 4096² RGBA mip chain exceeds the 16 MiB foreground staging ring.
             // The bound texture is published atomically when its generation is ready. Until then,
             // the affected indirect pass is skipped; no required-generation admission is claimed.

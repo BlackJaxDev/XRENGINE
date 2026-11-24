@@ -16,7 +16,7 @@ namespace XREngine.Rendering;
 internal static class AdvancedExtractionSubStageTimers
 {
     public static readonly bool Enabled =
-        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AdvancedExtractionSubStageTimers) == "1";
+        XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedExtractionSubStageTimers) == "1";
 
     private static readonly long[] s_ticks = new long[(int)EAdvancedExtractionSubStage.Count];
     private static long s_rows;

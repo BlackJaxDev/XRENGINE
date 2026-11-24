@@ -320,7 +320,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static double ResolveInitialHardFrameBudgetMs()
             {
-                string? raw = Environment.GetEnvironmentVariable(HardBudgetEnvVar);
+                string? raw = XREnvironment.GetValue(HardBudgetEnvVar);
                 return !string.IsNullOrWhiteSpace(raw) &&
                     double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double parsed)
                     ? NormalizeBudget(parsed)
@@ -329,7 +329,7 @@ namespace XREngine.Rendering.OpenGL
 
             private static bool IsEnabledEnvironmentVariable(string name)
             {
-                string? raw = Environment.GetEnvironmentVariable(name);
+                string? raw = XREnvironment.GetValue(name);
                 return raw == "1" || string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase);
             }
 

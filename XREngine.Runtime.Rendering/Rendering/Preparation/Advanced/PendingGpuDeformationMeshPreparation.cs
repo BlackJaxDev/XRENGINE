@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Numerics;
 using XREngine.Data.Rendering;
 
@@ -56,5 +57,11 @@ internal sealed class PendingGpuDeformationMeshPreparation
     internal ulong SpillHeadersRevision;
     internal ulong SpillEntriesRevision;
     internal uint SpillCount;
+    /// <summary>
+    /// Cooked coarse-first deformation order of the mesh's meshlet payload, or
+    /// default when the payload has none. The influence stage writes it into
+    /// the influence rows.
+    /// </summary>
+    internal ImmutableArray<uint> DeformationOrder;
     internal bool Unsupported;
 }

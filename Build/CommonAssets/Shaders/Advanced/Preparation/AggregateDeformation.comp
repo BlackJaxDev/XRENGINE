@@ -14,6 +14,7 @@ const uint FEATURE_TANGENTS = 1u << 3u;
 const uint FEATURE_SPILL_INFLUENCES = 1u << 4u;
 const uint FEATURE_MAXIMUM_BLENDSHAPE = 1u << 7u;
 const uint FEATURE_PRECOMPOSED_PALETTE = 1u << 9u;
+const uint FEATURE_DEFORMATION_ORDER = 1u << 10u;
 
 struct DeformationJob
 {
@@ -381,6 +382,12 @@ void main()
     uint jobIndex = JobIndices[groupedJob];
     DeformationJob job = Jobs[jobIndex];
     uint localVertex = flattenedVertex - JobVertexOffsets[groupedJob];
+    // A far instance deforms only a prefix of the cooked coarse-first order.
+    // Thread i then reads the mesh vertex from influence row i. All other reads
+    // and the output write use that mesh vertex, so index buffers stay valid.
+    if ((job.Features & FEATURE_DEFORMATION_ORDER) != 0u)
+        localVertex =
+            Influences[job.BoneInfluenceOffset + localVertex].DeformationOrderVertex;
     uint sourceIndex =
         job.SourceVertexOffset + job.VertexFirst + localVertex;
     PackedVertex outputVertex = Source[sourceIndex];

@@ -352,7 +352,7 @@ public static class VulkanFeatureProfile
         where TEnum : struct, Enum
     {
         value = default;
-        string? raw = Environment.GetEnvironmentVariable(environmentVariable);
+        string? raw = XREnvironment.GetValue(environmentVariable);
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 

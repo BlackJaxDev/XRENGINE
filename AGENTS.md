@@ -94,7 +94,13 @@ Temporary references are allowed **only when the associated todo document is act
 - Use a short subject by default. Add a body only when it is needed to explain the change. Do not add conventional-commit prefixes, emojis, promotional text, or automatic signatures unless the user explicitly requests them.
 - Use the user's configured Git identity for both the author and committer of new commits. Before committing, check `git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT`. Do not change Git identity settings, invent an identity, or set an assistant as the author, committer, or co-author.
 - Do not add assistant attribution, `Co-authored-by` trailers for assistants, or generated-by statements. Keep assistant, agent, model, and provider names or branding out of commit messages, branch names, tag names and messages, pull request titles and descriptions, and Git notes. This includes names such as Codex, Claude, ChatGPT, OpenAI, and Anthropic, and equivalent labels from other tools.
-- Use short, descriptive branch names based on the work, in lowercase with hyphens, such as `fix-broker-history` or `update-openvr-net10`. Do not add assistant names, model names, tool names, or agent prefixes or suffixes.
+- Name branches `<type>/<description>`. Write the description in lowercase with hyphens, such as `fix/broker-history` or `feature/meshlet-streaming`. Select the type from the work. If no type fits, ask the user. Do not add assistant names, model names, tool names, or agent prefixes or suffixes.
+  - `fix/`: a standard bug fix.
+  - `feature/`: a new feature implementation.
+  - `regression/`: an investigation and fix for a feature that worked before.
+  - `experimental/`: research work that the user can discard.
+  - `docs/`: documentation changes only.
+- When the work on a branch or worktree is merged or otherwise resolved, suggest that the user delete it locally, remotely, or both. Do not delete a branch or worktree until the user confirms.
 - Pull requests explain what changed, why, validation, risks, and necessary follow-ups in plain English. Describe the work without crediting the assistant. Keep any required contribution disclosure in the separate contribution acceptance record.
 
 ## Repository And Commands

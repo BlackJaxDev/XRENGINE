@@ -11,7 +11,7 @@ internal sealed partial class VulkanFrameLoop
         uint imageIndex)
     {
         bool enabled = IsTrueEnvironmentValue(
-            Environment.GetEnvironmentVariable(
+            XREnvironment.GetValue(
                 XREngineEnvironmentVariables.VulkanPhase524bInjectDesktopRejection));
         bool imageHasCompletedContent =
             OutputRuntime.Desktop.ImageHasValidPresentedContent is not null &&

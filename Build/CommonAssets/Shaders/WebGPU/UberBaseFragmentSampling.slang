@@ -47,14 +47,14 @@ float3 uberBaseSampleNormal(UberBaseMaterialParameters material, UberBaseMesh me
         float scale = abs(material.HeightMapScale) > 1e-6 ? material.HeightMapScale : 1.0;
         normal = uberBaseSobelNormal(tl, t, tr, l, r, bl, b, br, scale * material._BumpScale);
     }
-    else normal = uberBaseUnpackNormal(_BumpMap.Sample(_BumpMapSampler, uv), material._BumpScale);
+    else normal = uberBaseUnpackMaterialNormal(material, _BumpMap.Sample(_BumpMapSampler, uv));
     return uberBaseMappedNormal(normal, frame);
 #else
     return mesh.vertexNormal;
 #endif
 }
 
-float3 uberBaseSampleRms(UberBaseMaterialParameters material, UberBaseMesh mesh, uint features, float time)
+UberBaseSpecular uberBaseSampleSpecular(UberBaseMaterialParameters material, UberBaseMesh mesh, uint features, float time)
 {
     float4 metallic = float4(0.0), smoothness = float4(0.0), specular = float4(1.0);
 #if (XRE_UBER_BASE_FEATURES & 4) != 0 || defined(XRE_UBER_BASE_ALL_TEXTURES)
@@ -69,7 +69,7 @@ float3 uberBaseSampleRms(UberBaseMaterialParameters material, UberBaseMesh mesh,
     specular = _SpecularMap.Sample(_SpecularMapSampler, mesh.uv0 * material._SpecularMap_ST.xy + material._SpecularMap_ST.zw);
     }
 #endif
-    return uberBaseRms(material, features, metallic, smoothness, specular);
+    return uberBaseSpecular(material, features, metallic, smoothness, specular);
 }
 
 float3 uberBaseSampleEmission(UberBaseMaterialParameters material, UberBaseMesh mesh, uint features, float time)

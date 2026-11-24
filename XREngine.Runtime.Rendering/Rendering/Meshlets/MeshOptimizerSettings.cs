@@ -89,6 +89,7 @@ public partial class MeshletGenerationSettings : XRBase
     private int _optimizeLevel = 0;
     private bool _computeBounds = true;
     private bool _buildClusterHierarchy;
+    private bool _buildStreamingPages;
     private bool _encodeMeshlets;
     private bool _encodeVertexReferences = true;
 
@@ -162,6 +163,18 @@ public partial class MeshletGenerationSettings : XRBase
     {
         get => _buildClusterHierarchy;
         set => SetField(ref _buildClusterHierarchy, value);
+    }
+
+    /// <summary>
+    /// Packs the clusters of a cluster hierarchy payload into fixed-size geometry pages for geometry
+    /// streaming, and writes them to a page file next to the meshlet payload cache. Requires
+    /// <see cref="BuildClusterHierarchy"/>. Off by default. The payload does not change, and its
+    /// hashes do not include this setting, so a change to it recooks only the pages.
+    /// </summary>
+    public bool BuildStreamingPages
+    {
+        get => _buildStreamingPages;
+        set => SetField(ref _buildStreamingPages, value);
     }
 
     public bool ComputeBounds

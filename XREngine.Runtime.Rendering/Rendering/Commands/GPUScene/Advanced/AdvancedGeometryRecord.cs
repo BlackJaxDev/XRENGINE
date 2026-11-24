@@ -81,4 +81,33 @@ public struct AdvancedGeometryRecord
     /// meshlet payload exists. New consumers must bind all three meshlet streams.
     /// </summary>
     public readonly AdvancedBufferReference MeshletData => MeshletDescriptors;
+
+    /// <summary>
+    /// The first index arena element of the level cover indices of a skinned cluster hierarchy
+    /// geometry. <see cref="IndexData"/> holds the <see cref="IndexCount"/> canonical indices and
+    /// then the level covers; the canonical draw uses only the first part.
+    /// </summary>
+    public readonly uint LevelCoverIndexBase => IndexBase + IndexCount;
+
+    /// <summary>
+    /// The number of level cover indices after the canonical indices in <see cref="IndexData"/>,
+    /// or zero when the geometry has no level covers.
+    /// </summary>
+    public readonly uint LevelCoverIndexCount
+        => IndexData.ElementCount > IndexCount ? IndexData.ElementCount - IndexCount : 0u;
+
+    /// <summary>
+    /// True when an indexed draw of this geometry may use the index range: the canonical index
+    /// list, or a range inside the level covers (the cover of a skinned draw whose deformation
+    /// job deformed only a coarse prefix of the vertices).
+    /// </summary>
+    public readonly bool IsDrawIndexRange(uint firstIndex, uint indexCount)
+    {
+        if (firstIndex == IndexBase && indexCount == IndexCount)
+            return true;
+        uint coverBase = LevelCoverIndexBase;
+        return indexCount != 0u &&
+            firstIndex >= coverBase &&
+            (ulong)(firstIndex - coverBase) + indexCount <= LevelCoverIndexCount;
+    }
 }

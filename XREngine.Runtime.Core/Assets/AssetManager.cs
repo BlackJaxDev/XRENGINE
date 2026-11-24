@@ -149,8 +149,8 @@ namespace XREngine
                 || _runtimeAssetSource is { SupportsSynchronousReads: false })
             {
                 // Keep virtual path identities without probing or creating desktop directories.
-                string? engineOverride = Environment.GetEnvironmentVariable(EngineAssetsPathEnvVar);
-                string? gameOverride = Environment.GetEnvironmentVariable(GameAssetsPathEnvVar);
+                string? engineOverride = XREnvironment.GetValue(EngineAssetsPathEnvVar);
+                string? gameOverride = XREnvironment.GetValue(GameAssetsPathEnvVar);
                 EngineAssetsPath = Path.GetFullPath(!string.IsNullOrWhiteSpace(engineOverride)
                     ? engineOverride
                     : !string.IsNullOrWhiteSpace(engineAssetsDirPath)
@@ -164,7 +164,7 @@ namespace XREngine
                 return;
             }
             string? resolvedEngineAssetsPath = null;
-            string? engineAssetsOverridePath = Environment.GetEnvironmentVariable(EngineAssetsPathEnvVar);
+            string? engineAssetsOverridePath = XREnvironment.GetValue(EngineAssetsPathEnvVar);
             if (!string.IsNullOrWhiteSpace(engineAssetsOverridePath))
             {
                 resolvedEngineAssetsPath = Path.GetFullPath(engineAssetsOverridePath);
@@ -193,7 +193,7 @@ namespace XREngine
 
             EngineAssetsPath = resolvedEngineAssetsPath;
 
-            string? gameAssetsOverridePath = Environment.GetEnvironmentVariable(GameAssetsPathEnvVar);
+            string? gameAssetsOverridePath = XREnvironment.GetValue(GameAssetsPathEnvVar);
             if (!string.IsNullOrWhiteSpace(gameAssetsOverridePath))
             {
                 GameAssetsPath = gameAssetsOverridePath;
@@ -214,11 +214,11 @@ namespace XREngine
 
             // Best-effort defaults for sandbox mode. Project load keeps explicit environment
             // overrides for session-local writable state and replaces inferred paths otherwise.
-            string? gameMetadataOverridePath = Environment.GetEnvironmentVariable(GameMetadataPathEnvVar);
+            string? gameMetadataOverridePath = XREnvironment.GetValue(GameMetadataPathEnvVar);
             if (!string.IsNullOrWhiteSpace(gameMetadataOverridePath))
                 GameMetadataPath = gameMetadataOverridePath;
 
-            string? gameCacheOverridePath = Environment.GetEnvironmentVariable(GameCachePathEnvVar);
+            string? gameCacheOverridePath = XREnvironment.GetValue(GameCachePathEnvVar);
             if (!string.IsNullOrWhiteSpace(gameCacheOverridePath))
                 GameCachePath = gameCacheOverridePath;
 

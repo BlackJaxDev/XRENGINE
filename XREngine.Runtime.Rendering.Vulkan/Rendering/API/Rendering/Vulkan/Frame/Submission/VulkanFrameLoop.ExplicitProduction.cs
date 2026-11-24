@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Rendering.Shadows;
@@ -571,13 +571,11 @@ internal sealed partial class VulkanFrameLoop
         {
             // Capture the raw material snapshot first so cold imported textures can
             // be prepared before mesh materialization attempts descriptor binding.
-            acceptedPlan.CaptureRequiredTextureReferences(
-                _meshOperationRequestScratch.AsSpan(0, requestCount));
-            _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            acceptedPlan.ThrowIfSealed();
+            CaptureRequiredMeshTextureUploads(
+                acceptedPlan.RequiredTextureSet,
                 acceptedPlan.RequiredTextureUploads,
-                acceptedPlan.RequiredTextures,
-                acceptedPlan.RequiredTextureGenerations,
-                requireExactDescriptorPublication: false);
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
             CompleteAcceptedPresentNowTextureReadiness(
                 acceptedPlan,
                 ref watchdog,

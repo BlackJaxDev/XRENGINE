@@ -215,8 +215,87 @@ float3 XRENGINE_GetForwardAmbientFallback(float3 albedo, float3 diffuseAO)
     return XRENGINE_ResolveForwardAmbientFallback() * albedo * diffuseAO;
 }
 
-float3 XRENGINE_CalculateAmbientPbr(float3 normal, float3 fragPos, float3 albedo, float3 viewDir, float3 rms, float ambientOcclusion)
+// Returns the specular occlusion that the forward probe terms use. Without
+// probe resources the raw probe radiance is zero, so ambient occlusion alone
+// is a complete result.
+float XRENGINE_ForwardSpecularOcclusion(float NoV, float ambientOcclusion, float roughness)
 {
+#ifdef XRE_UBER_BASE_DISABLE_PBR_RESOURCES
+    return ambientOcclusion;
+#else
+    return (uberPbr.SpecularOcclusionEnabled != 0u)
+        ? XRENGINE_GTSpecularOcclusion(NoV, ambientOcclusion, roughness)
+        : ambientOcclusion;
+#endif
+}
+
+#ifndef XRE_UBER_BASE_DISABLE_PBR_RESOURCES
+// Selects the prefilter mip for a source reflection. Source materials map
+// perceptual roughness to a mip without the engine 1.7 - 0.7r curve.
+float XRENGINE_ForwardSourcePrefilterLod(int probeIndex, float roughness, float availableMip)
+{
+    ProbeParam probe = uberPbrParameters(probeIndex);
+    float maxMip = min(max(probe.PrefilterSampling.y, 0.0), availableMip);
+    float r = clamp(roughness, 0.0, 1.0);
+    if (probe.PrefilterSampling.x > 0.5)
+        return min(6.0 * r, maxMip);
+    r = 2.0 * r / (1.7 + sqrt(max(2.89 - 2.8 * r, 0.0)));
+    return r * maxMip;
+}
+#endif
+
+// Returns the weighted, unscaled prefiltered probe radiance along the view
+// reflection. The source Mochie reflection applies its own Fresnel and masks.
+float3 XRENGINE_SampleForwardRawPrefilter(float3 normal, float3 fragPos, float3 viewDir, float perceptualRoughness)
+{
+#ifdef XRE_UBER_BASE_DISABLE_PBR_RESOURCES
+    return float3(0.0);
+#else
+    if (!(uberPbr.ForwardPbrResourcesEnabled != 0u) || uberPbr.ProbeCount <= 0)
+        return float3(0.0);
+    float4 weights = float4(0.0);
+    int4 indices = int4(-1);
+    bool barycentric = false;
+    if ((uberPbr.UseProbeGrid != 0u))
+        XRENGINE_ResolveProbeWeightsGrid(fragPos, weights, indices, barycentric);
+#ifdef XRENGINE_PROBE_DEBUG_FALLBACK
+    else
+        XRENGINE_ResolveProbeWeights(fragPos, weights, indices);
+#endif
+    float3 reflection = reflect(-viewDir, normal);
+    float3 radiance = float3(0.0);
+    float total = 0.0;
+    uint prefilterWidth, prefilterHeight, prefilterLayers, prefilterLevels;
+    PrefilterArray.GetDimensions(0u, prefilterWidth, prefilterHeight, prefilterLayers, prefilterLevels);
+    float availableMip = float(max(int(prefilterLevels) - 1, 0));
+    for (int slot = 0; slot < 4; ++slot)
+    {
+        int probeIndex = indices[slot];
+        if (probeIndex < 0)
+            continue;
+        float weight = barycentric ? weights[slot]
+            : weights[slot] * XRENGINE_ComputeInfluenceWeight(probeIndex, fragPos);
+        if (weight <= 0.0)
+            continue;
+        float3 direction = XRENGINE_ApplyParallax(probeIndex, reflection, fragPos);
+        float normalization = max(uberPbrParameters(probeIndex).ProxyHalfExtents.w, 0.0001);
+        float mip = XRENGINE_ForwardSourcePrefilterLod(probeIndex, perceptualRoughness, availableMip);
+        radiance += weight * normalization * PrefilterArray.SampleLevel(PrefilterArraySampler,
+            float3(uberPbrOctaUv(direction), probeIndex), mip).rgb;
+        total += weight;
+    }
+    return total > 0.0 ? radiance / total : float3(0.0);
+#endif
+}
+
+// Returns the complete forward ambient term. The probe outputs keep the probe
+// diffuse and the reflection-scaled probe specular apart, so a source
+// reflection can replace the specular part.
+float3 XRENGINE_CalculateAmbientPbrWithProbe(float3 normal, float3 fragPos, float3 albedo, float3 viewDir,
+    float3 rms, float ambientOcclusion, float reflectionStrength, out float3 probeDiffuse, out float3 probeSpecular)
+{
+    probeDiffuse = float3(0.0);
+    probeSpecular = float3(0.0);
     float roughness = rms.x;
     float metallic = rms.y;
     float specularIntensity = rms.z;
@@ -224,7 +303,8 @@ float3 XRENGINE_CalculateAmbientPbr(float3 normal, float3 fragPos, float3 albedo
     float NoV = max(dot(normal, viewDir), 0.0);
     float3 F0 = lerp(float3(0.04), albedo, metallic);
     float3 kS = XRENGINE_SpecF_SchlickRoughnessApprox(NoV, F0, roughness) * specularIntensity;
-    float3 kD = (1.0 - kS) * (1.0 - metallic);
+    float3 diffuseFresnel = F0 + (float3(1.0) - F0) * pow(1.0 - NoV, 5.0);
+    float3 kD = (float3(1.0) - diffuseFresnel) * (1.0 - metallic);
     float3 diffuseAO = (lighting.ambientOcclusionControls.z > 0.5)
         ? XRENGINE_MultiBounceAO(ambientOcclusion, albedo)
         : float3(ambientOcclusion);
@@ -303,8 +383,11 @@ float3 XRENGINE_CalculateAmbientPbr(float3 normal, float3 fragPos, float3 albedo
 
     // The shared BRDF producer owns one linearly sampled mip with anisotropy one.
     float2 brdfValue = BRDF.SampleLevel(BRDFSampler, float2(NoV, roughness), 0.0).rg;
-    float3 diffuse = lighting.globalAmbient.xyz * irradianceColor * albedo;
+    // Convolution stores irradiance divided by PI, independent of world ambient.
+    float3 diffuse = irradianceColor * albedo;
     float3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
-    return kD * diffuse * diffuseAO + specular * specularOcclusion;
+    probeSpecular = specular * specularOcclusion * reflectionStrength;
+    probeDiffuse = kD * diffuse * diffuseAO;
+    return probeDiffuse + probeSpecular;
 #endif
 }

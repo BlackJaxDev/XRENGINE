@@ -96,18 +96,20 @@ bool TsrBuildCoveragePair(vec2 sourceUv, bool history, out TsrCoveragePair pair)
         {
             if (TsrLoadCurrentReactivity(pixel) >= 0.1)
                 return false;
-            vec3 color = TsrRgbToYCoCg(TsrLoadCurrentColor(pixel));
+            vec3 rawRgb = TsrLoadCurrentColor(pixel);
+            vec3 color = TsrRgbToYCoCg(TsrCompressHdrColor(rawRgb));
             pair.colorMin = min(pair.colorMin, color);
             pair.colorMax = max(pair.colorMax, color);
-            float luma = TsrCompressLuma(color.x);
+            float linearLuma = TsrRgbToYCoCg(rawRgb).x;
+            float luma = TsrCompressLuma(linearLuma);
             if (foreground)
             {
-                pair.foregroundLuma += color.x;
+                pair.foregroundLuma += linearLuma;
                 foregroundLumaRange = vec2(min(foregroundLumaRange.x, luma), max(foregroundLumaRange.y, luma));
             }
             else
             {
-                pair.backgroundLuma += color.x;
+                pair.backgroundLuma += linearLuma;
                 backgroundLumaRange = vec2(min(backgroundLumaRange.x, luma), max(backgroundLumaRange.y, luma));
             }
         }

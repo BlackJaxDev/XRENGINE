@@ -467,11 +467,15 @@ submission strategy selects the caster producer:
   cull for meshlet frames does not exist yet. The stage writes one log entry
   when it first resolves a meshlet frame to this producer. The shadow vertex stage
   reports a static meshlet payload as an indexed producer, so masked coverage
-  decodes index-buffer triangles. A skinned meshlet bin uses the same frozen
-  indexed arguments (local geometry indices, vertex offset 0). Its vertex stage
-  fetches each vertex from the prepared deformation of the frame
-  (`preparedDeformation.currentVertexOffset` into the current vertex arena), as
-  the indirect indexed producer does, so the avatar casts its present pose. A
+  decodes index-buffer triangles. The frozen indexed arguments of every record
+  already carry the arena vertex base in their vertex offset (the record's
+  prepared vertex base), so `gl_VertexIndex` is the arena index. The shadow
+  vertex stage adds a geometry or deformation base only for GPU-written indexed
+  arguments (push producer `IndirectIndexed`), which use local geometry indices
+  with vertex offset 0. An indexed bin of a meshlet frame and a skinned meshlet
+  bin read their vertices from the packed arena at that index. A skinned meshlet
+  bin reads the prepared deformation of the frame (the current vertex arena), so
+  the avatar casts its present pose. A
   skinned draw without a prepared deformation record casts nothing; it never
   falls back to the bind pose. The deformation stage runs before the directional
   shadow raster in the Advanced frame contract.
@@ -694,7 +698,9 @@ Open work that affects this design:
 
 - the directional caster lane is limited to desktop depth pages and CpuDirect;
   other shadow sources and submission strategies retain generic recording;
-- the canonical publisher drops unsupported commands without a diagnostic;
+- the canonical publisher drops commands with unsupported geometry without a
+  diagnostic. A command with an unsupported material draws the canonical error
+  material and writes a `CanonicalErrorMaterial` report;
 - OpenGL Advanced retains strict texture admission because bindless handles
   freeze sampling state. An explicitly authored placeholder policy would need
   its own material publication and lifetime contract;

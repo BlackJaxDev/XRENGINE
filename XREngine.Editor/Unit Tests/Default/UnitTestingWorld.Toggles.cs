@@ -176,6 +176,7 @@ public static partial class EditorUnitTests
         public bool EnableProfilerLogging = false; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public UnitTestFbxLogVerbosity FbxLogVerbosity { get; set; } = UnitTestFbxLogVerbosity.UseEnvironment; //Controls native FBX importer/exporter trace verbosity. UseEnvironment defers to XRE_FBX_LOG and routes enabled traces to the Assets log category.
         public UnitTestingRenderSettings Rendering { get; set; } = new(); //Grouped render backend, render-pipeline selection, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. Legacy flat RenderAPI values are migrated here when settings are regenerated.
+        public UnitTestingCrowdBenchmarkSettings CrowdBenchmark { get; set; } = new(); //Avatar crowd benchmark: copies of the first animated model import on rings at known distances (Enabled, AvatarCount, RingRadii, Center, Mode). Mode Triangles, ClusterCut, or DeformationLod replaces the virtual geometry render settings.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
         public bool GPURenderDispatch = false; //Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
         public bool StartInPlayModeWithoutTransitions = false; //Starts in play mode immediately without the edit->play transition.
@@ -364,6 +365,14 @@ public static partial class EditorUnitTests
             /// selection draw only the level-0 meshlets.
             /// </summary>
             public bool GenerateClusterHierarchy { get; set; }
+
+            /// <summary>
+            /// Packs the cluster hierarchy of this model into geometry pages for geometry streaming and
+            /// writes them to a page file next to the meshlet cache. Requires
+            /// <see cref="GenerateClusterHierarchy"/>. Off by default. The renderer still draws the
+            /// unpaged meshlet payload.
+            /// </summary>
+            public bool GenerateStreamingPages { get; set; }
 
             /// <summary>
             /// Additional post-import actions to apply after the source model has been loaded.

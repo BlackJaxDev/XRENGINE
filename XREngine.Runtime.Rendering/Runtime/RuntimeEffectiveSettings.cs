@@ -366,7 +366,19 @@ internal sealed class RuntimeEffectiveSettings
             : _cpuSocDebugForceVisible;
         set => _cpuSocDebugForceVisible = value;
     }
-    public bool GPURenderDispatch { get; set; }
+    private bool _gpuRenderDispatch = RuntimeRenderingHostServiceDefaults.GPURenderDispatch;
+    /// <summary>
+    /// Gets whether GPU render dispatch is requested. With a host installed, this reads the
+    /// host's effective value (user override, then project setting). The local value is used
+    /// only when no host is installed, for example in isolated runtime tests.
+    /// </summary>
+    public bool GPURenderDispatch
+    {
+        get => TryGetHostFrameTiming(out IRuntimeRenderFrameTimingServices services)
+            ? services.GPURenderDispatch
+            : _gpuRenderDispatch;
+        set => _gpuRenderDispatch = value;
+    }
     public EMeshSubmissionStrategy? ForceMeshSubmissionStrategy
     {
         get

@@ -24,10 +24,10 @@ public static class UdpProfilerSender
 
     public static bool TryStartFromEnvironment()
     {
-        if (Environment.GetEnvironmentVariable(ProfilerProtocol.EnabledEnvVar) != "1")
+        if (XREnvironment.GetValue(ProfilerProtocol.EnabledEnvVar) != "1")
             return false;
         int port = ProfilerProtocol.DefaultPort;
-        if (int.TryParse(Environment.GetEnvironmentVariable(ProfilerProtocol.PortEnvVar), out int configuredPort) &&
+        if (int.TryParse(XREnvironment.GetValue(ProfilerProtocol.PortEnvVar), out int configuredPort) &&
             configuredPort is > 0 and <= 65535)
             port = configuredPort;
         Start(port);

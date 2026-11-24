@@ -227,7 +227,7 @@ public sealed class ImportedAvatarComponentAdapterTests
         chain.Inert.ShouldBe(0.2f, 0.0001f);
         chain.Radius.ShouldBe(0.05f, 0.0001f);
         chain.Gravity.ShouldBe(new Vector3(0.0f, -0.3f, 0.0f));
-        chain.UpdateMode.ShouldBe(PhysicsChainComponent.EUpdateMode.FixedUpdate);
+        chain.UpdateMode.ShouldBe(PhysicsChainComponent.EUpdateMode.Normal);
         chain.Exclusions.ShouldBe([source.Transform]);
         chain.Colliders.ShouldNotBeNull().Count.ShouldBe(3);
         chain.ElasticityDistrib.ShouldNotBeNull().Keyframes.Count.ShouldBe(2);

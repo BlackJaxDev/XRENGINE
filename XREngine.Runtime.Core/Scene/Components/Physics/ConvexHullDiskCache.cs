@@ -19,7 +19,7 @@ public static class ConvexHullDiskCache
         if (!string.IsNullOrWhiteSpace(CacheRootOverride))
             return CacheRootOverride;
 
-        string? gameCachePath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GameCachePath);
+        string? gameCachePath = XREnvironment.GetValue(XREngineEnvironmentVariables.GameCachePath);
         if (!string.IsNullOrWhiteSpace(gameCachePath))
             return gameCachePath;
 

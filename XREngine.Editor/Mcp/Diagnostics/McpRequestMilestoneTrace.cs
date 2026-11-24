@@ -15,7 +15,7 @@ internal sealed class McpRequestMilestoneTrace
 
     /// <summary>True when <c>XRE_MCP_REQUEST_TRACE</c> is <c>1</c> (invoke_method calls only) or <c>all</c> (every tool call).</summary>
     internal static bool Enabled { get; } = AllTools ||
-        string.Equals(Environment.GetEnvironmentVariable("XRE_MCP_REQUEST_TRACE"), "1", StringComparison.Ordinal);
+        string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.McpRequestTrace), "1", StringComparison.Ordinal);
 
     private static bool AllTools =>
         string.Equals(Environment.GetEnvironmentVariable("XRE_MCP_REQUEST_TRACE"), "all", StringComparison.OrdinalIgnoreCase);

@@ -18,8 +18,8 @@ public static class SerializedModelImporterDocumentParser
         string normalized = Path.GetFullPath(metaPath);
 
         var yaml = new YamlStream();
-        // Unity writes names such as "Material #356" unquoted; keep the text after " #".
-        using var reader = new StringReader(UnityYamlPlainScalars.QuoteValuesWithHash(File.ReadAllText(normalized)));
+        // The source editor writes names such as "Material #356" without quotes; keep the text after " #".
+        using var reader = new StringReader(SerializedYamlPlainScalars.QuoteValuesWithHash(File.ReadAllText(normalized)));
         yaml.Load(reader);
         if (yaml.Documents.Count == 0 ||
             yaml.Documents[0].RootNode is not YamlMappingNode root ||

@@ -462,7 +462,7 @@
         ],
         "owner": "Engine",
         "frequency": "Material",
-        "bytes": 352,
+        "bytes": 496,
         "dynamic": true,
         "members": [
           {
@@ -821,6 +821,132 @@
             "offset": 348,
             "bytes": 4,
             "type": "f32"
+          },
+          {
+            "name": "U_SourceBackfaceNormals_0",
+            "provider": "_SourceBackfaceNormals",
+            "offset": 352,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_FlipBackfaceNormals_0",
+            "provider": "_FlipBackfaceNormals",
+            "offset": 356,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "U_SourceAlphaClip_0",
+            "provider": "_SourceAlphaClip",
+            "offset": 360,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_WorldAmbientOcclusionStrength_0",
+            "provider": "_WorldAmbientOcclusionStrength",
+            "offset": 364,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_BumpMapFlipGreen_0",
+            "provider": "_BumpMapFlipGreen",
+            "offset": 368,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "U_SourceLightMode_0",
+            "provider": "_SourceLightMode",
+            "offset": 372,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_PBRMochiePackedMasksEnabled_0",
+            "provider": "_PBRMochiePackedMasksEnabled",
+            "offset": 376,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_PBRMetallicMapsReflectionMaskChannel_0",
+            "provider": "_PBRMetallicMapsReflectionMaskChannel",
+            "offset": 380,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_PBRMetallicMapsSpecularMaskChannel_0",
+            "provider": "_PBRMetallicMapsSpecularMaskChannel",
+            "offset": 384,
+            "bytes": 4,
+            "type": "i32"
+          },
+          {
+            "name": "_PBRReflectionStrength_0",
+            "provider": "_PBRReflectionStrength",
+            "offset": 388,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_PBRReflectionMaskInvert_0",
+            "provider": "_PBRReflectionMaskInvert",
+            "offset": 392,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "_PBRSpecularMaskInvert_0",
+            "provider": "_PBRSpecularMaskInvert",
+            "offset": 396,
+            "bytes": 4,
+            "type": "f32"
+          },
+          {
+            "name": "U_SourceMochieSettings_0",
+            "provider": "_SourceMochieSettings",
+            "offset": 400,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "U_SourceMochieSecond_0",
+            "provider": "_SourceMochieSecond",
+            "offset": 416,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "U_SourceMochieReflection_0",
+            "provider": "_SourceMochieReflection",
+            "offset": 432,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "U_SourceMochieReflectionTint_0",
+            "provider": "_SourceMochieReflectionTint",
+            "offset": 448,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "U_SourceAdditiveSettings_0",
+            "provider": "_SourceAdditiveSettings",
+            "offset": 464,
+            "bytes": 16,
+            "type": "vec4<f32>"
+          },
+          {
+            "name": "U_SourceAdditiveColor_0",
+            "provider": "_SourceAdditiveColor",
+            "offset": 480,
+            "bytes": 16,
+            "type": "vec4<f32>"
           }
         ]
       },

@@ -41,8 +41,52 @@ public static class XREnvironment
         return Variables.GetOrAdd(name, static variableName => CreateState(variableName));
     }
 
+    /// <summary>
+    /// Returns the effective value for <paramref name="name"/>. When no editor runtime
+    /// override is active, synchronizes from the process environment so external writes
+    /// remain visible through this facade.
+    /// </summary>
     public static string? GetValue(string name)
-        => GetState(name).EffectiveValue;
+    {
+        RuntimeEnvironmentVariableState state = GetState(name);
+        if (state.HasRuntimeOverride)
+            return state.EffectiveValue;
+
+        string? current = Environment.GetEnvironmentVariable(state.Name, EnvironmentVariableTarget.Process);
+        string? previous = state.EffectiveValue;
+        if (!string.Equals(previous, current, StringComparison.Ordinal))
+        {
+            state.RefreshEffectiveValue(current);
+            PublishChange(state, previous);
+        }
+
+        return state.EffectiveValue;
+    }
+
+    /// <summary>
+    /// Writes a process-level environment value for bootstrap or subsystem integration
+    /// without marking it as a temporary editor runtime override.
+    /// </summary>
+    public static void SetProcessValue(string name, string? value)
+    {
+        RuntimeEnvironmentVariableState state = GetState(name);
+        string? previous;
+        bool changed;
+        lock (MutationLock)
+        {
+            previous = state.EffectiveValue;
+            Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.Process);
+            if (state.HasRuntimeOverride)
+                state.SetRuntimeOverride(value);
+            else
+                state.RefreshEffectiveValue(value);
+
+            changed = !string.Equals(previous, state.EffectiveValue, StringComparison.Ordinal);
+        }
+
+        if (changed)
+            PublishChange(state, previous);
+    }
 
     public static string? GetLaunchValue(string name)
         => GetState(name).LaunchValue;

@@ -314,6 +314,7 @@ namespace XREngine.Rendering.Vulkan
                 EndActiveRenderPass(ref recordingState, finalClose: preparePresent);
                 // The last pass scope closes here, after its render pass ended.
                 EndPassGpuProfilerScope(ref recordingState);
+                EmitGeometryStreamingFeedbackHostBarrier(recordingState.CommandBuffer);
 
                 int expectedPresentTransitions = recordingState.PreserveSwapchainForOverlay || !recordingState.TransitionSwapchainToPresent ? 0 : 1;
                 if (recordingState.UsedSwapchainDynamicRendering && recordingState.SwapchainPresentTransitions != expectedPresentTransitions)
@@ -340,6 +341,38 @@ namespace XREngine.Rendering.Vulkan
                         CreateOpenXrRuntimeColorSubresourceRange());
                 }
             }
+        }
+
+        /// <summary>
+        /// Makes the geometry page requests and touch bits that the meshlet task stage wrote in this
+        /// command buffer visible to host reads. The visibility resource runtime reads them from
+        /// mapped memory when it prepares the same frame slot again, after the slot's submission
+        /// completes. A fence or semaphore wait alone makes device writes available but not
+        /// visible to the host, so this barrier is required. It is recorded only while geometry
+        /// streaming is on, outside any render scope.
+        /// </summary>
+        private unsafe void EmitGeometryStreamingFeedbackHostBarrier(CommandBuffer commandBuffer)
+        {
+            if (!XREngine.Rendering.Commands.AdvancedVirtualGeometryPolicy.GeometryStreamingEnabled)
+                return;
+
+            MemoryBarrier memoryBarrier = new()
+            {
+                SType = StructureType.MemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderWriteBit,
+                DstAccessMask = AccessFlags.HostReadBit,
+            };
+            CmdPipelineBarrierTracked(
+                commandBuffer,
+                PipelineStageFlags.AllCommandsBit,
+                PipelineStageFlags.HostBit,
+                DependencyFlags.None,
+                1,
+                &memoryBarrier,
+                0,
+                null,
+                0,
+                null);
         }
 
         private void RecordFreshEmptyRequiredTerminalClear(

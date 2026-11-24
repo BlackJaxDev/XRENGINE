@@ -252,6 +252,22 @@ writes `openxr-render-failures.log` in Release builds. This auxiliary diagnostic
 includes rejection stage, frame/image identity and any caught exception, bounded
 to 64 records per renderer and one record per second. Use it to attribute
 missing layers; diagnostic runs do not establish clean performance results.
+The desktop PresentNow path also writes `vulkan-present-now.log` in Release
+builds. Each line has a local timestamp and records one state change: a pause
+that waits for a recovery edge (`RecoveryPending`, with the stage, ticket,
+dependency chain, and detail), a recovery probe (`RecoveryProbe`, with the edge
+that started it), a recovered renderer (`RendererRecovered`), or a terminal pause
+(`TerminalTransition`). When no desktop frame completes for 2 seconds, the
+frame loop also writes `PresentStalled` (at most every 5 seconds) with the
+reason, failure stage, recording deferral, and readiness retry of the latest
+attempt, and `PresentResumed` when a frame completes again. When the stall
+comes from a desktop frame that recorded no terminal swapchain write, a
+`missingTerminalWrite:` line follows. It has the operation, draw, blit, deferred,
+and dropped counts, the first recording failure, and the last eight operations of
+the first such frame in this stall. A frame that is
+retried each callback raises no failure, so these lines are the only Release
+record of such a stall. These are cold-path records. Use the file to find the
+failed stage when a Release session stops presenting.
 Routine `[Vulkan][FrameTree]` and `[Vulkan][PresentNow] readiness=ready` messages
 require `XRE_VULKAN_RECORDING_DIAG`, `XRE_VK_TRACE_DRAW`, or
 `XRE_VK_TRACE_SWAPDRAW`. Without those diagnostic flags, frame telemetry still
@@ -1005,6 +1021,31 @@ partial scene operations are never submitted. Warm requests do not consume the
 cold-work allowance. A persistent no-progress watchdog reports stalled requests
 instead of retrying indefinitely. This budget does not bound every other stage
 of scene publication or command recording.
+
+Each accepted desktop PresentNow frame records the distinct textures that it requires, with the
+streaming generation of each (`VulkanRequiredTextureReferenceSet`). The required-upload manifest
+is built from this set. Both hold at most `VulkanAcceptedFramePlan.RequiredTextureCapacity`
+(65,536) textures, separately from the 4,096 upload operations of `UploadCapacity`. An Advanced
+frame requires every texture of its canonical scene publication, so a crowd of imported avatars
+can require more than 10,000 textures. A hash index finds a texture that is already in the set,
+so the cost of each texture does not grow with the texture count. A frame that requires more
+textures fails with `FramePlanCapacityExceeded lane=Upload`, and `vulkan-present-now.log` shows
+the stall.
+
+The shared mesh request queue (`VulkanMeshOperationRequestQueue`) counts each request in one
+fixed lane, selected from the request's frame-operation context kind:
+
+| Lane | Capacity | Context kinds |
+|---|---|---|
+| `MainScene` | 1,536 | `MainViewport`, `OpenXrEye`, `SceneCapture`, `LightProbeCapture`, `DiagnosticCapture` |
+| `Shadow` | 4,096 | `Shadow` |
+| `Ui` | 256 | `UiPreview` |
+| `TerminalComposition` | 256 | `OpenXrMirror`, `Unknown` |
+
+A scene capture, such as a mirror, draws the same scene geometry as the main view, so it shares
+the `MainScene` lane with the main view. The accepted frame plan also counts these contexts in
+its main-scene lane. A request that does not fit its lane fails the frame with
+`FramePlanCapacityExceeded lane=<lane> meshLane=<lane>`.
 
 Set `XRE_VULKAN_VALIDATE_SPIRV=1` to validate generated and cached modules with
 `spirv-val --target-env vulkan1.4`; a missing validator fails the compile or cache

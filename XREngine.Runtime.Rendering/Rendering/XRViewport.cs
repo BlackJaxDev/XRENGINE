@@ -1093,7 +1093,11 @@ namespace XREngine.Rendering
                 if (!interactiveResize)
                 {
                     ApplyBaseInternalResolutionPolicy();
-                    _renderPipeline.ApplyAutomaticInternalResolutionPolicy(this);
+                    // A transition to no pipeline (for example, an OpenXR per-eye viewport that
+                    // its owner released while true single-pass stereo renders) has no pipeline
+                    // AA or upscale policy. The viewport keeps its base internal size.
+                    if (pipeline is not null)
+                        _renderPipeline.ApplyAutomaticInternalResolutionPolicy(this);
                 }
 
                 MarkExtentProfileDirty(
@@ -1225,6 +1229,20 @@ namespace XREngine.Rendering
             get => _meshSubmissionStrategyOverride;
             set => SetField(ref _meshSubmissionStrategyOverride, value);
         }
+
+        /// <summary>
+        /// Returns the mesh submission strategy that this viewport captures in its frame package:
+        /// <see cref="MeshSubmissionStrategyOverride"/> or the process-wide requested strategy.
+        /// While the active camera shows the Advanced meshlet ID view, a GPU indexed strategy
+        /// becomes a GPU meshlet strategy, so the view gets meshlet producers. See
+        /// <see cref="AdvancedRenderPipeline.ResolveMeshletViewSubmissionStrategy"/>.
+        /// </summary>
+        internal EMeshSubmissionStrategy ResolveRequestedMeshSubmissionStrategy()
+            => AdvancedRenderPipeline.ResolveMeshletViewSubmissionStrategy(
+                _renderPipeline.Pipeline,
+                ActiveCamera,
+                MeshSubmissionStrategyOverride ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy());
 
         /// <summary>
         /// When true, objects outside the camera's view frustum are culled (excluded from rendering).
@@ -1886,8 +1904,7 @@ namespace XREngine.Rendering
                 dimensions.InternalWidth,
                 dimensions.InternalHeight,
                 excludeProjectiveMirrors,
-                MeshSubmissionStrategyOverride ??
-                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy());
+                ResolveRequestedMeshSubmissionStrategy());
             CollectVisibleStageTimings.EndPath(ECollectVisiblePath.PackagePrepare, packagePathStart, 0);
         }
 

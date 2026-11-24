@@ -288,8 +288,8 @@ internal static class EditorOpenXrPawnSwitcher
 
             if (!ReferenceEquals(_preparedRenderer, window.Renderer) ||
                 !string.Equals(_preparedRuntimeJson, prepared.RuntimeJsonPath, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(Environment.GetEnvironmentVariable("XR_RUNTIME_JSON"), prepared.RuntimeJsonPath, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(Environment.GetEnvironmentVariable("XRE_UNIT_TEST_OPENXR_RUNTIME_JSON"), prepared.RuntimeJsonPath, StringComparison.OrdinalIgnoreCase))
+                !string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson), prepared.RuntimeJsonPath, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson), prepared.RuntimeJsonPath, StringComparison.OrdinalIgnoreCase))
             {
                 var configuration = new EditorOpenXrRendererConfiguration(prepared);
                 var result = await RendererHotReloadService.Current.RestartCurrentGenerationWithConfigurationAsync(

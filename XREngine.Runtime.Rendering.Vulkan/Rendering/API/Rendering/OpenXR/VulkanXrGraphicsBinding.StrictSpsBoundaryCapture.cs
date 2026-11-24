@@ -334,7 +334,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
 
     private static bool ReadStrictSpsBoundaryCaptureEnabled()
     {
-        string? configured = Environment.GetEnvironmentVariable(
+        string? configured = XREnvironment.GetValue(
             XREngineEnvironmentVariables.CaptureDefaultPipelineFbo);
         return string.Equals(configured, "1", StringComparison.Ordinal) ||
             string.Equals(configured, "true", StringComparison.OrdinalIgnoreCase);
@@ -342,7 +342,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
 
     private static int ResolveStrictSpsBoundaryCaptureSkipFrames()
     {
-        string? configured = Environment.GetEnvironmentVariable(
+        string? configured = XREnvironment.GetValue(
             XREngineEnvironmentVariables.CaptureDefaultPipelineSkipFrames);
         return int.TryParse(configured, out int skipFrames)
             ? Math.Max(0, skipFrames)
@@ -351,7 +351,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
 
     private static string ResolveStrictSpsBoundaryCaptureOutputDirectory()
     {
-        string? configured = Environment.GetEnvironmentVariable(
+        string? configured = XREnvironment.GetValue(
             XREngineEnvironmentVariables.CaptureDefaultPipelineOutputDirectory);
         return string.IsNullOrWhiteSpace(configured)
             ? Path.Combine(Environment.CurrentDirectory, "Build", "_AgentValidation", "manual-default-pipeline-capture", "mcp-captures")

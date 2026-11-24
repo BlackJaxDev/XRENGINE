@@ -109,7 +109,7 @@ public static partial class EditorUnitTests
             s.VrMirrorMode = XREngine.Runtime.Bootstrap.BootstrapRenderSettings.ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow);
         s.VrCopyEyePreviewTextures = previewVrStereoViews;
         if (Enum.TryParse(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
+                XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
                 ignoreCase: true,
                 out EVrDesktopFrameExecutionMode desktopExecutionMode))
         {
@@ -134,11 +134,27 @@ public static partial class EditorUnitTests
             s.VulkanPresentationProfile = runtimeSettings.Rendering.Vulkan.PresentationProfile;
             s.Vulkan.Startup.FallbackPolicy = runtimeSettings.Rendering.BackendFallbackPolicy;
             s.AdvancedVirtualGeometry = runtimeSettings.Rendering.VirtualGeometry;
+            s.AdvancedSkinnedVirtualGeometry = runtimeSettings.Rendering.SkinnedVirtualGeometry;
+            s.AdvancedSkinnedDeformationLod = runtimeSettings.Rendering.SkinnedDeformationLod;
+            s.AdvancedSkinnedPosedClusterBounds = runtimeSettings.Rendering.SkinnedPosedClusterBounds;
             s.AdvancedVirtualGeometryPixelThreshold = runtimeSettings.Rendering.VirtualGeometryPixelThreshold;
+            s.AdvancedGeometryPages = runtimeSettings.Rendering.GeometryPages;
+            s.AdvancedGeometryStreaming = runtimeSettings.Rendering.GeometryStreaming;
         }
         else if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
         {
             s.AllowShaderPipelines = Toggles.AllowShaderPipelines;
+        }
+
+        // A crowd benchmark mode replaces the virtual geometry values for the run.
+        if (runtimeSettings.CrowdBenchmark.TryResolveRenderMode(
+                out bool crowdVirtualGeometry,
+                out bool crowdSkinnedVirtualGeometry,
+                out bool crowdSkinnedDeformationLod))
+        {
+            s.AdvancedVirtualGeometry = crowdVirtualGeometry;
+            s.AdvancedSkinnedVirtualGeometry = crowdSkinnedVirtualGeometry;
+            s.AdvancedSkinnedDeformationLod = crowdSkinnedDeformationLod;
         }
 
         if (!groupedRenderingSpecified)
@@ -215,7 +231,7 @@ public static partial class EditorUnitTests
 
     private static void ApplyPhysicsDebugBenchmarkPreset(PhysicsVisualizeSettings settings)
     {
-        string? preset = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.PhysicsDebugPreset);
+        string? preset = XREnvironment.GetValue(XREngineEnvironmentVariables.PhysicsDebugPreset);
         if (string.IsNullOrWhiteSpace(preset))
             return;
 

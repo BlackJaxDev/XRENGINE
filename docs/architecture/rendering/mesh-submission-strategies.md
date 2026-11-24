@@ -351,6 +351,16 @@ renderer does not.
   an immutable validated payload and a revision token.
   `XRMesh.GetOrCreateMeshletPayload` must not become a disk-cache API that
   rendering calls.
+- A payload object stores the owner binding of one mesh
+  (`OwnerGeometryRevision`). `RenderableMesh` replaces a skinned mesh with a
+  runtime transform rebind clone when the serialized bone references point
+  outside the component hierarchy (for example, a cloned crowd avatar). The
+  clone uses the source buffers and topology lists and changes only bone
+  references. `XRMesh.TryAttachSharedGeometryMeshletPayload` gives the clone
+  its own payload copy, bound to the clone's geometry revision, after it checks
+  that both meshes use the same geometry objects. The copy shares the immutable
+  meshlet streams and needs no source hashing. Without the copy, the clone has
+  no meshlets and skips the meshlet and cluster level-of-detail routes.
 - Runtime format compatibility is separate from cook provenance. A runtime
   without the meshoptimizer cooker accepts a compatible baked payload. A newer
   cooker version invalidates derived data during import or cache validation,
@@ -493,9 +503,23 @@ The payload stores every cluster as a meshlet in the normal streams, level 0
 first, and adds `ClusterLevel0Count`, one `MeshletClusterLodRecord` (group,
 refined group; 8 bytes) per meshlet and one `MeshletLodGroupRecord`
 (simplified sphere, error, depth; 32 bytes) per group. Each meshlet keeps its
-own culling sphere and normal cone. Such a payload has payload version 5
+own culling sphere and normal cone. Such a payload has payload version 7
 (`MeshletPayload.ClusterHierarchyPayloadVersion`); every payload without a
 hierarchy stays version 4, so existing caches and cooked meshes stay valid.
+Version 6 added the cluster skinning tables (`ClusterSkins`, `ClusterBones`).
+Version 7 adds, for a skinned hierarchy, the deformation order
+(`DeformationVertexOrder`: a permutation of the source vertices, the vertices
+of the coarsest levels first), `DeformationPrefixCounts` (for each level `L`,
+the number of leading order entries that every cluster of level `L` or coarser
+and every root cluster reads) and `LevelMaxErrors` (the largest finite group
+error of each level). It also adds the level covers (`LevelCoverIndices`,
+`LevelCoverFirstIndex`, `LevelCoverIndexCount`, built by
+`MeshletLevelCoverBuilder`): for each level `L` above 0, the triangle list of
+every cluster of level `L` and every root cluster of a finer level. The cover of
+`L` is the cut that the clamped skinned cut selects at an infinite distance, so
+it covers the mesh once and reads only the deformation prefix of `L`. Level 0
+has no cover. The mesh vertices stay in source order. The cook writes one
+`[DeformationPrefix]` line for each model with the prefix share of each level.
 The hierarchy flag changes the meshlet settings hash only when it is set; it
 then adds `MeshletClusterHierarchyBuilder.CookVersion`, so a change of the cook
 recooks cached hierarchy payloads only.
@@ -518,9 +542,15 @@ summary line for each model to `meshlet-cache.log`.
 The Advanced canonical geometry publisher publishes the full hierarchy
 (`AdvancedPublishedMeshletLayout`): the descriptors and vertex indices of every
 level, and in the triangle-word stream of the geometry, after the packed
-triangle words, one cluster record per meshlet (2 words: group, refined group)
-and then one group record per group (8 words: sphere, error, depth, two
-reserved words; floats as bits). The geometry record keeps its GPU layout:
+triangle words, one skin header word, one cluster record per meshlet (2 words:
+group, refined group) and then one group record per group (8 words: sphere,
+error, depth, bone list offset, bone count; floats as bits). The skin header
+holds the offset of the skin tables (relative to the first cluster record), or
+zero for a geometry without them. A skinned payload adds the skin tables of
+`AdvancedClusterSkinTables` after the group records: one cluster skin record
+per meshlet (2 words: bone list offset, bone count) and the bone words (0-based
+utilized-bone indices). A group's bone list is the union of the bones of its
+clusters and of their refined groups, built once per payload. The geometry record keeps its GPU layout:
 `ReservedLayout0` holds the level-0 count (`ClusterLevel0Count`; zero without a
 hierarchy) and `ReservedLayout1` the word offset of the cluster records,
 relative to the geometry's `MeshletTriangleWords` reference, so arena
@@ -528,6 +558,217 @@ compaction keeps it valid. `MeshletCount` counts every level, and
 `DrawMeshletCount` is the level-0 count of a hierarchy geometry. Visibility
 payloads, deformation ranges and deformation witnesses use `DrawMeshletCount`,
 so a draw renders only level 0 unless the cluster cut below is on.
+
+### Cluster streaming pages
+
+`MeshletGenerationSettings.BuildStreamingPages` (off by default; the
+unit-testing world sets it for each model with `GenerateStreamingPages`, which
+needs `GenerateClusterHierarchy`) packs the clusters of a cluster hierarchy
+payload into fixed-size geometry pages for geometry streaming.
+`MeshletPageBuilder` runs after the hierarchy cook. It does not change the
+payload, and the payload hashes do not include the setting.
+
+- A page is 128 KiB (`MeshletPageFormat.PageBytes`) and holds at most 256
+  clusters. It holds one or more whole groups of one mesh, so a group never
+  crosses a page. The root groups (`SimplifiedError == float.MaxValue`) of every
+  level go to root pages of their own. The other groups of each level are sorted
+  by the Morton code of their sphere center and fill pages in that order. A page
+  holds groups of one level only. The root pages are the first pages.
+- The page tables (`MeshletPageTable`) hold the clusters in page order
+  (`ClusterOrder` maps each one back to its payload meshlet), the cluster records,
+  the group records with the page of each group in `Reserved0`, one
+  `MeshletPageRecord` per page (first cluster, cluster count, dependency range)
+  and the dependency table. A page depends on the pages that hold a parent of one
+  of its groups (the group of any cluster whose refined group is in the page).
+  Every dependency is a page of a coarser level or a root page.
+- A page image (`MeshletPageFormat`) starts with a 32-byte `MeshletPageHeader`,
+  then the `AdvancedMeshletDescriptor` of each cluster (with offsets local to the
+  page), the vertex indices, the triangle bytes and, for a static page, the
+  page-local `AdvancedDeformedVertex` copies of the vertices that its clusters
+  use. A skinned payload gets skinned topology pages: their vertex indices are
+  source vertex indices, and they hold no vertices. Each section is 16-byte
+  aligned.
+- `MeshletPageBuilder.Validate` checks every page set before the cook keeps it:
+  the cluster order is a permutation, every group is in exactly one page with its
+  clusters together, root and level rules, the exact dependency lists, the image
+  offsets, and that every decoded triangle names the same source vertices as the
+  payload triangle.
+- With the portable meshlet limits (64 vertices and 124 triangles for each
+  cluster) and at most about 21 clusters in a group, a static group needs at
+  most about 99 KiB, so every group of a runtime-compatible payload fits in a
+  page. A mesh that does not fit is logged (`[ClusterPages] ... notPaged`) and
+  keeps only its payload.
+
+`ModelImportMeshletPageCache` stores the pages of one model in
+`model-meshlets/<hash>.xrpages`, next to the `<hash>.xrmeshlets` payload file.
+The file has a header, an index (protected by a 64-bit xxHash) with one entry
+for each paged mesh, and the page blobs at 4 KiB-aligned offsets. Each blob is
+the Brotli-compressed page image, or the raw image when compression does not
+make it smaller, with a 32-bit xxHash of the image. An entry is used only when
+the payload freshness hash and the hash of the packed vertex data match, so a
+change to any vertex attribute cooks the pages again. The cook writes one
+`[ClusterPagesMesh]` line for each cooked mesh and one `[ClusterPages]` line for
+each model to `meshlet-cache.log`, with the page count, the root page bytes and
+the average page fill.
+
+#### Drawing from geometry pages
+
+The engine setting `AdvancedGeometryPages` (off by default; the unit-testing
+world sets it with `Rendering.GeometryPages`) makes the Vulkan Advanced path draw
+cluster hierarchy geometry from its pages. It needs `AdvancedVirtualGeometry`, and
+`AdvancedVirtualGeometryPolicy.GeometryPagesEnabled` latches it with the other
+virtual geometry settings. Without `AdvancedGeometryStreaming` (see
+[Streaming geometry pages](#streaming-geometry-pages)) every page stays resident.
+The geometry also keeps its meshlet tables and its canonical vertex and index
+streams, which the shadow, decal and fallback paths read.
+
+- The import attaches the cooked or stored pages of a mesh to its payload
+  (`MeshletPayload.AttachStreamingPages`) while the setting is on. The
+  `[ClusterPages]` line counts them as `attached`.
+- `AdvancedPublishedMeshletLayout` adds a page block after the hierarchy tables
+  of the triangle-word stream. The stream header, two words before the cluster
+  records, holds the word offset of the page block relative to the first cluster
+  record (zero without pages); the skin header stays one word before the
+  cluster records. The page block has a four-word header (the page count, the
+  cluster count, the first page of the geometry in the page table, and the
+  group count), one word for each cluster in published meshlet order
+  (`(page << 8) | page-local cluster`), and one word for each group (the
+  geometry-local page of the group). The page images are not in the stream. The geometry record gets
+  `EAdvancedGeometryFlags.StreamedPages`.
+- `AdvancedGeometryPagePool` (`AdvancedGeometryDatabase.PagePool`) owns a fixed
+  number of 128 KiB slots and the page table, which maps each registered page to
+  a slot or to not resident (`0xFFFFFFFF`). `AdvancedGeometryPagePoolMiB`
+  (default 512, range 16 to 2048, read once with the other settings) sets the
+  slot count. When the publisher registers a geometry with pages, it reserves a
+  contiguous range of page table entries and one slot for each page, and writes
+  the first page into the page block. A geometry whose pages do not fit in the
+  free slots registers without `StreamedPages` and draws from its meshlet arenas;
+  the publisher logs a warning and counts it in `GeometryPagePoolRejectCount`.
+- A tombstoned geometry retires its pages with the generation of the tombstoning
+  publication. Its page table entries read not resident from that publication,
+  and its slots and entries return to the free lists only when
+  `AdvancedSharedGpuSceneDatabase` reclaims that generation, so a frame in flight
+  never reads a slot that is written again. A partial registration that rolls
+  back frees its pages at once.
+- Each sealed publication captures the page table
+  (`AdvancedGeometryPublicationSnapshot.PageTable` and `PageTableVersion`).
+  `VulkanAdvancedGeometryPageResources`, owned by the resident geometry cache,
+  keeps one pool buffer and a small set of page table buffers. When the pool
+  version changes, it writes every slot whose image changed into the pool
+  buffer before it binds a table that names the slot. A table buffer is pinned
+  by the frame slots that bind it and is written again only after they
+  complete. The buffers prefer device-local host-visible memory and fall back
+  to system memory with a warning. The pool and the table bind at visibility
+  bindings 73 and 74; an empty pool or table binds a 16-byte sentinel.
+- `VisibilityStreamedGeometry.glslinc` reads these tables. It finds the slot of
+  a page through the page table and reads the page at word
+  `slot * 32768` of the pool. A page that is outside the table, not resident, or
+  names a slot outside the pool makes the cluster read fail, and the stage skips
+  the cluster. The meshlet task stage
+  tests the cluster cut from the cluster and group records, and then loads the
+  descriptor of a cluster in the cut from its page. Every hierarchy draw now
+  loads its descriptor after the cut test. The mesh stage reads the vertex
+  indices, the triangle bytes and, for a static page, the page-local vertices
+  from the page. A deformed draw reads the deformation output at the source
+  vertex. `PrimitiveAccess.glslinc` decodes the triangle from the same page and
+  returns its source vertices, so shading reads the canonical vertices of the
+  triangle that the raster drew. `OcclusionCulledBounds.comp` also reads the
+  descriptor from the page.
+- The visibility ID, the producers and the meshlet history keep the global
+  meshlet index, because the geometry keeps its meshlet range, also while its
+  pages stream.
+
+#### Streaming geometry pages
+
+The engine setting `AdvancedGeometryStreaming` (off by default; the unit-testing
+world sets it with `Rendering.GeometryStreaming`) streams the pages of static
+cluster hierarchy geometry. It needs `AdvancedGeometryPages`, and
+`AdvancedVirtualGeometryPolicy.GeometryStreamingEnabled` latches it with the
+other virtual geometry settings. Skinned topology pages always stay resident.
+Only the meshlet task stage writes page requests, so pages stream only for
+draws that use the `StaticMeshlet` producer: the mesh submission strategy must
+be a meshlet strategy (for example `ForceMeshSubmissionStrategy` or
+`XRE_FORCE_MESH_SUBMISSION_STRATEGY` set to `GpuMeshletZeroReadback`). The
+automatic strategy resolves to `CpuDirect` or a GPU indirect strategy. These
+draw the canonical index stream and write no page requests, so only the root
+pages of their geometry are resident.
+
+- Registration: the publisher reserves page table entries for every page of a
+  static paged geometry, but slots only for its root pages
+  (`AdvancedGeometryPagePool.TryReserve(pages, residentPageCount, out range)`).
+  It then registers the geometry with `MeshletPageStreamingManager`
+  (`AdvancedGeometryDatabase.StreamingManager`). A tombstoned or rolled-back
+  geometry is removed from the manager before its range retires.
+- Streamed cut (`XR_ADV_StreamedClusterCut` in `VisibilityMeshletCulling.glslinc`):
+  a cluster draws when its group's page is resident, its group error projects
+  above the threshold, and it is a level-0 cluster, or the group it was made
+  from projects at or below the threshold, or that group's page is not
+  resident. So a region without its finer pages draws the finest resident
+  level, and the cut never draws two levels over one point, because residency
+  is closed toward the root pages. The meshlet task stage and
+  `OcclusionCulledBounds.comp` use this rule for streamed geometry.
+- Feedback (task stage only, `XR_ADV_ENABLE_GEOMETRY_STREAMING_FEEDBACK`): the
+  ideal cut uses the threshold times `XR_ADV_STREAMING_PREFETCH` (0.5), so pages
+  load before they are needed. A cluster in the ideal cut whose page is missing
+  and whose group sphere is in the frustum writes one request (global page,
+  band, priority, pixel scale) to binding 75. The request bit of the page in
+  binding 76 removes duplicates in one frame, and requests past the buffer
+  capacity count as overflow. A resident page that draws, or that the ideal cut
+  needs, sets the touch bit of its slot in binding 76. The band is foreground
+  when the group error projects above the threshold, otherwise prefetch. The
+  priority is the projected error over the threshold, times 64.
+- Readback: `VulkanAdvancedVisibilityResourceRuntime` owns one request buffer
+  (16-byte header and `AdvancedGeometryPageRequestCapacity` entries, default
+  4096) and one feedback-bit buffer (touch words for the pool, then request
+  words for up to 2^20 page table entries) for each frame slot. They prefer
+  device-local host-visible memory. The primary command buffer ends with a
+  shader-write to host-read barrier. When the visibility runtime prepares a
+  frame slot again, the slot's earlier submission is complete, so it reads the
+  requests and the touch words of that frame, adds them to
+  `MeshletPageFeedbackQueue` (`AdvancedGeometryDatabase.StreamingFeedback`),
+  and clears the words that the frame could write. With streaming off, and for
+  shadow views, both bindings use a 16-byte sentinel; a request buffer without
+  entries turns the feedback writes off.
+- Residency update: in each publication, after the acknowledged tombstones are
+  reclaimed, the publisher drains the queue into the manager and runs
+  `MeshletPageStreamingManager.Update`. The update adds the missing dependency
+  chain of each requested page, sorts the requests by band and priority, and
+  loads pages within `AdvancedGeometryStreamingUploadMiBPerFrame` (default 4
+  MiB; the first load is always allowed). When no slot is free, it evicts the
+  resident page with the oldest touch frame that has no resident child page,
+  is not a root page and was not touched in the current frame. A prefetch load
+  evicts only pages untouched for 120 frames, a foreground load also pages
+  untouched for 8 frames, and no load evicts a page loaded for a higher band.
+  An evicted slot retires with the next publication sequence
+  (`AdvancedSharedGpuSceneDatabase.NextPublicationSequence`) and returns to the
+  free list when that generation is reclaimed.
+- A page table change makes the next publication commit, also when no row
+  changed: the unchanged-row gate and the reuse check compare the pool version
+  with the `PageTableVersion` of the retained publication.
+- `MeshletPageStreamingManager.Telemetry` counts the resident pages and bytes,
+  the requests, overflows, loads, evictions and failed pages. A page whose image
+  is missing or too large fails once, with a warning, and is not requested
+  again.
+- Every two seconds the publisher writes one `[GeometryStreaming]` rendering
+  log line: the resident pages and MiB, the used pool slots, the requests of the
+  last update by band, the total loads, evictions, overflows and failed pages,
+  the feedback frames that the queue accepted and dropped, and the registered
+  geometries with the total registrations, removals and released pages. A
+  `feedbackFrames` count that does not grow means that no GPU feedback reaches
+  the manager.
+- A removed geometry releases its resident pages without an eviction. This
+  occurs when the publisher replaces the geometry of a draw, for example when
+  the drawn mesh changes. The new geometry starts again from its root pages. In
+  the log, `releasedPages` then grows while `evictions` does not.
+- The shadow routing flags of a draw (`CastShadow`, `ReceiveShadows`,
+  `ShadowCasterDynamic` and `SharedOpaqueShadow`) are not part of its geometry
+  signature. The content update writes them to the draw record in place, so a
+  change of the shadow pass state does not replace the geometry or release its
+  pages.
+- Every two seconds the Vulkan visibility runtime writes one
+  `[GeometryStreamingFeedback]` rendering log line with the raw feedback of one
+  frame slot: the request count and overflow, the set touch bits, the bit words,
+  the request capacity, and the feedback reads that failed.
 
 ### Cluster cut (Advanced virtual geometry)
 
@@ -543,9 +784,14 @@ largest projected error, in render pixels, that a drawn cluster may have.
   start. The two consumers below must agree in every frame; a change while they
   run could draw every level at once.
 - The preparation extractor gives a static draw of a hierarchy geometry the
-  full meshlet range (`MeshletCount`). Skinned draws and every draw while the
-  setting is off keep `DrawMeshletCount`. Other backends never enable the
-  policy, so the OpenGL and WebGPU paths keep level 0.
+  full meshlet range (`MeshletCount`). A skinned draw gets it too while
+  `AdvancedSkinnedVirtualGeometry` (`Rendering.SkinnedVirtualGeometry`, on by
+  default, read with the other two settings) is on. The skinned cook locks the
+  vertices where clothing layers touch other skinned meshes, so layered clothing
+  (stockings over skin) does not show the layer under it. A capped A/B on one
+  avatar showed no GPU cost and no visible loss. Other skinned draws and
+  every draw while the setting is off keep `DrawMeshletCount`. Other backends never enable the policy, so the OpenGL
+  and WebGPU paths keep level 0.
 - The meshlet task stage is compiled with `XR_ADV_CLUSTER_LOD_CUT` (and the
   threshold as `XR_ADV_CLUSTER_LOD_PIXEL_THRESHOLD`) only while the setting is
   on. The off variant compiles from the same text as before, so its SPIR-V does
@@ -566,6 +812,87 @@ largest projected error, in render pixels, that a drawn cluster may have.
   against this frame's depth pyramid. Every cluster keeps its own sphere and
   cone for culling; the group sphere is used only for the error test.
 - Directional shadow casters still draw the full-detail canonical index buffer.
+- Posed bounds are on while `AdvancedSkinnedPosedClusterBounds`
+  (`Rendering.SkinnedPosedClusterBounds`, on by default, read with the other
+  settings) is on; the task stage then also compiles
+  `XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED`. Off makes every skinned draw use one
+  distance and culls no skinned cluster, which is useful to compare or to rule
+  out the posed bounds.
+- Skinned draws (`XR_ADV_CLUSTER_LOD_CUT_SKINNED`) with posed bounds: the cooked
+  group spheres are bind pose. When the GPU deformed the draw this frame (its
+  prepared deformation is active) and the geometry has skin tables, each group
+  uses a posed box: its bind sphere, grown by the blendshape margin, moved by
+  each bone of its bone list (the world-space skin palette rows at
+  `payload.paletteOffset`, visibility set binding 72), with the box around the
+  moved spheres. A linearly blended vertex lies in the convex hull of its bones'
+  moved positions, which the box holds. The projected error uses the distance
+  from the nearer eye to the box and the largest bone scale. A group's bone list
+  holds the lists of the groups below it and the cooked spheres grow from child
+  to parent, so a parent box holds each child box and the cut stays crack free.
+  A posed skinned cluster in the cut also gets the frustum test with the sphere
+  around its own posed box (its own bones). Posed skinned clusters still skip
+  the cone, history and Hi-Z tests.
+- Other skinned draws (no GPU deformation this frame, or no skin tables) use
+  one distance for the whole
+  draw: from the nearer eye to the nearer of the draw's two posed bounding
+  spheres (the instance record sphere, which the publisher updates when the CPU
+  posed bounds change, and visibility candidate words 4 to 7, which
+  `PatchPhysicsChainBounds` rewrites for GPU physics chains), less the
+  blendshape margin times the draw scale, clamped to the near distance. The margin (candidate word 2,
+  `AdvancedVisibilityCandidate.ClusterCutMargin`) is
+  `XRMesh.GetMaxBlendshapeDisplacement()`: per vertex the sum of its position
+  delta lengths, then the largest sum; a mesh without a CPU copy of its
+  blendshapes gives an unbounded margin, so its draw stays at level 0. One
+  distance with errors that grow from child to parent keeps the cut crack free.
+  The bound is per draw, so the whole draw refines as its nearest part does.
+  The task stage applies the skinned cut only when the payload range holds every
+  level, and an unusable candidate gives level 0.
+- Clothing layers: the skinned hierarchy cook locks every vertex that lies within
+  4 mm (bind space) of a triangle of another skinned mesh of the same model
+  (`SkinnedLayerContactLocks`, both sides of the layer), so a stocking and the
+  skin under it keep their full detail and the layer order does not change. On
+  the prefab avatar this locks about a third of the skinned vertices and keeps
+  4 to 19 percent of the triangle reduction from 1 to 12 m. Skinned clusters without
+  posed bounds still skip the frustum, cone, history and Hi-Z tests. Turn the setting off to compare
+  with full-detail skinned draws while static draws keep the cut.
+- Skinned deformation level of detail (`AdvancedSkinnedDeformationLod`,
+  `Rendering.SkinnedDeformationLod`, off by default, read with the other
+  settings; it needs the skinned cut): the extractor chooses a minimum level
+  `L` for each skinned draw with `AdvancedDeformationLevelSelector`. It uses
+  the eyes of the build's view set, the largest pixel scale times a safety
+  factor of 1.25, and a distance that is never larger than the GPU shared
+  distance (the instance sphere, the committed proxy box of a GPU physics draw
+  less its half diagonal, and the blendshape margin). `L` is the largest level
+  for which every finer group projects to at most the threshold. Mesh
+  preparation writes the deformation order into
+  `AdvancedSkinInfluence.DeformationOrderVertex`, the job deforms only the
+  first `DeformationPrefixCounts[L]` order entries
+  (`EAdvancedDeformationFeatureFlags.DeformationOrder`), and the candidate
+  carries `L` in word 3 (`AdvancedVisibilityCandidate.DeformationLevel`). The
+  task stage treats every group finer than `L` with a finite error as refined
+  enough, so it never draws a cluster that reads a vertex outside the prefix.
+  A grown prefix marks the draw's velocity invalid for one frame
+  (`AdvancedDeformedVertexArena.RecordDeformedVertexCount`). The canonical
+  geometry publisher appends the level covers after the canonical indices in
+  the same index arena range (`AdvancedGeometryRegistration.LevelCoverIndexCount`;
+  `AdvancedGeometryRecord.IndexData` then holds `IndexCount` canonical indices
+  and the covers, and arena compaction copies both). For a draw with `L > 0`
+  the visibility payload index range is the cover of `L`
+  (`AdvancedGeometryRecord.LevelCoverIndexBase` plus `LevelCoverFirstIndex[L]`),
+  so the directional shadow raster and the traditional raster draw only
+  deformed vertices; the Vulkan stable bins accept such a range through
+  `AdvancedGeometryRecord.IsDrawIndexRange`. A draw gets `L > 0` only when its
+  geometry holds the covers. Draws that another path reads keep `L = 0`:
+  transparent, fragment-depth, decal, wireframe, editor-highlighted and CPU
+  fallback draws, and draws that cull front faces or all faces. A double-sided
+  draw can get `L > 0`: its payload carries the cull mode, and the raster draws
+  it through the same cluster cut and index range.
+  The choice runs on both deformation preparation policies: the packed
+  aggregate inputs and the authored-vertex inputs of the Vulkan route. The
+  authored-vertex route keeps its visibility candidate bounds and reads only the
+  posed instance bounds of the publication for the choice. The
+  `XRE_ADVANCED_DEFORMATION_SLOT_DIAGNOSTICS` `SUMMARY` line counts the choices
+  (`gate.<outcome>`, `level<n>`) and the deformed and full vertex counts.
 
 Measured with New Sponza and the prefab avatar at 2688x2688 (RVC, true single
 pass stereo): at the atrium the early raster goes from 5.9 to 3.6 ms and the

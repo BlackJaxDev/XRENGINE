@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using System.Collections.Immutable;
 using System.Runtime.InteropServices;
 using XREngine.Data.Rendering;
@@ -271,7 +271,11 @@ public static partial class MeshOptimizerIntegration
         MeshOptimizerMeshletStats stats,
         int clusterLevel0Count = 0,
         MeshletClusterLodRecord[]? clusterLods = null,
-        MeshletLodGroupRecord[]? lodGroups = null)
+        MeshletLodGroupRecord[]? lodGroups = null,
+        MeshletClusterSkinRecord[]? clusterSkins = null,
+        ushort[]? clusterBones = null,
+        MeshletDeformationOrderBuilder.Result? deformationOrder = null,
+        MeshletLevelCoverBuilder.Result? levelCovers = null)
     {
         MeshletGenerationSettingsSnapshot meshletSnapshot = MeshletGenerationSettingsSnapshot.From(settings);
         MeshLodGenerationSettingsSnapshot lodSnapshot = MeshLodGenerationSettingsSnapshot.From(lodSettings);
@@ -306,6 +310,14 @@ public static partial class MeshOptimizerIntegration
             ClusterLevel0Count = clusterLevel0Count,
             ClusterLods = (clusterLods ?? []).ToImmutableArray(),
             LodGroups = (lodGroups ?? []).ToImmutableArray(),
+            ClusterSkins = (clusterSkins ?? []).ToImmutableArray(),
+            ClusterBones = (clusterBones ?? []).ToImmutableArray(),
+            DeformationVertexOrder = (deformationOrder?.VertexOrder ?? []).ToImmutableArray(),
+            DeformationPrefixCounts = (deformationOrder?.PrefixCounts ?? []).ToImmutableArray(),
+            LevelMaxErrors = (deformationOrder?.LevelMaxErrors ?? []).ToImmutableArray(),
+            LevelCoverIndices = (levelCovers?.Indices ?? []).ToImmutableArray(),
+            LevelCoverFirstIndex = (levelCovers?.LevelFirstIndex ?? []).ToImmutableArray(),
+            LevelCoverIndexCount = (levelCovers?.LevelIndexCount ?? []).ToImmutableArray(),
         };
         payload.ValidatePortablePayload();
         return payload;

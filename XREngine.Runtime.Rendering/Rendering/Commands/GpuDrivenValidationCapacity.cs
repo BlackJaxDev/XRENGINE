@@ -9,11 +9,11 @@ namespace XREngine.Rendering.Commands;
 internal static class GpuDrivenValidationCapacity
 {
     internal static uint Multiplier { get; } = ResolveMultiplier(
-        Environment.GetEnvironmentVariable(
+        XREnvironment.GetValue(
             XREngineEnvironmentVariables.GpuDrivenValidationCapacityMultiplier));
 
     internal static uint Floor { get; } = ResolveFloor(
-        Environment.GetEnvironmentVariable(
+        XREnvironment.GetValue(
             XREngineEnvironmentVariables.GpuDrivenValidationCapacityFloor));
 
     internal static uint Apply(uint requiredCapacity)

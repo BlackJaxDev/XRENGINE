@@ -33,12 +33,12 @@ public sealed record AdvancedLatePassMetadata
     public string? TemporalUnsupportedReason { get; init; }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="AdvancedLatePassMetadata"/> record for reflection and YAML serialization.
+    /// Creates metadata with the default values for the YAML deserializer. A saved or copied
+    /// material (for example a prefab copy made by <c>SceneNodePrefabUtility.CloneHierarchy</c>)
+    /// reads its metadata this way, and the deserializer then sets each saved property.
     /// </summary>
-    public AdvancedLatePassMetadata()
-        : this(EAdvancedLatePassKind.SortedAlpha)
-    {
-    }
+    private AdvancedLatePassMetadata()
+        => SceneColorSamplerName = AdvancedSceneColorContract.SceneColorSamplerName;
 
     public AdvancedLatePassMetadata(
         EAdvancedLatePassKind kind,

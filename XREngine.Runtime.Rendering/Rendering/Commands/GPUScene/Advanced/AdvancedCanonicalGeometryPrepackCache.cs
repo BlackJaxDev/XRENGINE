@@ -38,7 +38,7 @@ internal sealed class AdvancedCanonicalGeometryPrepackCache
     /// before launch to disable it; the publication then packs every mesh on the swap thread.
     /// </summary>
     internal static bool Enabled { get; } = !string.Equals(
-        Environment.GetEnvironmentVariable("XRE_ADVANCED_GEOMETRY_PREPACK"),
+        XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedGeometryPrepack),
         "0",
         StringComparison.Ordinal);
 

@@ -23,12 +23,25 @@ public sealed partial class AdvancedGpuScenePublisher
     private readonly List<XRMesh> _consumedPrepackMeshes = [];
     private long _prepackHitCount;
     private long _prepackMissCount;
+    private long _geometryPagePoolRejectCount;
+    // The frame of the publication that runs now. Pages that a streamed geometry makes resident
+    // at registration count as touched in it.
+    private long _geometryStreamingFrame;
+    // The Stopwatch timestamp after which the next [GeometryStreaming] telemetry line is written.
+    private long _nextGeometryStreamingLogTimestamp;
+    private static readonly TimeSpan GeometryStreamingLogInterval = TimeSpan.FromSeconds(2);
 
     /// <summary>Gets the staged meshes that were copied from a worker-packed entry.</summary>
     internal long PrepackHitCount => _prepackHitCount;
 
     /// <summary>Gets the staged meshes that were packed on the swap thread.</summary>
     internal long PrepackMissCount => _prepackMissCount;
+
+    /// <summary>
+    /// Gets the geometries with geometry pages that the page pool did not have free slots for.
+    /// Each one draws from its meshlet arenas instead.
+    /// </summary>
+    internal long GeometryPagePoolRejectCount => _geometryPagePoolRejectCount;
 
     /// <summary>Worker-packed canonical geometry that the staging step copies instead of packing.</summary>
     internal AdvancedCanonicalGeometryPrepackCache Prepack { get; } = new();
@@ -64,6 +77,16 @@ public sealed partial class AdvancedGpuScenePublisher
         => PackTriangleWords(triangleBytes, destination);
 
     /// <summary>
+    /// Returns the number of level cover indices that the publisher appends after the canonical
+    /// indices of a geometry: the cover table of a published cluster hierarchy payload, or zero.
+    /// The payload validation already checked that the covers address only vertices of the mesh.
+    /// </summary>
+    private static int ResolveLevelCoverIndexCount(MeshletPayload? payload, bool useMeshlets)
+        => useMeshlets && payload is { HasClusterHierarchy: true, HasDeformationOrder: true }
+            ? payload.LevelCoverIndices.Length
+            : 0;
+
+    /// <summary>
     /// Gets the ready pre-packed entry for the planned geometry. The entry must describe the same
     /// revision, buffers, triangle list, meshlet payload and counts as the mesh does now.
     /// </summary>
@@ -96,6 +119,11 @@ public sealed partial class AdvancedGpuScenePublisher
         public int VertexCount;
         public int IndexOffset;
         public int IndexCount;
+        /// <summary>
+        /// Level cover indices staged after the <see cref="IndexCount"/> canonical indices of a
+        /// skinned cluster hierarchy geometry, or zero.
+        /// </summary>
+        public int CoverIndexCount;
         public int DescriptorOffset;
         public int DescriptorCount;
         public int MeshletIndexOffset;
@@ -104,6 +132,15 @@ public sealed partial class AdvancedGpuScenePublisher
         public int TriangleWordCount;
         public uint ClusterHierarchyWordOffset;
         public uint ClusterLevel0Count;
+        /// <summary>The geometry flags of the layout, such as geometry pages.</summary>
+        public EAdvancedGeometryFlags GeometryFlags;
+        /// <summary>The geometry pages of the layout, or null.</summary>
+        public MeshletPageSet? Pages;
+        /// <summary>
+        /// The index of the first-page word in the staged triangle words of this geometry
+        /// (relative to <see cref="TriangleWordOffset"/>). Valid only with <see cref="Pages"/>.
+        /// </summary>
+        public int FirstPageWordIndex;
     }
 
     /// <summary>
@@ -187,7 +224,9 @@ public sealed partial class AdvancedGpuScenePublisher
             1u);
         ReadOnlySpan<byte> vertexBytes = MemoryMarshal.AsBytes(
             _packedGeometryVertices.AsSpan(staged.VertexOffset, staged.VertexCount));
-        ReadOnlySpan<uint> indices = _packedGeometryIndices.AsSpan(staged.IndexOffset, staged.IndexCount);
+        ReadOnlySpan<uint> indices = _packedGeometryIndices.AsSpan(
+            staged.IndexOffset,
+            checked(staged.IndexCount + staged.CoverIndexCount));
 
         if (staged.DescriptorCount == 0)
             return Database.Scene.Geometry.TryAddStatic(
@@ -196,13 +235,26 @@ public sealed partial class AdvancedGpuScenePublisher
                 registration,
                 out geometry);
 
+        EAdvancedGeometryFlags geometryFlags = staged.GeometryFlags;
+        bool reservedPages = false;
+        bool streamedPages = false;
+        AdvancedGeometryPagePool.PageRange pageRange = default;
+        if (staged.Pages is { } pages)
+        {
+            reservedPages = TryReserveGeometryPages(pages, in staged, out pageRange, out streamedPages);
+            if (!reservedPages)
+                geometryFlags &= ~EAdvancedGeometryFlags.StreamedPages;
+        }
+
         registration = registration with
         {
             MeshletCount = checked((uint)staged.DescriptorCount),
             ClusterLevel0Count = staged.ClusterLevel0Count,
             ClusterHierarchyWordOffset = staged.ClusterHierarchyWordOffset,
+            LevelCoverIndexCount = checked((uint)staged.CoverIndexCount),
+            GeometryFlags = geometryFlags,
         };
-        return Database.Scene.Geometry.TryAddMeshletLocal(
+        bool added = Database.Scene.Geometry.TryAddMeshletLocal(
             vertexBytes,
             indices,
             _packedMeshletDescriptors.AsSpan(staged.DescriptorOffset, staged.DescriptorCount),
@@ -210,6 +262,142 @@ public sealed partial class AdvancedGpuScenePublisher
             _packedMeshletTriangleWords.AsSpan(staged.TriangleWordOffset, staged.TriangleWordCount),
             registration,
             out geometry);
+        if (reservedPages)
+        {
+            if (!added)
+                Database.Scene.Geometry.PagePool.Release(pageRange);
+            else
+            {
+                Database.Scene.Geometry.PagePool.Bind(geometry, pageRange);
+                // The streaming manager loads and evicts the pages that are not resident yet.
+                if (streamedPages)
+                    GetGeometryStreamingManager().RegisterGeometry(geometry, pageRange, staged.Pages!, _geometryStreamingFrame);
+            }
+        }
+        return added;
+    }
+
+    /// <summary>
+    /// Returns the residency manager of the geometry page pool, and creates it on the first call
+    /// with the latched upload budget of <see cref="AdvancedVirtualGeometryPolicy"/>.
+    /// </summary>
+    private MeshletPageStreamingManager GetGeometryStreamingManager()
+        => Database.Scene.Geometry.GetOrCreateStreamingManager(new MeshletPageResidencyPolicy
+        {
+            UploadBytesPerUpdate = AdvancedVirtualGeometryPolicy.GeometryStreamingUploadBytes,
+        });
+
+    /// <summary>
+    /// Runs the geometry page streaming step of a publication, before the publication captures
+    /// the page table. Gives the queued GPU feedback to the streaming manager and runs one
+    /// residency update, which loads requested pages into free pool slots and evicts old pages.
+    /// Evicted slots retire until the next sealed publication, the first one whose page table does
+    /// not name them, is reclaimed. Does nothing while streaming is off or before the first
+    /// streamed geometry registers.
+    /// </summary>
+    private void UpdateGeometryStreaming(ulong frameId)
+    {
+        _geometryStreamingFrame = (long)frameId;
+        if (!AdvancedVirtualGeometryPolicy.GeometryStreamingEnabled)
+            return;
+
+        AdvancedGeometryDatabase geometry = Database.Scene.Geometry;
+        if (geometry.StreamingManager is not { } manager)
+        {
+            geometry.StreamingFeedback.Clear();
+            return;
+        }
+
+        using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.GeometryStreaming"))
+        {
+            geometry.StreamingFeedback.DrainTo(manager);
+            manager.Update(
+                _geometryStreamingFrame,
+                AdvancedVirtualGeometryPolicy.PixelThreshold,
+                Database.NextPublicationSequence);
+        }
+
+        LogGeometryStreamingTelemetry(geometry, manager);
+    }
+
+    /// <summary>
+    /// Writes one <c>[GeometryStreaming]</c> rendering log line every
+    /// <see cref="GeometryStreamingLogInterval"/>: the resident pages, the pool slot use, the
+    /// requests of the last update by band, the totals of loads, evictions, overflows, failed
+    /// pages and feedback frames, and the geometry registrations and removals. A removal releases
+    /// the resident pages of its geometry without an eviction, so the line counts these pages
+    /// separately. Live validation reads this line to confirm that the GPU feedback reaches the
+    /// manager and that pages load and evict. The time test runs first, so the frames between two
+    /// lines build no string.
+    /// </summary>
+    private void LogGeometryStreamingTelemetry(AdvancedGeometryDatabase geometry, MeshletPageStreamingManager manager)
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now < _nextGeometryStreamingLogTimestamp)
+            return;
+
+        _nextGeometryStreamingLogTimestamp = now + (long)(GeometryStreamingLogInterval.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+        MeshletPageStreamingTelemetry telemetry = manager.Telemetry;
+        AdvancedGeometryPagePool pool = geometry.PagePool;
+        MeshletPageFeedbackQueue feedback = geometry.StreamingFeedback;
+        Debug.Rendering(
+            $"[GeometryStreaming] frame={_geometryStreamingFrame} resident={telemetry.ResidentPages} pages ({telemetry.ResidentBytes / (1024.0 * 1024.0):F1} MiB) " +
+            $"slots={pool.UsedSlotCount}/{pool.SlotCount} " +
+            $"requested={telemetry.LastRequestedPages} (foreground={telemetry.LastRequestsInBand(EMeshletPageRequestBand.Foreground)} prefetch={telemetry.LastRequestsInBand(EMeshletPageRequestBand.Prefetch)}) " +
+            $"loads={telemetry.TotalLoads} evictions={telemetry.TotalEvictions} overflows={telemetry.TotalRequestOverflows} failed={telemetry.FailedPages} " +
+            $"geometries={telemetry.RegisteredGeometries} registrations={telemetry.TotalGeometryRegistrations} removals={telemetry.TotalGeometryRemovals} releasedPages={telemetry.TotalReleasedPages} " +
+            $"feedbackFrames={feedback.EnqueuedFrames} droppedFeedbackFrames={feedback.DroppedFrames}");
+    }
+
+    /// <summary>
+    /// True when the page pool changed its page table after <paramref name="publication"/> was
+    /// sealed, so that publication cannot be reused: the next frame must draw with a new capture
+    /// of the page table.
+    /// </summary>
+    private bool HasGeometryPageTableChanged(AdvancedGpuScenePublicationSnapshot publication)
+        => publication.GeometryPayloads.PageTableVersion != Database.Scene.Geometry.PagePool.Version;
+
+    /// <summary>
+    /// Removes a geometry from the streaming manager when its page range is retired or released.
+    /// </summary>
+    private void UnregisterStreamedGeometry(AdvancedGpuHandle geometry)
+        => Database.Scene.Geometry.StreamingManager?.UnregisterGeometry(geometry);
+
+    /// <summary>
+    /// Reserves page table entries and pool slots for the pages of a staged geometry, and writes
+    /// the first page into the page block of its staged triangle words, which the geometry add
+    /// then copies to the triangle-word arena. With geometry streaming on, a static geometry
+    /// (a page set without skinned topology) gets slots only for its root pages, and
+    /// <paramref name="streamed"/> is true: the caller then registers it with the streaming
+    /// manager, which loads the other pages on request. Otherwise every page gets a slot. Returns
+    /// false when the pool does not have enough free slots; the geometry then registers without
+    /// <see cref="EAdvancedGeometryFlags.StreamedPages"/> and draws from its meshlet arenas.
+    /// </summary>
+    private bool TryReserveGeometryPages(
+        MeshletPageSet pages,
+        in StagedCanonicalGeometry staged,
+        out AdvancedGeometryPagePool.PageRange range,
+        out bool streamed)
+    {
+        AdvancedGeometryPagePool pool = Database.Scene.Geometry.PagePool;
+        pool.EnsureConfigured(AdvancedVirtualGeometryPolicy.GeometryPagePoolSlotCount);
+        streamed = AdvancedVirtualGeometryPolicy.GeometryStreamingEnabled &&
+            pages.Table.Kind == EMeshletPageFlags.None &&
+            pages.Table.RootPageCount > 0;
+        int residentPageCount = streamed ? pages.Table.RootPageCount : pages.PageImages.Length;
+        if (!pool.TryReserve(pages, residentPageCount, out range))
+        {
+            ++_geometryPagePoolRejectCount;
+            Debug.RenderingWarningEvery(
+                "AdvancedGpuScenePublisher.GeometryPagePoolFull",
+                TimeSpan.FromSeconds(5),
+                $"Geometry page pool has no room for {residentPageCount} pages (used {pool.UsedSlotCount}/{pool.SlotCount} slots); the geometry draws from its meshlet arenas. Rejected geometries: {_geometryPagePoolRejectCount}.");
+            streamed = false;
+            return false;
+        }
+
+        _packedMeshletTriangleWords[staged.TriangleWordOffset + staged.FirstPageWordIndex] = range.FirstPage;
+        return true;
     }
 
     private bool TryStagePlannedGeometry(out string failure)
@@ -267,15 +455,17 @@ public sealed partial class AdvancedGpuScenePublisher
                 int descriptorCount = layout.DescriptorCount;
                 int meshletIndexCount = layout.VertexIndexCount;
                 int triangleWordCount = layout.TriangleWordCount;
+                int coverIndexCount = ResolveLevelCoverIndexCount(payload, useMeshlets);
                 ref StagedCanonicalGeometry sized = ref _stagedGeometry[commandIndex];
                 if (!ReferenceEquals(sized.SizedPayload, payload) ||
                     sized.SizedWithMeshlets != useMeshlets ||
                     sized.VertexCount != vertexCount || sized.IndexCount != indexCount ||
+                    sized.CoverIndexCount != coverIndexCount ||
                     sized.DescriptorCount != descriptorCount ||
                     sized.MeshletIndexCount != meshletIndexCount ||
                     sized.TriangleWordCount != triangleWordCount ||
                     vertexCount > _packedGeometryVertices.Length - vertexCursor ||
-                    indexCount > _packedGeometryIndices.Length - indexCursor ||
+                    indexCount + coverIndexCount > _packedGeometryIndices.Length - indexCursor ||
                     descriptorCount > _packedMeshletDescriptors.Length - descriptorCursor ||
                     meshletIndexCount > _packedMeshletVertexIndices.Length - meshletIndexCursor ||
                     triangleWordCount > _packedMeshletTriangleWords.Length - triangleWordCursor)
@@ -284,7 +474,10 @@ public sealed partial class AdvancedGpuScenePublisher
                     return false;
                 }
 
-                if (prepacked && prepack.UseMeshlets == useMeshlets)
+                // A worker entry packed before geometry pages were attached has a shorter
+                // triangle-word stream; it is packed again here.
+                if (prepacked && prepack.UseMeshlets == useMeshlets &&
+                    (!useMeshlets || prepack.MeshletTriangleWords.Length == triangleWordCount))
                 {
                     prepack.Vertices.AsSpan(0, vertexCount).CopyTo(
                         _packedGeometryVertices.AsSpan(vertexCursor, vertexCount));
@@ -330,6 +523,11 @@ public sealed partial class AdvancedGpuScenePublisher
                     }
                 }
 
+                // The level covers follow the canonical indices in the same index arena range.
+                if (coverIndexCount != 0)
+                    payload!.LevelCoverIndices.AsSpan().CopyTo(
+                        _packedGeometryIndices.AsSpan(indexCursor + indexCount, coverIndexCount));
+
                 if (!ReferenceEquals(mesh.Buffers, buffers) ||
                     !ReferenceEquals(mesh.MeshletPayload, payload) ||
                     mesh.GeometryRevision != plan.MeshGeometryRevision ||
@@ -350,6 +548,7 @@ public sealed partial class AdvancedGpuScenePublisher
                     VertexCount = vertexCount,
                     IndexOffset = indexCursor,
                     IndexCount = indexCount,
+                    CoverIndexCount = coverIndexCount,
                     DescriptorOffset = descriptorCursor,
                     DescriptorCount = descriptorCount,
                     MeshletIndexOffset = meshletIndexCursor,
@@ -358,9 +557,12 @@ public sealed partial class AdvancedGpuScenePublisher
                     TriangleWordCount = triangleWordCount,
                     ClusterHierarchyWordOffset = layout.ClusterHierarchyWordOffset,
                     ClusterLevel0Count = layout.ClusterLevel0Count,
+                    GeometryFlags = layout.GeometryFlags,
+                    Pages = layout.Pages,
+                    FirstPageWordIndex = layout.Pages is null ? 0 : layout.FirstPageWordIndex,
                 };
                 vertexCursor += vertexCount;
-                indexCursor += indexCount;
+                indexCursor += indexCount + coverIndexCount;
                 descriptorCursor += descriptorCount;
                 meshletIndexCursor += meshletIndexCount;
                 triangleWordCursor += triangleWordCount;
@@ -392,7 +594,7 @@ public sealed partial class AdvancedGpuScenePublisher
             return $"Geometry record add has no capacity or publication delta; {state}";
 
         ulong vertexBytes = (ulong)staged.VertexCount * (uint)Unsafe.SizeOf<AdvancedDeformedVertex>();
-        ulong indexBytes = (ulong)staged.IndexCount * sizeof(uint);
+        ulong indexBytes = (ulong)(staged.IndexCount + staged.CoverIndexCount) * sizeof(uint);
         if (vertexBytes > uint.MaxValue ||
             !geometry.StaticVertexArena.CanAppend((uint)vertexBytes, (uint)Unsafe.SizeOf<AdvancedDeformedVertex>()))
             return $"Static vertex arena rejected the append of {vertexBytes} bytes; {state}";
@@ -478,18 +680,20 @@ public sealed partial class AdvancedGpuScenePublisher
                 int descriptorCount = layout.DescriptorCount;
                 int meshletIndexCount = layout.VertexIndexCount;
                 int triangleWordCount = layout.TriangleWordCount;
+                int coverIndexCount = ResolveLevelCoverIndexCount(payload, useMeshlets);
                 _stagedGeometry[commandIndex] = new StagedCanonicalGeometry
                 {
                     SizedPayload = payload,
                     SizedWithMeshlets = useMeshlets,
                     VertexCount = vertexCount,
                     IndexCount = indexCount,
+                    CoverIndexCount = coverIndexCount,
                     DescriptorCount = descriptorCount,
                     MeshletIndexCount = meshletIndexCount,
                     TriangleWordCount = triangleWordCount,
                 };
                 totalVertexCount = checked(totalVertexCount + vertexCount);
-                totalIndexCount = checked(totalIndexCount + indexCount);
+                totalIndexCount = checked(totalIndexCount + indexCount + coverIndexCount);
                 totalMeshletDescriptorCount = checked(totalMeshletDescriptorCount + descriptorCount);
                 totalMeshletVertexIndexCount = checked(totalMeshletVertexIndexCount + meshletIndexCount);
                 totalMeshletTriangleWordCount = checked(totalMeshletTriangleWordCount + triangleWordCount);
@@ -500,7 +704,7 @@ public sealed partial class AdvancedGpuScenePublisher
                         vertexStride) ||
                     !TryAccumulateArenaAppend(
                         ref indexEnd,
-                        checked((ulong)indexCount * sizeof(uint)),
+                        checked((ulong)(indexCount + coverIndexCount) * sizeof(uint)),
                         sizeof(uint)))
                     return false;
 

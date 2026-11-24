@@ -1,4 +1,4 @@
-using MemoryPack;
+﻿using MemoryPack;
 using System;
 using System.ComponentModel;
 using System.Threading;
@@ -1145,7 +1145,7 @@ public static partial class RuntimeEngine
                 }
 
                 private static readonly bool s_directionalShadowStaticCacheDisabledByEnvironment =
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.DirectionalShadowStaticCache) is "0" or "false" or "False";
 
                 [Category("Shadows")]
                 [Description("Makes the emulated VR eye viewports use the cascaded HMD directional shadow source, as headset eyes do: the HMD cascades fit both eye frusta and the combined eye frustum. Default-pipeline eyes read them. Advanced eyes in SequentialViews still read the desktop cascades, because their views carry the desktop view kind. Use it to test the HMD cascade source (fit, lane groups, static tiles) without a headset. The environment variable XRE_EMULATED_VR_HMD_DIRECTIONAL_CASCADES=1 turns it on for the process.")]
@@ -1163,7 +1163,7 @@ public static partial class RuntimeEngine
                 }
 
                 private static readonly bool s_emulatedVrHmdDirectionalCascadesEnabledByEnvironment =
-                    Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EmulatedVrHmdDirectionalCascades) is "1" or "true" or "True";
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.EmulatedVrHmdDirectionalCascades) is "1" or "true" or "True";
 
                 [Category("Shadows")]
                 [Description("Centre of the directional cascade fit for the desktop camera. CameraPosition centres each cascade sphere on the camera, so turning the camera does not refit the cascades; the texels are 21-29% coarser in the default split. ViewCentroid centres it ahead of the camera: finer texels, but a turn refits the cascades.")]
@@ -3056,6 +3056,157 @@ public static partial class RuntimeEngine
                 {
                     get => _advancedVirtualGeometry;
                     set => SetField(ref _advancedVirtualGeometry, value);
+                }
+
+                private bool _advancedSkinnedVirtualGeometry = true;
+
+                /// <summary>
+                /// With <see cref="AdvancedVirtualGeometry"/> on, skinned meshlet draws of models cooked
+                /// with a cluster hierarchy also get the cluster cut, with the same
+                /// <see cref="AdvancedVirtualGeometryPixelThreshold"/>. On by default. The skinned cook
+                /// locks vertices where clothing layers touch other skinned meshes, so a layer (for
+                /// example stockings over skin) keeps its shape against the mesh under it. Off keeps
+                /// skinned draws at level 0 while static draws keep the cut. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With Advanced virtual geometry on, skinned meshlet draws also get the cluster cut. On by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedVirtualGeometry
+                {
+                    get => _advancedSkinnedVirtualGeometry;
+                    set => SetField(ref _advancedSkinnedVirtualGeometry, value);
+                }
+
+                private bool _advancedSkinnedDeformationLod;
+
+                /// <summary>
+                /// With <see cref="AdvancedSkinnedVirtualGeometry"/> on, a far skinned draw of a model
+                /// cooked with a deformation order deforms only the vertices that its coarsest allowed
+                /// cluster level reads. The preparation extractor chooses that minimum level from the
+                /// draw's posed bounds and the views, the aggregate deformation job deforms only the
+                /// prefix of the order for that level, and the skinned cluster cut never draws a finer
+                /// level. Off (the default) deforms every vertex. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With skinned virtual geometry on, far skinned draws deform only the vertices of their coarsest allowed cluster level. Off by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedDeformationLod
+                {
+                    get => _advancedSkinnedDeformationLod;
+                    set => SetField(ref _advancedSkinnedDeformationLod, value);
+                }
+
+                private bool _advancedSkinnedPosedClusterBounds = true;
+
+                /// <summary>
+                /// With <see cref="AdvancedSkinnedVirtualGeometry"/> on, chooses how the cluster cut
+                /// of a skinned draw measures distance. On (the default): each cluster group of a
+                /// skinned draw that the GPU deformed this frame is bounded by its own posed box, made
+                /// from its bones' current matrices, so distant parts of the draw get coarser clusters
+                /// and clusters outside the view are culled. Off: every cluster of a skinned draw uses
+                /// one distance, from the nearest point of the draw's bounds, and no skinned cluster is
+                /// culled. Use off to compare or to rule out the posed bounds. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With skinned virtual geometry on, bound each skinned cluster group by its posed bone box (finer distance and frustum culling per cluster). Off uses one distance per skinned draw. On by default. Read once at the first Advanced frame.")]
+                public bool AdvancedSkinnedPosedClusterBounds
+                {
+                    get => _advancedSkinnedPosedClusterBounds;
+                    set => SetField(ref _advancedSkinnedPosedClusterBounds, value);
+                }
+
+                private bool _advancedGeometryPages;
+
+                /// <summary>
+                /// With <see cref="AdvancedVirtualGeometry"/> on, cluster hierarchy geometry that was
+                /// imported with geometry pages (the <c>BuildStreamingPages</c> meshlet setting) draws
+                /// its clusters from the pages: the import attaches the cooked pages to the meshlet
+                /// payload, the publisher writes the page images to slots of the geometry page pool
+                /// (see <see cref="AdvancedGeometryPagePoolMiB"/>), and the meshlet task and mesh
+                /// stages and the surface reconstruction read the cluster descriptors, triangles and
+                /// static vertices from the pool through the page table. Every page stays resident
+                /// unless <see cref="AdvancedGeometryStreaming"/> is also on. Off by default.
+                /// Read once with <see cref="AdvancedVirtualGeometry"/>; the import reads it when it
+                /// attaches the pages.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With Advanced virtual geometry on, cluster hierarchy models imported with geometry pages draw their clusters from the pages. Every page stays resident unless geometry streaming is on. Off by default. Read once at the first Advanced frame.")]
+                public bool AdvancedGeometryPages
+                {
+                    get => _advancedGeometryPages;
+                    set => SetField(ref _advancedGeometryPages, value);
+                }
+
+                private int _advancedGeometryPagePoolMiB = 512;
+
+                /// <summary>
+                /// The size of the geometry page pool of <see cref="AdvancedGeometryPages"/>, in MiB
+                /// (16 to 2048). The pool holds one 128 KiB page image per slot, so 512 MiB holds
+                /// 4096 pages. A geometry whose pages do not fit in the free slots draws from its
+                /// meshlet arenas instead, and the publisher logs it. Read once with
+                /// <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Size of the Advanced geometry page pool in MiB (16 to 2048). Each 128 KiB slot holds one geometry page. Read once at the first Advanced frame.")]
+                public int AdvancedGeometryPagePoolMiB
+                {
+                    get => _advancedGeometryPagePoolMiB;
+                    set => SetField(ref _advancedGeometryPagePoolMiB, Math.Clamp(value, 16, 2048));
+                }
+
+                private bool _advancedGeometryStreaming;
+
+                /// <summary>
+                /// With <see cref="AdvancedGeometryPages"/> on, streams the pages of static cluster
+                /// hierarchy geometry. The publisher makes only the root pages of each geometry
+                /// resident. The meshlet task stage requests the missing pages of the cluster cut and
+                /// marks the resident pages that it uses. The publisher reads these requests from the
+                /// GPU, loads the pages into free pool slots within the upload budget (see
+                /// <see cref="AdvancedGeometryStreamingUploadMiBPerFrame"/>), and evicts the pages that
+                /// were not used for the longest time when the pool is full. A group whose finer pages
+                /// are not resident draws at the finest resident level. Skinned geometry keeps every
+                /// page resident. Off by default. Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("With Advanced geometry pages on, streams the pages of static cluster hierarchy models: only the root pages stay resident, and the cluster cut requests the finer pages that it needs. Off by default. Read once at the first Advanced frame.")]
+                public bool AdvancedGeometryStreaming
+                {
+                    get => _advancedGeometryStreaming;
+                    set => SetField(ref _advancedGeometryStreaming, value);
+                }
+
+                private int _advancedGeometryStreamingUploadMiBPerFrame = 4;
+
+                /// <summary>
+                /// The largest number of MiB of page images that one publication loads into the page
+                /// pool with <see cref="AdvancedGeometryStreaming"/> on (1 to 64). Each page is 128 KiB,
+                /// so 4 MiB loads at most 32 pages. The first load of a publication is always allowed.
+                /// Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Upload budget of Advanced geometry streaming in MiB per publication (1 to 64). Read once at the first Advanced frame.")]
+                public int AdvancedGeometryStreamingUploadMiBPerFrame
+                {
+                    get => _advancedGeometryStreamingUploadMiBPerFrame;
+                    set => SetField(ref _advancedGeometryStreamingUploadMiBPerFrame, Math.Clamp(value, 1, 64));
+                }
+
+                private int _advancedGeometryPageRequestCapacity = 4096;
+
+                /// <summary>
+                /// The number of page requests that the GPU can write in one frame with
+                /// <see cref="AdvancedGeometryStreaming"/> on (256 to 65536). Each request is 16 bytes.
+                /// The task stage writes each missing page only once per frame. When more pages are
+                /// missing, the GPU counts the overflow and the page is requested again in a later
+                /// frame. Read once with <see cref="AdvancedVirtualGeometry"/>.
+                /// </summary>
+                [Category("Advanced")]
+                [Description("Number of geometry page requests the GPU can write per frame with Advanced geometry streaming on (256 to 65536). Read once at the first Advanced frame.")]
+                public int AdvancedGeometryPageRequestCapacity
+                {
+                    get => _advancedGeometryPageRequestCapacity;
+                    set => SetField(ref _advancedGeometryPageRequestCapacity, Math.Clamp(value, 256, 65536));
                 }
 
                 private float _advancedVirtualGeometryPixelThreshold = 1.0f;

@@ -42,6 +42,7 @@ public partial class UnitTestingWorldSettings
     public bool EnableProfilerLogging = false;
     public UnitTestFbxLogVerbosity FbxLogVerbosity { get; set; } = UnitTestFbxLogVerbosity.UseEnvironment;
     public UnitTestingRenderSettings Rendering { get; set; } = new();
+    public UnitTestingCrowdBenchmarkSettings CrowdBenchmark { get; set; } = new();
     public bool RiveUI = false;
     public bool GPURenderDispatch = false;
     public bool StartInPlayModeWithoutTransitions = false;

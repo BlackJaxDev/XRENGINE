@@ -16,7 +16,7 @@ public static class FramePacingTimeline
 
     /// <summary>Gets whether the timeline records marks.</summary>
     public static readonly bool Enabled =
-        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.FramePacingTimeline) == "1";
+        XREnvironment.GetValue(XREngineEnvironmentVariables.FramePacingTimeline) == "1";
 
     private static readonly long[] s_timestamps = Enabled ? new long[Capacity] : [];
     private static readonly int[] s_threads = Enabled ? new int[Capacity] : [];

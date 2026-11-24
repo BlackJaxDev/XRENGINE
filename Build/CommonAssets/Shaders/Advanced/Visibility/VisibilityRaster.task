@@ -22,6 +22,17 @@
 //   again by LateVisibility) recomputes what the early raster drew from the same
 //   inputs and launches only the other survivors.
 //
+// Descriptors: a lane loads its meshlet descriptor only after the cluster cut
+// test passes. A geometry with geometry pages (VisibilityStreamedGeometry.glslinc)
+// reads the descriptor from the page of the cluster; another geometry reads the
+// meshlet descriptor table.
+//
+// Geometry streaming: a geometry with geometry pages uses the streamed cut
+// (XR_ADV_StreamedClusterCut), which draws a cluster only when its page is
+// resident and keeps a parent drawn while the finer page is missing. Every lane
+// of such a geometry writes its page request and touch bit at the cut, before
+// the history, cone and Hi-Z tests, so occlusion does not change the requests.
+//
 // View rule: the task stage cannot read gl_ViewIndex, so every test uses the
 // view record and the history of push.viewIndex. The mesh stage discards all
 // hardware views except push.viewIndex, so this output rasterizes only into
@@ -39,6 +50,7 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
 
 #define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityRasterPush.viewIndex
 #define XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS 1
+#define XR_ADV_ENABLE_GEOMETRY_STREAMING_FEEDBACK 1
 #if defined(XR_ADV_VISIBILITY_LATE_TASK)
 #define XR_ADV_ENABLE_DEPTH_PYRAMID_IMAGES 1
 #endif
@@ -113,30 +125,93 @@ void main()
             XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
             XRAdvancedMeshletDrawCullState drawState =
                 XR_ADV_MeshletDrawCullState(transform.world, payload.cullMode, producer);
-            XRAdvancedVisibilityMeshletDescriptor meshlet = XR_ADV_VisibilityMeshlets.records[meshletIndex];
-            laneTriangles = meshlet.triangleCount;
+            uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+                payload.geometry, VisibilityGeometryLookupSegment, XR_ADV_DIAGNOSTIC_MESH);
+            bool geometryValid = geometryDense != XR_ADV_INVALID_DENSE_INDEX;
+            XRAdvancedGeometryRecord geometry;
+            XRAdvancedStreamedGeometry streamed;
+            streamed.valid = false;
+            if (geometryValid)
+            {
+                geometry = XR_ADV_LoadGeometry(geometryDense);
+                streamed = XR_ADV_StreamedGeometry(geometry);
+            }
 #if defined(XR_ADV_CLUSTER_LOD_CUT)
             // The cut variant tests the cluster cut first. A cluster outside the
             // cut is not drawn, and the late variant does not set its history bit.
             // A cluster that enters the cut has no history bit, so the late raster
             // tests it against this frame's depth pyramid.
-            XRAdvancedClusterCutState cut = XR_ADV_ClusterCutState(payload.geometry, producer, viewIndex, view);
-            bool inCut = !cut.applies || XR_ADV_ClusterInCut(meshletIndex, cut, drawState);
-            cullReason = inCut
-                ? XR_ADV_ClassifyVisibilityMeshlet(
+            XRAdvancedClusterCutState cut = XR_ADV_ClusterCutStateForGeometry(
+                geometry, geometryValid, producer, viewIndex, view);
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED)
+            // A skinned draw gets posed group bounds when its GPU deformation ran
+            // this frame and its geometry has skin tables; otherwise one distance,
+            // from the draw's posed bounds, serves every cluster.
+            if (producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
+                XR_ADV_ClusterCutUseDrawBound(cut, payloadIndex, payload, drawState);
+#endif
+            bool inCut;
+            if (cut.applies && streamed.valid)
+            {
+                XRAdvancedStreamedCutResult streamedCut =
+                    XR_ADV_StreamedClusterCut(meshletIndex, cut, drawState, streamed, view);
+                inCut = streamedCut.draw;
+                if (streamedCut.touch)
+                    XR_ADV_StreamingTouchSlot(streamedCut.groupSlot);
+                if (streamedCut.request)
+                {
+                    XR_ADV_StreamingRequestPage(
+                        streamedCut.groupPage, streamedCut.band, streamedCut.priority, streamedCut.pixelScale);
+                }
+            }
+            else
+            {
+                inCut = !cut.applies || XR_ADV_ClusterInCut(meshletIndex, cut, drawState);
+            }
+#else
+            bool inCut = true;
+#endif
+            // The cut test reads only the cluster and group records. The
+            // descriptor is loaded only for a cluster in the cut, because a
+            // geometry with geometry pages reads it from the cluster's page.
+            XRAdvancedVisibilityMeshletDescriptor meshlet;
+            bool meshletLoaded = inCut &&
+                XR_ADV_LoadDrawMeshlet(geometry, streamed, meshletIndex, meshlet);
+            laneTriangles = meshletLoaded ? meshlet.triangleCount : 0u;
+#if defined(XR_ADV_CLUSTER_LOD_CUT)
+            cullReason = !inCut
+                ? XR_ADV_MESHLET_CULL_LOD
+                : !meshletLoaded
+                    ? XR_ADV_MESHLET_CULL_INVALID
+                    : XR_ADV_ClassifyVisibilityMeshlet(
+                        meshlet,
+                        drawState,
+                        producer,
+                        view.viewProjectionUnjittered,
+                        view.cameraPositionAndNear.xyz);
+#if defined(XR_ADV_CLUSTER_LOD_CUT_SKINNED_POSED)
+            // A posed skinned cluster gets the frustum test with the sphere around
+            // its posed box. It still skips the cone test (normals change with
+            // the pose), history and Hi-Z. The early and late variants compute
+            // the same result from the same frame's palette, so a late recheck
+            // matches what the early raster drew.
+            if (inCut && cut.posed && cullReason == XR_ADV_MESHLET_CULL_NONE)
+            {
+                vec4 posedSphere;
+                if (XR_ADV_SkinnedClusterWorldSphere(meshletIndex, meshlet.boundsSphere, cut, posedSphere) &&
+                    !XR_ADV_MeshletSphereInsideFrustum(posedSphere, view.viewProjectionUnjittered))
+                    cullReason = XR_ADV_MESHLET_CULL_FRUSTUM;
+            }
+#endif
+#else
+            cullReason = !meshletLoaded
+                ? XR_ADV_MESHLET_CULL_INVALID
+                : XR_ADV_ClassifyVisibilityMeshlet(
                     meshlet,
                     drawState,
                     producer,
                     view.viewProjectionUnjittered,
-                    view.cameraPositionAndNear.xyz)
-                : XR_ADV_MESHLET_CULL_LOD;
-#else
-            cullReason = XR_ADV_ClassifyVisibilityMeshlet(
-                meshlet,
-                drawState,
-                producer,
-                view.viewProjectionUnjittered,
-                view.cameraPositionAndNear.xyz);
+                    view.cameraPositionAndNear.xyz);
 #endif
 
             // History applies to static meshlets only; skinned meshlets are never

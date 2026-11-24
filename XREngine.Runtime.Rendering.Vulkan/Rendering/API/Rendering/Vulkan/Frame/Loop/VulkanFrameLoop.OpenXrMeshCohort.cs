@@ -36,7 +36,7 @@ internal sealed partial class VulkanFrameLoop
     private int _openXrMeshCohortWitnessMismatches;
 
     private static EOpenXrMeshCohortMode ResolveOpenXrMeshCohortMode()
-        => Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrMeshCohort)?.Trim() switch
+        => XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrMeshCohort)?.Trim() switch
         {
             "0" => EOpenXrMeshCohortMode.Off,
             "witness" => EOpenXrMeshCohortMode.Witness,

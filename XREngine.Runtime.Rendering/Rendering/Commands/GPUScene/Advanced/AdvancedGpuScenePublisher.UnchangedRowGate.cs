@@ -19,7 +19,7 @@ namespace XREngine.Rendering.Commands;
 public sealed partial class AdvancedGpuScenePublisher
 {
     private static readonly bool s_scenePublicationDiagnostics =
-        Environment.GetEnvironmentVariable("XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS") == "1";
+        XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedScenePublicationDiagnostics) == "1";
 
     /// <summary>
     /// Gets whether XRE_ADVANCED_SCENE_PUBLICATION_DIAGNOSTICS=1 enables the sampled lines of
@@ -121,6 +121,9 @@ public sealed partial class AdvancedGpuScenePublisher
         UnchangedRowGateScratch scratch = default;
         scratch.AcceptMovedRows = true;
         _movedRowCount = 0;
+        // Refreshes and rebinds that an earlier walk recorded belong to that walk.
+        _resourcePublisher.ClearStagedTextureRefreshes();
+        ClearMaterialRebinds();
         int rowCount = _plannedCommandCount;
         bool rowsUnchanged = true;
         int commandIndex = 0;
@@ -478,8 +481,8 @@ public sealed partial class AdvancedGpuScenePublisher
     /// Only <see cref="EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding"/>
     /// takes this path. The native Uber encoder gives it from the engine semantic (which
     /// advances the shader state revision), the Uber authored state (Uber state revision), the
-    /// alpha-to-coverage option (render options), the parameter values (value version), and the
-    /// texture list and sampler names (layout and resource versions); the remaining case is a
+    /// alpha-to-coverage option without a cutoff test (render options and value version), the
+    /// parameter values (value version), and the texture list and sampler names (layout and resource versions); the remaining case is a
     /// fixed schema size. The texture-state reasons of the resource encoder, such as an empty
     /// texture, also depend on texture contents that no material version tracks, so they keep
     /// the stage comparison. A false result only sends the row to that comparison.
@@ -622,8 +625,10 @@ public sealed partial class AdvancedGpuScenePublisher
         ref UnchangedRowGateScratch scratch)
     {
         int registrationIndex = identity.RegistrationIndex;
-        // Only rows that reused the committed material plan prove that the
-        // committed material row is current for these material inputs.
+        // Only rows that reused the committed material plan, or whose resolved
+        // material plan a successful publication committed (see
+        // CaptureCommittedMaterialPlans), prove that the committed material row
+        // is current for these material inputs.
         if (!plan.ReusedCommittedMaterial ||
             registrationIndex < 0 ||
             registrationIndex != plan.RegistrationIndex ||
@@ -754,6 +759,8 @@ public sealed partial class AdvancedGpuScenePublisher
                     cache.State,
                     bindings))
                 return FailRow(ref scratch, EAdvancedPreparedGateOutcome.MaterialChanged);
+            if (!preparing && _lastCheckRequestedMaterialRebind)
+                RecordMaterialRebind(commandIndex, registration.Material);
             scratch.CheckedHeaderMaterial = material;
             scratch.CheckedHeaderHandle = registration.Material;
         }
@@ -796,7 +803,10 @@ public sealed partial class AdvancedGpuScenePublisher
             return true;
         }
 
-        if (!WitnessedCommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface))
+        // Only the swap-time pass may stage texture refreshes: it runs at the publication
+        // boundary, and the retained-row commit that follows applies them.
+        if (!WitnessedCommittedMaterialBindingsMatch(handle, material, layout, bindings, in engineSurface, in uberSurface,
+                stageTextureRefreshes: !preparing))
             return false;
 
         if (preparing && epoch != 0UL)
@@ -910,11 +920,17 @@ public sealed partial class AdvancedGpuScenePublisher
             return false;
         }
 
-        // No row changes material or resource ownership in this publication.
+        // No row changes material ownership in this publication. A material rebind keeps
+        // its handle and only plans a resource change of that material.
         _plannedMaterialCount = 0;
         _plannedMaterialReleaseCount = 0;
         _resourceAcquireCount = 0;
         _resourceReleaseCount = 0;
+        // A frame with both kinds of in-place change takes the full plan, so the texture
+        // table capacity check of the texture refreshes covers every write of the commit.
+        if (_materialRebindCount != 0 &&
+            (_resourcePublisher.StagedTextureRefreshCount != 0 || !TryPlanMaterialRebinds()))
+            return false;
         bool hasGlobalResources;
         string globalResourceFailure;
         long globalPreflightStart = CollectVisibleStageTimings.StartIn(ECollectVisibleSection.WorldSwap);
@@ -922,7 +938,20 @@ public sealed partial class AdvancedGpuScenePublisher
             hasGlobalResources = TryPreflightGlobalResources(in globalResources, out globalResourceFailure);
         CollectVisibleStageTimings.End(ECollectVisibleStage.SwapAdvancedGlobalPreflight, globalPreflightStart);
         bool resourceMutation = hasGlobalResources && HasPlannedResourceMutation();
-        bool requiresCommit = resourceMutation || !publicationRetained;
+        // Texture records that the gate refreshes in place need a new publication, because
+        // the retained publication holds the old records. A frame that also changes global
+        // resource ownership takes the full plan, so the texture table capacity check below
+        // covers every write of the commit.
+        bool textureRefresh = _resourcePublisher.StagedTextureRefreshCount != 0;
+        if (textureRefresh && hasGlobalResources &&
+            (resourceMutation || !_resourcePublisher.CanApplyStagedTextureRefreshes()))
+            return false;
+        // Streaming loads and evictions change the page table without a row change. The retained
+        // publication holds the old table, so a new publication must capture it.
+        bool pageTableChanged = publicationRetained &&
+            Database.TryGetPublicationSnapshot(in candidate, out AdvancedGpuScenePublicationSnapshot retainedSnapshot) &&
+            HasGeometryPageTableChanged(retainedSnapshot);
+        bool requiresCommit = resourceMutation || textureRefresh || pageTableChanged || !publicationRetained;
         // The full plan repeats the global preflight; it has no other effect.
         if (hasGlobalResources && requiresCommit && !_committedSubmissionRowsValid)
             return false;
@@ -1046,8 +1075,11 @@ public sealed partial class AdvancedGpuScenePublisher
         {
             using (RuntimeEngine.Profiler.Start("GpuIndirect.AdvancedPublication.ApplyTransitions"))
             {
-                // With no planned material, these steps apply only the global
-                // resource acquisitions, rows, and releases.
+                // Texture records that the gate staged keep their handles, so no
+                // material record or row changes for them.
+                _resourcePublisher.ApplyStagedTextureRefreshes();
+                // These steps apply the planned material rebinds (if any), the
+                // global resource acquisitions, the rows, and the releases.
                 ApplyPreflightedMaterialTransitions();
                 ApplyPreflightedGlobalResources();
                 ApplyMovedRowPatches();

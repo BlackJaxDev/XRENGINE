@@ -945,6 +945,12 @@ public partial class XRMesh : ICookedBinarySerializable
 
     private MeshBufferEncoding ResolveEncoding(XRDataBuffer? buffer, string streamKey)
     {
+        // A clone reads the payload back at once and discards it. LZMA encoding of large
+        // streams (blendshape deltas most of all) takes most of the clone time, and Snorm16
+        // would make the clone's normals differ from the source, so store every stream raw.
+        if (TransientSerializationScope.IsActive)
+            return MeshBufferEncoding.Raw;
+
         if (!string.IsNullOrWhiteSpace(streamKey) && _bufferEncodingOverrides.TryGetValue(streamKey, out MeshBufferEncoding overrideEncoding))
             return ResolveMeshletOwnershipSafeEncoding(buffer, overrideEncoding);
 

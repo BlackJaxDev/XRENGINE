@@ -122,7 +122,7 @@ public unsafe partial class OpenXRAPI
 
     public OpenXrSmokeSummary CreateSmokeSummary(string? logDirectory = null)
     {
-        string? runtimeManifestPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? runtimeManifestPath = XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson);
         if (string.IsNullOrWhiteSpace(runtimeManifestPath))
             runtimeManifestPath = TryGetOpenXRActiveRuntime();
 

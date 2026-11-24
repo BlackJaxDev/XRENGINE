@@ -14,6 +14,14 @@ internal interface IGLBindlessTexture
     /// </summary>
     bool IsReadyForBindlessHandle();
 
+    /// <summary>
+    /// Like <see cref="IsReadyForBindlessHandle"/>, but a streaming transition that is still in
+    /// decode or cache read does not count: it has not touched this texture yet, so the current
+    /// resident storage and its sampling range stay valid. Only an upload or storage operation
+    /// that owns the native mip range makes the texture not ready.
+    /// </summary>
+    bool IsReadyForBindlessHandleDuringStreamingDecode();
+
     /// <summary>Records that obtaining <paramref name="handle"/> froze the texture parameters.</summary>
     void MarkBindlessHandleAcquired(ulong handle);
 

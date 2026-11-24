@@ -18,6 +18,14 @@ public struct AdvancedSkinInfluence
     public Vector4 Weights;
     public uint SpillOffset;
     public uint SpillCount;
-    public uint Reserved0;
+    /// <summary>
+    /// Mesh-local vertex that the aggregate deformation thread at this row's
+    /// position deforms when the job sets
+    /// <see cref="EAdvancedDeformationFeatureFlags.DeformationOrder"/>. The value
+    /// comes from the cooked coarse-first deformation order of the meshlet
+    /// payload, so a job can deform only the first prefix-count vertices of the
+    /// order. Meshes without a cooked order store their own row index.
+    /// </summary>
+    public uint DeformationOrderVertex;
     public uint Reserved1;
 }

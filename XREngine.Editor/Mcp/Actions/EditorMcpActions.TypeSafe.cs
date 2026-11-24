@@ -22,7 +22,7 @@ public sealed partial class EditorMcpActions
     public static Task<McpToolResponse> GetTypeSafeStatusAsync(McpToolContext context)
     {
         ITypeSafeClient client = s_typeSafeClient.Value;
-        bool hasEnvKey = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TypeSafeApiKey));
+        bool hasEnvKey = !string.IsNullOrWhiteSpace(XREnvironment.GetValue(XREngineEnvironmentVariables.TypeSafeApiKey));
 
         return Task.FromResult(new McpToolResponse("TypeSafe status retrieved.", new
         {

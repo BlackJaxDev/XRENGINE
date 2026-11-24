@@ -87,7 +87,7 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanOpenXr.ShouldContain("OpenXrVulkanPrewarmEyes");
         vulkanOpenXr.ShouldNotContain("OpenXrVulkanTrueStereoOverride");
         vulkanOpenXr.ShouldContain("Sequential/per-eye fallback is forbidden");
-        vulkanOpenXr.ShouldContain("Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo)");
+        vulkanOpenXr.ShouldContain("XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrVulkanMirrorFbo)");
         vulkanOpenXr.ShouldContain("\"1\"");
         vulkanOpenXr.ShouldContain("leave it unset for direct swapchain rendering");
         vulkanOpenXr.ShouldContain("ShouldPrewarmVulkanEyeResources");

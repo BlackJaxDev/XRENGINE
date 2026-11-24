@@ -177,7 +177,7 @@ namespace XREngine
         /// </summary>
         private static string? GetEditorUserDataRoot()
         {
-            string? sessionRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot);
+            string? sessionRoot = XREnvironment.GetValue(XREngineEnvironmentVariables.EditorSessionRoot);
             if (!string.IsNullOrWhiteSpace(sessionRoot))
                 return Path.Combine(Path.GetFullPath(sessionRoot), "user-data");
 
@@ -1128,8 +1128,8 @@ namespace XREngine
             }
 
             EnsureDirectory(project.AssetsDirectory);
-            string? metadataDirectoryOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GameMetadataPath);
-            string? cacheDirectoryOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GameCachePath);
+            string? metadataDirectoryOverride = XREnvironment.GetValue(XREngineEnvironmentVariables.GameMetadataPath);
+            string? cacheDirectoryOverride = XREnvironment.GetValue(XREngineEnvironmentVariables.GameCachePath);
             string? effectiveMetadataDirectory = string.IsNullOrWhiteSpace(metadataDirectoryOverride)
                 ? project.MetadataDirectory
                 : Path.GetFullPath(metadataDirectoryOverride);

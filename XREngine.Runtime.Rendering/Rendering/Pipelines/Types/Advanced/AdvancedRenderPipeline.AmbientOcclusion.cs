@@ -784,7 +784,7 @@ public partial class AdvancedRenderPipeline
 
     /// <summary>False when the A/B switch selects the uniform callbacks for these passes.</summary>
     private static readonly bool UseTypedPostProcessPublishers =
-        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AdvancedTypedPostProcessPublishers)?.Trim() != "0";
+        XREnvironment.GetValue(XREngineEnvironmentVariables.AdvancedTypedPostProcessPublishers)?.Trim() != "0";
 
     private readonly record struct AoFinalizeBindingKey(
         bool HasInstance,

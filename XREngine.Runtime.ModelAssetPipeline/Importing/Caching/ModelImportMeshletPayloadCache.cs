@@ -36,7 +36,7 @@ internal sealed class ModelImportMeshletPayloadCache
     public const string CacheFolderName = "model-meshlets";
 
     /// <summary>Set to 0 to disable the cache for a process.</summary>
-    public const string DisableEnvironmentVariable = "XRE_MODEL_MESHLET_CACHE";
+    public const string DisableEnvironmentVariable = XREngineEnvironmentVariables.ModelMeshletCache;
 
     private const string FileExtension = ".xrmeshlets";
     private const string FormatTag = "model-meshlet-section/v1";
@@ -80,7 +80,7 @@ internal sealed class ModelImportMeshletPayloadCache
     {
         if (string.IsNullOrWhiteSpace(cacheRoot) || string.IsNullOrWhiteSpace(modelIdentity))
             return null;
-        if (string.Equals(Environment.GetEnvironmentVariable(DisableEnvironmentVariable), "0", StringComparison.Ordinal))
+        if (string.Equals(XREnvironment.GetValue(DisableEnvironmentVariable), "0", StringComparison.Ordinal))
             return null;
 
         string filePath = Path.Combine(cacheRoot, CacheFolderName, ResolveFileName(modelIdentity));

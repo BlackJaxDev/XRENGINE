@@ -104,7 +104,7 @@ internal sealed class YtDlpStreamUrlResolver : IYouTubeStreamUrlResolver
 
     private static bool IsExecutableOnPath(string executable)
     {
-        string? path = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+        string? path = XREnvironment.GetValue(XREngineEnvironmentVariables.Path);
         if (string.IsNullOrWhiteSpace(path))
             return false;
 

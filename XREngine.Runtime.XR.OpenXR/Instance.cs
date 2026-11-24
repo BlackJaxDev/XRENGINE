@@ -269,7 +269,7 @@ public unsafe partial class OpenXRAPI
             return;
 
         // Prefer XR_RUNTIME_JSON if set, otherwise registry ActiveRuntime.
-        var runtimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        var runtimeJson = XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson);
         var activeRuntime = !string.IsNullOrWhiteSpace(runtimeJson)
             ? runtimeJson
             : GetActiveOpenXRRuntimePathWindows();
@@ -462,7 +462,7 @@ public unsafe partial class OpenXRAPI
         var sb = new StringBuilder();
         sb.Append($"Failed to create OpenXR instance. Result={result}");
 
-        var runtimeJsonEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        var runtimeJsonEnv = XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson);
         if (!string.IsNullOrWhiteSpace(runtimeJsonEnv))
             sb.Append($"\nXR_RUNTIME_JSON={runtimeJsonEnv}");
 

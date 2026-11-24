@@ -14,4 +14,10 @@ internal enum EVulkanGpuDiagnosticReadbackPurpose : byte
     /// the production meshlet zero-readback lane.
     /// </summary>
     MeshletZeroReadbackEvidence,
+
+    /// <summary>
+    /// Throttled copy of the per-view Advanced visibility counters, taken under a strategy
+    /// that is not instrumented while <see cref="AdvancedVisibilityCounterSampling"/> is on.
+    /// </summary>
+    CounterSample,
 }

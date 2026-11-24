@@ -705,7 +705,7 @@ namespace XREngine.Components.Lights
 
         private static bool? ParseVulkanDirectionalCascadesOverride()
         {
-            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDirectionalCascades);
+            string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanDirectionalCascades);
             if (string.IsNullOrWhiteSpace(value))
                 return null;
 
@@ -748,8 +748,8 @@ namespace XREngine.Components.Lights
                 return Volatile.Read(ref s_knownMonadoRuntime);
 
             string runtimePath =
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ??
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson) ??
+                XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson) ??
+                XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson) ??
                 string.Empty;
 
             bool known = runtimePath.Contains("monado", StringComparison.OrdinalIgnoreCase);

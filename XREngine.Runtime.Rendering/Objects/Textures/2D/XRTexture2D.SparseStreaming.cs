@@ -184,7 +184,8 @@ public partial class XRTexture2D
                     ? ETexMinFilter.LinearMipmapLinear
                     : ETexMinFilter.Linear;
                 MagFilter = ETexMagFilter.Linear;
-                PublishCanonicalSourceContentMutation();
+                // The first sparse resident image also ends the loading placeholder state.
+                PublishResidentMutationEndingPlaceholder(sourceContentMutation: true);
             }
             finally
             {

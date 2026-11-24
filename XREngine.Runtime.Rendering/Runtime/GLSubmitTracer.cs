@@ -48,7 +48,7 @@ public static class GLSubmitTracer
         // The editor will overwrite this with a SetLevel(...) call once preferences load.
         try
         {
-            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GlSubmitTrace);
+            string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.GlSubmitTrace);
             if (int.TryParse(raw, out int level) && level > 0)
                 SetLevel(level);
         }

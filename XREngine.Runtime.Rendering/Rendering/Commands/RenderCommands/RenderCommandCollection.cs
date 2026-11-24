@@ -761,8 +761,7 @@ namespace XREngine.Rendering.Commands
                     AssignedPipeline: AdvancedRenderPipeline,
                     ActiveGeneration: not null,
                 } &&
-                (viewport.MeshSubmissionStrategyOverride ??
-                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy()) ==
+                viewport.ResolveRequestedMeshSubmissionStrategy() ==
                 EMeshSubmissionStrategy.GpuIndirectZeroReadback;
 
         private readonly Lock _lock = new();
@@ -898,7 +897,7 @@ namespace XREngine.Rendering.Commands
 
             XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
             if (pipeline?.RequiresGpuMeshSubmissionPublication == true ||
-                submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented ||
+                _updatingMeshSubmissionStrategy is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented ||
                 RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked &&
                 submissionViewport?.MeshSubmissionStrategyOverride is EMeshSubmissionStrategy.GpuIndirectZeroReadback or EMeshSubmissionStrategy.GpuIndirectInstrumented)
                 scene?.RequestMeshSubmissionPublication();
@@ -2480,6 +2479,52 @@ namespace XREngine.Rendering.Commands
         /// <summary>Gets published commands while the caller owns <see cref="EnterRenderingBufferReadScope"/>.</summary>
         internal bool TryGetPublishedPassCommandsUnderReadLock(int renderPass, out ICollection<RenderCommand> commands)
             => TryGetPublishedPassCommandsNoLock(renderPass, out commands);
+
+        /// <summary>
+        /// Returns true when the published pass contains at least one primary mesh command with
+        /// active editor hover or selection bits.
+        /// </summary>
+        internal bool HasHighlightedMeshCommands(int renderPass)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
+                return false;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (GetCommandAt(list, i) is RenderCommandMesh3D meshCommand &&
+                    meshCommand.RenderEditorHighlightBits != 0u &&
+                    meshCommand.RenderSupplementalMaterialPass is null)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Renders every published primary mesh command in the pass that has active editor
+        /// hover or selection bits, using the supplied override material and its render options.
+        /// </summary>
+        internal void RenderHighlightedMeshCommands(int renderPass, XRMaterial material)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+
+            if (!TryGetPublishedPassCommandsNoLock(renderPass, out ICollection<RenderCommand> list))
+                return;
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (GetCommandAt(list, i) is RenderCommandMesh3D meshCommand &&
+                    meshCommand.RenderEditorHighlightBits != 0u &&
+                    meshCommand.RenderSupplementalMaterialPass is null)
+                {
+                    meshCommand.RenderWithMaterialOverride(material);
+                }
+            }
+        }
 
         private static void RenderWithOptionalCpuSocMeasurement(RenderCommand command, bool measureCpuSocSubmission)
         {

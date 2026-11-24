@@ -118,6 +118,20 @@ public sealed class AdvancedSharedGpuSceneDatabase
         }
     }
 
+    /// <summary>
+    /// The sequence that the next publication receives when it begins. A publication that is
+    /// rejected before its seal does not use it up, so every later sealed publication has this
+    /// sequence or a higher one.
+    /// </summary>
+    public ulong NextPublicationSequence
+    {
+        get
+        {
+            lock (_publicationSync)
+                return _nextPublicationSequence;
+        }
+    }
+
     public ulong LastSealedPublicationSequence
     {
         get
@@ -986,6 +1000,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
         reclaimed += Scene.RenderStates.ReclaimAcknowledged(safeSequence);
         reclaimed += Scene.EditorIdentities.ReclaimAcknowledged(safeSequence);
         reclaimed += Scene.Geometry.Records.ReclaimAcknowledged(safeSequence);
+        reclaimed += Scene.Geometry.PagePool.ReclaimAcknowledged(safeSequence);
         reclaimed += Materials.Materials.ReclaimAcknowledged(safeSequence);
         reclaimed += Materials.Kernels.ReclaimAcknowledged(safeSequence);
         reclaimed += Materials.Layouts.ReclaimAcknowledged(safeSequence);

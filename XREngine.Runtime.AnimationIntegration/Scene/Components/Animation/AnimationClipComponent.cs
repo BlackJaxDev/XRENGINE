@@ -129,6 +129,11 @@ namespace XREngine.Components.Animation
         public bool IsPlaying => _isPlaying;
         public bool IsPaused => _isPaused;
 
+        // Playback state recorded at deactivation. Activation starts the clip again when it was
+        // playing (or a deferred start was pending), and pauses it again when it was paused.
+        private bool _resumePlaybackOnActivate;
+        private bool _resumePausedOnActivate;
+
         private string _playbackCapabilityDiagnostic = string.Empty;
         /// <summary>
         /// Last capability, coordinate-contract, or avatar-definition reason
@@ -648,8 +653,16 @@ namespace XREngine.Components.Animation
             Start();
         }
 
+        /// <summary>
+        /// Stops playback. An explicit stop also cancels the restart that a later activation would
+        /// otherwise do for a clip that was playing when the component was deactivated.
+        /// </summary>
         public void StopPlayback()
-            => Stop();
+        {
+            _resumePlaybackOnActivate = false;
+            _resumePausedOnActivate = false;
+            Stop();
+        }
 
         public void Pause()
         {
@@ -2786,17 +2799,40 @@ namespace XREngine.Components.Animation
             }
         }
 
+        /// <summary>
+        /// Starts playback when the component becomes active in the hierarchy. Playback starts when
+        /// <see cref="StartOnActivate"/> is set, or when the clip was playing (or had a deferred start
+        /// pending) at the last deactivation. Deactivation stops playback and restores the animated
+        /// state, so a scene that is hidden and shown again (its nodes deactivate and activate) would
+        /// otherwise keep the bind pose. The restarted clip begins at its initial time. A clip that was
+        /// paused at deactivation starts paused again.
+        /// </summary>
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
-            if (Animation is not null && StartOnActivate)
-                Start();
+            bool resume = _resumePlaybackOnActivate;
+            bool resumePaused = _resumePausedOnActivate;
+            _resumePlaybackOnActivate = false;
+            _resumePausedOnActivate = false;
+            if (Animation is null || !(StartOnActivate || resume))
+                return;
+
+            Start();
+            if (resumePaused && !StartOnActivate)
+                Pause();
         }
+
+        /// <summary>
+        /// Records whether playback was running or pending, so that <see cref="OnComponentActivated"/>
+        /// can start it again, then stops playback and restores the animated state.
+        /// </summary>
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
 
+            _resumePlaybackOnActivate = _isPlaying || _deferredStartPending;
+            _resumePausedOnActivate = _isPaused;
             if (Animation is not null)
                 Stop();
         }

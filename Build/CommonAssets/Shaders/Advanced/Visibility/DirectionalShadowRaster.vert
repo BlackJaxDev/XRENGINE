@@ -140,9 +140,17 @@ void main()
     vec2 localTexCoord3 = vec2(0.0);
     vec4 localColor = vec4(1.0);
     uint selectedVertex = uint(XR_ADV_VERTEX_INDEX);
-    // Indirect indexed and skinned meshlet draws use local geometry indices (vertex
-    // offset 0) and fetch the vertex from the packed arena: the deformed range of this
-    // frame when the draw is deformed, the canonical geometry otherwise.
+    // Indirect indexed and skinned meshlet payloads fetch the vertex from the packed
+    // arena: the deformed range of this frame when the draw is deformed, the canonical
+    // geometry otherwise. Only GPU-written indexed arguments (push producer
+    // IndirectIndexed) use local geometry indices with vertex offset 0, so only they
+    // add the arena base here. The frozen indexed arguments of CPU-direct and meshlet
+    // frames already carry that base in their vertex offset, so gl_VertexIndex is the
+    // arena index. Adding the base again reads the vertices of other geometry, and the
+    // caster then moves or disappears from the cascade.
+    bool argumentsUseLocalIndices =
+        (XR_ADV_DirectionalShadowPush.producerAndOrigin &
+            XR_ADV_VIS_PRODUCER_MASK) == XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED;
     if (producer == XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED ||
         producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET)
     {
@@ -155,9 +163,11 @@ void main()
             XR_ADV_RejectShadowVertex();
             return;
         }
-        uint vertexBase = deformed
-            ? preparedDeformation.currentVertexOffset
-            : XR_ADV_LoadGeometry(geometryDense).currentVertexData.elementOffset;
+        uint vertexBase = !argumentsUseLocalIndices
+            ? 0u
+            : deformed
+                ? preparedDeformation.currentVertexOffset
+                : XR_ADV_LoadGeometry(geometryDense).currentVertexData.elementOffset;
         if (vertexBase > 0xffffffffu - selectedVertex)
         {
             XR_ADV_RejectShadowVertex();

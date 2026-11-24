@@ -113,11 +113,11 @@ internal static class NativeUdpProfilerSender
     /// </summary>
     public static bool TryStartFromEnvironment()
     {
-        if (Environment.GetEnvironmentVariable(ProfilerProtocol.EnabledEnvVar) != "1")
+        if (XREnvironment.GetValue(ProfilerProtocol.EnabledEnvVar) != "1")
             return false;
 
         int port = ProfilerProtocol.DefaultPort;
-        if (int.TryParse(Environment.GetEnvironmentVariable(ProfilerProtocol.PortEnvVar), out var p) && p > 0 && p <= 65535)
+        if (int.TryParse(XREnvironment.GetValue(ProfilerProtocol.PortEnvVar), out var p) && p > 0 && p <= 65535)
             port = p;
 
         Start(port);

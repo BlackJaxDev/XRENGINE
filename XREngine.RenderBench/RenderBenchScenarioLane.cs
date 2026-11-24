@@ -24,13 +24,13 @@ internal static class RenderBenchScenarioLane
     internal static int Run(RenderBenchOptions options)
     {
         // Process-local controls are fixed before renderer/shader initialization.
-        Environment.SetEnvironmentVariable("XRE_GPU_HIZ_COARSE_TILES", "1");
-        Environment.SetEnvironmentVariable("XRE_GPU_HIZ_COARSE_TILES_CULL", "1");
-        Environment.SetEnvironmentVariable("XRE_GPU_DRIVEN_VALIDATION_CAPACITY_MULTIPLIER", "1");
-        Environment.SetEnvironmentVariable("XRE_GPU_DRIVEN_VALIDATION_CAPACITY_FLOOR", "0");
-        Environment.SetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY", "GpuIndirectZeroReadback");
-        Environment.SetEnvironmentVariable("XRE_ENGINE_ASSETS_PATH", Path.Combine(Environment.CurrentDirectory, "Build", "CommonAssets"));
-        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionGpuTiming, options.ScenarioTiming ? "1" : "0");
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.GpuHizCoarseTiles, "1");
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.GpuHizCoarseTilesCull, "1");
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.GpuDrivenValidationCapacityMultiplier, "1");
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.GpuDrivenValidationCapacityFloor, "0");
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.ForceMeshSubmissionStrategy, "GpuIndirectZeroReadback");
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.EngineAssetsPath, Path.Combine(Environment.CurrentDirectory, "Build", "CommonAssets"));
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.OcclusionGpuTiming, options.ScenarioTiming ? "1" : "0");
         List<RenderBenchScenarioFrame> frames = [];
         RenderBenchScenarioResult result = CreateIdentity(options);
         try

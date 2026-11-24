@@ -68,19 +68,21 @@ degenerate input. Non-finite normals fail import. The pinned meshoptimizer
 generator provides Mikk compatibility; bit equality with Unity is not guaranteed.
 
 The importer adds one vertex for each polygon corner. Before it builds each mesh
-chunk, it merges the corners whose attributes are bit-equal: position, normal,
-tangent, every UV set, and every color set
-(`XRMeshPackedSource.WeldExactDuplicates`). The merge runs after tangent
-generation, so generated tangents are part of the comparison. Only identical
-corners merge, so the triangles and the rendered image do not change. Chunks
-with skin influences or blendshape deltas are not merged, because the comparison
-does not cover those streams. Without the merge, every meshlet stopped at its
-64-vertex limit with about 28 triangles, and the mesh simplifier could not
-remove triangles across the unshared corners. On the Intel New Sponza scene the
-merge removes about three quarters of the vertices and about two thirds of the
-meshlets. A Native FBX cache version bump marks this change. Existing imported
-assets, including saved prefab meshes, keep their unmerged vertices until the
-model is imported again.
+chunk, it merges the corners whose data is bit-equal: position, normal,
+tangent, every UV set, every color set, the skin influences (bone index and
+weight, in order), and the blendshape deltas (shape index and the position,
+normal, and tangent deltas, in order) (`XRMeshPackedSource.WeldExactDuplicates`).
+The merge runs after tangent generation, so generated tangents are part of the
+comparison. Only identical corners merge, so the triangles, the skinning, the
+blendshapes, and the rendered image do not change. Without the merge, every
+meshlet stopped at its 64-vertex limit with about 28 triangles, and the mesh
+simplifier could not remove triangles across the unshared corners. On the Intel
+New Sponza scene the merge removes about three quarters of the vertices and
+about two thirds of the meshlets. Native FBX cache version 15 added the merge
+for static chunks. Native FBX cache version 17 and serialized prefab cache version 25
+add it for skinned and blendshape chunks. Existing imported assets, including
+saved prefab meshes, keep their unmerged vertices until the model is imported
+again.
 
 Authored tangent layers use the FBX binormal layer to set the tangent sign.
 The sign uses the transformed normal, tangent, and binormal, and follows

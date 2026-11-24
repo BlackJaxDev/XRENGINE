@@ -43,13 +43,11 @@ struct OutputUniforms
 [[vk::binding(2, 1)]] Texture2D<float4> BloomBlurTexture;
 [[vk::binding(3, 1)]] SamplerState BloomBlurTextureSampler;
 [[vk::binding(4, 1)]] DepthTexture2D DepthView;
-[[vk::binding(5, 1)]] Texture2D<uint4> StencilView;
 [[vk::binding(6, 1)]] Texture2D<float4> AutoExposureTex;
 [[vk::binding(8, 1)]] Texture2D<float4> AtmosphereColor;
 [[vk::binding(9, 1)]] SamplerState AtmosphereColorSampler;
 [[vk::binding(10, 1)]] Texture2D<float4> VolumetricFogColor;
 [[vk::binding(11, 1)]] SamplerState VolumetricFogColorSampler;
-[[vk::binding(12, 1)]] Texture2D<uint4> AdvancedVisibilityMetadata;
 
 struct ScreenInput { [[vk::location(0)]] float3 position : POSITION; };
 struct ScreenOutput { float4 position : SV_Position; };
@@ -185,6 +183,8 @@ float2 SceneSourceUv(float2 uv)
 {
   return uv;
 }
+
+#include "ToneMapping.slang"
 
 float3 SampleHDR(float2 uv)
 {

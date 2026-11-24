@@ -24,7 +24,7 @@ public static class AdvancedHiddenAreaTiles
     private const float RadiusMargin = 0.01f;
 
     private static readonly SyntheticMask? s_synthetic = ParseSyntheticMask(
-        Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.TestHiddenAreaMask));
+        XREnvironment.GetValue(XREngineEnvironmentVariables.TestHiddenAreaMask));
 
     private static readonly EyeCache s_left = new();
     private static readonly EyeCache s_right = new();

@@ -148,7 +148,7 @@ float ComputeScreenEdgeFade(vec2 uv, float radiusPixels)
 // Canonical IntegrateArc from Jimenez et al. 2016 (Eq. 10)
 float IntegrateArc(float h, float n)
 {
-    float hClamped = clamp(h, 0.0f, HALF_PI);
+    float hClamped = clamp(h, 0.0f, PI);
     float nClamped = clamp(n, -HALF_PI, HALF_PI);
     return 0.25f * (-cos(2.0f * hClamped - nClamped) + cos(nClamped) + 2.0f * hClamped * sin(nClamped));
 }
@@ -179,7 +179,10 @@ uint AccumulateVisibilitySectors(vec3 deltaPos, vec3 viewDir, float normalAngle,
     if (deltaLenSq <= 1e-8f)
         return occludedSectors;
 
-    vec3 deltaPosBackface = deltaPos - viewDir * thickness;
+    // Scale backface thickness with distance so coarse raymarch steps form continuous
+    // occlusion across walls and pillars instead of thin pinholes.
+    float effectiveThickness = thickness + sqrt(deltaLenSq) * 0.45f;
+    vec3 deltaPosBackface = deltaPos - viewDir * effectiveThickness;
     float deltaBackLenSq = dot(deltaPosBackface, deltaPosBackface);
     if (deltaBackLenSq <= 1e-8f)
         return occludedSectors;
@@ -192,9 +195,11 @@ uint AccumulateVisibilitySectors(vec3 deltaPos, vec3 viewDir, float normalAngle,
     frontBackHorizon = clamp(((samplingDirection * -frontBackHorizon) - normalAngle + HALF_PI) / PI, 0.0f, 1.0f);
     frontBackHorizon = samplingDirection >= 0.0f ? frontBackHorizon.yx : frontBackHorizon.xy;
 
+    // Apply Bias as a tangent-plane guard band so flat surfaces never self-occlude
+    // without shrinking real occluders at larger distances.
     float biasOffset = clamp(Bias / PI, 0.0f, 0.499f);
-    float minHorizon = min(frontBackHorizon.x, frontBackHorizon.y) + biasOffset;
-    float maxHorizon = max(frontBackHorizon.x, frontBackHorizon.y) - biasOffset;
+    float minHorizon = clamp(min(frontBackHorizon.x, frontBackHorizon.y), biasOffset, 1.0f - biasOffset);
+    float maxHorizon = clamp(max(frontBackHorizon.x, frontBackHorizon.y), biasOffset, 1.0f - biasOffset);
     return UpdateSectors(minHorizon, maxHorizon, occludedSectors);
 }
 
@@ -242,10 +247,15 @@ void main()
     int sliceCount = clamp(SliceCount, 1, 8);
     int stepCount = clamp(StepsPerSlice, 1, 16);
     vec2 noiseCoord = XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView, 0).xy));
-    float baseAngle = (InterleavedGradientNoise(noiseCoord + vec2(float(gl_ViewID_OVR) * 13.0f, 0.0f)) - 0.5f) * (PI / float(sliceCount));
-    float stepJitter = InterleavedGradientNoise(noiseCoord + vec2(17.0f, 43.0f + float(gl_ViewID_OVR) * 19.0f));
+    // Use the Jimenez et al. 2016 4x4 spatial direction and step-jitter pattern so
+    // the bilateral blur removes rotation noise without low-frequency diagonal stripes.
+    ivec2 noisePixel = ivec2(noiseCoord) + ivec2(int(gl_ViewID_OVR) * 2, 0);
+    float spatialDirection = float((((noisePixel.x + noisePixel.y) & 3) << 2) + (noisePixel.x & 3)) / 16.0f;
+    float baseAngle = (spatialDirection - 0.5f) * (PI / float(sliceCount));
+    float stepJitter = float((noisePixel.y - noisePixel.x) & 3) * 0.25f + 0.125f;
 
     float visibility = 0.0f;
+    float weightSum = 0.0f;
 
     for (int sliceIndex = 0; sliceIndex < sliceCount; ++sliceIndex)
     {
@@ -253,7 +263,7 @@ void main()
         vec2 screenDir = vec2(cos(phi), sin(phi));
         vec2 clipDir = AOClipDirectionFromTextureDirection(screenDir);
 
-        vec3 sliceTangent = normalize(vec3(clipDir.x * invProjX, clipDir.y * invProjY, 0.0f));
+        vec3 sliceTangent = normalize(vec3(clipDir.x * texelSize.x * invProjX, clipDir.y * texelSize.y * invProjY, 0.0f));
         sliceTangent = normalize(sliceTangent - viewDir * dot(sliceTangent, viewDir));
         vec3 slicePlaneN = normalize(cross(viewDir, sliceTangent));
 
@@ -262,6 +272,7 @@ void main()
         if (projNLen <= 1e-5f)
         {
             visibility += 1.0f;
+            weightSum += 1.0f;
             continue;
         }
         projN /= projNLen;
@@ -270,8 +281,10 @@ void main()
         // Visibility-bitmask sector mapping uses the original GTAO N handedness.
         float visibilityBitmaskNormalAngle = -gamma;
 
-        float h1 = HALF_PI;
-        float h2 = HALF_PI;
+        float h1Tangent = clamp(HALF_PI + gamma, 0.0f, PI);
+        float h2Tangent = clamp(HALF_PI - gamma, 0.0f, PI);
+        float h1 = h1Tangent;
+        float h2 = h2Tangent;
         uint occludedSectors = 0u;
         float occludedSectorWeight = 0.0f;
 
@@ -312,11 +325,11 @@ void main()
                             if (projLen > 1e-5f)
                             {
                                 projDelta /= projLen;
-                                float candidateH = FastAcos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
+                                float candidateH = FastAcos(clamp(dot(projDelta, viewDir), -1.0f, 1.0f));
 
                                 float falloff = ComputeSampleFalloff(delta, dist, viewDir, falloffStart, radiusVS, thicknessLimit);
-                                candidateH = mix(HALF_PI, candidateH, falloff);
-                                candidateH = clamp(candidateH + Bias, 0.0f, HALF_PI);
+                                candidateH = mix(h1Tangent, candidateH, falloff);
+                                candidateH = clamp(candidateH + Bias, 0.0f, h1Tangent);
                                 h1 = min(h1, candidateH);
                             }
                         }
@@ -356,11 +369,11 @@ void main()
                             if (projLen > 1e-5f)
                             {
                                 projDelta /= projLen;
-                                float candidateH = FastAcos(clamp(dot(projDelta, viewDir), 0.0f, 1.0f));
+                                float candidateH = FastAcos(clamp(dot(projDelta, viewDir), -1.0f, 1.0f));
 
                                 float falloff = ComputeSampleFalloff(delta, dist, viewDir, falloffStart, radiusVS, thicknessLimit);
-                                candidateH = mix(HALF_PI, candidateH, falloff);
-                                candidateH = clamp(candidateH + Bias, 0.0f, HALF_PI);
+                                candidateH = mix(h2Tangent, candidateH, falloff);
+                                candidateH = clamp(candidateH + Bias, 0.0f, h2Tangent);
                                 h2 = min(h2, candidateH);
                             }
                         }
@@ -369,13 +382,17 @@ void main()
             }
         }
 
+        float sliceWeight = UseVisibilityBitmask
+            ? 1.0f
+            : projNLen * max(cos(gamma) + gamma * sin(gamma), 1e-4f);
         float sliceVis = UseVisibilityBitmask
-            ? 1.0f - occludedSectorWeight / float(VISIBILITY_BITMASK_SECTOR_COUNT)
-            : projNLen * (IntegrateArc(h1, gamma) + IntegrateArc(h2, -gamma));
-        visibility += clamp(sliceVis, 0.0f, 1.0f);
+            ? clamp(1.0f - occludedSectorWeight / float(VISIBILITY_BITMASK_SECTOR_COUNT), 0.0f, 1.0f)
+            : max(projNLen * (IntegrateArc(h1, gamma) + IntegrateArc(h2, -gamma)), 0.0f);
+        visibility += sliceVis;
+        weightSum += sliceWeight;
     }
 
-    visibility = clamp(visibility / float(sliceCount), 0.0f, 1.0f);
+    visibility = clamp(visibility / max(weightSum, 1e-5f), 0.0f, 1.0f);
     visibility = mix(1.0f, visibility, ComputeScreenEdgeFade(uv, radiusPixels));
     OutIntensity = visibility;
 }

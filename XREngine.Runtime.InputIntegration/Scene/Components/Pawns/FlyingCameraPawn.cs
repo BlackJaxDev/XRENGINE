@@ -134,17 +134,27 @@ namespace XREngine.Components
             if (tfm != null)
                 ArcBallRotate(pitch, yaw, tfm.Translation + tfm.LocalForward * distance);
         }
+        /// <summary>
+        /// Orbits the camera position and orientation around <paramref name="focusPoint"/> by
+        /// applying the exact orientation change from <see cref="AddYawPitch"/> to the offset
+        /// between the camera and the focus point.
+        /// </summary>
         public void ArcBallRotate(float pitch, float yaw, Vector3 focusPoint)
         {
             var tfm = TransformAs<Transform>();
-            tfm?.Translation = XRMath.ArcballTranslation(
-                pitch,
-                yaw,
-                Vector3.Transform(focusPoint, tfm.ParentInverseWorldMatrix),
-                tfm.Translation,
-                Vector3.Transform(Globals.Right, tfm.Rotation));
+            if (tfm is null)
+            {
+                AddYawPitch(yaw, pitch);
+                return;
+            }
+
+            Quaternion previousRotation = tfm.Rotation;
+            Vector3 localFocus = Vector3.Transform(focusPoint, tfm.ParentInverseWorldMatrix);
 
             AddYawPitch(yaw, pitch);
+
+            Quaternion deltaRotation = Quaternion.Normalize(tfm.Rotation * Quaternion.Inverse(previousRotation));
+            tfm.Translation = XRMath.ArcballTranslation(deltaRotation, localFocus, tfm.Translation);
         }
 
         /// <summary>

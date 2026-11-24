@@ -367,7 +367,7 @@ internal partial class Program
     private static bool TryGetOpenXrRenderPacingModeEnv(out OpenXrRenderPacingMode mode)
     {
         mode = default;
-        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrRenderPacingMode);
+        string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrRenderPacingMode);
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 
@@ -392,7 +392,7 @@ internal partial class Program
     private static bool TryGetOpenXrPoseTimeOffsetMsEnv(out float offsetMs)
     {
         offsetMs = default;
-        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrPoseTimeOffsetMs);
+        string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrPoseTimeOffsetMs);
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 
@@ -790,7 +790,7 @@ internal partial class Program
 
     private static bool? ResolveOptionalEnvironmentFlag(string name)
     {
-        string? value = Environment.GetEnvironmentVariable(name);
+        string? value = XREnvironment.GetValue(name);
         if (value is null)
             return null;
 
@@ -810,7 +810,7 @@ internal partial class Program
         if (IsEnabledEnvironmentFlag(XREngineEnvironmentVariables.EditorNormalGpuPriority))
             return;
 
-        string? vrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        string? vrMode = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrMode);
         bool xrRequested = !string.IsNullOrWhiteSpace(vrMode)
             && !vrMode.Trim().Equals("Desktop", StringComparison.OrdinalIgnoreCase);
         ApplyEditorGpuSchedulingPriority(belowNormal: !xrRequested && !RuntimeEngine.VRState.IsInVR);
@@ -825,7 +825,7 @@ internal partial class Program
 
     private static bool IsEnabledEnvironmentFlag(string name)
     {
-        string? value = Environment.GetEnvironmentVariable(name);
+        string? value = XREnvironment.GetValue(name);
         return value is not null
             && (value == "1"
                 || value.Equals("true", StringComparison.OrdinalIgnoreCase)
@@ -1082,7 +1082,7 @@ internal partial class Program
         }
 
         // Check environment variable
-        string? worldModeEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WorldMode);
+        string? worldModeEnv = XREnvironment.GetValue(XREngineEnvironmentVariables.WorldMode);
         if (!string.IsNullOrWhiteSpace(worldModeEnv) &&
             Enum.TryParse<EWorldMode>(worldModeEnv, true, out var mode))
         {
@@ -1213,7 +1213,7 @@ internal partial class Program
 
         // Allow overriding the window title for multi-instance local testing.
         // Example: launch a 2nd client with XRE_WINDOW_TITLE="XRE Editor (Client 2)".
-        string? windowTitleOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WindowTitle);
+        string? windowTitleOverride = XREnvironment.GetValue(XREngineEnvironmentVariables.WindowTitle);
         if (!string.IsNullOrWhiteSpace(windowTitleOverride) && settings.StartupWindows.Count > 0)
         {
             settings.StartupWindows[0].WindowTitle = windowTitleOverride;
@@ -1232,7 +1232,7 @@ internal partial class Program
         }
 
         // Allow overriding networking mode via env var for quick local testing.
-        string? netOverride = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.NetMode);
+        string? netOverride = XREnvironment.GetValue(XREngineEnvironmentVariables.NetMode);
         if (!string.IsNullOrWhiteSpace(netOverride) &&
             Enum.TryParse<ENetworkingType>(netOverride, true, out var mode))
         {
@@ -1311,13 +1311,13 @@ internal partial class Program
     private static bool TryGetIntEnv(string name, out int value)
     {
         value = default;
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         return !string.IsNullOrWhiteSpace(raw) && int.TryParse(raw, out value);
     }
 
     private static bool TryGetPositiveFloatEnv(string name, out float value)
     {
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         return float.TryParse(
                    raw,
                    NumberStyles.Float,
@@ -1329,7 +1329,7 @@ internal partial class Program
 
     private static bool ResolveDebugOpaquePipelineSetting(UnitTestingWorldSettings settings)
     {
-        string? forceDebugEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ForceDebugOpaquePipeline);
+        string? forceDebugEnv = XREnvironment.GetValue(XREngineEnvironmentVariables.ForceDebugOpaquePipeline);
         if (!string.IsNullOrWhiteSpace(forceDebugEnv))
         {
             if (TryParseBooleanArgument(forceDebugEnv, out bool forceDebug))
@@ -1976,8 +1976,8 @@ internal partial class Program
 
     private static void ConfigureMsBuildEnvironmentForHeadlessBuild()
     {
-        string? existingSdksPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildSdksPath);
-        string? existingMsbuildPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildExePath);
+        string? existingSdksPath = XREnvironment.GetValue(XREngineEnvironmentVariables.MsBuildSdksPath);
+        string? existingMsbuildPath = XREnvironment.GetValue(XREngineEnvironmentVariables.MsBuildExePath);
         if (!string.IsNullOrWhiteSpace(existingSdksPath) &&
             Directory.Exists(existingSdksPath) &&
             !string.IsNullOrWhiteSpace(existingMsbuildPath) &&
@@ -1986,7 +1986,7 @@ internal partial class Program
             return;
         }
 
-        string? dotnetRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DotnetRoot);
+        string? dotnetRoot = XREnvironment.GetValue(XREngineEnvironmentVariables.DotnetRoot);
         if (string.IsNullOrWhiteSpace(dotnetRoot))
         {
             string candidate = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet");
@@ -2010,16 +2010,16 @@ internal partial class Program
         if (!Directory.Exists(sdksPath) || !File.Exists(msbuildPath))
             return;
 
-        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildSdksPath, sdksPath);
-        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildExePath, msbuildPath);
-        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildExtensionsPath, selectedSdk);
-        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildExtensionsPath32, selectedSdk);
-        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.MsBuildToolsPath, selectedSdk);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.MsBuildSdksPath, sdksPath);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.MsBuildExePath, msbuildPath);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.MsBuildExtensionsPath, selectedSdk);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.MsBuildExtensionsPath32, selectedSdk);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.MsBuildToolsPath, selectedSdk);
     }
 
     private static string? TryResolvePreferredSdkDirectory(string sdkRoot)
     {
-        string? explicitSdkVersion = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DotnetSdkVersion);
+        string? explicitSdkVersion = XREnvironment.GetValue(XREngineEnvironmentVariables.DotnetSdkVersion);
         if (!string.IsNullOrWhiteSpace(explicitSdkVersion))
         {
             string explicitPath = Path.Combine(sdkRoot, explicitSdkVersion);

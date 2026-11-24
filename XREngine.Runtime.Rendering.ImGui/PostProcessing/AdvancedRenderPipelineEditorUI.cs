@@ -44,7 +44,8 @@ internal sealed class AdvancedRenderPipelineEditorUI(AdvancedRenderPipeline pipe
             currentView == EAdvancedShadingDebugView.Disabled &&
             GpuBvhDebugSettings.IsMeshletDebugDisplayEnabled(context.Camera, context.SelectedPipeline);
         if (meshletView)
-            ImGui.TextWrapped(DescribeMeshletView(RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy));
+            ImGui.TextWrapped(DescribeMeshletView(AdvancedRenderPipeline.ResolveMeshletViewSubmissionStrategy(
+                pipeline, context.Camera, RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy)));
     }
 
     private static void DrawCullingDebug(PipelineEditorContext context)
@@ -58,12 +59,13 @@ internal sealed class AdvancedRenderPipelineEditorUI(AdvancedRenderPipeline pipe
 
     /// <summary>
     /// States what the meshlet view shows for the current frame. It needs a meshlet
-    /// producer; with an indexed strategy every opaque pixel is neutral grey.
+    /// producer. The view switches a GPU indexed output to a meshlet strategy when the
+    /// renderer has a meshlet path; otherwise every opaque pixel is neutral grey.
     /// </summary>
     private static string DescribeMeshletView(EMeshSubmissionStrategy strategy)
         => strategy is EMeshSubmissionStrategy.GpuMeshletZeroReadback or EMeshSubmissionStrategy.GpuMeshletInstrumented
             ? $"Meshlet view, effective strategy {strategy}: each meshlet has its own color. Grey pixels come from indexed ranges, such as parallax ranges."
-            : $"Meshlet view, effective strategy {strategy}: this frame has no meshlet producer, so all opaque pixels are grey.";
+            : $"Meshlet view, effective strategy {strategy}: this output has no meshlet producer (CPU-direct submission, or no Vulkan meshlet path), so all opaque pixels are grey.";
 
     /// <summary>
     /// Names the occlusion test whose results the culled-bounds overlay shows for the

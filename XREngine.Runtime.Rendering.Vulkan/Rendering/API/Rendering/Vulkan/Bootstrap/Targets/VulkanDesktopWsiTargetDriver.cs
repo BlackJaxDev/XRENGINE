@@ -32,7 +32,7 @@ internal sealed unsafe class VulkanDesktopWsiTargetDriver : IVulkanRendererTarge
     {
         get
         {
-            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.DesktopPresentPath);
+            string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.DesktopPresentPath);
             if (!string.IsNullOrWhiteSpace(raw) &&
                 Enum.TryParse(raw.Trim(), ignoreCase: true, out EDesktopPresentPath parsed) &&
                 Enum.IsDefined(parsed))

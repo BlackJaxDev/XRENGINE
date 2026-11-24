@@ -311,7 +311,9 @@ internal sealed partial class VulkanFrameLoop
     /// Records one bounded set-1 diagnostic copy into the producer primary.
     /// The resulting staging slice is deliberately not submitted here: the
     /// desktop frame's accepted graphics timeline is its sole completion
-    /// authority.
+    /// authority. Instrumented passes copy every frame. Under other strategies,
+    /// only the per-view visibility counters are copied, and only on the frames
+    /// that <see cref="AdvancedVisibilityCounterSampling"/> selects.
     /// </summary>
     internal unsafe bool TryRecordAdvancedVisibilityDiagnosticCopy(
         CommandBuffer commandBuffer,
@@ -319,8 +321,16 @@ internal sealed partial class VulkanFrameLoop
         in GpuDiagnosticReadbackPlanNode node,
         ulong frameIdentity)
     {
-        if (_deviceLost || !node.IsInstrumentedPass || node.ByteCount == 0u ||
-            commandBuffer.Handle == 0)
+        if (_deviceLost || node.ByteCount == 0u || commandBuffer.Handle == 0)
+            return false;
+
+        EVulkanGpuDiagnosticReadbackPurpose purpose;
+        if (node.IsInstrumentedPass)
+            purpose = EVulkanGpuDiagnosticReadbackPurpose.Instrumented;
+        else if (node.Decoder == EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters &&
+                 AdvancedVisibilityCounterSampling.ShouldSample(frameIdentity))
+            purpose = EVulkanGpuDiagnosticReadbackPurpose.CounterSample;
+        else
             return false;
 
         VulkanFrameDataSlice source = node.Decoder switch
@@ -341,7 +351,7 @@ internal sealed partial class VulkanFrameLoop
         if (sidecar is null || !sidecar.TryReserveNext(
                 in node,
                 frameIdentity,
-                EVulkanGpuDiagnosticReadbackPurpose.Instrumented,
+                purpose,
                 out reservation) ||
             !sidecar.TryAcquireStagingSlice(
                 reservation.SlotIndex, node.ByteCount, out VulkanFrameDataSlice destination))

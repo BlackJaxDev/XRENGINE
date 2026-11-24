@@ -22,7 +22,7 @@ internal sealed unsafe partial class VulkanDeviceContext
     private const string SwapchainMaintenance1ExtensionName = "VK_EXT_swapchain_maintenance1";
     private const string UnifiedImageLayoutsExtensionName = "VK_KHR_unified_image_layouts";
     private const string DeviceAddressCommandsExtensionName = "VK_KHR_device_address_commands";
-    private const string RenderBenchUnifiedLayoutsEnvironmentVariable = "XRE_VK_RENDER_BENCH_UNIFIED_IMAGE_LAYOUTS";
+    private const string RenderBenchUnifiedLayoutsEnvironmentVariable = XREngineEnvironmentVariables.VulkanRenderBenchUnifiedImageLayouts;
     private const string RenderBenchGpuCalibrationEnvironmentVariable = XREngineEnvironmentVariables.VulkanRenderBenchGpuCalibration;
     private const string RenderBenchPerformanceQueryEnvironmentVariable = XREngineEnvironmentVariables.VulkanRenderBenchPerformanceQuery;
     internal static readonly string[] DefaultOptionalDeviceExtensions =
@@ -364,15 +364,15 @@ internal sealed unsafe partial class VulkanDeviceContext
             _deviceContext.AvailableDeviceExtensions,
             StringComparer.Ordinal);
         bool unifiedImageLayoutsRequested = string.Equals(
-            Environment.GetEnvironmentVariable(RenderBenchUnifiedLayoutsEnvironmentVariable),
+            XREnvironment.GetValue(RenderBenchUnifiedLayoutsEnvironmentVariable),
             "1",
             StringComparison.Ordinal);
         bool gpuCalibrationRequested = string.Equals(
-            Environment.GetEnvironmentVariable(RenderBenchGpuCalibrationEnvironmentVariable),
+            XREnvironment.GetValue(RenderBenchGpuCalibrationEnvironmentVariable),
             "1",
             StringComparison.Ordinal);
         bool performanceQueryRequested = string.Equals(
-            Environment.GetEnvironmentVariable(RenderBenchPerformanceQueryEnvironmentVariable),
+            XREnvironment.GetValue(RenderBenchPerformanceQueryEnvironmentVariable),
             "1",
             StringComparison.Ordinal);
         bool meshShaderExtensionAdvertised = availableExtensionSet.Contains(ExtMeshShader.ExtensionName);

@@ -30,9 +30,9 @@ namespace XREngine.Rendering.Commands
 
         internal static Action? ResetCountersHook { get; set; }
         private static bool VulkanCounterDiagnosticsEnabled =>
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCounterDiagnostics), "1", StringComparison.OrdinalIgnoreCase);
+            string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanCounterDiagnostics), "1", StringComparison.OrdinalIgnoreCase);
         private static bool VulkanDelayedCounterDiagnosticsEnabled =>
-            string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanIndirectTrace), "1", StringComparison.OrdinalIgnoreCase);
+            string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanIndirectTrace), "1", StringComparison.OrdinalIgnoreCase);
         private int _resolveMaterialLogBudget = 16;
         private readonly HashSet<uint> _lastMaterialTableIds = [];
         private readonly HashSet<uint> _currentMaterialTableIdsScratch = [];
@@ -136,7 +136,7 @@ namespace XREngine.Rendering.Commands
 
             if (meshletDebugForced)
             {
-                MeshSubmissionStrategy = ResolveMeshletDebugDisplayStrategy().ToSubmissionMode();
+                MeshSubmissionStrategy = GpuBvhDebugSettings.ResolveMeshletDebugDisplayStrategy().ToSubmissionMode();
                 MeshPrimitivePathPreference = EMeshPrimitivePathPreference.MeshShaderPreferred;
                 UseMeshletPipeline = true;
             }
@@ -391,11 +391,6 @@ namespace XREngine.Rendering.Commands
 
             return true;
         }
-
-        private static EMeshSubmissionStrategy ResolveMeshletDebugDisplayStrategy()
-            => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging
-                ? EMeshSubmissionStrategy.GpuMeshletInstrumented
-                : EMeshSubmissionStrategy.GpuMeshletZeroReadback;
 
         #endregion
 

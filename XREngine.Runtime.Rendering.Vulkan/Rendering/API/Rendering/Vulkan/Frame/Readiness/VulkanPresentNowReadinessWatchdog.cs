@@ -81,7 +81,7 @@ internal struct VulkanPresentNowReadinessWatchdog
 
     private static long ResolveTimeoutTicks()
     {
-        string? configured = Environment.GetEnvironmentVariable(
+        string? configured = XREnvironment.GetValue(
             XREngineEnvironmentVariables.VulkanPresentNowReadinessWatchdogMs);
         double milliseconds = double.TryParse(
                 configured,

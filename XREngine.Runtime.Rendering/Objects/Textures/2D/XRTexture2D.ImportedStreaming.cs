@@ -185,6 +185,25 @@ public partial class XRTexture2D
         return generation;
     }
 
+    /// <summary>
+    /// Advances the content generation for a resident publication that does not go through
+    /// <see cref="CommitImportedResidentPublication"/> (the OpenGL dense and sparse paths), and
+    /// ends the loading placeholder state with the same contract: the state clears before the
+    /// generation advances, so a publisher that sees the new generation also sees real data,
+    /// and the generation of the first resident publication is recorded.
+    /// </summary>
+    private long PublishResidentMutationEndingPlaceholder(bool sourceContentMutation)
+    {
+        bool wasPlaceholder = IsAwaitingFirstResidency;
+        ClearAwaitingFirstResidency();
+        long generation = sourceContentMutation
+            ? PublishCanonicalSourceContentMutation()
+            : PublishCanonicalResidencyMutation();
+        if (wasPlaceholder)
+            Volatile.Write(ref _firstResidentContentGeneration, generation);
+        return generation;
+    }
+
     /// <summary>Advances the content generation for a dense streaming resident commit and returns it.</summary>
     private long PublishCanonicalResidencyMutation()
     {
@@ -631,10 +650,9 @@ public partial class XRTexture2D
         texture.SmallestAllowedMipmapLevel = includeMipChain && residentData.Mipmaps.Length > 0
             ? residentData.Mipmaps.Length - 1
             : 0;
-        if (hadSparseResidency)
-            texture.PublishCanonicalSourceContentMutation();
-        else
-            texture.PublishCanonicalResidencyMutation();
+        // The OpenGL dense path ends the loading placeholder here, as
+        // CommitImportedResidentPublication does on Vulkan.
+        texture.PublishResidentMutationEndingPlaceholder(sourceContentMutation: hadSparseResidency);
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;

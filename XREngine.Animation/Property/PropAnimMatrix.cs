@@ -92,17 +92,9 @@ namespace XREngine.Animation
         public override Type ValueType => typeof(Matrix4x4);
 
         [Browsable(false)]
-        public new MatrixKeyframe? Next
-        {
-            get => _next as MatrixKeyframe;
-            set => SetField(ref _next, value);
-        }
+        public new MatrixKeyframe? Next => _next as MatrixKeyframe;
         [Browsable(false)]
-        public new MatrixKeyframe? Prev
-        {
-            get => _prev as MatrixKeyframe;
-            set => SetField(ref _prev, value);
-        }
+        public new MatrixKeyframe? Prev => _prev as MatrixKeyframe;
 
         public Matrix4x4 Interpolate(float second)
         {

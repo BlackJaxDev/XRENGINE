@@ -13,12 +13,12 @@ public static class S13aPublicationTelemetry
 {
     private const int TraceCapacity = 65536;
     public static bool TraceEnabled { get; } =
-        Environment.GetEnvironmentVariable("XRE_S13A_PUBLICATION_TRACE") == "1";
+        XREnvironment.GetValue(XREngineEnvironmentVariables.S13aPublicationTrace) == "1";
     public static uint TracedCommandId { get; } =
-        uint.TryParse(Environment.GetEnvironmentVariable("XRE_S13A_TRACE_COMMAND_ID"),
+        uint.TryParse(XREnvironment.GetValue(XREngineEnvironmentVariables.S13aTraceCommandId),
             out uint commandId) ? commandId : 0u;
     public static bool Enabled { get; } =
-        TraceEnabled || Environment.GetEnvironmentVariable("XRE_S13A_PUBLICATION_TELEMETRY") == "1";
+        TraceEnabled || XREnvironment.GetValue(XREngineEnvironmentVariables.S13aPublicationTelemetry) == "1";
 
     // A separate gate for each fixed slot lets MCP copy events without holding a
     // rendering lock. Contended writes are counted and dropped, never delayed.

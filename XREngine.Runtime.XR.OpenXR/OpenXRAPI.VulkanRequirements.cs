@@ -945,7 +945,7 @@ public unsafe partial class OpenXRAPI
     private static OpenXrVulkanEnable2BootstrapPolicy ResolveVulkanEnable2BootstrapPolicy(out string? diagnostic)
     {
         diagnostic = null;
-        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanEnable2Bootstrap);
+        string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrVulkanEnable2Bootstrap);
         if (string.IsNullOrWhiteSpace(value) ||
             value.Equals("auto", StringComparison.OrdinalIgnoreCase))
         {
@@ -978,11 +978,11 @@ public unsafe partial class OpenXRAPI
 
     private static string? ResolveCurrentOpenXrRuntimePath()
     {
-        string? runtimePath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? runtimePath = XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson);
         if (!string.IsNullOrWhiteSpace(runtimePath))
             return runtimePath;
 
-        runtimePath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson);
+        runtimePath = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson);
         if (!string.IsNullOrWhiteSpace(runtimePath))
             return runtimePath;
 
@@ -1057,7 +1057,7 @@ public unsafe partial class OpenXRAPI
     /// </summary>
     private static bool ShouldQueryVulkanRuntimeRequirements()
     {
-        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson)))
+        if (!string.IsNullOrWhiteSpace(XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson)))
             return true;
 
         if (IsUnitTestingOpenXrLaunchMode())
@@ -1071,14 +1071,14 @@ public unsafe partial class OpenXRAPI
 
     private static bool IsUnitTestingOpenXrLaunchMode()
     {
-        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        string? unitTestVrMode = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrMode);
         return string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase)
             || string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryParseBooleanEnvironment(string variableName)
     {
-        string? value = Environment.GetEnvironmentVariable(variableName);
+        string? value = XREnvironment.GetValue(variableName);
         if (string.IsNullOrWhiteSpace(value))
             return false;
 
@@ -1090,10 +1090,10 @@ public unsafe partial class OpenXRAPI
 
     private static string CreateVulkanRuntimeRequirementsCacheKey()
         => string.Join("|",
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson) ?? string.Empty,
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson) ?? string.Empty,
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode) ?? string.Empty,
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr) ?? string.Empty,
+            XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson) ?? string.Empty,
+            XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson) ?? string.Empty,
+            XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrMode) ?? string.Empty,
+            XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestUseOpenXr) ?? string.Empty,
             RuntimeRenderingHostServices.Presentation.IsOpenXrRuntimeRequested ? "openxr-requested" : string.Empty);
 
     private static OpenXrVulkanRuntimeRequirements QueryVulkanRuntimeRequirements()

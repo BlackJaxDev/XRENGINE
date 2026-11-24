@@ -61,7 +61,7 @@ public static class UnitTestingWorldSettingsStore
 
         string filePath = ResolveSettingsFilePath();
         bool explicitSettingsPath = !string.IsNullOrWhiteSpace(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestWorldSettingsPath));
+            XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestWorldSettingsPath));
 
         if (!File.Exists(filePath))
         {
@@ -117,7 +117,7 @@ public static class UnitTestingWorldSettingsStore
     public static string ResolveSettingsFilePath()
     {
         string currentDirectory = Environment.CurrentDirectory;
-        string? configuredPath = Environment.GetEnvironmentVariable(
+        string? configuredPath = XREnvironment.GetValue(
             XREngineEnvironmentVariables.UnitTestWorldSettingsPath);
         string path = string.IsNullOrWhiteSpace(configuredPath)
             ? Path.Combine(currentDirectory, "Assets", SettingsFileName)
@@ -394,7 +394,7 @@ public static class UnitTestingWorldSettingsStore
 
     public static void ApplyWorldKindOverride(UnitTestingWorldSettings settings)
     {
-        string? worldKindEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestWorldKind);
+        string? worldKindEnv = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestWorldKind);
         if (string.IsNullOrWhiteSpace(worldKindEnv))
             return;
 
@@ -413,14 +413,13 @@ public static class UnitTestingWorldSettingsStore
 
     public static void PublishVrLaunchModeForBootstrap(UnitTestingWorldSettings settings)
     {
-        string? existingVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        string? existingVrMode = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrMode);
         if (!string.IsNullOrWhiteSpace(existingVrMode))
             return;
 
-        Environment.SetEnvironmentVariable(
+        XREnvironment.SetProcessValue(
             XREngineEnvironmentVariables.UnitTestVrMode,
-            settings.VR.Mode.ToString(),
-            EnvironmentVariableTarget.Process);
+            settings.VR.Mode.ToString());
     }
 
     public static void ApplyVrLaunchOverrides(UnitTestingWorldSettings settings)
@@ -504,7 +503,7 @@ public static class UnitTestingWorldSettingsStore
             applied = true;
         }
 
-        if (bool.TryParse(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrRvcQuadView), out bool vrRvcQuadView))
+        if (bool.TryParse(XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrRvcQuadView), out bool vrRvcQuadView))
         {
             settings.VR.RvcQuadView = vrRvcQuadView;
             MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
@@ -584,7 +583,7 @@ public static class UnitTestingWorldSettingsStore
             applied = true;
         }
 
-        string? runtimeJsonEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson);
+        string? runtimeJsonEnv = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson);
         if (!string.IsNullOrWhiteSpace(runtimeJsonEnv))
         {
             settings.VR.OpenXrRuntimeJson = runtimeJsonEnv;
@@ -598,7 +597,7 @@ public static class UnitTestingWorldSettingsStore
             MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.VR));
         }
 
-        string? renderApiEnv = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestRenderApi);
+        string? renderApiEnv = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestRenderApi);
         if (!string.IsNullOrWhiteSpace(renderApiEnv))
         {
             if (Enum.TryParse(renderApiEnv, true, out ERenderLibrary renderApi))
@@ -751,7 +750,7 @@ public static class UnitTestingWorldSettingsStore
     private static bool TryGetBoolEnv(string name, out bool value)
     {
         value = default;
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 
@@ -781,7 +780,7 @@ public static class UnitTestingWorldSettingsStore
         where TEnum : struct, Enum
     {
         value = default;
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 
@@ -795,7 +794,7 @@ public static class UnitTestingWorldSettingsStore
     private static bool TryGetFloatEnv(string name, out float value)
     {
         value = default;
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 
@@ -809,7 +808,7 @@ public static class UnitTestingWorldSettingsStore
     private static bool TryGetUIntEnv(string name, out uint value)
     {
         value = default;
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         if (string.IsNullOrWhiteSpace(raw))
             return false;
 
@@ -897,7 +896,7 @@ public static class UnitTestingWorldSettingsStore
             return;
 
         string? configuredRuntimeJson = settings.VR.OpenXrRuntimeJson;
-        string? processRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? processRuntimeJson = XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson);
         if (!string.IsNullOrWhiteSpace(processRuntimeJson))
         {
             if (!string.IsNullOrWhiteSpace(configuredRuntimeJson)
@@ -931,7 +930,7 @@ public static class UnitTestingWorldSettingsStore
         }
 
         string resolvedRuntimeJson = ResolveSettingsPath(configuredRuntimeJson);
-        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson, resolvedRuntimeJson, EnvironmentVariableTarget.Process);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.XrRuntimeJson, resolvedRuntimeJson);
         Debug.Out($"[UnitTestingWorldSettings] Set process XR_RUNTIME_JSON from VR.OpenXrRuntimeJson: {resolvedRuntimeJson}");
     }
 
@@ -992,7 +991,7 @@ public static class UnitTestingWorldSettingsStore
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestRenderPipeline));
 
     private static bool HasEnvironmentValue(string name)
-        => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name));
+        => !string.IsNullOrWhiteSpace(XREnvironment.GetValue(name));
 
     public static bool TryEnsureMonadoServiceForCurrentProcess(string reason)
     {
@@ -1077,7 +1076,7 @@ public static class UnitTestingWorldSettingsStore
 
         string? runtimeJson = explicitRuntimeManifestPath;
         if (runtimeJson is null)
-            runtimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.XrRuntimeJson);
+            runtimeJson = XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson);
         if (string.IsNullOrWhiteSpace(runtimeJson))
             runtimeJson = settings.VR.OpenXrRuntimeJson;
         if (string.IsNullOrWhiteSpace(runtimeJson))
@@ -1157,7 +1156,7 @@ public static class UnitTestingWorldSettingsStore
 
             startInfo.Environment[XREngineEnvironmentVariables.XrRuntimeJson] = resolvedRuntimeJson;
             startInfo.Environment[XREngineEnvironmentVariables.Path] = BuildProcessPathWithPrependedDirectories(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path),
+                XREnvironment.GetValue(XREngineEnvironmentVariables.Path),
                 runtimeLibraryDirectory,
                 serviceDirectory);
             ApplyMonadoSimulatedDisplayProfileEnvironment(startInfo.Environment, displayProfile);
@@ -1315,7 +1314,7 @@ public static class UnitTestingWorldSettingsStore
         if (displayProfile.UsesDeterministicProfile)
         {
             _previousMonadoSimulatedProfileEnvironment ??= CaptureProcessEnvironment(MonadoSimulatedProfileEnvironmentVariableNames);
-            ApplyMonadoSimulatedDisplayProfileEnvironment(Environment.SetEnvironmentVariable, displayProfile);
+            ApplyMonadoSimulatedDisplayProfileEnvironment(XREnvironment.SetProcessValue, displayProfile);
             Debug.Out(
                 "[UnitTestingWorldSettings] Applied Monado simulated display environment: " +
                 $"{displayProfile.Preset} scale={displayProfile.Scale:F2} eye={displayProfile.EyeWidth}x{displayProfile.EyeHeight} " +
@@ -1329,7 +1328,7 @@ public static class UnitTestingWorldSettingsStore
             return;
 
         foreach ((string name, string? value) in _previousMonadoSimulatedProfileEnvironment)
-            Environment.SetEnvironmentVariable(name, value, EnvironmentVariableTarget.Process);
+            XREnvironment.SetProcessValue(name, value);
         _previousMonadoSimulatedProfileEnvironment = null;
         Debug.Out("[UnitTestingWorldSettings] Restored process Monado simulated display environment for RuntimeRecommended eye resolution.");
     }
@@ -1345,45 +1344,36 @@ public static class UnitTestingWorldSettingsStore
     }
 
     private static void ApplyMonadoSimulatedDisplayProfileEnvironment(
-        Action<string, string?, EnvironmentVariableTarget> setEnvironmentVariable,
+        Action<string, string?> setEnvironmentVariable,
         MonadoSimulatedDisplayProfile displayProfile)
     {
         setEnvironmentVariable(
             XREngineEnvironmentVariables.MonadoSimulatedDisplayWidth,
-            displayProfile.FullDisplayWidth.ToString(CultureInfo.InvariantCulture),
-            EnvironmentVariableTarget.Process);
+            displayProfile.FullDisplayWidth.ToString(CultureInfo.InvariantCulture));
         setEnvironmentVariable(
             XREngineEnvironmentVariables.MonadoSimulatedDisplayHeight,
-            displayProfile.DisplayHeight.ToString(CultureInfo.InvariantCulture),
-            EnvironmentVariableTarget.Process);
+            displayProfile.DisplayHeight.ToString(CultureInfo.InvariantCulture));
         setEnvironmentVariable(
             XREngineEnvironmentVariables.MonadoSimulatedViewCount,
-            "2",
-            EnvironmentVariableTarget.Process);
+            "2");
         setEnvironmentVariable(
             XREngineEnvironmentVariables.MonadoCompositorScalePercentage,
-            displayProfile.CompositorScalePercentage.ToString(CultureInfo.InvariantCulture),
-            EnvironmentVariableTarget.Process);
+            displayProfile.CompositorScalePercentage.ToString(CultureInfo.InvariantCulture));
         setEnvironmentVariable(
             XREngineEnvironmentVariables.MonadoOpenXrViewportScalePercentage,
-            displayProfile.OpenXrViewportScalePercentage.ToString(CultureInfo.InvariantCulture),
-            EnvironmentVariableTarget.Process);
+            displayProfile.OpenXrViewportScalePercentage.ToString(CultureInfo.InvariantCulture));
         setEnvironmentVariable(
             XREngineEnvironmentVariables.OpenXrEyeResolutionPreset,
-            displayProfile.Preset.ToString(),
-            EnvironmentVariableTarget.Process);
+            displayProfile.Preset.ToString());
         setEnvironmentVariable(
             XREngineEnvironmentVariables.OpenXrEyeResolutionScale,
-            displayProfile.Scale.ToString("0.####", CultureInfo.InvariantCulture),
-            EnvironmentVariableTarget.Process);
+            displayProfile.Scale.ToString("0.####", CultureInfo.InvariantCulture));
         setEnvironmentVariable(
             XREngineEnvironmentVariables.OpenXrEyeResolutionWidth,
-            displayProfile.EyeWidth.ToString(CultureInfo.InvariantCulture),
-            EnvironmentVariableTarget.Process);
+            displayProfile.EyeWidth.ToString(CultureInfo.InvariantCulture));
         setEnvironmentVariable(
             XREngineEnvironmentVariables.OpenXrEyeResolutionHeight,
-            displayProfile.EyeHeight.ToString(CultureInfo.InvariantCulture),
-            EnvironmentVariableTarget.Process);
+            displayProfile.EyeHeight.ToString(CultureInfo.InvariantCulture));
     }
 
     private static void SetMonadoSimulatedDisplayProfileEnvironment(
@@ -1416,7 +1406,7 @@ public static class UnitTestingWorldSettingsStore
     {
         Dictionary<string, string?> values = new(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < names.Count; i++)
-            values[names[i]] = Environment.GetEnvironmentVariable(names[i]);
+            values[names[i]] = XREnvironment.GetValue(names[i]);
         return values;
     }
 
@@ -1584,11 +1574,11 @@ public static class UnitTestingWorldSettingsStore
 
     private static IEnumerable<string> EnumerateMonadoRuntimeJsonCandidates()
     {
-        string? monadoRuntimeJson = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MonadoRuntimeJson);
+        string? monadoRuntimeJson = XREnvironment.GetValue(XREngineEnvironmentVariables.MonadoRuntimeJson);
         if (!string.IsNullOrWhiteSpace(monadoRuntimeJson))
             yield return ResolveSettingsPath(monadoRuntimeJson);
 
-        string? monadoInstallDir = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MonadoInstallDir);
+        string? monadoInstallDir = XREnvironment.GetValue(XREngineEnvironmentVariables.MonadoInstallDir);
         if (!string.IsNullOrWhiteSpace(monadoInstallDir))
         {
             yield return ResolveSettingsPath(Path.Combine(monadoInstallDir, "share", "openxr", "1", "openxr_monado.json"));
@@ -1642,7 +1632,7 @@ public static class UnitTestingWorldSettingsStore
 
     private static IEnumerable<string> EnumerateOpenXrLoaderCandidates()
     {
-        string? monadoInstallDir = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MonadoInstallDir);
+        string? monadoInstallDir = XREnvironment.GetValue(XREngineEnvironmentVariables.MonadoInstallDir);
         if (!string.IsNullOrWhiteSpace(monadoInstallDir))
         {
             yield return ResolveSettingsPath(Path.Combine(monadoInstallDir, "bin", "openxr_loader.dll"));
@@ -1669,7 +1659,7 @@ public static class UnitTestingWorldSettingsStore
             yield return ResolveSettingsPath(Path.Combine(programFilesX86, "Steam", "steamapps", "common", "SteamVR", "bin", "win64", "openxr_loader.dll"));
         }
 
-        string? path = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+        string? path = XREnvironment.GetValue(XREngineEnvironmentVariables.Path);
         if (string.IsNullOrWhiteSpace(path))
             yield break;
 
@@ -1684,7 +1674,7 @@ public static class UnitTestingWorldSettingsStore
     private static void PrependProcessPath(string directory)
     {
         string resolvedDirectory = Path.GetFullPath(directory);
-        string? currentPath = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.Path);
+        string? currentPath = XREnvironment.GetValue(XREngineEnvironmentVariables.Path);
         List<string> entries = string.IsNullOrWhiteSpace(currentPath)
             ? []
             : currentPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
@@ -1695,7 +1685,7 @@ public static class UnitTestingWorldSettingsStore
         string updatedPath = entries.Count == 0
             ? resolvedDirectory
             : resolvedDirectory + Path.PathSeparator + string.Join(Path.PathSeparator, entries);
-        Environment.SetEnvironmentVariable(XREngineEnvironmentVariables.Path, updatedPath, EnvironmentVariableTarget.Process);
+        XREnvironment.SetProcessValue(XREngineEnvironmentVariables.Path, updatedPath);
     }
 
     private static bool IsSameDirectory(string left, string right)

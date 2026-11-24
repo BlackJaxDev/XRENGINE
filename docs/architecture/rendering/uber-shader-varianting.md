@@ -142,6 +142,16 @@ for this case and does not evaluate `smoothstep` with equal limits.
 An absent source outline mask binds white. The outline texture remains a
 separate color and alpha sampler.
 
+The browser outline companion uses `WebGPU/UberOutline.slang`. Each cooked
+variant name lists its active coverage features in this order: alpha masks,
+dissolve, and source flipbook alpha. A source texture-array flipbook in
+final-alpha mode changes the outline coverage alpha, so that variant binds
+`_FlipbookTexArray` and `_FlipbookMask` and runs the alpha path of
+`source_flipbook.glsl`. The other flipbook modes change only color and
+emission, and the outline output does not read them. The outline cook keeps
+each source texture array and its layer settings in
+`PublishedTextureArrayProfile`.
+
 `ShadeNativeUber.glslinc` supplies the shared native evaluator for mono, MSAA,
 and overflow repair. It implements the supported toon lighting, normals, material
 AO, specular controls, cubemap reflections, layered matcaps, rim, emission,
@@ -162,10 +172,17 @@ and native shading. Active face discard, pixel UDIM cells, dissolve, or source
 cutout require masked publication before depth writes. Missing UV1 uses UV0 in
 both raster and reconstruction. UV2 and UV3 use the two former reserved words
 in the 64-byte packed vertex. Missing UV2 and UV3 remain zero, as in the forward
-shader. Active vertex UDIM discard and alpha-to-coverage
-remain explicit unsupported operations in native visibility. The forward Vulkan
-path preserves the material alpha-to-coverage state for both single-sample and
-multisample targets. A single sample can still reject a fragment with zero alpha;
+shader. Active vertex UDIM discard remains an explicit unsupported operation in
+native visibility. The native visibility raster has no alpha-to-coverage output.
+An alpha-to-coverage material with an alpha cutoff test (`_Mode` 1 or
+`_SourceAlphaClip`, which the importer sets for alpha-to-coverage sources)
+publishes a masked row. Its coverage keeps fragments with alpha at or above
+`_Cutoff`. On a single-sample target this matches the forward path, which also
+tests the cutoff. On a multisample target the masked edge is hard instead of a
+partial sample mask. An alpha-to-coverage material without a cutoff test stays
+unsupported (`UnsupportedResourceBinding`). The forward Vulkan path preserves the
+material alpha-to-coverage state for both single-sample and multisample targets.
+A single sample can still reject a fragment with zero alpha;
 the sample count must not silently disable the authored coverage state.
 Native coverage applies the surface-extension alpha dither with the same 8x8
 table as the forward shader. The raster passes use the fragment position, and
@@ -547,6 +564,16 @@ still invalidating when source text, path, includes, or snippets change.
 
 `ShaderUiManifest` is parsed once, then the builder caches derived data in a
 `ConditionalWeakTable<ShaderUiManifest, ManifestDerivedData>`.
+
+`XRShader.TryGetUiManifest` keeps the parsed manifest with the file and
+directory dependencies of the resolved source. A cache hit does not read these
+dependencies from disk again while two conditions are true: no shader source
+notification (`ShaderSourceDependencyIndex.NotificationsPublished`: hot reload,
+a watched file change, or a snippet change) arrived after the last disk check,
+and the last disk check is less than one second old. The Advanced scene
+publisher calls this method for each Uber material of a full plan, so the disk
+checks were a large part of the plan time. A file edit that no watcher reports
+is found at the next call after one second.
 
 Cached data includes:
 

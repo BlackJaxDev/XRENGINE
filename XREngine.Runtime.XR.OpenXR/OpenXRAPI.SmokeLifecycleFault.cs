@@ -20,7 +20,7 @@ public unsafe partial class OpenXRAPI
 
     private static OpenXrSmokeLifecycleFaultStage ResolveSmokeLifecycleFaultStage()
     {
-        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrSmokeLifecycleFaultStage);
+        string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrSmokeLifecycleFaultStage);
         if (string.IsNullOrWhiteSpace(value)) return OpenXrSmokeLifecycleFaultStage.None;
         if (!Enum.TryParse(value, ignoreCase: true, out OpenXrSmokeLifecycleFaultStage stage) ||
             !Enum.IsDefined(stage) || stage == OpenXrSmokeLifecycleFaultStage.None)

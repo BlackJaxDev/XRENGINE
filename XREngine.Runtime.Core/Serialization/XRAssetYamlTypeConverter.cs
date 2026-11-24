@@ -69,6 +69,7 @@ namespace XREngine
                 {
                     YamlDefaultTypeContext.ResetReadState();
                     YamlTransformReferenceContext.ResetReadState();
+                    TypeMismatchRecordingValueDeserializer.Reset();
                 }
 
                 return innerDeserializer.Deserialize(reader, expectedType, nestedObjectDeserializer, out value, rootDeserializer);
@@ -92,10 +93,13 @@ namespace XREngine
                 Mark startMark = current?.Start ?? ex.Start;
                 Mark endMark = current?.End ?? ex.End;
                 string expectedTypeName = expectedType.FullName ?? expectedType.Name;
+                string mismatch = TypeMismatchRecordingValueDeserializer.LastMismatch is { } lastMismatch
+                    ? $", LastTypeMismatch={lastMismatch}"
+                    : string.Empty;
                 throw new YamlException(
                     startMark,
                     endMark,
-                    $"{ex.Message} {AnnotationMarker}[ExpectedType={expectedTypeName}, ParserEvent={parserDetail}, Depth={_depth}, Mark={startMark.Line}:{startMark.Column}]",
+                    $"{ex.Message} {AnnotationMarker}[ExpectedType={expectedTypeName}, ParserEvent={parserDetail}, Depth={_depth}, Mark={startMark.Line}:{startMark.Column}{mismatch}]",
                     ex);
             }
             finally
@@ -743,7 +747,13 @@ namespace XREngine
 
         private static XRAsset? ResolveExternalReference(Guid guid, Type expectedType, string? portableReference = null)
         {
-            // First prefer already-loaded assets.
+            // A clone that shares assets with its source reads back the source instance. This path
+            // reads references for members with an abstract declared type (for example XRTexture),
+            // which the concrete asset converters do not see.
+            if (SharedAssetCloneScope.TryResolve(guid, out XRAsset? shared) && expectedType.IsInstanceOfType(shared))
+                return shared;
+
+            // Then prefer already-loaded assets.
             if (AssetSerializationServices.Current.TryGetAssetById(guid, out XRAsset? asset) && asset is not null)
                 return asset;
 

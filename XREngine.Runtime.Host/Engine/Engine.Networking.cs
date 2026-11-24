@@ -150,7 +150,7 @@ namespace XREngine
                         CredentialEpoch = startupSettings.MultiplayerCredentialEpoch,
                         Transport = startupSettings.MultiplayerTransport,
                         TlsServerName = startupSettings.ServerIP,
-                        DevelopmentTlsCertificatePin = Environment.GetEnvironmentVariable("XRE_DEVELOPMENT_TLS_SPKI_SHA256"),
+                        DevelopmentTlsCertificatePin = XREnvironment.GetValue(XREngineEnvironmentVariables.DevelopmentTlsSpkiSha256),
                     };
                     Networking = client;
                     client.Start(

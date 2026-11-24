@@ -23,7 +23,7 @@ public sealed class ProfileCameraMotionComponent : XRComponent
     /// </summary>
     public static bool IsRequested()
     {
-        string? profile = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileCamera);
+        string? profile = XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileCamera);
         return string.Equals(profile, "Moving", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(profile, "Orbit", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(profile, "MovingOrbit", StringComparison.OrdinalIgnoreCase) ||

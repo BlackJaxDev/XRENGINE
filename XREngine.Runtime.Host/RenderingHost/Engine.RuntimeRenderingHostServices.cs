@@ -269,6 +269,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public bool CpuSocUseAvx2 => Engine.EffectiveSettings.CpuSocUseAvx2;
     public bool CpuSocDebugVisualization => Engine.EffectiveSettings.CpuSocDebugVisualization;
     public bool CpuSocDebugForceVisible => Engine.EffectiveSettings.CpuSocDebugForceVisible;
+    public bool GPURenderDispatch => Engine.EffectiveSettings.GPURenderDispatch;
     public TextureRuntimeLogMode TextureLogMode => RuntimeEngine.Rendering.Settings.TextureLogMode;
     public double TextureSlowCpuDecodeResizeMilliseconds => RuntimeEngine.Rendering.Settings.TextureSlowCpuDecodeResizeMilliseconds;
     public double TextureSlowMipBuildMilliseconds => RuntimeEngine.Rendering.Settings.TextureSlowMipBuildMilliseconds;

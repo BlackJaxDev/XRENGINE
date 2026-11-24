@@ -125,6 +125,69 @@ public sealed class AdvancedGeometryDatabaseContractTests
     }
 
     [Test]
+    public void LevelCoverIndices_FollowTheCanonicalIndicesInOneIndexRange()
+    {
+        AdvancedGeometryDatabase database = CreateDatabase();
+        // One level-0 cluster; its hierarchy tables follow the one triangle word.
+        uint[] triangleWords = new uint[1 + AdvancedPublishedMeshletLayout.ClusterRecordWords +
+            AdvancedPublishedMeshletLayout.GroupRecordWords];
+        triangleWords[0] = 0x00020100u;
+        AdvancedGeometryRegistration registration = CreateTriangleRegistration() with
+        {
+            MeshletCount = 1u,
+            ClusterLevel0Count = 1u,
+            ClusterHierarchyWordOffset = 1u,
+            LevelCoverIndexCount = 3u,
+        };
+        uint[] indices = [0u, 1u, 2u, 2u, 1u, 0u];
+
+        database.TryAddMeshletLocal(
+            CreateTriangleVertices(),
+            indices,
+            [CreateTriangleMeshlet()],
+            [0u, 1u, 2u],
+            triangleWords,
+            registration,
+            out AdvancedGpuHandle handle).ShouldBeTrue();
+        database.TryGet(handle, out AdvancedGeometryRecord record).ShouldBeTrue();
+
+        record.IndexCount.ShouldBe(3u);
+        record.IndexData.ElementCount.ShouldBe(6u);
+        record.LevelCoverIndexBase.ShouldBe(record.IndexBase + 3u);
+        record.LevelCoverIndexCount.ShouldBe(3u);
+        MemoryMarshal.Cast<byte, uint>(database.IndexArena.Data).SequenceEqual(indices).ShouldBeTrue();
+        record.IsDrawIndexRange(record.IndexBase, 3u).ShouldBeTrue();
+        record.IsDrawIndexRange(record.LevelCoverIndexBase, 3u).ShouldBeTrue();
+        record.IsDrawIndexRange(record.IndexBase, 6u).ShouldBeFalse();
+        record.IsDrawIndexRange(record.LevelCoverIndexBase, 6u).ShouldBeFalse();
+        record.IsDrawIndexRange(record.LevelCoverIndexBase, 0u).ShouldBeFalse();
+    }
+
+    [Test]
+    public void LevelCoverIndices_NeedAClusterHierarchyAndWholeTriangles()
+    {
+        AdvancedGeometryDatabase database = CreateDatabase();
+        AdvancedGeometryRegistration withCover = CreateTriangleRegistration() with { LevelCoverIndexCount = 3u };
+        database.TryAddStatic(
+            CreateTriangleVertices(),
+            [0u, 1u, 2u, 2u, 1u, 0u],
+            withCover,
+            out _).ShouldBeFalse();
+
+        database.TryAddMeshletLocal(
+            CreateTriangleVertices(),
+            [0u, 1u, 2u, 2u, 1u, 0u],
+            [CreateTriangleMeshlet()],
+            [0u, 1u, 2u],
+            [0x00020100u],
+            withCover with { MeshletCount = 1u },
+            out _).ShouldBeFalse();
+
+        database.Records.Count.ShouldBe(0u);
+        database.IndexArena.CountBytes.ShouldBe(0u);
+    }
+
+    [Test]
     public void IncompatibleCookedGeometryVersion_IsRejectedWithoutArenaWrites()
     {
         AdvancedGeometryDatabase database = CreateDatabase();
@@ -192,6 +255,16 @@ public sealed class AdvancedGeometryDatabaseContractTests
 
     internal static byte[] CreateTriangleVertices()
         => new byte[3 * 12];
+
+    private static AdvancedMeshletDescriptor CreateTriangleMeshlet()
+        => new()
+        {
+            BoundsSphere = new Vector4(0f, 0f, 0f, 1f),
+            VertexOffset = 0u,
+            TriangleByteOffset = 0u,
+            VertexCount = 3u,
+            TriangleCount = 1u,
+        };
 
     internal static AdvancedGeometryRegistration CreateTriangleRegistration()
         => AdvancedGeometryRegistration.Create(

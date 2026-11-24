@@ -230,6 +230,13 @@ public interface IRuntimeRenderFrameTimingServices
     bool CpuSocDebugForceVisible { get; }
 
     /// <summary>
+    /// Gets whether the project or user settings request GPU render dispatch.
+    /// The mesh submission strategy resolver, the render pipelines, and the visual scene
+    /// read this value to choose between GPU-driven submission and CPU culling with direct draws.
+    /// </summary>
+    bool GPURenderDispatch { get; }
+
+    /// <summary>
     /// Gets the CPU spatial structure used for render visibility when GPU dispatch is disabled.
     /// </summary>
     ECpuSceneCullingStructure CpuSceneCullingStructure { get; }

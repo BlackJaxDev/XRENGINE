@@ -23,7 +23,7 @@ public static class BootstrapRenderSettings
             return EVrMirrorMode.FullIndependentRender;
 
         return Enum.TryParse(
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMirrorMode),
+            XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrMirrorMode),
             ignoreCase: true,
             out EVrMirrorMode mode)
             ? mode
@@ -107,7 +107,7 @@ public static class BootstrapRenderSettings
             renderSettings.VrMirrorMode = ResolveVrWindowMirrorMode(requiresIndependentDesktopWindow);
         renderSettings.VrCopyEyePreviewTextures = settings.PreviewVRStereoViews;
         if (Enum.TryParse(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
+                XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrDesktopFrameExecutionMode),
                 ignoreCase: true,
                 out EVrDesktopFrameExecutionMode desktopExecutionMode))
         {
@@ -123,7 +123,12 @@ public static class BootstrapRenderSettings
             renderSettings.VulkanPresentationProfile = settings.Rendering.Vulkan.PresentationProfile;
             renderSettings.VulkanPresentationTargetRefreshHz = settings.Rendering.Vulkan.TargetRefreshHz;
             renderSettings.AdvancedVirtualGeometry = settings.Rendering.VirtualGeometry;
+            renderSettings.AdvancedSkinnedVirtualGeometry = settings.Rendering.SkinnedVirtualGeometry;
+            renderSettings.AdvancedSkinnedDeformationLod = settings.Rendering.SkinnedDeformationLod;
+            renderSettings.AdvancedSkinnedPosedClusterBounds = settings.Rendering.SkinnedPosedClusterBounds;
             renderSettings.AdvancedVirtualGeometryPixelThreshold = settings.Rendering.VirtualGeometryPixelThreshold;
+            renderSettings.AdvancedGeometryPages = settings.Rendering.GeometryPages;
+            renderSettings.AdvancedGeometryStreaming = settings.Rendering.GeometryStreaming;
             Engine.GameSettings.VulkanPresentationProfileOverride = new(
                 settings.Rendering.Vulkan.PresentationProfile,
                 true);
@@ -134,6 +139,17 @@ public static class BootstrapRenderSettings
         else if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
         {
             renderSettings.AllowShaderPipelines = settings.AllowShaderPipelines;
+        }
+
+        // A crowd benchmark mode replaces the virtual geometry values for the run.
+        if (settings.CrowdBenchmark.TryResolveRenderMode(
+                out bool crowdVirtualGeometry,
+                out bool crowdSkinnedVirtualGeometry,
+                out bool crowdSkinnedDeformationLod))
+        {
+            renderSettings.AdvancedVirtualGeometry = crowdVirtualGeometry;
+            renderSettings.AdvancedSkinnedVirtualGeometry = crowdSkinnedVirtualGeometry;
+            renderSettings.AdvancedSkinnedDeformationLod = crowdSkinnedDeformationLod;
         }
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowSkinning)))

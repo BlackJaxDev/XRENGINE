@@ -119,11 +119,11 @@ internal sealed partial class VulkanFrameLoop
         => RuntimeEngine.GameSettings?.VRRuntime == EVRRuntime.OpenXR ||
            RuntimeEngine.VRState.IsOpenXRActive ||
            IsUnitTestingOpenXrLaunchMode() ||
-           IsTruthyEnvironmentValue(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestUseOpenXr));
+           IsTruthyEnvironmentValue(XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestUseOpenXr));
 
     private static bool IsUnitTestingOpenXrLaunchMode()
     {
-        string? unitTestVrMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.UnitTestVrMode);
+        string? unitTestVrMode = XREnvironment.GetValue(XREngineEnvironmentVariables.UnitTestVrMode);
         return string.Equals(unitTestVrMode, "MonadoOpenXR", StringComparison.OrdinalIgnoreCase)
             || string.Equals(unitTestVrMode, "OpenXR", StringComparison.OrdinalIgnoreCase);
     }

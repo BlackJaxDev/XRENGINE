@@ -101,7 +101,7 @@ namespace XREngine
         /// and <see cref="ArgumentException"/> are always traced regardless of this filter.
         /// </summary>
         public static string? FirstChanceExceptionFilter { get; set; } =
-            Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.FirstChanceExceptions);
+            XREnvironment.GetValue(XREngineEnvironmentVariables.FirstChanceExceptions);
 
         /// <summary>
         /// Optional delegate to evaluate whether the current managed thread is the active engine render thread.

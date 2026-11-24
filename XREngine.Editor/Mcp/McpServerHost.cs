@@ -1019,8 +1019,8 @@ namespace XREngine.Editor.Mcp
                 methods = s_supportedMethods,
                 editorSession = new
                 {
-                    name = NormalizeEditorSessionName(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionName)),
-                    isolated = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.EditorSessionRoot)),
+                    name = NormalizeEditorSessionName(XREnvironment.GetValue(XREngineEnvironmentVariables.EditorSessionName)),
+                    isolated = !string.IsNullOrWhiteSpace(XREnvironment.GetValue(XREngineEnvironmentVariables.EditorSessionRoot)),
                     processId = Environment.ProcessId
                 },
                 security = new

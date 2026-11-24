@@ -456,7 +456,7 @@ internal sealed partial class VulkanDeviceContext
     /// </summary>
     private static bool UsesSyncShaderAccessHeuristic()
     {
-        string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanSynchronizationShaderAccesses);
+        string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanSynchronizationShaderAccesses);
         return !(string.Equals(value, "0", StringComparison.Ordinal) ||
                  string.Equals(value, "false", StringComparison.OrdinalIgnoreCase));
     }

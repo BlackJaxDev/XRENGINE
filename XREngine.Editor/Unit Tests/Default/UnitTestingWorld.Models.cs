@@ -168,6 +168,7 @@ public static partial class EditorUnitTests
                     {
                         Enabled = true,
                         BuildClusterHierarchy = model.GenerateClusterHierarchy,
+                        BuildStreamingPages = model.GenerateClusterHierarchy && model.GenerateStreamingPages,
                     },
                     Lods = new MeshLodGenerationSettings
                     {
@@ -488,7 +489,27 @@ public static partial class EditorUnitTests
                         model,
                         onFinished: result =>
                         {
-                            _ = Engine.InvokeOnAppThread(() =>
+                            if (model.Kind is UnitTestModelImportKind.Animated && TryClaimCrowdBenchmark(model))
+                            {
+                                // Clone the crowd on a worker thread before the models are suspended,
+                                // so each clone has active models to suspend and stage.
+                                CreateCrowdOffAppThread(
+                                    result.RootNode,
+                                    result.AvatarRoot,
+                                    templateTakesFirstSlot: true,
+                                    $"UnitTestingWorld: Finish Unity prefab crowd '{Path.GetFileName(resolvedPath)}'",
+                                    FinishSerializedImport);
+                                return;
+                            }
+
+                            _ = Engine.InvokeOnAppThread(
+                                () => FinishSerializedImport([], []),
+                                $"UnitTestingWorld: Finish Unity prefab import '{Path.GetFileName(resolvedPath)}'",
+                                executeNowIfAlreadyAppThread: true);
+
+                            // Publishes the imported scene. createdCrowd and createdSlotRoots are empty
+                            // when there is no crowd.
+                            void FinishSerializedImport(List<CrowdAvatar> createdCrowd, List<SceneNode> createdSlotRoots)
                             {
                                 try
                                 {
@@ -499,9 +520,21 @@ public static partial class EditorUnitTests
                                             !string.IsNullOrWhiteSpace(model.SceneRootName),
                                     };
                                     List<ModelComponent> suspendedModels = [];
+                                    List<CrowdAvatar>? crowd = null;
+                                    List<List<ModelComponent>>? crowdSuspendedModels = null;
                                     if (model.Kind is UnitTestModelImportKind.Animated)
                                     {
-                                        suspendedModels = SuspendSerializedPrefabModelPublication(importedRoot);
+                                        if (createdCrowd.Count > 0)
+                                        {
+                                            crowd = createdCrowd;
+                                            importedScene.RootNodes.Remove(importedRoot);
+                                            importedScene.RootNodes.AddRange(createdSlotRoots);
+                                            crowdSuspendedModels = new(crowd.Count);
+                                            foreach (CrowdAvatar avatar in crowd)
+                                                crowdSuspendedModels.Add(SuspendSerializedPrefabModelPublication(avatar.Root));
+                                        }
+                                        else
+                                            suspendedModels = SuspendSerializedPrefabModelPublication(importedRoot);
                                     }
                                     else
                                     {
@@ -526,7 +559,18 @@ public static partial class EditorUnitTests
                                         lock (importedStaticRootsLock)
                                             importedStaticRoots.AddRange(importedScene.RootNodes);
                                     }
-                                    if (model.Kind is UnitTestModelImportKind.Animated)
+                                    if (model.Kind is UnitTestModelImportKind.Animated && crowd is not null)
+                                    {
+                                        bool setUpAvatars = IsSerializedPrefabPath(resolvedPath) ||
+                                            !string.IsNullOrWhiteSpace(model.SceneRootName);
+                                        for (int crowdIndex = 0; crowdIndex < crowd.Count; crowdIndex++)
+                                        {
+                                            if (setUpAvatars)
+                                                OnFinishedImportingAvatar(crowd[crowdIndex].AvatarRoot, null, result.SourceContentSha256);
+                                            StageSerializedPrefabModelPublication(crowd[crowdIndex].Root, crowdSuspendedModels![crowdIndex]);
+                                        }
+                                    }
+                                    else if (model.Kind is UnitTestModelImportKind.Animated)
                                     {
                                         if (IsSerializedPrefabPath(resolvedPath) ||
                                             !string.IsNullOrWhiteSpace(model.SceneRootName))
@@ -559,7 +603,7 @@ public static partial class EditorUnitTests
                                         finally { onSerializedImportCompleted?.Invoke(); }
                                     }
                                 }
-                            }, $"UnitTestingWorld: Finish Unity prefab import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
+                            }
                         },
                         onError: ex =>
                         {
@@ -589,18 +633,51 @@ public static partial class EditorUnitTests
                             onFinished: result =>
                             {
                                 string? sourceContentSha256 = TryComputeSourceModelContentSha256(resolvedPath);
-                                _ = Engine.InvokeOnAppThread(() =>
-                                {
-                                    SceneNode? importedNode = result.RootNode;
-                                    if (characterParentNode != null && importedNode != null && importedNode.Transform.Parent != characterParentNode.Transform)
-                                        characterParentNode.Transform.AddChild(importedNode.Transform, false, EParentAssignmentMode.Immediate);
+                                SceneNode? importedNode = result.RootNode;
 
-                                    OnFinishedImportingAvatar(
+                                // The crowd clones the detached avatar on a worker thread, before its
+                                // humanoid setup. A player avatar stays on the pawn, and the crowd gets
+                                // clones only.
+                                if (importedNode is not null && TryClaimCrowdBenchmark(model))
+                                {
+                                    CreateCrowdOffAppThread(
                                         importedNode,
-                                        characterParentNode,
-                                        sourceContentSha256);
-                                    CompleteAllModelImportSlot();
-                                }, $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'", executeNowIfAlreadyAppThread: true);
+                                        importedNode,
+                                        templateTakesFirstSlot: characterParentNode is null,
+                                        $"UnitTestingWorld: Finish animated avatar crowd '{Path.GetFileName(resolvedPath)}'",
+                                        FinishAnimatedImport);
+                                    return;
+                                }
+
+                                _ = Engine.InvokeOnAppThread(
+                                    () => FinishAnimatedImport([], []),
+                                    $"UnitTestingWorld: Finish animated avatar import '{Path.GetFileName(resolvedPath)}'",
+                                    executeNowIfAlreadyAppThread: true);
+
+                                // Attaches the avatar and the crowd slots, and runs the humanoid setup.
+                                // crowd and slotRoots are empty when there is no crowd.
+                                void FinishAnimatedImport(List<CrowdAvatar> crowd, List<SceneNode> slotRoots)
+                                {
+                                    try
+                                    {
+                                        if (characterParentNode != null && importedNode != null && importedNode.Transform.Parent != characterParentNode.Transform)
+                                            characterParentNode.Transform.AddChild(importedNode.Transform, false, EParentAssignmentMode.Immediate);
+                                        foreach (SceneNode slot in slotRoots)
+                                            SceneNodePrefabUtility.AttachInstance(slot, rootNode.World, rootNode);
+
+                                        if (crowd.Count == 0 || characterParentNode is not null)
+                                            OnFinishedImportingAvatar(
+                                                importedNode,
+                                                characterParentNode,
+                                                sourceContentSha256);
+                                        foreach (CrowdAvatar avatar in crowd)
+                                            OnFinishedImportingAvatar(avatar.AvatarRoot, null, sourceContentSha256);
+                                    }
+                                    finally
+                                    {
+                                        CompleteAllModelImportSlot();
+                                    }
+                                }
                             },
                             onError: ex =>
                             {
@@ -813,14 +890,14 @@ public static partial class EditorUnitTests
             root = null;
             error = null;
             if (!string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE"),
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.MeshletStandaloneCookedCacheMode),
                     "Load",
                     StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
 
-            string? cacheRoot = Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT");
+            string? cacheRoot = XREnvironment.GetValue(XREngineEnvironmentVariables.MeshletStandaloneCookedCacheRoot);
             if (string.IsNullOrWhiteSpace(cacheRoot))
             {
                 error = "Standalone cooked-mesh warm load was requested without a cache root.";
@@ -932,14 +1009,14 @@ public static partial class EditorUnitTests
             SceneNode importedRoot)
         {
             if (!string.Equals(
-                    Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_MODE"),
+                    XREnvironment.GetValue(XREngineEnvironmentVariables.MeshletStandaloneCookedCacheMode),
                     "Publish",
                     StringComparison.OrdinalIgnoreCase))
             {
                 return;
             }
 
-            string? cacheRoot = Environment.GetEnvironmentVariable("XRE_MESHLET_STANDALONE_COOKED_CACHE_ROOT");
+            string? cacheRoot = XREnvironment.GetValue(XREngineEnvironmentVariables.MeshletStandaloneCookedCacheRoot);
             if (string.IsNullOrWhiteSpace(cacheRoot))
                 return;
 

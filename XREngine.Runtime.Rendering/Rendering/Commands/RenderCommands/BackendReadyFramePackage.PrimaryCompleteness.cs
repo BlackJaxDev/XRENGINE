@@ -14,6 +14,35 @@ public sealed partial class BackendReadyFramePackage
     public uint FirstMissingPrimaryNativeStableQueryKey { get; private set; }
     public string? FirstMissingPrimaryNativeReason { get; private set; }
 
+    /// <summary>
+    /// Gets the publication sequence of the canonical draw identity that the first
+    /// missing primary draw carries, or 0 when the draw has no identity for that
+    /// primitive. A value that differs from <see cref="CanonicalScenePublication"/>
+    /// shows that the command identity and the package publication are from different
+    /// publications.
+    /// </summary>
+    public ulong FirstMissingPrimaryNativeIdentitySequence { get; private set; }
+
+    /// <summary>
+    /// Gets the command of the first missing primary draw, or null when no draw is missing.
+    /// A diagnostic reader passes it to <see cref="GPUScene.TryGetCanonicalCompatibilityReason"/>
+    /// to learn why the canonical scene did not publish the draw.
+    /// </summary>
+    public IRenderCommandMesh? FirstMissingPrimaryNativeCommand { get; private set; }
+
+    /// <summary>Gets the submesh index of the first missing primary draw, or -1 when no draw is missing.</summary>
+    public int FirstMissingPrimaryNativePrimitiveIndex { get; private set; } = -1;
+
+    /// <summary>Gets the mesh name of the first missing primary draw, or null when the mesh has no name.</summary>
+    public string? FirstMissingPrimaryNativeMeshName { get; private set; }
+
+    /// <summary>
+    /// Gets the material of the first missing primary draw, or null when no draw is missing or
+    /// the draw has no material. A diagnostic reader uses it to name the material and to
+    /// encode it again for the exact incompatibility text.
+    /// </summary>
+    public XRMaterial? FirstMissingPrimaryNativeMaterial { get; private set; }
+
     private void ClearPrimaryNativeCompleteness()
     {
         _primaryNativeSubmissions.Clear();
@@ -22,6 +51,11 @@ public sealed partial class BackendReadyFramePackage
         FirstMissingPrimaryNativePass = -1;
         FirstMissingPrimaryNativeStableQueryKey = 0u;
         FirstMissingPrimaryNativeReason = null;
+        FirstMissingPrimaryNativeIdentitySequence = 0UL;
+        FirstMissingPrimaryNativeCommand = null;
+        FirstMissingPrimaryNativePrimitiveIndex = -1;
+        FirstMissingPrimaryNativeMeshName = null;
+        FirstMissingPrimaryNativeMaterial = null;
     }
 
     /// <summary>
@@ -112,6 +146,15 @@ public sealed partial class BackendReadyFramePackage
                     FirstMissingPrimaryNativePass = pass.PassIndex;
                     FirstMissingPrimaryNativeStableQueryKey = command.StableQueryKey;
                     FirstMissingPrimaryNativeReason = reason;
+                    FirstMissingPrimaryNativeIdentitySequence =
+                        identities.TryGetPrimitive(primitiveIndex, out AdvancedGpuSceneDrawIdentity firstIdentity)
+                            ? firstIdentity.Publication.Sequence
+                            : 0UL;
+                    XRMeshRenderer? firstRenderer = frozen?.Renderer ?? mesh.Mesh;
+                    FirstMissingPrimaryNativeCommand = mesh;
+                    FirstMissingPrimaryNativePrimitiveIndex = primitiveIndex;
+                    FirstMissingPrimaryNativeMeshName = firstRenderer?.Mesh?.Name ?? firstRenderer?.Name;
+                    FirstMissingPrimaryNativeMaterial = material;
                 }
             }
         }

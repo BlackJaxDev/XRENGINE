@@ -26,7 +26,7 @@ public static class PhysicsChainCpuBenchmarkCommand
                 .GetCustomAttribute<AssemblyConfigurationAttribute>()?.Configuration;
             if (!string.Equals(buildConfiguration, "Release", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Physics-chain benchmark evidence must be captured from a Release build.");
-            string configuredRunRoot = Environment.GetEnvironmentVariable(
+            string configuredRunRoot = XREnvironment.GetValue(
                 PhysicsChainBenchmarkResultWriter.RunRootEnvironmentVariable)
                 ?? throw new InvalidOperationException(
                     $"{PhysicsChainBenchmarkResultWriter.RunRootEnvironmentVariable} must name a bounded validation run root.");

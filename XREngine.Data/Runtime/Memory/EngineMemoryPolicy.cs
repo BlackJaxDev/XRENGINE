@@ -90,7 +90,7 @@ public static class EngineMemoryPolicy
 
     private static EngineMemoryProfile ResolveProfile(EngineMemoryProfile defaultProfile)
     {
-        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.MemoryProfile);
+        string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.MemoryProfile);
         return TryParseProfile(raw, out EngineMemoryProfile parsed)
             ? parsed
             : defaultProfile;
@@ -98,7 +98,7 @@ public static class EngineMemoryPolicy
 
     private static GCLatencyMode ResolveLatencyMode(EngineMemoryProfile profile)
     {
-        string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.GcLatencyMode);
+        string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.GcLatencyMode);
         if (!string.IsNullOrWhiteSpace(raw) &&
             Enum.TryParse(raw.Trim(), ignoreCase: true, out GCLatencyMode parsed))
         {
@@ -163,19 +163,19 @@ public static class EngineMemoryPolicy
                 return parsed;
         }
 
-        string? env = Environment.GetEnvironmentVariable(environmentName);
+        string? env = XREnvironment.GetValue(environmentName);
         return TryParseBoolean(env, out bool envParsed) ? envParsed : defaultValue;
     }
 
     private static bool ReadFlag(string name, bool defaultValue)
     {
-        string? value = Environment.GetEnvironmentVariable(name);
+        string? value = XREnvironment.GetValue(name);
         return TryParseBoolean(value, out bool parsed) ? parsed : defaultValue;
     }
 
     private static long ReadPositiveLong(string name)
     {
-        string? raw = Environment.GetEnvironmentVariable(name);
+        string? raw = XREnvironment.GetValue(name);
         return long.TryParse(raw, out long parsed) && parsed > 0L ? parsed : 0L;
     }
 

@@ -3,6 +3,19 @@
 
 const float PI = 3.141592653589793;
 
+// Geometric and normal-map specular anti-aliasing (Tokuyoshi & Kaplanyan / Toksvig).
+// Widens GGX roughness where the shading normal bends across a pixel or a mipmapped
+// normal map shrinks in length, reducing distant specular sparkling without softening flat surfaces.
+float XR_ADV_SpecularAntiAliasing(float roughness, vec3 normalDx, vec3 normalDy, float normalMapLength)
+{
+    float roughness2 = roughness * roughness;
+    float normalVariance = dot(normalDx, normalDx) + dot(normalDy, normalDy);
+    float geometricVariance = min(0.5 * normalVariance, 0.18);
+    float safeLength = clamp(normalMapLength, 0.05, 1.0);
+    float normalMapVariance = min((1.0 - safeLength) / safeLength * 0.5, 0.18);
+    return sqrt(clamp(roughness2 + geometricVariance + normalMapVariance, 0.04 * 0.04, 1.0));
+}
+
 float XR_ADV_DistributionGGX(vec3 N, vec3 H, float roughness)
 {
     float a = roughness * roughness;
@@ -31,6 +44,17 @@ float XR_ADV_GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
 vec3 XR_ADV_FresnelSchlick(float cosTheta, vec3 F0)
 {
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+// Fresnel weight for image-based and ambient light. Indirect light arrives from the whole
+// hemisphere, so a rough surface does not reach full reflectance at a grazing view. The
+// roughness term caps the grazing value at max(1 - roughness, F0). Without the cap, the
+// (1 - F) diffuse weight falls to zero where N.V reaches zero. Interpolated normals of
+// coarse meshes face away from the camera near silhouette edges, so the cap also keeps
+// those edges from turning black.
+vec3 XR_ADV_FresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
+{
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
 // Shading flag 64 selects the Jimenez multi-bounce approximation.

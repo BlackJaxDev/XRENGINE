@@ -26,6 +26,9 @@ public sealed class AdvancedDeformedVertexArena
     private readonly ulong[] _lastFrames;
     private readonly byte[] _historyProduced;
     private readonly byte[] _historyReset;
+    private readonly uint[] _deformedVertexCounts;
+    private readonly uint[] _previousDeformedVertexCounts;
+    private readonly ulong[] _deformedVertexCountFrames;
     private readonly ulong[] _slotSubmissionValues;
     private readonly byte[][][] _retiredStorage;
     private readonly ulong[] _retiredCompletionValues;
@@ -65,6 +68,9 @@ public sealed class AdvancedDeformedVertexArena
         _lastFrames = new ulong[ownerTableCapacity];
         _historyProduced = new byte[ownerTableCapacity];
         _historyReset = new byte[ownerTableCapacity];
+        _deformedVertexCounts = new uint[ownerTableCapacity];
+        _previousDeformedVertexCounts = new uint[ownerTableCapacity];
+        _deformedVertexCountFrames = new ulong[ownerTableCapacity];
 
         _retiredStorage = new byte[options.RetiredGenerationCapacity][][];
         _retiredCompletionValues =
@@ -230,6 +236,34 @@ public sealed class AdvancedDeformedVertexArena
             _historyProduced[slot] = 1;
     }
 
+    /// <summary>
+    /// Records how many leading vertices of the cooked deformation order the owner's
+    /// aggregate job deforms in this frame. A job of a far draw deforms only a prefix,
+    /// so the vertices after the prefix keep older data in that output slot. Returns
+    /// true when the previous frame deformed at least as many vertices, so the previous
+    /// output holds every vertex that this frame deforms and velocity can use it.
+    /// Returns false when the prefix grew, when the owner has no slice, or when the
+    /// owner deformed nothing in the previous frame. Several draws of one owner in a
+    /// frame keep the largest count.
+    /// </summary>
+    public bool RecordDeformedVertexCount(AdvancedGpuHandle owner, uint deformedVertexCount)
+    {
+        ThrowIfFrameClosed();
+        int slot = FindOwner(owner);
+        if (slot < 0)
+            return false;
+        if (_deformedVertexCountFrames[slot] != _frameId)
+        {
+            _previousDeformedVertexCounts[slot] = _deformedVertexCountFrames[slot] + 1UL == _frameId
+                ? _deformedVertexCounts[slot]
+                : 0u;
+            _deformedVertexCounts[slot] = 0u;
+            _deformedVertexCountFrames[slot] = _frameId;
+        }
+        _deformedVertexCounts[slot] = Math.Max(_deformedVertexCounts[slot], deformedVertexCount);
+        return _previousDeformedVertexCounts[slot] >= deformedVertexCount;
+    }
+
     /// <summary>Invalidates owner history. An explicit reset also clears pose continuity.</summary>
     public void InvalidateOwnerHistory(AdvancedGpuHandle owner, bool reset = false)
     {
@@ -300,6 +334,9 @@ public sealed class AdvancedDeformedVertexArena
         Array.Clear(_lastFrames);
         Array.Clear(_historyProduced);
         Array.Clear(_historyReset);
+        Array.Clear(_deformedVertexCounts);
+        Array.Clear(_previousDeformedVertexCounts);
+        Array.Clear(_deformedVertexCountFrames);
         _nextVertexOffset = 0u;
         _pendingVertexCapacity = _vertexCapacity;
     }

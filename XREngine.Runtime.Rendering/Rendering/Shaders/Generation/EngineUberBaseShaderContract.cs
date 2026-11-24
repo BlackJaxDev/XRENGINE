@@ -62,7 +62,7 @@ public static partial class EngineUberBaseShaderContract
         }
         output.Append("#include \"").Append(source).Append("\"\n");
         output.Append("UberBaseMaterialParameters uberBaseResolveMaterial()\n{\n    UberBaseMaterialParameters value = uberMaterial;\n");
-        ulong assigned = 0;
+        UInt128 assigned = UInt128.Zero;
         Span<byte> bytes = stackalloc byte[16];
         foreach (string property in staticProperties)
         {
@@ -72,9 +72,9 @@ public static partial class EngineUberBaseShaderContract
             if (index < 0 || !UberBaseParameterSchema.IsActive(index, features)) continue;
             ShaderAbiMemberContract member = UberBaseParameterSchema.Members[index];
             Span<byte> value = bytes[..checked((int)member.Size)];
-            if ((assigned & (1UL << index)) != 0 || !UberBaseStaticLiteral.TryWrite(member.PhysicalType, property[(separator + 1)..], value))
+            if ((assigned & (UInt128.One << index)) != UInt128.Zero || !UberBaseStaticLiteral.TryWrite(member.PhysicalType, property[(separator + 1)..], value))
                 throw new NotSupportedException($"UberBase.StaticExpressionUnsupported: '{member.ProviderName}' requires one finite canonical literal.");
-            assigned |= 1UL << index;
+            assigned |= UInt128.One << index;
             output.Append("    value.").Append(member.ProviderName).Append(" = ")
                 .Append(UberBaseStaticLiteral.FormatSlang(member.PhysicalType, value)).Append(";\n");
         }

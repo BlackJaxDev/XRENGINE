@@ -117,7 +117,7 @@ internal sealed partial class VulkanCommandRuntime
     {
         get
         {
-            string? env = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanAsyncSubmit);
+            string? env = XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrVulkanAsyncSubmit);
             if (env is not null)
                 return !string.Equals(env, "0", StringComparison.OrdinalIgnoreCase) && !string.Equals(env, "false", StringComparison.OrdinalIgnoreCase);
             return true;

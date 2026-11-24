@@ -178,7 +178,7 @@ public static class AotParityDiagnostics
 
     private static EAotParityMode ResolveModeFromEnvironment()
     {
-        string? raw = Environment.GetEnvironmentVariable(EnvironmentVariable);
+        string? raw = XREnvironment.GetValue(EnvironmentVariable);
         if (!string.IsNullOrWhiteSpace(raw))
         {
             string value = raw.Trim();
@@ -195,10 +195,10 @@ public static class AotParityDiagnostics
 
         // The unit-test lane and headless validation default to error so a missing registration
         // fails the lane instead of waiting for a NativeAOT publish and smoke.
-        string? worldMode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.WorldMode);
+        string? worldMode = XREnvironment.GetValue(XREngineEnvironmentVariables.WorldMode);
         if (string.Equals(worldMode, "UnitTesting", StringComparison.OrdinalIgnoreCase))
             return EAotParityMode.Error;
-        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.HeadlessTest)))
+        if (!string.IsNullOrWhiteSpace(XREnvironment.GetValue(XREngineEnvironmentVariables.HeadlessTest)))
             return EAotParityMode.Error;
 
         return EAotParityMode.Off;

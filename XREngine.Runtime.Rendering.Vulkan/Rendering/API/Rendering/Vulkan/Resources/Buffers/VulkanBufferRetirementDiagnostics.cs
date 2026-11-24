@@ -50,8 +50,8 @@ internal static class VulkanBufferRetirementDiagnostics
 
     private static bool IsEnabled()
     {
-        string? setting = Environment.GetEnvironmentVariable(
-            "XRE_VULKAN_BUFFER_RETIREMENT_DIAGNOSTICS");
+        string? setting = XREnvironment.GetValue(
+            XREngineEnvironmentVariables.VulkanBufferRetirementDiagnostics);
         return string.Equals(setting, "1", StringComparison.Ordinal) ||
                string.Equals(setting, "true", StringComparison.OrdinalIgnoreCase);
     }

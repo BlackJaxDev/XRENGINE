@@ -244,7 +244,7 @@ public sealed partial class McpAssistantWindow
 
         try
         {
-            string runRoot = Environment.GetEnvironmentVariable("XRE_AGENT_VALIDATION_RUN_ROOT")
+            string runRoot = XREnvironment.GetValue(XREngineEnvironmentVariables.AgentValidationRunRoot)
                 ?? Path.Combine(
                     Environment.CurrentDirectory,
                     "Build",

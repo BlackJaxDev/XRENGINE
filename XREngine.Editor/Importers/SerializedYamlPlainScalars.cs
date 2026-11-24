@@ -3,14 +3,14 @@ using System.Text;
 namespace XREngine.Scene.Importers;
 
 /// <summary>
-/// Keeps the full text of Unity YAML values that contain " #". Unity writes such values without
+/// Keeps the full text of source scene YAML values that contain " #". The source editor writes such values without
 /// quotes (for example the FBX material name <c>name: Material #356</c> in a ModelImporter
 /// <c>externalObjects</c> list), and its own reader keeps the whole text. A YAML 1.1 reader
 /// treats " #" as the start of a comment and reads only <c>Material</c>, so every
-/// <c>Material #NNN</c> remap would collapse to one key. Unity YAML has no comments, so quoting
-/// these values before parsing gives the same text that Unity reads.
+/// <c>Material #NNN</c> remap would collapse to one key. Source scene YAML has no comments, so quoting
+/// these values before parsing gives the same text that the source editor reads.
 /// </summary>
-internal static class UnityYamlPlainScalars
+internal static class SerializedYamlPlainScalars
 {
     /// <summary>
     /// Returns <paramref name="text"/> with each plain <c>key: value</c> value that contains " #"

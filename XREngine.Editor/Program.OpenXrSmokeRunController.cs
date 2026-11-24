@@ -164,7 +164,7 @@ internal partial class Program
 
         private static void ValidateLifecycleFaultStage(int targetFrames)
         {
-            string? value = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrSmokeLifecycleFaultStage);
+            string? value = XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrSmokeLifecycleFaultStage);
             if (string.IsNullOrWhiteSpace(value))
                 return;
             if (targetFrames <= 0)
@@ -193,7 +193,7 @@ internal partial class Program
             if (settings.SceneOnlyVRPawn)
                 _warnings.Add("SceneOnlyVRPawn is scene-only and does not emulate OpenXR API calls; Lane 2 smoke should normally set it to false.");
 
-            string? requestedScale = Environment.GetEnvironmentVariable(
+            string? requestedScale = XREnvironment.GetValue(
                 XREngineEnvironmentVariables.VulkanPhase524bTsrResolutionScale);
             if (!string.IsNullOrWhiteSpace(requestedScale))
             {
@@ -1383,10 +1383,10 @@ internal partial class Program
         private void PopulateEffectiveConfiguration(OpenXrSmokeSummary summary)
         {
             summary.VulkanRenderTargetModeRequested =
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VkRenderTargetMode) ?? string.Empty;
+                XREnvironment.GetValue(XREngineEnvironmentVariables.VkRenderTargetMode) ?? string.Empty;
             summary.VulkanRenderTargetModeEffective = _vulkanRenderTargetModeEffective;
             summary.VulkanDiagnosticPresetRequested =
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanDiagnosticPreset) ?? string.Empty;
+                XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanDiagnosticPreset) ?? string.Empty;
             summary.VulkanDiagnosticPresetEffective = _vulkanDiagnosticPresetEffective;
             summary.VulkanValidationLayersEffective = _validationLayersObserved;
             summary.VulkanSynchronizationValidationEffective = _synchronizationValidationObserved;
@@ -1411,14 +1411,14 @@ internal partial class Program
                 summary.SubmissionValidation = smokeDiagnostics.CaptureOpenXrSubmissionValidation();
             }
             summary.OcclusionCullingModeRequested =
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode) ?? string.Empty;
+                XREnvironment.GetValue(XREngineEnvironmentVariables.OcclusionCullingMode) ?? string.Empty;
             summary.OcclusionCullingModeEffective = _occlusionCullingModeEffective;
             summary.MirrorModeEffective = _mirrorModeEffective;
         }
 
         private static string[] ResolveExternalValidationAllowlist()
         {
-            string? raw = Environment.GetEnvironmentVariable(ExternalValidationAllowlistEnvironmentVariable);
+            string? raw = XREnvironment.GetValue(ExternalValidationAllowlistEnvironmentVariable);
             return string.IsNullOrWhiteSpace(raw)
                 ? []
                 : raw.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -1431,7 +1431,7 @@ internal partial class Program
             summary.DefaultPipelineCaptureEnabled = ReadBooleanEnvironmentVariable(
                 XREngineEnvironmentVariables.CaptureDefaultPipelineFbo);
             summary.DefaultPipelineCaptureSkipFrames = int.TryParse(
-                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.CaptureDefaultPipelineSkipFrames),
+                XREnvironment.GetValue(XREngineEnvironmentVariables.CaptureDefaultPipelineSkipFrames),
                 out int skipFrames)
                     ? Math.Max(0, skipFrames)
                     : 0;
@@ -1657,12 +1657,12 @@ internal partial class Program
 
         private static string ResolveCaptureOutputDirectory()
         {
-            string? configured = Environment.GetEnvironmentVariable(
+            string? configured = XREnvironment.GetValue(
                 XREngineEnvironmentVariables.CaptureDefaultPipelineOutputDirectory);
             if (!string.IsNullOrWhiteSpace(configured))
                 return Path.GetFullPath(configured);
 
-            string? runRoot = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.AgentValidationRunRoot);
+            string? runRoot = XREnvironment.GetValue(XREngineEnvironmentVariables.AgentValidationRunRoot);
             string root = string.IsNullOrWhiteSpace(runRoot)
                 ? Path.Combine(Environment.CurrentDirectory, "Build", "_AgentValidation", "manual-default-pipeline-capture")
                 : Path.GetFullPath(runRoot);
@@ -1671,7 +1671,7 @@ internal partial class Program
 
         private static bool ReadBooleanEnvironmentVariable(string name)
         {
-            string? value = Environment.GetEnvironmentVariable(name);
+            string? value = XREnvironment.GetValue(name);
             return string.Equals(value, "1", StringComparison.Ordinal) ||
                 string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(value, "on", StringComparison.OrdinalIgnoreCase) ||
@@ -1685,7 +1685,7 @@ internal partial class Program
             if (targetFrames <= 0)
                 return OpenXrSubmissionValidationRequest.Disabled;
 
-            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrSubmissionValidation);
+            string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrSubmissionValidation);
             if (string.IsNullOrWhiteSpace(raw))
                 return OpenXrSubmissionValidationRequest.Disabled;
 
@@ -2083,7 +2083,7 @@ internal partial class Program
                     return arg[prefix.Length..];
             }
 
-            string? raw = Environment.GetEnvironmentVariable(environmentName);
+            string? raw = XREnvironment.GetValue(environmentName);
             return string.IsNullOrWhiteSpace(raw) ? null : raw;
         }
     }

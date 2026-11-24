@@ -75,13 +75,13 @@ public sealed class ProfileMutationWorkloadComponent : XRComponent
     /// </summary>
     public static ProfileMutationWorkloadComponent? CreateRequested(XRMaterial[] materials)
     {
-        string? mode = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileMutationWorkload);
+        string? mode = XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileMutationWorkload);
         if (!IsSupportedMode(mode))
             return null;
 
         string selectedMode = mode!;
         string? streamingAssetPath = string.Equals(selectedMode, "Streaming", StringComparison.OrdinalIgnoreCase)
-            ? Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileStreamingAsset)
+            ? XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileStreamingAsset)
             : null;
         return new ProfileMutationWorkloadComponent(selectedMode, materials, streamingAssetPath);
     }

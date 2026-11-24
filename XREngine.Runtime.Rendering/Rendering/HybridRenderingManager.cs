@@ -168,7 +168,7 @@ namespace XREngine.Rendering
 
     private static GPURenderPassCollection.IndirectDebugSettings DebugSettings => GPURenderPassCollection.IndirectDebug;
     private static bool VulkanCounterDiagnosticsEnabled =>
-        string.Equals(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanCounterDiagnostics), "1", StringComparison.OrdinalIgnoreCase);
+        string.Equals(XREnvironment.GetValue(XREngineEnvironmentVariables.VulkanCounterDiagnostics), "1", StringComparison.OrdinalIgnoreCase);
     private static readonly HashSet<uint> _warnedMultiVertexMaterials = [];
     private static bool IsGpuIndirectLoggingEnabled()
         => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;

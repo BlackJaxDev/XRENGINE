@@ -355,7 +355,7 @@ namespace XREngine.Rendering.OpenGL
                 Vector4 sourceFlatDirection,
                 uint editorHighlightBits)
                 => Render(modelMatrix, previousModelMatrix, materialOverride, renderOptionsOverride,
-                    instances, billboardMode, forceNoStereo, sourceFlatDirection);
+                    instances, billboardMode, forceNoStereo, sourceFlatDirection, editorHighlightBits);
 
             public void Render(
                 Matrix4x4 modelMatrix,
@@ -365,7 +365,8 @@ namespace XREngine.Rendering.OpenGL
                 uint instances,
                 EMeshBillboardMode billboardMode,
                 bool forceNoStereo,
-                Vector4 sourceFlatDirection = default)
+                Vector4 sourceFlatDirection = default,
+                uint editorHighlightBits = 0u)
             {
                 if (IsDebugCategoryEnabled("Render"))
                     Dbg($"Render request (instances={instances}, billboard={billboardMode})", "Render");
@@ -475,7 +476,8 @@ namespace XREngine.Rendering.OpenGL
                     instances,
                     billboardMode,
                     forceNoStereo,
-                    sourceFlatDirection))
+                    sourceFlatDirection,
+                    editorHighlightBits: editorHighlightBits))
                 {
                     return;
                 }
@@ -492,7 +494,8 @@ namespace XREngine.Rendering.OpenGL
                         billboardMode,
                         forceNoStereo,
                         sourceFlatDirection,
-                        uniformSourceMaterial: material))
+                        uniformSourceMaterial: material,
+                        editorHighlightBits: editorHighlightBits))
                 {
                     LogBatchedTextDraw("Render pending-uber-fallback", instances);
                     LogModelDrawDiagnostic("Render pending-uber-fallback", instances);
@@ -593,11 +596,12 @@ namespace XREngine.Rendering.OpenGL
                 EMeshBillboardMode billboardMode,
                 bool forceNoStereo,
                 Vector4 sourceFlatDirection,
-                GLMaterial? uniformSourceMaterial = null)
+                GLMaterial? uniformSourceMaterial = null,
+                uint editorHighlightBits = 0u)
                 => TryRenderWithMaterialProgramsCore(
                     material, modelMatrix, prevModelMatrix, materialOverride,
                     renderOptionsOverride, instances, billboardMode, forceNoStereo,
-                    null, 0, out _, uniformSourceMaterial, sourceFlatDirection);
+                    null, 0, out _, uniformSourceMaterial, sourceFlatDirection, editorHighlightBits);
 
             private bool TryRenderWithMaterialProgramsCore(
                 GLMaterial material,
@@ -612,7 +616,8 @@ namespace XREngine.Rendering.OpenGL
                 nuint indirectByteOffset,
                 out string failureReason,
                 GLMaterial? uniformSourceMaterial = null,
-                Vector4 sourceFlatDirection = default)
+                Vector4 sourceFlatDirection = default,
+                uint editorHighlightBits = 0u)
             {
                 failureReason = string.Empty;
                 if (!GetPrograms(material, out var vtx, out var mat))
@@ -675,6 +680,7 @@ namespace XREngine.Rendering.OpenGL
                 OnSettingUniforms(vtx!, mat!);
                 vtx!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
                 mat!.Uniform("u_SourceFlatDirection", sourceFlatDirection);
+                mat!.Uniform(EditorHighlightFragmentSourceAdapter.FlagsUniformName, editorHighlightBits);
                 MeshRenderer.EnterResourcePublicationLease();
                 try
                 {

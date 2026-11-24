@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Shadows;
@@ -23,6 +23,13 @@ internal sealed partial class VulkanFrameLoop
     private int _presentNowRecoveryProbeActive;
     private ulong _presentNowPreAcquireRetryLastFrame;
     private long _presentNowPreAcquireRetryStreakStartTicks;
+
+    /// <summary>
+    /// The auxiliary log that gets the PresentNow pause, probe, recovery, and terminal lines.
+    /// The Vulkan category log is compiled out of Release builds, so without this file a
+    /// Release session that stops presenting leaves no record of the failed stage.
+    /// </summary>
+    private const string PresentNowAuxiliaryLogFileName = "vulkan-present-now.log";
 
     /// <summary>
     /// Publishes a cold-path recovery edge for a failure explicitly classified as
@@ -256,13 +263,11 @@ internal sealed partial class VulkanFrameLoop
             }
 
             attempt.PresentNowMeshRequestCount = requestCount;
-            acceptedPlan.CaptureRequiredTextureReferences(
-                _meshOperationRequestScratch.AsSpan(0, requestCount));
-            _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            acceptedPlan.ThrowIfSealed();
+            CaptureRequiredMeshTextureUploads(
+                acceptedPlan.RequiredTextureSet,
                 acceptedPlan.RequiredTextureUploads,
-                acceptedPlan.RequiredTextures,
-                acceptedPlan.RequiredTextureGenerations,
-                requireExactDescriptorPublication: false);
+                _meshOperationRequestScratch.AsSpan(0, requestCount));
             if (!CompleteAcceptedPresentNowTextureReadiness(
                     acceptedPlan,
                     ref watchdog,
@@ -1067,6 +1072,26 @@ internal sealed partial class VulkanFrameLoop
     private VulkanTextureUploadSchedulingContext CreatePresentNowUploadContext()
         => CreateTextureUploadSchedulingContext();
 
+    /// <summary>
+    /// Adds the material textures of <paramref name="requests"/> to <paramref name="textures"/> and
+    /// captures the required-upload manifest for every texture in the set. The desktop PresentNow
+    /// path, explicit production, and the OpenXR eye path all use this one capture, so a visible
+    /// mesh always declares the same texture generations, and a texture that the current device
+    /// has never uploaded is found through the manifest on every path.
+    /// </summary>
+    private void CaptureRequiredMeshTextureUploads(
+        VulkanRequiredTextureReferenceSet textures,
+        VulkanTextureUploadManifest manifest,
+        ReadOnlySpan<VulkanMeshRenderRequest> requests)
+    {
+        textures.AddMeshRequestMaterialTextures(requests);
+        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            manifest,
+            textures.Textures,
+            textures.Generations,
+            requireExactDescriptorPublication: false);
+    }
+
     private bool CompleteAcceptedPresentNowTextureReadiness(
         VulkanAcceptedFramePlan acceptedPlan,
         ref VulkanPresentNowReadinessWatchdog watchdog,
@@ -1376,6 +1401,11 @@ internal sealed partial class VulkanFrameLoop
             failure.Stage,
             !failedProbe,
             failure.Message);
+        WritePresentNowAuxiliaryLog(
+            $"RecoveryPending frame={failure.FrameId} stage={failure.Stage} " +
+            $"ticket='{failure.ActiveTicket}' dependency='{failure.DependencyChain}' " +
+            $"automaticProbe={!failedProbe} elapsedMs={failure.Elapsed.TotalMilliseconds:F1} " +
+            $"detail={failure.Message}");
     }
 
     private bool TryBeginPresentNowRecoveryProbe(
@@ -1427,6 +1457,11 @@ internal sealed partial class VulkanFrameLoop
             previousCompileActivityGeneration,
             compileActivityGeneration,
             Volatile.Read(ref _presentNowRecoveryRequestReason));
+        WritePresentNowAuxiliaryLog(
+            $"RecoveryProbe frame={attempt.FrameNumber} sourceFrame={recoverableFailure.FrameId} " +
+            $"stage={recoverableFailure.Stage} automatic={automaticProbe} explicit={explicitRequest} " +
+            $"pipelineCompletion={pipelineCompletionProbe} " +
+            $"reason={Volatile.Read(ref _presentNowRecoveryRequestReason)}");
         return true;
     }
 
@@ -1479,6 +1514,9 @@ internal sealed partial class VulkanFrameLoop
             source?.FrameId ?? 0UL,
             source?.Stage.ToString() ?? "<unknown>",
             recoveryAttempts);
+        WritePresentNowAuxiliaryLog(
+            $"RendererRecovered frame={attempt.FrameNumber} sourceFrame={source?.FrameId ?? 0UL} " +
+            $"stage={source?.Stage.ToString() ?? "<unknown>"} attempts={recoveryAttempts}");
     }
 
     private static bool IsSuccessfulPresentNowRecoveryFrame(
@@ -1608,6 +1646,12 @@ internal sealed partial class VulkanFrameLoop
             transition.BackgroundResumeCount,
             transition.FailureType,
             transition.Detail);
+        WritePresentNowAuxiliaryLog(
+            $"TerminalTransition id={transition.TransitionId} frame={transition.FrameId} " +
+            $"stage={transition.ReadinessStage} ticket='{transition.ActiveTicket}' " +
+            $"dependency='{transition.DependencyChain}' disposition={transition.Disposition} " +
+            $"elapsedMs={transition.Elapsed.TotalMilliseconds:F1} failureType={transition.FailureType} " +
+            $"detail={transition.Detail}");
         Debug.Vulkan(
             "[Vulkan][PresentNow][ReproductionRecord] transition={0} " +
             "backend=Vulkan policy=BlockForExact workClass=PresentNow " +
@@ -1629,6 +1673,16 @@ internal sealed partial class VulkanFrameLoop
             transition.ActiveTicket,
             transition.DependencyChain);
     }
+
+    /// <summary>
+    /// Writes one PresentNow state change, with a local timestamp, to
+    /// <see cref="PresentNowAuxiliaryLogFileName"/>. Callers are cold paths that run once per
+    /// failure, probe, or recovery, so the formatted string does not allocate per frame.
+    /// </summary>
+    private static void WritePresentNowAuxiliaryLog(string message)
+        => Debug.WriteAuxiliaryLog(
+            PresentNowAuxiliaryLogFileName,
+            $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff} {message}");
 
     private void ResetIncompleteAcceptedPresentNowPlan(
         ref VulkanFrameAttempt attempt)
