@@ -6,6 +6,7 @@ using XREngine.Components;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Editor.Importers.SerializedAssets;
 using XREngine.Rendering;
+using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models;
 using XREngine.Runtime.Bootstrap;
@@ -70,7 +71,14 @@ public sealed class SerializedPrefabAvatarImportTests
             .Single();
         model.SceneNode.ShouldNotBeNull().Name.ShouldBe("MeshNode");
         model.MeshCastsShadows.ShouldBe(false);
-        model.Meshes.Single().RenderInfo.ReceivesShadows.ShouldBeFalse();
+        model.MeshReceivesShadows.ShouldBe(false);
+        // The import does not build runtime renderers. World attachment builds them from the
+        // completed import, so the test builds them here to check the values they receive.
+        model.Meshes.ShouldBeEmpty();
+        model.RebuildRuntimeMeshes();
+        RenderInfo3D renderInfo = model.Meshes.Single().RenderInfo;
+        renderInfo.CastsShadows.ShouldBeFalse();
+        renderInfo.ReceivesShadows.ShouldBeFalse();
         SubMesh subMesh = model.Model.ShouldNotBeNull().Meshes.Single();
         subMesh.RootTransform.ShouldBeSameAs(root.Transform);
         XRMaterial material = subMesh
