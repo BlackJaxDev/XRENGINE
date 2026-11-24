@@ -190,7 +190,8 @@ export function validateEngineAssetManifest(value, manifestUrl) {
             if (variant.semantic === 'UberOutline' && (variant.pass !== 'outline'
                 || variant.vertexProfile !== 'position-normal-uv4-color-v1'
                 || !['linear-hdr-v1', 'linear-hdr-alpha-mask-v1', 'linear-hdr-dissolve-v1',
-                    'linear-hdr-alpha-mask-dissolve-v1'].includes(variant.outputProfile)))
+                    'linear-hdr-alpha-mask-dissolve-v1', 'linear-hdr-flipbook-v1', 'linear-hdr-alpha-mask-flipbook-v1',
+                    'linear-hdr-dissolve-flipbook-v1', 'linear-hdr-alpha-mask-dissolve-flipbook-v1'].includes(variant.outputProfile)))
                 throw new Error('AssetSource.MaterialVariantInvalid.');
             if (['SkyboxGradient', 'SkyboxEquirectangular', 'SkyboxOctahedral', 'SkyboxCubemap', 'SkyboxDynamicProcedural'].includes(variant.semantic)
                 && (variant.pass !== 'background' || variant.vertexProfile !== 'fullscreen-sky-v1'
