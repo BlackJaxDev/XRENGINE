@@ -770,6 +770,9 @@ public static partial class RuntimeEngine
 
             if (zeroReadbackRequested)
             {
+                if (inputs.SupportsMeshletDispatch)
+                    return EMeshSubmissionStrategy.GpuMeshletZeroReadback;
+
                 if (inputs.SupportsIndirectCountDraw)
                     return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
 
@@ -888,6 +891,9 @@ public static partial class RuntimeEngine
 
             if (zeroReadbackRequested)
             {
+                if (supportsMeshletDispatch)
+                    return PublishResolvedMeshSubmissionStrategy(EMeshSubmissionStrategy.GpuMeshletZeroReadback);
+
                 if (supportsIndirectCount)
                     return PublishResolvedMeshSubmissionStrategy(EMeshSubmissionStrategy.GpuIndirectZeroReadback);
 
@@ -933,7 +939,18 @@ public static partial class RuntimeEngine
                 || RuntimeEngine.EffectiveSettings.EnableZeroReadbackMaterialScatter
                 || RuntimeEngine.EditorPreferences.Debug.EnableZeroReadbackMaterialScatter;
             if (zeroReadbackRequested)
-                return EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+            {
+                bool supportsMeshlet = AbstractRenderer.Current is { } currentRenderer
+                    ? currentRenderer.BackendId != RendererBackendId.WebGPU &&
+                      (currentRenderer.SupportsMeshletDispatch() ||
+                       (State.CurrentRenderingPipeline?.Pipeline is IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } &&
+                        currentRenderer is IAdvancedVisibilityStageBackendCapability { SupportsAdvancedComputeMeshletVisibility: true }))
+                    : LastResolvedRendererBackend != RuntimeGraphicsApiKind.WebGPU &&
+                      LastResolvedSupportsMeshletDispatch;
+                return supportsMeshlet
+                    ? EMeshSubmissionStrategy.GpuMeshletZeroReadback
+                    : EMeshSubmissionStrategy.GpuIndirectZeroReadback;
+            }
 
             return EMeshSubmissionStrategy.GpuIndirectInstrumented;
         }
