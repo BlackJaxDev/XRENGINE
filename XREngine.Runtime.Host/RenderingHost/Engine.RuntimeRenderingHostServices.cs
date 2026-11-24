@@ -303,6 +303,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public string PlayModeStateName => Engine.PlayMode.State.ToString();
     public EAntiAliasingMode DefaultAntiAliasingMode => Engine.EffectiveSettings.AntiAliasingMode;
     public EAntiAliasingFilterMode DefaultAntiAliasingFilterMode => Engine.EffectiveSettings.AntiAliasingFilterMode;
+    public float DefaultAntiAliasingSharpness => Engine.EffectiveSettings.AntiAliasingSharpness;
     public bool EnableNvidiaDlss => Engine.EffectiveSettings.EnableNvidiaDlss;
     public EDlssQualityMode DlssQuality => Engine.EffectiveSettings.DlssQuality;
     public float DlssCustomScale => RuntimeEngine.Rendering.Settings.DlssCustomScale;

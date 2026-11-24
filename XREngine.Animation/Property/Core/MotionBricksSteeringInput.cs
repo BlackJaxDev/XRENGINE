@@ -16,4 +16,6 @@ public readonly record struct MotionBricksSteeringInput(
     float RunSpeedMetersPerSecond,
     float ReplanIntervalSeconds,
     float InputReplanThreshold,
-    float DeltaSeconds);
+    float DeltaSeconds,
+    float VerticalVelocity = 0.0f,
+    bool SprintHeld = true);

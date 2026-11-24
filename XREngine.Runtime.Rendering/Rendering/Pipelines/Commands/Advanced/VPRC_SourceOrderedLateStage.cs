@@ -65,8 +65,11 @@ public sealed class VPRC_SourceOrderedLateStage : ViewportRenderCommand
         using var scope = commandCollection.EnterRenderingBufferReadScope();
         if (commandCollection.RenderingBackendReadyPackage.State !=
             EBackendReadyFramePackageState.Published)
-            throw new RenderResourcePreparationPendingException(
+        {
+            instance.RenderState.RequestPendingResourcePreparationDeferral(
                 "The source-ordered late pass has no published command package.");
+            return;
+        }
 
         using var required = RequiredMeshSubmissionScope.EnterIf(true);
         Commands?.Execute();

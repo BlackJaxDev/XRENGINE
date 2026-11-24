@@ -4,6 +4,7 @@ using System.Linq;
 using System.Numerics;
 using MemoryPack;
 using XREngine.Animation;
+using XREngine.Components.Animation;
 using XREngine.Core.Files;
 using XREngine.Serialization;
 using YamlDotNet.Core;
@@ -162,6 +163,7 @@ internal static class AnimStateMachineSerialization
         {
             ApplyType = layer.ApplyType,
             Weight = layer.Weight,
+            AvatarMask = layer.AvatarMask,
             InitialStateIndex = layer.InitialStateIndex,
             AnyStatePosition = layer.AnyState.Position,
             AnyStateTransitions = CreateTransitionModels(layer.AnyState.Transitions, stateIndices, published),
@@ -286,6 +288,7 @@ internal static class AnimStateMachineSerialization
         {
             ApplyType = model.ApplyType,
             Weight = model.Weight ?? 1.0f,
+            AvatarMask = model.AvatarMask ?? EHumanoidBodyMask.All,
             InitialStateIndex = model.InitialStateIndex ?? -1
         };
 
@@ -465,6 +468,8 @@ internal sealed partial class AnimLayerSerializedModel
     public AnimLayer.EApplyType ApplyType { get; set; }
 
     public float? Weight { get; set; }
+
+    public EHumanoidBodyMask? AvatarMask { get; set; }
 
     public int? InitialStateIndex { get; set; }
 

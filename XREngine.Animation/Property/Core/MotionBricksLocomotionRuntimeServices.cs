@@ -14,4 +14,11 @@ public static class MotionBricksLocomotionRuntimeServices
         get => Volatile.Read(ref _currentFactory);
         set => Volatile.Write(ref _currentFactory, value);
     }
+
+    /// <summary>
+    /// Triggers optional background warmup on the registered locomotion factory without
+    /// blocking the calling thread.
+    /// </summary>
+    public static void Prewarm()
+        => Volatile.Read(ref _currentFactory)?.Prewarm();
 }

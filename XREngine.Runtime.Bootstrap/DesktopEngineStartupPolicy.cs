@@ -51,8 +51,8 @@ internal sealed class DesktopEngineStartupPolicy : IRuntimeEngineStartupPolicy
             ],
             DefaultUserSettings = new UserSettings { VSync = EVSyncMode.Off },
             TargetUpdatesPerSecond = 90.0f,
-            TargetFramesPerSecond = 90.0f,
-            FixedFramesPerSecond = 45.0f,
+            TargetFramesPerSecond = 0.0f,
+            FixedFramesPerSecond = 60.0f,
         };
     }
 

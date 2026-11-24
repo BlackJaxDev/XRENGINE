@@ -243,6 +243,9 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
         if (mode == RuntimeImageResizeMode.IndependentChannels &&
             image.PixelFormat is RuntimePixelFormat.Rgba8 or RuntimePixelFormat.Bgra8 or RuntimePixelFormat.RgbaFloat32)
             return ResizeIndependentChannels(image, width, height);
+        if (mode == RuntimeImageResizeMode.LinearSrgbBox &&
+            image.PixelFormat is RuntimePixelFormat.Rgba8 or RuntimePixelFormat.Bgra8 or RuntimePixelFormat.Rgb8 or RuntimePixelFormat.Bgr8)
+            return ResizeLinearSrgbBox(image, width, height);
         (StorageType storage, string mapping) = image.PixelFormat switch
         {
             RuntimePixelFormat.Rgb8 => (StorageType.Char, "RGB"),
@@ -275,6 +278,7 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
         {
             case RuntimeImageResizeMode.Standard:
             case RuntimeImageResizeMode.IndependentChannels:
+            case RuntimeImageResizeMode.LinearSrgbBox:
                 resized.Resize(geometry);
                 break;
             case RuntimeImageResizeMode.Bilinear:
@@ -369,6 +373,120 @@ public sealed class MagickRuntimeImageCodec : IRuntimeImageCodec
                     else
                         destination[componentOffset] = (byte)Math.Clamp(
                             Math.Round(sums[channel] / area), byte.MinValue, byte.MaxValue);
+                }
+            }
+        }
+        return new RuntimeImage(width, height, image.Format, image.Type, result);
+    }
+
+    private static readonly float[] SrgbByteToLinearTable = BuildSrgbByteToLinearTable();
+
+    private static float[] BuildSrgbByteToLinearTable()
+    {
+        float[] table = new float[256];
+        for (int i = 0; i < 256; ++i)
+        {
+            float s = i / 255.0f;
+            table[i] = s <= 0.04045f
+                ? s / 12.92f
+                : MathF.Pow((s + 0.055f) / 1.055f, 2.4f);
+        }
+        return table;
+    }
+
+    private static byte LinearToSrgbByte(float linear)
+    {
+        float clamped = Math.Clamp(linear, 0.0f, 1.0f);
+        float srgb = clamped <= 0.0031308f
+            ? clamped * 12.92f
+            : 1.055f * MathF.Pow(clamped, 1.0f / 2.4f) - 0.055f;
+        return (byte)Math.Clamp(MathF.Round(srgb * 255.0f), 0.0f, 255.0f);
+    }
+
+    /// <summary>
+    /// Downsamples 8-bit sRGB color images in linear light using a non-ringing box filter.
+    /// Alpha weights color contributions when transparent pixels are present so dark UV gutters
+    /// do not bleed across opaque island edges or crush seam brightness on lower mip levels.
+    /// </summary>
+    private static RuntimeImage ResizeLinearSrgbBox(RuntimeImage image, uint width, uint height)
+    {
+        if (image.Width == 0 || image.Height == 0)
+            throw new InvalidDataException("Source image dimensions must be positive.");
+        bool hasAlpha = image.PixelFormat is RuntimePixelFormat.Rgba8 or RuntimePixelFormat.Bgra8;
+        int pixelBytes = hasAlpha ? 4 : 3;
+        byte[] result = new byte[checked((int)((long)width * height * pixelBytes))];
+        ReadOnlySpan<byte> source = image.Pixels.Span;
+        Span<byte> destination = result;
+        float[] srgbToLinear = SrgbByteToLinearTable;
+        double scaleX = image.Width / (double)width;
+        double scaleY = image.Height / (double)height;
+        double area = scaleX * scaleY;
+        for (int y = 0; y < height; ++y)
+        {
+            double top = y * scaleY;
+            double bottom = (y + 1) * scaleY;
+            int firstY = (int)Math.Floor(top);
+            int lastY = Math.Min((int)image.Height - 1, (int)Math.Ceiling(bottom) - 1);
+            for (int x = 0; x < width; ++x)
+            {
+                double left = x * scaleX;
+                double right = (x + 1) * scaleX;
+                int firstX = (int)Math.Floor(left);
+                int lastX = Math.Min((int)image.Width - 1, (int)Math.Ceiling(right) - 1);
+                double sumC0 = 0.0;
+                double sumC1 = 0.0;
+                double sumC2 = 0.0;
+                double rawC0 = 0.0;
+                double rawC1 = 0.0;
+                double rawC2 = 0.0;
+                double sumAlpha = 0.0;
+                double alphaWeightSum = 0.0;
+                for (int sourceY = firstY; sourceY <= lastY; ++sourceY)
+                {
+                    double verticalWeight = Math.Min(bottom, sourceY + 1.0) - Math.Max(top, sourceY);
+                    int row = image.Origin == RuntimeImageOrigin.BottomLeft
+                        ? (int)image.Height - sourceY - 1
+                        : sourceY;
+                    int rowOffset = checked(row * image.RowStrideBytes);
+                    for (int sourceX = firstX; sourceX <= lastX; ++sourceX)
+                    {
+                        double weight = verticalWeight *
+                            (Math.Min(right, sourceX + 1.0) - Math.Max(left, sourceX));
+                        int offset = rowOffset + sourceX * pixelBytes;
+                        float c0 = srgbToLinear[source[offset]];
+                        float c1 = srgbToLinear[source[offset + 1]];
+                        float c2 = srgbToLinear[source[offset + 2]];
+                        rawC0 += c0 * weight;
+                        rawC1 += c1 * weight;
+                        rawC2 += c2 * weight;
+                        if (hasAlpha)
+                        {
+                            double a = source[offset + 3] / 255.0;
+                            double aw = weight * a;
+                            sumC0 += c0 * aw;
+                            sumC1 += c1 * aw;
+                            sumC2 += c2 * aw;
+                            sumAlpha += a * weight;
+                            alphaWeightSum += aw;
+                        }
+                    }
+                }
+
+                int dstOffset = checked((int)(((long)y * width + x) * pixelBytes));
+                if (hasAlpha && alphaWeightSum > 1.0e-6)
+                {
+                    destination[dstOffset] = LinearToSrgbByte((float)(sumC0 / alphaWeightSum));
+                    destination[dstOffset + 1] = LinearToSrgbByte((float)(sumC1 / alphaWeightSum));
+                    destination[dstOffset + 2] = LinearToSrgbByte((float)(sumC2 / alphaWeightSum));
+                    destination[dstOffset + 3] = (byte)Math.Clamp(Math.Round((sumAlpha / area) * 255.0), 0.0, 255.0);
+                }
+                else
+                {
+                    destination[dstOffset] = LinearToSrgbByte((float)(rawC0 / area));
+                    destination[dstOffset + 1] = LinearToSrgbByte((float)(rawC1 / area));
+                    destination[dstOffset + 2] = LinearToSrgbByte((float)(rawC2 / area));
+                    if (hasAlpha)
+                        destination[dstOffset + 3] = 0;
                 }
             }
         }

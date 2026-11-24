@@ -14,12 +14,17 @@ public sealed class HumanoidToSomaPoseSampler
     private const float DegreesToRadians = MathF.PI / 180.0f;
 
     private readonly SomaRestSkeletonCalibration _calibration;
+    private readonly Quaternion _inverseNeutralBodyRotation;
     private readonly Quaternion[] _canonicalLocalDeltas = new Quaternion[SomaModelContract.JointCount];
     private readonly Quaternion[] _worldDeltas = new Quaternion[SomaModelContract.JointCount];
     private readonly Quaternion[] _worldRotations = new Quaternion[SomaModelContract.JointCount];
+    private readonly Vector3[] _provisionalWorldPositions = new Vector3[SomaModelContract.JointCount];
 
     public HumanoidToSomaPoseSampler(SomaRestSkeletonCalibration? calibration = null)
-        => _calibration = calibration ?? SomaRestSkeletonCalibration.CanonicalDefault;
+    {
+        _calibration = calibration ?? SomaRestSkeletonCalibration.CanonicalDefault;
+        _inverseNeutralBodyRotation = SomaToHumanoidMuscleConverter.ComputeInverseNeutralBodyRotation(_calibration);
+    }
 
     /// <summary>
     /// Converts one canonical humanoid muscle frame and Body transform into a 30-joint SOMA
@@ -99,19 +104,35 @@ public sealed class HumanoidToSomaPoseSampler
         else if (somaHipsPos.Y <= 0.1f)
             somaHipsPos.Y = _calibration.HipsHeightMeters;
 
-        _worldDeltas[0] = SomaPoseTransform.NormalizeOrIdentity(bodyRotation);
-        _worldRotations[0] = SomaPoseTransform.NormalizeOrIdentity(_worldDeltas[0] * restWorld[0]);
-        destinationLocalPose[0] = new SomaPoseTransform(somaHipsPos, _worldRotations[0]);
-
+        // Evaluate the provisional skeleton with neutral Hips so we can solve the exact Hips
+        // orientation whose Mecanim Body landmark frame matches bodyRotation.
+        _worldDeltas[0] = Quaternion.Identity;
+        _worldRotations[0] = restWorld[0];
+        _provisionalWorldPositions[0] = somaHipsPos;
         for (int joint = 1; joint < SomaModelContract.JointCount; joint++)
         {
             int parent = parents[joint];
+            _provisionalWorldPositions[joint] = _provisionalWorldPositions[parent]
+                + Vector3.Transform(refLocal[joint].Position, _worldRotations[parent]);
             _worldDeltas[joint] = SomaPoseTransform.NormalizeOrIdentity(_worldDeltas[parent] * _canonicalLocalDeltas[joint]);
             _worldRotations[joint] = SomaPoseTransform.NormalizeOrIdentity(_worldDeltas[joint] * restWorld[joint]);
             Quaternion localRot = SomaPoseTransform.NormalizeOrIdentity(
                 Quaternion.Inverse(_worldRotations[parent]) * _worldRotations[joint]);
             destinationLocalPose[joint] = new SomaPoseTransform(refLocal[joint].Position, localRot);
         }
+
+        Quaternion requestedBody = SomaPoseTransform.NormalizeOrIdentity(bodyRotation);
+        Quaternion hipsWorldDelta = SomaToHumanoidMuscleConverter.TryComputeBodyLandmarkRotation(
+            _provisionalWorldPositions,
+            out Quaternion provisionalRawBody)
+            ? SomaPoseTransform.NormalizeOrIdentity(
+                requestedBody * Quaternion.Inverse(
+                    SomaPoseTransform.NormalizeOrIdentity(provisionalRawBody * _inverseNeutralBodyRotation)))
+            : requestedBody;
+
+        _worldDeltas[0] = hipsWorldDelta;
+        _worldRotations[0] = SomaPoseTransform.NormalizeOrIdentity(hipsWorldDelta * restWorld[0]);
+        destinationLocalPose[0] = new SomaPoseTransform(somaHipsPos, _worldRotations[0]);
     }
 
     /// <summary>
@@ -200,7 +221,7 @@ public sealed class HumanoidToSomaPoseSampler
         return SomaPoseTransform.NormalizeOrIdentity(basisNorm * q * Quaternion.Inverse(basisNorm));
     }
 
-    private static Quaternion BuildVerticalDelta(
+    private Quaternion BuildVerticalDelta(
         ReadOnlySpan<float> muscles,
         EHumanoidValue twistMuscle,
         EHumanoidValue frontBackMuscle,
@@ -210,7 +231,10 @@ public sealed class HumanoidToSomaPoseSampler
         float twistDeg = NormalizedMuscleToDegrees(muscles[(int)twistMuscle], range);
         float frontBackDeg = -NormalizedMuscleToDegrees(muscles[(int)frontBackMuscle], range);
         float leftRightDeg = -NormalizedMuscleToDegrees(muscles[(int)leftRightMuscle], range);
-        return ComposeSwingTwistQuaternion(frontBackDeg, twistDeg, leftRightDeg, SomaToHumanoidMuscleConverter.VerticalJointBasis);
+        Quaternion basis = _calibration.UseMecanimNeutralPostureOffsets
+            ? SomaToHumanoidMuscleConverter.SpineMecanimBasis
+            : SomaToHumanoidMuscleConverter.VerticalJointBasis;
+        return ComposeSwingTwistQuaternion(frontBackDeg, twistDeg, leftRightDeg, basis);
     }
 
     private void BuildArmChain(
@@ -302,17 +326,20 @@ public sealed class HumanoidToSomaPoseSampler
             SomaToHumanoidMuscleConverter.LowerLegStretchRange);
         _canonicalLocalDeltas[shinIdx] = ComposeSwingTwistQuaternion(lowFrontBack, lowTwist, 0.0f, basis, lowerLegNeutral);
 
+        Quaternion footBasis = mecanim
+            ? SomaToHumanoidMuscleConverter.FootMecanimBasis
+            : SomaToHumanoidMuscleConverter.VerticalJointBasis;
         float footTwist = side * NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftFootTwistInOut : EHumanoidValue.RightFootTwistInOut)],
             SomaToHumanoidMuscleConverter.FootTwistRange);
         float footFrontBack = -NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftFootUpDown : EHumanoidValue.RightFootUpDown)],
             SomaToHumanoidMuscleConverter.FootUpDownRange);
-        _canonicalLocalDeltas[footIdx] = ComposeSwingTwistQuaternion(footFrontBack, footTwist, 0.0f, basis);
+        _canonicalLocalDeltas[footIdx] = ComposeSwingTwistQuaternion(footFrontBack, footTwist, 0.0f, footBasis);
 
         float toeFrontBack = -NormalizedMuscleToDegrees(
             muscles[(int)(isLeft ? EHumanoidValue.LeftToesUpDown : EHumanoidValue.RightToesUpDown)],
             SomaToHumanoidMuscleConverter.ToesUpDownRange);
-        _canonicalLocalDeltas[toeIdx] = ComposeSwingTwistQuaternion(toeFrontBack, 0.0f, 0.0f, basis);
+        _canonicalLocalDeltas[toeIdx] = ComposeSwingTwistQuaternion(toeFrontBack, 0.0f, 0.0f, footBasis);
     }
 }

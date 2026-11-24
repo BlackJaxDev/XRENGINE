@@ -30,6 +30,24 @@ layout(location = 1) out uint OutVisibilityMetadata;
 layout(location = 2) out uint OutVisibilitySelection;
 layout(location = 3) out vec2 OutVisibilitySamplePosition;
 
+// Converts coverage alpha into per-sample acceptance on multisample visibility
+// targets. Hardware alphaToCoverageEnable cannot operate on integer visibility
+// attachments, so per-sample shading evaluates coverage directly per gl_SampleID.
+// Single-sample targets fall back to the authored alpha cutoff.
+bool XR_ADV_KeepAlphaToCoverageSample(float alpha, float cutoff, float alphaFwidth, int sampleCount)
+{
+    if (sampleCount <= 1)
+        return cutoff > 0.001 ? (alpha >= cutoff) : (alpha >= 0.5);
+
+    float coverageAlpha = cutoff > 0.001
+        ? clamp((alpha - cutoff) / max(alphaFwidth, 1e-4) + 0.5, 0.0, 1.0)
+        : clamp(alpha, 0.0, 1.0);
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    float bayer = float(((pixel.x & 1) << 1) | ((pixel.x ^ pixel.y) & 1)) * 0.25 + 0.125;
+    float threshold = (float(gl_SampleID) + bayer) / float(sampleCount);
+    return coverageAlpha >= threshold;
+}
+
 #if defined(XR_ADV_VISIBILITY_FRAGMENT_DEPTH)
 // Parallax occlusion for standard height-map materials: discards silhouette fragments and
 // moves the fragment depth to the height-field hit along the view ray. Shading recovers the
@@ -91,6 +109,8 @@ void main()
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         discard;
     }
+    XRAdvancedViewRecord coverageView = XR_ADV_LoadView(VisibilityViewIndex);
+    vec2 upscaleDerivativeScale = XR_ADV_UpscaleDerivativeScale(coverageView);
     if (uber)
     {
         XR_UBER_Material = material;
@@ -104,23 +124,34 @@ void main()
         coordinates.uv1 = VisibilityCoverageUv1;
         coordinates.uv2 = VisibilityCoverageUv2;
         coordinates.uv3 = VisibilityCoverageUv3;
-        coordinates.uv0Dx = dFdx(VisibilityCoverageUv);
-        coordinates.uv0Dy = dFdy(VisibilityCoverageUv);
-        coordinates.uv1Dx = dFdx(VisibilityCoverageUv1);
-        coordinates.uv1Dy = dFdy(VisibilityCoverageUv1);
-        coordinates.uv2Dx = dFdx(VisibilityCoverageUv2);
-        coordinates.uv2Dy = dFdy(VisibilityCoverageUv2);
-        coordinates.uv3Dx = dFdx(VisibilityCoverageUv3);
-        coordinates.uv3Dy = dFdy(VisibilityCoverageUv3);
+        coordinates.uv0Dx = dFdx(VisibilityCoverageUv) * upscaleDerivativeScale.x;
+        coordinates.uv0Dy = dFdy(VisibilityCoverageUv) * upscaleDerivativeScale.y;
+        coordinates.uv1Dx = dFdx(VisibilityCoverageUv1) * upscaleDerivativeScale.x;
+        coordinates.uv1Dy = dFdy(VisibilityCoverageUv1) * upscaleDerivativeScale.y;
+        coordinates.uv2Dx = dFdx(VisibilityCoverageUv2) * upscaleDerivativeScale.x;
+        coordinates.uv2Dy = dFdy(VisibilityCoverageUv2) * upscaleDerivativeScale.y;
+        coordinates.uv3Dx = dFdx(VisibilityCoverageUv3) * upscaleDerivativeScale.x;
+        coordinates.uv3Dy = dFdy(VisibilityCoverageUv3) * upscaleDerivativeScale.y;
         coordinates.worldPosition = VisibilityCoverageWorldPosition;
         coordinates.localPosition = VisibilityCoverageLocalPosition;
         coordinates.color = VisibilityCoverageColor;
         coordinates.frontFacing = gl_FrontFacing;
-        coordinates.time = uintBitsToFloat(
-            XR_ADV_LoadView(VisibilityViewIndex).renderTimeBits);
+        coordinates.time = uintBitsToFloat(coverageView.renderTimeBits);
         vec4 baseColor;
         vec3 edgeEmission;
-        if (!XR_UBER_ApplyCoverage(coordinates, baseColor, edgeEmission)) discard;
+        bool keep = XR_UBER_EvaluateCoverage(coordinates, baseColor, edgeEmission, false);
+        float alphaFwidth = fwidth(baseColor.a);
+        if (!keep) discard;
+        if (XR_UBER_HasAlphaToCoverage())
+        {
+            if (!XR_ADV_KeepAlphaToCoverageSample(baseColor.a, UBER_F(_Cutoff), alphaFwidth, int(XR_ADV_ViewMsaaSampleCount(coverageView))))
+                discard;
+        }
+        else if ((UBER_I(_Mode) == 1 || UBER_F(_SourceAlphaClip) > 0.5) &&
+            baseColor.a < UBER_F(_Cutoff))
+        {
+            discard;
+        }
     }
     else
     {
@@ -131,17 +162,28 @@ void main()
             (flags & XR_ADV_STANDARD_HEIGHT_MAP_FLAG) != 0u;
         if (!parallax || (flags & 8u) != 0u)
         {
+            vec2 coverageUvDx = dFdx(VisibilityCoverageUv) * upscaleDerivativeScale.x;
+            vec2 coverageUvDy = dFdy(VisibilityCoverageUv) * upscaleDerivativeScale.y;
             float alpha = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD).a;
             if ((flags & 1u) != 0u)
                 alpha *= XR_ADV_StandardTexture(material, 0u, VisibilityCoverageUv,
-                    dFdx(VisibilityCoverageUv), dFdy(VisibilityCoverageUv), vec4(1.0)).a;
+                    coverageUvDx, coverageUvDy, vec4(1.0)).a;
             // A separate opacity map (for example an imported decal mask) multiplies
             // coverage by its red channel. Rows without one skip the fetch.
             if ((flags & XR_ADV_STANDARD_OPACITY_TEXTURE_FLAG) != 0u)
                 alpha *= XR_ADV_StandardTexture(material, XR_ADV_STANDARD_OPACITY_TEXTURE_SLOT, VisibilityCoverageUv,
-                    dFdx(VisibilityCoverageUv), dFdy(VisibilityCoverageUv), vec4(1.0)).r;
+                    coverageUvDx, coverageUvDy, vec4(1.0)).r;
             float alphaCutoff = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_ALPHA_CUTOFF_WORD));
-            if (alpha < alphaCutoff) discard;
+            float alphaFwidth = fwidth(alpha);
+            if ((flags & XR_ADV_STANDARD_ALPHA_TO_COVERAGE_FLAG) != 0u)
+            {
+                if (!XR_ADV_KeepAlphaToCoverageSample(alpha, alphaCutoff, alphaFwidth, int(XR_ADV_ViewMsaaSampleCount(coverageView))))
+                    discard;
+            }
+            else if (alpha < alphaCutoff)
+            {
+                discard;
+            }
         }
 #if defined(XR_ADV_VISIBILITY_FRAGMENT_DEPTH)
         if (parallax)

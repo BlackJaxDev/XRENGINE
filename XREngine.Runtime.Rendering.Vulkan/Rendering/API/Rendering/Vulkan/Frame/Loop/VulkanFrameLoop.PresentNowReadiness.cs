@@ -1244,6 +1244,12 @@ internal sealed partial class VulkanFrameLoop
         ref VulkanFrameAttempt attempt,
         in VulkanPresentNowReadinessRetry retry)
     {
+        // Normal asynchronous readiness retries (such as cold mesh admission, texture
+        // uploads, or pipeline compilation) are forward progress and must not consume
+        // the bounded recovery-probe failure budget.
+        if (Volatile.Read(ref _presentNowRecoveryProbeActive) != 0 &&
+            _presentNowRecoveryProbeAttempts > 0)
+            _presentNowRecoveryProbeAttempts--;
         PublishPresentNowRetryDiagnostic(ref attempt, in retry);
         ResetIncompleteAcceptedPresentNowPlan(ref attempt);
         // The next callback renders the scene again and queues a complete new

@@ -57,31 +57,51 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private VulkanAdvancedVisibilityPipelineReadiness PrepareMultisamplePrograms(
         out string reason)
     {
+        VulkanAdvancedVisibilityPipelineReadiness combined = VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        string combinedReason = "Ready";
+
         _lateVisibilityNoHzbProgram ??= CreateComputeProgram(
             AdvancedVisibilityShaderLibrary.LateVisibilityCompute,
             "VulkanAdvancedLateVisibilityNoHzb",
             "#define XR_ADV_DISABLE_HZB_OCCLUSION 1\n");
-        VulkanAdvancedVisibilityPipelineReadiness readiness = TryPrepareProgram(
+        VulkanAdvancedVisibilityPipelineReadiness lateLink = TryPrepareProgram(
             _lateVisibilityNoHzbProgram,
             out VkRenderProgram lateNoHzb,
-            out reason,
+            out string stepReason,
             "MSAA late-visibility compute program did not link a Vulkan pipeline layout");
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return readiness;
-        VulkanComputePipelineReadiness lateReadiness = lateNoHzb.TryGetOrRequestComputePipeline(
-            int.MinValue, null, out _, out string lateReason);
-        if (lateReadiness != VulkanComputePipelineReadiness.Ready)
-            return DescribeComputePipelineReadiness(
-                lateReadiness, "MSAA late visibility", lateReason, out reason);
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason, lateLink, stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
+        if (lateLink == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+        {
+            VulkanComputePipelineReadiness lateReadiness = lateNoHzb.TryGetOrRequestComputePipeline(
+                int.MinValue, null, out _, out string lateReason);
+            if (lateReadiness != VulkanComputePipelineReadiness.Ready &&
+                !CombinePreparationReadiness(ref combined, ref combinedReason,
+                    DescribeComputePipelineReadiness(lateReadiness, "MSAA late visibility", lateReason, out stepReason),
+                    stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
+        }
 
-        readiness = PrepareMultisampleResolveProgram(multiview: false, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return readiness;
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                PrepareMultisampleResolveProgram(multiview: false, out stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
         bool supportsMultiview =
             _resources.BackendObjectContext?.DeviceContext.AdvancedMultiviewEnabled == true;
-        return supportsMultiview
-            ? PrepareMultisampleResolveProgram(multiview: true, out reason)
-            : VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        if (supportsMultiview)
+            CombinePreparationReadiness(ref combined, ref combinedReason,
+                PrepareMultisampleResolveProgram(multiview: true, out stepReason), stepReason);
+
+        reason = combinedReason;
+        return combined;
     }
 
     private VulkanAdvancedVisibilityPipelineReadiness PrepareMultisampleResolveProgram(

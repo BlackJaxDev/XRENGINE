@@ -8,6 +8,8 @@
 // infers the mode from texture contents; import/material metadata owns that.
 //   0 = RGB normal map (default)
 //   1 = height map (Sobel 3x3 slopes)
+#pragma snippet "UpscaleTextureLodBias"
+
 #ifndef XRENGINE_HEIGHTMAP_MODE
 uniform int NormalMapMode = 0;
 #endif
@@ -19,14 +21,14 @@ uniform float HeightMapScale = 1.0f;
 vec3 XRENGINE_HeightToNormalSobel(vec2 uv)
 {
     vec2 texelSize = 1.0 / vec2(textureSize(Texture1, 0));
-    float tl = texture(Texture1, uv + vec2(-texelSize.x, -texelSize.y)).r;
-    float t  = texture(Texture1, uv + vec2( 0.0,         -texelSize.y)).r;
-    float tr = texture(Texture1, uv + vec2( texelSize.x, -texelSize.y)).r;
-    float l  = texture(Texture1, uv + vec2(-texelSize.x,  0.0        )).r;
-    float r  = texture(Texture1, uv + vec2( texelSize.x,  0.0        )).r;
-    float bl = texture(Texture1, uv + vec2(-texelSize.x,  texelSize.y)).r;
-    float b  = texture(Texture1, uv + vec2( 0.0,          texelSize.y)).r;
-    float br = texture(Texture1, uv + vec2( texelSize.x,  texelSize.y)).r;
+    float tl = XRENGINE_SampleBiasedTexture(Texture1, uv + vec2(-texelSize.x, -texelSize.y)).r;
+    float t  = XRENGINE_SampleBiasedTexture(Texture1, uv + vec2( 0.0,         -texelSize.y)).r;
+    float tr = XRENGINE_SampleBiasedTexture(Texture1, uv + vec2( texelSize.x, -texelSize.y)).r;
+    float l  = XRENGINE_SampleBiasedTexture(Texture1, uv + vec2(-texelSize.x,  0.0        )).r;
+    float r  = XRENGINE_SampleBiasedTexture(Texture1, uv + vec2( texelSize.x,  0.0        )).r;
+    float bl = XRENGINE_SampleBiasedTexture(Texture1, uv + vec2(-texelSize.x,  texelSize.y)).r;
+    float b  = XRENGINE_SampleBiasedTexture(Texture1, uv + vec2( 0.0,          texelSize.y)).r;
+    float br = XRENGINE_SampleBiasedTexture(Texture1, uv + vec2( texelSize.x,  texelSize.y)).r;
     // Sobel kernels (divided by 4 to keep magnitude in a usable range).
     float slopeX = ((tl + 2.0 * l + bl) - (tr + 2.0 * r + br)) * 0.25;
     float slopeY = ((tl + 2.0 * t + tr) - (bl + 2.0 * b + br)) * 0.25;
@@ -102,7 +104,7 @@ vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 positionWS, vec3 tangentWS, v
     }
     else
     {
-        vec4 sampledColor = texture(Texture1, uv);
+        vec4 sampledColor = XRENGINE_SampleBiasedTexture(Texture1, uv);
         vec3 sampledNormal = sampledColor.rgb * 2.0 - 1.0;
         // A BC5 normal map samples with alpha 0 (view swizzle R, G, 0, 0) and stores
         // only X and Y, so Z is rebuilt from them.

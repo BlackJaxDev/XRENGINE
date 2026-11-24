@@ -967,6 +967,9 @@ public partial class AdvancedRenderPipeline
         };
     }
 
+    private XRFrameBuffer CreateTsrOutputViewFBO()
+        => CreateTsrColorViewFBO(TsrOutputTextureName, TsrOutputViewFBOName);
+
     private XRFrameBuffer CreateTsrAccumulationFBO()
         => CreateTsrColorViewFBO(TsrAccumulationTextureName, TsrAccumulationFBOName);
 

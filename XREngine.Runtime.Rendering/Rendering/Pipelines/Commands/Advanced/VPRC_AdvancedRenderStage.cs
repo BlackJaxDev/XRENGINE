@@ -169,25 +169,27 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         if (Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
         {
             uint samples = request.MsaaSampleCount;
-            EnqueueLatePhase(
+            if (!EnqueueLatePhase(
                 visibility,
                 request with
                 {
                     Phase = EAdvancedVisibilityStageBackendPhase.LateCompute,
                 },
-                Descriptor.PassName);
-            EnqueueLatePhase(
+                Descriptor.PassName))
+                return;
+            if (!EnqueueLatePhase(
                 visibility,
                 request with
                 {
                     Phase = EAdvancedVisibilityStageBackendPhase.LateRaster,
                 },
-                LateVisibilityRasterPassName);
+                LateVisibilityRasterPassName))
+                return;
             if (samples > 1u)
             {
                 if (!ActivePipelineInstance.Resources.TryGetFrameBuffer(AdvancedVisibilityResourceNames.FrameBuffer, out XRFrameBuffer? resolvedTarget) || resolvedTarget is null)
                     throw new InvalidOperationException("Advanced MSAA requires the canonical visibility resolve framebuffer.");
-                EnqueueLatePhase(visibility, request with
+                if (!EnqueueLatePhase(visibility, request with
                 {
                     Phase = EAdvancedVisibilityStageBackendPhase.MultisampleResolve,
                     Target = resolvedTarget,
@@ -195,7 +197,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     MetadataTargetName = AdvancedVisibilityResourceNames.Metadata,
                     SelectionTargetName = AdvancedVisibilityResourceNames.Selection,
                     DepthTargetName = AdvancedVisibilityResourceNames.DepthStencil,
-                }, MultisampleVisibilityResolvePassName);
+                }, MultisampleVisibilityResolvePassName))
+                    return;
             }
             // Mesh surface decals draw against the final single-sample depth. Only a
             // backend with the decal lane receives the phase; others keep decals masked.
@@ -204,7 +207,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     AdvancedDecalBufferResourceNames.FrameBuffer, out XRFrameBuffer? decalTarget) &&
                 decalTarget is not null)
             {
-                EnqueueLatePhase(visibility, request with
+                _ = EnqueueLatePhase(visibility, request with
                 {
                     Phase = EAdvancedVisibilityStageBackendPhase.DecalBuffer,
                     Target = decalTarget,
@@ -732,7 +735,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         }
     }
 
-    private void EnqueueLatePhase(
+    private bool EnqueueLatePhase(
         IAdvancedVisibilityStageBackendCapability visibility,
         in AdvancedVisibilityStageBackendRequest request,
         string passName)
@@ -741,12 +744,16 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         if (!visibility.TryEnqueueAdvancedVisibilityStage(
                 in request,
                 out string failureReason))
+        {
             ReportRejectedPhase(request.Phase, failureReason);
-        else
-            PublishStageDiagnostic(
-                request.Phase,
-                EAdvancedProfileStageDiagnosticState.BackendEnqueueAccepted,
-                "The backend accepted this stage phase for authoring; submission and GPU completion remain separate receipts.");
+            return false;
+        }
+
+        PublishStageDiagnostic(
+            request.Phase,
+            EAdvancedProfileStageDiagnosticState.BackendEnqueueAccepted,
+            "The backend accepted this stage phase for authoring; submission and GPU completion remain separate receipts.");
+        return true;
     }
 
     private IDisposable? PushRenderGraphPass(string passName)
@@ -828,7 +835,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return;
 
         if (retryable)
-            throw new RenderResourcePreparationPendingException(reason);
+        {
+            ActivePipelineInstance.RenderState.RequestPendingResourcePreparationDeferral(reason);
+            return;
+        }
 
         throw new RequiredRenderCommandException(
             $"Required Advanced stage '{Stage}' cannot author the scene.",

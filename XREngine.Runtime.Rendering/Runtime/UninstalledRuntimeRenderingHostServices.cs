@@ -163,6 +163,7 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     public string PlayModeStateName => RuntimeRenderingHostServiceDefaults.PlayModeStateName;
     public EAntiAliasingMode DefaultAntiAliasingMode => RuntimeRenderingHostServiceDefaults.DefaultAntiAliasingMode;
     public EAntiAliasingFilterMode DefaultAntiAliasingFilterMode => RuntimeRenderingHostServiceDefaults.DefaultAntiAliasingFilterMode;
+    public float DefaultAntiAliasingSharpness => RuntimeRenderingHostServiceDefaults.DefaultAntiAliasingSharpness;
     public bool EnableNvidiaDlss => RuntimeRenderingHostServiceDefaults.EnableNvidiaDlss;
     public EDlssQualityMode DlssQuality => RuntimeRenderingHostServiceDefaults.DlssQuality;
     public float DlssCustomScale => RuntimeRenderingHostServiceDefaults.DlssCustomScale;

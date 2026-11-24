@@ -15,6 +15,8 @@
 // The ray march uses a derivative tangent frame built from the world position and the
 // unmodified UV0. That frame is exactly dP/du and dP/dv, so the UV offset and the depth
 // offset stay correct for mirrored, non-uniformly scaled or tiled UV layouts.
+#pragma snippet "UpscaleTextureLodBias"
+
 #ifdef XRENGINE_HEIGHTMAP_POM
 layout(location = 22) in float FragViewIndex;
 
@@ -161,7 +163,8 @@ vec2 XRENGINE_BeginSurfaceParallax(vec2 uv, vec3 positionWS, vec3 normalWS)
 
 vec4 XRENGINE_SampleSurface(sampler2D surfaceTexture, vec2 uv)
 {
-    return textureGrad(surfaceTexture, uv, XRENGINE_SurfaceUvDx, XRENGINE_SurfaceUvDy);
+    float derivativeScale = exp2(UpscaleTextureLodBias);
+    return textureGrad(surfaceTexture, uv, XRENGINE_SurfaceUvDx * derivativeScale, XRENGINE_SurfaceUvDy * derivativeScale);
 }
 
 void XRENGINE_EndSurfaceParallax()
@@ -178,7 +181,7 @@ vec2 XRENGINE_BeginSurfaceParallax(vec2 uv, vec3 positionWS, vec3 normalWS)
 
 vec4 XRENGINE_SampleSurface(sampler2D surfaceTexture, vec2 uv)
 {
-    return texture(surfaceTexture, uv);
+    return XRENGINE_SampleBiasedTexture(surfaceTexture, uv);
 }
 
 void XRENGINE_EndSurfaceParallax()

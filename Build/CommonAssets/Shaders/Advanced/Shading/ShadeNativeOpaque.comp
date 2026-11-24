@@ -5,9 +5,6 @@
 #include "StandardMaterial.glslinc"
 #include "StandardPBR.glslinc"
 #include "Advanced/Shading/StandardIbl.glslinc"
-// The shading kernel resolves the directional shadow once per work group.
-#define XR_ADV_SHADOW_GROUP_CACHE 1
-#include "StandardShadow.glslinc"
 #include "AdvancedDecalModifier.glslinc"
 #pragma snippet "NormalEncoding"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
@@ -41,6 +38,10 @@ XR_ADV_SHADING_IMAGE(rgba16f, 53) writeonly uniform image2D Normal;
 XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
 #define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
 #endif
+
+// Included after VisibilityDepth so directional contact shadows raymarch screen-space depth.
+#define XR_ADV_SHADOW_GROUP_CACHE 1
+#include "StandardShadow.glslinc"
 
 #include "NativeDecalBuffer.glslinc"
 #include "ShadeNativeOpaqueEvaluator.glslinc"

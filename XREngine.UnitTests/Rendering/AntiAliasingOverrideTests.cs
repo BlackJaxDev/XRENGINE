@@ -83,6 +83,38 @@ public sealed class AntiAliasingOverrideTests
         }
     }
 
+    [Test]
+    public void AntiAliasingSharpness_ResolvesUserProjectEngineCascadeAndClamps()
+    {
+        var originalUserSettings = Engine.UserSettings;
+        var originalGameSettings = Engine.GameSettings;
+        float originalSharpness = RuntimeEngine.Rendering.Settings.AntiAliasingSharpness;
+
+        try
+        {
+            Engine.UserSettings = new UserSettings();
+            Engine.GameSettings = new GameStartupSettings();
+            RuntimeEngine.Rendering.Settings.AntiAliasingSharpness = 0.25f;
+
+            Engine.EffectiveSettings.AntiAliasingSharpness.ShouldBe(0.25f, 1e-6f);
+
+            Engine.GameSettings.AntiAliasingSharpnessOverride = new OverrideableSetting<float>(0.6f, true);
+            Engine.EffectiveSettings.AntiAliasingSharpness.ShouldBe(0.6f, 1e-6f);
+
+            Engine.UserSettings.AntiAliasingSharpnessOverride = new OverrideableSetting<float>(1.5f, true);
+            Engine.EffectiveSettings.AntiAliasingSharpness.ShouldBe(1.0f, 1e-6f);
+
+            Engine.UserSettings.AntiAliasingSharpnessOverride = new OverrideableSetting<float>(-0.2f, true);
+            Engine.EffectiveSettings.AntiAliasingSharpness.ShouldBe(0.0f, 1e-6f);
+        }
+        finally
+        {
+            RuntimeEngine.Rendering.Settings.AntiAliasingSharpness = originalSharpness;
+            Engine.UserSettings = originalUserSettings;
+            Engine.GameSettings = originalGameSettings;
+        }
+    }
+
     [TestCase("#define XR_ADV_NATIVE_SHADING_FAMILY 1\n")]
     [TestCase("#define XR_ADV_VISIBILITY_ARRAY 1\n#define XR_ADV_NATIVE_SHADING_FAMILY 1\n")]
     public void ShadeNativeOpaqueMsaa_CompilesToSpirvForVulkan(string variantPreamble)
@@ -114,6 +146,13 @@ public sealed class AntiAliasingOverrideTests
     }
 
     [TestCase("Build/CommonAssets/Shaders/Scene3D/ResolveColorFromTextureMS.fs", "")]
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/RCAS.fs", "")]
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/RCASStereo.fs", "")]
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/FinalPostProcess.fs", "")]
+    [TestCase("Build/CommonAssets/Shaders/Scene3D/FinalPostProcessStereo.fs", "")]
+    [TestCase("Build/CommonAssets/Shaders/Common/TexturedDeferred.fs", "")]
+    [TestCase("Build/CommonAssets/Shaders/Common/TexturedNormalDeferred.fs", "")]
+    [TestCase("Build/CommonAssets/Shaders/Common/LitTexturedForward.fs", "")]
     [TestCase("Build/CommonAssets/Shaders/Scene3D/TemporalAccumulation.fs", "")]
     [TestCase("Build/CommonAssets/Shaders/Scene3D/TemporalAccumulationStereo.fs", "")]
     [TestCase("Build/CommonAssets/Shaders/Scene3D/TemporalSuperResolution.fs", "")]

@@ -19,7 +19,7 @@ namespace XREngine.UnitTests.Animation.MotionBricks;
 
 [TestFixture]
 [NonParallelizable]
-public sealed class MotionBricksStage4Tests
+public sealed class MotionBricksJoltRootMotionIntegrationTests
 {
     private const float FixedDelta = 1.0f / 60.0f;
 
@@ -124,7 +124,7 @@ public sealed class MotionBricksStage4Tests
         pawn.MoveForward(0.5f);
         pawn.MoveRight(0.0f);
 
-        ThirdPersonSteeringSnapshot walkSnapshot = pawn.ComputeCameraRelativeSteering(camForward, camRight);
+        SteeringSnapshot walkSnapshot = pawn.ComputeCameraRelativeSteering(camForward, camRight);
         walkSnapshot.DesiredWorldMoveXZ.X.ShouldBe(0.5f, 1.0e-4f);
         walkSnapshot.DesiredWorldMoveXZ.Y.ShouldBe(0.0f, 1.0e-4f);
         walkSnapshot.CameraYawRadians.ShouldBe(MathF.PI * 0.5f, 1.0e-4f);
@@ -132,7 +132,7 @@ public sealed class MotionBricksStage4Tests
         // Push stick fully diagonal; magnitude clamps to 1.0.
         pawn.MoveForward(1.0f);
         pawn.MoveRight(1.0f);
-        ThirdPersonSteeringSnapshot runSnapshot = pawn.ComputeCameraRelativeSteering(camForward, camRight);
+        SteeringSnapshot runSnapshot = pawn.ComputeCameraRelativeSteering(camForward, camRight);
         runSnapshot.DesiredWorldMoveXZ.Length().ShouldBe(1.0f, 1.0e-4f);
     }
 
@@ -170,7 +170,7 @@ public sealed class MotionBricksStage4Tests
         animator.StateMachine.Variables["StrafeMode"] = new AnimBool("StrafeMode", false);
         animator.StateMachine.Variables["IsGrounded"] = new AnimBool("IsGrounded", true);
 
-        var bridge = root.AddComponent<ThirdPersonRootMotionBridgeComponent>()!;
+        var bridge = root.AddComponent<CharacterRootMotionBridgeComponent>()!;
         bridge.Animator = animator;
         bridge.CharacterMovement = movement;
         bridge.BindEndpoints();
@@ -187,7 +187,7 @@ public sealed class MotionBricksStage4Tests
 
         for (int step = 0; step < 90; step++)
         {
-            bridge.ApplySteering(new ThirdPersonSteeringSnapshot(
+            bridge.ApplySteering(new SteeringSnapshot(
                 DesiredWorldMoveXZ: new Vector2(0.0f, 1.0f),
                 CameraYawRadians: 0.0f,
                 StrafeMode: false,
@@ -274,7 +274,7 @@ public sealed class MotionBricksStage4Tests
         animator.StateMachine.Variables["StrafeMode"] = new AnimBool("StrafeMode", false);
         animator.StateMachine.Variables["IsGrounded"] = new AnimBool("IsGrounded", true);
 
-        var bridge = root.AddComponent<ThirdPersonRootMotionBridgeComponent>()!;
+        var bridge = root.AddComponent<CharacterRootMotionBridgeComponent>()!;
         bridge.Animator = animator;
         bridge.CharacterMovement = movement;
         bridge.BindEndpoints();

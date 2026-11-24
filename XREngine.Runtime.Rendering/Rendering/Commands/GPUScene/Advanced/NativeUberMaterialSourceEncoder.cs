@@ -41,10 +41,18 @@ public static class NativeUberMaterialSourceEncoder
                 if (material.Parameter<ShaderFloat>(name) is { Value: > 0.001f })
                     return true;
         }
+        if (material.RenderOptions?.AlphaToCoverage == ERenderParamUsage.Enabled)
+            return true;
         if (material.IsUberFeatureEnabled("dissolve", false))
             return true;
         return material.Parameter<ShaderInt>("_Mode") is { Value: 1 };
     }
+
+    /// <summary>Packs fixed-function coverage flags into the second word of the native Uber feature header.</summary>
+    internal static uint EncodeStateFlags(XRMaterial material)
+        => material.RenderOptions?.AlphaToCoverage == ERenderParamUsage.Enabled
+            ? NativeUberMaterialSchema.AlphaToCoverageStateFlag
+            : 0u;
 
     public static bool TryEncode(
         XRMaterial material,
@@ -70,12 +78,6 @@ public static class NativeUberMaterialSourceEncoder
         {
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
             reason = "Native Uber requires a recognized authored Uber source.";
-            return false;
-        }
-        if (material.RenderOptions?.AlphaToCoverage == ERenderParamUsage.Enabled)
-        {
-            compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
-            reason = "Native Uber alpha-to-coverage requires a matching multisample coverage path.";
             return false;
         }
         uint features = 0u;
@@ -114,6 +116,7 @@ public static class NativeUberMaterialSourceEncoder
             return false;
         }
         words[NativeUberMaterialSchema.FeatureWordOffset] = features;
+        words[NativeUberMaterialSchema.StateFlagsWordOffset] = EncodeStateFlags(material);
         // A material without this parameter receives world AO in full.
         words[NativeUberMaterialSchema.ParameterWordOffset(
             NativeUberMaterialSchema.ParameterIndex("_WorldAmbientOcclusionStrength"))] = BitConverter.SingleToUInt32Bits(1.0f);

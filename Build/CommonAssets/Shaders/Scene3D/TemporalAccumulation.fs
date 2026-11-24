@@ -297,10 +297,9 @@ void main()
             vec3 historyRGB;
             if (AntiAliasingFilterMode == 1)
                 historyRGB = texture(HistoryColor, historyUV).rgb;
-            else if (AntiAliasingFilterMode == 2)
-                historyRGB = SampleTent2x2(HistoryColor, historyUV);
             else
-                // Proper bicubic Catmull-Rom reconstruction on history only
+                // Keep history sharp with bicubic Catmull-Rom under Default and Tent2x2
+                // so temporal feedback does not compound tent blur across frames.
                 historyRGB = SampleHistoryCatmullRom(HistoryColor, historyUV, TexelSize);
             historyYCoCg = RGBToYCoCg(historyRGB);
             historyStats = texture(HistoryExposureVariance, historyUV).rg;

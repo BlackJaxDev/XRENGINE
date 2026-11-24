@@ -9,8 +9,24 @@ namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static class BootstrapModelBuilder
 {
-    public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode, Action? onAllImportsComplete = null)
+    public static void ImportModels(
+        string desktopDir,
+        SceneNode rootNode,
+        SceneNode characterParentNode,
+        Action? onAllImportsComplete = null,
+        Action? onStaticImportsComplete = null)
     {
+        void DispatchStaticImportsComplete()
+        {
+            if (onStaticImportsComplete is null)
+                return;
+
+            _ = Engine.InvokeOnAppThread(
+                onStaticImportsComplete,
+                "BootstrapModelBuilder: Static model imports completed",
+                executeNowIfAlreadyAppThread: true);
+        }
+
         void DispatchAllImportsComplete()
         {
             if (onAllImportsComplete is null)
@@ -25,6 +41,7 @@ public static class BootstrapModelBuilder
         UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
         if (!settings.CreateUnitBox && !settings.HasAnyModelsToImport)
         {
+            DispatchStaticImportsComplete();
             DispatchAllImportsComplete();
             return;
         }
@@ -33,11 +50,12 @@ public static class BootstrapModelBuilder
         if (importBridge is null)
         {
             Debug.LogWarning("[BootstrapModelBuilder] Model import requested, but no bootstrap model-import bridge is registered.");
+            DispatchStaticImportsComplete();
             DispatchAllImportsComplete();
             return;
         }
 
-        importBridge.ImportModels(desktopDir, rootNode, characterParentNode, onAllImportsComplete);
+        importBridge.ImportModels(desktopDir, rootNode, characterParentNode, onAllImportsComplete, onStaticImportsComplete);
     }
 
     public static SkyboxComponent? AddSkybox(SceneNode rootNode, XRTexture2D? skyEquirect)

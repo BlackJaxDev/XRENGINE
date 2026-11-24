@@ -12,4 +12,9 @@ public enum EPhysicsChainGravityMode
     /// Falloff has its full effect at rest and less effect as the segment turns away from rest.
     /// </summary>
     SegmentRatio,
+    /// <summary>
+    /// Gravity biases each segment's rest direction toward gravity by its magnitude (zero keeps the rest pose;
+    /// one aligns with gravity), and pull moves the segment toward that biased target. Zero pull produces no gravity motion.
+    /// </summary>
+    RestBias,
 }

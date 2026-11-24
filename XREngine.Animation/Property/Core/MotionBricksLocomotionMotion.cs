@@ -11,7 +11,7 @@ namespace XREngine.Animation;
 /// <see cref="AnimStateMachine"/>.
 /// </summary>
 [MemoryPackable]
-public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProceduralRootMotionSource
+public partial class MotionBricksLocomotionMotion : MotionBase, IProceduralLocomotionMotion
 {
     /// <summary>
     /// Canonical body and limb <see cref="EHumanoidValue"/> channels written by SOMA
@@ -95,9 +95,11 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
     private string _strafeModeParameter = "StrafeMode";
     private string _styleParameter = "LocomotionStyle";
     private string _isGroundedParameter = "IsGrounded";
-    private float _walkSpeedMetersPerSecond = 1.5f;
-    private float _runSpeedMetersPerSecond = 4.2f;
-    private float _replanIntervalSeconds = 4.0f / 30.0f;
+    private string _verticalVelocityParameter = "VerticalVelocity";
+    private string _sprintHeldParameter = "SprintHeld";
+    private float _walkSpeedMetersPerSecond = 1.55f;
+    private float _runSpeedMetersPerSecond = 4.80f;
+    private float _replanIntervalSeconds = 12.0f / 30.0f;
     private float _inputReplanThreshold = 0.15f;
     private bool _bakeOrientationIntoPose;
     private bool _bakePositionYIntoPose = true;
@@ -120,6 +122,18 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
 
     [MemoryPackIgnore]
     private bool _ownsRuntimeDriver;
+
+    [MemoryPackIgnore]
+    private bool _hasRuntimeConfiguration;
+
+    [MemoryPackIgnore]
+    private float _configuredInitialWorldYawRadians;
+
+    [MemoryPackIgnore]
+    private float _configuredWorldRootMotionScale = 1.0f;
+
+    [MemoryPackIgnore]
+    private IMotionBricksTrajectoryProber? _configuredTrajectoryProber;
 
     [MemoryPackIgnore]
     private readonly HumanoidPoseHistoryFrame[] _seedFrameScratch =
@@ -187,16 +201,28 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
         set => SetField(ref _isGroundedParameter, value ?? string.Empty);
     }
 
+    public string VerticalVelocityParameter
+    {
+        get => _verticalVelocityParameter;
+        set => SetField(ref _verticalVelocityParameter, value ?? string.Empty);
+    }
+
+    public string SprintHeldParameter
+    {
+        get => _sprintHeldParameter;
+        set => SetField(ref _sprintHeldParameter, value ?? string.Empty);
+    }
+
     public float WalkSpeedMetersPerSecond
     {
         get => _walkSpeedMetersPerSecond;
-        set => SetField(ref _walkSpeedMetersPerSecond, float.IsFinite(value) ? MathF.Max(0.1f, value) : 1.5f);
+        set => SetField(ref _walkSpeedMetersPerSecond, float.IsFinite(value) ? MathF.Max(0.1f, value) : 1.55f);
     }
 
     public float RunSpeedMetersPerSecond
     {
         get => _runSpeedMetersPerSecond;
-        set => SetField(ref _runSpeedMetersPerSecond, float.IsFinite(value) ? MathF.Max(0.1f, value) : 4.2f);
+        set => SetField(ref _runSpeedMetersPerSecond, float.IsFinite(value) ? MathF.Max(0.1f, value) : 4.80f);
     }
 
     public float ReplanIntervalSeconds
@@ -308,6 +334,7 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
                 ReleaseOwnedDriver();
                 _runtimeDriver = RuntimeDriverOverride;
                 _ownsRuntimeDriver = false;
+                ApplyStoredRuntimeConfigurationToDriver();
             }
             return;
         }
@@ -320,7 +347,18 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
         {
             _runtimeDriver = factory.CreateDriver(this);
             _ownsRuntimeDriver = true;
+            ApplyStoredRuntimeConfigurationToDriver();
         }
+    }
+
+    private void ApplyStoredRuntimeConfigurationToDriver()
+    {
+        if (!_hasRuntimeConfiguration || _runtimeDriver is null)
+            return;
+
+        _runtimeDriver.SetInitialFacingYaw(_configuredInitialWorldYawRadians);
+        _runtimeDriver.SetWorldRootMotionScale(_configuredWorldRootMotionScale);
+        _runtimeDriver.SetTrajectoryProber(_configuredTrajectoryProber);
     }
 
     internal void CacheResolvedMuscleSlots()
@@ -387,7 +425,8 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
 
         float[] muscles = _evaluatedPose.MuscleValues;
         bool hasPose = _evaluatedPose.HasValidPose;
-        for (int i = 0; i < DrivenMuscleChannels.Length; i++)
+        int channelCount = Math.Min(DrivenMuscleChannels.Length, _muscleSlotIndices.Length);
+        for (int i = 0; i < channelCount; i++)
         {
             int slotIndex = _muscleSlotIndices[i];
             if (slotIndex < 0)
@@ -458,6 +497,64 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
         source.AsSpan(0, count).CopyTo(destination);
     }
 
+    [MemoryPackIgnore]
+    public object? RuntimeDriverToken => _runtimeDriver;
+
+    public void ConfigureLocomotionRuntime(
+        float initialWorldYawRadians,
+        float worldRootMotionScale,
+        IMotionBricksTrajectoryProber? trajectoryProber)
+    {
+        _configuredInitialWorldYawRadians = float.IsFinite(initialWorldYawRadians) ? initialWorldYawRadians : 0.0f;
+        _configuredWorldRootMotionScale = float.IsFinite(worldRootMotionScale) && worldRootMotionScale > 0.0f
+            ? worldRootMotionScale
+            : 1.0f;
+        _configuredTrajectoryProber = trajectoryProber;
+        _hasRuntimeConfiguration = true;
+        ApplyStoredRuntimeConfigurationToDriver();
+    }
+
+    public void DetachTrajectoryProber()
+    {
+        _configuredTrajectoryProber = null;
+        _runtimeDriver?.SetTrajectoryProber(null);
+    }
+
+    public void ApplyPhysicsRootReconciliation(
+        Vector3 resolvedFootPosition,
+        Vector3 actualPlanarVelocity,
+        Vector3 wallNormal,
+        bool isBlocked)
+        => _runtimeDriver?.ApplyPhysicsRootReconciliation(
+            resolvedFootPosition,
+            actualPlanarVelocity,
+            wallNormal,
+            isBlocked);
+
+    public bool TryGetCanonicalBodyRotation(out Quaternion canonicalBodyRotation)
+    {
+        if (_evaluatedPose.HasValidPose)
+        {
+            canonicalBodyRotation = _evaluatedPose.CanonicalBodyRotation;
+            return true;
+        }
+
+        canonicalBodyRotation = Quaternion.Identity;
+        return false;
+    }
+
+    public bool TryGetCurrentBodyRotation(out Quaternion currentBodyRotation)
+    {
+        if (_evaluatedPose.HasValidPose)
+        {
+            currentBodyRotation = _evaluatedPose.CurrentBodyRotation;
+            return true;
+        }
+
+        currentBodyRotation = Quaternion.Identity;
+        return false;
+    }
+
     public override void Tick(float delta)
         => AccumulateTickDelta(delta);
 
@@ -500,6 +597,10 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
         bool strafeMode = ReadBool(variables, _strafeModeParameter, false);
         int styleIndex = ReadInt(variables, _styleParameter, 0);
         bool isGrounded = ReadBool(variables, _isGroundedParameter, true);
+        float verticalVelocity = ReadFloat(variables, _verticalVelocityParameter, 0.0f);
+        // Default to true when the state machine does not declare SprintHeld so direct MoveInput
+        // callers and existing tests keep full speed range.
+        bool sprintHeld = ReadBool(variables, _sprintHeldParameter, true);
 
         return new MotionBricksSteeringInput(
             new Vector2(moveX, moveY),
@@ -511,7 +612,9 @@ public partial class MotionBricksLocomotionMotion : MotionBase, IHumanoidProcedu
             _runSpeedMetersPerSecond,
             _replanIntervalSeconds,
             _inputReplanThreshold,
-            deltaSeconds);
+            deltaSeconds,
+            verticalVelocity,
+            sprintHeld);
     }
 
     private static float ReadFloat(IDictionary<string, AnimVar> variables, string name, float fallback)

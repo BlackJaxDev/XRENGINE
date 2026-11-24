@@ -1670,11 +1670,26 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 _arrayImageDescriptorScratch[denseIndex] = realized;
             else if (record.Dimension == EAdvancedTextureDimension.Cube)
                 _cubeImageDescriptorScratch[denseIndex] = realized;
+            uint encodedPayload2 = (uint)record.Dimension;
+            if (source is XRTexture2D texture2D &&
+                ImportedTextureStreamingManager.Instance.TryGetStreamingLodBias(
+                    texture2D,
+                    out _,
+                    out float streamingLodBias) &&
+                streamingLodBias > 0.0f)
+            {
+                // Pack exp2(streamingLodBias) as an IEEE half-float in the upper
+                // 16 bits so Vulkan shaders scale textureGrad derivatives branchlessly
+                // without extra descriptor queries or sampler recreation.
+                float fadeScale = float.Exp2(Math.Clamp(streamingLodBias, 0.0f, 15.0f));
+                uint fadeScaleHalf = BitConverter.HalfToUInt16Bits((Half)fadeScale);
+                encodedPayload2 = (encodedPayload2 & 0xFFFFu) | (fadeScaleHalf << 16);
+            }
             _encodedTextureScratch[denseIndex + 1] =
                 new AdvancedEncodedTextureReference(
                     checked(textureBase + (uint)denseIndex),
                     defaultSamplerDescriptor,
-                    (uint)record.Dimension,
+                    encodedPayload2,
                     EAdvancedResourceReferenceFlags.Resident);
         }
 

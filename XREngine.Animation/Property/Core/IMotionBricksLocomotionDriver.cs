@@ -61,4 +61,36 @@ public interface IMotionBricksLocomotionDriver : IDisposable
     void SeedContextFromHumanoidHistory(ReadOnlySpan<HumanoidPoseHistoryFrame> fourContextFrames)
     {
     }
+
+    /// <summary>
+    /// Aligns the locomotion runtime's initial world-space facing yaw (radians, where 0 faces +Z)
+    /// to match the mounted avatar's actual world orientation before playback starts.
+    /// </summary>
+    void SetInitialFacingYaw(float facingYawRadians)
+    {
+    }
+
+    /// <summary>
+    /// Binds an optional terrain and obstacle prober used to project future ground trajectory
+    /// points onto static world geometry before dispatching SOMA replans.
+    /// </summary>
+    void SetTrajectoryProber(IMotionBricksTrajectoryProber? prober)
+    {
+    }
+
+    /// <summary>
+    /// Sets the humanoid root-motion world scale factor applied downstream by
+    /// <c>HumanoidComponent.EstimateAnimatedMotionScale()</c> so trajectory projection,
+    /// debug skeletons, and physics reconciliation stay matched 1:1 with world meters.
+    /// </summary>
+    void SetWorldRootMotionScale(float worldRootMotionScale)
+    {
+    }
+
+    /// <summary>
+    /// Copies the latest projected ground trajectory dots and current/future SOMA skeleton joints
+    /// into a caller-owned <paramref name="destination"/> buffer without allocating.
+    /// </summary>
+    bool TryCopyDebugSnapshot(MotionBricksDebugSnapshot destination)
+        => false;
 }

@@ -928,6 +928,20 @@ public partial class DefaultRenderPipeline
                     TsrUpscaleFBOName, TsrHistoryColorFBOName, TsrUpscaleFBOName,
                     leftHistoryReaderQuadFboName: includeMonoReference ? TsrMonoReferenceLeftFBOName : null,
                     rightHistoryReaderQuadFboName: includeMonoReference ? TsrMonoReferenceRightFBOName : null);
+
+                // Run RCAS after history capture so sharpening reads the fresh unsharpened resolve
+                // and writes back to TsrOutputTextureName without polluting temporal history.
+                var tsrSharpen = tsrUpscale.Add<VPRC_IfElse>();
+                tsrSharpen.Label = "DefaultTsrSharpenActive";
+                tsrSharpen.ConditionEvaluator = ShouldRunDefaultTsrSharpen;
+                var tsrSharpenCommands = new ViewportRenderCommandContainer(this);
+                var rcasPass = tsrSharpenCommands.Add<VPRC_RCAS>();
+                rcasPass.SourceFBOName = TsrHistoryColorFBOName;
+                rcasPass.DestinationFBOName = TsrUpscaleFBOName;
+                rcasPass.WaitForPassName = VPRC_TemporalAccumulationPass.TsrHistoryColorCopyPassName;
+                rcasPass.Stereo = Stereo;
+                tsrSharpen.TrueCommands = tsrSharpenCommands;
+
                 AppendDiagnosticTextureCapture(tsrUpscale, "14_TsrOutput", TsrOutputTextureName);
                 AppendDiagnosticTextureCapture(tsrUpscale, "14b_TsrHistoryColor", TsrHistoryColorTextureName);
                 AppendDiagnosticDesktopFinalCapture(tsrUpscale, "15_FinalOutput", TsrOutputTextureName);

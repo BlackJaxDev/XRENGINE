@@ -346,10 +346,30 @@ public static partial class EditorUnitTests
                 rootNode.AddComponent(() => workload);
         }
 
-        public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode, Action? onAllModelsImported = null)
+        public static void ImportModels(
+            string desktopDir,
+            SceneNode rootNode,
+            SceneNode characterParentNode,
+            Action? onAllModelsImported = null,
+            Action? onStaticModelsImported = null)
         {
             if (Toggles.CreateUnitBox)
                 CreateUnitBoxes(rootNode);
+
+            int staticModelImportCompletionQueued = 0;
+            void DispatchStaticModelsImported()
+            {
+                if (onStaticModelsImported is null)
+                    return;
+
+                if (Interlocked.CompareExchange(ref staticModelImportCompletionQueued, 1, 0) != 0)
+                    return;
+
+                _ = Engine.InvokeOnAppThread(
+                    onStaticModelsImported,
+                    "UnitTestingWorld: Static model imports completed",
+                    executeNowIfAlreadyAppThread: true);
+            }
 
             int allModelImportCompletionQueued = 0;
             void DispatchAllModelsImported()
@@ -368,6 +388,7 @@ public static partial class EditorUnitTests
 
             if (!Toggles.HasAnyModelsToImport)
             {
+                DispatchStaticModelsImported();
                 DispatchAllModelsImported();
                 return;
             }
@@ -393,9 +414,13 @@ public static partial class EditorUnitTests
 
             if (modelsToSchedule.Count == 0)
             {
+                DispatchStaticModelsImported();
                 DispatchAllModelsImported();
                 return;
             }
+
+            if (pendingStaticImports == 0)
+                DispatchStaticModelsImported();
 
             int staticImportCompletionQueued = 0;
             void CompleteStaticImportSlot()
@@ -406,7 +431,7 @@ public static partial class EditorUnitTests
                 if (Interlocked.CompareExchange(ref staticImportCompletionQueued, 1, 0) != 0)
                     return;
 
-                QueueLightProbeSpawnerModelBoundsWiring(rootNode, importedStaticRootsLock, importedStaticRoots);
+                QueueLightProbeSpawnerModelBoundsWiring(rootNode, importedStaticRootsLock, importedStaticRoots, DispatchStaticModelsImported);
             }
 
             void CompleteAllModelImportSlot()
@@ -525,8 +550,14 @@ public static partial class EditorUnitTests
                                         SceneNode avatarRoot = result.AvatarRoot!;
                                         List<ModelComponent> pawnSuspendedModels = SuspendSerializedPrefabModelPublication(avatarRoot);
                                         characterParentNode!.Transform.AddChild(avatarRoot.Transform, childPreservesWorldTransform: false, EParentAssignmentMode.Immediate);
-                                        OnFinishedImportingAvatar(avatarRoot, characterParentNode, result.SourceContentSha256);
-                                        StageSerializedPrefabModelPublication(avatarRoot, pawnSuspendedModels);
+                                        // Stage avatar meshes after humanoid, scaling, and MotionBricks setup
+                                        // finish so background Uber shader compilation completes first and the
+                                        // avatar does not flash in T-pose or trigger scale-change rebuilds.
+                                        OnFinishedImportingAvatar(
+                                            avatarRoot,
+                                            characterParentNode,
+                                            result.SourceContentSha256,
+                                            onSetupCompleted: () => StageSerializedPrefabModelPublication(avatarRoot, pawnSuspendedModels));
                                         Debug.Meshes(
                                             $"[UnityPrefab] Mounted '{resolvedPath}' onto '{characterParentNode.Name}' for desktop MotionBricks locomotion " +
                                             $"({result.ModelCount} models, {result.MaterialCount} materials).");
@@ -766,6 +797,7 @@ public static partial class EditorUnitTests
                                     {
                                         SceneNode importedRoot = result.RootNode;
                                         ApplySourceMaterialOverrides(importedRoot, model);
+                                        ApplyModelImportDebugBounds(importedRoot, model);
                                         if (HasPostImportFlag(model, ModelPostImportFlags.GenerateCoacdCollidersPerSubmesh))
                                         {
                                             bool combineCoacdColliders = HasPostImportFlag(model, ModelPostImportFlags.PutAllCoacdCollidersIntoOneStaticRigidBodyComponent);
@@ -851,7 +883,26 @@ public static partial class EditorUnitTests
             }, iterateChildHierarchy: true);
         }
 
-        private static void QueueLightProbeSpawnerModelBoundsWiring(SceneNode rootNode, object importedStaticRootsLock, List<SceneNode> importedStaticRoots)
+        private static void ApplyModelImportDebugBounds(
+            SceneNode importedRoot,
+            Settings.ModelImportSettings model)
+        {
+            bool enableBounds = model.RenderBounds
+                || (model.Kind == UnitTestModelImportKind.Animated && Toggles.ShowAvatarCullingBoxes);
+            if (!enableBounds)
+                return;
+
+            importedRoot.IterateComponents<ModelComponent>(component =>
+            {
+                component.RenderBounds = true;
+            }, iterateChildHierarchy: true);
+        }
+
+        private static void QueueLightProbeSpawnerModelBoundsWiring(
+            SceneNode rootNode,
+            object importedStaticRootsLock,
+            List<SceneNode> importedStaticRoots,
+            Action? onBoundsWired = null)
         {
             Engine.InvokeOnAppThread(() =>
             {
@@ -860,6 +911,7 @@ public static partial class EditorUnitTests
                     importedRoots = [.. importedStaticRoots];
 
                 WireLightProbeSpawnerToImportedModels(rootNode, importedRoots);
+                onBoundsWired?.Invoke();
             }, "UnitTestingWorld.Models.QueueLightProbeSpawnerModelBoundsWiring", executeNowIfAlreadyAppThread: true);
         }
 
@@ -1516,34 +1568,42 @@ public static partial class EditorUnitTests
         private static void OnFinishedImportingAvatar(
             SceneNode? rootNode,
             SceneNode? characterParentNode,
-            string? sourceModelContentSha256)
+            string? sourceModelContentSha256,
+            Action? onSetupCompleted = null)
             => OnFinishedImportingAvatar(
                 rootNode,
                 characterParentNode,
                 startupClips: null,
-                sourceModelContentSha256);
+                sourceModelContentSha256,
+                onSetupCompleted);
 
         private static void OnFinishedImportingAvatar(
             SceneNode? rootNode,
             SceneNode? characterParentNode,
             AvatarStartupClipLoadResult? startupClips,
-            string? sourceModelContentSha256)
+            string? sourceModelContentSha256,
+            Action? onSetupCompleted = null)
         {
             if (rootNode is null)
+            {
+                onSetupCompleted?.Invoke();
                 return;
+            }
 
             QueueAvatarPostImportSetup(
                 rootNode,
                 characterParentNode,
                 startupClips,
-                sourceModelContentSha256);
+                sourceModelContentSha256,
+                onSetupCompleted);
         }
 
         private static void QueueAvatarPostImportSetup(
             SceneNode rootNode,
             SceneNode? characterParentNode,
             AvatarStartupClipLoadResult? startupClips,
-            string? sourceModelContentSha256)
+            string? sourceModelContentSha256,
+            Action? onSetupCompleted = null)
         {
             HumanoidComponent? humanComp = null;
             HeightScaleBaseComponent? heightScale = null;
@@ -1647,6 +1707,7 @@ public static partial class EditorUnitTests
                                 QueueAvatarStartupClipAttachment(rootNode);
                         }
 
+                        onSetupCompleted?.Invoke();
                         return true;
 
                     default:

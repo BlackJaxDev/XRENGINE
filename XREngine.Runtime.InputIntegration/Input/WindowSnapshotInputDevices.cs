@@ -179,6 +179,7 @@ internal sealed class WindowSnapshotMouse(int index) : BaseMouse(index)
     private readonly WindowSnapshotTransitionBuffer<WindowMouseButtonTransition> _pendingTransitions = new();
     private bool _isTicking;
     private bool _isFocused;
+    private bool _isMouseCaptured;
     private IRuntimePointerContactSource? _inputSource;
     private object? _inputSourceOwner;
     private ulong _inputSourceGeneration;
@@ -251,6 +252,7 @@ internal sealed class WindowSnapshotMouse(int index) : BaseMouse(index)
                 return;
 
             _hideCursor = value;
+            _cursor.ResetRelativeBaseline();
             _captureRequest?.Invoke(value);
         }
     }
@@ -286,7 +288,12 @@ internal sealed class WindowSnapshotMouse(int index) : BaseMouse(index)
         if (_isTicking)
             _pendingTransitions.Clear();
         InvalidateInputDispatch();
+        bool focusOrCaptureChanged = (!_isFocused && snapshot.IsFocused)
+            || _isMouseCaptured != snapshot.IsMouseCaptured;
         _isFocused = snapshot.IsFocused;
+        _isMouseCaptured = snapshot.IsMouseCaptured;
+        if (focusOrCaptureChanged)
+            _cursor.ResetRelativeBaseline();
         Vector2 physicalPosition = new(snapshot.PointerX, snapshot.PointerY);
         if (physicalPosition != _physicalCursorPosition)
             _touchPositionPreferred = false;

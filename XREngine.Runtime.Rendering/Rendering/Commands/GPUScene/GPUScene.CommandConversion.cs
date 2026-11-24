@@ -391,7 +391,11 @@ namespace XREngine.Rendering.Commands
                     bool transformChanged = UpdateTransform(existing.TransformID, modelMatrix, meshCmd as RenderCommand);
                     if (transformChanged && S13aPublicationTelemetry.Enabled)
                         observation.TransformWrites++;
-                    BoundsGpu updatedBounds = ComputeRenderCullingBoundsGpu(snapshot.Owner, mesh.Bounds, modelMatrix, updated.BoundsID + 1u);
+                    BoundsGpu existingBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(index);
+                    uint existingBoundsVersion = existingBounds.BoundsVersion != 0u
+                        ? existingBounds.BoundsVersion
+                        : updated.BoundsID + 1u;
+                    BoundsGpu updatedBounds = ComputeRenderCullingBoundsGpu(snapshot.Owner, mesh.Bounds, modelMatrix, existingBoundsVersion);
                     updated.MeshID = newMeshID;
                     updated.SubmeshID = (newMeshID << 16) | ((uint)subMeshIndex & 0xFFFF);
                     updated.MaterialID = newMaterialID;
@@ -436,8 +440,14 @@ namespace XREngine.Rendering.Commands
                         ReleaseLogicalMeshResidency(existing.LogicalMeshID, "TryUpdateMeshCommand(mesh changed)");
                     }
 
-                    BoundsGpu existingBounds = UpdatingBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(index);
                     bool boundsChanged = !existingBounds.Equals(updatedBounds);
+                    if (boundsChanged)
+                    {
+                        // Advance BoundsVersion whenever CPU-owned world bounds change so
+                        // AdvancedGpuScenePublisher detects movement on identity-world skinned meshes.
+                        uint nextVersion = existingBoundsVersion == uint.MaxValue ? 1u : existingBoundsVersion + 1u;
+                        updatedBounds.BoundsVersion = nextVersion;
+                    }
                     RecordAllocationPhase(ref allocationMark, ref observation.BoundsCompareAllocatedBytes);
                     // Routes follow the accepted snapshot renderer. A renderer change can leave
                     // every published row byte-identical, so mark the routes dirty explicitly.

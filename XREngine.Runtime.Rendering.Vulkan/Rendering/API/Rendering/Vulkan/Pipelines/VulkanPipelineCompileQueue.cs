@@ -167,7 +167,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             if (_vulkanComputePipelineCompileJobs.ContainsKey(request.Key))
                 return true;
             VulkanPipelineCompileTask task = EnsureVulkanPipelineCompileTask();
-            Task<VulkanComputePipelineCompileResult> compileTask = task.Enqueue(
+            Task<VulkanComputePipelineCompileResult> compileTask = task.EnqueueCompute(
                 () => CreateComputePipelineOnWorker(request, BackgroundPipelineCache),
                 foregroundRequired: false,
                 out Action promoteToForeground);
@@ -573,7 +573,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             }
             Pipeline pipeline = request.Program.CreateComputePipelineFromRequest(request, backgroundPipelineCache);
             double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            PublishBackgroundPipelineCache(elapsedMs);
+            PublishBackgroundComputePipelineCache(elapsedMs);
             return new(true, pipeline, null, elapsedMs, Owner: request.Program);
         }
         catch (VulkanPipelineCompilationDeferredException exception)
@@ -852,6 +852,10 @@ internal sealed unsafe partial class VulkanPipelineManager
         VulkanGraphicsPipelineCompileJob[] jobs,
         string reason)
     {
+        // Promotion releases background graphics jobs gated on the foreground frame
+        // coordinator before a shader/layout mutation waits for their captured pointers.
+        foreach (VulkanGraphicsPipelineCompileJob job in jobs)
+            job.PromoteToForeground();
         foreach (VulkanGraphicsPipelineCompileJob job in jobs)
         {
             bool waitedForPublication = !job.Task.IsCompleted || !job.PublicationTask.IsCompleted;
@@ -1015,6 +1019,9 @@ internal sealed unsafe partial class VulkanPipelineManager
             jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values];
             computeJobs = [.. _vulkanComputePipelineCompileJobs.Values];
         }
+
+        foreach (VulkanGraphicsPipelineCompileJob job in jobs)
+            job.PromoteToForeground();
 
         foreach (VulkanGraphicsPipelineCompileJob job in jobs)
         {

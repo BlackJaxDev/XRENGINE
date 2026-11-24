@@ -1905,6 +1905,9 @@ namespace XREngine.Rendering
             program.Uniform(
                 EEngineUniform.FramebufferTextureYDirection.ToStringFast(),
                 (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend));
+            program.Uniform(
+                EEngineUniform.UpscaleTextureLodBias.ToStringFast(),
+                RenderPipeline.ResolveUpscaleTextureLodBiasForFrame());
 
             Parameters.SetUniforms(program);
         }

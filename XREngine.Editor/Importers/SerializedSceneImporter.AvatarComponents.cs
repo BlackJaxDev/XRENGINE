@@ -180,9 +180,13 @@ internal static partial class SerializedSceneImporter
         component.PinBranchChildren = (GetScalarInt(fields, "multiChildType") ?? 0) == 0;
         // Measured PhysBone behavior: bones aim relative to their simulated parents, stiffness holds the
         // offset from the parent without resisting gravity, and the settled gravity angle does not depend on bone size.
+        // PhysBone v1.1 (version >= 1) biases the rest direction toward gravity so pull controls the response.
+        int physBoneVersion = GetScalarInt(fields, "version") ?? 0;
         component.RestFollowsParent = true;
         component.StiffnessMode = EPhysicsChainStiffnessMode.HoldParentOffset;
-        component.GravityMode = EPhysicsChainGravityMode.SegmentRatio;
+        component.GravityMode = physBoneVersion >= 1
+            ? EPhysicsChainGravityMode.RestBias
+            : EPhysicsChainGravityMode.SegmentRatio;
         component.CarryParticlesBetweenSteps = false;
         component.CollisionMode = EPhysicsChainCollisionMode.Segment;
         component.Radius = MathF.Max(GetScalarFloat(fields, "radius") ?? 0.0f, 0.0f);

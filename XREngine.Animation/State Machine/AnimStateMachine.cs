@@ -3,7 +3,9 @@ using System.Numerics;
 using MemoryPack;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Animation.IK;
 using XREngine.Animation.Importers;
+using XREngine.Components.Animation;
 using static XREngine.Animation.AnimLayer;
 
 namespace XREngine.Animation
@@ -161,6 +163,7 @@ namespace XREngine.Animation
             }
 
             layout.QuaternionFloatGroups = BuildQuaternionFloatSlotGroups(slotsByPath, _animatedCurves);
+            layout.FloatSlotMasks = BuildFloatSlotMasks(slotsByPath, _animatedCurves, layout.FloatCount);
             SlotLayout = layout;
 
             // Build dense member array for ApplyAnimationValues
@@ -238,12 +241,87 @@ namespace XREngine.Animation
                     _liveHumanoidPoseHistory ??= new HumanoidPoseHistoryBuffer();
                     motionBricks.AttachPoseHistoryBuffer(_liveHumanoidPoseHistory);
                     break;
+                default:
+                    if (motion.IsProceduralMotion)
+                        motion.OnProceduralSlotLayoutBound(layout, slotsByPath);
+                    break;
             }
         }
 
         internal static AnimationQuaternionFloatSlotGroup[] BuildQuaternionFloatSlotGroups(
             IReadOnlyDictionary<string, AnimSlot> slotsByPath)
             => BuildQuaternionFloatSlotGroups(slotsByPath, membersByPath: null);
+
+        private static EHumanoidBodyMask[] BuildFloatSlotMasks(
+            IReadOnlyDictionary<string, AnimSlot> slotsByPath,
+            IReadOnlyDictionary<string, AnimationMember> membersByPath,
+            int floatCount)
+        {
+            if (floatCount <= 0)
+                return [];
+
+            var masks = new EHumanoidBodyMask[floatCount];
+            Array.Fill(masks, EHumanoidBodyMask.NonHumanoid);
+
+            foreach ((string path, AnimSlot slot) in slotsByPath)
+            {
+                if (slot.Type != EAnimValueType.Float || (uint)slot.TypeIndex >= (uint)floatCount)
+                    continue;
+
+                if (membersByPath.TryGetValue(path, out AnimationMember? member))
+                    masks[slot.TypeIndex] = ClassifyMemberBodyMask(member);
+            }
+
+            return masks;
+        }
+
+        private static EHumanoidBodyMask ClassifyMemberBodyMask(AnimationMember member)
+        {
+            if (member.MemberType != EAnimationMemberType.Method)
+                return EHumanoidBodyMask.NonHumanoid;
+
+            string name = member.MemberName;
+            if (name is "SetValue" or "SetImportedRawValue" && member.MethodArguments.Length > 0)
+            {
+                if (member.MethodArguments[0] is EHumanoidValue muscle)
+                    return HumanoidBodyMaskUtility.GetBodyPart(muscle);
+                if (member.MethodArguments[0] is int muscleIndex && Enum.IsDefined(typeof(EHumanoidValue), muscleIndex))
+                    return HumanoidBodyMaskUtility.GetBodyPart((EHumanoidValue)muscleIndex);
+            }
+
+            if (name == "SetImportedTranslationDof" && member.MethodArguments.Length > 0)
+            {
+                if (member.MethodArguments[0] is EHumanoidTranslationDofBone bone)
+                    return HumanoidBodyMaskUtility.GetBodyPart(bone);
+                if (member.MethodArguments[0] is int boneIndex && Enum.IsDefined(typeof(EHumanoidTranslationDofBone), boneIndex))
+                    return HumanoidBodyMaskUtility.GetBodyPart((EHumanoidTranslationDofBone)boneIndex);
+            }
+
+            if ((name.StartsWith("SetAnimatedIKPosition", StringComparison.Ordinal)
+                    || name.StartsWith("SetAnimatedIKRotation", StringComparison.Ordinal))
+                && member.MethodArguments.Length > 0)
+            {
+                if (member.MethodArguments[0] is ELimbEndEffector goal)
+                {
+                    return goal switch
+                    {
+                        ELimbEndEffector.LeftFoot => EHumanoidBodyMask.LeftLeg,
+                        ELimbEndEffector.RightFoot => EHumanoidBodyMask.RightLeg,
+                        ELimbEndEffector.LeftHand => EHumanoidBodyMask.LeftArm,
+                        ELimbEndEffector.RightHand => EHumanoidBodyMask.RightArm,
+                        _ => EHumanoidBodyMask.NonHumanoid,
+                    };
+                }
+            }
+
+            if (name.StartsWith("SetRootPosition", StringComparison.Ordinal)
+                || name.StartsWith("SetRootRotation", StringComparison.Ordinal))
+            {
+                return EHumanoidBodyMask.Root;
+            }
+
+            return EHumanoidBodyMask.NonHumanoid;
+        }
 
         private static AnimationQuaternionFloatSlotGroup[] BuildQuaternionFloatSlotGroups(
             IReadOnlyDictionary<string, AnimSlot> slotsByPath,
@@ -499,8 +577,10 @@ namespace XREngine.Animation
             if (layerWeight <= 0.0f)
                 return;
 
-            // Upper-body or partial override layers without Body/root tracks must not attenuate
-            // root motion authored by lower layers.
+            // Upper-body or partial override layers without Body/root tracks (or with Root masked out)
+            // must not attenuate root motion authored by lower layers.
+            if ((layer.AvatarMask & EHumanoidBodyMask.Root) == 0)
+                return;
             if (layer.HumanoidContributions.Count == 0 && !layer.HumanoidContributions.Overflowed)
                 return;
 
@@ -555,9 +635,9 @@ namespace XREngine.Animation
             {
                 bool additive = layer.ApplyType == EApplyType.Additive;
                 if (additive)
-                    ValueStore.AddFrom(layer.ValueStore, layerWeight);
+                    ValueStore.AddFrom(layer.ValueStore, layerWeight, layer.AvatarMask);
                 else
-                    ValueStore.OverrideFrom(layer.ValueStore, layerWeight);
+                    ValueStore.OverrideFrom(layer.ValueStore, layerWeight, layer.AvatarMask);
                 return;
             }
 

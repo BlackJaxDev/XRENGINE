@@ -15,7 +15,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.UnitTests.Animation.MotionBricks;
 
 [TestFixture]
-public sealed class MotionBricksStage5Tests
+public sealed class MotionBricksLiveContextAndLayeringTests
 {
     private static readonly MethodInfo TryPreparePlaybackMethod =
         typeof(AnimStateMachineComponent).GetMethod("TryPrepareStateMachinePlayback", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -251,6 +251,113 @@ public sealed class MotionBricksStage5Tests
         spine.ShouldBe(DeterministicWalkTestDriver.ExpectedBaseSpineMuscle + 0.25f, 1.0e-3f);
 
         // Layer 0 root motion still publishes cleanly alongside upper-body/additive layers.
+        accumulatedRootDelta.Length().ShouldBeGreaterThan(0.05f);
+    }
+
+    [Test]
+    public void AnimLayer_AvatarMask_FiltersFullBodyClipToUpperBodyPreservingLegsAndRootMotion()
+    {
+        // Every defined EHumanoidValue maps to a specific humanoid region rather than NonHumanoid.
+        foreach (EHumanoidValue muscle in Enum.GetValues<EHumanoidValue>())
+            HumanoidBodyMaskUtility.GetBodyPart(muscle).ShouldNotBe(EHumanoidBodyMask.NonHumanoid);
+
+        SceneNode root = CreateTestHumanoidRig(out HumanoidComponent humanoid);
+        var animator = root.AddComponent<AnimStateMachineComponent>()!;
+        animator.Humanoid = humanoid;
+        animator.RootMotionApplicationMode = EHumanoidRootMotionApplicationMode.ExternalConsumer;
+
+        using var deterministicDriver = new DeterministicWalkTestDriver();
+        var locomotionMotion = new MotionBricksLocomotionMotion
+        {
+            Name = "Locomotion",
+            RuntimeDriverOverride = deterministicDriver,
+        };
+        var baseState = new AnimState(locomotionMotion, "Locomotion");
+        var baseLayer = new AnimLayer(baseState)
+        {
+            InitialState = baseState,
+            ApplyType = AnimLayer.EApplyType.Override,
+            Weight = 1.0f,
+            AvatarMask = EHumanoidBodyMask.All,
+        };
+
+        // Layer 1 uses a full-body clip (arms AND legs), restricted to UpperBody via AvatarMask.
+        AnimationClip fullBodyWaveClip = CreateMultiMuscleClip(
+            (EHumanoidValue.RightArmDownUp, 0.85f),
+            (EHumanoidValue.LeftUpperLegFrontBack, -0.90f),
+            (EHumanoidValue.RightUpperLegFrontBack, -0.80f));
+        var waveState = new AnimState(fullBodyWaveClip, "FullBodyWaveMaskedToUpper");
+        var upperMaskedLayer = new AnimLayer(waveState)
+        {
+            InitialState = waveState,
+            ApplyType = AnimLayer.EApplyType.Override,
+            Weight = 1.0f,
+            AvatarMask = EHumanoidBodyMask.UpperBody,
+        };
+
+        // Layer 2 adds spine lean AND leg offset, restricted to Body via AvatarMask.
+        AnimationClip additiveClip = CreateAdditiveMuscleClip(EHumanoidValue.SpineFrontBack, 0.25f);
+        var legDeltaCurve = new PropAnimFloat
+        {
+            LengthInSeconds = 1.0f,
+            Looped = true,
+            DefaultValue = 0.0f,
+        };
+        legDeltaCurve.Keyframes.Add(new FloatKeyframe(0.0f, 0.0f, 0.0f, EVectorInterpType.Linear));
+        legDeltaCurve.Keyframes.Add(new FloatKeyframe(0.05f, 0.50f, 0.0f, EVectorInterpType.Linear));
+        legDeltaCurve.Keyframes.Add(new FloatKeyframe(1.0f, 0.50f, 0.0f, EVectorInterpType.Linear));
+        var sceneNodeMember = additiveClip.RootMember!.Children[0];
+        var getHumanoidMember = sceneNodeMember.Children[0];
+        var legSetter = new AnimationMember("SetImportedRawValue", EAnimationMemberType.Method)
+        {
+            MethodArguments = [EHumanoidValue.LeftUpperLegFrontBack, 0.0f, false],
+            AnimatedMethodArgumentIndex = 1,
+            CacheReturnValue = false,
+            DefaultValue = 0.0f,
+            Animation = legDeltaCurve,
+        };
+        getHumanoidMember.Children.Add(legSetter);
+
+        var leanState = new AnimState(additiveClip, "AdditiveMaskedToBody");
+        var additiveBodyLayer = new AnimLayer(leanState)
+        {
+            InitialState = leanState,
+            ApplyType = AnimLayer.EApplyType.Additive,
+            Weight = 1.0f,
+            AvatarMask = EHumanoidBodyMask.Body,
+        };
+
+        animator.StateMachine.Layers.Add(baseLayer);
+        animator.StateMachine.Layers.Add(upperMaskedLayer);
+        animator.StateMachine.Layers.Add(additiveBodyLayer);
+
+        bool prepared = (bool)TryPreparePlaybackMethod.Invoke(animator, null)!;
+        prepared.ShouldBeTrue(animator.PlaybackCapabilityDiagnostic);
+
+        Vector3 accumulatedRootDelta = Vector3.Zero;
+        animator.RootMotionEvaluated += (_, delta) => accumulatedRootDelta += delta.Translation;
+
+        long frame60Ticks = Stopwatch.Frequency / 60;
+        for (int i = 0; i < 6; i++)
+        {
+            EvaluateAndApplyMethod.Invoke(animator, [frame60Ticks, humanoid]);
+            ApplyMusclePoseMethod.Invoke(humanoid, null);
+            PublishRootMotionMethod.Invoke(animator, null);
+        }
+
+        // Upper-body override applied to RightArmDownUp.
+        humanoid.TryGetMuscleValue(EHumanoidValue.RightArmDownUp, out float rightArm).ShouldBeTrue();
+        rightArm.ShouldBe(0.85f, 1.0e-3f);
+
+        // Both Layer 1 (-0.90) and Layer 2 (+0.50) leg writes were masked out; Layer 0 legs remain intact.
+        humanoid.TryGetMuscleValue(EHumanoidValue.LeftUpperLegFrontBack, out float leftLeg).ShouldBeTrue();
+        leftLeg.ShouldBe(DeterministicWalkTestDriver.ExpectedLeftLegMuscle, 1.0e-3f);
+
+        // Additive Body mask allowed SpineFrontBack (+0.25) on top of Layer 0.
+        humanoid.TryGetMuscleValue(EHumanoidValue.SpineFrontBack, out float spine).ShouldBeTrue();
+        spine.ShouldBe(DeterministicWalkTestDriver.ExpectedBaseSpineMuscle + 0.25f, 1.0e-3f);
+
+        // Layer 0 root motion still publishes cleanly because Root is masked out on upper layers.
         accumulatedRootDelta.Length().ShouldBeGreaterThan(0.05f);
     }
 

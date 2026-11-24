@@ -9,4 +9,6 @@ public enum RuntimeImageResizeMode
     Adaptive,
     /// <summary>Average each channel without using alpha to weight RGB.</summary>
     IndependentChannels,
+    /// <summary>Downsample sRGB color channels in linear light with alpha-weighted box filtering.</summary>
+    LinearSrgbBox,
 }

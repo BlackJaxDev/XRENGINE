@@ -8,4 +8,12 @@ namespace XREngine.Animation;
 public interface IMotionBricksLocomotionDriverFactory
 {
     IMotionBricksLocomotionDriver CreateDriver(MotionBricksLocomotionMotion motion);
+
+    /// <summary>
+    /// Starts asynchronous runtime warmup (such as loading cached TensorRT plans) off the
+    /// application thread so the first locomotion activation does not stall a frame.
+    /// </summary>
+    void Prewarm()
+    {
+    }
 }

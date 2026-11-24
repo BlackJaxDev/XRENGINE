@@ -163,27 +163,56 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             _lateIndexedGroupFinalizeProgram ??= CreateComputeProgram(
                 AdvancedVisibilityShaderLibrary.FinalizeIndexedInstanceGroupsCompute,
                 "VulkanAdvancedLateIndexedGroupFinalize", "#define XR_ADV_LATE_GROUPS 1\n");
-            VulkanAdvancedVisibilityPipelineReadiness readiness = TryPrepareProgram(
-                _earlyIndexedGroupFinalizeProgram, out VkRenderProgram early, out reason,
+
+            VulkanAdvancedVisibilityPipelineReadiness combined = VulkanAdvancedVisibilityPipelineReadiness.Ready;
+            string combinedReason = "Ready";
+
+            VulkanAdvancedVisibilityPipelineReadiness earlyLink = TryPrepareProgram(
+                _earlyIndexedGroupFinalizeProgram, out VkRenderProgram early, out string stepReason,
                 "early indexed group finalizer did not link a Vulkan pipeline layout");
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
-            readiness = TryPrepareProgram(_lateIndexedGroupFinalizeProgram,
-                out VkRenderProgram late, out reason,
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason, earlyLink, stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
+            VulkanAdvancedVisibilityPipelineReadiness lateLink = TryPrepareProgram(
+                _lateIndexedGroupFinalizeProgram, out VkRenderProgram late, out stepReason,
                 "late indexed group finalizer did not link a Vulkan pipeline layout");
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
-            VulkanComputePipelineReadiness pipelineReadiness =
-                early.TryGetOrRequestComputePipeline(int.MinValue, null, out _, out string pipelineReason);
-            if (pipelineReadiness != VulkanComputePipelineReadiness.Ready)
-                return DescribeComputePipelineReadiness(pipelineReadiness,
-                    "early indexed group finalizer", pipelineReason, out reason);
-            pipelineReadiness = late.TryGetOrRequestComputePipeline(
-                int.MinValue, null, out _, out pipelineReason);
-            return pipelineReadiness == VulkanComputePipelineReadiness.Ready
-                ? VulkanAdvancedVisibilityPipelineReadiness.Ready
-                : DescribeComputePipelineReadiness(pipelineReadiness,
-                    "late indexed group finalizer", pipelineReason, out reason);
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason, lateLink, stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
+
+            if (earlyLink == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                VulkanComputePipelineReadiness pipelineReadiness =
+                    early.TryGetOrRequestComputePipeline(int.MinValue, null, out _, out string pipelineReason);
+                if (pipelineReadiness != VulkanComputePipelineReadiness.Ready &&
+                    !CombinePreparationReadiness(ref combined, ref combinedReason,
+                        DescribeComputePipelineReadiness(pipelineReadiness, "early indexed group finalizer", pipelineReason, out stepReason),
+                        stepReason))
+                {
+                    reason = combinedReason;
+                    return combined;
+                }
+            }
+            if (lateLink == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                VulkanComputePipelineReadiness pipelineReadiness =
+                    late.TryGetOrRequestComputePipeline(int.MinValue, null, out _, out string pipelineReason);
+                if (pipelineReadiness != VulkanComputePipelineReadiness.Ready &&
+                    !CombinePreparationReadiness(ref combined, ref combinedReason,
+                        DescribeComputePipelineReadiness(pipelineReadiness, "late indexed group finalizer", pipelineReason, out stepReason),
+                        stepReason))
+                {
+                    reason = combinedReason;
+                    return combined;
+                }
+            }
+
+            reason = combinedReason;
+            return combined;
         }
         catch (Exception exception)
         {
@@ -221,42 +250,83 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 AdvancedVisibilityShaderLibrary.BuildIndirectCompute,
                 "VulkanAdvancedBuildVisibilityIndirect");
 
-            VulkanAdvancedVisibilityPipelineReadiness linkReadiness = TryPrepareProgram(
+            VulkanAdvancedVisibilityPipelineReadiness combined = VulkanAdvancedVisibilityPipelineReadiness.Ready;
+            string combinedReason = "Ready";
+
+            VulkanAdvancedVisibilityPipelineReadiness patchLink = TryPrepareProgram(
                 _boundsPatchProgram,
                 out VkRenderProgram patch,
-                out reason,
+                out string stepReason,
                 "physics-chain bounds patch compute program did not link a Vulkan pipeline layout");
-            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return linkReadiness;
-            linkReadiness = TryPrepareProgram(
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason, patchLink, stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
+            VulkanAdvancedVisibilityPipelineReadiness earlyLink = TryPrepareProgram(
                 _earlyVisibilityProgram,
                 out VkRenderProgram early,
-                out reason,
+                out stepReason,
                 "early visibility compute program did not link a Vulkan pipeline layout");
-            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return linkReadiness;
-            linkReadiness = TryPrepareProgram(
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason, earlyLink, stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
+            VulkanAdvancedVisibilityPipelineReadiness indirectLink = TryPrepareProgram(
                 _buildIndirectProgram,
                 out VkRenderProgram indirect,
-                out reason,
+                out stepReason,
                 "visibility indirect compute program did not link a Vulkan pipeline layout");
-            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return linkReadiness;
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason, indirectLink, stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
 
-            VulkanComputePipelineReadiness patchReadiness = patch.TryGetOrRequestComputePipeline(
-                int.MinValue, null, out _, out string patchReason);
-            if (patchReadiness != VulkanComputePipelineReadiness.Ready)
-                return DescribeComputePipelineReadiness(patchReadiness, "physics-chain bounds patch", patchReason, out reason);
+            if (patchLink == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                VulkanComputePipelineReadiness patchReadiness = patch.TryGetOrRequestComputePipeline(
+                    int.MinValue, null, out _, out string patchReason);
+                if (patchReadiness != VulkanComputePipelineReadiness.Ready &&
+                    !CombinePreparationReadiness(ref combined, ref combinedReason,
+                        DescribeComputePipelineReadiness(patchReadiness, "physics-chain bounds patch", patchReason, out stepReason),
+                        stepReason))
+                {
+                    reason = combinedReason;
+                    return combined;
+                }
+            }
+            if (earlyLink == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                VulkanComputePipelineReadiness earlyReadiness = early.TryGetOrRequestComputePipeline(
+                    int.MinValue, null, out _, out string earlyReason);
+                if (earlyReadiness != VulkanComputePipelineReadiness.Ready &&
+                    !CombinePreparationReadiness(ref combined, ref combinedReason,
+                        DescribeComputePipelineReadiness(earlyReadiness, "early visibility", earlyReason, out stepReason),
+                        stepReason))
+                {
+                    reason = combinedReason;
+                    return combined;
+                }
+            }
+            if (indirectLink == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                VulkanComputePipelineReadiness indirectReadiness = indirect.TryGetOrRequestComputePipeline(
+                    int.MinValue, null, out _, out string indirectReason);
+                if (indirectReadiness != VulkanComputePipelineReadiness.Ready &&
+                    !CombinePreparationReadiness(ref combined, ref combinedReason,
+                        DescribeComputePipelineReadiness(indirectReadiness, "visibility indirect", indirectReason, out stepReason),
+                        stepReason))
+                {
+                    reason = combinedReason;
+                    return combined;
+                }
+            }
 
-            VulkanComputePipelineReadiness earlyReadiness = early.TryGetOrRequestComputePipeline(
-                int.MinValue, null, out _, out string earlyReason);
-            if (earlyReadiness != VulkanComputePipelineReadiness.Ready)
-                return DescribeComputePipelineReadiness(earlyReadiness, "early visibility", earlyReason, out reason);
-
-            VulkanComputePipelineReadiness indirectReadiness = indirect.TryGetOrRequestComputePipeline(
-                int.MinValue, null, out _, out string indirectReason);
-            if (indirectReadiness != VulkanComputePipelineReadiness.Ready)
-                return DescribeComputePipelineReadiness(indirectReadiness, "visibility indirect", indirectReason, out reason);
+            reason = combinedReason;
+            if (combined != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return combined;
 
             boundsPatch = patch;
             earlyVisibility = early;
@@ -322,29 +392,59 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 AdvancedVisibilityShaderLibrary.LateVisibilityCompute,
                 "VulkanAdvancedLateVisibility");
 
-            VulkanAdvancedVisibilityPipelineReadiness linkReadiness = TryPrepareProgram(
+            VulkanAdvancedVisibilityPipelineReadiness combined = VulkanAdvancedVisibilityPipelineReadiness.Ready;
+            string combinedReason = "Ready";
+
+            VulkanAdvancedVisibilityPipelineReadiness depthLink = TryPrepareProgram(
                 _buildDepthPyramidProgram,
                 out VkRenderProgram depth,
-                out reason,
+                out string stepReason,
                 "depth-pyramid compute program did not link a Vulkan pipeline layout");
-            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return linkReadiness;
-            linkReadiness = TryPrepareProgram(
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason, depthLink, stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
+            VulkanAdvancedVisibilityPipelineReadiness lateLink = TryPrepareProgram(
                 _lateVisibilityProgram,
                 out VkRenderProgram late,
-                out reason,
+                out stepReason,
                 "late-visibility compute program did not link a Vulkan pipeline layout");
-            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return linkReadiness;
-            VulkanComputePipelineReadiness depthReadiness = depth.TryGetOrRequestComputePipeline(
-                int.MinValue, null, out _, out string depthReason);
-            if (depthReadiness != VulkanComputePipelineReadiness.Ready)
-                return DescribeComputePipelineReadiness(depthReadiness, "depth pyramid", depthReason, out reason);
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason, lateLink, stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
+            if (depthLink == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                VulkanComputePipelineReadiness depthReadiness = depth.TryGetOrRequestComputePipeline(
+                    int.MinValue, null, out _, out string depthReason);
+                if (depthReadiness != VulkanComputePipelineReadiness.Ready &&
+                    !CombinePreparationReadiness(ref combined, ref combinedReason,
+                        DescribeComputePipelineReadiness(depthReadiness, "depth pyramid", depthReason, out stepReason),
+                        stepReason))
+                {
+                    reason = combinedReason;
+                    return combined;
+                }
+            }
+            if (lateLink == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            {
+                VulkanComputePipelineReadiness lateReadiness = late.TryGetOrRequestComputePipeline(
+                    int.MinValue, null, out _, out string lateReason);
+                if (lateReadiness != VulkanComputePipelineReadiness.Ready &&
+                    !CombinePreparationReadiness(ref combined, ref combinedReason,
+                        DescribeComputePipelineReadiness(lateReadiness, "late visibility", lateReason, out stepReason),
+                        stepReason))
+                {
+                    reason = combinedReason;
+                    return combined;
+                }
+            }
 
-            VulkanComputePipelineReadiness lateReadiness = late.TryGetOrRequestComputePipeline(
-                int.MinValue, null, out _, out string lateReason);
-            if (lateReadiness != VulkanComputePipelineReadiness.Ready)
-                return DescribeComputePipelineReadiness(lateReadiness, "late visibility", lateReason, out reason);
+            reason = combinedReason;
+            if (combined != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return combined;
 
             buildDepthPyramid = depth;
             lateVisibility = late;

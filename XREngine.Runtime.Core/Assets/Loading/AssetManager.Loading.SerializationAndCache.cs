@@ -472,8 +472,19 @@ namespace XREngine
             return normalizedPath;
         }
 
+        private static readonly string?[] TextureStreamingFreshnessProbeVariants =
+        [
+            null,
+            "usage-color",
+            "usage-data-independent-v1",
+            "usage-normal-independent-v1",
+            "usage-data",
+            "usage-normal",
+        ];
+
         /// <summary>
-        /// Returns whether a fresh cooked texture-streaming cache asset exists for a source image.
+        /// Returns whether a fresh cooked texture-streaming cache asset exists for a source image
+        /// under the default key or any known texture-usage variant folder.
         /// A fresh cache was cooked from a successful decode of the current source file, so
         /// callers can use this to skip a repeated full decode of the same source.
         /// This check does not queue a cache warm-up.
@@ -492,8 +503,19 @@ namespace XREngine
             if (!File.Exists(normalizedPath))
                 return false;
 
-            return TryResolveTextureStreamingCachePath(normalizedPath, explicitVariantKey: null, out Type? assetType, out _, out string cachePath)
-                && IsCacheAssetFresh(cachePath, normalizedPath, assetType);
+            for (int i = 0; i < TextureStreamingFreshnessProbeVariants.Length; i++)
+            {
+                if (TryResolveTextureStreamingCachePath(
+                    normalizedPath,
+                    explicitVariantKey: TextureStreamingFreshnessProbeVariants[i],
+                    out Type? assetType,
+                    out _,
+                    out string cachePath)
+                    && IsCacheAssetFresh(cachePath, normalizedPath, assetType))
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>

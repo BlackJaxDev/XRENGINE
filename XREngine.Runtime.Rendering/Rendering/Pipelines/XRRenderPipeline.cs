@@ -859,6 +859,52 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingFilterMode;
 
     /// <summary>
+    /// Resolves the effective post-resolve RCAS sharpening strength (0.0 to 1.0) for the current frame.
+    /// </summary>
+    /// <returns>The clamped RCAS sharpness strength for the current frame.</returns>
+    internal static float ResolveEffectiveAntiAliasingSharpnessForFrame()
+    {
+        float raw = TryCurrentPipeline?.EffectiveAntiAliasingSharpnessThisFrame
+            ?? RuntimeRenderingHostServices.FrameTiming.DefaultAntiAliasingSharpness;
+        return float.IsFinite(raw) ? Math.Clamp(raw, 0.0f, 1.0f) : 0.0f;
+    }
+
+    /// <summary>
+    /// Computes the negative texture LOD bias needed so reduced-resolution upscaling passes
+    /// sample mip levels that match the full output resolution. Returns 0 at native resolution
+    /// and during shadow, scene-capture, or light-probe passes.
+    /// </summary>
+    public static float ResolveUpscaleTextureLodBiasForFrame(XRRenderPipelineInstance? pipelineOverride = null)
+    {
+        if (RuntimeEngine.Rendering.State.IsSceneCapturePass ||
+            RuntimeEngine.Rendering.State.IsLightProbePass)
+            return 0.0f;
+
+        XRRenderPipelineInstance? pipeline = pipelineOverride ?? TryCurrentPipeline;
+        if (pipeline is null || pipeline.Pipeline?.IsShadowPass == true)
+            return 0.0f;
+
+        uint fullWidth = pipeline.ResourceDisplayWidth
+            ?? (uint)Math.Max(0, pipeline.RenderState.WindowViewport?.Width ?? 0);
+        uint fullHeight = pipeline.ResourceDisplayHeight
+            ?? (uint)Math.Max(0, pipeline.RenderState.WindowViewport?.Height ?? 0);
+        uint internalWidth = pipeline.ResourceInternalWidth
+            ?? (uint)Math.Max(0, pipeline.RenderState.WindowViewport?.InternalWidth ?? 0);
+        uint internalHeight = pipeline.ResourceInternalHeight
+            ?? (uint)Math.Max(0, pipeline.RenderState.WindowViewport?.InternalHeight ?? 0);
+        if (fullWidth == 0 || fullHeight == 0 || internalWidth == 0 || internalHeight == 0)
+            return 0.0f;
+
+        if (internalWidth >= fullWidth && internalHeight >= fullHeight)
+            return 0.0f;
+
+        float scaleX = (float)internalWidth / fullWidth;
+        float scaleY = (float)internalHeight / fullHeight;
+        float minScale = Math.Clamp(MathF.Min(scaleX, scaleY), 0.25f, 1.0f);
+        return MathF.Log2(minScale);
+    }
+
+    /// <summary>
     /// Resolves the effective MSAA sample count for the current frame, considering the current render pipeline instance and rendering state.
     /// </summary>
     /// <returns>The effective MSAA sample count for the current frame.</returns>

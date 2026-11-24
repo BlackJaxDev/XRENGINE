@@ -32,13 +32,16 @@ public sealed partial class AdvancedGpuDeformationResources
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(mesh);
-        if (!mesh.HasSkinning || mesh.VertexCount <= 0 ||
+        EAdvancedDeformationMeshPreparationPolicy policy = ResolveMeshPreparationPolicy();
+        bool needsDeformation = mesh.HasSkinning
+            || (policy == EAdvancedDeformationMeshPreparationPolicy.CanonicalSparseMorphs && mesh.BlendshapeNames.Length > 0);
+        if (!needsDeformation || mesh.VertexCount <= 0 ||
             !AdvancedPackedVertexCodec.HasReadableAttributes(mesh))
             return;
 
         cancellationToken.ThrowIfCancellationRequested();
         PendingGpuDeformationMeshPreparation pending = CreatePendingMesh(
-            mesh, 0u, 0UL, EAdvancedDeformationMeshPreparationPolicy.AuthoredVertices);
+            mesh, 0u, 0UL, policy);
         uint steps = 0u;
         while (pending.Stage < PendingGpuDeformationMeshPreparation.Spill)
         {
@@ -47,7 +50,7 @@ public sealed partial class AdvancedGpuDeformationResources
             AdvanceManagedMeshPreparation(pending);
         }
         cancellationToken.ThrowIfCancellationRequested();
-        if (!MatchesPendingSource(pending, EAdvancedDeformationMeshPreparationPolicy.AuthoredVertices) ||
+        if (!MatchesPendingSource(pending, policy) ||
             pending.RecordCount != pending.PackedRecordCount ||
             pending.DeltaCount != pending.PackedDeltaCount)
             throw new InvalidOperationException(
@@ -62,6 +65,12 @@ public sealed partial class AdvancedGpuDeformationResources
             ActiveBlendshapeCount = pending.ActiveBlendshapeCount,
             BlendshapeIndices = pending.Blendshapes.IsValid ? pending.Blendshapes.Indices : null,
             BlendshapeIndicesRevision = pending.BlendshapeIndicesRevision,
+            CanonicalMorphs = pending.CanonicalMorphs,
+            MorphRangesRevision = pending.MorphRangesRevision,
+            MorphRecordsRevision = pending.MorphRecordsRevision,
+            MorphDeltasRevision = pending.MorphDeltasRevision,
+            MorphMetadataRevision = pending.MorphMetadataRevision,
+            DeformationOrder = pending.DeformationOrder,
             Vertices = pending.VerticesScratch,
             Ranges = pending.RangesScratch,
             Records = pending.RecordsScratch,
@@ -314,12 +323,32 @@ public sealed partial class AdvancedGpuDeformationResources
         bool hasBlendshapes = XRMeshBlendshapeActiveListReader.TryCreate(
             mesh,
             out XRMeshBlendshapeActiveListReader blendshapes);
+        ImmutableArray<uint> deformationOrder = ResolveDeformationOrder(mesh);
+        bool morphWitnessMatches;
+        if (payload.CanonicalMorphs is not null)
+        {
+            XRMeshBlendshapeBufferState morphState = mesh.GetBlendshapeBufferStateSnapshot();
+            morphWitnessMatches =
+                payload.ActiveBlendshapeCount == mesh.BlendshapeNames.Length &&
+                ReferenceEquals(payload.CanonicalMorphs, morphState) &&
+                (morphState.SparseShapeRanges?.Revision ?? 0UL) == payload.MorphRangesRevision &&
+                (morphState.SparseRecords?.Revision ?? 0UL) == payload.MorphRecordsRevision &&
+                (morphState.QuantizedDeltas?.Revision ?? 0UL) == payload.MorphDeltasRevision &&
+                (morphState.QuantizationMetadata?.Revision ?? 0UL) == payload.MorphMetadataRevision;
+        }
+        else
+        {
+            morphWitnessMatches =
+                payload.ActiveBlendshapeCount == (hasBlendshapes ? blendshapes.ShapeCount : 0) &&
+                ReferenceEquals(payload.BlendshapeIndices, hasBlendshapes ? blendshapes.Indices : null) &&
+                payload.BlendshapeIndicesRevision == (hasBlendshapes ? blendshapes.Indices.Revision : 0UL);
+        }
+
         if (payload.GeometryRevision == mesh.GeometryRevision && payload.InputWitness.Matches(mesh, policy) &&
             payload.VertexCount == mesh.VertexCount &&
             ReferenceEquals(payload.Names, mesh.BlendshapeNames) &&
-            payload.ActiveBlendshapeCount == (hasBlendshapes ? blendshapes.ShapeCount : 0) &&
-            ReferenceEquals(payload.BlendshapeIndices, hasBlendshapes ? blendshapes.Indices : null) &&
-            payload.BlendshapeIndicesRevision == (hasBlendshapes ? blendshapes.Indices.Revision : 0UL))
+            payload.DeformationOrder == deformationOrder &&
+            morphWitnessMatches)
         {
             pending = new PendingGpuDeformationMeshPreparation
             {
@@ -334,6 +363,11 @@ public sealed partial class AdvancedGpuDeformationResources
                 BlendshapeCountsRevision = hasBlendshapes ? blendshapes.Counts.Revision : 0UL,
                 BlendshapeIndicesRevision = hasBlendshapes ? blendshapes.Indices.Revision : 0UL,
                 BlendshapeDeltasRevision = hasBlendshapes ? blendshapes.Deltas.Revision : 0UL,
+                CanonicalMorphs = payload.CanonicalMorphs,
+                MorphRangesRevision = payload.MorphRangesRevision,
+                MorphRecordsRevision = payload.MorphRecordsRevision,
+                MorphDeltasRevision = payload.MorphDeltasRevision,
+                MorphMetadataRevision = payload.MorphMetadataRevision,
                 LastOwnerVisitFrame = renderFrame,
                 Stage = PendingGpuDeformationMeshPreparation.Spill,
                 RecordCount = checked((uint)payload.Records.Length),
@@ -344,7 +378,7 @@ public sealed partial class AdvancedGpuDeformationResources
                 RangesScratch = payload.Ranges,
                 RecordsScratch = payload.Records,
                 DeltasScratch = payload.Deltas,
-                DeformationOrder = ResolveDeformationOrder(mesh),
+                DeformationOrder = deformationOrder,
             };
             return true;
         }

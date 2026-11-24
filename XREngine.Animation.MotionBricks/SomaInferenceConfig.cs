@@ -36,7 +36,19 @@ public readonly record struct SomaInferenceConfig
     /// </summary>
     public Vector2 HeadingAlignment { get; }
 
-    public SomaInferenceConfig(int allowedTokenBits, bool correctGeneratedDiff, Vector2 headingAlignment)
+    /// <summary>
+    /// When true, sets <c>has_local_poses = 1</c> on active target slots (4..7) so SOMA matches
+    /// the supplied target limb poses (used for explicit crouch/prone posture transitions).
+    /// When false, leaves target limb poses unconstrained so SOMA synthesizes natural alternating
+    /// footsteps purely from the 4 context frames and projected future root trajectory.
+    /// </summary>
+    public bool ConditionTargetLocalPoses { get; }
+
+    public SomaInferenceConfig(
+        int allowedTokenBits,
+        bool correctGeneratedDiff,
+        Vector2 headingAlignment,
+        bool conditionTargetLocalPoses = true)
     {
         const int validMask = (1 << SomaModelContract.AllowedTokenSlotCount) - 1;
         if ((allowedTokenBits & validMask) == 0 || (allowedTokenBits & ~validMask) != 0)
@@ -55,6 +67,7 @@ public readonly record struct SomaInferenceConfig
         AllowedTokenBits = allowedTokenBits;
         CorrectGeneratedDiff = correctGeneratedDiff;
         HeadingAlignment = headingAlignment;
+        ConditionTargetLocalPoses = conditionTargetLocalPoses;
     }
 
     /// <summary>

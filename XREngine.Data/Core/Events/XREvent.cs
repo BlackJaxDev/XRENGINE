@@ -62,28 +62,26 @@ namespace XREngine.Data.Core
             }
             using (BeginProfiling("XREvent.PersistentCalls"))
             {
-                InvokePersistentCalls([]);
+                InvokePersistentCalls();
             }
         }
 
-        private void InvokePersistentCalls(object?[] args)
+        private void InvokePersistentCalls()
         {
             var calls = PersistentCalls;
             if (calls is null || calls.Count == 0)
                 return;
 
-            // Avoid invalid enumeration if edited while running.
-            var snapshot = calls.ToArray();
-            for (int i = 0; i < snapshot.Length; i++)
+            for (int i = 0; i < calls.Count; i++)
             {
-                var call = snapshot[i];
+                var call = calls[i];
                 if (call is null || !call.IsConfigured)
                     continue;
 
                 if (!XRObjectBase.ObjectsCache.TryGetValue(call.TargetObjectId, out var targetObj))
                     continue;
 
-                call.TryInvoke(targetObj, args);
+                call.TryInvokeZeroArg(targetObj);
             }
         }
 
@@ -142,7 +140,7 @@ namespace XREngine.Data.Core
 
             using (BeginProfiling("XREvent.PersistentCalls"))
             {
-                InvokePersistentCalls([]);
+                InvokePersistentCalls();
             }
         }
 
@@ -193,7 +191,7 @@ namespace XREngine.Data.Core
 
             using (BeginProfiling("XREvent.PersistentCalls"))
             {
-                InvokePersistentCalls([]);
+                InvokePersistentCalls();
             }
         }
 
@@ -350,45 +348,31 @@ namespace XREngine.Data.Core
             if (calls is null || calls.Count == 0)
                 return;
 
-            object?[] singleArg = [item];
-
-            // If the selected method uses tuple expansion, unpack ValueTuple payloads.
-            // Otherwise pass the single payload as-is.
-            if (item is ITuple tuple)
+            object?[]? expanded = null;
+            for (int i = 0; i < calls.Count; i++)
             {
-                // We may still need the non-expanded path for callers, but the per-call flag is stored on the call itself.
-                // Allocate both forms and choose per call.
-                object?[] expanded = new object?[tuple.Length];
-                for (int i = 0; i < tuple.Length; i++)
-                    expanded[i] = tuple[i];
-
-                var snapshot = calls.ToArray();
-                for (int i = 0; i < snapshot.Length; i++)
-                {
-                    var call = snapshot[i];
-                    if (call is null || !call.IsConfigured)
-                        continue;
-
-                    if (!XRObjectBase.ObjectsCache.TryGetValue(call.TargetObjectId, out var targetObj))
-                        continue;
-
-                    call.TryInvoke(targetObj, call.UseTupleExpansion ? expanded : singleArg);
-                }
-
-                return;
-            }
-
-            var defaultSnapshot = calls.ToArray();
-            for (int i = 0; i < defaultSnapshot.Length; i++)
-            {
-                var call = defaultSnapshot[i];
+                var call = calls[i];
                 if (call is null || !call.IsConfigured)
                     continue;
 
                 if (!XRObjectBase.ObjectsCache.TryGetValue(call.TargetObjectId, out var targetObj))
                     continue;
 
-                call.TryInvoke(targetObj, singleArg);
+                if (call.UseTupleExpansion && item is ITuple tuple)
+                {
+                    if (expanded is null)
+                    {
+                        expanded = new object?[tuple.Length];
+                        for (int j = 0; j < tuple.Length; j++)
+                            expanded[j] = tuple[j];
+                    }
+
+                    call.TryInvoke(targetObj, expanded);
+                }
+                else
+                {
+                    call.TryInvokeTyped(targetObj, item);
+                }
             }
         }
 

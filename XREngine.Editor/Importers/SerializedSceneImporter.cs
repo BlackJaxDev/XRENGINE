@@ -180,6 +180,7 @@ internal static partial class SerializedSceneImporter
                 ? SourceImportCompletionTier.VisualPrefab
                 : SourceImportCompletionTier.VisualAndAvatarBehavior);
         SerializedPrefabDependencyMonitor.Register(manifest);
+        SerializedTextureValidationCache.FlushIfDirty();
         return new SerializedPrefabConversionResult
         {
             RootNode = rootNode,

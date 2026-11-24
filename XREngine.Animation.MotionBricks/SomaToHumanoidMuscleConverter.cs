@@ -48,7 +48,15 @@ public sealed class SomaToHumanoidMuscleConverter
         twistAxis: -Vector3.UnitX,
         leftRightAxis: Vector3.UnitZ);
 
-    // Mecanim-authored arm bases (matching HumanoidCanonicalPoseAuthoring with handedness = -1).
+    // Mecanim-authored joint bases (matching HumanoidCanonicalPoseAuthoring with handedness = -1).
+    internal static readonly Quaternion SpineMecanimBasis = CreateBasisRotation(
+        frontBackAxis: Vector3.UnitX,
+        twistAxis: -Vector3.UnitY,
+        leftRightAxis: -Vector3.UnitZ);
+    internal static readonly Quaternion FootMecanimBasis = CreateBasisRotation(
+        frontBackAxis: Vector3.UnitX,
+        twistAxis: -Vector3.UnitZ,
+        leftRightAxis: Vector3.UnitY);
     internal static readonly Quaternion LeftArmMecanimBasis = CreateBasisRotation(
         frontBackAxis: -Vector3.UnitY,
         twistAxis: -Vector3.UnitX,
@@ -72,12 +80,22 @@ public sealed class SomaToHumanoidMuscleConverter
     internal static readonly Quaternion RightLowerArmNeutralOffset =
         SomaPoseTransform.NormalizeOrIdentity(new Quaternion(-0.839f, 0.0f, 0.0f, 1.0f));
 
+    private const int LeftHipLandmarkJoint = 22;      // LeftLeg
+    private const int RightHipLandmarkJoint = 26;     // RightLeg
+    private const int LeftShoulderLandmarkJoint = 11; // LeftArm
+    private const int RightShoulderLandmarkJoint = 17;// RightArm
+
     private readonly SomaRestSkeletonCalibration _calibration;
+    private readonly Quaternion _inverseNeutralBodyRotation;
     private readonly Quaternion[] _worldRotations = new Quaternion[SomaModelContract.JointCount];
     private readonly Quaternion[] _worldDeltas = new Quaternion[SomaModelContract.JointCount];
+    private readonly Vector3[] _worldPositions = new Vector3[SomaModelContract.JointCount];
 
     public SomaToHumanoidMuscleConverter(SomaRestSkeletonCalibration? calibration = null)
-        => _calibration = calibration ?? SomaRestSkeletonCalibration.CanonicalDefault;
+    {
+        _calibration = calibration ?? SomaRestSkeletonCalibration.CanonicalDefault;
+        _inverseNeutralBodyRotation = ComputeInverseNeutralBodyRotation(_calibration);
+    }
 
     /// <summary>
     /// Converts one 30-joint SOMA local pose frame into normalized humanoid muscles and a
@@ -97,22 +115,35 @@ public sealed class SomaToHumanoidMuscleConverter
 
         float scale = float.IsFinite(avatarLegScale) && avatarLegScale > 0.01f ? avatarLegScale : 1.0f;
 
-        // Compose world orientations and extract rest-relative character-space deltas.
+        // Compose world positions/orientations and extract rest-relative character-space deltas.
+        _worldPositions[0] = localPose[0].Position;
         _worldRotations[0] = SomaPoseTransform.NormalizeOrIdentity(localPose[0].Rotation);
         _worldDeltas[0] = SomaPoseTransform.NormalizeOrIdentity(_worldRotations[0] * _calibration.InverseRestWorldRotations[0]);
 
         int[] parents = SomaModelContract.ParentIndices;
         Quaternion[] invRestWorld = _calibration.InverseRestWorldRotations;
+        SomaPoseTransform[] refLocal = _calibration.ReferenceLocalPoses;
         for (int joint = 1; joint < SomaModelContract.JointCount; joint++)
         {
+            int parent = parents[joint];
+            Vector3 localOffset = localPose[joint].Position;
+            if (localOffset.LengthSquared() <= 1.0e-8f)
+                localOffset = refLocal[joint].Position;
+
+            _worldPositions[joint] = _worldPositions[parent]
+                + Vector3.Transform(localOffset, _worldRotations[parent]);
             Quaternion localRot = SomaPoseTransform.NormalizeOrIdentity(localPose[joint].Rotation);
-            _worldRotations[joint] = SomaPoseTransform.NormalizeOrIdentity(_worldRotations[parents[joint]] * localRot);
+            _worldRotations[joint] = SomaPoseTransform.NormalizeOrIdentity(_worldRotations[parent] * localRot);
             _worldDeltas[joint] = SomaPoseTransform.NormalizeOrIdentity(_worldRotations[joint] * invRestWorld[joint]);
         }
 
         // Body root in humanoid meters scaled by target avatar leg proportions.
+        // Match HumanoidComponent's Mecanim Body orientation (computed from hip and shoulder
+        // landmarks) so TryAlignBody does not double-roll Hips when the spine counter-tilts.
         bodyPosition = localPose[0].Position * scale;
-        bodyRotation = _worldDeltas[0];
+        bodyRotation = TryComputeBodyLandmarkRotation(_worldPositions, out Quaternion rawBodyRotation)
+            ? SomaPoseTransform.NormalizeOrIdentity(rawBodyRotation * _inverseNeutralBodyRotation)
+            : _worldDeltas[0];
 
         // Spine chain: SOMA Spine1(1), Spine2(2), Chest(3) -> Spine, Chest, UpperChest.
         ConvertVerticalRole(
@@ -209,6 +240,30 @@ public sealed class SomaToHumanoidMuscleConverter
         out float frontBackDegrees,
         out float twistDegrees,
         out float leftRightDegrees)
+        => DecomposeSwingTwistDegrees(
+            canonicalDelta,
+            jointBasis,
+            neutralOffsetInBasis,
+            twistFirst: false,
+            out frontBackDegrees,
+            out twistDegrees,
+            out leftRightDegrees);
+
+    /// <summary>
+    /// Decomposes a canonical joint delta into basis-frame (frontBack, twist, leftRight) degrees.
+    /// When <paramref name="twistFirst"/> is <c>false</c>, factors <c>q = swing * twist</c>
+    /// (matching <c>CompiledHumanoidPoseSolver</c>). When <c>true</c>, factors
+    /// <c>q = twist * swing</c> so the extracted twist can be transferred directly onto the parent
+    /// bone's trailing twist while preserving exact world-space child orientation.
+    /// </summary>
+    private static void DecomposeSwingTwistDegrees(
+        Quaternion canonicalDelta,
+        Quaternion jointBasis,
+        Quaternion neutralOffsetInBasis,
+        bool twistFirst,
+        out float frontBackDegrees,
+        out float twistDegrees,
+        out float leftRightDegrees)
     {
         // Express canonicalDelta in the joint's (X=frontBack, Y=twist, Z=leftRight) frame
         // and remove any baked Mecanim neutral posture offset before swing-twist extraction.
@@ -219,12 +274,15 @@ public sealed class SomaToHumanoidMuscleConverter
         if (q.W < 0.0f)
             q = new Quaternion(-q.X, -q.Y, -q.Z, -q.W);
 
-        // Extract Y-axis twist component: q = swing * twist.
+        // Extract Y-axis twist component (identical for both swing * twist and twist * swing).
         Quaternion twist = SomaPoseTransform.NormalizeOrIdentity(new Quaternion(0.0f, q.Y, 0.0f, q.W));
         if (twist.W < 0.0f)
             twist = new Quaternion(-twist.X, -twist.Y, -twist.Z, -twist.W);
 
-        Quaternion swing = SomaPoseTransform.NormalizeOrIdentity(q * Quaternion.Inverse(twist));
+        Quaternion swing = SomaPoseTransform.NormalizeOrIdentity(
+            twistFirst
+                ? Quaternion.Inverse(twist) * q
+                : q * Quaternion.Inverse(twist));
         if (swing.W < 0.0f)
             swing = new Quaternion(-swing.X, -swing.Y, -swing.Z, -swing.W);
 
@@ -247,7 +305,7 @@ public sealed class SomaToHumanoidMuscleConverter
     private Quaternion ComputeCanonicalLocalDelta(int jointIndex, int parentIndex)
         => SomaPoseTransform.NormalizeOrIdentity(Quaternion.Inverse(_worldDeltas[parentIndex]) * _worldDeltas[jointIndex]);
 
-    private static void ConvertVerticalRole(
+    private void ConvertVerticalRole(
         Quaternion delta,
         Span<float> muscles,
         EHumanoidValue twistMuscle,
@@ -255,7 +313,10 @@ public sealed class SomaToHumanoidMuscleConverter
         EHumanoidValue leftRightMuscle,
         Vector2 range)
     {
-        DecomposeSwingTwistDegrees(delta, VerticalJointBasis, out float frontBackDeg, out float twistDeg, out float leftRightDeg);
+        Quaternion basis = _calibration.UseMecanimNeutralPostureOffsets
+            ? SpineMecanimBasis
+            : VerticalJointBasis;
+        DecomposeSwingTwistDegrees(delta, basis, out float frontBackDeg, out float twistDeg, out float leftRightDeg);
 
         // NativePoseSolver.StageRole applies twistSign=+1, frontBackSign=-1, leftRightSign=-1.
         muscles[(int)twistMuscle] = DegreesToNormalizedMuscle(twistDeg, range);
@@ -298,12 +359,23 @@ public sealed class SomaToHumanoidMuscleConverter
             DegreesToNormalizedMuscle(armLeftRight, ArmDownUpRange);
 
         DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(foreArmIdx, armIdx), basis, lowerArmNeutral, out float foreFrontBack, out float foreTwist, out _);
+        // SOMA models the forearm as a 1-DOF elbow hinge and stores forearm pronation/supination
+        // twist on the hand joint. Factor the hand delta twist-first (q = twist * swing) so its
+        // twist adds directly onto the forearm twist muscle while keeping exact world hand orientation.
+        DecomposeSwingTwistDegrees(
+            ComputeCanonicalLocalDelta(handIdx, foreArmIdx),
+            basis,
+            Quaternion.Identity,
+            twistFirst: true,
+            out float handFrontBack,
+            out float handTwist,
+            out float handLeftRight);
+
         muscles[(int)(isLeft ? EHumanoidValue.LeftForearmTwistInOut : EHumanoidValue.RightForearmTwistInOut)] =
-            DegreesToNormalizedMuscle(side * foreTwist, ForearmTwistRange);
+            DegreesToNormalizedMuscle(side * (foreTwist + handTwist), ForearmTwistRange);
         muscles[(int)(isLeft ? EHumanoidValue.LeftForearmStretch : EHumanoidValue.RightForearmStretch)] =
             DegreesToNormalizedMuscle(-side * foreFrontBack, ForearmStretchRange);
 
-        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(handIdx, foreArmIdx), basis, out float handFrontBack, out _, out float handLeftRight);
         muscles[(int)(isLeft ? EHumanoidValue.LeftHandInOut : EHumanoidValue.RightHandInOut)] =
             DegreesToNormalizedMuscle(side * handFrontBack, HandInOutRange);
         muscles[(int)(isLeft ? EHumanoidValue.LeftHandDownUp : EHumanoidValue.RightHandDownUp)] =
@@ -337,15 +409,83 @@ public sealed class SomaToHumanoidMuscleConverter
         muscles[(int)(isLeft ? EHumanoidValue.LeftLowerLegStretch : EHumanoidValue.RightLowerLegStretch)] =
             DegreesToNormalizedMuscle(-lowFrontBack, LowerLegStretchRange);
 
-        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(footIdx, shinIdx), VerticalJointBasis, out float footFrontBack, out float footTwist, out _);
+        Quaternion footBasis = mecanim ? FootMecanimBasis : VerticalJointBasis;
+        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(footIdx, shinIdx), footBasis, out float footFrontBack, out float footTwist, out _);
         muscles[(int)(isLeft ? EHumanoidValue.LeftFootTwistInOut : EHumanoidValue.RightFootTwistInOut)] =
             DegreesToNormalizedMuscle(side * footTwist, FootTwistRange);
         muscles[(int)(isLeft ? EHumanoidValue.LeftFootUpDown : EHumanoidValue.RightFootUpDown)] =
             DegreesToNormalizedMuscle(-footFrontBack, FootUpDownRange);
 
-        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(toeIdx, footIdx), VerticalJointBasis, out float toeFrontBack, out _, out _);
+        DecomposeSwingTwistDegrees(ComputeCanonicalLocalDelta(toeIdx, footIdx), footBasis, out float toeFrontBack, out _, out _);
         muscles[(int)(isLeft ? EHumanoidValue.LeftToesUpDown : EHumanoidValue.RightToesUpDown)] =
             DegreesToNormalizedMuscle(-toeFrontBack, ToesUpDownRange);
+    }
+
+    /// <summary>
+    /// Computes the raw Mecanim Body orientation quaternion from the four SOMA torso landmarks
+    /// (LeftLeg, RightLeg, LeftArm, RightArm) using equal hip and shoulder side weights and
+    /// torso-column up vector, matching <c>CompiledHumanoidBodyDefinition</c>.
+    /// </summary>
+    internal static bool TryComputeBodyLandmarkRotation(
+        ReadOnlySpan<Vector3> worldPositions,
+        out Quaternion rotation)
+    {
+        rotation = Quaternion.Identity;
+        if (worldPositions.Length < SomaModelContract.JointCount)
+            return false;
+
+        Vector3 leftHip = worldPositions[LeftHipLandmarkJoint];
+        Vector3 rightHip = worldPositions[RightHipLandmarkJoint];
+        Vector3 leftShoulder = worldPositions[LeftShoulderLandmarkJoint];
+        Vector3 rightShoulder = worldPositions[RightShoulderLandmarkJoint];
+
+        // In SOMA canonical space (+X left, +Y up, +Z forward), left - right points along +X.
+        Vector3 hipLeft = leftHip - rightHip;
+        Vector3 shoulderLeft = leftShoulder - rightShoulder;
+        Vector3 upVector = ((leftShoulder + rightShoulder) - (leftHip + rightHip)) * 0.5f;
+        float upLenSq = upVector.LengthSquared();
+        if (!float.IsFinite(upLenSq) || upLenSq <= 1.0e-8f)
+            return false;
+
+        Vector3 up = upVector / MathF.Sqrt(upLenSq);
+        Vector3 sideLeft = (hipLeft + shoulderLeft) * 0.5f;
+        Vector3 forwardVector = Vector3.Cross(sideLeft, up);
+        float forwardLenSq = forwardVector.LengthSquared();
+        if (!float.IsFinite(forwardLenSq) || forwardLenSq <= 1.0e-8f)
+            return false;
+
+        Vector3 forward = forwardVector / MathF.Sqrt(forwardLenSq);
+        Vector3 leftVector = Vector3.Cross(up, forward);
+        float leftLenSq = leftVector.LengthSquared();
+        if (!float.IsFinite(leftLenSq) || leftLenSq <= 1.0e-8f)
+            return false;
+
+        Vector3 left = leftVector / MathF.Sqrt(leftLenSq);
+        rotation = CreateBasisRotation(left, up, forward);
+        return true;
+    }
+
+    internal static Quaternion ComputeInverseNeutralBodyRotation(SomaRestSkeletonCalibration calibration)
+    {
+        Span<Vector3> restPositions = stackalloc Vector3[SomaModelContract.JointCount];
+        Span<Quaternion> restRotations = stackalloc Quaternion[SomaModelContract.JointCount];
+        SomaPoseTransform[] refLocal = calibration.ReferenceLocalPoses;
+        int[] parents = SomaModelContract.ParentIndices;
+
+        restPositions[0] = refLocal[0].Position;
+        restRotations[0] = SomaPoseTransform.NormalizeOrIdentity(refLocal[0].Rotation);
+        for (int joint = 1; joint < SomaModelContract.JointCount; joint++)
+        {
+            int parent = parents[joint];
+            restPositions[joint] = restPositions[parent]
+                + Vector3.Transform(refLocal[joint].Position, restRotations[parent]);
+            restRotations[joint] = SomaPoseTransform.NormalizeOrIdentity(
+                restRotations[parent] * refLocal[joint].Rotation);
+        }
+
+        return TryComputeBodyLandmarkRotation(restPositions, out Quaternion neutralBody)
+            ? Quaternion.Inverse(neutralBody)
+            : Quaternion.Identity;
     }
 
     private static Quaternion CreateBasisRotation(Vector3 frontBackAxis, Vector3 twistAxis, Vector3 leftRightAxis)

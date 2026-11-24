@@ -482,6 +482,7 @@ internal sealed class VulkanAutoUniformBindingSchema
             EEngineUniform.CameraNearZ or
             EEngineUniform.CameraFarZ or
             EEngineUniform.DepthMode or
+            EEngineUniform.UpscaleTextureLodBias or
             EEngineUniform.CameraPosition or
             EEngineUniform.CameraForward or
             EEngineUniform.CameraUp or

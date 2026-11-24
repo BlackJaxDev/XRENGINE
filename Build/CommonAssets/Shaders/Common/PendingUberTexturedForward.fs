@@ -67,6 +67,7 @@ uniform bool FallbackForceOpaque;
 uniform bool FallbackUseAlphaCutoff;
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 
 void main()
 {
@@ -79,7 +80,7 @@ void main()
 
     vec4 surface = FallbackBaseColor;
     if (FallbackHasTexture)
-        surface *= texture(Texture0, FragUV0);
+        surface *= XRENGINE_SampleBiasedTexture(Texture0, FragUV0);
 
     if (FallbackForceOpaque)
         surface.a = 1.0;

@@ -78,6 +78,7 @@ layout (location = 4) in vec2 FragUV0;
 #pragma snippet "ForwardLighting"
 #pragma snippet "AmbientOcclusionSampling"
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 #pragma snippet "ShadowMomentEncoding"
 
 void main()
@@ -85,8 +86,8 @@ void main()
 #if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     XRENGINE_BeginForwardFragmentOutput();
 #endif
-    vec4 texColor = texture(Texture0, FragUV0);
-    float alphaMask = texColor.a * texture(Texture1, FragUV0).r;
+    vec4 texColor = XRENGINE_SampleBiasedTexture(Texture0, FragUV0);
+    float alphaMask = texColor.a * XRENGINE_SampleBiasedTexture(Texture1, FragUV0).r;
     if (alphaMask < AlphaCutoff)
         discard;
 

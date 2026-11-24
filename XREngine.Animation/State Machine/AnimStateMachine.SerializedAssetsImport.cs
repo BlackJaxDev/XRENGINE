@@ -119,6 +119,10 @@ public partial class AnimStateMachine
             case MotionBricksLocomotionMotion:
                 requiresHumanoidAvatar = true;
                 break;
+            default:
+                if (motion.RequiresHumanoidAvatar)
+                    requiresHumanoidAvatar = true;
+                break;
         }
 
         diagnostic = string.Empty;

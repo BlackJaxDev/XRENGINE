@@ -91,7 +91,8 @@ if (-not $SkipPresets) {
     $presetFiles = @(
         "locomotion_bs1_linear.smart_primitive.json",
         "locomotion_bs2_directional.smart_primitive.json",
-        "locomotion_bs2_directional_crouch.smart_primitive.json"
+        "locomotion_bs2_directional_crouch.smart_primitive.json",
+        "locomotion_style_variations_bs1_linear.smart_primitive.json"
     )
     foreach ($preset in $presetFiles) {
         $artifacts += [pscustomobject]@{
@@ -100,6 +101,39 @@ if (-not $SkipPresets) {
             Url            = "$rawBaseUrl/assets/smart_primitives/soma/$preset"
             ExpectedSha256 = $null
             MinBytes       = 64
+        }
+    }
+
+    # Official SOMA BVH mocap clips referenced by the Smart Locomotion presets and default idle loops
+    # (CC-BY-4.0 / Apache-2.0 from NVlabs/motionbricks, hosted on Git LFS).
+    $bvhClips = @(
+        "locomotion/idle/idle_loop_001__A268.bvh",
+        "locomotion/idle/neutral_looking_around_R_001__A542.bvh",
+        "locomotion/idle/warm_up_neck_001__A359.bvh",
+        "locomotion/idle/legs_relax_002__A407.bvh",
+        "locomotion/idle/crouch_idle_001__A529.bvh",
+        "locomotion/bs_1d_linear/neutral_walk_ff_180_R_002__A536_M.bvh",
+        "locomotion/bs_1d_linear/neutral_jog_ff_180_R_001__A534.bvh",
+        "locomotion/bs_1d_linear/run_loop_180_R_003__A326.bvh",
+        "locomotion/bs_1d_linear/run_loop_180_R_003__A331.bvh",
+        "locomotion/bs_2d_directional/jog_ff_loop_360_R_very_fast_001__A454.bvh",
+        "locomotion/bs_2d_directional/jog_ff_loop_270_R_very_fast_002__A455_M.bvh",
+        "locomotion/bs_2d_directional/jog_ff_loop_270_R_very_fast_002__A455.bvh",
+        "locomotion/bs_2d_directional_crouch/crouch_ff_loop_180_R_001__A196.bvh",
+        "locomotion/bs_2d_directional_crouch/crouch_ff_loop_360_R_001__A196.bvh",
+        "locomotion/bs_2d_directional_crouch/crouch_ff_loop_270_R_002__A196_M.bvh",
+        "locomotion/bs_2d_directional_crouch/crouch_ff_loop_270_R_002__A196.bvh",
+        "jump/jump_over_obstacle_no_hand_0_75m_R_103__A416.bvh",
+        "jump/jump_over_obstacle_0_5m_R_001__A415.bvh"
+    )
+    foreach ($clip in $bvhClips) {
+        $relWin = "motions\soma\" + ($clip -replace "/", "\")
+        $artifacts += [pscustomobject]@{
+            RelativeTarget = $relWin
+            UpstreamPath   = "assets/motions/soma/$clip"
+            Url            = "$lfsBaseUrl/assets/motions/soma/$clip"
+            ExpectedSha256 = $null
+            MinBytes       = 1024
         }
     }
 }

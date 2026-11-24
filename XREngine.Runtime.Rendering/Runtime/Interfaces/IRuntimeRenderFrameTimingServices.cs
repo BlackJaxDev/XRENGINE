@@ -285,6 +285,11 @@ public interface IRuntimeRenderFrameTimingServices
     EAntiAliasingFilterMode DefaultAntiAliasingFilterMode { get; }
 
     /// <summary>
+    /// Gets the default post-resolve RCAS sharpening strength (0.0 to 1.0) used by TSR and TAA.
+    /// </summary>
+    float DefaultAntiAliasingSharpness { get; }
+
+    /// <summary>
     /// Gets whether NVIDIA DLSS super resolution is enabled by the effective host settings.
     /// </summary>
     bool EnableNvidiaDlss { get; }

@@ -207,6 +207,64 @@ bool TsrLocalVelocityStationary(vec2 sourceUv, vec2 extent)
     return true;
 }
 
+bool TsrHistoryMotionFootprintMatches(vec2 sourceUv, float predictedViewDepth,
+    float motionDepthTolerance)
+{
+    vec2 nearestUv = sourceUv;
+    float tapDepth = TsrHistorySurfaceDepth(nearestUv);
+    if (!TsrIsFarDepth(tapDepth))
+    {
+        float tapViewDepth = abs(TsrPreviousViewPosition(
+            XRENGINE_FramebufferTextureUVToClipXY(nearestUv), TsrClipDepth(tapDepth)).z);
+        if (!isnan(tapViewDepth) && !isinf(tapViewDepth)
+            && abs(tapViewDepth - predictedViewDepth) <= motionDepthTolerance)
+            return true;
+    }
+
+    // Projection jitter can shift a moving silhouette by up to one source texel between frames.
+    // Check the 3x3 previous depth neighborhood within the motion depth tolerance so animated
+    // avatar silhouettes keep temporal history instead of falling back to raw jittered pixels.
+    ivec2 extent = textureSize(HistoryDepth, 0).xy;
+    ivec2 center = clamp(ivec2(floor(sourceUv * vec2(extent))), ivec2(0), extent - 1);
+    for (int y = -1; y <= 1; ++y)
+    for (int x = -1; x <= 1; ++x)
+    {
+        ivec2 pixel = clamp(center + ivec2(x, y), ivec2(0), extent - 1);
+        float neighborDepth = TsrLoadHistoryDepth(pixel);
+        if (TsrIsFarDepth(neighborDepth))
+            continue;
+        vec2 tapUv = (vec2(pixel) + 0.5) / vec2(extent);
+        float neighborViewDepth = abs(TsrPreviousViewPosition(
+            XRENGINE_FramebufferTextureUVToClipXY(tapUv), TsrClipDepth(neighborDepth)).z);
+        if (!isnan(neighborViewDepth) && !isinf(neighborViewDepth)
+            && abs(neighborViewDepth - predictedViewDepth) <= motionDepthTolerance)
+            return true;
+    }
+    return false;
+}
+
+bool TsrHistoryPixelMatchesSurface(ivec2 pixel, ivec2 historyExtent, vec2 previousJitter,
+    bool background, bool objectMotion, bool stationary, vec3 predictedNdc, vec3 depthPlane,
+    float depthTolerance, float predictedViewDepth, float motionDepthTolerance)
+{
+    if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, historyExtent)))
+        return false;
+    vec2 depthUv = (vec2(pixel) + 0.5) / vec2(historyExtent) + previousJitter;
+    if (!TsrIsValidUv(depthUv))
+        return false;
+    bool matching = objectMotion
+        ? TsrHistoryMotionFootprintMatches(depthUv, predictedViewDepth, motionDepthTolerance)
+        : TsrHistoryFootprintMatchesPlane(depthUv, background, predictedNdc, depthPlane,
+            depthTolerance, stationary);
+    if (!matching)
+        return false;
+    vec4 metadata = TsrLoadHistoryMetadata(pixel);
+    if (any(isnan(metadata)) || any(isinf(metadata))
+        || (!objectMotion && metadata.y > 0.001 && metadata.y < 0.999))
+        return false;
+    return true;
+}
+
 bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
     vec2 currentJitter, vec2 previousJitter, out vec3 color, out float support, out float age,
     out float rejectionReason)
@@ -220,8 +278,10 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
 
     bool background = TsrIsFarDepth(surface.depth);
     bool stationary = false;
+    bool objectMotion = false;
     float predictedViewDepth = 0.0;
     float depthTolerance = 0.0;
+    float motionDepthTolerance = 0.0;
     vec3 predictedNdc = vec3(0.0);
     vec3 depthPlane = vec3(0.0, 0.0, 1.0);
     vec2 historyDepthExtent = vec2(textureSize(HistoryDepth, 0).xy);
@@ -242,16 +302,26 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
         vec2 staticUv = surface.uv - currentJitter + previousJitter;
         vec2 motionUv = staticUv
             - TsrFramebufferUvDisplacement(surface.velocity * 0.5, FramebufferTextureYDirection);
-        // 2D object motion supplies no previous object depth. Only trust the
-        // camera depth prediction when its correspondence agrees within a texel.
+        // Compare camera-only reprojection with object-motion reprojection. Match the 0.08-texel
+        // threshold to TsrLocalVelocityStationary so subtle avatar breathing and sway enter the
+        // motion-validated path instead of falling into a dead zone between static and moving checks.
         vec2 disagreement = abs(projectedUv - motionUv) * historyDepthExtent;
-        if (!TsrIsValidUv(projectedUv) || previousDepth < 0.0 || previousDepth > 1.0
-            || any(greaterThan(disagreement, vec2(0.5))))
+        objectMotion = any(greaterThan(disagreement, vec2(0.08)));
+        if (objectMotion)
+        {
+            if (!TsrIsValidUv(motionUv))
+            {
+                rejectionReason = 3.0;
+                return false;
+            }
+        }
+        else if (!TsrIsValidUv(projectedUv) || previousDepth < 0.0 || previousDepth > 1.0)
         {
             rejectionReason = 3.0;
             return false;
         }
-        stationary = all(lessThanEqual(abs(projectedUv - staticUv) * historyDepthExtent, vec2(0.1)))
+        stationary = !objectMotion
+            && all(lessThanEqual(abs(projectedUv - staticUv) * historyDepthExtent, vec2(0.1)))
             && TsrLocalVelocityStationary(surface.uv, historyDepthExtent);
         vec3 previousView = TsrPreviousViewPosition(previousNdc.xy, previousNdc.z);
         predictedViewDepth = abs(previousView.z);
@@ -263,6 +333,8 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
         // the projected pixel footprint so grazing/curved ridges stay stable.
         depthTolerance = min(max(DepthRejectThreshold, 0.0) * predictedViewDepth, 2.5 * footprint)
             + max(1e-5, predictedViewDepth * 2e-5);
+        motionDepthTolerance = max(max(DepthRejectThreshold, 0.04) * predictedViewDepth, 5.0 * footprint)
+            + max(1e-4, predictedViewDepth * 1e-4);
     }
     else
     {
@@ -270,80 +342,141 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
     }
 
     ivec2 historyExtent = textureSize(TsrHistoryColor, 0).xy;
-    if (AntiAliasingFilterMode == 2)
+    vec2 position = historyUv * vec2(historyExtent) - 0.5;
+    ivec2 basePixel = ivec2(floor(position));
+    vec2 fraction = fract(position);
+    vec3 innerColors[4];
+    vec3 validMin = vec3(1e20);
+    vec3 validMax = vec3(-1e20);
+    int innerValidCount = 0;
+    // Validate each bilinear history contributor against the target surface before blending.
+    for (int y = 0; y < 2; ++y)
+    for (int x = 0; x < 2; ++x)
     {
-        vec2 tentPosition = clamp(historyUv, vec2(0.0), vec2(1.0)) * vec2(historyExtent);
-        ivec2 centerPixel = ivec2(floor(tentPosition));
-        float wx[3];
-        float wy[3];
-        for (int i = -1; i <= 1; ++i)
-        {
-            wx[i + 1] = TsrTent1DIntegral(float(centerPixel.x + i) - tentPosition.x,
-                float(centerPixel.x + i + 1) - tentPosition.x);
-            wy[i + 1] = TsrTent1DIntegral(float(centerPixel.y + i) - tentPosition.y,
-                float(centerPixel.y + i + 1) - tentPosition.y);
-        }
-        for (int y = -1; y <= 1; ++y)
-        for (int x = -1; x <= 1; ++x)
-        {
-            float weight = wx[x + 1] * wy[y + 1];
-            if (weight <= 1e-6)
-                continue;
-            ivec2 pixel = centerPixel + ivec2(x, y);
-            if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, historyExtent)))
-                continue;
-            vec2 depthUv = (vec2(pixel) + 0.5) / vec2(historyExtent) + previousJitter;
-            if (!TsrIsValidUv(depthUv))
-                continue;
-            bool matching = TsrHistoryFootprintMatchesPlane(depthUv, background,
-                predictedNdc, depthPlane, depthTolerance, stationary);
-            if (!matching)
-                continue;
-            vec4 metadata = TsrLoadHistoryMetadata(pixel);
-            if (any(isnan(metadata)) || any(isinf(metadata))
-                || (metadata.y > 0.001 && metadata.y < 0.999))
-                continue;
-            color += TsrLoadHistoryColor(pixel).rgb * weight;
-            age += clamp(metadata.x, 0.0, 32.0) * weight;
-            support += weight;
-        }
-    }
-    else
-    {
-        vec2 position = historyUv * vec2(historyExtent) - 0.5;
-        ivec2 basePixel = ivec2(floor(position));
-        vec2 fraction = fract(position);
-        // Validate each actual bilinear history contributor. A matching neighbor
-        // must not admit the wider, incompatible Catmull-Rom color footprint.
-        for (int y = 0; y < 2; ++y)
-        for (int x = 0; x < 2; ++x)
-        {
-            float weight = (x == 0 ? 1.0 - fraction.x : fraction.x)
-                * (y == 0 ? 1.0 - fraction.y : fraction.y);
-            if (weight <= 1e-6)
-                continue;
-            ivec2 pixel = basePixel + ivec2(x, y);
-            if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, historyExtent)))
-                continue;
-            vec2 depthUv = (vec2(pixel) + 0.5) / vec2(historyExtent) + previousJitter;
-            if (!TsrIsValidUv(depthUv))
-                continue;
-            bool matching = TsrHistoryFootprintMatchesPlane(depthUv, background,
-                predictedNdc, depthPlane, depthTolerance, stationary);
-            if (!matching)
-                continue;
-            vec4 metadata = TsrLoadHistoryMetadata(pixel);
-            if (any(isnan(metadata)) || any(isinf(metadata))
-                || (metadata.y > 0.001 && metadata.y < 0.999))
-                continue;
-            color += TsrLoadHistoryColor(pixel).rgb * weight;
-            age += clamp(metadata.x, 0.0, 32.0) * weight;
-            support += weight;
-        }
+        float weight = (x == 0 ? 1.0 - fraction.x : fraction.x)
+            * (y == 0 ? 1.0 - fraction.y : fraction.y);
+        ivec2 pixel = basePixel + ivec2(x, y);
+        bool matches = TsrHistoryPixelMatchesSurface(pixel, historyExtent, previousJitter,
+            background, objectMotion, stationary, predictedNdc, depthPlane,
+            depthTolerance, predictedViewDepth, motionDepthTolerance);
+        if (!matches)
+            continue;
+        vec3 tapColor = TsrLoadHistoryColor(pixel).rgb;
+        innerColors[y * 2 + x] = tapColor;
+        validMin = min(validMin, tapColor);
+        validMax = max(validMax, tapColor);
+        ++innerValidCount;
+        if (weight <= 1e-6)
+            continue;
+        vec4 metadata = TsrLoadHistoryMetadata(pixel);
+        color += tapColor * weight;
+        age += clamp(metadata.x, 0.0, 32.0) * weight;
+        support += weight;
     }
     color /= max(support, 1e-6);
     age /= max(support, 1e-6);
-    rejectionReason = support >= 0.25 ? 0.0 : 4.0;
-    return support >= 0.25;
+
+    // Use surface-validated 5-tap Catmull-Rom when all four inner taps belong to the same
+    // surface and historyUv is subpixel-shifted. This stops recursive 2x2 bilinear blur from
+    // softening animated avatars and panning cameras while rejecting outer taps across depth edges.
+    if (innerValidCount == 4 && support >= 0.999 && AntiAliasingFilterMode != 1
+        && any(greaterThan(min(fraction, 1.0 - fraction), vec2(0.02))))
+    {
+        vec2 f = fraction;
+        vec2 f2 = f * f;
+        vec2 f3 = f2 * f;
+        vec2 w0 = -0.5 * f3 + f2 - 0.5 * f;
+        vec2 w1 =  1.5 * f3 - 2.5 * f2 + 1.0;
+        vec2 w2 = -1.5 * f3 + 2.0 * f2 + 0.5 * f;
+        vec2 w3 =  0.5 * f3 - 0.5 * f2;
+        vec2 w12 = w1 + w2;
+        vec2 u12 = w2 / max(w12, vec2(1e-6));
+
+        vec3 centerColor = mix(
+            mix(innerColors[0], innerColors[1], u12.x),
+            mix(innerColors[2], innerColors[3], u12.x),
+            u12.y);
+        float centerWeight = w12.x * w12.y;
+        vec3 bicubicSum = centerColor * centerWeight;
+        float bicubicWeight = centerWeight;
+
+        // Validate each outer axial pair against the same surface so negative bicubic lobes
+        // never pull background color across a silhouette edge.
+        if (TsrHistoryPixelMatchesSurface(basePixel + ivec2(-1, 0), historyExtent, previousJitter,
+                background, objectMotion, stationary, predictedNdc, depthPlane,
+                depthTolerance, predictedViewDepth, motionDepthTolerance)
+            && TsrHistoryPixelMatchesSurface(basePixel + ivec2(-1, 1), historyExtent, previousJitter,
+                background, objectMotion, stationary, predictedNdc, depthPlane,
+                depthTolerance, predictedViewDepth, motionDepthTolerance))
+        {
+            vec3 leftColor = mix(
+                TsrLoadHistoryColor(basePixel + ivec2(-1, 0)).rgb,
+                TsrLoadHistoryColor(basePixel + ivec2(-1, 1)).rgb,
+                u12.y);
+            float lw = w0.x * w12.y;
+            bicubicSum += leftColor * lw;
+            bicubicWeight += lw;
+            validMin = min(validMin, leftColor);
+            validMax = max(validMax, leftColor);
+        }
+        if (TsrHistoryPixelMatchesSurface(basePixel + ivec2(2, 0), historyExtent, previousJitter,
+                background, objectMotion, stationary, predictedNdc, depthPlane,
+                depthTolerance, predictedViewDepth, motionDepthTolerance)
+            && TsrHistoryPixelMatchesSurface(basePixel + ivec2(2, 1), historyExtent, previousJitter,
+                background, objectMotion, stationary, predictedNdc, depthPlane,
+                depthTolerance, predictedViewDepth, motionDepthTolerance))
+        {
+            vec3 rightColor = mix(
+                TsrLoadHistoryColor(basePixel + ivec2(2, 0)).rgb,
+                TsrLoadHistoryColor(basePixel + ivec2(2, 1)).rgb,
+                u12.y);
+            float rw = w3.x * w12.y;
+            bicubicSum += rightColor * rw;
+            bicubicWeight += rw;
+            validMin = min(validMin, rightColor);
+            validMax = max(validMax, rightColor);
+        }
+        if (TsrHistoryPixelMatchesSurface(basePixel + ivec2(0, -1), historyExtent, previousJitter,
+                background, objectMotion, stationary, predictedNdc, depthPlane,
+                depthTolerance, predictedViewDepth, motionDepthTolerance)
+            && TsrHistoryPixelMatchesSurface(basePixel + ivec2(1, -1), historyExtent, previousJitter,
+                background, objectMotion, stationary, predictedNdc, depthPlane,
+                depthTolerance, predictedViewDepth, motionDepthTolerance))
+        {
+            vec3 topColor = mix(
+                TsrLoadHistoryColor(basePixel + ivec2(0, -1)).rgb,
+                TsrLoadHistoryColor(basePixel + ivec2(1, -1)).rgb,
+                u12.x);
+            float tw = w12.x * w0.y;
+            bicubicSum += topColor * tw;
+            bicubicWeight += tw;
+            validMin = min(validMin, topColor);
+            validMax = max(validMax, topColor);
+        }
+        if (TsrHistoryPixelMatchesSurface(basePixel + ivec2(0, 2), historyExtent, previousJitter,
+                background, objectMotion, stationary, predictedNdc, depthPlane,
+                depthTolerance, predictedViewDepth, motionDepthTolerance)
+            && TsrHistoryPixelMatchesSurface(basePixel + ivec2(1, 2), historyExtent, previousJitter,
+                background, objectMotion, stationary, predictedNdc, depthPlane,
+                depthTolerance, predictedViewDepth, motionDepthTolerance))
+        {
+            vec3 bottomColor = mix(
+                TsrLoadHistoryColor(basePixel + ivec2(0, 2)).rgb,
+                TsrLoadHistoryColor(basePixel + ivec2(1, 2)).rgb,
+                u12.x);
+            float bw = w12.x * w3.y;
+            bicubicSum += bottomColor * bw;
+            bicubicWeight += bw;
+            validMin = min(validMin, bottomColor);
+            validMax = max(validMax, bottomColor);
+        }
+
+        if (bicubicWeight > 1e-4)
+            color = clamp(bicubicSum / bicubicWeight, max(validMin, vec3(0.0)), validMax);
+    }
+
+    float minSupport = objectMotion ? 0.1 : 0.25;
+    rejectionReason = support >= minSupport ? 0.0 : 4.0;
+    return support >= minSupport;
 }
 #endif

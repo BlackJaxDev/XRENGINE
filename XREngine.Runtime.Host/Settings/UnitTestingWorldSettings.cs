@@ -54,7 +54,7 @@ public partial class UnitTestingWorldSettings
     public bool PreviewVRStereoViews = false;
 
     public bool Skybox = true;
-    public bool ProceduralSky = false;
+    public bool ProceduralSky = true;
     public bool ProceduralSkyAutoCycle = true;
     public float ProceduralSkyTimeOfDay = 0.25f;
     public bool Spline = false;
@@ -68,8 +68,12 @@ public partial class UnitTestingWorldSettings
 
     public bool DirLight = true;
     public bool DirLightCastsShadows { get; set; } = true;
+    public int DirLightShadowBlockerSamples { get; set; } = 16;
+    public int DirLightShadowFilterSamples { get; set; } = 24;
+    public int DirLightShadowVogelTapCount { get; set; } = 16;
+    public int DirLightContactShadowSamples { get; set; } = 24;
     public bool SpotLight = false;
-    public bool DirLight2 = false;
+    public bool DirLight2 = true;
     public bool PointLight = false;
     public int DynamicPointLightCount { get; set; } = 0;
     public int DynamicSpotLightCount { get; set; } = 0;
@@ -77,7 +81,7 @@ public partial class UnitTestingWorldSettings
     public bool DynamicLightsForceShadowAtlas { get; set; } = true;
     public int DynamicLightSeed { get; set; } = 1337;
     public LightProbeMode LightProbe { get; set; } = LightProbeMode.ModelGrid;
-    public LightProbeCaptureMode LightProbeCapture { get; set; } = LightProbeCaptureMode.None;
+    public LightProbeCaptureMode LightProbeCapture { get; set; } = LightProbeCaptureMode.Startup;
     public float LightProbeCaptureMs = 100;
     public float? StopRealtimeCaptureSec = 5;
     public uint LightProbeResolution { get; set; } = 128;
@@ -102,6 +106,8 @@ public partial class UnitTestingWorldSettings
     public bool Locomotion = true;
     public bool ThirdPersonPawn = false;
     public bool MotionBricksLocomotion = false;
+    public bool MotionBricksDebugVisualization = false;
+    public bool ShowAvatarCullingBoxes = false;
 
     public float? CharacterControllerCapsuleTranslationY { get; set; }
 
@@ -219,6 +225,7 @@ public partial class UnitTestingWorldSettings
     }
 
     public EAntiAliasingMode? CameraAntiAliasingModeOverride = null;
+    public float? CameraBloomThresholdOverride = 2.2f;
     public EPhysicsLibrary PhysicsAPI = EPhysicsLibrary.PhysX;
     public ELoopType RecalcChildMatricesType = ELoopType.Asynchronous;
     public bool TickGroupedItemsInParallel = true;
@@ -265,5 +272,5 @@ public partial class UnitTestingWorldSettings
     public EVSyncMode? VSyncOverride = EVSyncMode.Off;
     public float RenderFPS = 0.0f;
     public float UpdateFPS = 60.0f;
-    public float FixedFPS = 30.0f;
+    public float FixedFPS = 60.0f;
 }

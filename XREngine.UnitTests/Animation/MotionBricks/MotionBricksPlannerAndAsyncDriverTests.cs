@@ -13,7 +13,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.UnitTests.Animation.MotionBricks;
 
 [TestFixture]
-public sealed class MotionBricksStage3Tests
+public sealed class MotionBricksPlannerAndAsyncDriverTests
 {
     private static readonly MethodInfo EvaluateAndApplyMethod =
         typeof(AnimStateMachineComponent).GetMethod("EvaluateAndApply", BindingFlags.Instance | BindingFlags.NonPublic)
@@ -172,7 +172,7 @@ public sealed class MotionBricksStage3Tests
         var evaluated = new MotionBricksEvaluatedPose();
         var stopwatch = Stopwatch.StartNew();
 
-        // Phase 1: Walk forward (+Z) for ~0.75s so acceleration and background replans build steady stride.
+        // Walk forward (+Z) for ~0.75 s so acceleration and background replans build steady stride.
         for (int i = 0; i < 45; i++)
         {
             driver.AdvanceAndEvaluate(CreateSteering(new Vector2(0.0f, 0.6f), dt: 1.0f / 60.0f), evaluated);
@@ -184,7 +184,7 @@ public sealed class MotionBricksStage3Tests
         float zAfterForward = evaluated.CurrentBodyPosition.Z;
         zAfterForward.ShouldBeGreaterThan(0.15f);
 
-        // Phase 2: Turn right (+X) and run for ~0.75s.
+        // Turn right (+X) and run for ~0.75 s.
         for (int i = 0; i < 45; i++)
         {
             driver.AdvanceAndEvaluate(CreateSteering(new Vector2(1.0f, 0.0f), dt: 1.0f / 60.0f), evaluated);
@@ -316,9 +316,9 @@ public sealed class MotionBricksStage3Tests
     }
 
     /// <summary>
-    /// Synthetic SOMA inference session that smoothly interpolates from context slot 3
-    /// to target slot 4 in aligned model space, letting Stage 3 tests exercise the full
-    /// Smart Locomotion -> encode -> async worker -> decode -> endpoint correction loop.
+    /// Synthetic SOMA inference session that interpolates from context slot 3 to target slot 4
+    /// in aligned model space so unit tests exercise the full Smart Locomotion, encoding, async
+    /// worker, decoding, and endpoint-correction loop.
     /// </summary>
     private sealed class GuidedSyntheticSomaSession(int simulatedInferenceDelayMs) : IMotionBricksInferenceSession
     {

@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using XREngine.Components.Animation;
 
 namespace XREngine.Animation;
 
@@ -486,29 +487,37 @@ public sealed partial class AnimationValueStore
     /// A missing source slot leaves the destination unchanged.
     /// </summary>
     public void OverrideFrom(AnimationValueStore source, float weight)
+        => OverrideFrom(source, weight, EHumanoidBodyMask.All);
+
+    /// <summary>
+    /// Composes an override layer while filtering channels through <paramref name="bodyMask"/>.
+    /// Slots outside the mask leave the destination unchanged with zero allocations.
+    /// </summary>
+    public void OverrideFrom(AnimationValueStore source, float weight, EHumanoidBodyMask bodyMask)
     {
+        if (bodyMask == EHumanoidBodyMask.None)
+            return;
+
         float layerWeight = SanitizeUnitWeight(weight);
         if (layerWeight <= 0.0f)
             return;
 
+        bool filterFloats = bodyMask != EHumanoidBodyMask.All && _floatSlotMasks.Length == _floats.Length;
         for (int i = 0; i < _floats.Length; i++)
         {
             if (_quaternionFloatMask[i])
                 continue;
+            if (filterFloats && (_floatSlotMasks[i] & bodyMask) == 0)
+                continue;
             BlendOverride(ref _floats[i], ref _floatCoverage[i], source._floats[i], source._floatCoverage[i] * layerWeight);
         }
-        for (int i = 0; i < _vectors2.Length; i++)
-            BlendOverride(ref _vectors2[i], ref _vector2Coverage[i], source._vectors2[i], source._vector2Coverage[i] * layerWeight);
-        for (int i = 0; i < _vectors3.Length; i++)
-            BlendOverride(ref _vectors3[i], ref _vector3Coverage[i], source._vectors3[i], source._vector3Coverage[i] * layerWeight);
-        for (int i = 0; i < _vectors4.Length; i++)
-            BlendOverride(ref _vectors4[i], ref _vector4Coverage[i], source._vectors4[i], source._vector4Coverage[i] * layerWeight);
-        for (int i = 0; i < _quaternions.Length; i++)
-            BlendOverrideQuaternion(ref _quaternions[i], ref _quaternionCoverage[i], source._quaternions[i], source._quaternionCoverage[i] * layerWeight);
 
         for (int groupIndex = 0; groupIndex < _quaternionFloatGroups.Length; groupIndex++)
         {
             AnimationQuaternionFloatSlotGroup group = _quaternionFloatGroups[groupIndex];
+            if (filterFloats && (_floatSlotMasks[group.XIndex] & bodyMask) == 0)
+                continue;
+
             Quaternion destination = ReadNormalizedQuaternion(_floats, group);
             float destinationCoverage = GetQuaternionFloatGroupCoverage(group);
             BlendOverrideQuaternion(
@@ -520,6 +529,17 @@ public sealed partial class AnimationValueStore
             SetQuaternionFloatGroupCoverage(group, destinationCoverage);
         }
 
+        if ((bodyMask & EHumanoidBodyMask.NonHumanoid) == 0)
+            return;
+
+        for (int i = 0; i < _vectors2.Length; i++)
+            BlendOverride(ref _vectors2[i], ref _vector2Coverage[i], source._vectors2[i], source._vector2Coverage[i] * layerWeight);
+        for (int i = 0; i < _vectors3.Length; i++)
+            BlendOverride(ref _vectors3[i], ref _vector3Coverage[i], source._vectors3[i], source._vector3Coverage[i] * layerWeight);
+        for (int i = 0; i < _vectors4.Length; i++)
+            BlendOverride(ref _vectors4[i], ref _vector4Coverage[i], source._vectors4[i], source._vector4Coverage[i] * layerWeight);
+        for (int i = 0; i < _quaternions.Length; i++)
+            BlendOverrideQuaternion(ref _quaternions[i], ref _quaternionCoverage[i], source._quaternions[i], source._quaternionCoverage[i] * layerWeight);
         for (int i = 0; i < _bools.Length; i++)
             BlendOverrideDiscrete(ref _bools[i], ref _boolCoverage[i], source._bools[i], source._boolCoverage[i] * layerWeight);
         for (int i = 0; i < _discrete.Length; i++)
@@ -531,19 +551,54 @@ public sealed partial class AnimationValueStore
     /// deltas are applied from identity and discrete slots are intentionally ignored.
     /// </summary>
     public void AddFrom(AnimationValueStore source, float weight)
+        => AddFrom(source, weight, EHumanoidBodyMask.All);
+
+    /// <summary>
+    /// Adds a reference-relative pose while filtering channels through <paramref name="bodyMask"/>.
+    /// Slots outside the mask leave the destination unchanged with zero allocations.
+    /// </summary>
+    public void AddFrom(AnimationValueStore source, float weight, EHumanoidBodyMask bodyMask)
     {
+        if (bodyMask == EHumanoidBodyMask.None)
+            return;
+
         float layerWeight = SanitizeUnitWeight(weight);
         if (layerWeight <= 0.0f)
             return;
 
+        bool filterFloats = bodyMask != EHumanoidBodyMask.All && _floatSlotMasks.Length == _floats.Length;
         for (int i = 0; i < _floats.Length; i++)
         {
             if (_quaternionFloatMask[i])
+                continue;
+            if (filterFloats && (_floatSlotMasks[i] & bodyMask) == 0)
                 continue;
             float alpha = source._floatCoverage[i] * layerWeight;
             _floats[i] += source._floats[i] * alpha;
             _floatCoverage[i] = MathF.Max(_floatCoverage[i], Saturate(alpha));
         }
+
+        for (int groupIndex = 0; groupIndex < _quaternionFloatGroups.Length; groupIndex++)
+        {
+            AnimationQuaternionFloatSlotGroup group = _quaternionFloatGroups[groupIndex];
+            if (filterFloats && (_floatSlotMasks[group.XIndex] & bodyMask) == 0)
+                continue;
+
+            float alpha = source.GetQuaternionFloatGroupCoverage(group) * layerWeight;
+            Quaternion destination = ReadNormalizedQuaternion(_floats, group);
+            Quaternion delta = Quaternion.Slerp(
+                Quaternion.Identity,
+                ReadNormalizedQuaternion(source._floats, group),
+                alpha);
+            WriteQuaternion(_floats, group, NormalizeOrIdentity(destination * delta));
+            SetQuaternionFloatGroupCoverage(
+                group,
+                MathF.Max(GetQuaternionFloatGroupCoverage(group), Saturate(alpha)));
+        }
+
+        if ((bodyMask & EHumanoidBodyMask.NonHumanoid) == 0)
+            return;
+
         for (int i = 0; i < _vectors2.Length; i++)
         {
             float alpha = source._vector2Coverage[i] * layerWeight;
@@ -568,20 +623,6 @@ public sealed partial class AnimationValueStore
             Quaternion delta = Quaternion.Slerp(Quaternion.Identity, NormalizeOrIdentity(source._quaternions[i]), alpha);
             _quaternions[i] = NormalizeOrIdentity(_quaternions[i] * delta);
             _quaternionCoverage[i] = MathF.Max(_quaternionCoverage[i], Saturate(alpha));
-        }
-        for (int groupIndex = 0; groupIndex < _quaternionFloatGroups.Length; groupIndex++)
-        {
-            AnimationQuaternionFloatSlotGroup group = _quaternionFloatGroups[groupIndex];
-            float alpha = source.GetQuaternionFloatGroupCoverage(group) * layerWeight;
-            Quaternion destination = ReadNormalizedQuaternion(_floats, group);
-            Quaternion delta = Quaternion.Slerp(
-                Quaternion.Identity,
-                ReadNormalizedQuaternion(source._floats, group),
-                alpha);
-            WriteQuaternion(_floats, group, NormalizeOrIdentity(destination * delta));
-            SetQuaternionFloatGroupCoverage(
-                group,
-                MathF.Max(GetQuaternionFloatGroupCoverage(group), Saturate(alpha)));
         }
     }
 

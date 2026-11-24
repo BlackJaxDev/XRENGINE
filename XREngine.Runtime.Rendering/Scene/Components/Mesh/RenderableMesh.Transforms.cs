@@ -324,7 +324,10 @@ namespace XREngine.Components.Scene.Mesh
                     // Basis is for the GPU skinned BVH; TryApplySkinnedBoneCullingBounds publishes the
                     // world-space aggregate with an identity offset (the single skinned convention).
                     SetSkinnedRootRenderMatrix(basis);
+                    AABB? priorBounds = RenderInfo?.LocalCullingVolume;
                     _ = TryApplySkinnedBoneCullingBounds();
+                    if (!Nullable.Equals(RenderInfo?.LocalCullingVolume, priorBounds))
+                        _rc.SwapBuffers();
 
                     return;
                 }

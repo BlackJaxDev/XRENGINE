@@ -62,6 +62,7 @@ layout (location = 4) in vec2 FragUV0;
 uniform sampler2D Texture0;
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 
 void main()
 {
@@ -69,7 +70,7 @@ void main()
     Normal = XRENGINE_EncodeNormal(FragNorm);
 #else
     XRENGINE_BeginForwardFragmentOutput();
-    vec4 color = texture(Texture0, FragUV0);
+    vec4 color = XRENGINE_SampleBiasedTexture(Texture0, FragUV0);
     color.a = 1.0;
     XRENGINE_WriteForwardFragment(color);
 #endif

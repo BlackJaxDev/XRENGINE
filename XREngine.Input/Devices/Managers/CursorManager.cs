@@ -8,9 +8,17 @@ namespace XREngine.Input.Devices
     public class CursorManager : InputManagerBase
     {
         private float _lastX, _lastY;
+        private bool _hasLastPosition;
 
         //relative, absolute
         private readonly List<DelCursorUpdate?>?[] _onCursorUpdate = new List<DelCursorUpdate?>?[2];
+
+        /// <summary>
+        /// Clears the previous cursor position so the next sample establishes a new baseline
+        /// without emitting a large relative delta jump.
+        /// </summary>
+        public void ResetRelativeBaseline()
+            => _hasLastPosition = false;
 
         public void Register(DelCursorUpdate func, EMouseMoveType type, bool unregister)
         {
@@ -40,19 +48,17 @@ namespace XREngine.Input.Devices
         internal void Tick(float x, float y, InputDevice? device, ulong revision)
         {
             float dX, dY;
-            //if (WrapBounds is not null)
-            //{
-            //    Vector2 position = new(x, y);
-            //    Vector2 lastPosition = new(_lastX, _lastY);
-            //    position = Wrap(position, lastPosition, WrapBounds.Value, out dX, out dY);
-            //    x = position.X;
-            //    y = position.Y;
-            //}
-            //else
-            //{
+            if (!_hasLastPosition)
+            {
+                dX = 0.0f;
+                dY = 0.0f;
+                _hasLastPosition = true;
+            }
+            else
+            {
                 dX = x - _lastX;
                 dY = y - _lastY;
-            //}
+            }
             ExecuteList(x, y, _onCursorUpdate[(int)EMouseMoveType.Absolute], device, revision);
             if (device is null || revision == device.InputDispatchRevision)
                 ExecuteList(dX, -dY, _onCursorUpdate[(int)EMouseMoveType.Relative], device, revision);

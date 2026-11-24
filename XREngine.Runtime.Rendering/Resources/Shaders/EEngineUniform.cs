@@ -69,6 +69,7 @@ namespace XREngine.Rendering
         ClipSpaceYDirection,
         ClipDepthRange,
         FramebufferTextureYDirection,
+        UpscaleTextureLodBias,
         CameraPosition,
         //CameraForward,
         //CameraUp,

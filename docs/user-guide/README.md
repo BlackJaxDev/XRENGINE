@@ -16,6 +16,7 @@ These docs should stay practical: what the concept is, when to use it, which set
 - [Component System](components.md)
 - [Transforms](transforms.md)
 - [Animation](animation.md)
+- [MotionBricks Procedural Locomotion Setup](motionbricks-animation.md)
 - [Physics](physics.md)
 - [Rendering](rendering.md)
 - [VR Development](vr-development.md)

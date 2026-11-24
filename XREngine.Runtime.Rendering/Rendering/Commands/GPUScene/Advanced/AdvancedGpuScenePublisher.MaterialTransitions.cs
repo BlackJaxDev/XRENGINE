@@ -1593,6 +1593,12 @@ public sealed partial class AdvancedGpuScenePublisher
             if (engineSurface.SchemaVersion != 0 || uberSurface.SchemaVersion != 0 ||
                 bindings.Length != NativeUberMaterialSchema.TextureRoleCount)
                 return false;
+            if (!Database.Materials.Materials.TryGet(handle, out AdvancedMaterialRecord committed) ||
+                !Database.Materials.TryGetConstantWords(committed, out ReadOnlySpan<uint> committedConstants) ||
+                committedConstants.Length <= NativeUberMaterialSchema.StateFlagsWordOffset ||
+                committedConstants[NativeUberMaterialSchema.StateFlagsWordOffset] !=
+                    NativeUberMaterialSourceEncoder.EncodeStateFlags(material))
+                return false;
 
             try
             {

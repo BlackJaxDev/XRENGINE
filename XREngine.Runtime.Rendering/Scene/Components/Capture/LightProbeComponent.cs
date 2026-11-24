@@ -119,7 +119,7 @@ namespace XREngine.Components.Capture.Lights
                 vec3 right = normalize(cross(up, N));
                 up         = normalize(cross(N, right));
 
-                float sampleDelta = 0.025f;
+                float sampleDelta = 0.075f;
                 int numSamples = 0;
                 for (float phi = 0.0f; phi < 2.0f * PI; phi += sampleDelta)
                 {
@@ -215,7 +215,7 @@ namespace XREngine.Components.Capture.Lights
                 vec3 R = N;
                 vec3 V = R;
 
-                const uint SAMPLE_COUNT = 1024u;
+                const uint SAMPLE_COUNT = 128u;
                 vec3 prefilteredColor = vec3(0.0f);
                 float totalWeight = 0.0f;
 

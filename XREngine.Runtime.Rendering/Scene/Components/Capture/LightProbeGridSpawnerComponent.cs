@@ -62,6 +62,7 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
     private readonly object _gridBuildSync = new();
 
     private bool _isSequentialCaptureRunning;
+    private bool _pendingSequentialCaptureWhenReady;
     private int _sequentialCaptureIndex = -1;
     private int _sequentialCaptureCompletedCount;
     private LightProbeComponent? _activeCaptureProbe;
@@ -525,6 +526,7 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
 
     protected override void OnComponentDeactivated()
     {
+        _pendingSequentialCaptureWhenReady = false;
         StopSequentialCapture("Idle");
         InvalidatePendingGridBuilds();
         UnregisterDeferredSpawnRetry();
@@ -546,6 +548,7 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
 
     protected override void OnEndPlay()
     {
+        _pendingSequentialCaptureWhenReady = false;
         StopSequentialCapture("Idle");
         InvalidatePendingGridBuilds();
         UnregisterDeferredSpawnRetry();
@@ -557,6 +560,7 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
 
     protected override void OnDestroying()
     {
+        _pendingSequentialCaptureWhenReady = false;
         StopSequentialCapture("Idle");
         InvalidatePendingGridBuilds();
         UnregisterDeferredSpawnRetry();
@@ -566,15 +570,30 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
         base.OnDestroying();
     }
 
+    /// <summary>
+    /// Raised when a sequential capture batch completes, cancels, or ends without any probes to capture.
+    /// </summary>
+    public event Action? SequentialCaptureCompleted;
+
     public void BeginSequentialCapture()
     {
         if (_spawnedProbes.Count == 0)
         {
+            if (_deferredSpawnPending || _placementModelRebuildPending || _gridBuildRunning || UsePlacementBoundsModels)
+            {
+                _pendingSequentialCaptureWhenReady = true;
+                _captureStatus = "Waiting for probe grid placement before capture.";
+                Debug.Lighting("[LightProbeBatch] Deferred sequential capture request until probe grid placement finishes.");
+                return;
+            }
+
             _captureStatus = "No spawned probes to capture.";
+            SequentialCaptureCompleted?.Invoke();
             return;
         }
 
-        StopSequentialCapture("Idle");
+        _pendingSequentialCaptureWhenReady = false;
+        StopSequentialCapture("Idle", notifyCompleted: false);
 
         _isSequentialCaptureRunning = true;
         _sequentialCaptureIndex = -1;
@@ -594,7 +613,10 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
     }
 
     public void CancelSequentialCapture()
-        => StopSequentialCapture($"Canceled after {_sequentialCaptureCompletedCount}/{_spawnedProbes.Count} probes.");
+    {
+        _pendingSequentialCaptureWhenReady = false;
+        StopSequentialCapture($"Canceled after {_sequentialCaptureCompletedCount}/{_spawnedProbes.Count} probes.");
+    }
 
     private void SpawnGrid()
     {
@@ -859,6 +881,9 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
             if (!string.IsNullOrEmpty(result.DiagnosticMessage))
                 Debug.Lighting(result.DiagnosticMessage);
 
+            if (request.RestartSequentialCapture)
+                _pendingSequentialCaptureWhenReady = true;
+
             RefreshPlacementModelSubscriptions();
             _deferredSpawnPending = true;
             RegisterDeferredSpawnRetry();
@@ -914,6 +939,8 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
         _captureStatus = $"Ready: {_spawnedProbes.Count} probes.";
 
         if (request.RestartSequentialCapture && _spawnedNodes.Count > 0)
+            BeginSequentialCapture();
+        else if (_pendingSequentialCaptureWhenReady && _spawnedNodes.Count > 0)
             BeginSequentialCapture();
     }
 
@@ -1023,7 +1050,7 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
         return false;
     }
 
-    private void StopSequentialCapture(string status)
+    private void StopSequentialCapture(string status, bool notifyCompleted = true)
     {
         bool wasRunning = _isSequentialCaptureRunning;
         IRuntimeRenderWorld? world = WorldAs<IRuntimeRenderWorld>();
@@ -1045,6 +1072,8 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
             Debug.Lighting(
                 $"[LightProbeBatch] {status} totalMs={totalMs:F2} avgProbeMs={(_sequentialCaptureCompletedCount > 0 ? totalMs / _sequentialCaptureCompletedCount : 0.0):F2} queueDepth={world?.Lights.PendingCaptureWorkItemCount ?? 0} pendingComponents={world?.Lights.PendingCaptureComponentCount ?? 0} structuralRefreshMs={batchDiagnostics?.StructuralRefreshTime.TotalMilliseconds ?? 0.0:F2} structuralRefreshes={batchDiagnostics?.StructuralRefreshCount ?? 0} contentRefreshMs={batchDiagnostics?.ContentRefreshTime.TotalMilliseconds ?? 0.0:F2} contentRefreshes={batchDiagnostics?.ContentRefreshCount ?? 0}");
             world?.Lights.EndLightProbeBatchCapture();
+            if (notifyCompleted)
+                SequentialCaptureCompleted?.Invoke();
         }
     }
 
@@ -1200,11 +1229,15 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
         }
 
         bool replaceExistingGrid = _placementModelRebuildReplaceExisting;
+        bool restartSequentialCapture = _isSequentialCaptureRunning || _pendingSequentialCaptureWhenReady || AutoSequentialCaptureOnBeginPlay;
         _placementModelRebuildPending = false;
         _placementModelRebuildReplaceExisting = false;
         UnregisterPlacementModelRebuild();
 
-        RequestGridBuild(replaceExistingGrid, restartSequentialCapture: false);
+        if (_isSequentialCaptureRunning)
+            StopSequentialCapture("Rebuilding probe grid.");
+
+        RequestGridBuild(replaceExistingGrid, restartSequentialCapture);
     }
 
     private void RegisterDeferredSpawnRetry()
@@ -1250,7 +1283,9 @@ public partial class LightProbeGridSpawnerComponent : XRComponent
         }
 
         Debug.Lighting("[LightProbeGrid] Deferred placement retry - scheduling background bounds check.");
-        RequestGridBuild(replaceExistingGrid: false, restartSequentialCapture: false);
+        RequestGridBuild(
+            replaceExistingGrid: false,
+            restartSequentialCapture: _pendingSequentialCaptureWhenReady || AutoSequentialCaptureOnBeginPlay);
     }
 
     private static bool TryGetPlacementBounds(GridBuildRequest request, out AABB bounds, bool logDiagnostics = true)

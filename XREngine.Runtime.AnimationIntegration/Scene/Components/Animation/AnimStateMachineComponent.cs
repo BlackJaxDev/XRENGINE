@@ -80,6 +80,11 @@ namespace XREngine.Components
         public long RootMotionLoopCycle => _dominantRootMotionLoopCycle;
         public HumanoidProjectedRootPose AppliedRootMotionPose => _appliedRootMotionPose;
         public HumanoidRootMotionDelta AppliedRootMotionDelta => _appliedRootMotionDelta;
+        /// <summary>
+        /// Duration in seconds of the most recent state-machine evaluation step.
+        /// Consumers use this to convert per-render-frame root-motion deltas into steady velocity.
+        /// </summary>
+        public float LastEvaluatedDeltaSeconds => _lastEvaluatedDeltaSeconds;
 
         public event Action<HumanoidProjectedRootPose, HumanoidRootMotionDelta>? RootMotionEvaluated;
 
@@ -177,6 +182,7 @@ namespace XREngine.Components
         }
 
         private readonly HashSet<AnimVar> _changedLastEval = [];
+        private float _lastEvaluatedDeltaSeconds;
 
         private void VariableChanged(AnimVar? var)
         {
@@ -336,6 +342,10 @@ namespace XREngine.Components
 
         private void EvaluateAndApply(long deltaTicks, HumanoidComponent? humanoid)
         {
+            _lastEvaluatedDeltaSeconds = deltaTicks > 0L
+                ? (float)((double)deltaTicks / System.Diagnostics.Stopwatch.Frequency)
+                : 0.0f;
+
             bool ownsImportedBodySampleTransaction = false;
             bool animationGoalFramePrepared = false;
             HumanoidIKSolverComponent? ikSolver = humanoid?.SceneNode.GetComponent<VRIKSolverComponent>() is null

@@ -509,6 +509,7 @@ namespace XREngine
         // Full cascade settings (Project > Engine, user can override)
         private OverrideableSetting<EAntiAliasingMode> _antiAliasingModeOverride = new();
         private OverrideableSetting<EAntiAliasingFilterMode> _antiAliasingFilterModeOverride = new();
+        private OverrideableSetting<float> _antiAliasingSharpnessOverride = new();
         private OverrideableSetting<uint> _msaaSampleCountOverride = new();
         private OverrideableSetting<EVSyncMode> _vSyncOverride = new();
         private OverrideableSetting<EGlobalIlluminationMode> _globalIlluminationModeOverride = new();
@@ -889,6 +890,19 @@ namespace XREngine
         {
             get => _antiAliasingFilterModeOverride;
             set => SetField(ref _antiAliasingFilterModeOverride, value ?? new());
+        }
+
+        /// <summary>
+        /// Project override for post-resolve RCAS sharpening strength used by TSR and TAA.
+        /// Takes precedence over engine defaults when HasOverride is true.
+        /// Can be further overridden by user settings.
+        /// </summary>
+        [Category("Quality Overrides")]
+        [Description("Project override for post-resolve RCAS sharpening strength (0.0 to 1.0) applied after TSR and TAA.")]
+        public OverrideableSetting<float> AntiAliasingSharpnessOverride
+        {
+            get => _antiAliasingSharpnessOverride;
+            set => SetField(ref _antiAliasingSharpnessOverride, value ?? new());
         }
 
         /// <summary>

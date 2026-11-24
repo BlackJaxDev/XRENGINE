@@ -1357,7 +1357,7 @@ namespace XREngine.Rendering
             uint scaledHeight = Math.Max(1u, (uint)Math.Round(height * scale));
             RuntimeImageResizeMode mode = usage is ETextureImportUsage.Data or ETextureImportUsage.Normal
                 ? RuntimeImageResizeMode.IndependentChannels
-                : RuntimeImageResizeMode.Standard;
+                : RuntimeImageResizeMode.LinearSrgbBox;
             return RuntimeImageCodecs.Require().Resize(previewImage, scaledWidth, scaledHeight, mode);
         }
 
@@ -1375,7 +1375,7 @@ namespace XREngine.Rendering
             ArgumentNullException.ThrowIfNull(image);
             RuntimeImageResizeMode mode = usage is ETextureImportUsage.Data or ETextureImportUsage.Normal
                 ? RuntimeImageResizeMode.IndependentChannels
-                : RuntimeImageResizeMode.Standard;
+                : RuntimeImageResizeMode.LinearSrgbBox;
             int mipCount = Math.Max(1, GetSmallestMipmapLevel(image.Width, image.Height) + 1);
             Mipmap2D[] mips = new Mipmap2D[mipCount];
             mips[0] = new Mipmap2D(image);

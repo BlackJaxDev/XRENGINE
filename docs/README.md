@@ -112,6 +112,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Component System](user-guide/components.md)
 - [Transforms](user-guide/transforms.md)
 - [Animation](user-guide/animation.md)
+- [MotionBricks Procedural Locomotion Setup](user-guide/motionbricks-animation.md)
 - [Physics](user-guide/physics.md)
 - [Rendering](user-guide/rendering.md)
 - [VR Development](user-guide/vr-development.md)

@@ -46,7 +46,9 @@ public static class SomaModelContract
 
     public const int RootJointIndex = 0;
     public const int LeftLegJointIndex = 22;
+    public const int LeftFootJointIndex = 24;
     public const int RightLegJointIndex = 26;
+    public const int RightFootJointIndex = 28;
 
     /// <summary>
     /// Exact 30 joint names in SOMA model order. Index 0 is always <c>Hips</c>.

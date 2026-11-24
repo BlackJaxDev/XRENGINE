@@ -120,6 +120,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public bool? EffectiveOutputHDRThisFrame { get; private set; }
     public EAntiAliasingMode? EffectiveAntiAliasingModeThisFrame { get; private set; }
     public EAntiAliasingFilterMode? EffectiveAntiAliasingFilterModeThisFrame { get; private set; }
+    public float? EffectiveAntiAliasingSharpnessThisFrame { get; private set; }
     public uint? EffectiveMsaaSampleCountThisFrame { get; private set; }
     public float? EffectiveTsrRenderScaleThisFrame { get; private set; }
     /// <summary>
@@ -946,7 +947,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                             using (RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(
                                        (int)EDefaultRenderPass.PreRender))
                             {
-                                dispatcher.RunVisible(ActiveMeshRenderCommands);
+                                if (!dispatcher.TryRunVisible(ActiveMeshRenderCommands, out string? deformationPendingReason))
+                                    return ReportExactOutputPreconditionFailure(
+                                        in outputCompletionRequest,
+                                        deformationPendingReason ?? "Vulkan deformation prepass is pending.");
                             }
                         }
 
@@ -966,6 +970,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         {
                             NotifyCommandChainExecutionAborted();
                             throw;
+                        }
+                        if (RenderState.HasPendingResourcePreparation)
+                        {
+                            NotifyCommandChainExecutionAborted();
+                            return ReportExactOutputPreconditionFailure(
+                                in outputCompletionRequest,
+                                RenderState.PendingResourcePreparationReason ?? "Render resource preparation is pending.");
                         }
                         RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageConsumption(
                             System.Diagnostics.Stopwatch.GetTimestamp() - consumptionStarted);

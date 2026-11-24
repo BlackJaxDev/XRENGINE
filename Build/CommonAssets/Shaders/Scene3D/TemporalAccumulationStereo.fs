@@ -244,9 +244,8 @@ void main()
         float historyDepth = texture(HistoryDepth, EyeUv(historySampleUv)).r;
         if (abs(historyDepth - currentDepth) <= DepthRejectThreshold)
         {
-            vec3 historyRgb = AntiAliasingFilterMode == 2
-                ? SampleTent2x2(HistoryColor, historySampleUv)
-                : texture(HistoryColor, EyeUv(historySampleUv)).rgb;
+            // Keep history sampling sharp so temporal feedback does not compound tent blur.
+            vec3 historyRgb = texture(HistoryColor, EyeUv(historySampleUv)).rgb;
             historyYCoCg = RGBToYCoCg(historyRgb);
             historyStats = texture(HistoryExposureVariance, EyeUv(historySampleUv)).rg;
         }

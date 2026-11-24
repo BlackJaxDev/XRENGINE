@@ -231,7 +231,11 @@ bool XR_UBER_ApplyDissolve(XRUberCoordinates coordinates, inout vec4 baseColor, 
     return true;
 }
 
-bool XR_UBER_ApplyCoverage(
+// Evaluates face discard, UDIM tile discard, base alpha/masks, decals, flipbook,
+// and dissolve without running the final alpha-cutoff clip test. Visibility raster
+// alpha-to-coverage and native shading call this so multisample edge samples below
+// the hard cutoff remain available for coverage conversion and shading.
+bool XR_UBER_EvaluateCoverage(
     XRUberCoordinates coordinates,
     out vec4 baseColor,
     out vec3 edgeEmission,
@@ -319,7 +323,6 @@ bool XR_UBER_ApplyCoverage(
     base.a = alpha;
     XR_UBER_ApplyDecals(coordinates, base, edgeEmission);
     XR_UBER_ApplyFlipbook(coordinates, shadowPass, base, edgeEmission);
-    int blendMode = UBER_I(_Mode);
     baseColor = base;
     vec3 dissolveEmission;
     bool keep = XR_UBER_ApplyDissolve(coordinates, baseColor, dissolveEmission);
@@ -327,6 +330,17 @@ bool XR_UBER_ApplyCoverage(
     // Source ForceOpaque runs after decals and dissolve but before the clip test.
     if (UBER_F(_SourceAlphaClip) > 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
         baseColor.a = 1.0;
+    return keep;
+}
+
+bool XR_UBER_ApplyCoverage(
+    XRUberCoordinates coordinates,
+    out vec4 baseColor,
+    out vec3 edgeEmission,
+    bool shadowPass)
+{
+    bool keep = XR_UBER_EvaluateCoverage(coordinates, baseColor, edgeEmission, shadowPass);
+    int blendMode = UBER_I(_Mode);
     return keep && ((blendMode != 1 && UBER_F(_SourceAlphaClip) <= 0.5) ||
         baseColor.a >= UBER_F(_Cutoff));
 }

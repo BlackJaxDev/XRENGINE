@@ -131,13 +131,30 @@ public sealed class SomaRestSkeletonCalibration
     private static SomaRestSkeletonCalibration CreateSomaN1Default()
     {
         // T-pose rest world orientations for the official NVIDIA SOMA N1 rig (+X left, +Y up, +Z forward).
+        // SOMA's standing ankle-to-toe foot axis slopes ~17.5 deg downward from ankle to ball of foot
+        // and toe-base slopes ~11.5 deg downward; matching these rest axes keeps flat standing idle at
+        // zero FootUpDown and ToesUpDown instead of pitching the avatar onto her toes.
         Quaternion spineRest = CreateBasisQuaternion(Vector3.UnitY, Vector3.UnitZ, Vector3.UnitX);
         Quaternion leftArmRest = CreateBasisQuaternion(Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitY);
         Quaternion rightArmRest = CreateBasisQuaternion(Vector3.UnitX, -Vector3.UnitZ, Vector3.UnitY);
         Quaternion leftLegRest = CreateBasisQuaternion(-Vector3.UnitY, -Vector3.UnitZ, Vector3.UnitX);
-        Quaternion leftFootRest = CreateBasisQuaternion(Vector3.UnitZ, -Vector3.UnitY, Vector3.UnitX);
+        Quaternion leftFootRest = CreateBasisQuaternion(
+            new Vector3(0.0f, -0.300706f, 0.953717f),
+            new Vector3(0.0f, -0.953717f, -0.300706f),
+            Vector3.UnitX);
+        Quaternion leftToeRest = CreateBasisQuaternion(
+            new Vector3(0.0f, -0.199368f, 0.979925f),
+            new Vector3(0.0f, -0.979925f, -0.199368f),
+            Vector3.UnitX);
         Quaternion rightLegRest = CreateBasisQuaternion(Vector3.UnitY, Vector3.UnitZ, Vector3.UnitX);
-        Quaternion rightFootRest = CreateBasisQuaternion(-Vector3.UnitZ, Vector3.UnitY, Vector3.UnitX);
+        Quaternion rightFootRest = CreateBasisQuaternion(
+            new Vector3(0.0f, 0.300706f, -0.953717f),
+            new Vector3(0.0f, 0.953717f, 0.300706f),
+            Vector3.UnitX);
+        Quaternion rightToeRest = CreateBasisQuaternion(
+            new Vector3(0.0f, 0.199368f, -0.979925f),
+            new Vector3(0.0f, 0.979925f, 0.199368f),
+            Vector3.UnitX);
 
         var worldRotations = new Quaternion[SomaModelContract.JointCount];
         for (int i = 0; i <= 9; i++)
@@ -149,11 +166,11 @@ public sealed class SomaRestSkeletonCalibration
         worldRotations[22] = leftLegRest;
         worldRotations[23] = leftLegRest;
         worldRotations[24] = leftFootRest;
-        worldRotations[25] = leftFootRest;
+        worldRotations[25] = leftToeRest;
         worldRotations[26] = rightLegRest;
         worldRotations[27] = rightLegRest;
         worldRotations[28] = rightFootRest;
-        worldRotations[29] = rightFootRest;
+        worldRotations[29] = rightToeRest;
 
         // Bone-local segment offsets in meters from the SOMA N1 BVH skeleton hierarchy.
         Vector3[] localOffsets =

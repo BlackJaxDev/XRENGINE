@@ -784,7 +784,9 @@ bool XR_ADV_TryReconstructSurface(
         ((metadata >> XR_ADV_VIS_MASKED_SHIFT) & 1u) != 0u;
     bool frontFacing =
         ((metadata >> XR_ADV_VIS_FRONT_FACE_SHIFT) & 1u) != 0u;
-    bool reactive = masked || !velocityValid;
+    // Masked surfaces with valid geometry velocity accumulate through TSR so
+    // jittered subpixel samples antialias alpha-tested edges such as hair.
+    bool reactive = !velocityValid;
     uint flags = XR_ADV_SURFACE_VALID |
         ((velocityValidityReason << XR_ADV_TEMPORAL_VELOCITY_REASON_SHIFT) &
             XR_ADV_TEMPORAL_VELOCITY_REASON_MASK);

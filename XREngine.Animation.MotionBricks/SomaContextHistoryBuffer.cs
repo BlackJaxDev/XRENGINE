@@ -9,7 +9,9 @@ namespace XREngine.Animation.MotionBricks;
 /// </summary>
 public sealed class SomaContextHistoryBuffer
 {
-    private const int Capacity = 32;
+    // Retain at least 0.5 s at 500 FPS (and > 0.25 s at 1000 FPS) so the 100 ms 30 Hz SOMA
+    // context window never clamps older frames to frame 0 on high-framerate Vulkan builds.
+    private const int Capacity = 256;
     private const int JointCount = SomaModelContract.JointCount;
     private const float ContextStepSeconds = 1.0f / SomaModelContract.SampleRateHz;
 

@@ -342,20 +342,23 @@ public partial class AdvancedRenderPipeline
             get
             {
                 XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                PipelinePostProcessState? state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
                 return _generation.Advance(new FinalPostProcessBindingKey(
                     GetTexture<XRTexture>(PostProcessOutputTextureName),
                     instance?.ResourceGeneration ?? 0,
-                    ResolveLensDistortionInputs(ResolveCurrentSettingsCamera()?.GetActivePostProcessState())));
+                    ResolveLensDistortionInputs(state),
+                    ResolveFinalPostProcessRcasSharpness(state)));
             }
         }
 
         public ulong ResourceGeneration => Generation;
 
         public void PublishUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-            => ApplyLensDistortionUniforms(
-                ResolveCurrentSettingsCamera()?.GetActivePostProcessState(),
-                materialProgram,
-                enabled: true);
+        {
+            PipelinePostProcessState? state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
+            ApplyLensDistortionUniforms(state, materialProgram, enabled: true);
+            materialProgram.Uniform("RcasSharpness", ResolveFinalPostProcessRcasSharpness(state));
+        }
 
         public void PublishResources(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
         {
@@ -368,7 +371,31 @@ public partial class AdvancedRenderPipeline
     private readonly record struct FinalPostProcessBindingKey(
         XRTexture? Source,
         int PipelineResourceGeneration,
-        LensDistortionInputs Lens);
+        LensDistortionInputs Lens,
+        float RcasSharpness);
+
+    private static bool ShouldRunAdvancedTsrSharpen()
+    {
+        if (ResolveEffectiveAntiAliasingSharpnessForFrame() <= 1e-5f)
+            return false;
+
+        PipelinePostProcessState? state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
+        return ResolveTemporalSettings(state).DebugMode == TemporalDebugViewMode.Disabled;
+    }
+
+    private static float ResolveFinalPostProcessRcasSharpness(PipelinePostProcessState? state)
+    {
+        if (ResolveEffectiveAntiAliasingModeForFrame() != EAntiAliasingMode.Taa)
+            return 0.0f;
+
+        float sharpness = ResolveEffectiveAntiAliasingSharpnessForFrame();
+        if (sharpness <= 1e-5f)
+            return 0.0f;
+
+        return ResolveTemporalSettings(state).DebugMode == TemporalDebugViewMode.Disabled
+            ? sharpness
+            : 0.0f;
+    }
 
     private void ApplyFinalPostProcessProgramBindings(XRRenderProgram materialProgram)
     {
@@ -378,6 +405,7 @@ public partial class AdvancedRenderPipeline
 
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyLensDistortionUniforms(state, materialProgram, enabled: true);
+        materialProgram.Uniform("RcasSharpness", ResolveFinalPostProcessRcasSharpness(state));
     }
 
     private void ApplyFxaaProgramBindings(XRRenderProgram materialProgram)

@@ -1,11 +1,14 @@
 using XREngine.Extensions;
 using System.Numerics;
+using XREngine.Components.Animation;
 using XREngine.Components.Movement;
+using XREngine.Components.Scene.Transforms;
 using XREngine.Core.Attributes;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Input.Devices;
 using XREngine.Networking;
+using XREngine.Scene;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components
@@ -46,8 +49,8 @@ namespace XREngine.Components
         private float _keyboardMovementInputMultiplier = 200.0f;
         private float _keyboardLookXInputMultiplier = 200.0f;
         private float _keyboardLookYInputMultiplier = 200.0f;
-        private float _mouseXLookInputMultiplier = 10.0f;
-        private float _mouseYLookInputMultiplier = 10.0f;
+        private float _mouseXLookInputMultiplier = 0.12f;
+        private float _mouseYLookInputMultiplier = 0.12f;
         private float _gamePadMovementInputMultiplier = 200.0f;
         private float _gamePadXLookInputMultiplier = 100.0f;
         private float _gamePadYLookInputMultiplier = 100.0f;
@@ -67,13 +70,26 @@ namespace XREngine.Components
         // Cursor visibility
         private bool _shouldHideCursor = true;
 
-        // Third-person root-motion steering state
+        // Root-motion steering state
         private bool _useRootMotionSteering;
         private bool _strafeMode;
         private float _keyboardWalkMagnitude = 0.6f;
-        private ThirdPersonSteeringSnapshot _lastThirdPersonSteering;
+        private SteeringSnapshot _lastSteering;
 
-        public event Action<ThirdPersonSteeringSnapshot>? RootMotionSteeringUpdated;
+        // Keyboard & gamepad run, stance hold, and optional third-person camera rig reference
+        private bool _shiftLeftHeld;
+        private bool _shiftRightHeld;
+        private bool _gamepadRunHeld;
+        private bool _gamepadRunToggled;
+        private bool _gamepadStanceHoldTriggered;
+        private ThirdPersonCameraRigComponent? _thirdPersonCameraRig;
+
+        /// <summary>
+        /// Raised on each input tick while <see cref="UseRootMotionSteering"/> is enabled so
+        /// root-motion bridges or custom scripts can consume camera-relative steering.
+        /// Bindable in the inspector without code via <see cref="XREvent{T}"/> persistent calls.
+        /// </summary>
+        public XREvent<SteeringSnapshot>? RootMotionSteeringUpdated;
 
         // Network state tracking (edge-triggered flags reset after capture)
         private bool _networkJumpPressed;
@@ -288,9 +304,15 @@ namespace XREngine.Components
 
         /// <summary>
         /// Raised when the pause toggle key (Escape) is pressed.
-        /// Subscribe to this event to show/hide a pause menu.
+        /// Bindable from code or the editor inspector via <see cref="XREvent"/>.
         /// </summary>
-        public event Action? PauseToggled;
+        public XREvent? PauseToggled;
+
+        /// <summary>
+        /// Raised when the locomotion debug visualization toggle key (F) is pressed.
+        /// Bindable from code or the editor inspector via <see cref="XREvent"/>.
+        /// </summary>
+        public XREvent? LocomotionDebugToggled;
 
         #endregion
 
@@ -344,10 +366,29 @@ namespace XREngine.Components
             input.RegisterAxisUpdate(EGamePadAxis.RightThumbstickX, LookRight, true);
             input.RegisterAxisUpdate(EGamePadAxis.RightThumbstickY, LookUp, true);
 
-            // Gamepad jump (A button / face down)
+            // Gamepad jump (lower face button: A / Cross)
             input.RegisterButtonPressed(EGamePadButton.FaceDown, Jump);
-            // Gamepad run (X button / face left)
-            input.RegisterButtonPressed(EGamePadButton.FaceLeft, Run);
+            // Gamepad run hold (left face button: X / Square)
+            input.RegisterButtonPressed(EGamePadButton.FaceLeft, OnGamepadRun);
+            // Gamepad crouch (tap right face button) and prone (hold right face button: B / Circle)
+            input.RegisterButtonEvent(EGamePadButton.FaceRight, EButtonInputType.Pressed, OnGamepadStancePressed);
+            input.RegisterButtonEvent(EGamePadButton.FaceRight, EButtonInputType.Held, OnGamepadStanceHeld);
+            input.RegisterButtonEvent(EGamePadButton.FaceRight, EButtonInputType.Released, OnGamepadStanceReleased);
+            // Gamepad debug visualization toggle (top face button: Y / Triangle)
+            input.RegisterButtonEvent(EGamePadButton.FaceUp, EButtonInputType.Pressed, ToggleLocomotionDebug);
+            // Gamepad third-person shoulder views (LB / RB) and centered zoom (D-Pad Up / Down)
+            input.RegisterButtonEvent(EGamePadButton.LeftBumper, EButtonInputType.Pressed, ToggleLeftShoulderView);
+            input.RegisterButtonEvent(EGamePadButton.RightBumper, EButtonInputType.Pressed, ToggleRightShoulderView);
+            input.RegisterButtonPressed(EGamePadButton.DPadUp, OnGamepadCameraZoomIn);
+            input.RegisterButtonPressed(EGamePadButton.DPadDown, OnGamepadCameraZoomOut);
+
+            if (input.Unregister)
+            {
+                _gamepadRunHeld = false;
+                _gamepadStanceHoldTriggered = false;
+                UpdateRunState();
+                ResolveThirdPersonCameraRig()?.ClearHeldInputs();
+            }
 
             // Keyboard movement (WASD)
             input.RegisterKeyStateChange(EKey.W, MoveForward);
@@ -363,8 +404,17 @@ namespace XREngine.Components
 
             // Action keys
             input.RegisterKeyStateChange(EKey.Space, Jump);
+            input.RegisterKeyStateChange(EKey.ShiftLeft, OnShiftLeftRun);
+            input.RegisterKeyStateChange(EKey.ShiftRight, OnShiftRightRun);
             input.RegisterKeyEvent(EKey.C, EButtonInputType.Pressed, ToggleCrouch);
             input.RegisterKeyEvent(EKey.Z, EButtonInputType.Pressed, ToggleProne);
+
+            // Third-person camera framing keys (Q/E lowered close shoulder views, R/T centered zoom)
+            input.RegisterKeyEvent(EKey.Q, EButtonInputType.Pressed, ToggleLeftShoulderView);
+            input.RegisterKeyEvent(EKey.E, EButtonInputType.Pressed, ToggleRightShoulderView);
+            input.RegisterKeyStateChange(EKey.R, SetCameraZoomInHeld);
+            input.RegisterKeyStateChange(EKey.T, SetCameraZoomOutHeld);
+            input.RegisterKeyEvent(EKey.F, EButtonInputType.Pressed, ToggleLocomotionDebug);
 
             // System keys
             input.RegisterKeyEvent(EKey.Escape, EButtonInputType.Pressed, TogglePause);
@@ -397,6 +447,37 @@ namespace XREngine.Components
         }
 
         /// <summary>
+        /// Optional third-person camera rig controlled by shoulder view (Q/E, LB/RB) and
+        /// centered zoom (R/T, D-Pad Up/Down) inputs. When unset, resolved from this node
+        /// or its hierarchy.
+        /// </summary>
+        public ThirdPersonCameraRigComponent? ThirdPersonCameraRig
+        {
+            get => _thirdPersonCameraRig;
+            set => SetField(ref _thirdPersonCameraRig, value);
+        }
+
+        private ThirdPersonCameraRigComponent? ResolveThirdPersonCameraRig()
+        {
+            if (_thirdPersonCameraRig is not null)
+                return _thirdPersonCameraRig;
+
+            if (SceneNode?.GetComponent<ThirdPersonCameraRigComponent>() is { } siblingRig)
+            {
+                _thirdPersonCameraRig = siblingRig;
+                return siblingRig;
+            }
+
+            if (SceneNode?.GetComponentInHierarchy(nameof(ThirdPersonCameraRigComponent)) is ThirdPersonCameraRigComponent childRig)
+            {
+                _thirdPersonCameraRig = childRig;
+                return childRig;
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// When true, grounded WASD and gamepad left-stick inputs publish camera-relative
         /// steering snapshots for root-motion animation controllers (such as MotionBricks)
         /// instead of driving horizontal velocity directly on <see cref="CharacterMovement3DComponent"/>.
@@ -426,13 +507,13 @@ namespace XREngine.Components
             set => SetField(ref _keyboardWalkMagnitude, Math.Clamp(value, 0.1f, 1.0f));
         }
 
-        public ThirdPersonSteeringSnapshot LastThirdPersonSteering => _lastThirdPersonSteering;
+        public SteeringSnapshot LastSteering => _lastSteering;
 
         /// <summary>
         /// Computes camera-relative planar steering (preserving analog thumbstick magnitude)
         /// from the provided view basis vectors.
         /// </summary>
-        public ThirdPersonSteeringSnapshot ComputeCameraRelativeSteering(Vector3 forward, Vector3 right)
+        public SteeringSnapshot ComputeCameraRelativeSteering(Vector3 forward, Vector3 right)
         {
             Vector3 desiredWorld = Vector3.Zero;
 
@@ -467,13 +548,28 @@ namespace XREngine.Components
                 : 0.0f;
             bool isGrounded = Movement.CharacterController?.IsGrounded
                 ?? (Movement.MovementMode == CharacterMovement3DComponent.EMovementMode.Walking);
+            ELocomotionStyle locomotionStyle = Movement.CrouchState switch
+            {
+                CharacterMovement3DComponent.ECrouchState.Crouched => ELocomotionStyle.Crouched,
+                CharacterMovement3DComponent.ECrouchState.Prone => ELocomotionStyle.Prone,
+                _ => ELocomotionStyle.Standing,
+            };
+            Vector3 upDir = Movement.UpDirection;
+            upDir = upDir.LengthSquared() > 1.0e-8f ? Vector3.Normalize(upDir) : Globals.Up;
+            float verticalVelocity = Movement.CharacterController is { } controller
+                ? Vector3.Dot(controller.LinearVelocity, upDir)
+                : 0.0f;
+            if (!float.IsFinite(verticalVelocity))
+                verticalVelocity = 0.0f;
 
-            return new ThirdPersonSteeringSnapshot(
+            return new SteeringSnapshot(
                 worldXZ,
                 cameraYaw,
                 _strafeMode,
                 Movement.IsRunning,
-                isGrounded);
+                isGrounded,
+                locomotionStyle,
+                verticalVelocity);
         }
 
         /// <summary>
@@ -483,11 +579,13 @@ namespace XREngine.Components
         /// <param name="right">The right direction on the XZ plane.</param>
         private void AddMovement(Vector3 forward, Vector3 right)
         {
-            if (_useRootMotionSteering)
+            if (_useRootMotionSteering
+                && RootMotionSteeringUpdated is { } steeringEvent
+                && (steeringEvent.Count > 0 || steeringEvent.HasPersistentCalls))
             {
-                ThirdPersonSteeringSnapshot steering = ComputeCameraRelativeSteering(forward, right);
-                _lastThirdPersonSteering = steering;
-                RootMotionSteeringUpdated?.Invoke(steering);
+                SteeringSnapshot steering = ComputeCameraRelativeSteering(forward, right);
+                _lastSteering = steering;
+                steeringEvent.Invoke(steering);
 
                 // Grounded translation is owned by animation root motion; keep direct input for airborne control.
                 if (steering.IsGrounded)
@@ -640,15 +738,16 @@ namespace XREngine.Components
             => _keyboardLookInput.Y += pressed ? 1.0f : -1.0f;
 
         /// <summary>
-        /// Processes mouse look input, applying sensitivity and updating view rotation.
+        /// Applies a relative mouse displacement directly in degrees per count without frame-time scaling.
         /// </summary>
-        /// <param name="dx">Horizontal mouse delta.</param>
-        /// <param name="dy">Vertical mouse delta.</param>
+        /// <param name="dx">Horizontal mouse displacement for the current frame.</param>
+        /// <param name="dy">Vertical mouse displacement for the current frame.</param>
         public void MouseLook(float dx, float dy)
         {
-            float dt = ViewRotationDeltaSeconds;
-            _viewRotation.Pitch += dt * dy * MouseYLookInputMultiplier;
-            _viewRotation.Yaw -= dt * dx * MouseXLookInputMultiplier;
+            // Relative mouse deltas are already integrated displacements, not angular velocities.
+            // Multiplying by frame delta time causes erratic sensitivity spikes when frame pacing changes.
+            _viewRotation.Pitch += dy * MouseYLookInputMultiplier;
+            _viewRotation.Yaw -= dx * MouseXLookInputMultiplier;
             ClampPitch();
             RemapYaw();
         }
@@ -730,6 +829,101 @@ namespace XREngine.Components
         }
 
         /// <summary>
+        /// Updates run hold state for the gamepad left face button (X / Square).
+        /// </summary>
+        public void OnGamepadRun(bool pressed)
+        {
+            _gamepadRunHeld = pressed;
+            UpdateRunState();
+        }
+
+        /// <summary>
+        /// Toggles latched run state for callers that bind a toggle action.
+        /// </summary>
+        public void ToggleGamepadRun()
+        {
+            _gamepadRunToggled = !_gamepadRunToggled;
+            UpdateRunState();
+        }
+
+        private void OnShiftLeftRun(bool pressed)
+        {
+            _shiftLeftHeld = pressed;
+            UpdateRunState();
+        }
+
+        private void OnShiftRightRun(bool pressed)
+        {
+            _shiftRightHeld = pressed;
+            UpdateRunState();
+        }
+
+        private void UpdateRunState()
+            => Run(_shiftLeftHeld || _shiftRightHeld || _gamepadRunHeld || _gamepadRunToggled);
+
+        /// <summary>
+        /// Toggles the lowered, close over-the-left-shoulder camera view (Q key or LB) on the bound <see cref="ThirdPersonCameraRig"/>.
+        /// </summary>
+        public void ToggleLeftShoulderView()
+            => ResolveThirdPersonCameraRig()?.ToggleLeftShoulderView();
+
+        /// <summary>
+        /// Toggles the lowered, close over-the-right-shoulder camera view (E key or RB) on the bound <see cref="ThirdPersonCameraRig"/>.
+        /// </summary>
+        public void ToggleRightShoulderView()
+            => ResolveThirdPersonCameraRig()?.ToggleRightShoulderView();
+
+        /// <summary>
+        /// Updates whether the centered zoom-in key (R) is held on the bound <see cref="ThirdPersonCameraRig"/>.
+        /// </summary>
+        public void SetCameraZoomInHeld(bool held)
+            => ResolveThirdPersonCameraRig()?.SetZoomInHeld(held);
+
+        /// <summary>
+        /// Updates whether the centered zoom-out key (T) is held on the bound <see cref="ThirdPersonCameraRig"/>.
+        /// </summary>
+        public void SetCameraZoomOutHeld(bool held)
+            => ResolveThirdPersonCameraRig()?.SetZoomOutHeld(held);
+
+        /// <summary>
+        /// Updates whether the gamepad zoom-in button (D-Pad Up) is held on the bound <see cref="ThirdPersonCameraRig"/>.
+        /// </summary>
+        public void OnGamepadCameraZoomIn(bool held)
+            => ResolveThirdPersonCameraRig()?.SetGamepadZoomInHeld(held);
+
+        /// <summary>
+        /// Updates whether the gamepad zoom-out button (D-Pad Down) is held on the bound <see cref="ThirdPersonCameraRig"/>.
+        /// </summary>
+        public void OnGamepadCameraZoomOut(bool held)
+            => ResolveThirdPersonCameraRig()?.SetGamepadZoomOutHeld(held);
+
+        /// <summary>
+        /// Starts tracking a right-face-button press so a short tap toggles crouch on release
+        /// and a sustained hold toggles prone without firing crouch.
+        /// </summary>
+        public void OnGamepadStancePressed()
+            => _gamepadStanceHoldTriggered = false;
+
+        /// <summary>
+        /// Switches prone state when the right face button is held past the hold threshold.
+        /// </summary>
+        public void OnGamepadStanceHeld()
+        {
+            _gamepadStanceHoldTriggered = true;
+            ToggleProne();
+        }
+
+        /// <summary>
+        /// Toggles crouch when the right face button is released before the prone hold fires.
+        /// </summary>
+        public void OnGamepadStanceReleased()
+        {
+            if (!_gamepadStanceHoldTriggered)
+                ToggleCrouch();
+            _gamepadStanceHoldTriggered = false;
+        }
+
+        /// <summary>
         /// Toggles between crouched and standing states (C key).
         /// </summary>
         public void ToggleCrouch()
@@ -760,6 +954,12 @@ namespace XREngine.Components
         /// </summary>
         protected virtual void TogglePause()
             => PauseToggled?.Invoke();
+
+        /// <summary>
+        /// Toggles locomotion debug visualization rendering by invoking <see cref="LocomotionDebugToggled"/> (F key).
+        /// </summary>
+        public void ToggleLocomotionDebug()
+            => LocomotionDebugToggled?.Invoke();
 
         /// <summary>
         /// Toggles mouse cursor capture/visibility (Backspace key).

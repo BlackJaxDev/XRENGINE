@@ -158,13 +158,29 @@
       "type": "boolean",
       "description": "Controls whether the primary directional light casts shadows."
     },
+    "DirLightShadowBlockerSamples": {
+      "type": "integer",
+      "description": "PCSS blocker-search sample count used on unit-test directional light shadow maps (1-32)."
+    },
+    "DirLightShadowFilterSamples": {
+      "type": "integer",
+      "description": "PCF/PCSS filter sample count used on unit-test directional light shadow maps (1-32)."
+    },
+    "DirLightShadowVogelTapCount": {
+      "type": "integer",
+      "description": "Vogel disk tap count used on unit-test directional light shadow maps (1-32)."
+    },
+    "DirLightContactShadowSamples": {
+      "type": "integer",
+      "description": "Screen-space contact shadow sample count used on unit-test directional lights (1-32)."
+    },
     "SpotLight": {
       "type": "boolean",
       "description": "Enables or disables SpotLight."
     },
     "DirLight2": {
       "type": "boolean",
-      "description": "Enables or disables DirLight2."
+      "description": "Adds a second directional light controlled as the moon light when ProceduralSky is active."
     },
     "PointLight": {
       "type": "boolean",
@@ -244,6 +260,14 @@
     "MotionBricksLocomotion": {
       "type": "boolean",
       "description": "Drives the desktop third-person avatar with NVIDIA MotionBricks SOMA procedural locomotion and Jolt root motion."
+    },
+    "MotionBricksDebugVisualization": {
+      "type": "boolean",
+      "description": "Draws MotionBricks future ground trajectory dots, collision clamps, and current/future SOMA skeletons in 3D."
+    },
+    "ShowAvatarCullingBoxes": {
+      "type": "boolean",
+      "description": "Enables per-mesh culling bounding-box debug rendering only on the avatar's ModelComponents."
     },
     "CharacterControllerCapsuleTranslationY": {
       "type": [
@@ -616,6 +640,13 @@
       ],
       "description": "When set, forces this anti-aliasing mode on the constructed unit-testing main camera via the per-camera AntiAliasingModeOverride, bypassing the global/game-settings AA. Null leaves the camera on the global setting.",
       "markdownDescription": "Supported values: `None`, `Msaa`, `Fxaa`, `Smaa`, `Taa`, `Tsr`, `Dlaa`."
+    },
+    "CameraBloomThresholdOverride": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "When set, overrides the unit-testing camera bloom threshold so bright lit avatar skin stays below bloom while HDR highlights and emissives still glow. Null keeps the default BloomSettings threshold."
     },
     "PhysicsAPI": {
       "$ref": "#/definitions/EPhysicsLibrary",
@@ -1320,6 +1351,10 @@
         "UseSourceMaterialAsOverride": {
           "type": "boolean",
           "description": "Publishes each imported renderable's source material as an explicit local material override. This keeps the visual result unchanged while exercising the local-override submission contract."
+        },
+        "RenderBounds": {
+          "type": "boolean",
+          "description": "Draws culling bounding boxes on every ModelComponent imported for this model without enabling global mesh bounds across the entire scene."
         },
         "ImporterBackend": {
           "$ref": "#/definitions/ModelImportBackendPreference",

@@ -1,19 +1,32 @@
-using System.Diagnostics;
 using System.Numerics;
+using XREngine.Components.Animation;
 
 namespace XREngine.Animation.MotionBricks;
 
 /// <summary>
 /// Production <see cref="IMotionBricksLocomotionDriver"/> that runs Smart Locomotion
 /// planning on the animation thread and dispatches TensorRT SOMA replans on a dedicated
-/// background worker thread with lock-free/minimal-lock double-buffered trajectory swaps
-/// and smooth 50 ms splice cross-blending.
+/// background worker thread with double-buffered trajectory swaps and splice cross-blending.
 /// </summary>
-public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionDriver
+public sealed partial class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionDriver
 {
     private const int JointCount = SomaModelContract.JointCount;
+    private const float IdleCrossfadeDurationSeconds = 0.55f;
+    private const int IdleCrossfadeStartRemainingFrames = 15;
+    private const float IdleCrossfadeFallbackDelaySeconds = 0.85f;
+    private const float InitialSpawnIdleDelaySeconds = 0.12f;
+    private const float StandToProneDurationSeconds = 0.62f;
+    private const float CrouchToProneDurationSeconds = 0.44f;
+    private const float ProneToCrouchDurationSeconds = 0.42f;
+    private const float ProneToStandDurationSeconds = 0.60f;
+    private const float AirborneConfirmDelaySeconds = 0.06f;
+    private const float JumpTakeoffVelocityThreshold = 1.2f;
+    private const float BodyRotationSmoothingRate = 28.0f;
 
-    private readonly IMotionBricksInferenceSession? _inferenceSession;
+    private volatile IMotionBricksInferenceSession? _inferenceSession;
+    private Task<(IMotionBricksInferenceSession? Session, string? Error)>? _pendingSessionTask;
+    private volatile bool _deferredSessionPending;
+    private volatile bool _deferredSessionFailed;
     private readonly bool _ownsSession;
     private readonly bool _useBackgroundThread;
     private readonly SomaRestSkeletonCalibration _calibration;
@@ -27,8 +40,65 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         new SomaPoseTransform[SomaModelContract.ContextPoseCount * JointCount];
 
     private readonly SomaPoseTransform[] _displayedPose = new SomaPoseTransform[JointCount];
+    private readonly SomaPoseTransform[] _airborneScratch = new SomaPoseTransform[JointCount];
+    private readonly SomaPoseTransform[] _somaIdleScratch = new SomaPoseTransform[JointCount];
+    private readonly SomaPoseTransform[] _debugPoseScratch = new SomaPoseTransform[JointCount];
+    private readonly SomaPoseTransform[] _debugWorldScratch = new SomaPoseTransform[JointCount];
+    private readonly SomaPoseTransform[] _idleCrossfadeStartPose = new SomaPoseTransform[JointCount];
+    private readonly SomaPoseTransform[] _landingContextScratch =
+        new SomaPoseTransform[SomaModelContract.ContextPoseCount * JointCount];
+    private readonly object _debugSync = new();
+    private readonly SomaPoseTransform[] _debugDisplayedPoseSnapshot = new SomaPoseTransform[JointCount];
+    private readonly SomaPoseTransform[] _debugFutureMidPoseSnapshot = new SomaPoseTransform[JointCount];
+    private readonly SomaPoseTransform[] _debugFutureEndPoseSnapshot = new SomaPoseTransform[JointCount];
+    private readonly MotionBricksTrajectoryPoint[] _debugTrajectorySnapshot =
+        new MotionBricksTrajectoryPoint[MotionBricksDebugSnapshot.MaxTrajectoryPoints];
+    private int _debugTrajectoryCount;
+    private Vector4 _debugFootContactsSnapshot;
+    private float _debugFutureMidLeadSeconds;
+    private float _debugFutureEndLeadSeconds;
+    private bool _debugHasCurrentPose;
+    private bool _debugHasFutureMidPose;
+    private bool _debugHasFutureEndPose;
+    private Vector3 _debugWorldFootAnchor;
+    private Vector3 _debugTargetGroundWorld;
+    private Vector3 _liveWorldFootPosition;
+    private Vector3 _liveActualPlanarVelocity;
+    private bool _hasLiveWorldFootPosition;
+    private Vector3 _somaWorldOriginOffsetXZ;
+    private bool _hasSomaWorldOriginOffset;
+    private float _trajectoryPreviewAccumulator;
+    private volatile IMotionBricksTrajectoryProber? _trajectoryProber;
+
     private Vector4 _displayedFootContacts;
     private bool _hasDisplayedPose;
+    private bool _wasGrounded = true;
+    private float _ungroundedDurationSeconds;
+    private bool _wasProne;
+    private float _proneTransitionProgress;
+    private bool _proneTransitionUseStandingEndpoint = true;
+    private int _lastNonProneStyleIndex = SomaLocomotionPoseBank.StandingStyleIndex;
+    private float _proneCrawlPhaseRadians;
+    private float _lastProneFacingYawRadians;
+    private bool _hasLastProneFacingYaw;
+    private bool _isInBreathingIdle;
+    private bool _isCrossfadingToIdle;
+    private float _idleSettledSeconds;
+    private float _idleCrossfadeElapsedSeconds;
+    private float _idleBreathingTimeSeconds;
+    private int _idleStyleIndex = SomaLocomotionPoseBank.StandingStyleIndex;
+    private SomaMotionClip? _activeIdleClip;
+    private uint _idleClipRngState = 0x13579BDFu;
+    private bool _hasQueuedStoppingReplan;
+    private long _stoppingReplanSequence;
+    private Vector3 _idleAnchorRootXZ;
+    private float _idleFacingYawRadians;
+    private Vector2 _landingCarryVelocityXZ;
+    private float _landingCushionDurationSeconds;
+    private float _landingCushionRemainingSeconds;
+    private bool _isMovingLanding;
+    private float _movingLandingNormalizedSpeed;
+    private float _initialFacingYawRadians;
 
     // Double-buffered playback trajectories: main thread reads _activeBuffer;
     // worker writes into _stagingBuffer and publishes _stagedSequence under _swapSync.
@@ -36,6 +106,7 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
     private SomaTrajectoryPlaybackBuffer _activeBuffer = new();
     private SomaTrajectoryPlaybackBuffer _stagingBuffer = new();
     private long _stagedSequence;
+    private long _stagedRequestTimestamp;
     private long _consumedSequence;
 
     // Latest-wins replan mailbox (zero per-replan allocation).
@@ -46,16 +117,37 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         new SomaPoseTransform[SomaModelContract.TargetPoseCapacity * JointCount];
     private int _pendingTargetCount;
     private SomaInferenceConfig _pendingConfig = SomaInferenceConfig.Default;
+    private int _pendingStyleIndex = SomaLocomotionPoseBank.StandingStyleIndex;
+    private float _pendingFacingYawRadians;
     private long _pendingRequestSequence;
+    private long _pendingRequestTimestamp;
     private bool _hasPendingRequest;
+
+    // Physics-thread to animation-thread root reconciliation mailbox.
+    private readonly object _reconciliationSync = new();
+    private bool _hasPendingReconciliation;
+    private Vector3 _pendingPhysicsFootPosition;
+    private Vector3 _pendingActualPlanarVelocity;
+    private Vector3 _pendingWallNormal;
+    private bool _pendingIsBlocked;
 
     // Worker-owned scratch buffers (accessed strictly by the worker thread, or main thread in sync mode).
     private readonly SomaPoseTransform[] _workerContext =
         new SomaPoseTransform[SomaModelContract.ContextPoseCount * JointCount];
     private readonly SomaPoseTransform[] _workerTargets =
         new SomaPoseTransform[SomaModelContract.TargetPoseCapacity * JointCount];
+    private readonly SomaPoseTransform[] _workerIdleFallbackPose = new SomaPoseTransform[JointCount];
+    private readonly SomaPoseTransform[] _workerWorldPoseScratch = new SomaPoseTransform[JointCount];
+    private readonly Quaternion[] _workerSmoothRotScratch =
+        new Quaternion[SomaModelContract.MaxValidFrameCount * 21];
     private readonly SomaInferenceInputBuffer _workerInput = new();
     private readonly SomaInferenceOutputBuffer _workerOutput = new();
+    private int _recoveryConditioningRemainingReplans;
+
+    private readonly float[] _smoothedMuscles = new float[MotionBricksEvaluatedPose.MuscleChannelCount];
+    private bool _hasSmoothedMuscles;
+    private Quaternion _smoothedBodyRotation = Quaternion.Identity;
+    private bool _hasSmoothedBodyRotation;
 
     private readonly AutoResetEvent? _workerSignal;
     private readonly Thread? _workerThread;
@@ -63,6 +155,7 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
     private bool _disposed;
 
     private float _avatarLegScale = 1.0f;
+    private float _worldRootMotionScale = 1.0f;
     private bool _hasCanonicalOrigin;
     private Vector3 _canonicalBodyPosition;
     private Quaternion _canonicalBodyRotation = Quaternion.Identity;
@@ -81,8 +174,49 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         SomaSmartLocomotionSettings? settings = null,
         SomaLocomotionPoseBank? poseBank = null,
         float avatarLegScale = 1.0f)
+        : this(
+            inferenceSession,
+            pendingSessionTask: null,
+            ownsSession,
+            useBackgroundThread,
+            calibration,
+            settings,
+            poseBank,
+            avatarLegScale)
+    {
+    }
+
+    internal MotionBricksAsyncLocomotionDriver(
+        Task<(IMotionBricksInferenceSession? Session, string? Error)> pendingSessionTask,
+        SomaRestSkeletonCalibration? calibration = null,
+        SomaSmartLocomotionSettings? settings = null,
+        SomaLocomotionPoseBank? poseBank = null,
+        float avatarLegScale = 1.0f)
+        : this(
+            inferenceSession: null,
+            pendingSessionTask: pendingSessionTask ?? throw new ArgumentNullException(nameof(pendingSessionTask)),
+            ownsSession: true,
+            useBackgroundThread: true,
+            calibration,
+            settings,
+            poseBank,
+            avatarLegScale)
+    {
+    }
+
+    private MotionBricksAsyncLocomotionDriver(
+        IMotionBricksInferenceSession? inferenceSession,
+        Task<(IMotionBricksInferenceSession? Session, string? Error)>? pendingSessionTask,
+        bool ownsSession,
+        bool useBackgroundThread,
+        SomaRestSkeletonCalibration? calibration,
+        SomaSmartLocomotionSettings? settings,
+        SomaLocomotionPoseBank? poseBank,
+        float avatarLegScale)
     {
         _inferenceSession = inferenceSession;
+        _pendingSessionTask = pendingSessionTask;
+        _deferredSessionPending = pendingSessionTask is not null;
         _ownsSession = ownsSession;
         _useBackgroundThread = useBackgroundThread;
         _calibration = calibration ?? SomaRestSkeletonCalibration.CanonicalDefault;
@@ -92,10 +226,15 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         _converter = new SomaToHumanoidMuscleConverter(_calibration);
         _poseSampler = new HumanoidToSomaPoseSampler(_calibration);
         _avatarLegScale = float.IsFinite(avatarLegScale) && avatarLegScale > 0.01f ? avatarLegScale : 1.0f;
+        _poseBank.CopyIdlePose(_workerIdleFallbackPose);
 
         SeedNeutralState();
 
-        if (_inferenceSession is null)
+        if (_deferredSessionPending)
+        {
+            _diagnosticStatus = "Warming up TensorRT SOMA engine on background worker.";
+        }
+        else if (_inferenceSession is null)
         {
             _diagnosticStatus = "No MotionBricks TensorRT inference session is bound.";
         }
@@ -105,12 +244,13 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         }
         else
         {
+            string targetSource = _poseBank.HasMocapTargets ? "SOMA mocap targets" : "procedural targets";
             _diagnosticStatus = _useBackgroundThread
-                ? "Ready (Async TensorRT worker active)."
-                : "Ready (Synchronous TensorRT mode).";
+                ? $"Ready (Async TensorRT worker active, {targetSource})."
+                : $"Ready (Synchronous TensorRT mode, {targetSource}).";
         }
 
-        if (_useBackgroundThread && _inferenceSession is { IsEngineReady: true })
+        if (_useBackgroundThread && (_deferredSessionPending || _inferenceSession is { IsEngineReady: true }))
         {
             _workerSignal = new AutoResetEvent(false);
             _workerThread = new Thread(WorkerLoop)
@@ -122,7 +262,9 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         }
     }
 
-    public bool IsReady => !_disposed && _inferenceSession is { IsEngineReady: true };
+    public bool IsReady => !_disposed
+        && !_deferredSessionFailed
+        && (_deferredSessionPending || _inferenceSession is { IsEngineReady: true });
     public string DiagnosticStatus => _diagnosticStatus;
     public long CompletedReplanCount => Volatile.Read(ref _completedReplanCount);
     public long ContextSeedCount => Volatile.Read(ref _contextSeedCount);
@@ -144,6 +286,25 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
     {
     }
 
+    public void SetInitialFacingYaw(float facingYawRadians)
+    {
+        if (!float.IsFinite(facingYawRadians))
+            return;
+
+        _initialFacingYawRadians = CriticalSpringDamper.WrapAngleRadians(facingYawRadians);
+        ResetPlayback();
+    }
+
+    public void SetTrajectoryProber(IMotionBricksTrajectoryProber? prober)
+        => _trajectoryProber = prober;
+
+    public void SetWorldRootMotionScale(float worldRootMotionScale)
+        => _worldRootMotionScale = float.IsFinite(worldRootMotionScale) && worldRootMotionScale > 0.01f
+            ? worldRootMotionScale
+            : 1.0f;
+
+    private float EffectiveWorldScale => _avatarLegScale * _worldRootMotionScale;
+
     public void ResetPlayback()
     {
         lock (_requestSync)
@@ -154,28 +315,44 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
             _activeBuffer.Clear();
             _stagingBuffer.Clear();
             _stagedSequence = 0L;
+            _stagedRequestTimestamp = 0L;
             _consumedSequence = 0L;
         }
 
         _hasCanonicalOrigin = false;
-        _planner.Reset();
+        _hasLiveWorldFootPosition = false;
+        _liveActualPlanarVelocity = Vector3.Zero;
+        _hasSomaWorldOriginOffset = false;
+        _somaWorldOriginOffsetXZ = Vector3.Zero;
+        _trajectoryPreviewAccumulator = 0.0f;
+        _wasGrounded = true;
+        _wasProne = false;
+        _proneTransitionProgress = 0.0f;
+        _proneTransitionUseStandingEndpoint = true;
+        _lastNonProneStyleIndex = SomaLocomotionPoseBank.StandingStyleIndex;
+        _proneCrawlPhaseRadians = 0.0f;
+        _isInBreathingIdle = false;
+        _isCrossfadingToIdle = false;
+        _idleSettledSeconds = 0.0f;
+        _idleCrossfadeElapsedSeconds = 0.0f;
+        _idleBreathingTimeSeconds = 0.0f;
+        _idleStyleIndex = SomaLocomotionPoseBank.StandingStyleIndex;
+        _activeIdleClip = null;
+        _hasQueuedStoppingReplan = false;
+        _stoppingReplanSequence = 0L;
+        _idleAnchorRootXZ = Vector3.Zero;
+        _idleFacingYawRadians = _initialFacingYawRadians;
+        _landingCarryVelocityXZ = Vector2.Zero;
+        _landingCushionDurationSeconds = 0.0f;
+        _landingCushionRemainingSeconds = 0.0f;
+        _isMovingLanding = false;
+        _movingLandingNormalizedSpeed = 0.0f;
+        _hasSmoothedMuscles = false;
+        _hasSmoothedBodyRotation = false;
+        _ungroundedDurationSeconds = 0.0f;
+        Volatile.Write(ref _recoveryConditioningRemainingReplans, 0);
+        _planner.Reset(_initialFacingYawRadians);
         SeedNeutralState();
-    }
-
-    /// <summary>
-    /// Seeds the 4-frame 30 Hz context history from live avatar poses (used when entering
-    /// MotionBricks locomotion from a traditional animation clip state).
-    /// </summary>
-    public void SeedContextPoses(ReadOnlySpan<SomaPoseTransform> fourContextPoses, float facingYawRadians)
-    {
-        _history.SeedFromFourPoses(fourContextPoses);
-        ReadOnlySpan<SomaPoseTransform> newest = fourContextPoses.Slice(
-            (SomaModelContract.ContextPoseCount - 1) * JointCount,
-            JointCount);
-        newest.CopyTo(_displayedPose);
-        _hasDisplayedPose = true;
-        _planner.Reset(facingYawRadians);
-        Interlocked.Increment(ref _contextSeedCount);
     }
 
     /// <summary>
@@ -189,18 +366,9 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
 
         _poseSampler.SampleFourContextPoses(fourContextFrames, _avatarLegScale, _seedSomaPoses);
         Quaternion newestRootRot = _seedSomaPoses[(SomaModelContract.ContextPoseCount - 1) * JointCount].Rotation;
-        Vector3 forward = Vector3.Transform(Vector3.UnitZ, newestRootRot);
-        float lenSq = forward.X * forward.X + forward.Z * forward.Z;
-        float facingYaw = lenSq > 1.0e-8f ? MathF.Atan2(forward.X, forward.Z) : 0.0f;
+        float facingYaw = ExtractFacingYaw(newestRootRot, _initialFacingYawRadians);
         SeedContextPoses(_seedSomaPoses, facingYaw);
     }
-
-    private readonly object _reconciliationSync = new();
-    private bool _hasPendingReconciliation;
-    private Vector3 _pendingPhysicsFootPosition;
-    private Vector3 _pendingActualPlanarVelocity;
-    private Vector3 _pendingWallNormal;
-    private bool _pendingIsBlocked;
 
     /// <summary>
     /// Records Jolt physics capsule position and wall-blocking feedback from the physics thread
@@ -222,112 +390,6 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
         }
     }
 
-    private void ApplyPendingPhysicsReconciliationOnAnimationThread()
-    {
-        bool hasPending;
-        Vector3 actualFootPosition;
-        Vector3 actualPlanarVelocity;
-        Vector3 wallNormal;
-        bool isBlocked;
-
-        lock (_reconciliationSync)
-        {
-            hasPending = _hasPendingReconciliation;
-            if (!hasPending)
-                return;
-
-            actualFootPosition = _pendingPhysicsFootPosition;
-            actualPlanarVelocity = _pendingActualPlanarVelocity;
-            wallNormal = _pendingWallNormal;
-            isBlocked = _pendingIsBlocked;
-            _hasPendingReconciliation = false;
-            _pendingIsBlocked = false;
-        }
-
-        if (_hasDisplayedPose)
-        {
-            Vector3 currentRoot = _displayedPose[0].Position;
-            var planarCorrection = new Vector3(
-                actualFootPosition.X - currentRoot.X,
-                0.0f,
-                actualFootPosition.Z - currentRoot.Z);
-            float driftSq = planarCorrection.LengthSquared();
-            // Snap the trajectory root immediately on wall collisions, or when drift exceeds the
-            // normal 1-step render-to-physics phase offset (0.20 m).
-            if ((isBlocked && driftSq > 1.0e-6f) || driftSq > 0.04f)
-            {
-                _displayedPose[0] = new SomaPoseTransform(currentRoot + planarCorrection, _displayedPose[0].Rotation);
-                _history.ApplyRootTranslationOffset(planarCorrection);
-                _activeBuffer.ApplyRootTranslationOffset(planarCorrection);
-            }
-        }
-
-        _planner.NotifyPhysicsCollisionClamp(actualPlanarVelocity, wallNormal, isBlocked);
-    }
-
-    public void AdvanceAndEvaluate(in MotionBricksSteeringInput input, MotionBricksEvaluatedPose destination)
-    {
-        ArgumentNullException.ThrowIfNull(destination);
-        if (_disposed || !IsReady)
-        {
-            destination.HasValidPose = false;
-            return;
-        }
-
-        ApplyPendingPhysicsReconciliationOnAnimationThread();
-        _planner.UpdateSteering(input);
-
-        // Adopt any completed trajectory produced by the background worker.
-        TrySwapCompletedTrajectory();
-
-        if (_planner.ShouldTriggerReplan(input, _activeBuffer.RemainingFrames, out bool isUrgent))
-            EnqueueReplan(input, isUrgent);
-
-        // In synchronous mode, execute immediately and swap.
-        if (!_useBackgroundThread)
-        {
-            ProcessPendingRequestCore();
-            TrySwapCompletedTrajectory();
-        }
-
-        if (_activeBuffer.TryAdvanceAndSample(input.DeltaSeconds, _displayedPose, out Vector4 contacts))
-        {
-            _displayedFootContacts = contacts;
-            _hasDisplayedPose = true;
-            _history.RecordPose(_displayedPose, input.DeltaSeconds);
-
-            if (_activeBuffer.IsExhausted)
-                _diagnosticStatus = "Warning: Trajectory buffer exhausted while waiting for TensorRT replan; holding last valid pose.";
-        }
-        else if (!_hasDisplayedPose)
-        {
-            destination.HasValidPose = false;
-            return;
-        }
-
-        Array.Clear(destination.MuscleValues);
-        _converter.ConvertFrame(
-            _displayedPose,
-            _avatarLegScale,
-            destination.MuscleValues,
-            out Vector3 bodyPosition,
-            out Quaternion bodyRotation);
-
-        if (!_hasCanonicalOrigin)
-        {
-            _canonicalBodyPosition = bodyPosition;
-            _canonicalBodyRotation = bodyRotation;
-            _hasCanonicalOrigin = true;
-        }
-
-        destination.CanonicalBodyPosition = _canonicalBodyPosition;
-        destination.CanonicalBodyRotation = _canonicalBodyRotation;
-        destination.CurrentBodyPosition = bodyPosition;
-        destination.CurrentBodyRotation = bodyRotation;
-        destination.FootContacts = _displayedFootContacts;
-        destination.HasValidPose = true;
-    }
-
     public void Dispose()
     {
         if (_disposed)
@@ -344,136 +406,95 @@ public sealed class MotionBricksAsyncLocomotionDriver : IMotionBricksLocomotionD
             _inferenceSession?.Dispose();
     }
 
+    private void SeedContextPoses(ReadOnlySpan<SomaPoseTransform> fourContextPoses, float facingYawRadians)
+    {
+        _history.SeedFromFourPoses(fourContextPoses);
+        ReadOnlySpan<SomaPoseTransform> newest = fourContextPoses.Slice(
+            (SomaModelContract.ContextPoseCount - 1) * JointCount,
+            JointCount);
+        newest.CopyTo(_displayedPose);
+        _hasDisplayedPose = true;
+        _isInBreathingIdle = false;
+        _isCrossfadingToIdle = false;
+        _idleSettledSeconds = 0.0f;
+        _idleCrossfadeElapsedSeconds = 0.0f;
+        _hasQueuedStoppingReplan = false;
+        _stoppingReplanSequence = 0L;
+        _hasSmoothedMuscles = false;
+        _hasSmoothedBodyRotation = false;
+        _ungroundedDurationSeconds = 0.0f;
+        _idleFacingYawRadians = facingYawRadians;
+        _planner.Reset(facingYawRadians);
+        Interlocked.Increment(ref _contextSeedCount);
+    }
+
+    private void ApplyPendingPhysicsReconciliationOnAnimationThread()
+    {
+        Vector3 actualFootPosition;
+        Vector3 actualPlanarVelocity;
+        Vector3 wallNormal;
+        bool isBlocked;
+
+        lock (_reconciliationSync)
+        {
+            if (!_hasPendingReconciliation)
+                return;
+
+            actualFootPosition = _pendingPhysicsFootPosition;
+            actualPlanarVelocity = _pendingActualPlanarVelocity;
+            wallNormal = _pendingWallNormal;
+            isBlocked = _pendingIsBlocked;
+            _hasPendingReconciliation = false;
+            _pendingIsBlocked = false;
+        }
+
+        _liveWorldFootPosition = actualFootPosition;
+        _liveActualPlanarVelocity = actualPlanarVelocity;
+        _hasLiveWorldFootPosition = true;
+
+        if (_hasDisplayedPose)
+        {
+            float worldPerSoma = EffectiveWorldScale;
+            Vector3 currentRoot = _displayedPose[0].Position;
+            Vector3 currentRootXZ = new(currentRoot.X, 0.0f, currentRoot.Z);
+            Vector3 actualFootXZ = new(actualFootPosition.X, 0.0f, actualFootPosition.Z);
+
+            if (!_hasSomaWorldOriginOffset)
+            {
+                _somaWorldOriginOffsetXZ = actualFootXZ - currentRootXZ * worldPerSoma;
+                _hasSomaWorldOriginOffset = true;
+            }
+
+            Vector3 expectedWorldXZ = _somaWorldOriginOffsetXZ + currentRootXZ * worldPerSoma;
+            Vector3 worldDriftXZ = actualFootXZ - expectedWorldXZ;
+            float driftSq = worldDriftXZ.LengthSquared();
+
+            // Snap immediately on real wall collisions, or when open-space world drift exceeds
+            // normal render-to-physics pipelining lag (0.40 m).
+            if ((isBlocked && driftSq > 1.0e-6f) || driftSq > 0.16f)
+            {
+                Vector3 somaCorrection = worldDriftXZ / worldPerSoma;
+                _displayedPose[0] = new SomaPoseTransform(currentRoot + somaCorrection, _displayedPose[0].Rotation);
+                _history.ApplyRootTranslationOffset(somaCorrection);
+                _activeBuffer.ApplyRootTranslationOffset(somaCorrection);
+
+                // Shift the canonical origin by the same SOMA-space correction so physics reconciliation
+                // does not inject a phantom root-motion delta back into Jolt on the next frame.
+                if (_hasCanonicalOrigin)
+                    _canonicalBodyPosition += somaCorrection * _avatarLegScale;
+                if (_isInBreathingIdle)
+                    _idleAnchorRootXZ += somaCorrection;
+            }
+        }
+
+        _planner.NotifyPhysicsCollisionClamp(actualPlanarVelocity, wallNormal, isBlocked);
+    }
+
     private void SeedNeutralState()
     {
-        _poseBank.CopyIdlePose(_displayedPose);
+        _poseBank.CopyIdlePoseAtYaw(_initialFacingYawRadians, _displayedPose);
         _displayedFootContacts = new Vector4(1.0f, 1.0f, 1.0f, 1.0f);
         _hasDisplayedPose = true;
         _history.SeedFromPose(_displayedPose);
-    }
-
-    private void EnqueueReplan(in MotionBricksSteeringInput input, bool isUrgent)
-    {
-        lock (_requestSync)
-        {
-            if (!_history.TrySampleContextToken(_pendingContext))
-                return;
-
-            Vector3 currentRoot = _displayedPose[0].Position;
-            _pendingConfig = _planner.BuildTargetPoses(
-                input,
-                currentRoot,
-                isUrgent,
-                _pendingTargets,
-                out _pendingTargetCount);
-            _pendingRequestSequence = ++_nextSequence;
-            _hasPendingRequest = true;
-        }
-
-        _workerSignal?.Set();
-    }
-
-    private void TrySwapCompletedTrajectory()
-    {
-        lock (_swapSync)
-        {
-            if (_stagedSequence <= _consumedSequence || _stagingBuffer.FrameCount <= 0)
-                return;
-
-            (_activeBuffer, _stagingBuffer) = (_stagingBuffer, _activeBuffer);
-            _consumedSequence = _stagedSequence;
-            if (_hasDisplayedPose)
-            {
-                _activeBuffer.BeginSpliceFrom(
-                    _displayedPose,
-                    _displayedFootContacts,
-                    _settings.SpliceBlendDurationSeconds);
-            }
-        }
-    }
-
-    private void WorkerLoop()
-    {
-        while (!_stopRequested)
-        {
-            _workerSignal!.WaitOne(millisecondsTimeout: 50);
-            if (_stopRequested)
-                break;
-
-            ProcessPendingRequestCore();
-        }
-    }
-
-    private void ProcessPendingRequestCore()
-    {
-        if (_inferenceSession is null || !_inferenceSession.IsEngineReady)
-            return;
-
-        int targetCount;
-        SomaInferenceConfig config;
-        long requestSequence;
-
-        lock (_requestSync)
-        {
-            if (!_hasPendingRequest)
-                return;
-
-            _pendingContext.CopyTo(_workerContext, 0);
-            _pendingTargets.CopyTo(_workerTargets, 0);
-            targetCount = _pendingTargetCount;
-            config = _pendingConfig;
-            requestSequence = _pendingRequestSequence;
-            _hasPendingRequest = false;
-        }
-
-        long startTimestamp = Stopwatch.GetTimestamp();
-        SomaTensorCodec.EncodeInputs(
-            _workerContext,
-            _workerTargets,
-            targetCount,
-            config,
-            SomaPoseTransform.Identity,
-            _workerInput);
-
-        if (!_inferenceSession.TryRunSomaInference(_workerInput, _workerOutput, out string? error))
-        {
-            _diagnosticStatus = error ?? "TensorRT SOMA inference failed during async replan.";
-            return;
-        }
-
-        int validFrames = SomaTensorCodec.DecodeOutputs(
-            _workerOutput,
-            _workerInput.GuideAlignment,
-            SomaPoseTransform.Identity,
-            _calibration.ReferenceLocalPoses);
-        if (validFrames <= 0)
-        {
-            _diagnosticStatus = "SOMA async replan decoded zero valid frames.";
-            return;
-        }
-
-        if (config.CorrectGeneratedDiff)
-        {
-            ReadOnlySpan<SomaPoseTransform> lastContext = _workerContext.AsSpan(
-                (SomaModelContract.ContextPoseCount - 1) * JointCount,
-                JointCount);
-            ReadOnlySpan<SomaPoseTransform> firstTarget = _workerTargets.AsSpan(0, JointCount);
-            SomaTensorCodec.ApplyEndpointCorrection(lastContext, firstTarget, _workerOutput);
-        }
-
-        double elapsedMs = (Stopwatch.GetTimestamp() - startTimestamp) * 1000.0 / Stopwatch.Frequency;
-        Volatile.Write(ref _lastInferenceMs, elapsedMs);
-
-        lock (_swapSync)
-        {
-            _stagingBuffer.CopyFromDecodedOutput(_workerOutput, requestSequence);
-            _stagedSequence = requestSequence;
-        }
-
-        Volatile.Write(ref _lastDecodedFrameCount, validFrames);
-        Interlocked.Increment(ref _completedReplanCount);
-        _diagnosticStatus = _useBackgroundThread
-            ? "Ready (Async TensorRT worker active)."
-            : "Ready (Synchronous TensorRT mode).";
     }
 }

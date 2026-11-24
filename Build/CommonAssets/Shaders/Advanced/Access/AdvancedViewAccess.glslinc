@@ -9,6 +9,15 @@ const uint XR_ADV_VIEW_TEMPORAL_HISTORY_VALID = 1u << 7u;
 const uint XR_ADV_VIEW_EXCLUDE_PROJECTIVE_MIRRORS = 1u << 8u;
 // EAdvancedViewRecordFlags.GtaoMaterialNormals: GTAO normal-map micro-occlusion is on.
 const uint XR_ADV_VIEW_GTAO_MATERIAL_NORMALS = 1u << 9u;
+// EAdvancedViewRecordFlags bits 10..13: visibility raster MSAA sample count (0 or 1 = single-sample).
+const uint XR_ADV_VIEW_MSAA_SAMPLE_COUNT_SHIFT = 10u;
+const uint XR_ADV_VIEW_MSAA_SAMPLE_COUNT_MASK = 0xFu << XR_ADV_VIEW_MSAA_SAMPLE_COUNT_SHIFT;
+
+uint XR_ADV_ViewMsaaSampleCount(XRAdvancedViewRecord viewRecord)
+{
+    uint encoded = (viewRecord.flags & XR_ADV_VIEW_MSAA_SAMPLE_COUNT_MASK) >> XR_ADV_VIEW_MSAA_SAMPLE_COUNT_SHIFT;
+    return max(encoded, 1u);
+}
 
 // Analytic reconstruction keeps full-rate visibility. Peripheral sampling only
 // widens the texture footprint; it never removes geometry or borrows another eye.
@@ -22,6 +31,15 @@ float XR_ADV_FoveationDerivativeScale(XRAdvancedViewRecord viewRecord, vec2 targ
     float outerRadius = viewRecord.foveationRadii.w;
     float peripheral = smoothstep(guardRadius, outerRadius, eccentricity);
     return exp2(peripheral * viewRecord.foveationCenterAndBias.z);
+}
+
+// Scales screen-space UV gradients by internal/output resolution ratio so
+// textureGrad selects output-resolution mip levels when rendering below native
+// resolution (for example TSR, DLSS, or XeSS). Returns (1, 1) at native size.
+vec2 XR_ADV_UpscaleDerivativeScale(XRAdvancedViewRecord viewRecord)
+{
+    vec2 ratio = viewRecord.renderSizeAndInverse.xy * viewRecord.outputSizeAndInverse.zw;
+    return clamp(ratio, vec2(0.25), vec2(1.0));
 }
 
 XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_VIEWS) readonly buffer XRAdvancedViewTable

@@ -179,6 +179,7 @@ public partial class PhysicsChainComponent : XRComponent
     private Vector3 _objectMove;
     private Vector3 _objectPrevPosition;
     private float _objectScale;
+    private float _initialObjectScale = 1.0f;
     private Vector3 _rootBonePrevPosition;
     private Vector3 _smoothedObjectMove;
 

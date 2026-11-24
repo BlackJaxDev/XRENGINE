@@ -906,6 +906,13 @@ internal sealed partial class VulkanFrameLoop
         out string reason)
     {
         targetSnapshot = default;
+        if (!target.IsApiWrapperPublicationReady)
+        {
+            reason =
+                $"{VulkanFrameBufferAttachmentNotReadyException.DiagnosticPrefix} " +
+                $"Framebuffer target '{target.GetDescribingName()}' has not published CPU construction yet.";
+            return false;
+        }
         VkFrameBuffer? wrapper =
             _resourceRuntime.CreateAPIRenderObject(target) as VkFrameBuffer;
         if (wrapper is null)

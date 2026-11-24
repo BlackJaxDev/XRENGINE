@@ -4,7 +4,6 @@ using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
-using XREngine.Components.Movement.Modules;
 using XREngine.Components.Lights;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Transforms;
@@ -551,8 +550,6 @@ public static class BootstrapPawnFactory
 
         var movementComp = characterNode.AddComponent<CharacterMovement3DComponent>()!;
         InitMovement(movementComp);
-        if (settings.MotionBricksLocomotion)
-            movementComp.MovementModule = new RootMotionMovementModule("MotionBricks Root Motion");
 
         float spawnY = settings.CharacterControllerCapsuleTranslationY ?? (movementComp.HalfHeight + 0.01f);
         characterTfm.SetPositionAndRotation(new Vector3(0.0f, spawnY, 0.0f), Quaternion.Identity);
@@ -564,16 +561,22 @@ public static class BootstrapPawnFactory
 
         SceneNode cameraOffsetNode = new(footNode, "Camera Offset");
         var cameraOffsetTfm = cameraOffsetNode.SetTransform<Transform>();
-        cameraOffsetTfm.Translation = new Vector3(0.0f, movementComp.HalfHeight * 1.8f, 0.0f);
+        cameraOffsetTfm.Translation = new Vector3(
+            0.0f,
+            settings.ThirdPersonPawn ? 1.18f : (movementComp.HalfHeight * 1.8f),
+            0.0f);
         if (settings.MotionBricksLocomotion && settings.ThirdPersonPawn)
             cameraOffsetTfm.Rotation = Quaternion.CreateFromYawPitchRoll(MathF.PI * 0.5f, -10.0f * (MathF.PI / 180.0f), 0.0f);
 
         SceneNode cameraParentNode;
+        BoomTransform? thirdPersonBoom = null;
         if (settings.ThirdPersonPawn)
         {
             cameraParentNode = cameraOffsetNode.NewChildWithTransform<BoomTransform>(out var boomTfm, "3rd Person Camera Boom");
-            boomTfm.MaxLength = settings.MotionBricksLocomotion ? 3.2f : 10.0f;
+            boomTfm.MaxLength = settings.MotionBricksLocomotion ? 2.15f : 10.0f;
             boomTfm.ZoomOutSpeed = 5.0f;
+            boomTfm.IgnoredComponents.Add(movementComp);
+            thirdPersonBoom = boomTfm;
         }
         else
             cameraParentNode = cameraOffsetNode;
@@ -590,8 +593,14 @@ public static class BootstrapPawnFactory
         characterComp.CameraComponent = camComp;
         characterComp.InputOrientationTransform = cameraNode.Transform;
         characterComp.ViewRotationTransform = cameraOffsetTfm;
-        if (settings.MotionBricksLocomotion)
-            characterComp.UseRootMotionSteering = true;
+        if (thirdPersonBoom is not null)
+        {
+            var cameraRig = characterNode.AddComponent<ThirdPersonCameraRigComponent>("Third-Person Camera Rig")!;
+            cameraRig.CameraBoom = thirdPersonBoom;
+            cameraRig.CameraPivotTransform = cameraOffsetTfm;
+            cameraRig.CharacterMovement = movementComp;
+            characterComp.ThirdPersonCameraRig = cameraRig;
+        }
 
         if (setUI && camComp is not null)
             BootstrapEditorBridge.Current?.CreateEditorUi(rootNode, camComp, characterComp);
@@ -648,15 +657,31 @@ public static class BootstrapPawnFactory
     private static void ConfigureCameraPostProcessing(CameraComponent cameraComponent)
     {
         var settings = RuntimeBootstrapState.Settings;
-        Debug.Out($"[BootstrapPawnFactory] ConfigureCameraPostProcessing Atmosphere={settings.InitializeAtmosphericScattering} VolumetricFog={settings.InitializeVolumetricFog} MeshletDebugDisplay={settings.MeshletDebugDisplay}");
+        bool hasBloomThresholdOverride = settings.CameraBloomThresholdOverride is float bloomOverride
+            && float.IsFinite(bloomOverride)
+            && bloomOverride >= 0.0f;
+        Debug.Out($"[BootstrapPawnFactory] ConfigureCameraPostProcessing Atmosphere={settings.InitializeAtmosphericScattering} VolumetricFog={settings.InitializeVolumetricFog} MeshletDebugDisplay={settings.MeshletDebugDisplay} BloomThresholdOverride={settings.CameraBloomThresholdOverride}");
         if (!settings.InitializeVolumetricFog &&
             !settings.InitializeAtmosphericScattering &&
-            !settings.MeshletDebugDisplay)
+            !settings.MeshletDebugDisplay &&
+            !hasBloomThresholdOverride)
             return;
 
         var camera = cameraComponent.Camera;
         if (!camera.RenderPipeline.OverrideProtected)
             camera.RenderPipeline.OverrideProtected = true;
+
+        if (hasBloomThresholdOverride)
+        {
+            float bloomThreshold = settings.CameraBloomThresholdOverride!.Value;
+            var bloomStage = camera.GetPostProcessStageState<BloomSettings>();
+            if (bloomStage is not null)
+            {
+                bloomStage.SetValue(nameof(BloomSettings.Threshold), bloomThreshold);
+                if (bloomStage.TryGetBacking(out BloomSettings? bloomSettings) && bloomSettings is not null)
+                    bloomSettings.Threshold = bloomThreshold;
+            }
+        }
 
         if (settings.MeshletDebugDisplay)
         {

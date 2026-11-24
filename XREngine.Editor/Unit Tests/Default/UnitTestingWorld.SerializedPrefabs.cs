@@ -141,6 +141,10 @@ public static partial class EditorUnitTests
 
                 (int modelCount, int materialCount, int sourceToonCount, int downgradeCount) =
                     ValidateSerializedPrefabMaterials(convertedRoot, prefabPath);
+                // Start background Uber shader variant compilation and pack managed GPU deformation
+                // payloads now while the hierarchy is still owned by the import worker so meshes do
+                // not stall the render thread after publication.
+                PrewarmSerializedPrefabAssets(convertedRoot);
                 if (manifest.CompletionTier == SourceImportCompletionTier.PartialVisual)
                     Debug.MeshesWarning($"[UnityPrefab] Partial import '{prefabPath}': {manifest.Diagnostics.Count} diagnostic(s). Available content is retained.");
                 SceneNode importRoot = ApplySerializedPrefabImportTransform(convertedRoot, settings);
@@ -204,31 +208,185 @@ public static partial class EditorUnitTests
             return suspended;
         }
 
+        private static void PrewarmSerializedPrefabAssets(SceneNode rootNode)
+        {
+            PrewarmSerializedPrefabMaterials(rootNode);
+
+            HashSet<XRMesh> visitedMeshes = new(ReferenceEqualityComparer.Instance);
+            rootNode.IterateComponents<ModelComponent>(component =>
+            {
+                if (component.Model is { } model)
+                {
+                    for (int i = 0; i < model.Meshes.Count; i++)
+                    {
+                        foreach (SubMeshLOD lod in model.Meshes[i].LODs)
+                        {
+                            if (lod.Mesh is { } lodMesh)
+                                visitedMeshes.Add(lodMesh);
+                        }
+                    }
+                }
+
+                for (int i = 0; i < component.Meshes.Count; i++)
+                {
+                    if (component.Meshes[i].CurrentLODRenderer?.Mesh is { } currentMesh)
+                        visitedMeshes.Add(currentMesh);
+                }
+            }, iterateChildHierarchy: true);
+
+            foreach (XRMesh mesh in visitedMeshes)
+            {
+                if (!mesh.HasSkinning && !mesh.HasBlendshapes)
+                    continue;
+
+                try
+                {
+                    AdvancedGpuDeformationResources.PrepareImportedMesh(mesh);
+                }
+                catch (Exception ex)
+                {
+                    Debug.MeshesWarning(
+                        $"[UnityPrefab] Skipping worker deformation pre-pack for mesh '{mesh.Name ?? "<unnamed>"}': {ex.Message}");
+                }
+            }
+        }
+
+        private static void PrewarmSerializedPrefabMaterials(SceneNode rootNode)
+        {
+            HashSet<XRMaterial> visited = new(ReferenceEqualityComparer.Instance);
+            rootNode.IterateComponents<ModelComponent>(component =>
+            {
+                CollectModelMaterials(component, visited);
+            }, iterateChildHierarchy: true);
+
+            foreach (XRMaterial material in visited)
+                material.RequestUberVariantPreparationIfNeeded();
+        }
+
+        private static void CollectModelMaterials(ModelComponent component, HashSet<XRMaterial> destination)
+        {
+            if (component.Model is { } model)
+            {
+                for (int i = 0; i < model.Meshes.Count; i++)
+                {
+                    SubMesh subMesh = model.Meshes[i];
+                    foreach (SubMeshLOD lod in subMesh.LODs)
+                    {
+                        if (lod.Material is { } lodMaterial)
+                            destination.Add(lodMaterial);
+                    }
+                }
+            }
+
+            for (int i = 0; i < component.Meshes.Count; i++)
+            {
+                RenderableMesh mesh = component.Meshes[i];
+                if (mesh.MaterialOverride is { } overrideMaterial)
+                    destination.Add(overrideMaterial);
+                if (mesh.CurrentLODRenderer?.Material is { } lodMaterial)
+                    destination.Add(lodMaterial);
+            }
+        }
+
+        private static bool AreModelMaterialsReadyForAdmission(ModelComponent component)
+        {
+            if (component.Model is { } model)
+            {
+                for (int i = 0; i < model.Meshes.Count; i++)
+                {
+                    SubMesh subMesh = model.Meshes[i];
+                    foreach (SubMeshLOD lod in subMesh.LODs)
+                    {
+                        if (lod.Material is { } lodMaterial && !lodMaterial.IsUberVariantReadyForAdmission)
+                            return false;
+                    }
+                }
+            }
+
+            for (int i = 0; i < component.Meshes.Count; i++)
+            {
+                RenderableMesh mesh = component.Meshes[i];
+                if (mesh.MaterialOverride is { } overrideMaterial && !overrideMaterial.IsUberVariantReadyForAdmission)
+                    return false;
+                if (mesh.CurrentLODRenderer?.Material is { } lodMaterial && !lodMaterial.IsUberVariantReadyForAdmission)
+                    return false;
+            }
+
+            return true;
+        }
+
         private static void StageSerializedPrefabModelPublication(
             SceneNode rootNode,
             List<ModelComponent> suspendedModels)
         {
-            const int MaxModelsPerAppFrame = 2;
+            const int MaxModelsPerPresentedFrame = 4;
             if (suspendedModels.Count == 0)
                 return;
 
+            PrewarmSerializedPrefabMaterials(rootNode);
+
             int nextModelIndex = 0;
+            ulong lastActivationPresentFrameId = 0UL;
+            long lastActivationTimestamp = 0L;
+            long materialWaitStartTicks = Stopwatch.GetTimestamp();
+            long materialWaitLimitTicks = Stopwatch.Frequency * 10L;
+            long presentFallbackTicks = Stopwatch.Frequency / 4L;
+
             Debug.Meshes(
                 $"[UnityPrefab] Staging {suspendedModels.Count} model components under " +
-                $"'{rootNode.Name}' at up to {MaxModelsPerAppFrame} per app frame.");
+                $"'{rootNode.Name}' at up to {MaxModelsPerPresentedFrame} per presented frame.");
             Engine.AddAppThreadCoroutine(() =>
             {
                 if (rootNode.IsDestroyed)
                     return true;
 
-                int endIndex = Math.Min(
-                    suspendedModels.Count,
-                    nextModelIndex + MaxModelsPerAppFrame);
-                for (; nextModelIndex < endIndex; nextModelIndex++)
+                // Wait until the renderer actually presents after the previous model batch so new
+                // cold meshes never pile up across consecutive rejected PresentNow attempts.
+                ulong currentPresentFrameId = RuntimeEngine.Rendering.Stats.FrameLifecycle.PresentFrameId;
+                long nowTicks = Stopwatch.GetTimestamp();
+                if (lastActivationTimestamp != 0L
+                    && currentPresentFrameId <= lastActivationPresentFrameId
+                    && nowTicks - lastActivationTimestamp < presentFallbackTicks)
+                {
+                    return false;
+                }
+
+                // Skip any already-destroyed components before checking shader readiness.
+                while (nextModelIndex < suspendedModels.Count && suspendedModels[nextModelIndex].IsDestroyed)
+                    nextModelIndex++;
+
+                if (nextModelIndex >= suspendedModels.Count)
+                {
+                    Debug.Meshes(
+                        $"[UnityPrefab] Finished staged model publication for '{rootNode.Name}'.");
+                    return true;
+                }
+
+                // Keep meshes hidden while their Uber shader variants are still compiling on
+                // background threads so Vulkan PresentNow does not stall on cold shader builds.
+                bool materialWaitExpired = nowTicks - materialWaitStartTicks >= materialWaitLimitTicks;
+                int activatedThisFrame = 0;
+                while (nextModelIndex < suspendedModels.Count && activatedThisFrame < MaxModelsPerPresentedFrame)
                 {
                     ModelComponent component = suspendedModels[nextModelIndex];
-                    if (!component.IsDestroyed)
-                        component.IsActive = true;
+                    if (component.IsDestroyed)
+                    {
+                        nextModelIndex++;
+                        continue;
+                    }
+
+                    if (!materialWaitExpired && !AreModelMaterialsReadyForAdmission(component))
+                        break;
+
+                    component.IsActive = true;
+                    nextModelIndex++;
+                    activatedThisFrame++;
+                }
+
+                if (activatedThisFrame > 0)
+                {
+                    lastActivationPresentFrameId = currentPresentFrameId;
+                    lastActivationTimestamp = nowTicks;
                 }
 
                 if (nextModelIndex < suspendedModels.Count)

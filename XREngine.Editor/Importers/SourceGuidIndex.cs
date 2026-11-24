@@ -1,4 +1,7 @@
 using System.Collections.Concurrent;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using XREngine.Scene.Prefabs;
 
@@ -9,16 +12,21 @@ namespace XREngine.Scene.Importers;
 /// </summary>
 public sealed class SourceGuidIndex : IDisposable
 {
+    private const string DiskCacheHeaderPrefix = "#xrengine-unity-guid-index-v1";
+
     private static readonly ConcurrentDictionary<string, SourceGuidIndex> CachedIndexes =
         new(StringComparer.OrdinalIgnoreCase);
 
     private readonly object _sync = new();
     private readonly Dictionary<string, SourceGuidResolution> _byGuid = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _guidByPath = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, long> _metaWriteTicksByMetaPath = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<SourceImportDiagnostic> _diagnostics = [];
     private readonly List<FileSystemWatcher> _watchers = [];
     private bool _initialized;
     private bool _invalidated;
+    private bool _loadedFromDiskCache;
+    private bool _bypassDiskCacheOnce;
     private bool _disposed;
 
     private SourceGuidIndex(string projectRoot)
@@ -57,9 +65,27 @@ public sealed class SourceGuidIndex : IDisposable
         EnsureInitialized();
         lock (_sync)
         {
-            return _byGuid.TryGetValue(guid, out SourceGuidResolution? resolution)
-                ? resolution
-                : new SourceGuidResolution { Guid = guid };
+            if (_byGuid.TryGetValue(guid, out SourceGuidResolution? resolution))
+            {
+                if (!_loadedFromDiskCache || IsCachedResolutionCurrent(guid, resolution))
+                    return resolution;
+
+                RebuildIndexFromDiskLocked();
+                return _byGuid.TryGetValue(guid, out resolution)
+                    ? resolution
+                    : new SourceGuidResolution { Guid = guid };
+            }
+
+            if (_loadedFromDiskCache)
+            {
+                // A missing GUID in a disk-cached snapshot can mean an asset was added
+                // while the editor was closed. Rescan once so new assets always resolve.
+                RebuildIndexFromDiskLocked();
+                if (_byGuid.TryGetValue(guid, out resolution))
+                    return resolution;
+            }
+
+            return new SourceGuidResolution { Guid = guid };
         }
     }
 
@@ -70,8 +96,55 @@ public sealed class SourceGuidIndex : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assetPath);
         EnsureInitialized();
+        string fullPath = Path.GetFullPath(assetPath);
         lock (_sync)
-            return _guidByPath.TryGetValue(Path.GetFullPath(assetPath), out guid);
+        {
+            if (_guidByPath.TryGetValue(fullPath, out guid))
+            {
+                if (!_loadedFromDiskCache || IsCachedMetaPathCurrent(fullPath + ".meta", guid))
+                    return true;
+
+                RebuildIndexFromDiskLocked();
+                return _guidByPath.TryGetValue(fullPath, out guid);
+            }
+
+            if (_loadedFromDiskCache)
+            {
+                RebuildIndexFromDiskLocked();
+                return _guidByPath.TryGetValue(fullPath, out guid);
+            }
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns a snapshot of all indexed asset paths under this Unity project without re-walking disk.
+    /// </summary>
+    internal string[] SnapshotIndexedAssetPaths()
+    {
+        EnsureInitialized();
+        lock (_sync)
+            return [.. _guidByPath.Keys];
+    }
+
+    /// <summary>
+    /// Resolves a sidecar disk cache file path for project-scoped Unity index metadata,
+    /// or returns null for ephemeral temp directories or when no asset cache root is configured.
+    /// </summary>
+    internal string? TryResolveProjectSidecarCachePath(string suffix)
+    {
+        string? cacheRoot = Engine.Assets?.GameCachePath;
+        if (string.IsNullOrWhiteSpace(cacheRoot))
+            return null;
+
+        string tempRoot = Path.GetFullPath(Path.GetTempPath());
+        if (IsPathBelow(ProjectRoot, tempRoot))
+            return null;
+
+        byte[] hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(ProjectRoot.ToUpperInvariant()));
+        string hashHex = Convert.ToHexString(hashBytes)[..24];
+        return Path.Combine(cacheRoot, "UnityGuidIndex", $"{hashHex}.{suffix}");
     }
 
     public string NormalizePortablePath(string assetPath)
@@ -94,7 +167,10 @@ public sealed class SourceGuidIndex : IDisposable
     public void Invalidate()
     {
         lock (_sync)
+        {
             _invalidated = true;
+            _bypassDiskCacheOnce = true;
+        }
     }
 
     private void EnsureInitialized()
@@ -109,29 +185,99 @@ public sealed class SourceGuidIndex : IDisposable
         }
     }
 
+    private void RebuildIndexFromDiskLocked()
+    {
+        _bypassDiskCacheOnce = true;
+        BuildIndex();
+    }
+
     private void BuildIndex()
     {
         _byGuid.Clear();
         _guidByPath.Clear();
+        _metaWriteTicksByMetaPath.Clear();
         _diagnostics.Clear();
+        _loadedFromDiskCache = false;
+
+        List<SourceSearchRoot> roots = [.. EnumerateSearchRoots()];
+        bool allowDiskCache = !_bypassDiskCacheOnce;
+        _bypassDiskCacheOnce = false;
+
+        if (allowDiskCache && TryLoadFromDiskCacheLocked(roots))
+        {
+            ResetWatchers(roots);
+            _initialized = true;
+            _invalidated = false;
+            _loadedFromDiskCache = true;
+            ScanCount++;
+            Generation++;
+            return;
+        }
 
         var candidatesByGuid = new Dictionary<string, List<SourceGuidCandidate>>(StringComparer.OrdinalIgnoreCase);
-        List<SourceSearchRoot> roots = [.. EnumerateSearchRoots()];
+        var scanDiagnostics = new ConcurrentBag<SourceImportDiagnostic>();
+        var scannedEntries = new ConcurrentBag<(SourceGuidCandidate Candidate, long MetaWriteTicks)>();
+
         foreach (SourceSearchRoot root in roots)
         {
+            List<string> metaFiles = [];
+            HashSet<string> existingEntries = new(StringComparer.OrdinalIgnoreCase);
+
             try
             {
-                foreach (string metaPath in Directory
-                    .EnumerateFiles(root.PhysicalPath, "*.meta", SearchOption.AllDirectories)
-                    .Order(StringComparer.OrdinalIgnoreCase))
+                var options = new EnumerationOptions
                 {
-                    string? guid = TryReadGuid(metaPath);
-                    if (string.IsNullOrWhiteSpace(guid))
-                        continue;
+                    RecurseSubdirectories = true,
+                    IgnoreInaccessible = true,
+                    ReturnSpecialDirectories = false,
+                };
 
+                // One recursive pass collects both .meta files and sibling assets/directories
+                // so we avoid separate per-file File.Exists and Directory.Exists syscalls.
+                foreach (string entry in Directory.EnumerateFileSystemEntries(root.PhysicalPath, "*", options))
+                {
+                    if (entry.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
+                        metaFiles.Add(entry);
+                    else
+                        existingEntries.Add(entry);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                scanDiagnostics.Add(new SourceImportDiagnostic
+                {
+                    Code = "UNITYGUID0001",
+                    Severity = SourceImportDiagnosticSeverity.Warning,
+                    Category = SourceImportDiagnosticCategory.GuidResolution,
+                    SourcePath = root.PhysicalPath,
+                    Message = $"Could not scan Unity GUID root '{root.PhysicalPath}': {ex.Message}",
+                });
+                continue;
+            }
+
+            Parallel.ForEach(
+                metaFiles,
+                new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 16) },
+                metaPath =>
+                {
                     string assetPath = metaPath[..^5];
-                    if (!File.Exists(assetPath) && !Directory.Exists(assetPath))
-                        continue;
+                    if (!existingEntries.Contains(assetPath))
+                        return;
+
+                    string? guid;
+                    long metaWriteTicks;
+                    try
+                    {
+                        guid = TryReadGuid(metaPath);
+                        if (string.IsNullOrWhiteSpace(guid))
+                            return;
+
+                        metaWriteTicks = File.GetLastWriteTimeUtc(metaPath).Ticks;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        return;
+                    }
 
                     string relative = Path.GetRelativePath(root.PhysicalPath, assetPath).Replace('\\', '/');
                     var candidate = new SourceGuidCandidate
@@ -144,30 +290,38 @@ public sealed class SourceGuidIndex : IDisposable
                             : $"{root.PortablePrefix.TrimEnd('/')}/{relative}",
                         Precedence = root.Precedence,
                     };
-
-                    if (!candidatesByGuid.TryGetValue(guid, out List<SourceGuidCandidate>? candidates))
-                    {
-                        candidates = [];
-                        candidatesByGuid.Add(guid, candidates);
-                    }
-
-                    if (!candidates.Any(existing => string.Equals(existing.AssetPath, candidate.AssetPath, StringComparison.OrdinalIgnoreCase)))
-                        candidates.Add(candidate);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _diagnostics.Add(new SourceImportDiagnostic
-                {
-                    Code = "UNITYGUID0001",
-                    Severity = SourceImportDiagnosticSeverity.Warning,
-                    Category = SourceImportDiagnosticCategory.GuidResolution,
-                    SourcePath = root.PhysicalPath,
-                    Message = $"Could not scan Unity GUID root '{root.PhysicalPath}': {ex.Message}",
+                    scannedEntries.Add((candidate, metaWriteTicks));
                 });
-            }
         }
 
+        foreach (SourceImportDiagnostic diagnostic in scanDiagnostics)
+            _diagnostics.Add(diagnostic);
+
+        foreach ((SourceGuidCandidate candidate, long metaWriteTicks) in scannedEntries)
+        {
+            _metaWriteTicksByMetaPath[candidate.MetaPath] = metaWriteTicks;
+            if (!candidatesByGuid.TryGetValue(candidate.Guid, out List<SourceGuidCandidate>? candidates))
+            {
+                candidates = [];
+                candidatesByGuid.Add(candidate.Guid, candidates);
+            }
+
+            if (!candidates.Any(existing => string.Equals(existing.AssetPath, candidate.AssetPath, StringComparison.OrdinalIgnoreCase)))
+                candidates.Add(candidate);
+        }
+
+        PopulateIndexFromCandidatesLocked(candidatesByGuid);
+        TrySaveToDiskCacheLocked(roots);
+
+        ResetWatchers(roots);
+        _initialized = true;
+        _invalidated = false;
+        ScanCount++;
+        Generation++;
+    }
+
+    private void PopulateIndexFromCandidatesLocked(Dictionary<string, List<SourceGuidCandidate>> candidatesByGuid)
+    {
         foreach ((string guid, List<SourceGuidCandidate> candidates) in candidatesByGuid)
         {
             SourceGuidCandidate[] ordered =
@@ -199,13 +353,184 @@ public sealed class SourceGuidIndex : IDisposable
                 });
             }
         }
-
-        ResetWatchers(roots);
-        _initialized = true;
-        _invalidated = false;
-        ScanCount++;
-        Generation++;
     }
+
+    private bool IsCachedResolutionCurrent(string guid, SourceGuidResolution resolution)
+    {
+        if (resolution.Selected is not { } selected)
+            return false;
+
+        if (!File.Exists(selected.AssetPath) && !Directory.Exists(selected.AssetPath))
+            return false;
+
+        return IsCachedMetaPathCurrent(selected.MetaPath, guid);
+    }
+
+    private bool IsCachedMetaPathCurrent(string metaPath, string expectedGuid)
+    {
+        if (!File.Exists(metaPath))
+            return false;
+
+        long currentTicks = File.GetLastWriteTimeUtc(metaPath).Ticks;
+        if (_metaWriteTicksByMetaPath.TryGetValue(metaPath, out long cachedTicks) && cachedTicks == currentTicks)
+            return true;
+
+        try
+        {
+            string? diskGuid = TryReadGuid(metaPath);
+            if (!string.Equals(diskGuid, expectedGuid, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            _metaWriteTicksByMetaPath[metaPath] = currentTicks;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private string? TryResolveDiskCachePath()
+    {
+        string? cacheRoot = Engine.Assets?.GameCachePath;
+        if (string.IsNullOrWhiteSpace(cacheRoot))
+            return null;
+
+        // Do not persist caches for ephemeral unit-test project directories under %TEMP%.
+        string tempRoot = Path.GetFullPath(Path.GetTempPath());
+        if (IsPathBelow(ProjectRoot, tempRoot))
+            return null;
+
+        byte[] hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(ProjectRoot.ToUpperInvariant()));
+        string hashHex = Convert.ToHexString(hashBytes)[..24];
+        return Path.Combine(cacheRoot, "UnityGuidIndex", $"{hashHex}.v1.tsv");
+    }
+
+    private string BuildCacheHeader(IReadOnlyList<SourceSearchRoot> roots)
+    {
+        string packagesRoot = Path.Combine(ProjectRoot, "Packages");
+        long manifestTicks = GetFileWriteTicksOrZero(Path.Combine(packagesRoot, "manifest.json"));
+        long lockTicks = GetFileWriteTicksOrZero(Path.Combine(packagesRoot, "packages-lock.json"));
+        string rootSignature = string.Join(
+            "|",
+            roots.Select(static r => $"{r.Precedence}:{r.PortablePrefix}:{r.PhysicalPath}"));
+        return $"{DiskCacheHeaderPrefix}\t{ProjectRoot}\t{manifestTicks}\t{lockTicks}\t{rootSignature}";
+    }
+
+    private bool TryLoadFromDiskCacheLocked(IReadOnlyList<SourceSearchRoot> roots)
+    {
+        string? cachePath = TryResolveDiskCachePath();
+        if (string.IsNullOrWhiteSpace(cachePath) || !File.Exists(cachePath))
+            return false;
+
+        try
+        {
+            string expectedHeader = BuildCacheHeader(roots);
+            var candidatesByGuid = new Dictionary<string, List<SourceGuidCandidate>>(StringComparer.OrdinalIgnoreCase);
+
+            using var reader = new StreamReader(cachePath, Encoding.UTF8);
+            string? header = reader.ReadLine();
+            if (!string.Equals(header, expectedHeader, StringComparison.Ordinal))
+                return false;
+
+            string? line;
+            while ((line = reader.ReadLine()) is not null)
+            {
+                if (line.Length == 0)
+                    continue;
+
+                string[] parts = line.Split('\t');
+                if (parts.Length != 6 ||
+                    !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int precedence) ||
+                    !long.TryParse(parts[5], NumberStyles.Integer, CultureInfo.InvariantCulture, out long metaWriteTicks))
+                {
+                    return false;
+                }
+
+                var candidate = new SourceGuidCandidate
+                {
+                    Guid = parts[0],
+                    Precedence = precedence,
+                    PortablePath = parts[2],
+                    AssetPath = parts[3],
+                    MetaPath = parts[4],
+                };
+                _metaWriteTicksByMetaPath[candidate.MetaPath] = metaWriteTicks;
+                if (!candidatesByGuid.TryGetValue(candidate.Guid, out List<SourceGuidCandidate>? candidates))
+                {
+                    candidates = [];
+                    candidatesByGuid.Add(candidate.Guid, candidates);
+                }
+
+                candidates.Add(candidate);
+            }
+
+            if (candidatesByGuid.Count == 0)
+                return false;
+
+            PopulateIndexFromCandidatesLocked(candidatesByGuid);
+            Debug.Meshes($"[UnityGuidIndex] Loaded {candidatesByGuid.Count} cached Unity GUIDs for '{ProjectRoot}'.");
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException)
+        {
+            _byGuid.Clear();
+            _guidByPath.Clear();
+            _metaWriteTicksByMetaPath.Clear();
+            _diagnostics.Clear();
+            return false;
+        }
+    }
+
+    private void TrySaveToDiskCacheLocked(IReadOnlyList<SourceSearchRoot> roots)
+    {
+        string? cachePath = TryResolveDiskCachePath();
+        if (string.IsNullOrWhiteSpace(cachePath) || _byGuid.Count == 0)
+            return;
+
+        try
+        {
+            string? directory = Path.GetDirectoryName(cachePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            string tempPath = $"{cachePath}.{Guid.NewGuid():N}.tmp";
+            using (var writer = new StreamWriter(tempPath, append: false, Encoding.UTF8))
+            {
+                writer.WriteLine(BuildCacheHeader(roots));
+                foreach (SourceGuidResolution resolution in _byGuid.Values)
+                {
+                    foreach (SourceGuidCandidate candidate in resolution.Candidates)
+                    {
+                        long metaTicks = _metaWriteTicksByMetaPath.TryGetValue(candidate.MetaPath, out long ticks)
+                            ? ticks
+                            : 0L;
+                        writer.Write(candidate.Guid);
+                        writer.Write('\t');
+                        writer.Write(candidate.Precedence.ToString(CultureInfo.InvariantCulture));
+                        writer.Write('\t');
+                        writer.Write(candidate.PortablePath);
+                        writer.Write('\t');
+                        writer.Write(candidate.AssetPath);
+                        writer.Write('\t');
+                        writer.Write(candidate.MetaPath);
+                        writer.Write('\t');
+                        writer.WriteLine(metaTicks.ToString(CultureInfo.InvariantCulture));
+                    }
+                }
+            }
+
+            File.Move(tempPath, cachePath, overwrite: true);
+            Debug.Meshes($"[UnityGuidIndex] Saved {_byGuid.Count} Unity GUIDs to disk cache for '{ProjectRoot}'.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Disk cache writes are opportunistic and never fail an import.
+        }
+    }
+
+    private static long GetFileWriteTicksOrZero(string path)
+        => File.Exists(path) ? File.GetLastWriteTimeUtc(path).Ticks : 0L;
 
     private IEnumerable<SourceSearchRoot> EnumerateSearchRoots()
     {

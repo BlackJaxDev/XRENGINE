@@ -126,7 +126,8 @@ public static class RuntimeRenderingHostServiceDefaults
     public const EThreePlayerPreference ThreePlayerViewportPreference = EThreePlayerPreference.PreferFirstPlayer;
     public const RuntimeGraphicsApiKind CurrentRenderBackend = RuntimeGraphicsApiKind.Unknown;
     public const EAntiAliasingMode DefaultAntiAliasingMode = EAntiAliasingMode.None;
-    public const EAntiAliasingFilterMode DefaultAntiAliasingFilterMode = EAntiAliasingFilterMode.Default;
+    public const EAntiAliasingFilterMode DefaultAntiAliasingFilterMode = EAntiAliasingFilterMode.Tent2x2;
+    public const float DefaultAntiAliasingSharpness = 0.35f;
     public const bool EnableNvidiaDlss = false;
     public const EDlssQualityMode DlssQuality = EDlssQualityMode.Quality;
     public const float DlssCustomScale = 1.0f;

@@ -22,6 +22,7 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
     float CameraFovY,
     float CameraAspect,
     XRCamera.EDepthMode CameraDepthMode,
+    float UpscaleTextureLodBias,
     uint SkinPaletteBase,
     uint SkinPaletteCount,
     int SkinningInfluenceCap,
@@ -61,6 +62,8 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
     private static float s_cachedCameraAspect;
     [ThreadStatic]
     private static XRCamera.EDepthMode s_cachedCameraDepthMode;
+    [ThreadStatic]
+    private static float s_cachedUpscaleTextureLodBias;
 
     internal static VulkanAutoUniformPublicationSnapshot Capture(
         in PendingMeshDraw draw,
@@ -92,6 +95,8 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
             s_cachedCameraAspect = perspective?.AspectRatio ?? 0f;
             s_cachedCameraDepthMode =
                 camera?.DepthMode ?? XRCamera.EDepthMode.Normal;
+            s_cachedUpscaleTextureLodBias =
+                RenderPipeline.ResolveUpscaleTextureLodBiasForFrame(pipeline);
             s_cachedFrameGeneration = ComputeFrameGeneration(renderFrameId);
             s_cachedViewGeneration = ComputeViewGeneration(
                 draw,
@@ -100,7 +105,8 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
                 s_cachedCameraFovX,
                 s_cachedCameraFovY,
                 s_cachedCameraAspect,
-                s_cachedCameraDepthMode);
+                s_cachedCameraDepthMode,
+                s_cachedUpscaleTextureLodBias);
             s_cachedRenderFrameId = renderFrameId;
             s_cachedPipeline = pipeline;
             s_cachedCamera = camera;
@@ -144,6 +150,7 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
             s_cachedCameraFovY,
             s_cachedCameraAspect,
             s_cachedCameraDepthMode,
+            s_cachedUpscaleTextureLodBias,
             skinPaletteBase,
             skinPaletteCount,
             skinningInfluenceCap,
@@ -202,7 +209,8 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
         float cameraFovX,
         float cameraFovY,
         float cameraAspect,
-        XRCamera.EDepthMode cameraDepthMode)
+        XRCamera.EDepthMode cameraDepthMode,
+        float upscaleTextureLodBias)
     {
         FrameOpSignatureHasher hash = new();
         AddMatrix(ref hash, draw.ViewMatrix);
@@ -239,6 +247,7 @@ internal readonly record struct VulkanAutoUniformPublicationSnapshot(
         hash.Add(cameraFovY);
         hash.Add(cameraAspect);
         hash.Add((int)cameraDepthMode);
+        hash.Add(upscaleTextureLodBias);
         return hash.ToHash();
     }
 

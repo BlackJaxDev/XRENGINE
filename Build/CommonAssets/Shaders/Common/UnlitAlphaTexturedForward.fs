@@ -69,6 +69,7 @@ uniform float FarPlaneDist;
 #endif
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 #pragma snippet "ShadowMomentEncoding"
 
 void main()
@@ -76,7 +77,7 @@ void main()
 #if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     XRENGINE_BeginForwardFragmentOutput();
 #endif
-    vec4 color = texture(Texture0, FragUV0);
+    vec4 color = XRENGINE_SampleBiasedTexture(Texture0, FragUV0);
     if (color.a < AlphaCutoff)
       discard;
 

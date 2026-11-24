@@ -122,37 +122,72 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         out VulkanAdvancedNativeComputePipelines pipelines, out string reason)
     {
         pipelines = default;
-        VulkanAdvancedVisibilityPipelineReadiness readiness = TryGetNativeComputePipeline(0,
-            "Advanced/Classification/ClassifyTiles.comp", out VulkanAdvancedComputePipeline classify, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(1, "Advanced/Classification/BuildClassificationIndirect.comp",
-            out VulkanAdvancedComputePipeline arguments, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(2, "Advanced/AO/Gtao.comp",
-            out VulkanAdvancedComputePipeline ambientOcclusion, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(3, "Advanced/Lighting/BuildFroxels.comp",
-            out VulkanAdvancedComputePipeline froxels, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(4, "Advanced/Shading/ShadeBackground.comp",
-            out VulkanAdvancedComputePipeline background, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(5, "Advanced/Shading/ShadeNativeOpaque.comp",
-            out VulkanAdvancedComputePipeline shade, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
+        VulkanAdvancedVisibilityPipelineReadiness combined = VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        string combinedReason = "Ready";
+
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                TryGetNativeComputePipeline(0, "Advanced/Classification/ClassifyTiles.comp", out VulkanAdvancedComputePipeline classify, out string stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                TryGetNativeComputePipeline(1, "Advanced/Classification/BuildClassificationIndirect.comp", out VulkanAdvancedComputePipeline arguments, out stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                TryGetNativeComputePipeline(2, "Advanced/AO/Gtao.comp", out VulkanAdvancedComputePipeline ambientOcclusion, out stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                TryGetNativeComputePipeline(3, "Advanced/Lighting/BuildFroxels.comp", out VulkanAdvancedComputePipeline froxels, out stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                TryGetNativeComputePipeline(4, "Advanced/Shading/ShadeBackground.comp", out VulkanAdvancedComputePipeline background, out stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                TryGetNativeComputePipeline(5, "Advanced/Shading/ShadeNativeOpaque.comp", out VulkanAdvancedComputePipeline shade, out stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
         // The lean standard kernel is prepared with the family, so the first frame that can
         // use it does not wait for its compile.
-        readiness = TryGetNativeComputePipeline(ShadeStandardLeanProgramIndex, ShadeShaderPath,
-            out VulkanAdvancedComputePipeline shadeLean, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                TryGetNativeComputePipeline(ShadeStandardLeanProgramIndex, ShadeShaderPath, out VulkanAdvancedComputePipeline shadeLean, out stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
         // The RVC telemetry kernel is small. It is prepared with the family so
         // a compile failure is loud at admission, not a silent missing counter.
-        readiness = TryGetNativeComputePipeline(RvcShadeletTelemetryProgramIndex, RvcShadeletTelemetryShaderPath,
-            out VulkanAdvancedComputePipeline telemetry, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(FoveatedQuadFillProgramIndex, FoveatedQuadFillShaderPath,
-            out VulkanAdvancedComputePipeline foveatedFill, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                TryGetNativeComputePipeline(RvcShadeletTelemetryProgramIndex, RvcShadeletTelemetryShaderPath, out VulkanAdvancedComputePipeline telemetry, out stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                TryGetNativeComputePipeline(FoveatedQuadFillProgramIndex, FoveatedQuadFillShaderPath, out VulkanAdvancedComputePipeline foveatedFill, out stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
+
+        reason = combinedReason;
+        if (combined != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return combined;
+
         pipelines = new(classify, arguments, ambientOcclusion, froxels, background, shade, default)
         {
             RvcShadeletTelemetry = telemetry,

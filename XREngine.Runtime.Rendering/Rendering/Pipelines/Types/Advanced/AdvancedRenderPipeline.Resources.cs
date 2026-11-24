@@ -526,6 +526,7 @@ public partial class AdvancedRenderPipeline
             DeclareLatePostDestination(builder, SmaaFBOName, SmaaOutputTextureName, windowSize, CreateSmaaFBO);
         }
         DeclareLatePostDestination(builder, TsrHistoryColorFBOName, TsrHistoryColorTextureName, windowSize, CreateTsrHistoryColorFBO);
+        DeclareLatePostDestination(builder, TsrOutputViewFBOName, TsrOutputTextureName, windowSize, CreateTsrOutputViewFBO);
         DeclareLatePostDestination(builder, TsrAccumulationFBOName, TsrAccumulationTextureName, windowSize, CreateTsrAccumulationFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataOutputTextureName, windowSize, CreateTsrHistoryMetadataOutputFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataFBOName, TsrHistoryMetadataTextureName, windowSize, CreateTsrHistoryMetadataFBO);

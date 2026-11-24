@@ -65,6 +65,18 @@ public abstract partial class MotionBase
                     destination.TryAdd(proceduralContribution);
                 }
                 break;
+            default:
+                if (IsProceduralMotion
+                    && TryCreateProceduralHumanoidContribution(
+                        normalizedTime,
+                        weight,
+                        CombineOccurrenceId(occurrenceId, ID),
+                        lifecycleGeneration,
+                        out HumanoidMotionContribution genericProceduralContribution))
+                {
+                    destination.TryAdd(genericProceduralContribution);
+                }
+                break;
         }
     }
 

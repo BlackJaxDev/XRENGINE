@@ -20,7 +20,16 @@ public partial class RootMotionMovementModule : MovementModule
     private Vector3 _pendingWorldTranslationDelta;
 
     [MemoryPackIgnore]
+    private float _pendingDeltaTimeSeconds;
+
+    [MemoryPackIgnore]
     private Quaternion _pendingYawDelta = Quaternion.Identity;
+
+    [MemoryPackIgnore]
+    private Vector3 _lastComputedHorizontalVelocity;
+
+    [MemoryPackIgnore]
+    private float _staleZeroStepElapsedSeconds;
 
     [MemoryPackIgnore]
     private Vector3 _lastRequestedHorizontalDisplacement;
@@ -28,14 +37,34 @@ public partial class RootMotionMovementModule : MovementModule
     [MemoryPackIgnore]
     private Vector3 _requestedHorizontalDisplacementSincePhysicsStep;
 
+    [MemoryPackIgnore]
+    private Vector3 _lastAirHorizontalVelocity;
+
+    [MemoryPackIgnore]
+    private bool _lastAirHadDirectionalInput;
+
+    [MemoryPackIgnore]
+    private float _landingMomentumGraceRemainingSeconds;
+
     private float _airControlFactor = 0.65f;
     private float _airMinSpeedFactor = 0.4f;
     private float _rootMotionScale = 1.0f;
 
-    [MemoryPackConstructor]
-    public RootMotionMovementModule() { }
+    public const float DefaultRootMotionJumpForce = 4.9f;
+    public const float DefaultRootMotionGravityScale = 2.0f;
 
-    public RootMotionMovementModule(string name) : base(name) { }
+    [MemoryPackConstructor]
+    public RootMotionMovementModule()
+    {
+        JumpForce = DefaultRootMotionJumpForce;
+        GravityScale = DefaultRootMotionGravityScale;
+    }
+
+    public RootMotionMovementModule(string name) : base(name)
+    {
+        JumpForce = DefaultRootMotionJumpForce;
+        GravityScale = DefaultRootMotionGravityScale;
+    }
 
     /// <summary>
     /// Scalar multiplier applied to incoming animation root-motion translation deltas.
@@ -87,11 +116,16 @@ public partial class RootMotionMovementModule : MovementModule
     }
 
     /// <summary>
-    /// Accumulates one world-space root-motion translation and yaw delta emitted by
-    /// <c>AnimStateMachineComponent.RootMotionEvaluated</c>. Safe to call across render
-    /// and physics threads with zero heap allocations.
+    /// Accumulates one world-space root-motion translation, yaw delta, and evaluated animation
+    /// duration emitted by <c>AnimStateMachineComponent.RootMotionEvaluated</c>. Passing
+    /// <paramref name="deltaSeconds"/> lets the fixed physics step compute steady velocity even
+    /// when render and physics rates do not divide evenly. Safe to call across render and physics
+    /// threads with zero heap allocations.
     /// </summary>
-    public void AccumulateRootMotionDelta(Vector3 worldTranslationDelta, Quaternion yawDelta)
+    public void AccumulateRootMotionDelta(
+        Vector3 worldTranslationDelta,
+        Quaternion yawDelta,
+        float deltaSeconds = 0.0f)
     {
         if (!IsFinite(worldTranslationDelta))
             worldTranslationDelta = Vector3.Zero;
@@ -101,6 +135,8 @@ public partial class RootMotionMovementModule : MovementModule
         {
             _pendingWorldTranslationDelta += worldTranslationDelta;
             _pendingYawDelta = Quaternion.Normalize(_pendingYawDelta * safeYaw);
+            if (float.IsFinite(deltaSeconds) && deltaSeconds > 0.0f)
+                _pendingDeltaTimeSeconds += deltaSeconds;
         }
     }
 
@@ -139,19 +175,30 @@ public partial class RootMotionMovementModule : MovementModule
         lock (_accumulatorSync)
         {
             _pendingWorldTranslationDelta = Vector3.Zero;
+            _pendingDeltaTimeSeconds = 0.0f;
             _pendingYawDelta = Quaternion.Identity;
+            _lastComputedHorizontalVelocity = Vector3.Zero;
+            _staleZeroStepElapsedSeconds = 0.0f;
             _lastRequestedHorizontalDisplacement = Vector3.Zero;
             _requestedHorizontalDisplacementSincePhysicsStep = Vector3.Zero;
+            _lastAirHorizontalVelocity = Vector3.Zero;
+            _lastAirHadDirectionalInput = false;
+            _landingMomentumGraceRemainingSeconds = 0.0f;
         }
     }
 
     public override MovementResult ProcessGroundMovement(in MovementContext context)
     {
+        const float maxVelocityCarrySeconds = 0.06f;
+
         Vector3 rawDelta;
+        float accumulatedAnimSeconds;
         lock (_accumulatorSync)
         {
             rawDelta = _pendingWorldTranslationDelta;
+            accumulatedAnimSeconds = _pendingDeltaTimeSeconds;
             _pendingWorldTranslationDelta = Vector3.Zero;
+            _pendingDeltaTimeSeconds = 0.0f;
         }
 
         Vector3 up = context.UpDirection.LengthSquared() > 1.0e-8f
@@ -164,7 +211,79 @@ public partial class RootMotionMovementModule : MovementModule
         Vector3 horizontalVelocity = Vector3.Zero;
         if (float.IsFinite(context.DeltaTime) && context.DeltaTime > 1.0e-6f)
         {
-            horizontalVelocity = horizontalDelta / context.DeltaTime;
+            if (accumulatedAnimSeconds > 1.0e-6f)
+            {
+                // Divide accumulated displacement by its own evaluated animation duration so
+                // asynchronous render and fixed physics clocks produce steady velocity.
+                horizontalVelocity = horizontalDelta / accumulatedAnimSeconds;
+                horizontalDelta = horizontalVelocity * context.DeltaTime;
+                _lastComputedHorizontalVelocity = horizontalVelocity;
+                _staleZeroStepElapsedSeconds = 0.0f;
+            }
+            else if (horizontalDelta.LengthSquared() > 1.0e-10f)
+            {
+                horizontalVelocity = horizontalDelta / context.DeltaTime;
+                _lastComputedHorizontalVelocity = horizontalVelocity;
+                _staleZeroStepElapsedSeconds = 0.0f;
+            }
+            else if (_lastComputedHorizontalVelocity.LengthSquared() > 1.0e-6f)
+            {
+                // Carry recent horizontal velocity across a physics tick that fires between two
+                // render frames instead of dropping the capsule to zero velocity for one step.
+                _staleZeroStepElapsedSeconds += context.DeltaTime;
+                if (_staleZeroStepElapsedSeconds <= maxVelocityCarrySeconds)
+                {
+                    horizontalVelocity = _lastComputedHorizontalVelocity;
+                    horizontalDelta = horizontalVelocity * context.DeltaTime;
+                }
+                else
+                {
+                    _lastComputedHorizontalVelocity = Vector3.Zero;
+                }
+            }
+
+            // Preserve carried airborne horizontal velocity across touchdown physics steps while
+            // the animation driver transitions straight into walking or running root motion.
+            if (_landingMomentumGraceRemainingSeconds > 0.0f)
+            {
+                _landingMomentumGraceRemainingSeconds = MathF.Max(0.0f, _landingMomentumGraceRemainingSeconds - context.DeltaTime);
+                Vector3 carried = _lastAirHorizontalVelocity - up * Vector3.Dot(_lastAirHorizontalVelocity, up);
+                float carriedSpeedSq = carried.LengthSquared();
+                if (carriedSpeedSq > 0.04f)
+                {
+                    float currentSpeedSq = horizontalVelocity.LengthSquared();
+                    float dot = Vector3.Dot(horizontalVelocity, carried);
+                    if (currentSpeedSq >= carriedSpeedSq * 0.78f && dot > 0.0f)
+                    {
+                        // Full-speed ground root motion has taken over; end grace early.
+                        _landingMomentumGraceRemainingSeconds = 0.0f;
+                        _lastAirHorizontalVelocity = Vector3.Zero;
+                        _lastAirHadDirectionalInput = false;
+                    }
+                    else if (_lastAirHadDirectionalInput && dot >= -0.05f * carriedSpeedSq)
+                    {
+                        // Maintain full carried speed in the active travel direction with zero dip.
+                        float carriedSpeed = MathF.Sqrt(carriedSpeedSq);
+                        Vector3 direction = currentSpeedSq > 0.04f && dot > 0.0f
+                            ? Vector3.Normalize(horizontalVelocity)
+                            : carried / carriedSpeed;
+                        horizontalVelocity = direction * carriedSpeed;
+                        horizontalDelta = horizontalVelocity * context.DeltaTime;
+                    }
+                    else if (!_lastAirHadDirectionalInput && currentSpeedSq < carriedSpeedSq * 0.64f)
+                    {
+                        horizontalVelocity = carried;
+                        horizontalDelta = horizontalVelocity * context.DeltaTime;
+                    }
+                }
+
+                if (_landingMomentumGraceRemainingSeconds <= 0.0f)
+                {
+                    _lastAirHorizontalVelocity = Vector3.Zero;
+                    _lastAirHadDirectionalInput = false;
+                }
+            }
+
             float speed = horizontalVelocity.Length();
             if (speed > context.MaxSpeed && context.MaxSpeed > 0.0f)
             {
@@ -191,6 +310,9 @@ public partial class RootMotionMovementModule : MovementModule
         lock (_accumulatorSync)
         {
             _pendingWorldTranslationDelta = Vector3.Zero;
+            _pendingDeltaTimeSeconds = 0.0f;
+            _lastComputedHorizontalVelocity = Vector3.Zero;
+            _staleZeroStepElapsedSeconds = 0.0f;
             _lastRequestedHorizontalDisplacement = Vector3.Zero;
             _requestedHorizontalDisplacementSincePhysicsStep = Vector3.Zero;
         }
@@ -212,6 +334,9 @@ public partial class RootMotionMovementModule : MovementModule
 
         horizontal = ClampHorizontalSpeed(horizontal + context.UpDirection * context.VerticalSpeed, context.MaxSpeed, context.UpDirection);
         horizontal -= context.UpDirection * Vector3.Dot(horizontal, context.UpDirection);
+        _lastAirHorizontalVelocity = horizontal;
+        _lastAirHadDirectionalInput = context.InputDirection.LengthSquared() > 1.0e-4f;
+        _landingMomentumGraceRemainingSeconds = _lastAirHadDirectionalInput ? 0.28f : 0.10f;
 
         float newVerticalSpeed = context.VerticalSpeed + Vector3.Dot(context.Gravity, context.UpDirection) * context.DeltaTime;
 

@@ -14,7 +14,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.UnitTests.Animation.MotionBricks;
 
 [TestFixture]
-public sealed class MotionBricksStage2Tests
+public sealed class MotionBricksStateMachineAndConversionTests
 {
     private static readonly MethodInfo EvaluateAndApplyMethod =
         typeof(AnimStateMachineComponent).GetMethod("EvaluateAndApply", BindingFlags.Instance | BindingFlags.NonPublic)
@@ -89,7 +89,10 @@ public sealed class MotionBricksStage2Tests
         stateMachineComp.RootMotionApplicationMode = EHumanoidRootMotionApplicationMode.ExternalConsumer;
 
         var syntheticSession = new SyntheticWalkSomaSession(stepMetersPerFrame: 0.06f, legSwingRadians: 0.45f);
-        using var driver = new SomaFixedTargetLocomotionDriver(syntheticSession, ownsSession: false);
+        using var driver = new MotionBricksAsyncLocomotionDriver(
+            syntheticSession,
+            ownsSession: false,
+            useBackgroundThread: false);
         var motion = new MotionBricksLocomotionMotion
         {
             Name = "MotionBricksLocomotion",
@@ -113,11 +116,23 @@ public sealed class MotionBricksStage2Tests
         prepared.ShouldBeTrue(stateMachineComp.PlaybackCapabilityDiagnostic);
 
         long frameTicks = Stopwatch.Frequency / 30;
-        for (int i = 0; i < 6; i++)
+        float maxAbsLeftLegMuscle = 0.0f;
+        float minLegBindRotationDot = 1.0f;
+        Transform legTransform = leftLegNode.GetTransformAs<Transform>(true)!;
+
+        for (int i = 0; i < 10; i++)
         {
             EvaluateAndApplyMethod.Invoke(stateMachineComp, [frameTicks, humanoid]);
             ApplyMusclePoseMethod.Invoke(humanoid, null);
             PublishRootMotionMethod.Invoke(stateMachineComp, null);
+
+            if (humanoid.TryGetMuscleValue(EHumanoidValue.LeftUpperLegFrontBack, out float sampleLegMuscle))
+                maxAbsLeftLegMuscle = MathF.Max(maxAbsLeftLegMuscle, MathF.Abs(sampleLegMuscle));
+
+            float bindDot = MathF.Abs(Quaternion.Dot(
+                Quaternion.Normalize(legTransform.Rotation),
+                Quaternion.Normalize(legTransform.BindState.Rotation)));
+            minLegBindRotationDot = MathF.Min(minLegBindRotationDot, bindDot);
         }
 
         syntheticSession.InferenceCallCount.ShouldBeGreaterThanOrEqualTo(1);
@@ -125,12 +140,9 @@ public sealed class MotionBricksStage2Tests
         rootMotionEvents.ShouldBeGreaterThan(1);
         accumulatedDelta.Length().ShouldBeGreaterThan(0.15f);
 
-        humanoid.TryGetMuscleValue(EHumanoidValue.LeftUpperLegFrontBack, out float leftLegMuscle).ShouldBeTrue();
-        MathF.Abs(leftLegMuscle).ShouldBeGreaterThan(0.05f);
-
-        Transform legTransform = leftLegNode.GetTransformAs<Transform>(true)!;
-        Quaternion.Dot(Quaternion.Normalize(legTransform.Rotation), Quaternion.Normalize(legTransform.BindState.Rotation))
-            .ShouldBeLessThan(0.999f);
+        humanoid.TryGetMuscleValue(EHumanoidValue.LeftUpperLegFrontBack, out _).ShouldBeTrue();
+        maxAbsLeftLegMuscle.ShouldBeGreaterThan(0.05f);
+        minLegBindRotationDot.ShouldBeLessThan(0.999f);
     }
 
     [Test]

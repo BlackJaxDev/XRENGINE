@@ -11,7 +11,7 @@ internal sealed class VulkanPipelinePrewarmDatabase
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented = true,
+        WriteIndented = false,
     };
 
     private readonly Dictionary<string, VulkanPipelinePrewarmEntry> _entriesByKey;

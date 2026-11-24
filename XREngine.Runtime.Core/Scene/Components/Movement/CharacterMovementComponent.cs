@@ -563,6 +563,26 @@ namespace XREngine.Components.Movement
         public IAbstractDynamicRigidBody? RigidBodyReference
             => (ActiveController as IPhysicsControllerBodySource)?.Actor;
 
+        /// <summary>
+        /// Fires after the active character controller resizes its capsule height and shifts
+        /// <see cref="RigidBodyTransform"/> to keep the foot contact point fixed in world space.
+        /// </summary>
+        public event Action<float>? ControllerResized;
+
+        private void ResizeActiveControllerPreservingFootWorldPosition(float targetHeight)
+        {
+            if (ActiveController is not { } controller)
+                return;
+
+            Vector3 beforePosition = controller.Position;
+            controller.Resize(targetHeight);
+            Vector3 positionDelta = controller.Position - beforePosition;
+            if (IsFinite(positionDelta) && positionDelta.LengthSquared() > 1.0e-10f)
+                RigidBodyTransform.ApplyPositionOffsetPreservingInterpolation(positionDelta);
+
+            ControllerResized?.Invoke(HalfHeight);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -577,18 +597,18 @@ namespace XREngine.Components.Movement
                     break;
                 case nameof(StandingHeight):
                     if (CrouchState == ECrouchState.Standing)
-                        ActiveController?.Resize(StandingHeight);
+                        ResizeActiveControllerPreservingFootWorldPosition(StandingHeight);
                     break;
                 case nameof(CrouchedHeight):
                     if (CrouchState == ECrouchState.Crouched)
-                        ActiveController?.Resize(CrouchedHeight);
+                        ResizeActiveControllerPreservingFootWorldPosition(CrouchedHeight);
                     break;
                 case nameof(ProneHeight):
                     if (CrouchState == ECrouchState.Prone)
-                        ActiveController?.Resize(ProneHeight);
+                        ResizeActiveControllerPreservingFootWorldPosition(ProneHeight);
                     break;
                 case nameof(CrouchState):
-                    ActiveController?.Resize(GetCurrentHeight());
+                    ResizeActiveControllerPreservingFootWorldPosition(GetCurrentHeight());
                     break;
                 case nameof(Radius):
                     ActiveController?.Radius = Radius;
@@ -907,10 +927,16 @@ namespace XREngine.Components.Movement
             _previousPhysicsFootPosition = footPosition;
             _hasPreviousPhysicsFootPosition = true;
 
+            // Drain the render-side root-motion accumulator, then compare Jolt/PhysX actual planar
+            // travel against the exact displacement this controller consumed during this fixed step.
+            if (_movementModule is RootMotionMovementModule rootMotionModule)
+                rootMotionModule.ConsumeRequestedHorizontalDisplacementSincePhysicsStep();
+
             Vector3 actualPlanar = ProjectOntoPlane(actualDisplacement, up);
-            Vector3 requestedPlanar = _movementModule is RootMotionMovementModule rootMotionModule
-                ? rootMotionModule.ConsumeRequestedHorizontalDisplacementSincePhysicsStep()
-                : ProjectOntoPlane(_lastSubmittedPlanarVelocity * deltaTime, up);
+            Vector3 requestedVelocity = IsFinite(controller.RequestedVelocity)
+                ? controller.RequestedVelocity
+                : _lastSubmittedPlanarVelocity;
+            Vector3 requestedPlanar = ProjectOntoPlane(requestedVelocity * deltaTime, up);
 
             float requestedDist = requestedPlanar.Length();
             float blockedRatio = 0.0f;
@@ -994,9 +1020,13 @@ namespace XREngine.Components.Movement
         {
             if (ActiveController is null)
                 return;
+            if (WorldAs<IRuntimePhysicsWorldContext>() is not { PhysicsEnabled: true })
+                return;
             float dt = DeltaTime;
             if (!float.IsFinite(dt) || dt <= 0.0f)
                 return;
+            if (!TickInputWithPhysics && dt > 0.05f)
+                dt = 0.05f;
 
             Acceleration = (Velocity - LastVelocity) / dt;
 
@@ -1333,15 +1363,22 @@ namespace XREngine.Components.Movement
             // Update stored velocity
             Velocity = newVelocity;
 
-            // Apply landing friction when hitting ground
+            // Apply landing friction when hitting ground, unless a root-motion character lands
+            // with directional movement input held and must preserve horizontal momentum.
             if (ActiveController.IsGrounded)
             {
-                Vector3 up = NormalizedUpDirection;
-                float frictionFactor = 1.0f - MovementModule.GroundFriction;
-                float verticalSpeed = Vector3.Dot(newVelocity, up);
-                Vector3 tangentialVelocity = newVelocity - up * verticalSpeed;
-                newVelocity = tangentialVelocity * frictionFactor + up * verticalSpeed;
-                Velocity = newVelocity;
+                bool preserveMovingRootMotionLanding = MovementModule is RootMotionMovementModule
+                    && inputDirection.LengthSquared() > 1.0e-4f;
+                if (!preserveMovingRootMotionLanding)
+                {
+                    Vector3 up = NormalizedUpDirection;
+                    float frictionFactor = 1.0f - MovementModule.GroundFriction;
+                    float verticalSpeed = Vector3.Dot(newVelocity, up);
+                    Vector3 tangentialVelocity = newVelocity - up * verticalSpeed;
+                    newVelocity = tangentialVelocity * frictionFactor + up * verticalSpeed;
+                    Velocity = newVelocity;
+                }
+
                 ReconcileGroundSupport(true);
             }
 

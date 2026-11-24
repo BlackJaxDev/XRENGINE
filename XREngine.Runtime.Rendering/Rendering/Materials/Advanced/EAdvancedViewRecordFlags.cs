@@ -34,4 +34,13 @@ public enum EAdvancedViewRecordFlags : uint
     /// scales the GTAO value by how far the normal-mapped normal bends from the surface normal.
     /// </summary>
     GtaoMaterialNormals = 1u << 9,
+    /// <summary>
+    /// Four-bit field (bits 10 through 13) encoding the visibility raster MSAA sample count (2, 4, or 8;
+    /// 0 or 1 means single-sample). Vulkan GLSL does not expose <c>gl_NumSamples</c>, so masked
+    /// alpha-to-coverage reads the active sample count from the view record.
+    /// </summary>
+    MsaaSampleCountBit0 = 1u << 10,
+    MsaaSampleCountBit1 = 1u << 11,
+    MsaaSampleCountBit2 = 1u << 12,
+    MsaaSampleCountBit3 = 1u << 13,
 }

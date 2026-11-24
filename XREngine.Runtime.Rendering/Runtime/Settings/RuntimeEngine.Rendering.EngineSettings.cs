@@ -540,7 +540,8 @@ public static partial class RuntimeEngine
                 private Vector3 _defaultLuminance = new(0.299f, 0.587f, 0.114f);
                 private bool _outputHDR = false;
                 private EAntiAliasingMode _antiAliasingMode = EAntiAliasingMode.Tsr;
-                private EAntiAliasingFilterMode _antiAliasingFilterMode = EAntiAliasingFilterMode.Default;
+                private EAntiAliasingFilterMode _antiAliasingFilterMode = EAntiAliasingFilterMode.Tent2x2;
+                private float _antiAliasingSharpness = 0.35f;
                 private float _tsrRenderScale = 0.75f;
                 private bool _enableNvidiaDlss = false;
                 private EDlssQualityMode _dlssQuality = EDlssQualityMode.Quality;
@@ -1164,6 +1165,18 @@ public static partial class RuntimeEngine
                 {
                     get => _antiAliasingFilterMode;
                     set => SetField(ref _antiAliasingFilterMode, value);
+                }
+
+                /// <summary>
+                /// Controls the post-resolve RCAS sharpening strength applied after TSR and TAA.
+                /// Zero disables sharpening; higher values increase local contrast adaptation up to 1.0.
+                /// </summary>
+                [Category("Performance")]
+                [Description("Post-resolve RCAS sharpening strength (0.0 to 1.0) applied after TSR and TAA.")]
+                public float AntiAliasingSharpness
+                {
+                    get => _antiAliasingSharpness;
+                    set => SetField(ref _antiAliasingSharpness, float.IsFinite(value) ? Math.Clamp(value, 0.0f, 1.0f) : 0.0f);
                 }
 
                 /// <summary>

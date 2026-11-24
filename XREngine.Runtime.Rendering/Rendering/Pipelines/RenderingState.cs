@@ -110,6 +110,20 @@ public sealed partial class XRRenderPipelineInstance
         public bool HasRequiredOffscreenAuthoringFailure { get; private set; }
         public string? RequiredOffscreenAuthoringFailureReason { get; private set; }
         public int RequiredOffscreenAuthoringFailureCount { get; private set; }
+        /// <summary>
+        /// True when the active pipeline invocation deferred without throwing because a required
+        /// GPU resource (such as shader compilation, deformation mesh packing, or a producer
+        /// receipt) is still preparing asynchronously.
+        /// </summary>
+        public bool HasPendingResourcePreparation { get; private set; }
+        public string? PendingResourcePreparationReason { get; private set; }
+        internal void RequestPendingResourcePreparationDeferral(string reason)
+        {
+            HasPendingResourcePreparation = true;
+            PendingResourcePreparationReason ??= string.IsNullOrWhiteSpace(reason)
+                ? "Render resource preparation is pending."
+                : reason;
+        }
         internal void SetOutputCompletionReservation(
             ulong receiptId,
             in RenderOutputRequest output)
@@ -322,6 +336,8 @@ public sealed partial class XRRenderPipelineInstance
             HasRequiredOffscreenAuthoringFailure = false;
             RequiredOffscreenAuthoringFailureReason = null;
             RequiredOffscreenAuthoringFailureCount = 0;
+            HasPendingResourcePreparation = false;
+            PendingResourcePreparationReason = null;
             GlobalMaterialOverride = globalMaterialOverride;
             ScreenSpaceUserInterface = screenSpaceUI?.IsScreenSpace == true ? screenSpaceUI : null;
             MeshRenderCommands = meshRenderCommands;
@@ -452,6 +468,8 @@ public sealed partial class XRRenderPipelineInstance
             HasRequiredOffscreenAuthoringFailure = false;
             RequiredOffscreenAuthoringFailureReason = null;
             RequiredOffscreenAuthoringFailureCount = 0;
+            HasPendingResourcePreparation = false;
+            PendingResourcePreparationReason = null;
             DirectionalCascadeLayeredShadowPass = false;
             DirectionalCascadeInstancedLayeredShadowPass = false;
             DirectionalCascadeAtlasGroupedShadowPass = false;

@@ -723,6 +723,9 @@ public partial class XRMaterial
     // All CPU-side request shaping stays here on the material path so renderer work is limited
     // to backend-facing compile/adoption once a prepared variant is ready.
     public void RequestUberVariantRebuild()
+        => RequestUberVariantRebuildCore(skipDebounce: false);
+
+    private void RequestUberVariantRebuildCore(bool skipDebounce)
     {
         if (IsDestroyed || IsMaterialTeardownRequested)
             return;
@@ -763,8 +766,11 @@ public partial class XRMaterial
 
         _uberVariantBuildTask = Task.Run(async () =>
         {
-            await Task.Delay(UberVariantDebounceMilliseconds, cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
+            if (!skipDebounce)
+            {
+                await Task.Delay(UberVariantDebounceMilliseconds, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
 
             SetUberVariantStatus(new UberMaterialVariantStatus
             {
@@ -1199,6 +1205,13 @@ public partial class XRMaterial
     }
 
     /// <summary>
+    /// Returns true when a non-Uber material is ready or when an authored Uber material has
+    /// finished preparing its raster shader source (or reached a terminal failure state).
+    /// </summary>
+    public bool IsUberVariantReadyForAdmission
+        => IsUberRasterSourceReady() || UberVariantStatus.Stage == EUberMaterialVariantStage.Failed;
+
+    /// <summary>
     /// Kicks off an asynchronous uber-variant build for this material if one is
     /// not already in flight or complete. Safe no-op for non-uber materials.
     /// </summary>
@@ -1221,7 +1234,7 @@ public partial class XRMaterial
         if (!TryGetUberMaterialState(out _, out _))
             return;
 
-        RequestUberVariantRebuild();
+        RequestUberVariantRebuildCore(skipDebounce: ActiveUberVariant.IsEmpty);
     }
 
     private bool HasRenderableUberVariantState(XRShader? activeFragmentShader)

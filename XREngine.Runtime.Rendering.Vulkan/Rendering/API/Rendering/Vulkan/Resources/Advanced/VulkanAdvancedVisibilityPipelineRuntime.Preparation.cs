@@ -469,6 +469,27 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         }
     }
 
+    private static bool CombinePreparationReadiness(
+        ref VulkanAdvancedVisibilityPipelineReadiness combined,
+        ref string combinedReason,
+        VulkanAdvancedVisibilityPipelineReadiness next,
+        string nextReason)
+    {
+        if (next == VulkanAdvancedVisibilityPipelineReadiness.Failed)
+        {
+            combined = next;
+            combinedReason = nextReason;
+            return false;
+        }
+        if (next != VulkanAdvancedVisibilityPipelineReadiness.Ready &&
+            combined == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+        {
+            combined = next;
+            combinedReason = nextReason;
+        }
+        return true;
+    }
+
     private VulkanAdvancedVisibilityPipelineReadiness PrepareRequiredFamilyOnce(out string reason)
     {
         long attemptStart = Stopwatch.GetTimestamp();
@@ -477,61 +498,87 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         {
             using var foregroundWaitObservation =
                 new VulkanPipelineForegroundWaitObservationScope(_foregroundWaitObserver);
-            VulkanAdvancedVisibilityPipelineReadiness readiness =
-                PrepareComputePipelines(out _, out _, out _, out reason);
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
+            // Queue every required shader family in the same pass so all compiler lanes
+            // run in parallel instead of stalling cold startup one shader at a time.
+            VulkanAdvancedVisibilityPipelineReadiness combined = VulkanAdvancedVisibilityPipelineReadiness.Ready;
+            string combinedReason = "Ready";
 
-            readiness = PrepareIndexedGroupFinalizePipelines(out reason);
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareComputePipelines(out _, out _, out _, out string stepReason), stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
 
-            readiness = PrepareLateVisibilityComputePipelines(out _, out _, out reason);
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareIndexedGroupFinalizePipelines(out stepReason), stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
 
-            readiness = PrepareMultisamplePrograms(out reason);
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareLateVisibilityComputePipelines(out _, out _, out stepReason), stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
 
-            readiness = PrepareNativeComputePipelines(out _preparedNativeComputePipelines, out reason);
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareMultisamplePrograms(out stepReason), stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
 
-            readiness = PrepareRasterFamily(meshlet: false, multiview: false, out reason);
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareNativeComputePipelines(out VulkanAdvancedNativeComputePipelines nativePipelines, out stepReason), stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
+            if (combined == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                _preparedNativeComputePipelines = nativePipelines;
+
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareRasterFamily(meshlet: false, multiview: false, out stepReason), stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
 
             bool supportsMeshlets =
                 _resources.BackendObjectContext?.DeviceContext.SupportsMeshTaskIndirectCount == true;
-            if (supportsMeshlets)
+            if (supportsMeshlets &&
+                !CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareRasterFamily(meshlet: true, multiview: false, out stepReason), stepReason))
             {
-                readiness = PrepareRasterFamily(meshlet: true, multiview: false, out reason);
-                if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                    return readiness;
+                reason = combinedReason;
+                return combined;
             }
 
             bool supportsMultiview =
                 _resources.BackendObjectContext?.DeviceContext.AdvancedMultiviewEnabled == true;
-            if (supportsMultiview)
+            if (supportsMultiview &&
+                !CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareRasterFamily(meshlet: false, multiview: true, out stepReason), stepReason))
             {
-                readiness = PrepareRasterFamily(meshlet: false, multiview: true, out reason);
-                if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                    return readiness;
+                reason = combinedReason;
+                return combined;
             }
 
             if (supportsMeshlets && supportsMultiview &&
-                _resources.AdvancedVisibilityResources.SupportsMultiviewMeshRaster)
+                _resources.AdvancedVisibilityResources.SupportsMultiviewMeshRaster &&
+                !CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareRasterFamily(meshlet: true, multiview: true, out stepReason), stepReason))
             {
-                readiness = PrepareRasterFamily(meshlet: true, multiview: true, out reason);
-                if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                    return readiness;
+                reason = combinedReason;
+                return combined;
             }
 
-            // The directional shadow lane links after the visibility family and
-            // publishes its own readiness. The family never waits on it: a lane
-            // that is still linking (or failed) keeps cascades on the generic
-            // path, and the lane readiness poll finishes the link on demand.
+            // Kick off the directional shadow lane in parallel without blocking required
+            // visibility family readiness on it. Start optional Uber prewarm only after the
+            // required standard visibility family is ready so Uber never delays frame 1.
             VulkanAdvancedVisibilityPipelineReadiness shadowReadiness =
                 PrepareDirectionalShadowFamily(out string shadowReason);
             Volatile.Write(ref _completedDirectionalShadowPreparationIdentity, CaptureDirectionalShadowPreparationIdentity());
@@ -539,8 +586,11 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 ref _directionalShadowPreparation,
                 new PreparationSnapshot(shadowReadiness, shadowReason));
 
-            reason = "Ready";
-            return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+            if (combined == VulkanAdvancedVisibilityPipelineReadiness.Ready && PrewarmUberShadingKernels)
+                _ = TryGetUberShadingPipelines(multisample: false, out _, out _, out _);
+
+            reason = combinedReason;
+            return combined;
         }
         finally
         {
@@ -550,11 +600,18 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
     private VulkanAdvancedVisibilityPipelineReadiness PrepareDirectionalShadowFamily(out string reason)
     {
-        VulkanAdvancedVisibilityPipelineReadiness readiness =
-            PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Opaque, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return readiness;
-        return PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Masked, out reason);
+        VulkanAdvancedVisibilityPipelineReadiness combined = VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        string combinedReason = "Ready";
+        if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Opaque, out string stepReason), stepReason))
+        {
+            reason = combinedReason;
+            return combined;
+        }
+        CombinePreparationReadiness(ref combined, ref combinedReason,
+            PrepareDirectionalShadowProgram(EAdvancedMaterialCoverageMode.Masked, out stepReason), stepReason);
+        reason = combinedReason;
+        return combined;
     }
 
     /// <summary>
@@ -567,21 +624,29 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         bool multiview,
         out string reason)
     {
+        VulkanAdvancedVisibilityPipelineReadiness combined = VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        string combinedReason = "Ready";
         int variantCount = meshlet ? 2 : 1;
         for (int variant = 0; variant < variantCount; variant++)
         {
             bool late = variant == 1;
-            VulkanAdvancedVisibilityPipelineReadiness readiness = PrepareRasterProgram(
-                EAdvancedMaterialCoverageMode.Opaque, meshlet, out _, out reason, multiview, late);
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
-            readiness = PrepareRasterProgram(
-                EAdvancedMaterialCoverageMode.Masked, meshlet, out _, out reason, multiview, late);
-            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-                return readiness;
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareRasterProgram(EAdvancedMaterialCoverageMode.Opaque, meshlet, out _, out string stepReason, multiview, late),
+                    stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
+            if (!CombinePreparationReadiness(ref combined, ref combinedReason,
+                    PrepareRasterProgram(EAdvancedMaterialCoverageMode.Masked, meshlet, out _, out stepReason, multiview, late),
+                    stepReason))
+            {
+                reason = combinedReason;
+                return combined;
+            }
         }
-        reason = "Ready";
-        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        reason = combinedReason;
+        return combined;
     }
 
     private void PublishPreparationState(

@@ -825,10 +825,17 @@ namespace XREngine.Rendering.Vulkan
                     (targetWrapper = ResourceRuntime.BackendObjects.Get(request.Target)
                         as VkFrameBuffer) is null)
                 {
+                    // Frame-plan preparation wraps live targets before sealing. A missing wrapper
+                    // during recording means the target or its Vulkan wrapper was concurrently
+                    // invalidated or destroyed (for example when a shadow atlas page or pipeline
+                    // generation is recreated), so retry on a fresh frame instead of latching
+                    // PresentNow recovery.
                     recordingState.RecordingDeferredReason =
-                        "Advanced visibility operation is Unsupported: the authoritative target has no Vulkan framebuffer wrapper.";
+                        $"Advanced visibility operation requires a fresh-frame retry: authoritative target " +
+                        $"'{request.Target?.GetDescribingName() ?? "<null>"}' (stage={request.Stage}, " +
+                        $"phase={request.Phase}, destroyed={request.Target?.IsDestroyed ?? false}) has no Vulkan framebuffer wrapper.";
                     recordingState.FailureKind = EVulkanCommandRecordingFailureKind
-                        .RecoverAfterStateChange;
+                        .RetryFrame;
                     return false;
                 }
                 string targetShapeReason = string.Empty;

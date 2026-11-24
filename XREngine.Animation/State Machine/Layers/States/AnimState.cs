@@ -151,6 +151,8 @@ namespace XREngine.Animation
         {
             if (Motion is MotionBricksLocomotionMotion motionBricks)
                 motionBricks.AccumulateTickDelta(delta);
+            else if (Motion is { IsProceduralMotion: true })
+                Motion.OnProceduralTickDelta(delta);
 
             AdvanceNormalizedPlayback(delta, variables);
             CollectImportedAnimationEvents(variables, includePrevious: false);
@@ -164,6 +166,8 @@ namespace XREngine.Animation
             float delta = deltaTicks == 0L ? 0.0f : (float)(deltaTicks / (double)Stopwatch.Frequency);
             if (Motion is MotionBricksLocomotionMotion motionBricks)
                 motionBricks.AccumulateTickDelta(delta);
+            else if (Motion is { IsProceduralMotion: true })
+                Motion.OnProceduralTickDelta(delta);
 
             AdvanceNormalizedPlayback(delta, variables);
             CollectImportedAnimationEvents(variables, includePrevious: false);
@@ -179,6 +183,8 @@ namespace XREngine.Animation
             _isEntered = true;
             if (Motion is MotionBricksLocomotionMotion motionBricks)
                 motionBricks.NotifyStateEntered();
+            else if (Motion is { IsProceduralMotion: true })
+                Motion.OnProceduralStateEntered();
 
             foreach (var component in Components)
                 component.StateEntered(this, variables);
@@ -192,6 +198,8 @@ namespace XREngine.Animation
             _isEntered = false;
             if (Motion is MotionBricksLocomotionMotion motionBricks)
                 motionBricks.NotifyStateExited();
+            else if (Motion is { IsProceduralMotion: true })
+                Motion.OnProceduralStateExited();
 
             foreach (var component in Components)
                 component.StateExited(this, variables);

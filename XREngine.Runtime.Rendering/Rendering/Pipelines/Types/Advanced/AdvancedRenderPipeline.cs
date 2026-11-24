@@ -1599,6 +1599,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string SmaaEdgeFBOName = SmaaFBOName + "_EdgeFBO";
     public const string SmaaBlendFBOName = SmaaFBOName + "_BlendFBO";
     public const string TsrOutputTextureName = "TsrOutputTexture";
+    public const string TsrOutputViewFBOName = "TsrOutputViewFBO";
     public const string TsrAccumulationTextureName = "TsrAccumulationTexture";
     public const string TsrAccumulationFBOName = "TsrAccumulationFBO";
     public const string TsrHistoryMetadataOutputTextureName = "TsrHistoryMetadataOutput";
@@ -2393,16 +2394,29 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     /// </param>
     internal EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera, RenderPipeline settingsPipeline)
     {
-        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(settingsPipeline) is not { } stage ||
-            !stage.TryGetBacking(out AmbientOcclusionSettings? settings) ||
-            settings is not { Enabled: true } ||
-            AmbientOcclusionSettings.NormalizeType(settings.Type) != AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion ||
-            !settings.GroundTruth.UseMaterialNormals)
+        EAdvancedViewRecordFlags flags = EAdvancedViewRecordFlags.None;
+
+        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(settingsPipeline) is { } stage &&
+            stage.TryGetBacking(out AmbientOcclusionSettings? settings) &&
+            settings is { Enabled: true } &&
+            AmbientOcclusionSettings.NormalizeType(settings.Type) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion &&
+            settings.GroundTruth.UseMaterialNormals)
         {
-            return EAdvancedViewRecordFlags.None;
+            flags |= EAdvancedViewRecordFlags.GtaoMaterialNormals;
         }
 
-        return EAdvancedViewRecordFlags.GtaoMaterialNormals;
+        EAntiAliasingMode antiAliasingMode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
+        if (antiAliasingMode == EAntiAliasingMode.Msaa && EnableDeferredMsaa)
+        {
+            uint msaaSamples = Math.Clamp(
+                camera?.MsaaSampleCountOverride ?? RuntimeRenderingHostServices.FrameTiming.DefaultMsaaSampleCount,
+                1u,
+                15u);
+            if (msaaSamples > 1u)
+                flags |= (EAdvancedViewRecordFlags)((msaaSamples & 0xFu) << 10);
+        }
+
+        return flags;
     }
 
     private AmbientOcclusionSettings? ResolveAmbientOcclusionSettings(

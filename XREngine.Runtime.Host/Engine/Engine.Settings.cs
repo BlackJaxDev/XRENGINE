@@ -676,6 +676,7 @@ namespace XREngine
             Action applyAA = EngineRenderingSettingsApplication.ApplyAntiAliasingPreference;
             h[nameof(UserSettings.AntiAliasingModeOverride)] = applyAA;           // also matches GameStartup
             h[nameof(UserSettings.AntiAliasingFilterModeOverride)] = applyAA;     // also matches GameStartup
+            h[nameof(UserSettings.AntiAliasingSharpnessOverride)] = applyAA;      // also matches GameStartup
             h[nameof(UserSettings.MsaaSampleCountOverride)] = applyAA;            // also matches GameStartup
 
             // ── Timer / VSync ──

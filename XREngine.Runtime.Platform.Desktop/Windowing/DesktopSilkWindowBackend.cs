@@ -248,8 +248,20 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     public void RequestCursorCapture(bool captured)
     {
         AssertOwnerThread();
-        if (_input is { Mice.Count: > 0 })
-            _input.Mice[0].Cursor.CursorMode = captured ? CursorMode.Disabled : CursorMode.Normal;
+        if (_input is not { Mice.Count: > 0 })
+            return;
+
+        ICursor cursor = _input.Mice[0].Cursor;
+        if (!captured)
+        {
+            cursor.CursorMode = CursorMode.Normal;
+            return;
+        }
+
+        // Prefer raw mouse motion so OS pointer acceleration does not distort camera look.
+        cursor.CursorMode = cursor.IsSupported(CursorMode.Raw)
+            ? CursorMode.Raw
+            : CursorMode.Disabled;
     }
 
     public void SetVSync(bool enabled)

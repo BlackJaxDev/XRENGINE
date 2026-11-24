@@ -229,14 +229,18 @@ public static class SomaTensorCodec
             }
         }
 
-        WriteConditionMasks(targetPoseCount, config.AllowedTokenBits, destination);
+        WriteConditionMasks(targetPoseCount, config.AllowedTokenBits, destination, config.ConditionTargetLocalPoses);
     }
 
     /// <summary>
     /// Writes the four conditioning mask tensors that specify which context/target slots
     /// are active and which token counts the model may select.
     /// </summary>
-    public static void WriteConditionMasks(int targetPoseCount, int allowedTokenBits, SomaInferenceInputBuffer destination)
+    public static void WriteConditionMasks(
+        int targetPoseCount,
+        int allowedTokenBits,
+        SomaInferenceInputBuffer destination,
+        bool conditionTargetLocalPoses = true)
     {
         ArgumentNullException.ThrowIfNull(destination);
         if (targetPoseCount < 1 || targetPoseCount > SomaModelContract.TargetPoseCapacity)
@@ -249,8 +253,9 @@ public static class SomaTensorCodec
         for (int i = 0; i < SomaModelContract.ContextAndTargetPoseCount; i++)
         {
             int active = i < activePoseCount ? 1 : 0;
+            bool isContext = i < SomaModelContract.ContextPoseCount;
             destination.HasGlobalRootValues[i] = active;
-            destination.HasLocalPoses[i] = active;
+            destination.HasLocalPoses[i] = isContext ? active : (conditionTargetLocalPoses ? active : 0);
             destination.HasLocalRootValues[i] = (i == lastContextIndex || i == lastTargetIndex) ? 0 : active;
         }
 
@@ -371,6 +376,72 @@ public static class SomaTensorCodec
             {
                 SomaPoseTransform withStart = SomaPoseTransform.ApplyDelta(poses[frameBase + joint], startDeltas[joint], startWeight);
                 poses[frameBase + joint] = SomaPoseTransform.ApplyDelta(withStart, endDeltas[joint], endWeight);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes the start-seam discontinuity for all 30 joints over <paramref name="decayFrames"/>
+    /// frames and gently guides only the root transform (joint 0) toward
+    /// <paramref name="firstTargetLocalPose"/> so turning and speed track steering crisply while
+    /// keeping SOMA's generated limb motion completely unwarped.
+    /// </summary>
+    public static void ApplyStartAndRootEndpointCorrection(
+        ReadOnlySpan<SomaPoseTransform> lastContextLocalPose,
+        ReadOnlySpan<SomaPoseTransform> firstTargetLocalPose,
+        SomaInferenceOutputBuffer output,
+        int decayFrames = 6,
+        float endRootWeightScale = 0.85f)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        if (lastContextLocalPose.Length < SomaModelContract.JointCount)
+            throw new ArgumentException($"Last context pose must contain {SomaModelContract.JointCount} joints.", nameof(lastContextLocalPose));
+        if (firstTargetLocalPose.Length < SomaModelContract.JointCount)
+            throw new ArgumentException($"First target pose must contain {SomaModelContract.JointCount} joints.", nameof(firstTargetLocalPose));
+
+        int frameCount = output.ValidFrameCount;
+        if (frameCount < 2)
+            return;
+
+        const int jointCount = SomaModelContract.JointCount;
+        int lastFrameBase = (frameCount - 1) * jointCount;
+        SomaPoseTransform[] poses = output.DecodedLocalPoses;
+        SomaPoseTransform[] startDeltas = output.StartEndpointDeltas;
+
+        startDeltas[0] = SomaPoseTransform.ComputeRootEndpointDelta(poses[0], lastContextLocalPose[0]);
+        SomaPoseTransform endRootDelta = SomaPoseTransform.ComputeRootEndpointDelta(poses[lastFrameBase], firstTargetLocalPose[0]);
+        for (int joint = 1; joint < jointCount; joint++)
+            startDeltas[joint] = SomaPoseTransform.ComputeDelta(poses[joint], lastContextLocalPose[joint]);
+
+        int startSpan = Math.Clamp(decayFrames, 2, frameCount);
+        float invStartSpan = 1.0f / (startSpan - 1);
+        float invFullSpan = 1.0f / (frameCount - 1);
+        float clampedEndScale = Math.Clamp(endRootWeightScale, 0.0f, 1.0f);
+
+        for (int frame = 0; frame < frameCount; frame++)
+        {
+            float startWeight = frame < startSpan ? 1.0f - frame * invStartSpan : 0.0f;
+            float endWeight = (frame * invFullSpan) * clampedEndScale;
+            int frameBase = frame * jointCount;
+
+            Quaternion startStep = startWeight > 0.0f
+                ? Quaternion.Slerp(Quaternion.Identity, SomaPoseTransform.NormalizeOrIdentity(startDeltas[0].Rotation), startWeight)
+                : Quaternion.Identity;
+            Quaternion endStep = endWeight > 0.0f
+                ? Quaternion.Slerp(Quaternion.Identity, SomaPoseTransform.NormalizeOrIdentity(endRootDelta.Rotation), endWeight)
+                : Quaternion.Identity;
+
+            Vector3 pos = poses[frameBase].Position
+                + startDeltas[0].Position * startWeight
+                + endRootDelta.Position * endWeight;
+            Quaternion rot = SomaPoseTransform.NormalizeOrIdentity(
+                SomaPoseTransform.NormalizeOrIdentity(poses[frameBase].Rotation) * startStep * endStep);
+            poses[frameBase] = new SomaPoseTransform(pos, rot);
+
+            if (startWeight > 0.0f)
+            {
+                for (int joint = 1; joint < jointCount; joint++)
+                    poses[frameBase + joint] = SomaPoseTransform.ApplyDelta(poses[frameBase + joint], startDeltas[joint], startWeight);
             }
         }
     }

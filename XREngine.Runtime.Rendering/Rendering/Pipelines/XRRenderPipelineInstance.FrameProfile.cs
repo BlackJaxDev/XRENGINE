@@ -54,6 +54,7 @@ public sealed partial class XRRenderPipelineInstance
             ? EAntiAliasingMode.None
             : effectiveAntiAliasingMode;
         EffectiveAntiAliasingFilterModeThisFrame = frameTiming.DefaultAntiAliasingFilterMode;
+        EffectiveAntiAliasingSharpnessThisFrame = Math.Clamp(frameTiming.DefaultAntiAliasingSharpness, 0.0f, 1.0f);
         EffectiveMsaaSampleCountThisFrame = Math.Max(1u,
             FinalOutput?.SceneSampleCountOverride ??
             effectiveAntiAliasingCamera?.MsaaSampleCountOverride ??

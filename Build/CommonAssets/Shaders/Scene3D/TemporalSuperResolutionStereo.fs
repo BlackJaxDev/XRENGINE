@@ -134,22 +134,24 @@ vec3 SampleCurrentReconstruction(sampler2DArray tex, vec2 uv, vec2 texelSize)
     return (center + axial * 2.0 + diagonal) * (1.0 / 16.0);
 }
 
-// Integrates the 2x2 bilinear tent kernel W(x, y) = (1 - |x|)(1 - |y|) across
-// the overlapping 3x3 texel squares of the active multiview layer.
-vec3 SampleTent2x2(sampler2DArray tex, vec2 uv)
+// Integrates a 2x2 output-pixel bilinear tent kernel W(x / r) = 1 - |x / r| across
+// the overlapping 3x3 source texels of the active multiview layer.
+vec3 SampleTent2x2(sampler2DArray tex, vec2 uv, vec2 radiusInSourceTexels)
 {
     ivec2 extent = max(textureSize(tex, 0).xy, ivec2(1));
     int layer = int(gl_ViewID_OVR);
+    vec2 radius = clamp(radiusInSourceTexels, vec2(0.25), vec2(1.0));
+    vec2 invRadius = 1.0 / radius;
     vec2 position = clamp(uv, vec2(0.0), vec2(1.0)) * vec2(extent);
     ivec2 centerPixel = ivec2(floor(position));
     float wx[3];
     float wy[3];
     for (int i = -1; i <= 1; ++i)
     {
-        wx[i + 1] = TsrTent1DIntegral(float(centerPixel.x + i) - position.x,
-            float(centerPixel.x + i + 1) - position.x);
-        wy[i + 1] = TsrTent1DIntegral(float(centerPixel.y + i) - position.y,
-            float(centerPixel.y + i + 1) - position.y);
+        wx[i + 1] = TsrTent1DIntegral((float(centerPixel.x + i) - position.x) * invRadius.x,
+            (float(centerPixel.x + i + 1) - position.x) * invRadius.x);
+        wy[i + 1] = TsrTent1DIntegral((float(centerPixel.y + i) - position.y) * invRadius.y,
+            (float(centerPixel.y + i + 1) - position.y) * invRadius.y);
     }
 
     vec3 colorSum = vec3(0.0);
@@ -370,17 +372,18 @@ void main()
 #endif
     vec2 sourceTexelSize = TextureTexelSize(PostProcessOutputTexture);
     vec2 historyTexelSize = TextureTexelSize(TsrHistoryColor);
-    bool nativeResolution = all(equal(
-        textureSize(PostProcessOutputTexture, 0).xy,
-        textureSize(TsrHistoryColor, 0).xy));
+    ivec2 sourceExtent = max(textureSize(PostProcessOutputTexture, 0).xy, ivec2(1));
+    ivec2 historyExtent = max(textureSize(TsrHistoryColor, 0).xy, ivec2(1));
+    bool nativeResolution = all(equal(sourceExtent, historyExtent));
+    vec2 tentRadius = clamp(vec2(sourceExtent) / vec2(historyExtent), vec2(0.25), vec2(1.0));
 
     vec4 currentSample = texture(PostProcessOutputTexture, EyeUv(uv));
     vec3 currentColorRaw = currentSample.rgb;
 #ifdef XR_TSR_STABLE_OUTPUT
-    // Surface ownership and current color use positive taps; Tent2x2 widens the
-    // reconstruction footprint to the integrated 2x2 bilinear tent kernel.
+    // Surface ownership and current color use positive taps; Tent2x2 reconstructs
+    // across a 2x2 output-pixel tent footprint scaled into source texel space.
     vec3 currentColor = (AntiAliasingFilterMode == 2 && !isPostTemporalForward)
-        ? SampleTent2x2(PostProcessOutputTexture, uv)
+        ? SampleTent2x2(PostProcessOutputTexture, uv, tentRadius)
         : currentColorRaw;
 #else
     // The selected source grid also applies at native resolution. Stencil-tagged
@@ -389,7 +392,7 @@ void main()
     if (isPostTemporalForward || AntiAliasingFilterMode == 1)
         currentColor = currentColorRaw;
     else if (AntiAliasingFilterMode == 2)
-        currentColor = SampleTent2x2(PostProcessOutputTexture, uv);
+        currentColor = SampleTent2x2(PostProcessOutputTexture, uv, tentRadius);
     else
         currentColor = nativeResolution
             ? currentColorRaw
@@ -433,9 +436,9 @@ void main()
             vec3 historyRgb;
             if (AntiAliasingFilterMode == 1)
                 historyRgb = texture(TsrHistoryColor, EyeUv(historySampleUv)).rgb;
-            else if (AntiAliasingFilterMode == 2)
-                historyRgb = SampleTent2x2(TsrHistoryColor, historySampleUv);
             else
+                // Keep history sharp with bicubic Catmull-Rom under Default and Tent2x2
+                // so temporal feedback does not compound tent blur across frames.
                 historyRgb = SampleCatmullRom(TsrHistoryColor, historySampleUv, historyTexelSize);
             historyYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(historyRgb));
         }

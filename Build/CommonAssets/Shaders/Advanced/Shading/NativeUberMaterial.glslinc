@@ -24,6 +24,12 @@ bool XR_UBER_HasFeature(uint feature)
     return (XR_ADV_LoadMaterialConstant(XR_UBER_Material, XR_UBER_FEATURES_WORD) & feature) != 0u;
 }
 
+bool XR_UBER_HasAlphaToCoverage()
+{
+    return (XR_ADV_LoadMaterialConstant(XR_UBER_Material, XR_UBER_STATE_FLAGS_WORD) &
+        XR_UBER_STATE_ALPHA_TO_COVERAGE) != 0u;
+}
+
 vec4 XR_UBER_Sample(uint slot, vec2 uv, vec2 dx, vec2 dy, vec4 absent)
 {
     return XR_ADV_StandardTexture(XR_UBER_Material, slot, uv, dx, dy, absent);

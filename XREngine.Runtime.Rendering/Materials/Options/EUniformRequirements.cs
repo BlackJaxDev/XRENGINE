@@ -93,6 +93,7 @@ namespace XREngine.Rendering.Models.Materials
                 [nameof(EEngineUniform.CameraFovY)] = EUniformRequirements.Camera,
                 [nameof(EEngineUniform.CameraAspect)] = EUniformRequirements.Camera,
                 [nameof(EEngineUniform.DepthMode)] = EUniformRequirements.Camera,
+                [nameof(EEngineUniform.UpscaleTextureLodBias)] = EUniformRequirements.Camera,
                 [nameof(EEngineUniform.PrevViewMatrix)] = EUniformRequirements.Camera,
                 [nameof(EEngineUniform.PrevLeftEyeViewMatrix)] = EUniformRequirements.Camera,
                 [nameof(EEngineUniform.PrevRightEyeViewMatrix)] = EUniformRequirements.Camera,

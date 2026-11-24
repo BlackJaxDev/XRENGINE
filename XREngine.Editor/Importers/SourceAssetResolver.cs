@@ -1,4 +1,7 @@
+using System.Collections.Concurrent;
+using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Text;
 
 namespace XREngine.Scene.Importers;
 
@@ -94,45 +97,158 @@ public sealed class SourceAssetResolver
         }
     }
 
+    private const string ShaderEvidenceCacheHeader = "#xrengine-unity-original-shader-evidence-v1";
+
     private void CollectOriginalShaderNames(OriginalShaderEvidence evidence)
     {
-        foreach (string rootName in new[] { "Assets", "Packages" })
+        string assetsRoot = Path.GetFullPath(Path.Combine(ProjectRoot, "Assets"));
+        string packagesRoot = Path.GetFullPath(Path.Combine(ProjectRoot, "Packages"));
+
+        // Collect all .mat paths from the already-built GUID index instead of re-walking disk.
+        List<string> materialPaths = [];
+        foreach (string assetPath in _index.SnapshotIndexedAssetPaths())
         {
-            string root = Path.Combine(ProjectRoot, rootName);
-            if (!Directory.Exists(root))
+            if (!assetPath.EndsWith(".mat", StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            try
+            if (!assetPath.StartsWith(assetsRoot, StringComparison.OrdinalIgnoreCase) &&
+                !assetPath.StartsWith(packagesRoot, StringComparison.OrdinalIgnoreCase))
             {
-                foreach (string materialPath in Directory.EnumerateFiles(root, "*.mat", SearchOption.AllDirectories)
-                    .Order(StringComparer.OrdinalIgnoreCase))
+                continue;
+            }
+
+            materialPaths.Add(assetPath);
+        }
+
+        materialPaths.Sort(StringComparer.OrdinalIgnoreCase);
+
+        if (TryLoadShaderEvidenceFromDisk(materialPaths.Count, evidence))
+            return;
+
+        var discovered = new ConcurrentBag<(string Guid, string Name, string SourcePath)>();
+        Parallel.ForEach(
+            materialPaths,
+            new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 16) },
+            materialPath =>
+            {
+                try
                 {
-                    try
+                    if (!File.Exists(materialPath))
+                        return;
+
+                    string yaml = File.ReadAllText(materialPath);
+                    if (!yaml.Contains("OriginalShader:", StringComparison.Ordinal) ||
+                        !yaml.Contains("Poiyomi", StringComparison.OrdinalIgnoreCase))
                     {
-                        string yaml = File.ReadAllText(materialPath);
-                        if (!yaml.Contains("OriginalShader:", StringComparison.Ordinal) ||
-                            !yaml.Contains("Poiyomi", StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        SerializedMaterialDocument material = SerializedMaterialDocumentParser.Parse(yaml, materialPath);
-                        if (!material.OverrideTags.TryGetValue("OriginalShader", out string? originalName) ||
-                            !originalName.Contains("Poiyomi", StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        AddShaderNameEvidence(evidence, material.Shader.Guid, originalName, materialPath);
-                        if (material.OverrideTags.TryGetValue("OriginalShaderGUID", out string? originalGuid))
-                            AddShaderNameEvidence(evidence, originalGuid, originalName, materialPath);
+                        return;
                     }
-                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or YamlDotNet.Core.YamlException)
+
+                    SerializedMaterialDocument material = SerializedMaterialDocumentParser.Parse(yaml, materialPath);
+                    if (!material.OverrideTags.TryGetValue("OriginalShader", out string? originalName) ||
+                        !originalName.Contains("Poiyomi", StringComparison.OrdinalIgnoreCase))
                     {
-                        // An unrelated material must not stop an import.
+                        return;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(material.Shader.Guid))
+                        discovered.Add((material.Shader.Guid, originalName, materialPath));
+                    if (material.OverrideTags.TryGetValue("OriginalShaderGUID", out string? originalGuid) &&
+                        !string.IsNullOrWhiteSpace(originalGuid))
+                    {
+                        discovered.Add((originalGuid, originalName, materialPath));
                     }
                 }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or YamlDotNet.Core.YamlException)
+                {
+                    // An unrelated material must not stop an import.
+                }
+            });
+
+        foreach ((string guid, string name, string sourcePath) in discovered
+            .OrderBy(static item => item.SourcePath, StringComparer.OrdinalIgnoreCase))
+        {
+            AddShaderNameEvidence(evidence, guid, name, sourcePath);
+        }
+
+        TrySaveShaderEvidenceToDisk(materialPaths.Count, evidence);
+    }
+
+    private bool TryLoadShaderEvidenceFromDisk(int materialCount, OriginalShaderEvidence evidence)
+    {
+        string? cachePath = _index.TryResolveProjectSidecarCachePath("shaders.v1.tsv");
+        if (string.IsNullOrWhiteSpace(cachePath) || !File.Exists(cachePath))
+            return false;
+
+        try
+        {
+            string expectedHeader = $"{ShaderEvidenceCacheHeader}\t{ProjectRoot}\t{materialCount}";
+            using var reader = new StreamReader(cachePath, Encoding.UTF8);
+            string? header = reader.ReadLine();
+            if (!string.Equals(header, expectedHeader, StringComparison.Ordinal))
+                return false;
+
+            string? line;
+            while ((line = reader.ReadLine()) is not null)
             {
-                // The current import still uses direct shader and material evidence.
+                if (line.Length == 0)
+                    continue;
+
+                string[] parts = line.Split('\t');
+                if (parts.Length == 2 && parts[0] == "C")
+                {
+                    evidence.Conflicts.Add(parts[1]);
+                }
+                else if (parts.Length == 4 && parts[0] == "N")
+                {
+                    evidence.Names[parts[1]] = (parts[2], parts[3]);
+                }
+                else
+                {
+                    evidence.Names.Clear();
+                    evidence.Conflicts.Clear();
+                    return false;
+                }
             }
+
+            Debug.Meshes($"[UnityGuidIndex] Loaded {evidence.Names.Count} cached Poiyomi shader evidence entries for '{ProjectRoot}'.");
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            evidence.Names.Clear();
+            evidence.Conflicts.Clear();
+            return false;
+        }
+    }
+
+    private void TrySaveShaderEvidenceToDisk(int materialCount, OriginalShaderEvidence evidence)
+    {
+        string? cachePath = _index.TryResolveProjectSidecarCachePath("shaders.v1.tsv");
+        if (string.IsNullOrWhiteSpace(cachePath))
+            return;
+
+        try
+        {
+            string? directory = Path.GetDirectoryName(cachePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            string tempPath = $"{cachePath}.{Guid.NewGuid():N}.tmp";
+            using (var writer = new StreamWriter(tempPath, append: false, Encoding.UTF8))
+            {
+                writer.WriteLine($"{ShaderEvidenceCacheHeader}\t{ProjectRoot}\t{materialCount}");
+                foreach (string conflictGuid in evidence.Conflicts)
+                    writer.WriteLine($"C\t{conflictGuid}");
+                foreach ((string guid, (string name, string sourcePath)) in evidence.Names)
+                    writer.WriteLine($"N\t{guid}\t{name}\t{sourcePath}");
+            }
+
+            File.Move(tempPath, cachePath, overwrite: true);
+            Debug.Meshes($"[UnityGuidIndex] Saved {evidence.Names.Count} Poiyomi shader evidence entries to disk cache for '{ProjectRoot}'.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Disk cache writes are opportunistic and never fail an import.
         }
     }
 

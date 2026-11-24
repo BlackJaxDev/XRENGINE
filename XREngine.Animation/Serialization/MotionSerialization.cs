@@ -39,6 +39,14 @@ internal static class MotionSerialization
                     => MemoryPackSerializer.Serialize(BlendTreeSerialization.CreatePublishedModel(tree)),
                 MotionBricksLocomotionMotion motionBricks when motionBricks.GetType() == typeof(MotionBricksLocomotionMotion)
                     => MemoryPackSerializer.Serialize(CreateMotionBricksModel(motionBricks)),
+                HumanoidLookAtAimMotion lookAt when lookAt.GetType() == typeof(HumanoidLookAtAimMotion)
+                    => MemoryPackSerializer.Serialize(lookAt),
+                ProceduralSecondaryMotion secondary when secondary.GetType() == typeof(ProceduralSecondaryMotion)
+                    => MemoryPackSerializer.Serialize(secondary),
+                ProceduralStrideMotion stride when stride.GetType() == typeof(ProceduralStrideMotion)
+                    => MemoryPackSerializer.Serialize(stride),
+                MotionWarpingMotion warping when warping.GetType() == typeof(MotionWarpingMotion)
+                    => MemoryPackSerializer.Serialize(CreateMotionWarpingModel(warping, published: true)),
                 _ => throw new NotSupportedException($"Published motion type '{motion.GetType().FullName}' is not registered.")
             }
         };
@@ -72,6 +80,19 @@ internal static class MotionSerialization
         if (model.TypeName == typeof(MotionBricksLocomotionMotion).FullName)
             return CreateRuntimeMotionBricks(
                 MemoryPackSerializer.Deserialize<MotionBricksLocomotionMotionSerializedModel>(model.Payload));
+        if (model.TypeName == typeof(HumanoidLookAtAimMotion).FullName)
+            return MemoryPackSerializer.Deserialize<HumanoidLookAtAimMotion>(model.Payload)
+                ?? throw new InvalidDataException("Published HumanoidLookAtAimMotion has an empty payload.");
+        if (model.TypeName == typeof(ProceduralSecondaryMotion).FullName)
+            return MemoryPackSerializer.Deserialize<ProceduralSecondaryMotion>(model.Payload)
+                ?? throw new InvalidDataException("Published ProceduralSecondaryMotion has an empty payload.");
+        if (model.TypeName == typeof(ProceduralStrideMotion).FullName)
+            return MemoryPackSerializer.Deserialize<ProceduralStrideMotion>(model.Payload)
+                ?? throw new InvalidDataException("Published ProceduralStrideMotion has an empty payload.");
+        if (model.TypeName == typeof(MotionWarpingMotion).FullName)
+            return CreateRuntimeMotionWarping(
+                MemoryPackSerializer.Deserialize<MotionWarpingMotionSerializedModel>(model.Payload),
+                published: true);
 
         throw new InvalidDataException($"Published motion type '{model.TypeName}' is not registered.");
     }
@@ -95,6 +116,10 @@ internal static class MotionSerialization
             BlendTree2D blendTree2D => MemoryPackSerializer.Serialize((BlendTree2DSerializedModel)BlendTreeSerialization.CreateModel(blendTree2D)),
             BlendTreeDirect blendTreeDirect => MemoryPackSerializer.Serialize((BlendTreeDirectSerializedModel)BlendTreeSerialization.CreateModel(blendTreeDirect)),
             MotionBricksLocomotionMotion motionBricks => MemoryPackSerializer.Serialize(CreateMotionBricksModel(motionBricks)),
+            HumanoidLookAtAimMotion lookAt => MemoryPackSerializer.Serialize(lookAt),
+            ProceduralSecondaryMotion secondary => MemoryPackSerializer.Serialize(secondary),
+            ProceduralStrideMotion stride => MemoryPackSerializer.Serialize(stride),
+            MotionWarpingMotion warping => MemoryPackSerializer.Serialize(CreateMotionWarpingModel(warping, published: false)),
             _ => throw new NotSupportedException($"Unsupported motion type '{motion.GetType().FullName}'.")
         };
 
@@ -136,7 +161,61 @@ internal static class MotionSerialization
             return CreateRuntimeMotionBricks(model);
         }
 
+        if (motionType == typeof(HumanoidLookAtAimMotion))
+            return MemoryPackSerializer.Deserialize<HumanoidLookAtAimMotion>(payload)
+                ?? throw new InvalidDataException("HumanoidLookAtAimMotion has an empty payload.");
+
+        if (motionType == typeof(ProceduralSecondaryMotion))
+            return MemoryPackSerializer.Deserialize<ProceduralSecondaryMotion>(payload)
+                ?? throw new InvalidDataException("ProceduralSecondaryMotion has an empty payload.");
+
+        if (motionType == typeof(ProceduralStrideMotion))
+            return MemoryPackSerializer.Deserialize<ProceduralStrideMotion>(payload)
+                ?? throw new InvalidDataException("ProceduralStrideMotion has an empty payload.");
+
+        if (motionType == typeof(MotionWarpingMotion))
+        {
+            MotionWarpingMotionSerializedModel? model =
+                MemoryPackSerializer.Deserialize<MotionWarpingMotionSerializedModel>(payload);
+            return CreateRuntimeMotionWarping(model, published: false);
+        }
+
         throw new NotSupportedException($"Unsupported motion type '{motionType.FullName}'.");
+    }
+
+    private static MotionWarpingMotionSerializedModel CreateMotionWarpingModel(MotionWarpingMotion motion, bool published)
+        => new()
+        {
+            Name = motion.Name,
+            SourceClip = motion.SourceClip is null
+                ? null
+                : (published
+                    ? AnimationClipSerialization.CreatePublishedModel(motion.SourceClip)
+                    : AnimationClipSerialization.CreateModel(motion.SourceClip)),
+            WarpWindows = [.. motion.WarpWindows],
+        };
+
+    private static MotionWarpingMotion CreateRuntimeMotionWarping(MotionWarpingMotionSerializedModel? model, bool published)
+    {
+        if (model is null)
+            throw new InvalidDataException("MotionWarpingMotion has an empty payload.");
+
+        AnimationClip? clip = null;
+        if (model.SourceClip is not null)
+        {
+            clip = new AnimationClip();
+            if (published)
+                AnimationClipSerialization.ApplyPublishedModel(clip, model.SourceClip);
+            else
+                AnimationClipSerialization.ApplyModel(clip, model.SourceClip);
+        }
+
+        return new MotionWarpingMotion
+        {
+            Name = model.Name ?? string.Empty,
+            SourceClip = clip,
+            WarpWindows = model.WarpWindows is null ? [] : [.. model.WarpWindows],
+        };
     }
 
     private static MotionBricksLocomotionMotionSerializedModel CreateMotionBricksModel(MotionBricksLocomotionMotion motion)
@@ -214,4 +293,12 @@ internal sealed partial class MotionBricksLocomotionMotionSerializedModel
     public bool BakeOrientationIntoPose { get; set; }
     public bool BakePositionYIntoPose { get; set; } = true;
     public bool BakePositionXZIntoPose { get; set; }
+}
+
+[MemoryPackable]
+internal sealed partial class MotionWarpingMotionSerializedModel
+{
+    public string? Name { get; set; }
+    public AnimationClipSerializedModel? SourceClip { get; set; }
+    public List<MotionWarpWindow> WarpWindows { get; set; } = [];
 }

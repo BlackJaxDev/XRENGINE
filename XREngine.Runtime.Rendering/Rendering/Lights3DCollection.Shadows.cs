@@ -436,7 +436,11 @@ namespace XREngine.Scene
             if (ShouldDeferAuxiliaryCaptures())
                 return;
 
-            int maximumCaptureWorkItems = Math.Max(1, MaximumCaptureWorkItemsPerFrame);
+            // During sequential probe-grid batch capture, run at most one face or IBL
+            // finalization per frame so GPU probe work does not spike interactive frame time.
+            int maximumCaptureWorkItems = LightProbeBatchCaptureActive
+                ? 1
+                : Math.Max(1, MaximumCaptureWorkItemsPerFrame);
             while (_captureWorkItemsExecutedThisFrame < maximumCaptureWorkItems && _captureWorkQueue.TryPeek(out _))
             {
                 if (_captureWorkItemsExecutedThisFrame > 0 &&
@@ -501,7 +505,9 @@ namespace XREngine.Scene
                                 }
                             }
                             CompletePendingCapture(item.Component);
-                            break;
+                            // Finalize submits irradiance and prefilter GPU convolution; stop here so it
+                            // never stacks on top of face renders in the same frame.
+                            return;
 
                         case ECaptureWorkType.FullCapture:
                             item.Component.CollectVisible();

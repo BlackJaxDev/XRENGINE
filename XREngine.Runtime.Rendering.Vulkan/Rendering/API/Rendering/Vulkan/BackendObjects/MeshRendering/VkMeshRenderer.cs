@@ -504,6 +504,12 @@ internal unsafe partial class VkMeshRenderer(
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         XRRenderPipelineInstance? pipeline =
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        if (pipeline?.RenderState.HasPendingResourcePreparation == true)
+        {
+            failureReason = pipeline.RenderState.PendingResourcePreparationReason
+                ?? "Render resource preparation is pending.";
+            return false;
+        }
         FrameOpContext context = _programPlanner?.CaptureFrameOpContext() ?? default;
         // A stereo pipeline also produces mono utility draws (for example BRDF
         // integration). Freeze the selected shader version's topology with this
@@ -606,6 +612,11 @@ internal unsafe partial class VkMeshRenderer(
                 failureReason,
                 out _);
             CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
+            if (pipeline is not null)
+            {
+                pipeline.RenderState.RequestPendingResourcePreparationDeferral(failureReason);
+                return false;
+            }
             throw new RenderResourcePreparationPendingException(failureReason);
         }
 

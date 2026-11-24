@@ -1927,6 +1927,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         string smaaBlendPass = $"SmaaBlend_{SmaaEdgeTextureName}_to_{SmaaBlendFBOName}";
         string smaaNeighborhoodPass = $"SmaaNeighborhood_{FinalPostProcessOutputFBOName}_to_{SmaaOutputTextureName}";
         string tsrPass = VPRC_RenderQuadToFBO.BuildQuadBlitPassName(TsrUpscaleFBOName, TsrUpscaleFBOName);
+        string tsrSharpenPass = VPRC_RCAS.BuildPassName(TsrHistoryColorFBOName, TsrUpscaleFBOName);
 
         AddDependencyByIndex(LateOnTopForwardPassName, (int)EDefaultRenderPass.TransparentForward);
         AddDependencyByIndex(nameof(VPRC_ExposureUpdate), (int)EDefaultRenderPass.TransparentForward);
@@ -1939,11 +1940,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         AddDependency(smaaBlendPass, smaaEdgePass);
         AddDependency(smaaNeighborhoodPass, smaaBlendPass);
         AddDependency(tsrPass, finalPostProcessPass);
+        AddDependency(tsrSharpenPass, VPRC_TemporalAccumulationPass.TsrHistoryColorCopyPassName);
 
         AddDependency("RenderToWindow_FinalPostProcessOutputTexture", finalPostProcessPass);
         AddDependency("RenderToWindow_FxaaOutputTexture", fxaaPass);
         AddDependency("RenderToWindow_SmaaOutputTexture", smaaNeighborhoodPass);
-        AddDependency("RenderToWindow_TsrOutputTexture", tsrPass);
+        AddDependency("RenderToWindow_TsrOutputTexture", tsrPass, tsrSharpenPass);
 
         void AddDependencyByIndex(string passName, params int[] dependencies)
         {
