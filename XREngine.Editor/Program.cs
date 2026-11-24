@@ -29,6 +29,7 @@ using XREngine.Editor.Importers.SerializedAssets;
 using XREngine.Editor.Mcp;
 using XREngine.Editor.Rendering.EditorHighlight;
 using XREngine.Editor.Settings;
+using XREngine.Editor.WindowRecording;
 using XREngine.Fbx;
 using XREngine.Native;
 using XREngine.Rendering;
@@ -202,6 +203,11 @@ internal partial class Program
         // Start play mode controller
         EditorPlayModeController.Initialize();
 
+        // F12 saves a screenshot and Shift+F12 records the window to an MP4 file. Both read
+        // native window input, so they work with every pawn and game mode.
+        EditorWindowScreenshot.Initialize();
+        EditorWindowVideoRecorder.Initialize();
+
         if (args.Any(
                 argument => string.Equals(
                     argument,
@@ -321,6 +327,8 @@ internal partial class Program
         {
             smokeRun.FinishAfterRun();
             smokeRun.Dispose();
+            EditorWindowVideoRecorder.Shutdown();
+            EditorWindowScreenshot.Shutdown();
             EditorImGuiUI.ShutdownToolbarIcons();
             WriteBootstrapTrace("Shutting down MCP host.");
             McpServerHost.Shutdown();

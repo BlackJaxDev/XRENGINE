@@ -1307,7 +1307,7 @@ try {
         $brokerLock = Get-Content -Raw -LiteralPath $brokerLockPath | ConvertFrom-Json
         $nested.Add([pscustomobject]@{
             Name = "LocalAgentBroker.Orchestration $($brokerLock.version)"
-            UsedBy = 'XREngine.Editor'
+            UsedBy = 'XREngine.AgentRuntimes; XREngine.Editor'
             Owner = 'BlackJax LLC'
             Url = "$($brokerLock.repository)/tree/v$($brokerLock.version)"
             License = 'MIT'

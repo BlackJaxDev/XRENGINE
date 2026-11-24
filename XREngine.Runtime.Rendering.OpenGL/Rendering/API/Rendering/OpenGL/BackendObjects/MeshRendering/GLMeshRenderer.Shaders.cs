@@ -378,7 +378,7 @@ namespace XREngine.Rendering.OpenGL
                 ConfigureDrawTopology(vertexProgram!, materialProgram);
                 configureDrawTopologyMs = ElapsedMilliseconds(stageStart);
 
-                if (BuffersBound && VertexArrayBindingsStale())
+                if (BuffersBound && (VertexArrayBindingsStale() || !VertexArrayMatchesProgram(vertexProgram!)))
                     BuffersBound = false;
 
                 if (!BuffersBound)

@@ -588,6 +588,21 @@ namespace XREngine.Rendering
             set => SetField(ref _transparentSortPriority, value);
         }
 
+        private bool _generateMissingMeshTangents;
+        /// <summary>
+        /// When true, a mesh renderer that uses this material adds UV0 tangents to a mesh that has none.
+        /// </summary>
+        /// <remarks>
+        /// Set it for a material whose own vertex shader reads the <c>Tangent</c> input, for example a translated
+        /// Unity shader. Unity gives every mesh tangents, and such shaders normalize the tangent, so a zero tangent
+        /// gives NaN values.
+        /// </remarks>
+        public bool GenerateMissingMeshTangents
+        {
+            get => _generateMissingMeshTangents;
+            set => SetField(ref _generateMissingMeshTangents, value);
+        }
+
         private ETransparencyMode? _transparentTechniqueOverride;
         public ETransparencyMode? TransparentTechniqueOverride
         {

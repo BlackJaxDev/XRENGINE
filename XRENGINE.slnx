@@ -14,6 +14,7 @@
   <Project Path="XREngine.ControlPlane/XREngine.ControlPlane.csproj" />
   <Project Path="XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj" />
   <Project Path="XREngine.Animation/XREngine.Animation.csproj" />
+  <Project Path="XREngine.AgentRuntimes/XREngine.AgentRuntimes.csproj" />
   <Project Path="XREngine.Audio/XREngine.Audio.csproj" />
   <Project Path="XREngine.Data/XREngine.Data.csproj" />
   <Project Path="XREngine.Editor/XREngine.Editor.csproj" />
@@ -82,4 +83,5 @@
   <Project Path="XREngine.Runtime.MeshProcessing.Meshoptimizer/XREngine.Runtime.MeshProcessing.Meshoptimizer.csproj" />
   <Project Path="XREngine.Audio.WebAudio/XREngine.Audio.WebAudio.csproj" />
   <Project Path="XREngine.Runtime.Net.WebSockets/XREngine.Runtime.Net.WebSockets.csproj" />
+  <Project Path="XREngine.ShaderTranslation/XREngine.ShaderTranslation.csproj" />
 </Solution>

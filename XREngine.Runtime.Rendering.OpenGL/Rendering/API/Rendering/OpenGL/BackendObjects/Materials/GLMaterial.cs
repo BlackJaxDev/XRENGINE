@@ -17,6 +17,8 @@ namespace XREngine.Rendering.OpenGL
 
             private uint _lastUniformProgramBindingId = uint.MaxValue;
             private XRRenderProgram? _lastUniformProgram;
+            private uint _lastVertexUniformProgramBindingId = uint.MaxValue;
+            private XRRenderProgram? _lastVertexUniformProgram;
             private XRMaterial? _shadowBindingSourceMaterial;
             private XRRenderProgram? _shadowBindingProgram;
             private uint _shadowBindingProgramBindingId = uint.MaxValue;
@@ -73,6 +75,8 @@ namespace XREngine.Rendering.OpenGL
                 _separableProgram = null;
                 _lastUniformProgram = null;
                 _lastUniformProgramBindingId = uint.MaxValue;
+                _lastVertexUniformProgram = null;
+                _lastVertexUniformProgramBindingId = uint.MaxValue;
                 _shadowBindingSourceMaterial = null;
                 _shadowBindingProgram = null;
                 _shadowBindingProgramBindingId = uint.MaxValue;
@@ -89,6 +93,36 @@ namespace XREngine.Rendering.OpenGL
             private void TextureAdded(XRTexture? tex)
             {
 
+            }
+
+            /// <summary>
+            /// Sets the material parameters and the engine uniforms on the separable vertex program of a material
+            /// that supplies its own vertex shader.
+            /// </summary>
+            /// <remarks>
+            /// In shader pipeline mode, <see cref="SetUniforms"/> sets values only on the material program. A material
+            /// vertex shader can also read material parameters, for example a texture scale and offset, and engine
+            /// uniforms such as the camera position. Call this method before <see cref="SetUniforms"/>: the parameters
+            /// keep their change flags here, and <see cref="SetUniforms"/> clears them. A different vertex program than
+            /// at the last call gets all values.
+            /// </remarks>
+            /// <param name="vertexProgram">The separable vertex program of the draw.</param>
+            public void SetVertexProgramUniforms(GLRenderProgram vertexProgram)
+            {
+                using var sample = RuntimeEngine.Profiler.Start("GLMaterial.SetVertexProgramUniforms", ProfilerScopeKind.AlwaysOnHotPathLoop);
+
+                bool forceUpdate = !ReferenceEquals(_lastVertexUniformProgram, vertexProgram.Data) ||
+                    _lastVertexUniformProgramBindingId != vertexProgram.BindingId;
+                _lastVertexUniformProgram = vertexProgram.Data;
+                _lastVertexUniformProgramBindingId = vertexProgram.BindingId;
+
+                foreach (ShaderVar param in Data.Parameters)
+                    param?.SetUniformKeepingChange(vertexProgram.Data, forceUpdate);
+
+                // Only the engine uniforms that the linked vertex program uses.
+                EUniformRequirements requirements = vertexProgram.GetActiveEngineUniformRequirements();
+                if (RequiresEngineUniformBinding(vertexProgram, requirements))
+                    SetEngineUniforms(vertexProgram, requirements);
             }
 
             public void SetUniforms(GLRenderProgram? materialProgram)

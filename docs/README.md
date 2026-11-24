@@ -71,6 +71,8 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Unity Conversion](developer-guides/assets/unity-conversion-integrations.md): package startup imports, scene and prefab roots, source dependencies, and Poiyomi materials.
 - [Unity Script Host](developer-guides/assets/unity-script-host.md): source inventory, assembly graphs, source compilation, and explicit execution limits.
 - [Editor Notifications](user-guide/editor/notifications.md): asset alerts and panel close controls in the ImGui editor.
+- [Editor Keyboard Shortcuts](user-guide/editor/keyboard-shortcuts.md): camera, selection, transform, play mode, and capture keys.
+- [Window Video Recording](user-guide/editor/window-recording.md): the Shift+F12 MP4 recording shortcut and its output settings.
 - [Native FBX Import And Export](developer-guides/assets/native-fbx-import-export.md)
 - [OpenAL Streaming Audio](developer-guides/audio/openal-streaming-audio.md)
 - [Component API](developer-guides/components/component-api.md)
@@ -94,6 +96,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Skinning](developer-guides/rendering/skinning.md)
 - [Blendshaping](developer-guides/rendering/blendshaping.md)
 - [Poiyomi Toon Material Conversion](developer-guides/rendering/poiyomi-toon-material-conversion.md)
+- [Unity Shader Translation](developer-guides/rendering/unity-shader-translation.md)
 - [Maintaining Poiyomi Toon Support](developer-guides/rendering/poiyomi-toon-maintenance.md)
 - [Gaussian Splat Cutscene Capture](developer-guides/rendering/gaussian-splat-cutscene-capture.md)
 - [Vulkan OBS Hook Compatibility](developer-guides/rendering/vulkan-obs-hook-compatibility.md)

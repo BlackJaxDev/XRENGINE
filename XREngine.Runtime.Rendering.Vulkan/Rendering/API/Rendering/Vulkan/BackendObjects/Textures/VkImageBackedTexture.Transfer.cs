@@ -76,21 +76,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         if (currentLayout != ImageLayout.TransferDstOptimal)
             TransitionImageLayout(currentLayout, ImageLayout.TransferDstOptimal);
 
-        BufferImageCopy region = new()
-        {
-            BufferOffset = stagingSlice.Offset,
-            BufferRowLength = 0,
-            BufferImageHeight = 0,
-            ImageSubresource = new ImageSubresourceLayers
-            {
-                AspectMask = AspectFlags,
-                MipLevel = mipLevel,
-                BaseArrayLayer = baseArrayLayer,
-                LayerCount = layerCount,
-            },
-            ImageOffset = new Offset3D(0, 0, 0),
-            ImageExtent = extent,
-        };
+        BufferImageCopy region = CreateBufferImageCopy(stagingSlice.Offset, mipLevel, baseArrayLayer, layerCount, extent);
 
         // Keep synchronous texture publication ordered with prior and future image
         // uses on the graphics queue.  The resource command authority owns the
@@ -103,6 +89,54 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             in arenaLease,
             "VkImageBackedTexture.CopyBufferToImage");
     }
+
+    /// <summary>
+    /// Records a copy of a tightly packed staging slice into <paramref name="session"/>.
+    /// The image must be in <see cref="ImageLayout.TransferDstOptimal"/> when the copy runs.
+    /// </summary>
+    /// <remarks>
+    /// The caller validates the region and the staging byte count, and publishes the host
+    /// writes of the slice before the session is submitted.
+    /// </remarks>
+    protected void RecordCopyBufferToImage(
+        VulkanSynchronousResourceCommandSession session,
+        in VulkanFrameDataSlice stagingSlice,
+        uint mipLevel,
+        uint baseArrayLayer,
+        uint layerCount,
+        Extent3D extent)
+    {
+        BufferImageCopy region = CreateBufferImageCopy(stagingSlice.Offset, mipLevel, baseArrayLayer, layerCount, extent);
+        session.Encoder.CopyBufferToImage(
+            session.CommandBuffer,
+            stagingSlice.Buffer,
+            _image,
+            ImageLayout.TransferDstOptimal,
+            1,
+            &region);
+    }
+
+    private BufferImageCopy CreateBufferImageCopy(
+        ulong bufferOffset,
+        uint mipLevel,
+        uint baseArrayLayer,
+        uint layerCount,
+        Extent3D extent)
+        => new()
+        {
+            BufferOffset = bufferOffset,
+            BufferRowLength = 0,
+            BufferImageHeight = 0,
+            ImageSubresource = new ImageSubresourceLayers
+            {
+                AspectMask = AspectFlags,
+                MipLevel = mipLevel,
+                BaseArrayLayer = baseArrayLayer,
+                LayerCount = layerCount,
+            },
+            ImageOffset = new Offset3D(0, 0, 0),
+            ImageExtent = extent,
+        };
 
     private bool ValidateCopyBufferToImageRegion(uint mipLevel, uint baseArrayLayer, uint layerCount, Extent3D extent)
     {
