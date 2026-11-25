@@ -627,7 +627,11 @@ void main()
             RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
         XRFrameBuffer? sourceFrameBuffer = ResolveSourceFrameBuffer(instance, sourceTexture);
         if (!isLeaseBackedOutputTarget && !useBoundOutputFbo)
+        {
             renderer.TrackWindowPresentSource(sourceTexture, sourceFrameBuffer);
+            if (sourceTexture is XRTexture2D presentTex2D)
+                instance.RenderState.SetResolvedWindowPresentSource(presentTex2D, FlipSourceYOnVulkan);
+        }
 
         using var areaScope = instance.RenderState.PushRenderArea(region);
         if (ClearColor || ClearDepth || ClearStencil)

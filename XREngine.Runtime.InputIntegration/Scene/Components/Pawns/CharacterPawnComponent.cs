@@ -67,8 +67,18 @@ namespace XREngine.Components
         private bool _movementAffectedByTimeDilation = true;
         private bool _viewRotationAffectedByTimeDilation = true;
 
-        // Cursor visibility
+        // Cursor visibility state
         private bool _shouldHideCursor = true;
+
+        // Held keyboard state for deterministic zeroing across pause transitions
+        private bool _moveForwardHeld;
+        private bool _moveBackwardHeld;
+        private bool _moveLeftHeld;
+        private bool _moveRightHeld;
+        private bool _lookLeftHeld;
+        private bool _lookRightHeld;
+        private bool _lookUpHeld;
+        private bool _lookDownHeld;
 
         // Root-motion steering state
         private bool _useRootMotionSteering;
@@ -81,6 +91,7 @@ namespace XREngine.Components
         private bool _shiftRightHeld;
         private bool _gamepadRunHeld;
         private bool _gamepadRunToggled;
+        private bool _gamepadStancePressed;
         private bool _gamepadStanceHoldTriggered;
         private ThirdPersonCameraRigComponent? _thirdPersonCameraRig;
 
@@ -298,6 +309,54 @@ namespace XREngine.Components
             set => SetField(ref _shouldHideCursor, value);
         }
 
+        /// <summary>
+        /// Returns true when <see cref="PauseToggled"/> already has runtime or persistent listeners
+        /// implementing a custom pause menu.
+        /// </summary>
+        public override bool HasCustomPauseMenu
+            => PauseToggled is { } pauseEvent
+            && (pauseEvent.HasEffectiveListeners || pauseEvent.HasPersistentCalls);
+
+        /// <inheritdoc />
+        protected override void OnGameplayInputPausedChanged(bool paused)
+        {
+            ClearHeldGameplayInputs();
+            ApplyCursorCaptureState();
+        }
+
+        private void ApplyCursorCaptureState()
+        {
+            if (LocalInput is not LocalInputInterface input)
+                return;
+
+            input.HideCursor = !IsGameplayInputPaused && ShouldHideCursor;
+        }
+
+        private void ClearHeldGameplayInputs()
+        {
+            _moveForwardHeld = false;
+            _moveBackwardHeld = false;
+            _moveLeftHeld = false;
+            _moveRightHeld = false;
+            _lookLeftHeld = false;
+            _lookRightHeld = false;
+            _lookUpHeld = false;
+            _lookDownHeld = false;
+            _keyboardMovementInput = Vector2.Zero;
+            _gamepadMovementInput = Vector2.Zero;
+            _keyboardLookInput = Vector2.Zero;
+            _shiftLeftHeld = false;
+            _shiftRightHeld = false;
+            _gamepadRunHeld = false;
+            _gamepadRunToggled = false;
+            _gamepadStancePressed = false;
+            _gamepadStanceHoldTriggered = false;
+            UpdateRunState();
+            Movement.Jump(false);
+            Movement.SetMovementInput(Vector3.Zero);
+            ResolveThirdPersonCameraRig()?.ClearHeldInputs();
+        }
+
         #endregion
 
         #region Events
@@ -349,8 +408,8 @@ namespace XREngine.Components
         {
             if (inputInterface is not InputInterface input)
                 return;
-            // Configure cursor visibility based on pawn settings
-            if (ShouldHideCursor)
+            // Configure cursor visibility based on pawn settings and pause state
+            if (ShouldHideCursor && !IsGameplayInputPaused)
                 input.HideCursor = !input.Unregister;
             else if (input.HideCursor)
                 input.HideCursor = false;
@@ -441,6 +500,12 @@ namespace XREngine.Components
             Vector3 right = ProjectOntoPlane(tfm.WorldRight, up);
             forward = forward.LengthSquared() > 1e-8f ? Vector3.Normalize(forward) : Vector3.Zero;
             right = right.LengthSquared() > 1e-8f ? Vector3.Normalize(right) : Vector3.Zero;
+
+            if (IsGameplayInputPaused)
+            {
+                AddMovement(forward, right);
+                return;
+            }
 
             AddMovement(forward, right);
             UpdateViewRotation(cam);
@@ -663,37 +728,66 @@ namespace XREngine.Components
         /// Handles keyboard forward movement (W key).
         /// </summary>
         public void MoveForward(bool pressed)
-            => _keyboardMovementInput.Y += pressed ? 1.0f : -1.0f;
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            _moveForwardHeld = pressed;
+            UpdateKeyboardMovementInput();
+        }
 
         /// <summary>
         /// Handles keyboard backward movement (S key).
         /// </summary>
         public void MoveBackward(bool pressed)
-            => _keyboardMovementInput.Y += pressed ? -1.0f : 1.0f;
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            _moveBackwardHeld = pressed;
+            UpdateKeyboardMovementInput();
+        }
 
         /// <summary>
         /// Handles keyboard left strafe (A key).
         /// </summary>
         public void MoveLeft(bool pressed)
-            => _keyboardMovementInput.X += pressed ? -1.0f : 1.0f;
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            _moveLeftHeld = pressed;
+            UpdateKeyboardMovementInput();
+        }
 
         /// <summary>
         /// Handles keyboard right strafe (D key).
         /// </summary>
         public void MoveRight(bool pressed)
-            => _keyboardMovementInput.X += pressed ? 1.0f : -1.0f;
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            _moveRightHeld = pressed;
+            UpdateKeyboardMovementInput();
+        }
+
+        private void UpdateKeyboardMovementInput()
+            => _keyboardMovementInput = new Vector2(
+                (_moveRightHeld ? 1.0f : 0.0f) - (_moveLeftHeld ? 1.0f : 0.0f),
+                (_moveForwardHeld ? 1.0f : 0.0f) - (_moveBackwardHeld ? 1.0f : 0.0f));
 
         /// <summary>
         /// Handles gamepad right strafe (left thumbstick X axis).
         /// </summary>
         public void MoveRight(float value)
-            => _gamepadMovementInput.X = value;
+            => _gamepadMovementInput.X = IsGameplayInputPaused ? 0.0f : value;
 
         /// <summary>
         /// Handles gamepad forward/backward movement (left thumbstick Y axis).
         /// </summary>
         public void MoveForward(float value)
-            => _gamepadMovementInput.Y = value;
+            => _gamepadMovementInput.Y = IsGameplayInputPaused ? 0.0f : value;
 
         #endregion
 
@@ -717,25 +811,54 @@ namespace XREngine.Components
         /// Handles keyboard left look (left arrow key).
         /// </summary>
         public void LookLeft(bool pressed)
-            => _keyboardLookInput.X += pressed ? -1.0f : 1.0f;
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            _lookLeftHeld = pressed;
+            UpdateKeyboardLookInput();
+        }
 
         /// <summary>
         /// Handles keyboard right look (right arrow key).
         /// </summary>
         public void LookRight(bool pressed)
-            => _keyboardLookInput.X += pressed ? 1.0f : -1.0f;
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            _lookRightHeld = pressed;
+            UpdateKeyboardLookInput();
+        }
 
         /// <summary>
         /// Handles keyboard down look (down arrow key).
         /// </summary>
         public void LookDown(bool pressed)
-            => _keyboardLookInput.Y += pressed ? -1.0f : 1.0f;
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            _lookDownHeld = pressed;
+            UpdateKeyboardLookInput();
+        }
 
         /// <summary>
         /// Handles keyboard up look (up arrow key).
         /// </summary>
         public void LookUp(bool pressed)
-            => _keyboardLookInput.Y += pressed ? 1.0f : -1.0f;
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            _lookUpHeld = pressed;
+            UpdateKeyboardLookInput();
+        }
+
+        private void UpdateKeyboardLookInput()
+            => _keyboardLookInput = new Vector2(
+                (_lookRightHeld ? 1.0f : 0.0f) - (_lookLeftHeld ? 1.0f : 0.0f),
+                (_lookUpHeld ? 1.0f : 0.0f) - (_lookDownHeld ? 1.0f : 0.0f));
 
         /// <summary>
         /// Applies a relative mouse displacement directly in degrees per count without frame-time scaling.
@@ -744,6 +867,9 @@ namespace XREngine.Components
         /// <param name="dy">Vertical mouse displacement for the current frame.</param>
         public void MouseLook(float dx, float dy)
         {
+            if (IsGameplayInputPaused)
+                return;
+
             // Relative mouse deltas are already integrated displacements, not angular velocities.
             // Multiplying by frame delta time causes erratic sensitivity spikes when frame pacing changes.
             _viewRotation.Pitch += dy * MouseYLookInputMultiplier;
@@ -785,6 +911,9 @@ namespace XREngine.Components
 
         public void LookRight(float dx)
         {
+            if (IsGameplayInputPaused)
+                return;
+
             float dt = ViewRotationDeltaSeconds;
             _viewRotation.Yaw -= dt * dx * GamePadXLookInputMultiplier;
             RemapYaw();
@@ -795,6 +924,9 @@ namespace XREngine.Components
         /// </summary>
         public void LookUp(float dy)
         {
+            if (IsGameplayInputPaused)
+                return;
+
             float dt = ViewRotationDeltaSeconds;
             _viewRotation.Pitch += dt * dy * GamePadYLookInputMultiplier;
             ClampPitch();
@@ -810,6 +942,9 @@ namespace XREngine.Components
         /// <param name="pressed">True when the jump key/button is pressed down.</param>
         public void Jump(bool pressed)
         {
+            if (IsGameplayInputPaused)
+                return;
+
             Movement.Jump(pressed);
 
             // Track edge-triggered state for network sync
@@ -833,6 +968,9 @@ namespace XREngine.Components
         /// </summary>
         public void OnGamepadRun(bool pressed)
         {
+            if (IsGameplayInputPaused)
+                return;
+
             _gamepadRunHeld = pressed;
             UpdateRunState();
         }
@@ -842,18 +980,27 @@ namespace XREngine.Components
         /// </summary>
         public void ToggleGamepadRun()
         {
+            if (IsGameplayInputPaused)
+                return;
+
             _gamepadRunToggled = !_gamepadRunToggled;
             UpdateRunState();
         }
 
         private void OnShiftLeftRun(bool pressed)
         {
+            if (IsGameplayInputPaused)
+                return;
+
             _shiftLeftHeld = pressed;
             UpdateRunState();
         }
 
         private void OnShiftRightRun(bool pressed)
         {
+            if (IsGameplayInputPaused)
+                return;
+
             _shiftRightHeld = pressed;
             UpdateRunState();
         }
@@ -865,50 +1012,89 @@ namespace XREngine.Components
         /// Toggles the lowered, close over-the-left-shoulder camera view (Q key or LB) on the bound <see cref="ThirdPersonCameraRig"/>.
         /// </summary>
         public void ToggleLeftShoulderView()
-            => ResolveThirdPersonCameraRig()?.ToggleLeftShoulderView();
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            ResolveThirdPersonCameraRig()?.ToggleLeftShoulderView();
+        }
 
         /// <summary>
         /// Toggles the lowered, close over-the-right-shoulder camera view (E key or RB) on the bound <see cref="ThirdPersonCameraRig"/>.
         /// </summary>
         public void ToggleRightShoulderView()
-            => ResolveThirdPersonCameraRig()?.ToggleRightShoulderView();
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            ResolveThirdPersonCameraRig()?.ToggleRightShoulderView();
+        }
 
         /// <summary>
         /// Updates whether the centered zoom-in key (R) is held on the bound <see cref="ThirdPersonCameraRig"/>.
         /// </summary>
         public void SetCameraZoomInHeld(bool held)
-            => ResolveThirdPersonCameraRig()?.SetZoomInHeld(held);
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            ResolveThirdPersonCameraRig()?.SetZoomInHeld(held);
+        }
 
         /// <summary>
         /// Updates whether the centered zoom-out key (T) is held on the bound <see cref="ThirdPersonCameraRig"/>.
         /// </summary>
         public void SetCameraZoomOutHeld(bool held)
-            => ResolveThirdPersonCameraRig()?.SetZoomOutHeld(held);
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            ResolveThirdPersonCameraRig()?.SetZoomOutHeld(held);
+        }
 
         /// <summary>
         /// Updates whether the gamepad zoom-in button (D-Pad Up) is held on the bound <see cref="ThirdPersonCameraRig"/>.
         /// </summary>
         public void OnGamepadCameraZoomIn(bool held)
-            => ResolveThirdPersonCameraRig()?.SetGamepadZoomInHeld(held);
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            ResolveThirdPersonCameraRig()?.SetGamepadZoomInHeld(held);
+        }
 
         /// <summary>
         /// Updates whether the gamepad zoom-out button (D-Pad Down) is held on the bound <see cref="ThirdPersonCameraRig"/>.
         /// </summary>
         public void OnGamepadCameraZoomOut(bool held)
-            => ResolveThirdPersonCameraRig()?.SetGamepadZoomOutHeld(held);
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            ResolveThirdPersonCameraRig()?.SetGamepadZoomOutHeld(held);
+        }
 
         /// <summary>
         /// Starts tracking a right-face-button press so a short tap toggles crouch on release
         /// and a sustained hold toggles prone without firing crouch.
         /// </summary>
         public void OnGamepadStancePressed()
-            => _gamepadStanceHoldTriggered = false;
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            _gamepadStancePressed = true;
+            _gamepadStanceHoldTriggered = false;
+        }
 
         /// <summary>
         /// Switches prone state when the right face button is held past the hold threshold.
         /// </summary>
         public void OnGamepadStanceHeld()
         {
+            if (IsGameplayInputPaused || !_gamepadStancePressed)
+                return;
+
             _gamepadStanceHoldTriggered = true;
             ToggleProne();
         }
@@ -918,8 +1104,16 @@ namespace XREngine.Components
         /// </summary>
         public void OnGamepadStanceReleased()
         {
+            if (IsGameplayInputPaused || !_gamepadStancePressed)
+            {
+                _gamepadStancePressed = false;
+                _gamepadStanceHoldTriggered = false;
+                return;
+            }
+
             if (!_gamepadStanceHoldTriggered)
                 ToggleCrouch();
+            _gamepadStancePressed = false;
             _gamepadStanceHoldTriggered = false;
         }
 
@@ -928,6 +1122,9 @@ namespace XREngine.Components
         /// </summary>
         public void ToggleCrouch()
         {
+            if (IsGameplayInputPaused)
+                return;
+
             Movement.CrouchState = Movement.CrouchState == CharacterMovement3DComponent.ECrouchState.Crouched
                 ? CharacterMovement3DComponent.ECrouchState.Standing
                 : CharacterMovement3DComponent.ECrouchState.Crouched;
@@ -939,6 +1136,9 @@ namespace XREngine.Components
         /// </summary>
         public void ToggleProne()
         {
+            if (IsGameplayInputPaused)
+                return;
+
             Movement.CrouchState = Movement.CrouchState == CharacterMovement3DComponent.ECrouchState.Prone
                 ? CharacterMovement3DComponent.ECrouchState.Standing
                 : CharacterMovement3DComponent.ECrouchState.Prone;
@@ -959,7 +1159,12 @@ namespace XREngine.Components
         /// Toggles locomotion debug visualization rendering by invoking <see cref="LocomotionDebugToggled"/> (F key).
         /// </summary>
         public void ToggleLocomotionDebug()
-            => LocomotionDebugToggled?.Invoke();
+        {
+            if (IsGameplayInputPaused)
+                return;
+
+            LocomotionDebugToggled?.Invoke();
+        }
 
         /// <summary>
         /// Toggles mouse cursor capture/visibility (Backspace key).

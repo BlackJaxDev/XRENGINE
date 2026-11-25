@@ -1084,9 +1084,13 @@ namespace XREngine.Rendering.UI
                     return true;
 
                 var tfm = BoundableTransform;
+                float effectiveOpacity = tfm.EffectiveOpacity;
+                if (effectiveOpacity <= 0.0001f)
+                    return true;
+
                 var worldMatrix = GetRenderCanvasMatrix(tfm);
-                var textColor = new Vector4(Color.R, Color.G, Color.B, Color.A);
-                var outlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A);
+                var textColor = new Vector4(Color.R, Color.G, Color.B, Color.A * effectiveOpacity);
+                var outlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A * effectiveOpacity);
                 var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
                 var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
 

@@ -159,7 +159,24 @@ namespace XREngine.Components
         }
 
         public bool AllowKeyboardInput
-            => Controller?.FocusedInteractable is null;
+            => !IsGameplayInputPaused && Controller?.FocusedInteractable is null;
+
+        /// <inheritdoc />
+        protected override void OnGameplayInputPausedChanged(bool paused)
+        {
+            if (!paused)
+                return;
+
+            _incRight = 0.0f;
+            _incForward = 0.0f;
+            _incUp = 0.0f;
+            _incPitch = 0.0f;
+            _incYaw = 0.0f;
+            _rightClickDragging = false;
+            _rightClickPendingDragActivation = false;
+            RightClickPressed = false;
+            LeftClickPressed = false;
+        }
 
         protected virtual void MoveDown(bool pressed)
         {
@@ -205,13 +222,13 @@ namespace XREngine.Components
         }
 
         protected virtual void OnLeftStickX(float value)
-            => _incRight = value * GamepadTranslateSpeed;
+            => _incRight = IsGameplayInputPaused ? 0.0f : value * GamepadTranslateSpeed;
         protected virtual void OnLeftStickY(float value)
-            => _incForward = value * GamepadTranslateSpeed;
+            => _incForward = IsGameplayInputPaused ? 0.0f : value * GamepadTranslateSpeed;
         protected virtual void OnRightStickX(float value)
-            => _incYaw = -value * GamepadRotateSpeed;
+            => _incYaw = IsGameplayInputPaused ? 0.0f : -value * GamepadRotateSpeed;
         protected virtual void OnRightStickY(float value)
-            => _incPitch = value * GamepadRotateSpeed;
+            => _incPitch = IsGameplayInputPaused ? 0.0f : value * GamepadRotateSpeed;
 
         protected virtual void YawRight(bool pressed)
         {
@@ -319,6 +336,14 @@ namespace XREngine.Components
 
         protected virtual void OnRightClick(bool pressed)
         {
+            if (IsGameplayInputPaused)
+            {
+                RightClickPressed = false;
+                _rightClickDragging = false;
+                _rightClickPendingDragActivation = false;
+                return;
+            }
+
             bool stateChanged = RightClickPressed != pressed;
 
             RightClickPressed = pressed;
@@ -348,7 +373,7 @@ namespace XREngine.Components
             }
         }
         protected virtual void OnLeftClick(bool pressed)
-            => LeftClickPressed = pressed;
+            => LeftClickPressed = !IsGameplayInputPaused && pressed;
 
         protected override void OnComponentActivated()
         {

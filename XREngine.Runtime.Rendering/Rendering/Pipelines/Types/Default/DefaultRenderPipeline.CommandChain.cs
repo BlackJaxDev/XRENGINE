@@ -202,7 +202,10 @@ public partial class DefaultRenderPipeline
         AppendFinalOutput(c, bypassVendorUpscale);
 
         c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
-        c.Add<VPRC_RenderScreenSpaceUI>().WithAnchor("default.screenSpaceUI");
+        AppendScreenSpaceUiWithBackdropBlur(
+            c,
+            [FinalPostProcessOutputTextureName, PostProcessOutputTextureName],
+            screenSpaceUiAnchorId: "default.screenSpaceUI");
         return c;
     }
 

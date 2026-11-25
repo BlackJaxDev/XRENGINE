@@ -349,6 +349,8 @@ public static class XREngineEnvironmentVariables
     public const string DebugCameraInput = "XRE_DEBUG_CAMERA_INPUT";
     public const string CameraInputDiag = "XRE_CAMERA_INPUT_DIAG";
     public const string FpsTextBatchedDebugMode = "XRE_FPS_TEXT_BATCHED_DEBUG_MODE";
+    /// <summary>Overrides the GPU texture format for the on-demand UI backdrop blur pyramid (Rgba8, Rgba16f, R11fG11fB10f).</summary>
+    public const string UiBackdropBlurFormat = "XRE_UI_BACKDROP_BLUR_FORMAT";
     public const string GlslDceIncludes = "XRE_GLSL_DCE_INCLUDES";
     public const string BloomDebugSolid = "XRE_BLOOM_DEBUG_SOLID";
     public const string BloomDiag = "XRE_BLOOM_DIAG";

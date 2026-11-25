@@ -209,7 +209,7 @@ public partial class DefaultRenderPipeline
             _ => DefaultPipelineResourceFeature.None,
         };
 
-        return (ulong)mask;
+        return (ulong)mask | UiBackdropBlurResources.GetFormatFeatureBits(35);
     }
 
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
@@ -1108,6 +1108,7 @@ public partial class DefaultRenderPipeline
             .Add();
 
         DeclareBloomFrameBuffers(builder, internalSize);
+        UiBackdropBlurResources.DeclareResources(builder, this);
 
         Texture(builder, AtmosphereColorTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), SampledColorAttachment,
             EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f,

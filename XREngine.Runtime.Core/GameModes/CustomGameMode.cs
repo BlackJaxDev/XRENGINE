@@ -72,5 +72,22 @@ namespace XREngine
                 SetField(ref _defaultPlayerUserInterfaceClass, value);
             }
         }
+
+        /// <summary>
+        /// Custom pause menu component type supplied by this game mode.
+        /// When null, direct-to-play editor sessions may inject the default pause menu.
+        /// </summary>
+        [Description("Custom pause menu component type supplied by this game mode.")]
+        public Type? DefaultPauseMenuClass
+        {
+            get => _defaultPauseMenuClass;
+            set
+            {
+                if (value is not null && !typeof(XRComponent).IsAssignableFrom(value))
+                    throw new ArgumentException($"Default pause menu must derive from {nameof(XRComponent)}.", nameof(value));
+
+                SetField(ref _defaultPauseMenuClass, value);
+            }
+        }
     }
 }
