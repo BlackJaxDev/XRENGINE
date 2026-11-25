@@ -1079,8 +1079,7 @@ public partial class AnimationPanel : NativeVirtualTextPanel
         }
         if (_pathRows.TryGetValue(id,
                 out EditorImGuiUI.AnimationClipPathCandidate? candidate))
-            return (ReferenceEquals(candidate, _selectedCandidate) ? "> " : "  ") +
-                candidate.DisplayPath + " [" + candidate.ValueType.Name + "]";
+            return $"{(ReferenceEquals(candidate, _selectedCandidate) ? "> " : "  ")}{candidate.DisplayPath} [{candidate.ValueType.Name}]";
         return string.Empty;
     }
 

@@ -157,11 +157,8 @@ public static partial class InspectorPropertyEditors
                         ? "Grouped key actions support up to 64 distinct curves and 100000 total keys."
                         : $"Curve {_groupCurveIndex + 1}/{group!.Curves.Length}: {curve.Curve.Name}. " +
                           $"Marked {marks!.MarkedCount}/{marks.Count}. " +
-                          (marked is null ? "No key marked on this curve. " :
-                              $"Marked key at {marked.Second.ToString("G9", CultureInfo.InvariantCulture)} seconds. ") +
-                          (curve.Track.Count == 0 ? "This curve has no key; grouped actions are unavailable." :
-                              $"Select a row, then Mark / Unmark. Showing up to {MaximumKeys} keys. " +
-                              "Outgoing value assignment respects each key's linked-values setting.");
+                          $"{(marked is null ? "No key marked on this curve. " : $"Marked key at {marked.Second.ToString("G9", CultureInfo.InvariantCulture)} seconds. ")}" +
+                          $"{(curve.Track.Count == 0 ? "This curve has no key; grouped actions are unavailable." : $"Select a row, then Mark / Unmark. Showing up to {MaximumKeys} keys. Outgoing value assignment respects each key's linked-values setting.")}";
                 }
                 if (!IsRemovalViewCurrent(revision)) return false;
                 if (_previousRemovalCurve is not null) _previousRemovalCurve.IsEnabled = curve is not null && _groupCurveIndex > 0;

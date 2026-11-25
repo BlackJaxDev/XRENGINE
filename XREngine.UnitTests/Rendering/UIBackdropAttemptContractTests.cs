@@ -78,6 +78,12 @@ public sealed class UIBackdropAttemptContractTests
         typeof(XRWindow).GetField("_requiredOpenGlBackdropReceipts",
             BindingFlags.Instance | BindingFlags.NonPublic)!
             .SetValue(window, new HashSet<ulong>());
+        typeof(XRWindow).GetField("_requiredOpenGlWorldReceipts",
+            BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(window, new HashSet<ulong>());
+        typeof(XRWindow).GetField("_openGlWorldNativeTokens",
+            BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(window, new Dictionary<ulong, ulong>());
         return window;
     }
 

@@ -105,10 +105,10 @@ public sealed class UIBatchScissorTests
         finally { root.Destroy(true); }
     }
 
-    [TestCase(-10, 20, 0, 10)]
-    [TestCase(90, 20, 90, 10)]
-    [TestCase(-20, 10, 0, 0)]
-    [TestCase(110, 10, 100, 0)]
+    [TestCase(-10, 20, 0, 10u)]
+    [TestCase(90, 20, 90, 10u)]
+    [TestCase(-20, 10, 0, 0u)]
+    [TestCase(110, 10, 100, 0u)]
     public void ScissorClampsOriginalHorizontalIntersection(int x, int width, int expectedX, uint expectedWidth)
     {
         Rect2D result = VulkanStateTracker.CreateVulkanScissor(
@@ -120,10 +120,10 @@ public sealed class UIBatchScissorTests
         result.Extent.Height.ShouldBe(20u);
     }
 
-    [TestCase(-10, 20, 90, 10)]
-    [TestCase(90, 20, 0, 10)]
-    [TestCase(-20, 10, 100, 0)]
-    [TestCase(110, 10, 0, 0)]
+    [TestCase(-10, 20, 90, 10u)]
+    [TestCase(90, 20, 0, 10u)]
+    [TestCase(-20, 10, 100, 0u)]
+    [TestCase(110, 10, 0, 0u)]
     public void ScissorClampsOriginalVerticalIntersection(int y, int height, int expectedY, uint expectedHeight)
     {
         Rect2D result = VulkanStateTracker.CreateVulkanScissor(

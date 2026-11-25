@@ -207,9 +207,7 @@ public sealed class UIActualControlCompositionTests
         }, TimeSpan.FromSeconds(5));
         if (!captured || publication is null)
             throw new AssertionException("No current publication was captured: " +
-                (typeof(UICanvasComponent).GetField("_lastPublicationCaptureFailure",
-                    BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(canvas) ??
-                 "layout or painter-order admission did not settle") +
+                $"{typeof(UICanvasComponent).GetField("_lastPublicationCaptureFailure", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(canvas) ?? "layout or painter-order admission did not settle"}" +
                 $"; layout={transform.CurrentLayoutGeneration} invalid={transform.IsLayoutInvalidated}" +
                 $" updating={transform.IsUpdatingLayout} journal={transform.ChangeJournal.Revision}" +
                 $" candidate={publication?.LayoutGeneration}/{publication?.ChangeRevision}");

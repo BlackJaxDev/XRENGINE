@@ -201,10 +201,7 @@ internal static class UIWorldCropShaderContract
         if (!source.StartsWith("#version ", StringComparison.Ordinal) ||
             versionEnd < 0 || bodyStart <= versionEnd)
             return false;
-        clipped = source[..(versionEnd + 1)] + CropDeclarations + "\n" +
-            source[(versionEnd + 1)..(bodyStart + 1)] +
-            "\n    XRENGINE_ApplyUiWorldCrop();\n" +
-            source[(bodyStart + 1)..];
+        clipped = $"{source[..(versionEnd + 1)]}{CropDeclarations}\n{source[(versionEnd + 1)..(bodyStart + 1)]}\n    XRENGINE_ApplyUiWorldCrop();\n{source[(bodyStart + 1)..]}";
         return true;
     }
 
