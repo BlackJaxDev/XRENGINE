@@ -9,6 +9,18 @@ namespace XREngine.Rendering.UI;
 public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtualAccessibilityProvider, IVirtualListItemIndex,
     IVirtualListItemExtents
 {
+    /// <summary>
+    /// Gets or sets the provider that the list holds. A wrapper such as <see cref="UIVirtualPropertyGridProvider{T}"/>
+    /// sets itself here, because the list leases its rows to the wrapper and not to this table.
+    /// </summary>
+    internal IVirtualListProvider ListProvider
+    {
+        get => _listProvider ?? this;
+        set => _listProvider = value;
+    }
+
+    private IVirtualListProvider? _listProvider;
+
     private sealed class RowState
     {
         public required UIBoundableTransform[] Cells;
@@ -249,7 +261,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
             throw new InvalidOperationException("The virtual table row ID does not match its source.");
         UIListTransform? list = row.Parent as UIListTransform;
         if (row.Parent is not null && list is null ||
-            list is not null && (!ReferenceEquals(list.VirtualProvider, this) ||
+            list is not null && (!ReferenceEquals(list.VirtualProvider, ListProvider) ||
                 !list.TryGetVirtualRowLease(row, out UIVirtualRowLease lease) ||
                 lease.ItemId != itemId || lease.Incarnation != incarnation))
             throw new InvalidOperationException("The virtual table row has no matching list lease.");
@@ -325,7 +337,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
             state.Interaction.IsSelected = itemId == _selectedId;
             if (list is not null && IsCurrentBinding(row, state, itemId, incarnation, list,
                     providerIncarnation, sourceRevision, epoch))
-                state.Interaction.BindNavigation(this, list, itemId, incarnation);
+                state.Interaction.BindNavigation(ListProvider, list, itemId, incarnation);
             if (state.Interaction.BoundItemId == itemId && IsCurrentBinding(row, state, itemId,
                     incarnation, list, providerIncarnation, sourceRevision, epoch))
                 state.CompletedSourceRevision = sourceRevision;
@@ -460,7 +472,7 @@ public sealed class UIVirtualTableProvider<T> : IVirtualListProvider, IUIVirtual
         ulong itemId, ulong incarnation, ulong providerIncarnation)
         => row.SceneNode is { IsDestroyed: false, IsDestroyQueued: false } &&
             (list is null ? row.Parent is null :
-                ReferenceEquals(row.Parent, list) && ReferenceEquals(list.VirtualProvider, this) &&
+                ReferenceEquals(row.Parent, list) && ReferenceEquals(list.VirtualProvider, ListProvider) &&
                 list.VirtualProviderIncarnation == providerIncarnation &&
                 list.TryGetVirtualRowLease(row, out UIVirtualRowLease lease) &&
                 lease.ItemId == itemId && lease.Incarnation == incarnation);

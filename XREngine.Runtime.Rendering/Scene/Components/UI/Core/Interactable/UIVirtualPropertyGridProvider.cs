@@ -20,6 +20,7 @@ public sealed class UIVirtualPropertyGridProvider<T> : IVirtualListProvider, IUI
             new UIVirtualTableColumn<T>("value", "Value", valueWidth,
                 createValueEditor, bindValueEditor, unbindValueEditor, refreshValueEditor));
         _table.AccessibleRowName = getName;
+        _table.ListProvider = this;
     }
 
     public int Count => _table.Count;
