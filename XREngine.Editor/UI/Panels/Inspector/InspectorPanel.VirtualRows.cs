@@ -38,16 +38,44 @@ public partial class InspectorPanel
         private readonly Dictionary<PropertyInfo, ulong> _ids = [];
         private readonly Dictionary<ulong, int> _indices = [];
         private object?[] _targetIdentities = [];
+        private readonly Dictionary<PropertyInfo, object?[]> _rowTargets = [];
+        private readonly Dictionary<PropertyInfo, string> _rowNames = [];
+        private readonly HashSet<PropertyInfo> _sectionHeaders = [];
         private ulong _nextId;
         public object?[]? Targets { get; private set; }
+
+        /// <summary>
+        /// Gets the objects that one row edits. A stacked scene node view edits the node, its transform, and its
+        /// components in one list, so a row can edit another object than <see cref="Targets"/>.
+        /// </summary>
+        public object?[]? TargetsFor(PropertyInfo property)
+            => _rowTargets.TryGetValue(property, out object?[]? targets) ? targets : Targets;
+
+        /// <summary>Gets the display name that replaces the property name, such as a component name on its header row.</summary>
+        public string? NameFor(PropertyInfo property)
+            => _rowNames.TryGetValue(property, out string? name) ? name : null;
+
+        /// <summary>Reports whether a row starts a section, such as the transform or one component.</summary>
+        public bool IsSectionHeader(PropertyInfo property) => _sectionHeaders.Contains(property);
         public int Count => _properties.Count;
         public ulong Revision { get; private set; } = 1;
         public ulong GetItemId(int index) => _ids[_properties[index]];
         public PropertyInfo GetItem(int index) => _properties[index];
         public bool TryGetIndexOfItemId(ulong id, out int index) => _indices.TryGetValue(id, out index);
 
-        public void Reset(List<PropertyInfo> properties, object?[]? targets)
+        public void Reset(List<PropertyInfo> properties, object?[]? targets, InspectorRowLayout? layout = null)
         {
+            _rowTargets.Clear();
+            _rowNames.Clear();
+            _sectionHeaders.Clear();
+            if (layout is not null)
+            {
+                foreach (var entry in layout.Targets)
+                    _rowTargets.Add(entry.Key, entry.Value);
+                foreach (var entry in layout.Names)
+                    _rowNames.Add(entry.Key, entry.Value);
+                _sectionHeaders.UnionWith(layout.Headers);
+            }
             // A different target must get different row leases even when its type exposes
             // the same PropertyInfo objects. The virtual list cancels focused/captured
             // interactions when those leases are recycled.
@@ -344,10 +372,10 @@ public partial class InspectorPanel
         _virtualPropertyProvider = new PropertyProvider();
         _virtualPropertyGrid = new UIVirtualPropertyGridProvider<PropertyInfo>(
             _virtualPropertyProvider,
-            property => ResolveName(property) ?? property.Name,
+            property => _virtualPropertyProvider?.NameFor(property) ?? ResolveName(property) ?? property.Name,
             160, 400,
             CreatePropertyValueCell,
-            (cell, property, _) => BindPropertyRow(cell, property, _virtualPropertyProvider.Targets),
+            (cell, property, _) => BindPropertyRow(cell, property, _virtualPropertyProvider.TargetsFor(property)),
             UnbindPropertyRow);
         list.VirtualProvider = _virtualPropertyGrid;
         _virtualPropertyList = list;
@@ -378,9 +406,10 @@ public partial class InspectorPanel
 
     private void RefreshVirtualProperties()
     {
-        List<PropertyInfo> properties = GetMatchingProperties(InspectedObjects);
+        InspectorRowLayout? layout = BuildStackedNodeLayout(InspectedObjects);
+        List<PropertyInfo> properties = layout?.Properties ?? GetMatchingProperties(InspectedObjects);
         Properties = properties;
-        _virtualPropertyProvider!.Reset(properties, InspectedObjects);
+        _virtualPropertyProvider!.Reset(properties, InspectedObjects, layout);
         _virtualPropertyList!.InvalidateMeasure();
         RefreshComponentViews();
         if (_staleDetailSuspended && _detailEditor is not null &&
@@ -423,8 +452,17 @@ public partial class InspectorPanel
         detailButton.InteractAction += _ =>
         {
             PropertyInfo? clickedProperty = state.Property;
-            if (clickedProperty is not null)
-                ShowDetailEditor(clickedProperty);
+            if (clickedProperty is null)
+                return;
+            // A row of the transform or a component section edits another object than the inspected node.
+            // Its details open by inspecting that object, which the Properties button returns from.
+            if (_virtualPropertyProvider?.TargetsFor(clickedProperty) is { } rowTargets &&
+                !SameTargets(rowTargets, InspectedObjects))
+            {
+                InspectedObjects = rowTargets;
+                return;
+            }
+            ShowDetailEditor(clickedProperty);
         };
         _propertyRows.Add(valueTransform, state);
         return valueTransform;
@@ -451,8 +489,8 @@ public partial class InspectorPanel
             ReferenceEquals(state.BindingToken, token) &&
             _propertyRows.TryGetValue(row, out PropertyRow? currentRow) && ReferenceEquals(currentRow, state) &&
             provider is not null && ReferenceEquals(_virtualPropertyProvider, provider) && provider.Revision == revision &&
-            _componentGeneration == generation && SameTargets(provider.Targets, capturedTargets) &&
-            SameTargets(InspectedObjects, capturedTargets);
+            _componentGeneration == generation && SameTargets(provider.TargetsFor(property), capturedTargets) &&
+            SameTargets(provider.Targets, InspectedObjects);
         state.Columns.Bind(Current);
         if (_propertyColumnScroll is not null && IsActiveInHierarchy && !ApplyPropertyColumnLayout(state.Columns))
         {
@@ -460,6 +498,14 @@ public partial class InspectorPanel
             return;
         }
         if (!Current()) return;
+        // Section header rows (the transform and each component) read brighter and larger than member rows.
+        if (state.Columns.NameLabel is { } nameLabel)
+        {
+            bool header = provider!.IsSectionHeader(property);
+            nameLabel.Color = header ? EditorGlassTheme.TextPrimary : EditorGlassTheme.TextSecondary;
+            nameLabel.FontSize = header ? EditorGlassTheme.FontSize : EditorGlassTheme.CaptionFontSize;
+            if (!Current()) return;
+        }
         if (targets is { Length: > 0 } && property.SetMethod?.IsPublic == true &&
             (typeof(XRComponent).IsAssignableFrom(property.PropertyType) ||
              typeof(XRAsset).IsAssignableFrom(property.PropertyType)))

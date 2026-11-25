@@ -136,6 +136,11 @@ public static partial class InspectorPropertyEditors
             n.AddComponent<UIMaterialComponent>()!.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Gray, 1);
             n.NewChild<UITextComponent>(out var label);
             label.VerticalAlignment = EVerticalAlignment.Center;
+            // Match the other value editors: the property text size, the field text color, and an inset.
+            label.FontSize = EditorUI.Styles.PropertyInputFontSize;
+            label.Color = EditorUI.Styles.PropertyInputTextColor;
+            label.ClipToBounds = true;
+            label.BoundableTransform.Margins = new System.Numerics.Vector4(6.0f, 0.0f, 6.0f, 0.0f);
             combo.Opening += _ => combo.PopupPosition = popup.GetPosition();
             n.AddComponent<InspectorEnumEditorComponent>()!.Configure(combo, label, prop, objects);
         }

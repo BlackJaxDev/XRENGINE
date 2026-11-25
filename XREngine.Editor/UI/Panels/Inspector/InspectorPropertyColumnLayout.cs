@@ -50,6 +50,10 @@ internal sealed class InspectorPropertyColumnLayout
     }
     internal void Revoke() => _bindingCurrent = null;
 
+    /// <summary>Gets the text of the name cell, which the inspector styles for section header rows.</summary>
+    internal XREngine.Rendering.UI.UITextComponent? NameLabel
+        => _nameNode.GetComponent<XREngine.Rendering.UI.UITextComponent>();
+
     internal bool TryApply(UIListTransform list, object provider, ulong incarnation,
         Func<bool> ownerCurrent, float viewportWidth)
     {

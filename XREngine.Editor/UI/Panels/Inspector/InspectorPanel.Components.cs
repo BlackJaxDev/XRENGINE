@@ -186,7 +186,14 @@ public partial class InspectorPanel
     }
 
     private void ComponentListChanged((SceneNode node, XRComponent comp) _)
-        => RefreshComponentViews();
+    {
+        // The stacked node view lists the components, so it rebuilds its rows too.
+        if (_virtualPropertyList is not null && _virtualPropertyProvider is not null &&
+            BuildStackedNodeLayout(InspectedObjects) is not null)
+            RefreshVirtualProperties();
+        else
+            RefreshComponentViews();
+    }
 
     private void RefreshComponentTypes()
     {
