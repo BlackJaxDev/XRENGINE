@@ -11,6 +11,9 @@ internal sealed class EditorPropertyDelegates
 
     public static EditorPropertyDelegates Create(PropertyInfo property)
     {
+        // An inspector-scoped copy only gives a row its own identity. Expressions need the runtime property.
+        if (property is InspectorScopedPropertyInfo scoped)
+            property = scoped.Inner;
         if (property.GetMethod is null || property.GetMethod.IsStatic || property.GetIndexParameters().Length != 0)
             throw new ArgumentException("A readable instance scalar property is required.", nameof(property));
         var target = Expression.Parameter(typeof(object), "target");

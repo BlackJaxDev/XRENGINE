@@ -41,6 +41,7 @@ public partial class InspectorPanel
         private readonly Dictionary<PropertyInfo, object?[]> _rowTargets = [];
         private readonly Dictionary<PropertyInfo, string> _rowNames = [];
         private readonly HashSet<PropertyInfo> _sectionHeaders = [];
+        private readonly Dictionary<PropertyInfo, string> _sectionKeys = [];
         private ulong _nextId;
         public object?[]? Targets { get; private set; }
 
@@ -57,6 +58,10 @@ public partial class InspectorPanel
 
         /// <summary>Reports whether a row starts a section, such as the transform or one component.</summary>
         public bool IsSectionHeader(PropertyInfo property) => _sectionHeaders.Contains(property);
+
+        /// <summary>Gets the key of the section that a header row starts, or null for a member row.</summary>
+        public string? SectionKeyFor(PropertyInfo property)
+            => _sectionKeys.TryGetValue(property, out string? key) ? key : null;
         public int Count => _properties.Count;
         public ulong Revision { get; private set; } = 1;
         public ulong GetItemId(int index) => _ids[_properties[index]];
@@ -68,8 +73,11 @@ public partial class InspectorPanel
             _rowTargets.Clear();
             _rowNames.Clear();
             _sectionHeaders.Clear();
+            _sectionKeys.Clear();
             if (layout is not null)
             {
+                foreach (var entry in layout.SectionKeys)
+                    _sectionKeys.Add(entry.Key, entry.Value);
                 foreach (var entry in layout.Targets)
                     _rowTargets.Add(entry.Key, entry.Value);
                 foreach (var entry in layout.Names)
@@ -377,6 +385,7 @@ public partial class InspectorPanel
             CreatePropertyValueCell,
             (cell, property, _) => BindPropertyRow(cell, property, _virtualPropertyProvider.TargetsFor(property)),
             UnbindPropertyRow);
+        _virtualPropertyGrid.Activated += ToggleStackedSection;
         list.VirtualProvider = _virtualPropertyGrid;
         _virtualPropertyList = list;
         StartPropertyColumnLayout();
@@ -406,7 +415,7 @@ public partial class InspectorPanel
 
     private void RefreshVirtualProperties()
     {
-        InspectorRowLayout? layout = BuildStackedNodeLayout(InspectedObjects);
+        InspectorRowLayout? layout = BuildStackedNodeLayout(InspectedObjects, _collapsedStackSections);
         List<PropertyInfo> properties = layout?.Properties ?? GetMatchingProperties(InspectedObjects);
         Properties = properties;
         _virtualPropertyProvider!.Reset(properties, InspectedObjects, layout);

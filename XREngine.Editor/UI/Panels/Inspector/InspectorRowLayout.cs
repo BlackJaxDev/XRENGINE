@@ -12,6 +12,8 @@ internal sealed class InspectorRowLayout
     public Dictionary<PropertyInfo, object?[]> Targets { get; } = [];
     public Dictionary<PropertyInfo, string> Names { get; } = [];
     public HashSet<PropertyInfo> Headers { get; } = [];
+    /// <summary>The key of the section that each header row starts. Collapse state is stored by this key.</summary>
+    public Dictionary<PropertyInfo, string> SectionKeys { get; } = [];
 
     /// <summary>Adds a row that edits <paramref name="target"/>. Returns false when the property is already listed.</summary>
     public bool Add(PropertyInfo property, object target)

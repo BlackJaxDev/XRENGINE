@@ -16,7 +16,7 @@ public sealed class InspectorStackedNodeLayoutTests
     }
 
     private static object? Build(object?[]? objects)
-        => typeof(InspectorPanel).GetMethod("BuildStackedNodeLayout", BindingFlags.NonPublic | BindingFlags.Static)!
+        => typeof(InspectorPanel).GetMethod("BuildStackedNodeLayout", BindingFlags.NonPublic | BindingFlags.Static, [typeof(object[])])!
             .Invoke(null, [objects]);
 
     private static T Member<T>(object layout, string name)
@@ -51,6 +51,51 @@ public sealed class InspectorStackedNodeLayoutTests
             Assert.That(targets[strength], Is.EqualTo(new object?[] { component }));
             Assert.That(properties.Any(property => property.DeclaringType == typeof(XRComponent) &&
                 !ReferenceEquals(property, componentHeader)), Is.False);
+        }
+        finally { node.Destroy(true); }
+    }
+
+    [Test]
+    public void SameTypeComponentsEachGetTheirOwnSection()
+    {
+        SceneNode node = new("Pair");
+        try
+        {
+            StackedLayoutProbeComponent first = node.AddComponent<StackedLayoutProbeComponent>()!;
+            StackedLayoutProbeComponent second = node.AddComponent<StackedLayoutProbeComponent>()!;
+            object layout = Build([node])!;
+            var properties = Member<List<PropertyInfo>>(layout, "Properties");
+            var targets = Member<Dictionary<PropertyInfo, object?[]>>(layout, "Targets");
+            PropertyInfo[] strengths = properties.Where(property => property.Name == nameof(StackedLayoutProbeComponent.Strength)).ToArray();
+            Assert.That(strengths, Has.Length.EqualTo(2));
+            Assert.That(strengths[0], Is.Not.SameAs(strengths[1]));
+            Assert.That(targets[strengths[0]], Is.EqualTo(new object?[] { first }));
+            Assert.That(targets[strengths[1]], Is.EqualTo(new object?[] { second }));
+            Assert.That(strengths[1].GetValue(second), Is.EqualTo(2.0f));
+            Assert.That(Build([node]) is { } rebuilt &&
+                Member<List<PropertyInfo>>(rebuilt, "Properties").Contains(strengths[1]), Is.True);
+        }
+        finally { node.Destroy(true); }
+    }
+
+    [Test]
+    public void CollapsedSectionsKeepOnlyTheirHeaderRow()
+    {
+        SceneNode node = new("Collapsed");
+        try
+        {
+            node.AddComponent<StackedLayoutProbeComponent>();
+            MethodInfo build = typeof(InspectorPanel).GetMethod("BuildStackedNodeLayout",
+                BindingFlags.NonPublic | BindingFlags.Static, [typeof(object[]), typeof(IReadOnlySet<string>)])!;
+            HashSet<string> collapsed = ["Transform", typeof(StackedLayoutProbeComponent).FullName!];
+            object layout = build.Invoke(null, [new object?[] { node }, collapsed])!;
+            var properties = Member<List<PropertyInfo>>(layout, "Properties");
+            var names = Member<Dictionary<PropertyInfo, string>>(layout, "Names");
+            Assert.That(properties.Any(property => property.Name == nameof(StackedLayoutProbeComponent.Strength)), Is.False);
+            Assert.That(properties.Any(property => property.ReflectedType == node.Transform.GetType() &&
+                property.Name != nameof(XRComponent.IsActive)), Is.False);
+            PropertyInfo header = properties.Single(property => property.Name == nameof(XRComponent.IsActive));
+            Assert.That(names[header], Does.StartWith("> "));
         }
         finally { node.Destroy(true); }
     }
