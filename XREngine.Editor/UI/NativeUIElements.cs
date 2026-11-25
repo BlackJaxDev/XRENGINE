@@ -14,6 +14,9 @@ namespace XREngine.Editor.UI;
 
 public static class NativeUIElements
 {
+    /// <summary>One shared button style, so buttons do not each build their own copy.</summary>
+    private static readonly UIStyle SharedButtonStyle = EditorGlassTheme.Button;
+
     /// <summary>Create an image that shares its parent's immutable atlas page.</summary>
     public static (SceneNode Node, UIMaterialComponent Image) CreateImage(
         SceneNode parent, UIImageAtlasComponent atlas, string key,
@@ -48,18 +51,33 @@ public static class NativeUIElements
         EditorUI.Styles.UpdateButton(button);
 
         background.SetBatchSolidColor(ColorF4.Transparent);
+        // The glass style animates the fill, corners, and text color for hover, press, and focus.
+        button.Style = SharedButtonStyle;
 
         var buttonTransform = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
+        // With stretched anchors, Width and Height add to the parent's extent. A button with a set size
+        // uses point anchors on that axis instead, so its size is exactly the requested size. It sits at
+        // the left of its slot and at the vertical middle.
         if (width is not null)
+        {
+            buttonTransform.MinAnchor = new Vector2(0.0f, buttonTransform.MinAnchor.Y);
+            buttonTransform.MaxAnchor = new Vector2(0.0f, buttonTransform.MaxAnchor.Y);
+            buttonTransform.NormalizedPivot = new Vector2(0.0f, buttonTransform.NormalizedPivot.Y);
             buttonTransform.Width = width;
+        }
         if (height > 0)
+        {
+            buttonTransform.MinAnchor = new Vector2(buttonTransform.MinAnchor.X, 0.5f);
+            buttonTransform.MaxAnchor = new Vector2(buttonTransform.MaxAnchor.X, 0.5f);
+            buttonTransform.NormalizedPivot = new Vector2(buttonTransform.NormalizedPivot.X, 0.5f);
             buttonTransform.Height = height;
+        }
         buttonTransform.Margins = margins ?? new Vector4(4.0f, 2.0f, 4.0f, 2.0f);
 
         buttonNode.NewChild<UITextComponent>(out var label);
         label.Text = text;
         label.FontSize = fontSize ?? EditorUI.Styles.PropertyNameFontSize;
-        label.Color = EditorUI.Styles.ButtonTextColor;
+        label.Color = EditorGlassTheme.TextPrimary;
         label.HorizontalAlignment = EHorizontalAlignment.Center;
         label.VerticalAlignment = EVerticalAlignment.Center;
         label.BoundableTransform.Margins = new Vector4(6.0f, 0.0f, 6.0f, 0.0f);

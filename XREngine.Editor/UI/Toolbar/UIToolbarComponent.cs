@@ -43,6 +43,8 @@ public partial class UIToolbarComponent : UIComponent
     }
 
     private const float Margin = 4.0f;
+    /// <summary>One shared menu item style, so menu buttons do not each build their own copy.</summary>
+    private static readonly UIStyle SharedMenuItemStyle = EditorGlassTheme.MenuItem;
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
@@ -219,11 +221,12 @@ public partial class UIToolbarComponent : UIComponent
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
         if (!horizontal)
             menuMat.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
-        EditorPanel.ApplyBackground(menuMat);
+        // The root list is the menu bar; a vertical list is a drop-down menu surface.
+        EditorGlassTheme.ApplyStatic(menuMat, horizontal ? EditorGlassTheme.MenuBar : EditorGlassTheme.MenuSurface);
         var listTfm = listNode.SetTransform<UIListTransform>();
         listTfm.DisplayHorizontal = horizontal;
-        listTfm.ItemSpacing = 0.0f;
-        listTfm.Padding = new Vector4(0.0f);
+        listTfm.ItemSpacing = horizontal ? 2.0f : 0.0f;
+        listTfm.Padding = horizontal ? new Vector4(6.0f, 0.0f, 6.0f, 0.0f) : new Vector4(4.0f);
         listTfm.ItemAlignment = EListAlignment.TopOrLeft;
         // For horizontal lists, ItemSize is the WIDTH per item. Use null to let each
         // item auto-size from its content (DesiredSize.X / text width).
@@ -273,6 +276,7 @@ public partial class UIToolbarComponent : UIComponent
         if (alignSubmenuToSide)
             background.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
         background.SetBatchSolidColor(ColorF4.Transparent);
+        button.Style = SharedMenuItemStyle;
         var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
         buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
         buttonTfm.Margins = new Vector4(Margin);
@@ -318,7 +322,7 @@ public partial class UIToolbarComponent : UIComponent
         var separatorNode = listNode.NewChild<UIMaterialComponent>(out var separatorMat);
         if (alignSubmenuToSide)
             separatorMat.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
-        EditorPanel.ApplyBackground(separatorMat);
+        EditorGlassTheme.ApplyStatic(separatorMat, EditorGlassTheme.Divider);
         var separatorTfm = separatorNode.SetTransform<UIBoundableTransform>();
         separatorTfm.Padding = new Vector4(0.0f);
         separatorTfm.Width = 1.0f;
@@ -336,6 +340,7 @@ public partial class UIToolbarComponent : UIComponent
         if (alignSubmenuToSide)
             background.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
         background.SetBatchSolidColor(ColorF4.Transparent);
+        button.Style = SharedMenuItemStyle;
 
         var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
         buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
@@ -348,7 +353,7 @@ public partial class UIToolbarComponent : UIComponent
 
         text.FontSize = 14;
         text.Text = tbb.Text;
-        text.Color = EditorUI.Styles.ButtonTextColor;
+        text.Color = EditorGlassTheme.TextPrimary;
         if (alignSubmenuToSide)
             text.RenderPass = (int)EDefaultRenderPass.OnTopForward;
 

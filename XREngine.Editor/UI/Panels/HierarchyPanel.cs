@@ -28,12 +28,11 @@ public partial class HierarchyPanel : EditorPanel, IUIScrollReceiver
     }
 
     private const float Margin = 4.0f;
-    private const int DepthIncrement = 10;
-    private const float ArrowWidth = 16.0f;
+    private const int DepthIncrement = 14;
+    private const float ArrowWidth = 18.0f;
     private static readonly Vector4 DropTargetHighlight = new(0.25f, 0.55f, 0.95f, 0.35f);
     private static readonly Vector4 RootDropHighlight = new(0.18f, 0.18f, 0.18f, 0.30f);
-    private static readonly ColorF4 SelectedNodeColor = new(0.22f, 0.50f, 0.85f, 0.45f);
-    private static FontGlyphSet NativeUiIconFont => FontGlyphSet.LoadDefaultUIIconFont();
+    private static ColorF4 SelectedNodeColor => EditorGlassTheme.RowSelectedFill;
     private static FontGlyphSet NativeUiEmojiFont => FontGlyphSet.LoadDefaultUIEmojiFont();
 
     private readonly Dictionary<UIInteractableComponent, Vector2> _pendingDragStarts = new();

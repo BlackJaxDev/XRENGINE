@@ -1,4 +1,5 @@
 using System;
+using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Core.Attributes;
@@ -181,7 +182,8 @@ public partial class UIEditorComponent : UIComponent
             if (StopTerminatedBuild(splitChild)) return;
             UIMaterialComponent background = splitChild.AddComponent<UIMaterialComponent>()!;
             if (StopTerminatedBuild(splitChild)) return;
-            EditorPanel.ApplyBackground(background);
+            // A soft gradient fills the window behind the frosted panel cards.
+            EditorGlassTheme.ApplyStatic(background, EditorGlassTheme.WindowBackdrop);
             if (StopTerminatedBuild(splitChild)) return;
             background.RenderPass = (int)EDefaultRenderPass.Background;
             if (StopTerminatedBuild(splitChild)) return;
@@ -251,7 +253,9 @@ public partial class UIEditorComponent : UIComponent
                 return;
             }
 
-            SceneNode dockNode = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "DockableRoot");
+            SceneNode dockNode = splitChild.NewChildWithTransform<UIBoundableTransform>(out UIBoundableTransform dockBounds, "DockableRoot");
+            // Half a gutter here plus half a gutter around each card gives one full gutter at the window edge.
+            dockBounds.Margins = new Vector4(EditorGlassTheme.PanelGutter * 0.5f);
             if (StopTerminatedBuild(splitChild)) return;
             if (EditorUnitTests.Toggles.BackgroundShader)
             {

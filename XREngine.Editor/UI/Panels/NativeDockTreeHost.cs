@@ -443,27 +443,44 @@ internal sealed class NativeDockTreeHost
         }
     }
 
+    /// <summary>Shared tab styles, so each tab strip does not build its own copies.</summary>
+    private static readonly UIStyle SharedTabStyle = EditorGlassTheme.Tab;
+    private static readonly UIStyle SharedSelectedTabStyle = EditorGlassTheme.SelectedTab;
+
     private void RenderStack(SceneNode parent, NativeDockNode stack)
     {
         ulong revision = _renderGate.Revision;
-        SceneNode stackNode = parent.NewChildWithTransform(out UIDualSplitTransform outer, $"DockStack-{stack.Id}");
+        // A frosted card holds the stack. Its margins leave a gutter between neighbouring cards.
+        float halfGutter = EditorGlassTheme.PanelGutter * 0.5f;
+        SceneNode cardNode = parent.NewChildWithTransform(out UIBoundableTransform cardBounds, $"DockCard-{stack.Id}");
+        cardBounds.Margins = new Vector4(halfGutter);
+        EditorGlassTheme.ApplyStatic(cardNode.AddComponent<UIMaterialComponent>()!, EditorGlassTheme.PanelCard);
+        SceneNode stackNode = cardNode.NewChildWithTransform(out UIDualSplitTransform outer, $"DockStack-{stack.Id}");
+        outer.MinAnchor = Vector2.Zero;
+        outer.MaxAnchor = Vector2.One;
+        outer.Margins = new Vector4(4.0f, 4.0f, 4.0f, 4.0f);
         outer.VerticalSplit = true;
         outer.FirstFixedSize = true;
-        outer.FixedSize = 60;
+        outer.FixedSize = EditorGlassTheme.HeaderHeight;
         outer.SplitterSize = 0;
+        // One header row: the tabs fill the left side, and two compact actions sit at the right.
         SceneNode header = stackNode.NewChildWithTransform(out UIDualSplitTransform headerSplit, "DockHeader");
         header.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.StaticChrome;
-        headerSplit.VerticalSplit = true;
-        headerSplit.FirstFixedSize = true;
-        headerSplit.FixedSize = 30;
+        headerSplit.VerticalSplit = false;
+        headerSplit.FirstFixedSize = false;
+        headerSplit.FixedSize = 64;
         headerSplit.SplitterSize = 0;
         SceneNode tabsNode = header.NewChildWithTransform(out UIListTransform tabList, "DockTabs");
         tabsNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
         tabList.DisplayHorizontal = true;
         tabList.ItemAlignment = EListAlignment.TopOrLeft;
-        tabList.ItemSize = 82;
+        tabList.ItemSize = EditorGlassTheme.TabWidth;
         UITabStripComponent strip = tabsNode.AddComponent<UITabStripComponent>()!;
-        strip.TabWidth = 82;
+        strip.TabWidth = EditorGlassTheme.TabWidth;
+        strip.TabHeight = EditorGlassTheme.TabHeight;
+        strip.LabelFontSize = EditorGlassTheme.CaptionFontSize + 1.0f;
+        strip.TabStyle = SharedTabStyle;
+        strip.SelectedTabStyle = SharedSelectedTabStyle;
         UIButtonComponent dropProbe = tabsNode.AddComponent<UIButtonComponent>()!;
         dropProbe.IsEnabled = false;
         dropProbe.IsTabStop = false;
@@ -484,9 +501,10 @@ internal sealed class NativeDockTreeHost
         SceneNode actionsNode = header.NewChildWithTransform(out UIListTransform actions, "DockActions");
         actionsNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
         actions.DisplayHorizontal = true;
-        actions.ItemAlignment = EListAlignment.TopOrLeft;
+        actions.ItemAlignment = EListAlignment.BottomOrRight;
         actions.ItemSpacing = 2;
-        SceneNode content = stackNode.NewChildWithTransform<UIBoundableTransform>(out _, "DockContent");
+        SceneNode content = stackNode.NewChildWithTransform<UIBoundableTransform>(out UIBoundableTransform contentBounds, "DockContent");
+        contentBounds.Margins = new Vector4(2.0f, 2.0f, 2.0f, 4.0f);
         content.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Dynamic;
         SceneNode actionMenuNode = _root.NewChild<UIContextMenuComponent>(out var actionMenu, "DockActionsMenu");
         actionMenuNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
@@ -533,11 +551,9 @@ internal sealed class NativeDockTreeHost
             CommitStructure();
         };
 
-        SceneNode closedNode = actionsNode.NewChild<UITextComponent>(out var closedLabel);
-        closedNode.GetTransformAs<UIBoundableTransform>(true)!.Width = 100;
-        closedLabel.VerticalAlignment = EVerticalAlignment.Center;
-
-        var actionsButton = NativeUIElements.CreateButton(actionsNode, "Actions", width: 80, height: 28).Button;
+        var actionsButton = NativeUIElements.CreateButton(actionsNode, "...", width: 28,
+            height: EditorGlassTheme.TabHeight, margins: new Vector4(1.0f, 2.0f, 1.0f, 2.0f)).Button;
+        actionsButton.AccessibilityLabel = "Panel actions";
         actionsButton.InteractAction += _ =>
         {
             if (!IsCurrentStack(stack, revision))
@@ -561,12 +577,14 @@ internal sealed class NativeDockTreeHost
                     if (!IsCurrentStack(stack, revision))
                         return;
                     _closedCursor++;
-                    RefreshClosedLabel();
                 }, _tree.ClosedPanels.Count > 1),
                 new ContextMenuItem("Detach", () => DetachSelected(stack, revision)),
                 new ContextMenuItem("Move to window", () => MoveToWindow(stack, revision)));
         };
-        var drag = NativeUIElements.CreateButton(actionsNode, "Drag", width: 60, height: 28).Button;
+        // The grip starts a drag of the shown panel to another stack or window.
+        var drag = NativeUIElements.CreateButton(actionsNode, "::", width: 28,
+            height: EditorGlassTheme.TabHeight, margins: new Vector4(1.0f, 2.0f, 1.0f, 2.0f)).Button;
+        drag.AccessibilityLabel = "Drag panel";
         drag.NeedsMouseMove = true;
         Vector2? dragStart = null;
         drag.MouseMove += (x, y, source) =>
@@ -587,14 +605,7 @@ internal sealed class NativeDockTreeHost
                 BeginTabDrag(source, stack, revision, panel, point);
         };
         drag.MouseDirectOverlapLeave += _ => dragStart = null;
-        RefreshClosedLabel();
         Refresh();
-
-        void RefreshClosedLabel()
-        {
-            closedLabel.Text = _tree.ClosedPanels.Count == 0 ? string.Empty :
-                Title(_tree.ClosedPanels[Math.Abs(_closedCursor % _tree.ClosedPanels.Count)]);
-        }
 
         void Refresh()
         {

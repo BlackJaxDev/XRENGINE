@@ -59,9 +59,10 @@ public sealed partial class NativeHierarchyWorkflowTests
             Assert.That(tree.TryGetNode(Id(panel, first), out UIVirtualTreeNode? item), Is.True);
             Assert.That(item!.Name, Is.EqualTo(first.Name));
             Assert.That(Field<UITextComponent>(row, "Label").Text, Is.EqualTo(first.Name));
-            Assert.That(Field<UITextComponent>(row, "ToggleGlyph").Text, Is.Empty);
+            // The row checkbox state: 0 inactive, 1 active.
+            Assert.That(Field<int>(row, "ToggleIndicatorState"), Is.EqualTo(0));
             first.IsActiveSelf = true;
-            Assert.That(Field<UITextComponent>(row, "ToggleGlyph").Text, Is.EqualTo("\u2713"));
+            Assert.That(Field<int>(row, "ToggleIndicatorState"), Is.EqualTo(1));
             first.CanDeactivate = false;
             Assert.That(Field<UIButtonComponent>(row, "Toggle").IsEnabled, Is.False);
             first.CanDeactivate = true;

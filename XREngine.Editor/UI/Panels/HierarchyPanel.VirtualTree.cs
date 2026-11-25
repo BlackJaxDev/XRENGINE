@@ -28,7 +28,9 @@ public partial class HierarchyPanel
         public required UITextComponent ArrowGlyph;
         public required UIButtonComponent Toggle;
         public required UIBoundableTransform ToggleTransform;
-        public required UITextComponent ToggleGlyph;
+        public required UIMaterialComponent ToggleIndicator;
+        /// <summary>Last state drawn by the toggle checkbox: -1 unset, 0 inactive, 1 active, 2 active but locked.</summary>
+        public int ToggleIndicatorState = -1;
         public required UIButtonComponent Unload;
         public required UIBoundableTransform UnloadTransform;
         public required UITextInputComponent RenameInput;
@@ -52,6 +54,59 @@ public partial class HierarchyPanel
         public XRScene? Scene;
         public ulong ItemId;
     }
+
+
+    private static readonly UIQuadStyle ActiveIndicatorStyle = new UIStyleProperties
+    {
+        CornerRadii = new Vector4(3.5f),
+        BorderWidth = 1.0f,
+        BorderColor = EditorGlassTheme.Accent,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    private static readonly UIQuadStyle InactiveIndicatorStyle = new UIStyleProperties
+    {
+        CornerRadii = new Vector4(3.5f),
+        BorderWidth = 1.25f,
+        BorderColor = EditorGlassTheme.TextDisabled,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    /// <summary>
+    /// Shows the active state of a node or scene as a small rounded checkbox: an accent fill when active,
+    /// and an empty outline when inactive. A locked toggle shows at half strength.
+    /// </summary>
+    private static void ApplyActiveIndicator(UIMaterialComponent indicator, bool active, bool enabled)
+    {
+        ColorF4 accent = EditorGlassTheme.Accent;
+        ColorF4 fill = active
+            ? new ColorF4(accent.R, accent.G, accent.B, enabled ? 1.0f : 0.45f)
+            : ColorF4.Transparent;
+        indicator.SetBatchSolidColor(fill);
+        indicator.QuadStyle = active ? ActiveIndicatorStyle : InactiveIndicatorStyle;
+    }
+
+    /// <summary>
+    /// Redraws the row checkbox only when its state changes. A color write always records a visual change,
+    /// and a visual change makes the canvas publish again, so rebinding a row must not repeat the write.
+    /// </summary>
+    private static void UpdateActiveIndicator(HierarchyRow state, bool active, bool enabled)
+    {
+        int code = !active ? 0 : enabled ? 1 : 2;
+        if (state.ToggleIndicatorState == code)
+            return;
+        state.ToggleIndicatorState = code;
+        ApplyActiveIndicator(state.ToggleIndicator, active, enabled);
+    }
+
+    private const float ScrollbarClearance = ScrollbarWidth + ScrollbarPadding * 2.0f;
+    private const float LabelInset = 10.0f;
+    // Room at the right of the label for the unload and active buttons and the scrollbar.
+    private const float LabelRightInset = 54.0f + ScrollbarClearance;
+    // Disclosure marks drawn with plain letters: the bundled UI font has no triangle or down-chevron
+    // glyphs, and the Windows symbol font is too large to import as a bitmap atlas.
+    private const string CollapsedChevron = ">";
+    private const string ExpandedChevron = "v";
 
     private UIVirtualTreeProvider? _virtualTree;
     private IDisposable? _virtualRootDropRegistration;
@@ -125,7 +180,8 @@ public partial class HierarchyPanel
         track.MaxAnchor = Vector2.One;
         track.Width = ScrollbarWidth;
         track.Margins = new Vector4(0, ScrollbarPadding, ScrollbarPadding, ScrollbarPadding);
-        trackMaterial.SetBatchSolidColor(new Vector4(0, 0, 0, 0.15f));
+        trackMaterial.SetBatchSolidColor(new Vector4(0, 0, 0, 0.12f));
+        trackMaterial.QuadStyle = new UIStyleProperties { CornerRadii = new Vector4(ScrollbarWidth * 0.5f) }.ToQuadStyle();
         if (!CanUseHierarchy || revision != _hierarchyRevision)
             return;
         _scrollbarTrackTransform = track;
@@ -137,7 +193,8 @@ public partial class HierarchyPanel
         thumb.Height = MinScrollbarThumbHeight;
         thumb.NormalizedPivot = new Vector2(0, 1);
         thumb.BlocksInputBehind = true;
-        thumbMaterial.SetBatchSolidColor(new Vector4(1, 1, 1, 0.35f));
+        thumbMaterial.SetBatchSolidColor(new Vector4(1, 1, 1, 0.12f));
+        thumbMaterial.QuadStyle = new UIStyleProperties { CornerRadii = new Vector4(ScrollbarWidth * 0.5f) }.ToQuadStyle();
         if (CanUseHierarchy && revision == _hierarchyRevision)
             _scrollbarThumbTransform = thumb;
     }
@@ -476,16 +533,23 @@ public partial class HierarchyPanel
         SceneNode rowNode = new("HierarchyRow");
         UIBoundableTransform rowTransform = rowNode.SetTransform<UIBoundableTransform>();
         rowTransform.MaxAnchor = Vector2.One;
+        // A small inset turns the hover and selection fill into a rounded pill.
+        rowTransform.Margins = new Vector4(2.0f, 1.0f, 2.0f, 1.0f);
         UIVirtualTreeRowButtonComponent button = rowNode.AddComponent<UIVirtualTreeRowButtonComponent>()!;
         UIMaterialComponent background = rowNode.AddComponent<UIMaterialComponent>()!;
         background.SetBatchSolidColor(ColorF4.Transparent);
+        background.QuadStyle = new UIStyleProperties
+        {
+            CornerRadii = new Vector4(EditorGlassTheme.ControlRadius),
+            DecodeSrgbColors = true,
+        }.ToQuadStyle();
 
         var labelNode = rowNode.NewChild<UITextComponent>(out var label);
         UIBoundableTransform labelTransform = labelNode.GetTransformAs<UIBoundableTransform>(true)!;
         labelTransform.MaxAnchor = new Vector2(1, 1);
-        labelTransform.Margins = new Vector4(10, Margin, 54, Margin);
-        label.FontSize = 14;
-        label.Color = ColorF4.White;
+        labelTransform.Margins = new Vector4(LabelInset, Margin, LabelRightInset, Margin);
+        label.FontSize = EditorGlassTheme.FontSize;
+        label.Color = EditorGlassTheme.TextPrimary;
         label.HorizontalAlignment = EHorizontalAlignment.Left;
         label.VerticalAlignment = EVerticalAlignment.Center;
 
@@ -496,8 +560,10 @@ public partial class HierarchyPanel
         arrowTransform.Width = ArrowWidth;
         arrowTransform.BlocksInputBehind = true;
         arrowNode.NewChild<UITextComponent>(out var arrowGlyph);
-        arrowGlyph.Font = NativeUiIconFont;
-        arrowGlyph.FontSize = 10;
+        arrowGlyph.Font = XREngine.Rendering.FontGlyphSet.LoadDefaultUIIconFont();
+        arrowGlyph.Text = CollapsedChevron;
+        // This fallback font draws smaller than its nominal size, so the size is large.
+        arrowGlyph.FontSize = 19;
         arrowGlyph.Color = EditorUI.Styles.ExpandArrowColor;
         arrowGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
         arrowGlyph.VerticalAlignment = EVerticalAlignment.Center;
@@ -506,31 +572,38 @@ public partial class HierarchyPanel
         toggle.IsTabStop = false;
         UIBoundableTransform toggleTransform = toggleNode.GetTransformAs<UIBoundableTransform>(true)!;
         toggleTransform.MinAnchor = new Vector2(1, 0);
+        toggleTransform.NormalizedPivot = new Vector2(1, 0);
         toggleTransform.MaxAnchor = Vector2.One;
         toggleTransform.Width = 24;
-        toggleTransform.Margins = new Vector4(2);
+        // The right margin keeps the button clear of the scrollbar at the right edge of the rows.
+        toggleTransform.Margins = new Vector4(2, 2, 2 + ScrollbarClearance, 2);
         toggleTransform.BlocksInputBehind = true;
-        toggleNode.NewChild<UITextComponent>(out var toggleGlyph);
-        toggleGlyph.Font = NativeUiIconFont;
-        toggleGlyph.FontSize = 12;
-        toggleGlyph.Color = ColorF4.White;
-        toggleGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
-        toggleGlyph.VerticalAlignment = EVerticalAlignment.Center;
+        // A small rounded checkbox shows whether the node or scene is active.
+        var indicatorNode = toggleNode.NewChild<UIMaterialComponent>(out var toggleIndicator);
+        UIBoundableTransform indicatorTransform = indicatorNode.GetTransformAs<UIBoundableTransform>(true)!;
+        indicatorTransform.MinAnchor = new Vector2(0.5f, 0.5f);
+        indicatorTransform.MaxAnchor = new Vector2(0.5f, 0.5f);
+        indicatorTransform.NormalizedPivot = new Vector2(0.5f, 0.5f);
+        indicatorTransform.Width = 12;
+        indicatorTransform.Height = 12;
+        indicatorTransform.BlocksInputBehind = false;
+        ApplyActiveIndicator(toggleIndicator, active: true, enabled: true);
 
         var unloadNode = rowNode.NewChild<UIButtonComponent>(out var unload);
         unload.IsTabStop = false;
         UIBoundableTransform unloadTransform = unloadNode.GetTransformAs<UIBoundableTransform>(true)!;
         unloadTransform.MinAnchor = new Vector2(1, 0);
+        unloadTransform.NormalizedPivot = new Vector2(1, 0);
         unloadTransform.MaxAnchor = Vector2.One;
         unloadTransform.Width = 24;
         unloadTransform.Translation = new Vector2(-24, 0);
-        unloadTransform.Margins = new Vector4(2);
+        unloadTransform.Margins = new Vector4(2, 2, 2 + ScrollbarClearance, 2);
         unloadTransform.BlocksInputBehind = true;
         unloadNode.NewChild<UITextComponent>(out var unloadGlyph);
-        unloadGlyph.Font = NativeUiIconFont;
-        unloadGlyph.FontSize = 10;
-        unloadGlyph.Text = "\u2716";
-        unloadGlyph.Color = ColorF4.White;
+        unloadGlyph.FontSize = 15;
+        unloadGlyph.Font = XREngine.Rendering.FontGlyphSet.LoadDefaultUIIconFont();
+        unloadGlyph.Text = "\u00D7";
+        unloadGlyph.Color = EditorGlassTheme.TextSecondary;
         unloadGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
         unloadGlyph.VerticalAlignment = EVerticalAlignment.Center;
 
@@ -547,7 +620,7 @@ public partial class HierarchyPanel
             Transform = rowTransform, Button = button, Background = background,
             Label = label, LabelTransform = labelTransform, Arrow = arrow,
             ArrowTransform = arrowTransform, ArrowGlyph = arrowGlyph,
-            Toggle = toggle, ToggleTransform = toggleTransform, ToggleGlyph = toggleGlyph,
+            Toggle = toggle, ToggleTransform = toggleTransform, ToggleIndicator = toggleIndicator, ToggleIndicatorState = 1,
             Unload = unload, UnloadTransform = unloadTransform,
             RenameInput = renameInput, RenameTransform = renameTransform
         };
@@ -631,30 +704,37 @@ public partial class HierarchyPanel
         bool isNode = node is not null;
         state.Label.Text = item.Id == EditorSceneToggleRowId
             ? (_showEditorScene ? "Show Editor Scene: On" : "Show Editor Scene: Off") : item.Name;
-        state.Label.Color = isNode ? ColorF4.White : EditorUI.Styles.SectionHeaderTextColor;
-        state.LabelTransform.Translation = isNode
-            ? new Vector2(node!.Transform.Depth * DepthIncrement + ArrowWidth, 0)
-            : Vector2.Zero;
+        state.Label.Color = isNode
+            ? node!.IsActiveInHierarchy ? EditorGlassTheme.TextPrimary : EditorGlassTheme.TextDisabled
+            : EditorUI.Styles.SectionHeaderTextColor;
+        // The label stretches across the row, and layout moves a stretched box only by its margins, not by its
+        // translation. So the label indent is its left margin. The arrow has a point anchor, so its
+        // translation moves it.
+        float indent = isNode ? node!.Transform.Depth * DepthIncrement : 0.0f;
+        float labelLeft = isNode || scene is not null ? indent + ArrowWidth + 4.0f : LabelInset;
+        Vector4 labelMargins = new(labelLeft, Margin, LabelRightInset, Margin);
+        if (state.LabelTransform.Margins != labelMargins)
+            state.LabelTransform.Margins = labelMargins;
         bool hasChildren = scene is not null || isNode && HasSceneNodeChildren(node!);
         state.ArrowTransform.Visibility = hasChildren ? EVisibility.Visible : EVisibility.Hidden;
-        state.ArrowTransform.Translation = isNode
-            ? new Vector2(node!.Transform.Depth * DepthIncrement, 0) : Vector2.Zero;
-        state.ArrowGlyph.Text = scene is not null
-            ? (_collapsedSections.Contains(scene.ID) ? "\u25B6" : "\u25BC")
-            : isNode && IsCollapsed(node!) ? "\u25B6" : "\u25BC";
+        Vector2 arrowOffset = new(indent + 2.0f, 0.0f);
+        if (state.ArrowTransform.Translation != arrowOffset)
+            state.ArrowTransform.Translation = arrowOffset;
+        bool collapsed = scene is not null
+            ? _collapsedSections.Contains(scene.ID)
+            : isNode && IsCollapsed(node!);
+        state.ArrowGlyph.Text = collapsed ? CollapsedChevron : ExpandedChevron;
         bool managedScene = scene is not null && TryGetActiveWorld()?.TargetWorld?.Scenes.Contains(scene) == true;
         state.ToggleTransform.Visibility = isNode || managedScene ? EVisibility.Visible : EVisibility.Hidden;
         state.Toggle.IsEnabled = isNode ? node!.CanDeactivate || !node.IsActiveSelf : managedScene;
         state.UnloadTransform.Visibility = managedScene ? EVisibility.Visible : EVisibility.Hidden;
         if (isNode)
         {
-            state.ToggleGlyph.Text = node!.IsActiveSelf ? "\u2713" : string.Empty;
-            state.ToggleGlyph.Color = node.IsActiveSelf ? ColorF4.White : EditorUI.Styles.DisabledTextColor;
+            UpdateActiveIndicator(state, node!.IsActiveSelf, state.Toggle.IsEnabled);
         }
         else if (scene is not null)
         {
-            state.ToggleGlyph.Text = scene.IsVisible ? "\u2713" : string.Empty;
-            state.ToggleGlyph.Color = scene.IsVisible ? ColorF4.White : EditorUI.Styles.DisabledTextColor;
+            UpdateActiveIndicator(state, scene.IsVisible, state.Toggle.IsEnabled);
         }
         if (!IsHierarchyRowCurrent(state))
             return;
@@ -724,8 +804,7 @@ public partial class HierarchyPanel
             MarkSceneHierarchyDirty(node, nodeWorld);
             if (ReferenceEquals(state.Node, node))
             {
-                state.ToggleGlyph.Text = node.IsActiveSelf ? "\u2713" : string.Empty;
-                state.ToggleGlyph.Color = node.IsActiveSelf ? ColorF4.White : EditorUI.Styles.DisabledTextColor;
+                UpdateActiveIndicator(state, node.IsActiveSelf, state.Toggle.IsEnabled);
             }
         });
     }

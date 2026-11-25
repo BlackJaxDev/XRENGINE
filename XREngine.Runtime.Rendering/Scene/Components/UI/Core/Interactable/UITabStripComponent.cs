@@ -28,6 +28,15 @@ public sealed partial class UITabStripComponent : UIComponent
 
     public float TabWidth { get; set; } = 100;
     public float TabHeight { get; set; } = 28;
+    /// <summary>Text size of the tab labels.</summary>
+    public float LabelFontSize { get; set; } = 12;
+    /// <summary>
+    /// Style of a tab that is not selected. When null, tabs use a flat gray fill. Set the styles before the
+    /// first <see cref="SetTabs"/> call; a later change applies at the next call.
+    /// </summary>
+    public UIStyle? TabStyle { get; set; }
+    /// <summary>Style of the selected tab. When null, the selected tab uses <see cref="TabStyle"/>.</summary>
+    public UIStyle? SelectedTabStyle { get; set; }
     public int Count => _count;
     public ulong? SelectedId => _selectedId;
 
@@ -134,7 +143,11 @@ public sealed partial class UITabStripComponent : UIComponent
                 return;
             slot.Button.AccessibilityLabel = tab.Title;
             slot.Button.AccessibilityDescription = tab.IsOpen ? null : "Closed tab. Activate to reopen.";
-            slot.Button.IsSelected = tab.Id == selectedId;
+            bool isSelected = tab.Id == selectedId;
+            slot.Button.IsSelected = isSelected;
+            UIStyle? style = isSelected ? SelectedTabStyle ?? TabStyle : TabStyle;
+            if (style is not null && !ReferenceEquals(slot.Button.Style, style))
+                slot.Button.Style = style;
             slot.Bounds.Visibility = EVisibility.Visible;
             slot.Bounds.Height = TabHeight;
             if (IsDestroyed || IsDestroyQueued)
@@ -185,7 +198,10 @@ public sealed partial class UITabStripComponent : UIComponent
             bounds.MaxAnchor = Vector2.Zero;
             bounds.Width = TabWidth;
             bounds.Height = TabHeight;
-            node.AddComponent<UIMaterialComponent>()!.SetBatchSolidColor(new ColorF4(0.18f, 0.18f, 0.18f, 1));
+            bounds.Margins = TabStyle is null ? Vector4.Zero : new Vector4(2, 2, 2, 2);
+            node.AddComponent<UIMaterialComponent>()!.SetBatchSolidColor(TabStyle is null
+                ? new ColorF4(0.18f, 0.18f, 0.18f, 1)
+                : ColorF4.Transparent);
             UITabButtonComponent button = node.AddComponent<UITabButtonComponent>()!;
             button.DefaultTextColor = ColorF4.White;
             SceneNode textNode = new(node) { Name = "TabLabel" };
@@ -194,9 +210,11 @@ public sealed partial class UITabStripComponent : UIComponent
             labelBounds.MaxAnchor = Vector2.One;
             labelBounds.Margins = new Vector4(6, 0, 6, 0);
             UITextComponent label = textNode.AddComponent<UITextComponent>()!;
-            label.FontSize = 12;
+            label.FontSize = LabelFontSize;
             label.Color = ColorF4.White;
             label.VerticalAlignment = EVerticalAlignment.Center;
+            if (TabStyle is not null)
+                label.HorizontalAlignment = EHorizontalAlignment.Center;
             Slot slot = new() { Bounds = bounds, Button = button, Label = label };
             button.InteractAction += _ =>
             {
