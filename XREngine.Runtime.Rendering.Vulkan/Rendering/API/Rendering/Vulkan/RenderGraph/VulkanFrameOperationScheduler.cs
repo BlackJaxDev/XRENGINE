@@ -510,6 +510,12 @@ internal sealed class VulkanFrameOperationScheduler
 
     private static bool IsNestedUiPipelineOp(in FrameOpContext context)
     {
+        // A canvas publication receipt marks a screen-space UI draw. Cold operations can reach
+        // the scheduler with a coalesced context whose pipeline is the scene pipeline, so the
+        // pipeline type alone would order these draws before the scene writes the swapchain.
+        if (context.UiPublicationReceiptId != 0UL)
+            return true;
+
         if (context.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
             return true;
 

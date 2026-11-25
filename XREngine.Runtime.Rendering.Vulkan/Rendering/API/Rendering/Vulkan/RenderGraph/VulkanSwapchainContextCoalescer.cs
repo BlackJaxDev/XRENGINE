@@ -17,6 +17,14 @@ internal static class VulkanSwapchainContextCoalescer
         _ => false,
     };
 
+    /// <summary>
+    /// Returns the canonical recording context with the UI publication receipt of <paramref name="original"/>.
+    /// Recording compatibility ignores the receipt, so the replacement must keep it: the receipt
+    /// attests the canvas draws, and the scheduler orders screen-space UI draws by their receipt.
+    /// </summary>
+    private static FrameOpContext WithOwnership(in FrameOpContext canonical, in FrameOpContext original)
+        => canonical with { UiPublicationReceiptId = original.UiPublicationReceiptId };
+
     public static void Coalesce(FrameOp[] operations)
         => Coalesce(operations.AsSpan(), preparedMeshIngress: null);
 
@@ -38,7 +46,7 @@ internal static class VulkanSwapchainContextCoalescer
             }
 
             if (!FrameOpContextCompatibility.AreRecordingCompatible(operation.Context, canonicalContext.Value))
-                operation.Context = canonicalContext.Value;
+                operation.Context = WithOwnership(canonicalContext.Value, operation.Context);
         }
 
         if (preparedMeshIngress is null)
@@ -60,7 +68,7 @@ internal static class VulkanSwapchainContextCoalescer
                     entry.Context,
                     canonicalContext.Value))
             {
-                preparedMeshIngress.SetContext(index, canonicalContext.Value);
+                preparedMeshIngress.SetContext(index, WithOwnership(canonicalContext.Value, entry.Context));
             }
         }
     }
