@@ -454,7 +454,9 @@ internal sealed class NativeDockTreeHost
         float halfGutter = EditorGlassTheme.PanelGutter * 0.5f;
         SceneNode cardNode = parent.NewChildWithTransform(out UIBoundableTransform cardBounds, $"DockCard-{stack.Id}");
         cardBounds.Margins = new Vector4(halfGutter);
-        EditorGlassTheme.ApplyStatic(cardNode.AddComponent<UIMaterialComponent>()!, EditorGlassTheme.PanelCard);
+        UIMaterialComponent card = cardNode.AddComponent<UIMaterialComponent>()!;
+        EditorGlassTheme.ApplyStatic(card, EditorGlassTheme.PanelCard);
+        bool? cardShowsScene = null;
         SceneNode stackNode = cardNode.NewChildWithTransform(out UIDualSplitTransform outer, $"DockStack-{stack.Id}");
         outer.MinAnchor = Vector2.Zero;
         outer.MaxAnchor = Vector2.One;
@@ -614,6 +616,13 @@ internal sealed class NativeDockTreeHost
             ulong? selectedId = stack.Selected is { } selected
                 ? (ulong)(Array.IndexOf(NativeDockPanel.All, selected) + 1) : null;
             strip.SetTabs(items, selectedId);
+            // A stack that shows the scene behind the UI keeps its card clear, so the scene shows through.
+            bool showsScene = stack.Selected == NativeDockPanel.Scene && EditorGlassTheme.SceneBehindPanels;
+            if (cardShowsScene != showsScene)
+            {
+                cardShowsScene = showsScene;
+                EditorGlassTheme.ApplyStatic(card, showsScene ? EditorGlassTheme.ClearCard : EditorGlassTheme.PanelCard);
+            }
             foreach (var (panel, slot) in panels)
             {
                 bool active = panel == stack.Selected;

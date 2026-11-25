@@ -121,6 +121,13 @@ public static class EditorGlassTheme
         DecodeSrgbColors = true,
     };
 
+    /// <summary>Card of a stack that shows the scene behind the UI: no fill, so the scene shows through.</summary>
+    public static UIStyleProperties ClearCard => new()
+    {
+        BackgroundColor = new ColorF4(0.0f, 0.0f, 0.0f, 0.0f),
+        DecodeSrgbColors = true,
+    };
+
     /// <summary>Soft vertical gradient that fills the window behind the panel cards.</summary>
     public static UIStyleProperties WindowBackdrop => new()
     {

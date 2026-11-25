@@ -41,6 +41,7 @@ These docs are intentionally closer to the code than the user guide. They should
 - [Windows CI](testing/windows-ci.md)
 - [Software Vulkan Correctness Validation](testing/software-vulkan-validation.md)
 - [UI](ui/native-hierarchy-panel.md)
+- [Native editor layout and theme](ui/native-editor-layout-and-theme.md)
 - [VR](vr/openxr-runtime.md)
 - [VR Body Tracking and Spectator Integration](vr/openxr-body-tracking.md)
 

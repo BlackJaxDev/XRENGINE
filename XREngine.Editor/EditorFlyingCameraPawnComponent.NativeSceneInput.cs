@@ -60,7 +60,7 @@ public partial class EditorFlyingCameraPawnComponent
                 input.TryGetPresentedPointerTarget(out var target, out normalizedPoint,
                     out var identity, out long revision, out ulong lifetime) &&
                 target is NativeSceneViewportInput scene &&
-                scene.TrySample(this, input, normalizedPoint, identity, revision, lifetime, out owner))
+                scene.TrySample(this, input, ref normalizedPoint, identity, revision, lifetime, out owner))
                 return true;
         }
         owner = default;

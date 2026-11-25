@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Components;
 using XREngine.Components.Scene;
 using XREngine.Core.Attributes;
+using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Editor.UI.Toolbar;
@@ -182,8 +183,13 @@ public partial class UIEditorComponent : UIComponent
             if (StopTerminatedBuild(splitChild)) return;
             UIMaterialComponent background = splitChild.AddComponent<UIMaterialComponent>()!;
             if (StopTerminatedBuild(splitChild)) return;
-            // A soft gradient fills the window behind the frosted panel cards.
-            EditorGlassTheme.ApplyStatic(background, EditorGlassTheme.WindowBackdrop);
+            // When the scene fills the window, the root stays clear so the scene shows between and through
+            // the frosted panel cards. When the scene is docked in a panel, a soft gradient fills the window.
+            EditorGlassTheme.SceneBehindPanels = !SceneViewPanel.IsSceneDockedInPanel;
+            if (EditorGlassTheme.SceneBehindPanels)
+                background.SetBatchSolidColor(ColorF4.Transparent);
+            else
+                EditorGlassTheme.ApplyStatic(background, EditorGlassTheme.WindowBackdrop);
             if (StopTerminatedBuild(splitChild)) return;
             background.RenderPass = (int)EDefaultRenderPass.Background;
             if (StopTerminatedBuild(splitChild)) return;

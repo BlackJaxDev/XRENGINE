@@ -18,7 +18,7 @@ internal sealed class NativeSceneViewportInput : UIInteractableComponent
     }
 
     public bool TrySample(EditorFlyingCameraPawnComponent pawn, UICanvasInputComponent input,
-        Vector2 normalizedPoint, XREngine.Rendering.UI.State.UIElementIdentity identity,
+        ref Vector2 normalizedPoint, XREngine.Rendering.UI.State.UIElementIdentity identity,
         long revision, ulong lifetime, out NativeScenePointerOwner owner)
     {
         owner = default;
@@ -35,8 +35,27 @@ internal sealed class NativeSceneViewportInput : UIInteractableComponent
             !ReferenceEquals(input.OwningPawn, pawn) ||
             !ReferenceEquals(input.GetCameraCanvas(), UserInterfaceCanvas))
             return false;
+        if (!panel.IsDockedSceneViewport(sceneViewport) &&
+            !TryMapToWindowViewport(sceneViewport, ref normalizedPoint))
+            return false;
         owner = new(this, input, sceneViewport, window, camera,
             world, identity, revision, lifetime);
         return true;
+    }
+
+    /// <summary>
+    /// Converts a point from this panel's normalized space to the normalized space of the window viewport
+    /// that renders the scene behind the editor UI. The canvas uses window pixels with the origin at the
+    /// bottom left, the same space as the viewport region.
+    /// </summary>
+    private bool TryMapToWindowViewport(XRViewport viewport, ref Vector2 normalizedPoint)
+    {
+        var region = BoundableTransform.AxisAlignedRegion;
+        if (viewport.Width <= 0 || viewport.Height <= 0 || region.Width <= 0 || region.Height <= 0)
+            return false;
+        float x = region.X + normalizedPoint.X * region.Width;
+        float y = region.Y + normalizedPoint.Y * region.Height;
+        normalizedPoint = new Vector2((x - viewport.X) / viewport.Width, (y - viewport.Y) / viewport.Height);
+        return normalizedPoint.X is >= 0.0f and <= 1.0f && normalizedPoint.Y is >= 0.0f and <= 1.0f;
     }
 }

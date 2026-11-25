@@ -30,7 +30,43 @@ public class SceneViewPanel : EditorPanel
     private bool _sceneControlsTickRegistered;
 
     public XRCamera? Camera => SceneViewport?.ActiveCamera;
-    internal XRViewport? SceneViewport => _sceneViewport?.Viewport;
+
+    /// <summary>
+    /// Gets whether the scene renders inside this panel. This is true when the editor preference
+    /// <see cref="EditorPreferences.ViewportPresentationMode"/> is
+    /// <see cref="EditorPreferences.EViewportPresentationMode.UseViewportPanel"/>. Otherwise the window
+    /// viewport shows the scene across the whole window, behind the panels, and this panel is a clear
+    /// region that forwards pointer input to that viewport. The ImGui editor uses the same preference.
+    /// </summary>
+    public static bool IsSceneDockedInPanel
+        => Engine.EditorPreferences?.ViewportPresentationMode == EditorPreferences.EViewportPresentationMode.UseViewportPanel;
+
+    /// <summary>
+    /// Gets the viewport that shows the scene for this panel: the embedded viewport when the scene is docked
+    /// in the panel, or the window viewport that renders the scene behind the editor UI.
+    /// </summary>
+    internal XRViewport? SceneViewport => _sceneViewport is { } docked
+        ? docked.Viewport
+        : ResolveWindowSceneViewport(Window);
+
+    /// <summary>Reports whether <paramref name="viewport"/> is this panel's embedded scene viewport.</summary>
+    internal bool IsDockedSceneViewport(XRViewport viewport)
+        => _sceneViewport is { } docked && ReferenceEquals(docked.Viewport, viewport);
+
+    /// <summary>Returns the first viewport of <paramref name="window"/> that renders a camera of the window's world.</summary>
+    internal static XRViewport? ResolveWindowSceneViewport(XRWindow? window)
+    {
+        if (window?.TargetWorldInstance is not { } world)
+            return null;
+        IReadOnlyList<XRViewport> viewports = window.Viewports;
+        for (int index = 0; index < viewports.Count; index++)
+        {
+            XRViewport viewport = viewports[index];
+            if (ReferenceEquals(viewport.World, world) && CameraBelongsToWorld(viewport.CameraComponent, world))
+                return viewport;
+        }
+        return null;
+    }
     public CameraComponent? CameraComponent
     {
         get => _cameraComponent;
@@ -60,7 +96,7 @@ public class SceneViewPanel : EditorPanel
         base.OnComponentActivated();
         if (_cameraBindingStopped || IsDestroyed || IsDestroyQueued)
             return;
-        if (_sceneViewport is null)
+        if (_sceneViewport is null && IsSceneDockedInPanel)
         {
             _sceneViewport = SceneNode.AddComponent<UIViewportComponent>();
             // The Scene panel is the editor's main 3D view, so it renders as a desktop scene output.
