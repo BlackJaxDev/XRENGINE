@@ -165,6 +165,20 @@ internal sealed partial class VulkanAcceptedFramePlan
         return false;
     }
 
+    private void AddPlannedUiReceipt(ulong id, ulong excludedReceiptId, ref int count)
+    {
+        if (id == 0UL || id == excludedReceiptId)
+            return;
+        for (int index = 0; index < count; index++)
+            if (_uiPublicationReceiptIds[index] == id)
+                return;
+        if (count == _uiPublicationReceiptIds.Length)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.Ui, _uiPublicationReceiptIds.Length,
+                _uiPublicationReceiptIds.Length + 1);
+        _uiPublicationReceiptIds[count++] = id;
+    }
+
     private void BindUiPublicationReceipts(FramePlan logicalPlan, VulkanRenderer owner)
     {
         ulong excludedWorldReceiptId = 0UL;
@@ -173,18 +187,35 @@ internal sealed partial class VulkanAcceptedFramePlan
             desktopHost is XRWindow desktopWindow)
             _ = desktopWindow.TryGetRequiredVulkanWorldUiAttempt(
                 out _, out _, out _, out excludedWorldReceiptId, out _);
-        int count = VulkanUiPublicationReceiptLedger.CopySealedForFrame(
-            owner, RuntimeEngine.Rendering.State.RenderFrameId,
-            _uiPublicationReceiptIds, excludedWorldReceiptId);
-        if (count < 0)
-            throw new VulkanAcceptedFramePlanCapacityException(
-                EVulkanAcceptedFrameLane.Ui, _uiPublicationReceiptIds.Length,
-                _uiPublicationReceiptIds.Length + 1);
-        _uiPublicationReceiptCount = count;
         FrameOperationSequence nativeStatic =
             logicalPlan.GetNativeStaticOperationsForRecording();
         FrameOperationSequence nativeDynamic =
             logicalPlan.GetNativeDynamicOverlayOperationsForRecording();
+        // A plan binds the receipts whose draws it holds. Readiness can carry prepared draws
+        // across frames, so the frame that authored a receipt is not always the frame that
+        // plans it.
+        int count = 0;
+        for (int index = 0; index < StaticOperationCount; index++)
+            AddPlannedUiReceipt(_staticOperations[index].ContextReference.UiPublicationReceiptId,
+                excludedWorldReceiptId, ref count);
+        for (int index = 0; index < PreparedMeshIngress.Count; index++)
+            AddPlannedUiReceipt(PreparedMeshIngress.GetEntry(index).Context.UiPublicationReceiptId,
+                excludedWorldReceiptId, ref count);
+        for (int index = 0; index < nativeStatic.Length; index++)
+            AddPlannedUiReceipt(nativeStatic.GetContext(index).UiPublicationReceiptId,
+                excludedWorldReceiptId, ref count);
+        _uiPublicationReceiptCount = count;
+        for (int receiptIndex = 0; receiptIndex < count; receiptIndex++)
+        {
+            ulong id = _uiPublicationReceiptIds[receiptIndex];
+            if (!VulkanUiPublicationReceiptLedger.TryClaimSealed(owner, id))
+                throw new VulkanPlanPreconditionException(
+                    $"UI publication receipt {id} is not sealed for this plan.");
+        }
+        // Receipts sealed in an earlier frame whose draws are in no plan or queue can never
+        // be recorded. Release them so their GPU cohorts return to the canvas.
+        _ = VulkanUiPublicationReceiptLedger.RetireUnclaimedBefore(owner,
+            RuntimeEngine.Rendering.State.RenderFrameId, excludedWorldReceiptId);
         for (int receiptIndex = 0; receiptIndex < count; receiptIndex++)
         {
             ulong id = _uiPublicationReceiptIds[receiptIndex];

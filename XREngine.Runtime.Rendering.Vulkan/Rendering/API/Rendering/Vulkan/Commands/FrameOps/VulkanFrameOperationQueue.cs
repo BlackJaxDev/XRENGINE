@@ -146,6 +146,19 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     }
 
     /// <summary>Discards operations from one failed UI authoring attempt.</summary>
+    /// <summary>Reports whether a pending operation still belongs to one UI publication receipt.</summary>
+    internal bool HasPendingUiPublicationOperations(ulong receiptId)
+    {
+        using (SyncRoot.EnterScope())
+        {
+            Span<FrameOp> operations = CollectionsMarshal.AsSpan(Pending);
+            for (int index = 0; index < operations.Length; index++)
+                if (operations[index].ContextReference.UiPublicationReceiptId == receiptId)
+                    return true;
+            return false;
+        }
+    }
+
     internal int DiscardPendingUiPublicationOperations(ulong receiptId)
     {
         using (SyncRoot.EnterScope())

@@ -37,6 +37,10 @@ public sealed partial class VulkanRenderer
         return false;
     }
 
+    /// <summary>Reports whether queued or prepared draws of one UI receipt can still reach a plan.</summary>
+    internal bool HasPendingUiPublicationWork(ulong receiptId)
+        => _frameLoop.HasPendingUiPublicationWork(receiptId);
+
     public override bool IsUiPublicationReceiptRetired(ulong receiptId)
         => VulkanUiPublicationReceiptLedger.IsRetired(receiptId);
 

@@ -60,6 +60,16 @@ internal sealed class UIPublicationReceiptState
         return true;
     }
 
+    /// <summary>Returns an unrecorded plan claim, so that a later plan can claim the receipt again.</summary>
+    internal void ReleaseClaim()
+    {
+        if (!Claimed || ArtifactReferenced)
+            return;
+        Claimed = false;
+        PreparedAttested = false;
+        PreparedDraws = 0;
+    }
+
     internal bool TryAttestPrepared(int preparedDraws)
     {
         if (!Claimed || Failed || preparedDraws != ExpectedDraws ||

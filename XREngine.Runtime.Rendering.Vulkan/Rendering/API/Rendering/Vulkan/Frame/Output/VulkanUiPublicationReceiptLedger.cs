@@ -98,35 +98,63 @@ internal static class VulkanUiPublicationReceiptLedger
         }
     }
 
-    internal static int CopySealedForFrame(
-        VulkanRenderer owner, ulong frameId, Span<ulong> destination,
-        ulong excludedReceiptId)
+    /// <summary>
+    /// Removes the sealed receipts of earlier frames that no frame plan claimed. A plan claims only
+    /// the receipts of its own frame, so such a receipt can never be recorded: its frame was declined
+    /// or deferred before planning. Its GPU cohorts were not submitted, so they can be reused.
+    /// Without this removal the canvas cohorts stay reserved and the canvas never draws again.
+    /// </summary>
+    /// <param name="keptReceiptId">A receipt that another path owns, such as a required world UI attempt.</param>
+    /// <returns>The number of removed receipts.</returns>
+    internal static int RetireUnclaimedBefore(VulkanRenderer owner, ulong frameId, ulong keptReceiptId)
+    {
+        Span<ulong> candidates = stackalloc ulong[Capacity];
+        int candidateCount = 0;
+        lock (Gate)
+            for (int index = 0; index < Entries.Length; index++)
+                if (Entries[index] is { } entry && IsUnclaimedBefore(entry, owner, frameId, keptReceiptId))
+                    candidates[candidateCount++] = entry.Id;
+        if (candidateCount == 0)
+            return 0;
+
+        // The queues take their own locks, so they are checked outside the ledger gate.
+        for (int index = 0; index < candidateCount; index++)
+            if (owner.HasPendingUiPublicationWork(candidates[index]))
+                candidates[index] = 0UL;
+
+        int removed = 0;
+        List<UIPublication>? detached = null;
+        lock (Gate)
+            for (int index = 0; index < Entries.Length; index++)
+            {
+                // Recheck: a plan can claim the receipt between the two gates.
+                if (Entries[index] is not { } entry || !IsUnclaimedBefore(entry, owner, frameId, keptReceiptId) ||
+                    !candidates[..candidateCount].Contains(entry.Id))
+                    continue;
+                entry.State.Fail();
+                if (entry.Fence is VulkanTimelineGpuFence fence)
+                    fence.Fail(EGpuFenceFailureSite.OutputCohortIncomplete,
+                        EGpuFenceNativeSubmission.NotCalled);
+                Entries[index] = null;
+                (detached ??= []).Add(entry.Publication);
+                removed++;
+            }
+        if (detached is not null)
+            for (int index = 0; index < detached.Count; index++)
+                detached[index].Release();
+        return removed;
+    }
+
+    private static bool IsUnclaimedBefore(Entry entry, VulkanRenderer owner, ulong frameId, ulong keptReceiptId)
+        => ReferenceEquals(entry.Owner, owner) && entry.FrameId < frameId && entry.Id != keptReceiptId &&
+            entry.State.Sealed && !entry.State.Claimed;
+
+    /// <summary>Claims one sealed receipt whose draws an accepted plan holds.</summary>
+    internal static bool TryClaimSealed(VulkanRenderer owner, ulong id)
     {
         lock (Gate)
-        {
-            int count = 0;
-            for (int index = 0; index < Entries.Length; index++)
-                if (Entries[index] is { } entry &&
-                    entry.State is { Sealed: true, Failed: false, Claimed: false } &&
-                    ReferenceEquals(entry.Owner, owner) && entry.FrameId == frameId &&
-                    entry.Id != excludedReceiptId)
-                {
-                    if (count == destination.Length)
-                        return -1;
-                    count++;
-                }
-            int copied = 0;
-            for (int index = 0; index < Entries.Length; index++)
-                if (Entries[index] is { } entry &&
-                    entry.State is { Sealed: true, Failed: false, Claimed: false } &&
-                    ReferenceEquals(entry.Owner, owner) && entry.FrameId == frameId &&
-                    entry.Id != excludedReceiptId)
-                {
-                    destination[copied++] = entry.Id;
-                    _ = entry.State.TryClaim();
-                }
-            return count;
-        }
+            return Find(id) is { } entry && ReferenceEquals(entry.Owner, owner) &&
+                entry.State.TryClaim();
     }
 
     internal static bool TryGetSealed(ulong id, out int expected,
@@ -217,6 +245,11 @@ internal static class VulkanUiPublicationReceiptLedger
         }
     }
 
+    /// <summary>
+    /// Returns the claim of a plan that reset before it recorded the receipt. The receipt stays
+    /// sealed, because readiness can keep its prepared draws and bind them in a later plan. If no
+    /// later plan holds its draws, <see cref="RetireUnclaimedBefore"/> releases it.
+    /// </summary>
     internal static void ReleaseUnrecordedPlanClaim(ulong id)
     {
         lock (Gate)
@@ -224,10 +257,7 @@ internal static class VulkanUiPublicationReceiptLedger
             if (Find(id) is not { } entry ||
                 !entry.State.CanReleaseUnrecordedClaim)
                 return;
-            if (entry.Fence is VulkanTimelineGpuFence fence)
-                fence.Fail(EGpuFenceFailureSite.OutputCohortIncomplete,
-                    EGpuFenceNativeSubmission.NotCalled);
-            Remove(id);
+            entry.State.ReleaseClaim();
         }
     }
 

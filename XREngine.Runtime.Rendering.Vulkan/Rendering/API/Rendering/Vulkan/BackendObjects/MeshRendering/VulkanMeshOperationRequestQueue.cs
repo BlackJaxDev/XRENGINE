@@ -463,6 +463,23 @@ internal sealed class VulkanMeshOperationRequestQueue
         }
     }
 
+    /// <summary>Reports whether a queued draw still belongs to one UI publication receipt.</summary>
+    internal bool HasPendingUiPublicationRequests(ulong receiptId)
+    {
+        lock (_gate)
+        {
+            for (int index = 0; index < _count; index++)
+            {
+                int source = _head + index;
+                if (source >= Capacity)
+                    source -= Capacity;
+                if (_entries[source].Context.UiPublicationReceiptId == receiptId)
+                    return true;
+            }
+            return false;
+        }
+    }
+
     /// <summary>Discards queued draws from one failed UI authoring attempt.</summary>
     internal int DiscardPendingUiPublicationRequests(ulong receiptId)
     {
