@@ -140,6 +140,35 @@ public sealed class RenderCommandCollectionOrderingTests
     }
 
     [Test]
+    public void PainterSortedMeshes_KeepCanvasPainterOrder_InFarToNearPass()
+    {
+        const int pass = (int)EDefaultRenderPass.TransparentForward;
+        RenderCommandCollection commands = new(new Dictionary<int, IComparer<RenderCommand>?>
+        {
+            [pass] = new FarToNearRenderCommandSorter()
+        });
+        XRCamera camera = new(new XREngine.Scene.Transforms.Transform(Vector3.Zero));
+        Vector3 anchor = new(0.0f, 0.0f, -5.0f);
+        // The parent's bounds are nearer to the camera than the child's. Distance order alone
+        // would draw the child first and hide it under the parent.
+        RenderCommandMesh3D parent = CreateBoundedMeshCommand(pass, 1.0f, 2.0f);
+        RenderCommandMesh3D child = CreateBoundedMeshCommand(pass, 8.0f, 9.0f);
+        RenderCommandMesh3D sibling = CreateBoundedMeshCommand(pass, 4.0f, 5.0f);
+        parent.PainterSort = new RenderCommandPainterSort(anchor, 0);
+        child.PainterSort = new RenderCommandPainterSort(anchor, 1);
+        sibling.PainterSort = new RenderCommandPainterSort(anchor, 2);
+
+        commands.AddCPU(sibling, camera);
+        commands.AddCPU(child, camera);
+        commands.AddCPU(parent, camera);
+        commands.SwapBuffers();
+
+        commands.TryGetRenderingPassCommands(pass, out IReadOnlyCollection<RenderCommand>? passCommands).ShouldBeTrue();
+        passCommands.ShouldNotBeNull();
+        passCommands.ToArray().ShouldBe(new RenderCommand[] { parent, child, sibling });
+    }
+
+    [Test]
     public void SortedRenderPasses_UseSnapshotCollections_NotLiveMutableSortedSet()
     {
         string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Commands/RenderCommands/RenderCommandCollection.cs");

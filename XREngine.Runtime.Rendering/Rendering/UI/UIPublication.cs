@@ -340,6 +340,12 @@ public sealed class UIPublication
                 return;
             }
             UIRecordStore<UIRenderRecord> renders = _renderStore!;
+            // The store holds the records in painter order. Coplanar canvas draws have no depth
+            // order, so the transparent pass must keep this order instead of sorting each draw by
+            // its own distance. All draws share the canvas center as their sort anchor.
+            Vector2 canvasCenter = CanvasBounds.Center;
+            Vector3 sortAnchor = Vector3.Transform(new Vector3(canvasCenter.X, canvasCenter.Y, 0.0f),
+                AuthoringCanvasWorldMatrix);
             for (int page = 0; page < renders.PageCount; page++)
             foreach (ref readonly UIRenderRecord record in renders.GetPage(page))
             {
@@ -347,13 +353,21 @@ public sealed class UIPublication
                     continue;
                 RenderCommandMesh3D template = record.FrozenWorldCommand ??
                     throw new InvalidOperationException("A visible direct-world UI draw has no frozen command.");
-                commands.Add(new UIPublishedWorldMeshCommand(canvas, this, template,
+                RenderCommandPainterSort painterSort = new(sortAnchor, commands.Count);
+                UIPublishedWorldMeshCommand command = new(canvas, this, template,
                     record.WorldCastsShadows, record.WorldLayer, record.WorldCullingVolume,
                     record.WorldRenderInfo, record.SourceWorldCommand,
                     record.WorldRegistrationIncarnation, record.Crop,
                     record.Payload?.WorldCrop,
                     record.Payload?.WorldCropFragmentShader,
-                    record.Payload?.WorldCropVertexShader));
+                    record.Payload?.WorldCropVertexShader)
+                {
+                    PainterSort = painterSort,
+                };
+                // The live route draws the source command, so it needs the same key.
+                if (record.SourceWorldCommand is { } source)
+                    source.PainterSort = painterSort;
+                commands.Add(command);
             }
             _worldCommands = commands.ToArray();
         }

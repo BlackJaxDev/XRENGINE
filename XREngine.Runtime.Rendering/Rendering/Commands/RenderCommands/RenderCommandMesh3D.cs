@@ -809,6 +809,20 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        private RenderCommandPainterSort? _painterSort;
+
+        /// <summary>
+        /// The painter-order sort key of a direct-world UI draw, or null for an ordinary mesh.
+        /// A canvas publication sets it on the canvas owner thread. The collection reads it when it
+        /// captures the sort distance and the sort order of this command. The key is one immutable
+        /// object, so a reader never sees the anchor of one publication with the index of another.
+        /// </summary>
+        internal RenderCommandPainterSort? PainterSort
+        {
+            get => Volatile.Read(ref _painterSort);
+            set => Volatile.Write(ref _painterSort, value);
+        }
+
         public override void CollectedForRender(IRuntimeRenderCamera? camera)
         {
             base.CollectedForRender(camera);
@@ -816,7 +830,9 @@ namespace XREngine.Rendering.Commands
             // This is done in the collect visible thread - doesn't need to be thread safe.
             if (camera != null)
             {
-                if (CullingVolume is AABB bounds && bounds.IsValid)
+                if (PainterSort is { } painter)
+                    UpdateRenderDistance(painter.Anchor, camera);
+                else if (CullingVolume is AABB bounds && bounds.IsValid)
                     UpdateRenderDistance(bounds, camera);
                 else
                     UpdateRenderDistance(_renderWorldMatrix.Translation, camera);
@@ -833,6 +849,14 @@ namespace XREngine.Rendering.Commands
             fallbackPosition = default;
             if (camera is null)
                 return base.CaptureSortDistance(camera);
+
+            // Every draw of one direct-world canvas shares the canvas anchor, so the painter index
+            // alone orders the draws of the canvas.
+            if (PainterSort is { } painter)
+            {
+                fallbackPosition = painter.Anchor;
+                return Vector3.DistanceSquared(camera.Transform.RenderTranslation, painter.Anchor);
+            }
 
             if (CullingVolume is AABB bounds && bounds.IsValid)
             {

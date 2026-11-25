@@ -1208,7 +1208,9 @@ namespace XREngine.Rendering.Commands
                 if (!TryReserveCollectedResourceNoLock(item))
                     return false;
 
-                long sortOrderKey = GetSortOrderKey(pass);
+                long sortOrderKey = item is RenderCommandMesh3D { PainterSort: { } painter }
+                    ? GetPainterSortOrderKey(pass, painter.Index)
+                    : GetSortOrderKey(pass);
                 int beforeCount = set.Count;
                 XREngine.Rendering.UI.UIPublication? newUiClaim =
                     item is XREngine.Rendering.UI.IUiPublicationRenderCommand uiCommand &&
@@ -1307,6 +1309,16 @@ namespace XREngine.Rendering.Commands
                 ? long.MaxValue - nextValue
                 : nextValue;
         }
+
+        /// <summary>
+        /// Converts a UI painter index to a sort order key. Draws with the same sort distance
+        /// then render in painter order in both near-to-far and far-to-near passes, because a
+        /// far-to-near pass inverts the whole comparison.
+        /// </summary>
+        private long GetPainterSortOrderKey(int pass, int painterIndex)
+            => _passSorterTypes.TryGetValue(pass, out Type? sorterType) && sorterType == typeof(FarToNearRenderCommandSorter)
+                ? long.MaxValue - painterIndex
+                : painterIndex;
 
         public int GetCommandsAddedCount()
         {
