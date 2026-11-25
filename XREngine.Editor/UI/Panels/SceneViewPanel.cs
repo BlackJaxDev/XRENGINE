@@ -60,7 +60,13 @@ public class SceneViewPanel : EditorPanel
         base.OnComponentActivated();
         if (_cameraBindingStopped || IsDestroyed || IsDestroyQueued)
             return;
-        _sceneViewport ??= SceneNode.AddComponent<UIViewportComponent>();
+        if (_sceneViewport is null)
+        {
+            _sceneViewport = SceneNode.AddComponent<UIViewportComponent>();
+            // The Scene panel is the editor's main 3D view, so it renders as a desktop scene output.
+            if (_sceneViewport is not null)
+                _sceneViewport.IsPrimarySceneView = true;
+        }
         _sceneInput ??= SceneNode.AddComponent<NativeSceneViewportInput>();
         if (_sceneInput is not null)
             _sceneInput.Panel = this;

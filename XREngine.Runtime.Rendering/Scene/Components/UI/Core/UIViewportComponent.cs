@@ -76,6 +76,7 @@ namespace XREngine.Rendering.UI
         private uint _requestedWidth = 1u;
         private uint _requestedHeight = 1u;
         private bool _pendingResize;
+        private bool _isPrimarySceneView;
 
         //These bools are to prevent infinite pre-rendering recursion
         private bool _collecting = false;
@@ -191,6 +192,35 @@ namespace XREngine.Rendering.UI
         [YamlIgnore]
         public XRViewport Viewport { get; private set; } = new XRViewport(null, 1, 1);
 
+        /// <summary>
+        /// Gets or sets whether this viewport shows the main desktop scene view, such as the editor Scene panel.
+        /// <para>
+        /// When true, the viewport asks for a desktop scene pipeline, so the Advanced pipeline can reserve its
+        /// visibility resources. The viewport then collects and swaps through its own frame-paced callbacks. These
+        /// callbacks give the collect and the render the same frame output request, which the desktop view history
+        /// (temporal effects such as TSR) needs to accept a frame. The render also runs as a normal scene pass, so
+        /// exposure, bloom, and motion vectors stay on.
+        /// </para>
+        /// <para>
+        /// When false (the default), the viewport asks for a plain offscreen capture pipeline and renders as a
+        /// scene capture pass, which suits previews and thumbnails.
+        /// </para>
+        /// </summary>
+        [YamlIgnore]
+        public bool IsPrimarySceneView
+        {
+            get => _isPrimarySceneView;
+            set
+            {
+                _isPrimarySceneView = value;
+                Viewport.PipelineRequest = value
+                    ? RenderPipelineRequest.DesktopScene()
+                    : RenderPipelineRequest.OffscreenCapture();
+                Viewport.AutomaticallyCollectVisible = value;
+                Viewport.AutomaticallySwapBuffers = value;
+            }
+        }
+
         protected override void UITransformPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
         {
             base.UITransformPropertyChanged(sender, e);
@@ -205,6 +235,12 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+
+            // The scene renders into a Vulkan framebuffer with row 0 at the top of the image, but the quad
+            // samples with bottom-up UVs. Flip the quad UVs so the scene shows upright, as other consumers
+            // of Vulkan framebuffer textures do.
+            FlipVerticalUVCoord = RuntimeEngine.Rendering.State.IsVulkan &&
+                RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
 
             RuntimeEngine.Time.Timer.SwapBuffers += SwapBuffers;
             RuntimeEngine.Time.Timer.CollectVisible += CollectVisible;
@@ -324,6 +360,30 @@ namespace XREngine.Rendering.UI
             return created;
         }
 
+        /// <summary>
+        /// Returns the published surface when the primary scene view can render into it again, or null when the
+        /// viewport needs a new surface (the first frame, or a size change).
+        /// </summary>
+        /// <remarks>
+        /// The primary scene view renders every frame. A new surface for each frame gives the UI draw a new
+        /// captured material each frame. The Vulkan backend compiles a program for each new material, so the
+        /// draw would never be ready, and the canvas would drop every frame. Rendering in place keeps one
+        /// captured draw. The render graph orders this frame's scene write after the earlier UI read of the
+        /// same texture on the queue.
+        /// </remarks>
+        private ViewportSurface? AcquireInPlaceSurface()
+        {
+            ViewportSurface? published = Volatile.Read(ref _publishedSurface);
+            if (published is null || published.Generation == 0 ||
+                published.Fbo.Width != _requestedWidth || published.Fbo.Height != _requestedHeight)
+                return null;
+            // The construction placeholder carries CPU pixels. Only a GPU-rendered surface can be reused.
+            foreach (Mipmap2D mip in published.Texture.Mipmaps)
+                if (mip.Data is not null)
+                    return null;
+            return published;
+        }
+
         public void CollectVisible()
         {
             using var sample = RuntimeEngine.Profiler.Start("UIViewportComponent.CollectVisible");
@@ -336,6 +396,12 @@ namespace XREngine.Rendering.UI
             }
 
             EnsureRenderWindowHooked();
+            // The primary scene view collects through the viewport's own frame-paced callback.
+            if (IsPrimarySceneView)
+            {
+                _collectVisibleCompleted++;
+                return;
+            }
             _collecting = true;
             try
             {
@@ -372,6 +438,12 @@ namespace XREngine.Rendering.UI
             try
             {
                 ApplyPendingSize();
+                // The primary scene view swaps through the viewport's own frame-paced callback.
+                if (IsPrimarySceneView)
+                {
+                    _swapBuffersCompleted++;
+                    return;
+                }
                 bool wasSceneCapturePass = RuntimeEngine.Rendering.State.IsSceneCapturePass;
                 RuntimeEngine.Rendering.State.IsSceneCapturePass = true;
                 try
@@ -421,7 +493,9 @@ namespace XREngine.Rendering.UI
             try
             {
                 ApplyPendingSize();
-                ViewportSurface? surface = AcquireProducedSurface();
+                ViewportSurface? surface = IsPrimarySceneView
+                    ? AcquireInPlaceSurface() ?? AcquireProducedSurface()
+                    : AcquireProducedSurface();
                 if (surface is null)
                 {
                     _lastProducerFailure = "UI.Viewport.ProducerCapacity: all viewport textures still belong to published UI draws.";
@@ -438,7 +512,7 @@ namespace XREngine.Rendering.UI
                 }
 
                 bool wasSceneCapturePass = RuntimeEngine.Rendering.State.IsSceneCapturePass;
-                RuntimeEngine.Rendering.State.IsSceneCapturePass = true;
+                RuntimeEngine.Rendering.State.IsSceneCapturePass = !IsPrimarySceneView;
                 try
                 {
                     if (!Viewport.TryRender(_fbo, null, null, false))
@@ -462,12 +536,16 @@ namespace XREngine.Rendering.UI
                 if (Volatile.Read(ref _viewportProducerDestroyed) != 0)
                     return;
                 _lastRenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                _lastProducerFailure = null;
+                _renderCompleted++;
+                // An in-place render updates the texture that the published UI draw already samples,
+                // so the canvas keeps its publication and needs no new capture.
+                if (ReferenceEquals(surface, Volatile.Read(ref _publishedSurface)) && surface.Generation != 0)
+                    return;
                 surface.Publish(++_nextSurfaceGeneration);
                 Volatile.Write(ref _publishedSurface, surface);
-                _lastProducerFailure = null;
                 if (Interlocked.Exchange(ref _viewportVisualInvalidationQueued, 1) == 0)
                     RuntimeEngine.EnqueueAppThreadTask(_invalidateViewportVisual, "UI.Viewport.FramePublished");
-                _renderCompleted++;
             }
             finally
             {
