@@ -52,6 +52,23 @@ controls that set colors directly match the styled controls.
 - Colors are sRGB and the styles decode them to linear. Alpha is linear coverage,
   and blending is linear, so white overlay fills use small alpha values.
 
+## Inspector
+
+For one selected scene node, the inspector shows a stacked view like the ImGui
+inspector (`InspectorPanel.BuildStackedNodeLayout`):
+
+- the node summary: name, active state, layer, and the Transform header,
+- the members that the node's transform type declares,
+- one section per component. Each section starts with the component's active
+  toggle, named after the component, and lists the members that the component
+  type declares below `XRComponent`.
+
+Each row keeps the object that it edits, so a row can edit the transform or a
+component instead of the inspected node. "Open details" on such a row inspects
+that object; the Properties button returns to the node. Two components of the
+same type share their property objects, so only the first gets a section.
+Several selected nodes use the plain list of their shared members.
+
 ## Layout Rules
 
 - A stretched axis (`MinAnchor` and `MaxAnchor` differ on that axis) does not move
