@@ -326,6 +326,25 @@ public static class NativeUIElements
         return child;
     }
 
+    // A checked box fills with the accent color. The icon font has no check glyph, so the fill shows the
+    // state, and a mixed state shows a dash.
+    private const float CheckboxBorderWidth = 1.5f;
+    private static readonly ColorF4 CheckboxOffFill = new(0.0f, 0.0f, 0.0f, 0.22f);
+
+    private static ColorF4 CheckboxFill(UIToggleComponent.ECurrentState state)
+    {
+        ColorF4 accent = EditorGlassTheme.Accent;
+        return state switch
+        {
+            UIToggleComponent.ECurrentState.True => accent,
+            UIToggleComponent.ECurrentState.Intermediate => new ColorF4(accent.R, accent.G, accent.B, 0.45f),
+            _ => CheckboxOffFill,
+        };
+    }
+
+    private static string CheckboxGlyph(UIToggleComponent.ECurrentState state)
+        => state == UIToggleComponent.ECurrentState.Intermediate ? "-" : string.Empty;
+
     public static (UIToggleComponent Toggle, UIMaterialComponent Background, UITextComponent Glyph) CreateCheckboxToggle(
         SceneNode parent,
         PropertyInfo? property = null,
@@ -334,7 +353,7 @@ public static class NativeUIElements
         float glyphFontSize = 16.0f)
     {
         var materialComponent = parent.AddComponent<UIMaterialComponent>()!;
-        materialComponent.SetBatchBorderStyle(ColorF4.Black, ColorF4.Gray, 2.0f);
+        materialComponent.SetBatchBorderStyle(CheckboxOffFill, ColorF4.Gray, CheckboxBorderWidth);
 
         var tfm = materialComponent.BoundableTransform;
         tfm.MinAnchor = new Vector2(0.0f, 0.0f);
@@ -359,12 +378,8 @@ public static class NativeUIElements
 
         void SetCheckState(UIToggleComponent.ECurrentState state)
         {
-            glyph.Text = state switch
-            {
-                UIToggleComponent.ECurrentState.True => "\u2713",
-                UIToggleComponent.ECurrentState.Intermediate => "\u2212",
-                _ => string.Empty,
-            };
+            materialComponent.SetBatchBorderStyle(CheckboxFill(state), materialComponent.BatchBorderColor, CheckboxBorderWidth);
+            glyph.Text = CheckboxGlyph(state);
         }
 
         void GotFocus(UIInteractableComponent _)
@@ -422,7 +437,7 @@ public static class NativeUIElements
             : materialLease.IsCurrent(parent) && toggleLease.IsCurrent(parent) && glyphLease.IsCurrent(parent);
         UIMaterialComponent? material = AddGuardedComponent<UIMaterialComponent>(parent, Current, retainFailedReceipt);
         if (!Current() || material is null) return false;
-        material.SetBatchBorderStyle(ColorF4.Black, ColorF4.Gray, 2.0f);
+        material.SetBatchBorderStyle(CheckboxOffFill, ColorF4.Gray, CheckboxBorderWidth);
         if (!Current()) return false;
         UIBoundableTransform bounds = material.BoundableTransform;
         if (!Current() || !ReferenceEquals(parent.Transform, bounds)) return false;
@@ -483,12 +498,9 @@ public static class NativeUIElements
         void SetCheckState(UIToggleComponent.ECurrentState state)
         {
             if (!Current()) return;
-            string? text = state switch
-            {
-                UIToggleComponent.ECurrentState.True => "\u2713",
-                UIToggleComponent.ECurrentState.Intermediate => "\u2212",
-                _ => null,
-            };
+            material.SetBatchBorderStyle(CheckboxFill(state), material.BatchBorderColor, CheckboxBorderWidth);
+            if (!Current()) return;
+            string? text = CheckboxGlyph(state);
             try
             {
                 glyph.SetTextGuarded(text, Current, static current =>

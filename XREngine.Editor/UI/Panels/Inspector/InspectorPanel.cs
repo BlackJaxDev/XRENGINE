@@ -249,6 +249,27 @@ public partial class InspectorPanel : EditorPanel
         CreateVirtualPropertyList();
     }
 
+    /// <summary>
+    /// Scene node members that the inspector shows, in display order. The ImGui inspector shows the same
+    /// summary: the name, the active state, the layer, and the transform. The other public members are
+    /// runtime state, such as play state, serialization lists, and identity.
+    /// </summary>
+    private static readonly string[] SceneNodeInspectorMembers =
+        [nameof(Scene.SceneNode.Name), nameof(Scene.SceneNode.IsActiveSelf), nameof(Scene.SceneNode.Layer), nameof(Scene.SceneNode.Transform)];
+
+    /// <summary>
+    /// Applies the ImGui inspector member rules: a readable, non-indexed property that is not marked
+    /// <c>[Browsable(false)]</c>. For a scene node, only the members in <see cref="SceneNodeInspectorMembers"/>.
+    /// </summary>
+    private static bool IsInspectableProperty(object target, PropertyInfo property)
+    {
+        if (!property.CanRead || property.GetIndexParameters().Length != 0)
+            return false;
+        if (property.GetCustomAttribute<System.ComponentModel.BrowsableAttribute>() is { Browsable: false })
+            return false;
+        return target is not Scene.SceneNode || Array.IndexOf(SceneNodeInspectorMembers, property.Name) >= 0;
+    }
+
     /// <summary>Gets property metadata that is valid for every selected object.</summary>
     private static List<PropertyInfo> GetMatchingProperties(object?[]? objects)
     {
@@ -266,8 +287,11 @@ public partial class InspectorPanel : EditorPanel
             if (first)
             {
                 foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
-                    if (property.GetIndexParameters().Length == 0)
+                    if (IsInspectableProperty(obj, property))
                         matching.Add(property);
+                if (obj is Scene.SceneNode)
+                    matching.Sort(static (left, right) => Array.IndexOf(SceneNodeInspectorMembers, left.Name)
+                        .CompareTo(Array.IndexOf(SceneNodeInspectorMembers, right.Name)));
                 first = false;
                 continue;
             }
