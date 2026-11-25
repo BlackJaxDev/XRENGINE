@@ -70,6 +70,34 @@ public class PawnComponent : XRComponent, IRuntimeInputControllablePawn, IRuntim
     public EventList<XRComponent> LinkedUICanvasInputs { get; } = [];
     ICollection<XRComponent> IRuntimeInputControllablePawn.LinkedUiInputComponents => LinkedUICanvasInputs;
 
+    private bool _isGameplayInputPaused;
+    /// <summary>
+    /// Gets or sets whether gameplay input on this pawn is paused, for example while a pause menu is open.
+    /// </summary>
+    [Browsable(false)]
+    public bool IsGameplayInputPaused
+    {
+        get => _isGameplayInputPaused;
+        set
+        {
+            if (SetField(ref _isGameplayInputPaused, value))
+                OnGameplayInputPausedChanged(value);
+        }
+    }
+
+    /// <summary>
+    /// Returns true when this pawn manages its own pause menu and should not receive
+    /// a host-injected default pause menu.
+    /// </summary>
+    [Browsable(false)]
+    public virtual bool HasCustomPauseMenu => false;
+
+    /// <summary>
+    /// Runs after <see cref="IsGameplayInputPaused"/> changes so subclasses can clear held inputs
+    /// and release or restore mouse capture.
+    /// </summary>
+    protected virtual void OnGameplayInputPausedChanged(bool paused) { }
+
     protected virtual void PostPossess() => PostPossessed?.Invoke(this);
     protected virtual void PrePossess() => PrePossessed?.Invoke(this);
     protected virtual void PostUnpossess() => PostUnpossessed?.Invoke(this);

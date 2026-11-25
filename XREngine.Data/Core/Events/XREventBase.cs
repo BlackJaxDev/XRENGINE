@@ -118,6 +118,12 @@ namespace XREngine.Data.Core
         public bool HasPendingAdds => Volatile.Read(ref _pendingAddsCount) != 0;
         public bool HasPendingRemoves => Volatile.Read(ref _pendingRemovesCount) != 0;
 
+        /// <summary>
+        /// Returns true when this event has at least one active or queued runtime listener.
+        /// </summary>
+        public bool HasEffectiveListeners
+            => (_actions?.Count ?? 0) + Volatile.Read(ref _pendingAddsCount) - Volatile.Read(ref _pendingRemovesCount) > 0;
+
         public void AddListener(TListener action)
         {
             using (_pendingAddsLock.EnterScope())

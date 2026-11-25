@@ -880,11 +880,25 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     (historyReservation.Candidate.PipelineIdentity != TemporalHistoryPipelineIdentity ||
                      historyReservation.Output.Target.TargetGeneration != unchecked((ulong)ResourceGeneration) ||
                      viewport is not null && historyReservation.Candidate.ExtentRevision != viewport.ExtentRevision))
+                {
+                    RenderIndependentScreenSpaceUi(
+                        userInterface,
+                        viewport,
+                        targetFBO,
+                        "the history generation changed during resource realization");
                     return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The history generation changed during resource realization.");
+                }
                 if (completionReservationOwned &&
                     completionReservation.Output.Target.TargetGeneration !=
                         unchecked((ulong)ResourceGeneration))
+                {
+                    RenderIndependentScreenSpaceUi(
+                        userInterface,
+                        viewport,
+                        targetFBO,
+                        "the output generation changed during resource realization");
                     return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The output generation changed during resource realization.");
+                }
                 RenderCommandCollection activeCommands =
                     meshRenderCommandsOverride ?? MeshRenderCommands;
                 DirectionalShadowPipelineDiagnostics.Record(
@@ -931,6 +945,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     }
                 }
 
+                string? deferredPreparationReason = null;
                 try
                 {
                     using (AbstractRenderer.Current?.EnterRenderPipelineFrameResourceScope(this, viewport))
@@ -948,57 +963,71 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                                        (int)EDefaultRenderPass.PreRender))
                             {
                                 if (!dispatcher.TryRunVisible(ActiveMeshRenderCommands, out string? deformationPendingReason))
-                                    return ReportExactOutputPreconditionFailure(
-                                        in outputCompletionRequest,
-                                        deformationPendingReason ?? "Vulkan deformation prepass is pending.");
+                                    deferredPreparationReason = deformationPendingReason ?? "Vulkan deformation prepass is pending.";
                             }
                         }
 
-                        long consumptionStarted = System.Diagnostics.Stopwatch.GetTimestamp();
-                        DirectionalShadowPipelineDiagnostics.Record(
-                            EDirectionalShadowPipelineReceiptStage.BeforeCommandChainExecute,
-                            this,
-                            Pipeline,
-                            targetFBO);
-                        try
+                        if (deferredPreparationReason is null)
                         {
-                            BeginEditorPickingCandidateAuthoring();
-                            Pipeline.CommandChain.Execute();
-                            EndEditorPickingCandidateExecution();
+                            long consumptionStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                            DirectionalShadowPipelineDiagnostics.Record(
+                                EDirectionalShadowPipelineReceiptStage.BeforeCommandChainExecute,
+                                this,
+                                Pipeline,
+                                targetFBO);
+                            try
+                            {
+                                BeginEditorPickingCandidateAuthoring();
+                                Pipeline.CommandChain.Execute();
+                                EndEditorPickingCandidateExecution();
+                            }
+                            catch
+                            {
+                                NotifyCommandChainExecutionAborted();
+                                throw;
+                            }
+                            if (RenderState.HasPendingResourcePreparation)
+                            {
+                                NotifyCommandChainExecutionAborted();
+                                deferredPreparationReason = RenderState.PendingResourcePreparationReason ?? "Render resource preparation is pending.";
+                            }
+                            else
+                            {
+                                RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageConsumption(
+                                    System.Diagnostics.Stopwatch.GetTimestamp() - consumptionStarted);
+                            }
                         }
-                        catch
-                        {
-                            NotifyCommandChainExecutionAborted();
-                            throw;
-                        }
-                        if (RenderState.HasPendingResourcePreparation)
-                        {
-                            NotifyCommandChainExecutionAborted();
-                            return ReportExactOutputPreconditionFailure(
-                                in outputCompletionRequest,
-                                RenderState.PendingResourcePreparationReason ?? "Render resource preparation is pending.");
-                        }
-                        RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageConsumption(
-                            System.Diagnostics.Stopwatch.GetTimestamp() - consumptionStarted);
                     }
                 }
                 catch (RenderResourcePreparationPendingException exception)
                 {
-                    return ReportExactOutputPreconditionFailure(
-                        in outputCompletionRequest,
-                        exception.Message);
+                    deferredPreparationReason = exception.Message;
                 }
                 catch (RequiredRenderCommandException exception)
                     when (exception.InnerException is RenderResourcePreparationPendingException)
                 {
+                    deferredPreparationReason = exception.InnerException.Message;
+                }
+
+                if (deferredPreparationReason is not null)
+                {
+                    if (!RenderState.HasExecutedScreenSpaceUi)
+                    {
+                        RenderIndependentScreenSpaceUi(
+                            userInterface,
+                            viewport,
+                            targetFBO,
+                            deferredPreparationReason);
+                    }
                     return ReportExactOutputPreconditionFailure(
                         in outputCompletionRequest,
-                        exception.InnerException.Message);
+                        deferredPreparationReason);
                 }
 
                 if (RenderState.HasRequiredOffscreenAuthoringFailure)
                 {
                     NotifyCommandChainExecutionAborted();
+                    string offscreenReason = RenderState.RequiredOffscreenAuthoringFailureReason ?? "Required offscreen output authoring failed.";
                     Debug.RenderingWarningEvery(
                         $"XRRenderPipelineInstance.RequiredOffscreenAuthoringFailure.{ProfilerKey}",
                         TimeSpan.FromSeconds(1),
@@ -1006,7 +1035,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         ProfilerKey,
                         RenderState.RequiredOffscreenAuthoringFailureCount,
                         RenderState.RequiredOffscreenAuthoringFailureReason ?? "unspecified");
-                    return DeclineRender(RenderState.RequiredOffscreenAuthoringFailureReason ?? "Required offscreen output authoring failed.");
+                    if (!RenderState.HasExecutedScreenSpaceUi)
+                    {
+                        RenderIndependentScreenSpaceUi(
+                            userInterface,
+                            viewport,
+                            targetFBO,
+                            offscreenReason);
+                    }
+                    return DeclineRender(offscreenReason);
                 }
 
                 ValidateActiveGenerationDescriptorParity();
@@ -1081,8 +1118,21 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (userInterface is not { IsActive: true, IsScreenSpace: true })
             return;
 
-        using (AbstractRenderer.Current?.PushUiClipSpacePolicy())
-            userInterface.RenderScreenSpace(viewport, targetFbo);
+        try
+        {
+            using (AbstractRenderer.Current?.PushUiClipSpacePolicy())
+                userInterface.RenderScreenSpace(viewport, targetFbo);
+        }
+        catch (RenderResourcePreparationPendingException ex)
+        {
+            Debug.RenderingWarningEvery(
+                "RenderPipeline.IndependentScreenSpaceUiPending",
+                TimeSpan.FromSeconds(1),
+                "[RenderResources] Independent screen-space UI deferred during scene recovery ({0}): {1}",
+                sceneDeferralReason,
+                ex.Message);
+            return;
+        }
 
         if (Debug.ShouldLogEvery(
                 "RenderPipeline.IndependentScreenSpaceUi",

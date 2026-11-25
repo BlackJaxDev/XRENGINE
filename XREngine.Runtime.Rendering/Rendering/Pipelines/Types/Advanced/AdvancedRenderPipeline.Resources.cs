@@ -180,6 +180,7 @@ public partial class AdvancedRenderPipeline
             (EditorHighlightModule is not null && !UsesMinimalVisibilityOutput
                 ? EditorHighlightResourcesFeatureBit
                 : 0UL) |
+            UiBackdropBlurResources.GetFormatFeatureBits(58) |
             BuildAmbientOcclusionFeatureMask(instance, viewport);
         return (ulong)visibilityFeatures |
             (ulong)reconstructionFeatures |
@@ -509,6 +510,8 @@ public partial class AdvancedRenderPipeline
             .DependsOn(PostProcessOutputTextureName).Factory(CreateFinalPostProcessFBO).Add();
         DeclareAdvancedBloomFrameBuffers(builder, internalSize);
         DeclareAdvancedPostEffects(builder, internalSize);
+        if (AllowsScreenSpaceUi)
+            UiBackdropBlurResources.DeclareResources(builder, this);
         builder.FrameBuffer(HistoryCaptureFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
             .Color(0, HistoryColorTextureName).DepthStencil(HistoryDepthStencilTextureName).Factory(CreateHistoryCaptureFBO).Add();

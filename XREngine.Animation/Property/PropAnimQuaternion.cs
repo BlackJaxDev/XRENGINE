@@ -282,7 +282,7 @@ namespace XREngine.Animation
                 _prevKeyframeTrack = Keyframes;
                 _prevKeyframeExactEditGeneration = Keyframes.ExactEditGeneration;
             }
-            _prevKeyframe ??= Keyframes.GetKeyBefore(_currentTime) ?? Keyframes.First;
+            _prevKeyframe ??= Keyframes.GetKeyBefore(_currentTime);
 
             if (Keyframes.Count == 0)
             {

@@ -47,6 +47,7 @@ public static class EditorPlayModeController
             return;
 
         // Subscribe to play mode events
+        Engine.PlayMode.StateChanged += OnPlayModeStateChanged;
         Engine.PlayMode.PreEnterPlay += OnPreEnterPlay;
         Engine.PlayMode.PostEnterPlay += OnPostEnterPlay;
         Engine.PlayMode.PreExitPlay += OnPreExitPlay;
@@ -58,6 +59,7 @@ public static class EditorPlayModeController
         // Editor play controls belong to the window rather than the possessed pawn so they
         // remain available when a GameMode owns input or no gameplay pawn is possessed.
         XRWindow.AnyWindowKeyDown += OnAnyWindowKeyDown;
+        XRWindow.AnyWindowGamepadButtonDown += OnAnyWindowGamepadButtonDown;
 
         _initialized = true;
         Debug.Out("EditorPlayModeController initialized");
@@ -71,6 +73,7 @@ public static class EditorPlayModeController
         if (!_initialized)
             return;
 
+        Engine.PlayMode.StateChanged -= OnPlayModeStateChanged;
         Engine.PlayMode.PreEnterPlay -= OnPreEnterPlay;
         Engine.PlayMode.PostEnterPlay -= OnPostEnterPlay;
         Engine.PlayMode.PreExitPlay -= OnPreExitPlay;
@@ -79,11 +82,21 @@ public static class EditorPlayModeController
         Engine.PlayMode.Paused -= OnPaused;
         Engine.PlayMode.Resumed -= OnResumed;
         XRWindow.AnyWindowKeyDown -= OnAnyWindowKeyDown;
+        XRWindow.AnyWindowGamepadButtonDown -= OnAnyWindowGamepadButtonDown;
+        EditorPlayModePauseMenu.Detach();
 
         _initialized = false;
     }
 
     #region Event Handlers
+
+    private static void OnPlayModeStateChanged(EPlayModeState state)
+    {
+        if (state == EPlayModeState.Play && Engine.PlayMode.ForcePlayWithoutTransitions)
+            Engine.EnqueueUpdateThreadTask(EditorPlayModePauseMenu.RefreshForDirectPlayMode);
+        else if (state is EPlayModeState.Edit or EPlayModeState.ExitingPlay)
+            Engine.EnqueueUpdateThreadTask(EditorPlayModePauseMenu.Detach);
+    }
 
     private static void OnPreEnterPlay()
     {
@@ -313,6 +326,12 @@ public static class EditorPlayModeController
 
     private static void OnAnyWindowKeyDown(XRWindow window, EKey key)
     {
+        if (key == EKey.Escape && Engine.PlayMode.ForcePlayWithoutTransitions)
+        {
+            Engine.EnqueueUpdateThreadTask(EditorPlayModePauseMenu.ToggleFromPauseInput);
+            return;
+        }
+
         if (key == EKey.F6)
         {
             Engine.EnqueueUpdateThreadTask(HandleStepFrameShortcut);
@@ -329,6 +348,12 @@ public static class EditorPlayModeController
         Engine.EnqueueUpdateThreadTask(forceExit
             ? ForceExitPlayModeFromShortcut
             : HandlePlayPauseShortcut);
+    }
+
+    private static void OnAnyWindowGamepadButtonDown(XRWindow window, EGamePadButton button)
+    {
+        if (button == EGamePadButton.SpecialRight && Engine.PlayMode.ForcePlayWithoutTransitions)
+            Engine.EnqueueUpdateThreadTask(EditorPlayModePauseMenu.ToggleFromPauseInput);
     }
 
     private static void HandlePlayPauseShortcut()

@@ -1038,6 +1038,36 @@ public static partial class RuntimeEngine
                 private static void MarkShadowAtlasRenderResourcesChanged(string settingName)
                     => global::XREngine.Rendering.AbstractRenderer.Current?.NotifyRenderResourcesChanged(settingName);
 
+                private EUiBackdropBlurFormat _uiBackdropBlurFormat = ResolveInitialUiBackdropBlurFormat();
+                private int _uiBackdropBlurFormatAtomic = (int)ResolveInitialUiBackdropBlurFormat();
+
+                private static EUiBackdropBlurFormat ResolveInitialUiBackdropBlurFormat()
+                {
+                    string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.UiBackdropBlurFormat);
+                    if (!string.IsNullOrWhiteSpace(raw) &&
+                        Enum.TryParse<EUiBackdropBlurFormat>(raw.Trim(), ignoreCase: true, out EUiBackdropBlurFormat parsed))
+                    {
+                        return parsed;
+                    }
+
+                    return EUiBackdropBlurFormat.Rgba8;
+                }
+
+                [Category("UI")]
+                [Description("GPU texture format used by the on-demand Dual-Kawase UI backdrop blur pyramid. Toggle between Rgba8 (lowest bandwidth), R11fG11fB10f, and Rgba16f (higher precision on dark scenes) at runtime.")]
+                public EUiBackdropBlurFormat UiBackdropBlurFormat
+                {
+                    get => (EUiBackdropBlurFormat)Volatile.Read(ref _uiBackdropBlurFormatAtomic);
+                    set
+                    {
+                        if (!SetField(ref _uiBackdropBlurFormat, value))
+                            return;
+
+                        Volatile.Write(ref _uiBackdropBlurFormatAtomic, (int)value);
+                        global::XREngine.Rendering.AbstractRenderer.Current?.NotifyRenderResourcesChanged(nameof(UiBackdropBlurFormat));
+                    }
+                }
+
                 [Category("Shadows")]
                 [Description("Width and height of each dynamic shadow atlas page in texels.")]
                 public uint ShadowAtlasPageSize

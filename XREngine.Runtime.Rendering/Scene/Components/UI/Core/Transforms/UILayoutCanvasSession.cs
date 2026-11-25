@@ -426,6 +426,9 @@ internal sealed class UILayoutCanvasSession
                 switch (transform.PlacementInfo)
                 {
                     case UIListTransform.UIListChildPlacementInfo list:
+                        // The worker result keeps the cross-axis padding in the child translation,
+                        // so the placement carries only the flow offset.
+                        list.CrossAxisOffset = 0;
                         if ((transform.Parent as UIListTransform)?.DisplayHorizontal == true)
                         {
                             list.BottomOrLeftOffset = placement.X;

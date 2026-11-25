@@ -43,6 +43,12 @@ public sealed class UICanvasInputComponentEditor : IXRComponentEditor
         EditorImGuiUI.DrawReadOnlyField("Resolved Canvas", DescribeComponent(input.GetCameraCanvas()));
         EditorImGuiUI.DrawReadOnlyField("Owning Pawn", DescribeComponent(input.OwningPawn as XRComponent));
         EditorImGuiUI.DrawReadOnlyField("Focused", DescribeComponent(input.FocusedComponent));
+        EditorImGuiUI.DrawReadOnlyField("Gamepad Selected", input.FocusedComponent?.IsGamepadSelected == true ? "Yes" : "No");
+        EditorImGuiUI.DrawReadOnlyField(
+            "Active Flow Map",
+            input.ActiveNavigationFlowMap is { } flowMap
+                ? $"{flowMap.Edges.Count} edge(s), {flowMap.AllowedDirections}"
+                : "Auto");
         EditorImGuiUI.DrawReadOnlyField("Topmost Interactable", DescribeComponent(input.TopMostInteractable));
         EditorImGuiUI.DrawReadOnlyField("Topmost Element", DescribeComponent(input.TopMostElement));
         EditorImGuiUI.DrawReadOnlyField("Layout Invalidated", input.IsLayoutInvalidated ? "Yes" : "No");

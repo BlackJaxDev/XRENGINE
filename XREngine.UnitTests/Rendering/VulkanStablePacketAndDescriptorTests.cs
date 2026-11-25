@@ -3824,7 +3824,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         window.ShouldNotContain("StartProfileScope($\"XRViewport.RenderToFBO[");
         events.ShouldNotContain("WithProfiling(\"XREvent.Invoke\", InvokeInternal)");
         events.ShouldContain("IDisposable? sample = BeginProfiling(\"XREvent.Invoke\")");
-        uiInput.ShouldContain("_intersectionCollectionScratch");
+        uiInput.ShouldContain("private HashSet<RenderInfo2D> _lastIntersectionIdentities");
         uiInput.ShouldNotContain(".Union(UIElementIntersections)");
         uiInput.ShouldNotContain("LastUIElementIntersections.ToArray()");
         collection2D.ShouldContain("private static readonly Action<RenderInfo2D> CollectRenderCommandsCallback");

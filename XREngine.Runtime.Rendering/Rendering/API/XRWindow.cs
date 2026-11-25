@@ -61,6 +61,7 @@ namespace XREngine.Rendering
             public void FocusChanged(bool focused) => owner.OnFocusChanged(focused);
             public void FileDropped(string[] paths) => owner.OnFileDropped(paths);
             public void KeyDown(EKey key) => AnyWindowKeyDown?.Invoke(owner, key);
+            public void GamepadButtonDown(EGamePadButton button) => AnyWindowGamepadButtonDown?.Invoke(owner, button);
             public bool CloseRequested() => owner.HandleDesktopCloseRequested();
             public void InteractiveResizeStarted() => owner.BeginInteractiveResize("native-window");
             public void InteractiveResizeUpdated(IVector2 extent)
@@ -100,6 +101,11 @@ namespace XREngine.Rendering
         /// to their owning thread.
         /// </summary>
         public static event Action<XRWindow, EKey>? AnyWindowKeyDown;
+        /// <summary>
+        /// Fired for every primary-gamepad button-down transition on a focused native window before
+        /// pawn input consumes the corresponding snapshot.
+        /// </summary>
+        public static event Action<XRWindow, EGamePadButton>? AnyWindowGamepadButtonDown;
         public event Action<XRWindow, bool>? FocusChanged;
         public event Action<XRWindow, string[]>? FileDropped;
         public event Action<XRWindow>? ClosingRequested;

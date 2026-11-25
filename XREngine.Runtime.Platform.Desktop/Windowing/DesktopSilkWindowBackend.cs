@@ -55,6 +55,7 @@ internal sealed partial class DesktopSilkWindowBackend : IRuntimeWindowBackend, 
     private bool _interactiveResize;
     private bool _renderDispatchActive;
     private GlFlushDelegate? _glFlush;
+    private ushort _lastPrimaryGamepadButtons;
 
     public DesktopSilkWindowBackend(IWindow window, RuntimeWindowCreateOptions options)
     {
@@ -782,8 +783,20 @@ internal sealed partial class DesktopSilkWindowBackend : IRuntimeWindowBackend, 
         bool captured = _input is { Mice.Count: > 0 } &&
             _input.Mice[0].Cursor.CursorMode is CursorMode.Disabled or CursorMode.Raw;
         WindowGamepadSnapshot gamepad = CapturePrimaryGamepad();
+        ushort currentGamepadButtons = gamepad.IsConnected ? gamepad.PressedButtonMask : (ushort)0;
+        ushort newlyPressedGamepadButtons = (ushort)(currentGamepadButtons & ~_lastPrimaryGamepadButtons);
+        _lastPrimaryGamepadButtons = currentGamepadButtons;
         _inputAccumulator.Publish(keyboardCount, mouseCount, gamepadCount, _focused, captured, gamepad);
         _uiInputAccumulator.Publish(keyboardCount, mouseCount, gamepadCount, _focused, captured, gamepad);
+
+        if (_focused && newlyPressedGamepadButtons != 0 && _sink is { } sink)
+        {
+            for (int i = 0; i < 14; i++)
+            {
+                if ((newlyPressedGamepadButtons & (1u << i)) != 0)
+                    sink.GamepadButtonDown((EGamePadButton)i);
+            }
+        }
     }
 
     private WindowGamepadSnapshot CapturePrimaryGamepad()

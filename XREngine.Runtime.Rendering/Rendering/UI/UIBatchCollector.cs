@@ -182,6 +182,8 @@ public sealed partial class UIBatchCollector : IDisposable
         public Vector4 BorderColor;
         public float BorderWidth;
         public ulong PrimitiveHandle;
+        /// <summary>Box style read by the solid quad shaders from the style buffer.</summary>
+        public UIQuadStyle Style;
     }
 
     /// <summary>
@@ -255,10 +257,13 @@ public sealed partial class UIBatchCollector : IDisposable
         public bool ImageSrgb;
         public bool Border;
         public UIBackdropRequest Backdrop;
+        /// <summary>Largest frosted-glass blur radius any entry in this run requests, in logical pixels.</summary>
+        public float MaxStyleBlurRadius;
         public readonly List<MaterialQuadEntry> Entries = [];
 
         public void Clear()
         {
+            MaxStyleBlurRadius = 0.0f;
             CompositionOwner = default;
             CompositionSegmentIdentity = 0;
             CompositionSegmentRevision = 0;
@@ -647,12 +652,16 @@ public sealed partial class UIBatchCollector : IDisposable
     private XRDataBuffer<Vector4>? _matQuadUvBuf;         // textured binding 3: UV rectangle per instance
     private XRDataBuffer<Vector4>? _matQuadBorderWidthBuf; // border binding 4: width per instance
     private XRDataBuffer<uint>? _matQuadDrawIndexBuf;      // desktop binding 5: draw order → stable slot
+    private XRDataBuffer<Vector4>? _matQuadStyleBuf;       // solid binding 4: MaterialStyleVec4Count × vec4 per slot
+    private XRMeshRenderer? _matQuadStyleBackdropMesh;
+    private XRTexture2D? _matQuadStyleBackdropTexture;
     private XRMeshRenderer? _matQuadBorderMesh;
     private XRMeshRenderer? _matQuadBackdropMesh;
     private XRTexture2D? _matQuadBackdropTexture;
     private Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> _materialTextureMeshes = [];
     private List<(XRTexture2D Texture, bool Srgb)> _staleMaterialTextures = [];
     private const int MaxMaterialTextureMeshes = 64;
+    private const uint MaterialStyleVec4Count = 7;
     private const int MaxRunCohorts = 4;
     private const int MaxCanvasGpuCohorts = 256;
     private const uint MaxRetainedQuadSlotsPerRun = 1u << 20;
@@ -674,6 +683,9 @@ public sealed partial class UIBatchCollector : IDisposable
         public XRDataBuffer<Vector4>? Uv;
         public XRDataBuffer<Vector4>? BorderWidth;
         public XRDataBuffer<uint>? DrawIndex;
+        public XRDataBuffer<Vector4>? Style;
+        public XRMeshRenderer? StyleBackdropMesh;
+        public XRTexture2D? StyleBackdropTexture;
         public XRMeshRenderer? BorderMesh;
         public XRMeshRenderer? BackdropMesh;
         public XRTexture2D? BackdropTexture;
@@ -932,6 +944,33 @@ public sealed partial class UIBatchCollector : IDisposable
     }
 
     /// <summary>
+    /// Blurred scene texture for frosted-glass quads during screen-space UI rendering.
+    /// <c>VPRC_RenderScreenSpaceUI</c> sets it from <c>RenderingState.UiBackdropBlurTexture</c>
+    /// for the duration of one canvas render and restores the previous value afterward.
+    /// </summary>
+    internal static XRTexture2D? ActiveBackdropBlurTexture { get; set; }
+
+    /// <summary>Host pipeline type name, used only in the missing-blur diagnostic.</summary>
+    internal static string? ActiveBackdropBlurHostPipelineName { get; set; }
+
+    /// <summary>
+    /// Gets the largest backdrop blur radius, in logical pixels, that a rendered quad run requests.
+    /// <c>VPRC_PrepareUiBackdropBlur</c> skips the blur pyramid when this is zero.
+    /// </summary>
+    public float MaxRequestedBackdropBlurRadius
+    {
+        get
+        {
+            float max = 0.0f;
+            foreach (BatchPool<MaterialQuadBatchData> groups in _renderMaterialGroups.Values)
+                for (int index = 0; index < groups.Count; index++)
+                    if (groups[index].MaxStyleBlurRadius > max)
+                        max = groups[index].MaxStyleBlurRadius;
+            return max;
+        }
+    }
+
+    /// <summary>
     /// True if any material quad or text data was collected this frame.
     /// </summary>
     public bool HasBatchData
@@ -1135,11 +1174,12 @@ public sealed partial class UIBatchCollector : IDisposable
         UICompositionOwner compositionOwner = default,
         ulong compositionSegmentIdentity = 0,
         ulong compositionSegmentRevision = 0,
-        UIBackdropRequest backdrop = default)
+        UIBackdropRequest backdrop = default,
+        in UIQuadStyle style = default)
         => AddMaterialQuadCore(renderPass, zIndex, passes, in worldMatrix, in color,
             in uixywh, cropRegion, texture, uv, imageSrgb, border,
             borderColor, borderWidth, primitiveHandle, compositionOwner,
-            compositionSegmentIdentity, compositionSegmentRevision, backdrop, null);
+            compositionSegmentIdentity, compositionSegmentRevision, backdrop, null, in style);
 
     private void AddMaterialQuadCore(
         int renderPass, int zIndex, RenderCommandCollection passes,
@@ -1148,7 +1188,7 @@ public sealed partial class UIBatchCollector : IDisposable
         bool imageSrgb, bool border, Vector4 borderColor, float borderWidth,
         ulong primitiveHandle, UICompositionOwner compositionOwner,
         ulong compositionSegmentIdentity, ulong compositionSegmentRevision,
-        UIBackdropRequest backdrop, UITextureSnapshot? imageSnapshot)
+        UIBackdropRequest backdrop, UITextureSnapshot? imageSnapshot, in UIQuadStyle style)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
@@ -1195,12 +1235,12 @@ public sealed partial class UIBatchCollector : IDisposable
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Material, groupIndex));
         }
 
-        AppendMaterialEntry(batch, in worldMatrix, in color, in uixywh, uv, borderColor, borderWidth, primitiveHandle);
+        AppendMaterialEntry(batch, in worldMatrix, in color, in uixywh, uv, borderColor, borderWidth, primitiveHandle, in style);
     }
 
     private static void AppendMaterialEntry(MaterialQuadBatchData batch,
         in Matrix4x4 worldMatrix, in Vector4 color, in Vector4 uixywh, Vector4 uv,
-        Vector4 borderColor, float borderWidth, ulong primitiveHandle)
+        Vector4 borderColor, float borderWidth, ulong primitiveHandle, in UIQuadStyle style)
     {
         UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         batch.Entries.Add(new MaterialQuadEntry
@@ -1211,8 +1251,12 @@ public sealed partial class UIBatchCollector : IDisposable
             UV = uv,
             BorderColor = borderColor,
             BorderWidth = borderWidth,
-            PrimitiveHandle = primitiveHandle
+            PrimitiveHandle = primitiveHandle,
+            Style = style,
         });
+        float blurRadius = style.EffectiveBackdropBlurRadius;
+        if (blurRadius > batch.MaxStyleBlurRadius)
+            batch.MaxStyleBlurRadius = blurRadius;
     }
 
     /// <summary>
@@ -1551,7 +1595,7 @@ public sealed partial class UIBatchCollector : IDisposable
             return HasCompletedOrAbandonedVulkanFence(gpu.Fence) &&
                 CanReuseVulkanBuffer(gpu.Transform) && CanReuseVulkanBuffer(gpu.Color) &&
                 CanReuseVulkanBuffer(gpu.Bounds) &&
-                CanReuseVulkanBuffer(gpu.DrawIndex) &&
+                CanReuseVulkanBuffer(gpu.DrawIndex) && CanReuseVulkanBuffer(gpu.Style) &&
                 (!gpu.UsedUv || CanReuseVulkanBuffer(gpu.Uv)) &&
                 (!gpu.UsedBorderWidth || CanReuseVulkanBuffer(gpu.BorderWidth));
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.OpenGL)
@@ -1757,6 +1801,9 @@ public sealed partial class UIBatchCollector : IDisposable
         _matQuadUvBuf = gpu.Uv;
         _matQuadBorderWidthBuf = gpu.BorderWidth;
         _matQuadDrawIndexBuf = gpu.DrawIndex;
+        _matQuadStyleBuf = gpu.Style;
+        _matQuadStyleBackdropMesh = gpu.StyleBackdropMesh;
+        _matQuadStyleBackdropTexture = gpu.StyleBackdropTexture;
         _matQuadBorderMesh = gpu.BorderMesh;
         _matQuadBackdropMesh = gpu.BackdropMesh;
         _matQuadBackdropTexture = gpu.BackdropTexture;
@@ -1775,6 +1822,9 @@ public sealed partial class UIBatchCollector : IDisposable
         gpu.Uv = _matQuadUvBuf;
         gpu.BorderWidth = _matQuadBorderWidthBuf;
         gpu.DrawIndex = _matQuadDrawIndexBuf;
+        gpu.Style = _matQuadStyleBuf;
+        gpu.StyleBackdropMesh = _matQuadStyleBackdropMesh;
+        gpu.StyleBackdropTexture = _matQuadStyleBackdropTexture;
         gpu.BorderMesh = _matQuadBorderMesh;
         gpu.BackdropMesh = _matQuadBackdropMesh;
         gpu.BackdropTexture = _matQuadBackdropTexture;
@@ -1795,7 +1845,7 @@ public sealed partial class UIBatchCollector : IDisposable
             if (old.WorldMatrix != current.WorldMatrix || old.Color != current.Color ||
                 old.UIXYWH != current.UIXYWH || old.UV != current.UV ||
                 old.BorderColor != current.BorderColor || old.BorderWidth != current.BorderWidth ||
-                old.PrimitiveHandle != current.PrimitiveHandle)
+                old.PrimitiveHandle != current.PrimitiveHandle || !old.Style.Equals(current.Style))
                 return false;
         }
         return true;
@@ -1854,6 +1904,7 @@ public sealed partial class UIBatchCollector : IDisposable
         _matQuadUvBuf?.Destroy();
         _matQuadBorderWidthBuf?.Destroy();
         _matQuadDrawIndexBuf?.Destroy();
+        _matQuadStyleBuf?.Destroy();
 
         // Transform buffer: 4 vec4 rows per matrix, so elementCount = capacity * 4
         _matQuadTransformBuf = new XRDataBuffer<Vector4>(
@@ -1912,6 +1963,15 @@ public sealed partial class UIBatchCollector : IDisposable
                 DisposeOnPush = false
             };
             mesh.Buffers["QuadDrawIndexBuffer"] = _matQuadDrawIndexBuf;
+            // Style buffer: corner radii, border, gradient, shadow, and blur values per slot.
+            _matQuadStyleBuf = new XRDataBuffer<Vector4>(
+                "QuadStyleBuffer", EBufferTarget.ShaderStorageBuffer, _matQuadCapacity * MaterialStyleVec4Count)
+            {
+                Usage = EBufferUsage.StreamDraw,
+                BindingIndexOverride = 4,
+                DisposeOnPush = false
+            };
+            mesh.Buffers["QuadStyleBuffer"] = _matQuadStyleBuf;
         }
     }
 
@@ -2030,6 +2090,7 @@ public sealed partial class UIBatchCollector : IDisposable
             _matQuadBoundsBuf!.Resize(_matQuadCapacity);
             _matQuadUvBuf?.Resize(_matQuadCapacity);
             _matQuadBorderWidthBuf?.Resize(_matQuadCapacity);
+            _matQuadStyleBuf?.Resize(_matQuadCapacity * MaterialStyleVec4Count);
             _matQuadNeedsPush = true;
             if (cohort is not null)
             {
@@ -2046,6 +2107,8 @@ public sealed partial class UIBatchCollector : IDisposable
         if (!fullUpload)
         {
             UploadChangedMaterialRanges(entries, cohort!.UploadedEntries, textured, border);
+            if (!textured && !border)
+                UploadChangedStyleRanges(entries, cohort.UploadedEntries);
             return;
         }
 
@@ -2090,6 +2153,20 @@ public sealed partial class UIBatchCollector : IDisposable
             uvWriter.Commit();
         if (border)
             borderWidthWriter.Commit();
+        if (!textured && !border && _matQuadStyleBuf is not null)
+        {
+            XRBufferWriter<Vector4> styleWriter = _matQuadStyleBuf.Alloc<Vector4>(instanceElementCount * MaterialStyleVec4Count);
+            Span<Vector4> styles = styleWriter.Span;
+            styles.Clear();
+            for (int i = 0; i < entries.Count; i++)
+            {
+                int styleIndex = i * (int)MaterialStyleVec4Count;
+                WriteQuadStyle(styles, ref styleIndex, in System.Runtime.InteropServices.CollectionsMarshal.AsSpan(entries)[i].Style);
+            }
+            styleWriter.Commit();
+            UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, instanceElementCount * MaterialStyleVec4Count * 16L);
+            UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+        }
         UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted,
             ((long)transformElementCount + instanceElementCount * (border ? 4L : textured ? 3L : 2L)) * 16L);
         UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, border ? 5 : textured ? 4 : 3);
@@ -2128,6 +2205,7 @@ public sealed partial class UIBatchCollector : IDisposable
             _matQuadUvBuf!.Resize(_matQuadCapacity);
             _matQuadBorderWidthBuf!.Resize(_matQuadCapacity);
             _matQuadDrawIndexBuf!.Resize(_matQuadCapacity);
+            _matQuadStyleBuf?.Resize(_matQuadCapacity * MaterialStyleVec4Count);
             full = true;
         }
         while (gpu.UploadedSlots.Count < storageCount)
@@ -2169,6 +2247,19 @@ public sealed partial class UIBatchCollector : IDisposable
             }
             for (int index = 0; index < draw.Count; index++)
                 indices.Span[index] = draw[index];
+            if (!textured && !border && _matQuadStyleBuf is not null)
+            {
+                XRBufferWriter<Vector4> styles = _matQuadStyleBuf.Alloc<Vector4>(storageCount * MaterialStyleVec4Count);
+                styles.Span.Clear();
+                foreach ((uint slot, MaterialQuadEntry entry) in slots)
+                {
+                    int styleIndex = checked((int)(slot * MaterialStyleVec4Count));
+                    WriteQuadStyle(styles.Span, ref styleIndex, in entry.Style);
+                }
+                styles.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, storageCount * MaterialStyleVec4Count * 16L);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+            }
             transforms.Commit();
             colors.Commit();
             bounds.Commit();
@@ -2226,6 +2317,8 @@ public sealed partial class UIBatchCollector : IDisposable
                     first = end;
                 }
             }
+            if (!textured && !border && _matQuadStyleBuf is not null)
+                UploadChangedStyleSlots(slots, gpu);
             List<uint> previous = gpu.UploadedDrawIndices;
             int firstDraw = 0;
             while (firstDraw < draw.Count)
@@ -2253,6 +2346,69 @@ public sealed partial class UIBatchCollector : IDisposable
         gpu.UploadedDrawIndices.Clear();
         gpu.UploadedDrawIndices.AddRange(draw);
         _matQuadNeedsPush = false;
+    }
+
+    /// <summary>
+    /// Writes the style buffer ranges whose slots changed since this cohort's last upload.
+    /// Adjacent changed slots share one write.
+    /// </summary>
+    private void UploadChangedStyleSlots(List<(uint Slot, MaterialQuadEntry Entry)> slots, MaterialGPUResources gpu)
+    {
+        int first = 0;
+        while (first < slots.Count)
+        {
+            while (first < slots.Count && !StyleSlotChanged(slots[first], gpu))
+                first++;
+            if (first == slots.Count)
+                break;
+            int end = first + 1;
+            while (end < slots.Count && slots[end].Slot == slots[end - 1].Slot + 1 && StyleSlotChanged(slots[end], gpu))
+                end++;
+            uint count = (uint)(end - first);
+            XRBufferWriter<Vector4> writer = _matQuadStyleBuf!.AllocAt<Vector4>(
+                slots[first].Slot * MaterialStyleVec4Count, count * MaterialStyleVec4Count);
+            int styleIndex = 0;
+            for (int index = first; index < end; index++)
+                WriteQuadStyle(writer.Span, ref styleIndex, in System.Runtime.InteropServices.CollectionsMarshal.AsSpan(slots)[index].Entry.Style);
+            writer.Commit();
+            UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, count * MaterialStyleVec4Count * 16L);
+            UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+            first = end;
+        }
+    }
+
+    private static bool StyleSlotChanged((uint Slot, MaterialQuadEntry Entry) value, MaterialGPUResources gpu)
+        => !gpu.InitializedSlots[(int)value.Slot] ||
+           !gpu.UploadedSlots[(int)value.Slot].Style.Equals(value.Entry.Style);
+
+    /// <summary>
+    /// Writes the style buffer ranges whose entries changed in place since the previous upload.
+    /// </summary>
+    private void UploadChangedStyleRanges(List<MaterialQuadEntry> entries, List<MaterialQuadEntry> previous)
+    {
+        if (_matQuadStyleBuf is null)
+            return;
+        int first = 0;
+        while (first < entries.Count)
+        {
+            while (first < entries.Count && entries[first].Style.Equals(previous[first].Style))
+                first++;
+            if (first == entries.Count)
+                break;
+            int end = first + 1;
+            while (end < entries.Count && !entries[end].Style.Equals(previous[end].Style))
+                end++;
+            uint count = (uint)(end - first);
+            XRBufferWriter<Vector4> writer = _matQuadStyleBuf.AllocAt<Vector4>(
+                (uint)first * MaterialStyleVec4Count, count * MaterialStyleVec4Count);
+            int styleIndex = 0;
+            for (int index = first; index < end; index++)
+                WriteQuadStyle(writer.Span, ref styleIndex, in System.Runtime.InteropServices.CollectionsMarshal.AsSpan(entries)[index].Style);
+            writer.Commit();
+            UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, count * MaterialStyleVec4Count * 16L);
+            UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+            first = end;
+        }
     }
 
     private static bool MaterialSlotFieldChanged((uint Slot, MaterialQuadEntry Entry) value,
@@ -2633,7 +2789,7 @@ public sealed partial class UIBatchCollector : IDisposable
         XRMeshRenderer materialQuadMesh = batch.Backdrop.IsDefined
             ? EnsureBackdropMesh(backdropTexture!) : batch.Border ? EnsureMaterialBorderMesh() :
             batch.Texture is { } texture
-                ? EnsureMaterialTextureMesh(texture, batch.ImageSrgb) : _matQuadMesh!;
+                ? EnsureMaterialTextureMesh(texture, batch.ImageSrgb) : SelectSolidQuadMesh(batch);
 
         var version = GetImmediateRenderVersion(materialQuadMesh);
         bool prepared;
@@ -2700,7 +2856,12 @@ public sealed partial class UIBatchCollector : IDisposable
             backdropMaterial.SetFloat("BlurStrength", batch.Backdrop.BlurStrength);
         }
 
-        UIStaticDrawCandidate cacheCandidate = CaptureStaticDrawCandidate(renderer, materialQuadMesh, batch, cohort);
+        if (ReferenceEquals(materialQuadMesh, _matQuadStyleBackdropMesh) && materialQuadMesh.Material is { } frostedMaterial)
+            frostedMaterial.SetVector2("UiViewportSize", ResolveUiViewportSize());
+
+        UIStaticDrawCandidate cacheCandidate = ReferenceEquals(materialQuadMesh, _matQuadStyleBackdropMesh)
+            ? default
+            : CaptureStaticDrawCandidate(renderer, materialQuadMesh, batch, cohort);
         using UIStaticDrawScope cacheScope = new(in cacheCandidate);
         ulong backdropDrawScope = 0UL;
         ulong backdropOutputScope = 0UL;
@@ -3763,6 +3924,24 @@ public sealed partial class UIBatchCollector : IDisposable
         destination[index++] = new Vector4(m.M41, m.M42, m.M43, m.M44);
     }
 
+    /// <summary>
+    /// Packs one <see cref="UIQuadStyle"/> as seven vec4 values in the layout that
+    /// UIQuadBatched.vs reads: radii, meta (exponent, border width, sheen, flags), border color,
+    /// gradient bottom color, shadow color, shadow geometry, and blur parameters.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void WriteQuadStyle(Span<Vector4> destination, ref int index, in UIQuadStyle style)
+    {
+        float cornerExponent = style.CornerExponent > 0.0f ? style.CornerExponent : 2.0f;
+        destination[index++] = style.CornerRadii;
+        destination[index++] = new Vector4(cornerExponent, style.BorderWidth, style.BorderHighlightBoost, (uint)style.Flags);
+        destination[index++] = style.BorderColor;
+        destination[index++] = style.GradientBottomColor;
+        destination[index++] = style.ShadowColor;
+        destination[index++] = style.ShadowParams;
+        destination[index++] = style.BackdropBlurParams;
+    }
+
     private static uint NextPowerOf2(uint v)
     {
         v--;
@@ -3873,6 +4052,10 @@ public sealed partial class UIBatchCollector : IDisposable
         gpu.Uv?.Destroy();
         gpu.BorderWidth?.Destroy();
         gpu.DrawIndex?.Destroy();
+        gpu.Style?.Destroy();
+        XRMaterial? styleBackdropMaterial = gpu.StyleBackdropMesh?.Material;
+        gpu.StyleBackdropMesh?.Destroy();
+        styleBackdropMaterial?.Destroy();
         XRMaterial? borderMaterial = gpu.BorderMesh?.Material;
         gpu.BorderMesh?.Destroy();
         borderMaterial?.Destroy();
@@ -3902,6 +4085,10 @@ public sealed partial class UIBatchCollector : IDisposable
         _matQuadUvBuf?.Destroy();
         _matQuadBorderWidthBuf?.Destroy();
         _matQuadDrawIndexBuf?.Destroy();
+        _matQuadStyleBuf?.Destroy();
+        XRMaterial? styleBackdropMaterial = _matQuadStyleBackdropMesh?.Material;
+        _matQuadStyleBackdropMesh?.Destroy();
+        styleBackdropMaterial?.Destroy();
         XRMaterial? borderMaterial = _matQuadBorderMesh?.Material;
         _matQuadBorderMesh?.Destroy();
         borderMaterial?.Destroy();
@@ -3925,6 +4112,9 @@ public sealed partial class UIBatchCollector : IDisposable
         _matQuadUvBuf = null;
         _matQuadBorderWidthBuf = null;
         _matQuadDrawIndexBuf = null;
+        _matQuadStyleBuf = null;
+        _matQuadStyleBackdropMesh = null;
+        _matQuadStyleBackdropTexture = null;
         _matQuadBorderMesh = null;
         _matQuadBackdropMesh = null;
         _matQuadBackdropTexture = null;

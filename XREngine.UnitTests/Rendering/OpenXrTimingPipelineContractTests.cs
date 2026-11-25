@@ -1912,7 +1912,7 @@ public sealed class OpenXrTimingPipelineContractTests
             editorPawn,
             "private void PostRender()",
             "private void ApplyInput");
-        postRender.ShouldContain("GetDepthHit(vp, GetCursorInternalCoordinatePosition(vp));");
+        postRender.ShouldContain("GetDepthHit(depthViewport, GetCursorInternalCoordinatePosition(depthViewport));");
         postRender.ShouldNotContain("IsRenderingExternalSwapchainTarget");
 
         uiMaterial.ShouldContain("public void SetBlendModeAllDrawBuffers(BlendMode? blendMode)");
@@ -1921,7 +1921,7 @@ public sealed class OpenXrTimingPipelineContractTests
         uiMaterial.ShouldContain("RenderCommand3D.MarkDirty();");
 
         uiMaterial.ShouldContain("public bool DisableBatching");
-        uiMaterial.ShouldContain("return !DisableBatching &&");
+        uiMaterial.ShouldContain("if (DisableBatching)");
         uiViewport.ShouldContain("DisableBatching = true;");
         uiViewport.ShouldContain("SetBlendModeAllDrawBuffers(BlendMode.Disabled());");
         uiViewport.ShouldContain("Viewport.AllowAutomaticInternalResolution = false;");

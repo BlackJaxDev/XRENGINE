@@ -30,6 +30,8 @@ public readonly record struct UIRenderRecord
     public UIBackdropRequest Backdrop { get; init; }
     public Vector4 BorderColor { get; init; }
     public float BorderWidth { get; init; }
+    /// <summary>Box style for styled quads, with alpha already scaled by the effective opacity.</summary>
+    public UIQuadStyle QuadStyle { get; init; }
     public Vector4 TextColor { get; init; }
     public Vector4 OutlineColor { get; init; }
     public float OutlineThickness { get; init; }

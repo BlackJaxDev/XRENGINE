@@ -571,7 +571,7 @@ namespace XREngine.Rendering.UI
             }
 
             float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
-            float spacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
+            float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
             float dpiScale = BoundableTransform.GetCanvasTransform()?.DpiScale ?? 1.0f;
             string text = Text ?? string.Empty;
             float? fontSize = FontSize;
@@ -590,7 +590,7 @@ namespace XREngine.Rendering.UI
             if (previous is not null && ReferenceEquals(_layoutInputFont, _font) &&
                 previous.Text == text &&
                 previous.FontRevision == fontRevision && previous.FontSize == fontSize &&
-                previous.Wrap == wrap && previous.Spacing == spacing &&
+                previous.Wrap == wrap && previous.Spacing == glyphSpacing &&
                 previous.LineSpacing == lineSpacing &&
                 previous.HorizontalAlignment == horizontal &&
                 previous.VerticalAlignment == vertical &&
@@ -619,7 +619,7 @@ namespace XREngine.Rendering.UI
                 UseShapedText != shapedText || HorizontalAlignment != horizontal ||
                 VerticalAlignment != vertical || BoundableTransform.Margins != margins ||
                 (BoundableTransform.GetCanvasTransform()?.DpiScale ?? 1.0f) != dpiScale ||
-                ResolveLayoutSpacingForOutputPixels(OutlineAffectsSpacing ? OutlineThickness : 0.0f) != spacing ||
+                ResolveLayoutSpacingForOutputPixels(OutlineAffectsSpacing ? OutlineThickness : 0.0f) != glyphSpacing ||
                 DefaultLineSpacing + (OutlineAffectsSpacing ? OutlineThickness : 0.0f) != lineSpacing))
                 throw new InvalidOperationException("UI.ShapingInputsChanged: text inputs changed during shaping.");
             if (shapedText && (!font.TryCaptureLayoutMetrics(out _, out Vector2 currentAtlas,
@@ -627,7 +627,7 @@ namespace XREngine.Rendering.UI
                 currentRevision != fontRevision || currentAtlas != atlasSize || currentEm != emSize))
                 throw new InvalidOperationException("UI.ShapingInputsChanged: font metrics changed during shaping.");
             _layoutInput = new(text, metrics, ++_textRevision, fontRevision,
-                emSize, atlasSize, fontSize, wrap, spacing,
+                emSize, atlasSize, fontSize, wrap, glyphSpacing,
                 lineSpacing, horizontal, vertical,
                 margins, dpiScale, ShapingRequest: shapingRequest,
                 ShapingBackendGeneration: shapedText ? backendGeneration : 0,
@@ -1454,14 +1454,15 @@ namespace XREngine.Rendering.UI
             }
             else
                 ReleasePublicationAtlas();
+            float opacity = BoundableTransform.EffectiveOpacity;
             return record with
             {
                 Visible = visible,
                 CaptureFailure = failure,
                 AtlasSnapshot = snapshot,
                 IsText = true,
-                TextColor = new Vector4(Color.R, Color.G, Color.B, Color.A),
-                OutlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A),
+                TextColor = new Vector4(Color.R, Color.G, Color.B, Color.A * opacity),
+                OutlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A * opacity),
                 OutlineThickness = OutlineThickness,
                 Atlas = atlas,
                 AtlasType = (int)(font?.AtlasType ?? default),

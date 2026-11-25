@@ -286,6 +286,25 @@ namespace XREngine.Rendering.UI
             RenderPass = material.RenderPass;
         }
 
+        private UIQuadStyle _quadStyle;
+        /// <summary>
+        /// Box style for the batched quad: corner radii, hairline border, vertical gradient, drop shadow,
+        /// backdrop blur, and sRGB color decoding. The canvas publishes it with the quad record, and the
+        /// batched quad shader reads it from the per-instance style buffer.
+        /// </summary>
+        public UIQuadStyle QuadStyle
+        {
+            get => _quadStyle;
+            set
+            {
+                if (SetField(ref _quadStyle, value))
+                    RecordQuadVisualChange();
+            }
+        }
+
+        private static Vector4 ApplyOpacity(Vector4 color, float opacity)
+            => new(color.X, color.Y, color.Z, color.W * opacity);
+
         public Vector4 BatchBorderColor
         {
             get => _batchBorderColor;
@@ -891,9 +910,11 @@ namespace XREngine.Rendering.UI
             Vector4 uv = FlipVerticalUVCoord
                 ? new(_batchImageUv.X, _batchImageUv.W, _batchImageUv.Z, _batchImageUv.Y)
                 : _batchImageUv;
+            float opacity = bounds.EffectiveOpacity;
             UIRenderRecord record = base.CapturePublicationRenderRecord(in output) with
             {
-                QuadColor = material?.Parameter<ShaderVector4>("MatColor")?.Value ?? _intrinsicColor,
+                QuadColor = ApplyOpacity(material?.Parameter<ShaderVector4>("MatColor")?.Value ?? _intrinsicColor, opacity),
+                QuadStyle = _quadStyle.WithOpacity(opacity),
                 Texture = texture,
                 UV = uv,
                 ImageSrgb = texture is not null && (material is not null
@@ -1018,7 +1039,7 @@ namespace XREngine.Rendering.UI
             Vector4 bounds = record.Bounds;
             collector.AddMaterialQuad(record.RenderPass, record.ZIndex, passes, in worldMatrix, in color, in bounds,
                 record.Crop, record.Texture, record.UV, record.ImageSrgb, record.IsBorder,
-                record.BorderColor, record.BorderWidth);
+                record.BorderColor, record.BorderWidth, style: record.QuadStyle);
             return true;
         }
 

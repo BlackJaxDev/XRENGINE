@@ -41,6 +41,7 @@ internal static class EditorOpenXrPawnSwitcher
 
     public static bool IsRequested => _requested;
     public static EVrDesktopView DesktopView => _desktopView;
+    public static VRPlayerCharacterComponent? ActiveVrPlayer => _vrPawn?.SceneNode?.GetComponent<VRPlayerCharacterComponent>();
     public static Guid? OwnedVrRigNodeId => _ownedVrRoot?.ID;
     public static bool OwnedVrRigIsInEditorScene => _ownedVrRoot is { } root &&
         _vrEditorIntegration?.IsInEditorScene(root) == true;

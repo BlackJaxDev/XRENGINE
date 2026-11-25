@@ -569,7 +569,7 @@ public sealed class VulkanUpscaleBridgeTodoCompletionTests
         windowSource.ShouldContain("if (RuntimeEngine.IsDispatchingRenderFrame)");
         windowSource.ShouldContain("ProcessDeferredCloseRequest();");
         editorSource.ShouldContain("window.RequestClose();");
-        engineLifecycleSource.ShouldContain("window.RequestClose();");
+        engineLifecycleSource.ShouldContain("window.RequestCloseForApplicationShutdown();");
     }
 
     [Test]

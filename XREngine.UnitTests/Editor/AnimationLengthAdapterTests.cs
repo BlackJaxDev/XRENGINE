@@ -59,7 +59,7 @@ public sealed class AnimationLengthAdapterTests
             animation.Start();
             animation.Tick(2.5f);
             Assert.That(animation.State, Is.EqualTo(EAnimationState.Stopped));
-            animation.Seek(3, wrapLooped: false);
+            animation.Seek(3f, wrapLooped: false);
             Assert.That(animation.CurrentTime, Is.EqualTo(4));
             Assert.That(Undo.TryUndo(), Is.True);
             Assert.That((animation.AuthoredFrameCount, animation.AuthoredFramesPerSecond),

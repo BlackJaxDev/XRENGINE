@@ -262,6 +262,83 @@ public sealed partial class UIBatchCollector
         BackdropSurfacePool.RetireOwner(renderer, backendGeneration);
     }
 
+    /// <summary>
+    /// Picks the mesh for a solid quad run. A run with a frosted-glass entry uses the backdrop
+    /// variant when the host pipeline supplies a blur texture and the variant is ready to draw.
+    /// Otherwise it uses the solid mesh, which draws the tinted fill without the blurred backdrop.
+    /// </summary>
+    private XRMeshRenderer SelectSolidQuadMesh(MaterialQuadBatchData batch)
+    {
+        if (batch.MaxStyleBlurRadius <= 0.001f || AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
+            return _matQuadMesh!;
+        XRTexture2D? blur = ActiveBackdropBlurTexture ??
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.UiBackdropBlurTexture as XRTexture2D;
+        if (blur is null)
+        {
+            Debug.UIEvery(
+                "UIBatchCollector.MissingBackdropBlur",
+                TimeSpan.FromSeconds(10),
+                "[UIBatch] A quad asks for backdrop blur (radius={0:F1}px) on host pipeline '{1}', but no UiBackdropBlurTexture is available. The tinted fill draws without blur.",
+                batch.MaxStyleBlurRadius,
+                ActiveBackdropBlurHostPipelineName ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.GetType().Name ?? "<unknown>");
+            return _matQuadMesh!;
+        }
+        XRMeshRenderer frosted = EnsureStyleBackdropMesh(blur);
+        GetImmediateRenderVersion(frosted).Generate();
+        return frosted.TryPrepareForRendering() ? frosted : _matQuadMesh!;
+    }
+
+    /// <summary>Gets the size of the region that the UI renders into, for screen UV computation.</summary>
+    private static Vector2 ResolveUiViewportSize()
+    {
+        BoundingRectangle area = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.CurrentRenderRegion
+            ?? RuntimeEngine.Rendering.State.RenderArea;
+        if (area.Width <= 0 || area.Height <= 0)
+            area = RuntimeEngine.Rendering.State.RenderArea;
+        return new Vector2(Math.Max(1, area.Width), Math.Max(1, area.Height));
+    }
+
+    /// <summary>
+    /// Creates the frosted-glass variant of the solid quad mesh for one blur texture. It shares
+    /// the cohort's instance buffers and samples the pipeline's blur pyramid in UIQuadBatchedBackdrop.fs.
+    /// </summary>
+    private XRMeshRenderer EnsureStyleBackdropMesh(XRTexture2D texture)
+    {
+        if (_matQuadStyleBackdropMesh is not null && ReferenceEquals(_matQuadStyleBackdropTexture, texture))
+            return _matQuadStyleBackdropMesh;
+        XRMaterial? retiredMaterial = _matQuadStyleBackdropMesh?.Material;
+        _matQuadStyleBackdropMesh?.Destroy();
+        retiredMaterial?.Destroy();
+        _matQuadStyleBackdropMesh = null;
+        _matQuadStyleBackdropTexture = null;
+        EnsureMaterialQuadMesh();
+        XRMaterial material = new(
+            [new ShaderVector2(new Vector2(1920.0f, 1080.0f), "UiViewportSize")],
+            [texture], UIBatchMaterialPrototype.SolidBackdrop.CreateDesktopShaders())
+        {
+            Name = "UIBatchStyledBackdrop",
+            RenderPass = (int)EDefaultRenderPass.TransparentForward,
+            RenderOptions = UIBatchMaterialPrototype.SolidBackdrop.CreateRenderOptions(false)
+        };
+        XRMeshRenderer mesh = new(_matQuadMesh!.Mesh!, material)
+        {
+            Name = "UIBatchStyledBackdropRenderer",
+            GenerationPriority = EMeshGenerationPriority.RenderPipeline,
+            CaptureUniformsOnRender = true
+        };
+        mesh.Buffers["QuadTransformBuffer"] = _matQuadTransformBuf!;
+        mesh.Buffers["QuadColorBuffer"] = _matQuadColorBuf!;
+        mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf!;
+        mesh.Buffers["QuadStyleBuffer"] = _matQuadStyleBuf!;
+        mesh.Buffers["QuadDrawIndexBuffer"] = _matQuadDrawIndexBuf!;
+        mesh.BindingPublishers.Add(new UIRequiredTextureBindings(texture));
+        DisableShaderPipelines(mesh);
+        mesh.EnsureRenderPipelineVersionsCreated();
+        _matQuadStyleBackdropMesh = mesh;
+        _matQuadStyleBackdropTexture = texture;
+        return mesh;
+    }
+
     private XRMeshRenderer EnsureBackdropMesh(XRTexture2D texture)
     {
         if (_matQuadBackdropMesh is not null && ReferenceEquals(_matQuadBackdropTexture, texture))

@@ -25,6 +25,11 @@ internal sealed class UIBatchMaterialPrototype
         ("UIQuadBatched.vs", EShaderType.Vertex),
         ("UIQuadBatched.fs", EShaderType.Fragment));
 
+    /// <summary>Solid styled quad that also samples the pipeline's blurred scene texture.</summary>
+    internal static readonly UIBatchMaterialPrototype SolidBackdrop = new(true,
+        ("UIQuadBatched.vs", EShaderType.Vertex),
+        ("UIQuadBatchedBackdrop.fs", EShaderType.Fragment));
+
     internal static readonly UIBatchMaterialPrototype Border = new(true,
         ("UIBorderBatched.vs", EShaderType.Vertex),
         ("UIBorderBatched.fs", EShaderType.Fragment));

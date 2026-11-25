@@ -58,6 +58,8 @@ public sealed partial class VulkanRenderer :
     private readonly VulkanFrameLoop _frameLoop;
     private readonly VulkanFramePlanner _framePlanner;
     private readonly VulkanResourceRuntime _resourceRuntime;
+    // Native proofs for checked world UI output attempts.
+    private readonly VulkanWorldUiProofSet _worldUiProofs;
     private readonly VulkanCommandRuntime _commandRuntime = new();
     internal VulkanCommandRuntime CommandRuntime => _commandRuntime;
     bool IDebugPrimitivePreparationBackendCapability.CanPrepareDebugPrimitives
@@ -199,6 +201,7 @@ public sealed partial class VulkanRenderer :
         // the frame loop and active desktop target retain their actual slot count.
         _resourceRuntime = new VulkanResourceRuntime(VulkanMappedFrameArena.MaximumFrameSlotCount);
         _outputRuntime = new VulkanOutputRuntime(VulkanTargetPolicySnapshot.Capture(targetDriver));
+        _worldUiProofs = new VulkanWorldUiProofSet(this);
         _deviceContext = new VulkanDeviceContext(
             new VulkanDeviceContextConfiguration(
                 targetDriver.RequiresPresentQueue,

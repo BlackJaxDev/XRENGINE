@@ -88,7 +88,20 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             using var clipScope = XREngine.Rendering.AbstractRenderer.Current?.PushUiClipSpacePolicy();
-            ui.RenderScreenSpace(ActivePipelineInstance.RenderState.RenderingViewport, fbo);
+            XRTexture2D? previousBackdropBlur = XREngine.Rendering.UI.UIBatchCollector.ActiveBackdropBlurTexture;
+            string? previousHostPipelineName = XREngine.Rendering.UI.UIBatchCollector.ActiveBackdropBlurHostPipelineName;
+            XREngine.Rendering.UI.UIBatchCollector.ActiveBackdropBlurTexture = ActivePipelineInstance.RenderState.UiBackdropBlurTexture as XRTexture2D;
+            XREngine.Rendering.UI.UIBatchCollector.ActiveBackdropBlurHostPipelineName = ActivePipelineInstance.Pipeline?.GetType().Name;
+            try
+            {
+                ui.RenderScreenSpace(ActivePipelineInstance.RenderState.RenderingViewport, fbo);
+                ActivePipelineInstance.RenderState.MarkScreenSpaceUiExecuted();
+            }
+            finally
+            {
+                XREngine.Rendering.UI.UIBatchCollector.ActiveBackdropBlurTexture = previousBackdropBlur;
+                XREngine.Rendering.UI.UIBatchCollector.ActiveBackdropBlurHostPipelineName = previousHostPipelineName;
+            }
         }
 
         private int ResolvePassIndex(string passName)
@@ -103,6 +116,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 ?? RenderGraphResourceNames.OutputRenderTarget;
 
             var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RenderScreenSpaceUI), ERenderGraphPassStage.Graphics);
+            if (context.ResourceLayout is not null && context.HasResource(UiBackdropBlurResources.HalfTextureName))
+                builder.SampleTexture(MakeTextureResource(UiBackdropBlurResources.HalfTextureName));
             builder.UseColorAttachment(MakeColorTargetResource(target));
             if (!string.Equals(target, RenderGraphResourceNames.OutputRenderTarget, StringComparison.OrdinalIgnoreCase))
             {

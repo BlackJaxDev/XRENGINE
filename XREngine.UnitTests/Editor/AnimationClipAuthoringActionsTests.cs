@@ -817,6 +817,7 @@ public class AnimationClipAuthoringActionsTests
             Assert.That(AnimationClipAuthoringActions.TryAddKey(clip,
                 member, 0.25f, out Keyframe? created), Is.True);
             QuaternionKeyframe key = (QuaternionKeyframe)created!;
+            ERadialInterpType originalIn = key.InterpolationTypeIn;
             Undo.ClearHistory();
             Quaternion tangent = Quaternion.CreateFromAxisAngle(Vector3.UnitY, 0.5f);
             Assert.That(AnimationClipAuthoringActions.SetKeyTangent(clip, key,
@@ -827,8 +828,7 @@ public class AnimationClipAuthoringActionsTests
             Assert.That(key.InterpolationTypeIn,
                 Is.EqualTo(ERadialInterpType.Linear));
             Assert.That(Undo.TryUndo(), Is.True);
-            Assert.That(key.InterpolationTypeIn,
-                Is.EqualTo(ERadialInterpType.Step));
+            Assert.That(key.InterpolationTypeIn, Is.EqualTo(originalIn));
             Assert.That(Undo.TryUndo(), Is.True);
             Assert.That(key.InTangent, Is.EqualTo(Quaternion.Identity));
         }

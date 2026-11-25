@@ -356,17 +356,17 @@ namespace XREngine.Rendering.UI
                     out Vector2 atlasSize, out float emSize, out long fontRevision))
                     return null;
                 float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
-                float spacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
+                float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
                 UITextLayoutInput? previous = _layoutInput;
                 if (previous is not null && ReferenceEquals(_layoutInputFont, font) &&
                     previous.Text == (Text ?? string.Empty) && previous.FontRevision == fontRevision &&
                     ReferenceEquals(previous.Runes, metrics) && previous.AtlasSize == atlasSize &&
                     previous.EmSize == emSize && previous.FontSize == FontSize &&
-                    previous.Spacing == spacing && previous.LineSpacing == DefaultLineSpacing + outlineSpacing)
+                    previous.Spacing == glyphSpacing && previous.LineSpacing == DefaultLineSpacing + outlineSpacing)
                     return previous;
                 _layoutInputFont = font;
                 _layoutInput = new(Text ?? string.Empty, metrics, ++_textRevision, fontRevision,
-                    emSize, atlasSize, FontSize, FontGlyphSet.EWrapMode.None, spacing,
+                    emSize, atlasSize, FontSize, FontGlyphSet.EWrapMode.None, glyphSpacing,
                     DefaultLineSpacing + outlineSpacing, EHorizontalAlignment.Left, EVerticalAlignment.Bottom, Vector4.Zero);
                 return _layoutInput;
             }

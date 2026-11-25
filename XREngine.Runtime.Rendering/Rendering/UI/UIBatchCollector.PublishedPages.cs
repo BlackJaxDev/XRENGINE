@@ -219,8 +219,9 @@ public sealed partial class UIBatchCollector
         Matrix4x4 world = record.WorldMatrix;
         Vector4 color = record.QuadColor;
         Vector4 bounds = record.Bounds;
+        UIQuadStyle style = record.QuadStyle;
         AppendMaterialEntry(run, in world, in color, in bounds, record.UV,
-            record.BorderColor, record.BorderWidth, primitiveHandle);
+            record.BorderColor, record.BorderWidth, primitiveHandle, in style);
     }
 
     private void CollectPageText(PublishedPage page, int offset, in UIRenderRecord record,
