@@ -65,9 +65,16 @@ inspector (`InspectorPanel.BuildStackedNodeLayout`):
 
 Each row keeps the object that it edits, so a row can edit the transform or a
 component instead of the inspected node. "Open details" on such a row inspects
-that object; the Properties button returns to the node. Two components of the
-same type share their property objects, so only the first gets a section.
-Several selected nodes use the plain list of their shared members.
+that object; the Properties button returns to the node. Several selected nodes
+use the plain list of their shared members.
+
+- Click a section header row to collapse or open the section. The title starts
+  with `v` when open and `>` when collapsed. The inspector keeps the collapse
+  state by section key: `Transform`, or the component type name.
+- Rows are keyed by `PropertyInfo`, and two components of the same type share
+  their property objects. The later components use `InspectorScopedPropertyInfo`
+  copies, which forward to the real property but have their own identity.
+  `EditorPropertyDelegates` unwraps them before it builds accessors.
 
 ## Layout Rules
 
