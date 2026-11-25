@@ -472,7 +472,8 @@ public sealed class UIStyleAnimatorComponent : UIComponent
         if (materialComp is not null)
         {
             if (state.HasBackgroundColor)
-                materialComp.Material?.SetVector4("MatColor", state.BackgroundColor);
+                // SetQuadColor also records the visual change, so a retained canvas republishes the quad.
+                materialComp.SetQuadColor("MatColor", state.BackgroundColor);
             materialComp.QuadStyle = state.ToQuadStyle();
         }
 
