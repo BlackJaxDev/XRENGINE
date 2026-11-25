@@ -25,9 +25,21 @@ public sealed class SceneRootSerializationTests
         try
         {
             byte[] payload = Serialize(scene, format);
-            Assert.That(payload, Is.EqualTo(LegacySceneRootFixtures.Get(FixtureName(format, withRoots))));
+            Assert.That(payload, Is.EqualTo(ExpectedBytes(format, withRoots)));
         }
         finally { Retire(scene); }
+    }
+
+    /// <summary>
+    /// Gets the legacy fixture bytes. The YAML writer ends lines with the platform newline, and the
+    /// YAML fixtures hold LF line ends, so the YAML fixture text uses the platform newline here.
+    /// </summary>
+    private static byte[] ExpectedBytes(string format, bool withRoots)
+    {
+        byte[] fixture = LegacySceneRootFixtures.Get(FixtureName(format, withRoots));
+        return format == "yaml" && Environment.NewLine != "\n"
+            ? Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(fixture).Replace("\n", Environment.NewLine))
+            : fixture;
     }
 
     [TestCase("yaml", false)]
