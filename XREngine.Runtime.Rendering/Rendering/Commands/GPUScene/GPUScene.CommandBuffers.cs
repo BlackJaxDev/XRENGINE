@@ -141,6 +141,11 @@ namespace XREngine.Rendering.Commands
                         MarkBvhDirtyUnlessSuppressed(_updatingCommandCount);
                 }
             }
+
+            // Outside _lock: the sweep takes each pipeline's picking lock and releases leases.
+            AdvancedGpuScenePublicationReference publication = AdvancedScenePublication;
+            if (publication.IsValid)
+                EditorPickingSourceSweep.Sweep(publication.DatabaseEpoch, publication.Sequence);
         }
 
         private static unsafe void CopyBufferRange(XRDataBuffer source, XRDataBuffer destination, uint startIndex, uint count)

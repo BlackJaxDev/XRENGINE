@@ -1082,6 +1082,12 @@ public sealed class AdvancedSharedGpuSceneDatabase
     /// Removes every fully acknowledged, unpinned publication without allowing
     /// an older pinned entry to block later reusable entries. Publication
     /// metadata, its snapshot object, and both pin counts always move together.
+    /// The newest sealed publication always stays in the ring, also when it has
+    /// no lease yet. It is the scene's current publication: frame packages and
+    /// the publisher acquire their leases on it after it is sealed. If a lease
+    /// release on another thread removed it first, those lease requests failed,
+    /// and a viewport package kept the previous publication while its mesh
+    /// commands already carried identities of the new one.
     /// </summary>
     private void CompactAcknowledgedPublicationsCore()
     {
@@ -1097,7 +1103,9 @@ public sealed class AdvancedSharedGpuSceneDatabase
         for (int sourceOffset = 0; sourceOffset < _publicationCount; ++sourceOffset)
         {
             int sourceIndex = (_publicationHead + sourceOffset) % _publicationRing.Length;
-            bool isRemovable = _publicationRing[sourceIndex].Sequence <= acknowledgedSequence &&
+            ulong sequence = _publicationRing[sourceIndex].Sequence;
+            bool isRemovable = sequence <= acknowledgedSequence &&
+                sequence != _lastSealedPublicationSequence &&
                 _packagePinCounts[sourceIndex] == 0u &&
                 _gpuPinCounts[sourceIndex] == 0u;
             if (isRemovable)

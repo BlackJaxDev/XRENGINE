@@ -26,6 +26,7 @@ public sealed partial class XRRenderPipelineInstance
     private readonly Action<ulong, EditorPickingEncodedPixel> _editorPickingReadbackCompleted;
     private EditorPickingRequest? _pendingEditorPickingRequest;
     private ulong _editorPickingGeneration;
+    private bool _editorPickingSweepRegistered;
 
     private static EditorPickingRequestSlot[] CreateEditorPickingRequestSlots()
     {
@@ -54,6 +55,9 @@ public sealed partial class XRRenderPipelineInstance
 
         PromoteSubmittedEditorPickingCandidate();
         AbortEditorPickingCandidate();
+        ReleaseStaleEditorPickingSource(
+            package.CanonicalScenePublication.DatabaseEpoch,
+            package.CanonicalScenePublication.Sequence);
 
         if (package.State != EBackendReadyFramePackageState.Published ||
             !TryGetTexture(AdvancedRenderPipeline.EditorPickingIdentityTextureName,
@@ -95,6 +99,48 @@ public sealed partial class XRRenderPipelineInstance
                 ++_nextEditorPickingAuthoringToken;
             _editorPickingCandidateToken = _nextEditorPickingAuthoringToken;
         }
+    }
+
+    /// <summary>
+    /// The largest number of scene publications that a retained editor picking source may
+    /// fall behind the current frame package before the pipeline releases it.
+    /// </summary>
+    /// <remarks>
+    /// The source keeps a GPU publication lease, and the canonical scene tables cannot trim
+    /// their journals past a pinned publication. A pipeline that keeps rendering replaces its
+    /// source every submitted frame. A pipeline whose frames are not submitted (for example an
+    /// OpenXR eye that waits on a resource) keeps its old source, and without this bound its
+    /// lease would fill the shadow-table journal until every publication is rejected.
+    /// </remarks>
+    private const ulong MaxEditorPickingSourcePublicationAge = 64UL;
+
+    /// <summary>
+    /// Disposes the retained editor picking source when its native publication belongs to the
+    /// scene database <paramref name="databaseEpoch"/> and is more than
+    /// <see cref="MaxEditorPickingSourcePublicationAge"/> publications older than
+    /// <paramref name="currentPublicationSequence"/>. The pipeline calls this when it publishes a
+    /// new candidate, and <see cref="EditorPickingSourceSweep"/> calls it after each world swap,
+    /// so a stopped pipeline also releases its source. A picking request takes its own lease, so
+    /// a queued request stays valid. A later submitted frame publishes a new source.
+    /// </summary>
+    internal void ReleaseStaleEditorPickingSource(ulong databaseEpoch, ulong currentPublicationSequence)
+    {
+        if (currentPublicationSequence == 0UL)
+            return;
+
+        EditorPickingSourceReceipt stale;
+        lock (_editorPickingSync)
+        {
+            AdvancedGpuScenePublicationLease lease = _editorPickingSource.NativeLease;
+            if (!lease.IsValid ||
+                lease.Reference.DatabaseEpoch != databaseEpoch ||
+                lease.Reference.Sequence + MaxEditorPickingSourcePublicationAge >= currentPublicationSequence)
+                return;
+
+            stale = _editorPickingSource;
+            _editorPickingSource = default;
+        }
+        stale.Dispose();
     }
 
     /// <summary>
@@ -180,6 +226,7 @@ public sealed partial class XRRenderPipelineInstance
         EditorPickingSourceReceipt previous = default;
         EditorPickingSourceReceipt failed = default;
         XRGpuFence? fence = null;
+        bool promoted = false;
         lock (_editorPickingSync)
         {
             if (!_editorPickingCandidate.IsValid ||
@@ -200,6 +247,7 @@ public sealed partial class XRRenderPipelineInstance
             {
                 previous = _editorPickingSource;
                 _editorPickingSource = _editorPickingCandidate;
+                promoted = true;
             }
             else
                 failed = _editorPickingCandidate;
@@ -209,6 +257,11 @@ public sealed partial class XRRenderPipelineInstance
         previous.Dispose();
         failed.Dispose();
         fence?.Dispose();
+        if (promoted && !_editorPickingSweepRegistered)
+        {
+            _editorPickingSweepRegistered = true;
+            EditorPickingSourceSweep.Register(this);
+        }
     }
 
     /// <summary>Queues one pixel readback against a retained accepted editor source.</summary>
