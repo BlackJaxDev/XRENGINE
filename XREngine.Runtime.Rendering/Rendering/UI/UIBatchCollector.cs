@@ -664,6 +664,10 @@ public sealed partial class UIBatchCollector : IDisposable
     private const uint MaterialStyleVec4Count = 7;
     private const int MaxRunCohorts = 4;
     private const int MaxCanvasGpuCohorts = 256;
+    // Hard bound for one canvas, so a defect that leaks runs cannot grow GPU memory without limit.
+    private const int MaxCanvasGpuCohortCeiling = 8192;
+    // Cohorts that one canvas may hold for its current packet. See UpdateCanvasGpuCohortLimit.
+    private int _canvasGpuCohortLimit = MaxCanvasGpuCohorts;
     private const uint MaxRetainedQuadSlotsPerRun = 1u << 20;
     private const uint MaxRetainedGlyphSlotsPerRun = 1u << 20;
     private uint _matQuadCapacity;
@@ -1067,6 +1071,7 @@ public sealed partial class UIBatchCollector : IDisposable
             renderer.BackendId != RendererBackendId.Vulkan)
             return true;
         RetireInactiveGpuCohorts(renderer);
+        UpdateCanvasGpuCohortLimit();
         int newCohorts = 0;
         foreach (var passGroups in _renderMaterialGroups)
         {
@@ -1105,7 +1110,7 @@ public sealed partial class UIBatchCollector : IDisposable
                 newCohorts++;
             }
         }
-        return CountGpuCohorts() + newCohorts <= MaxCanvasGpuCohorts;
+        return CountGpuCohorts() + newCohorts <= _canvasGpuCohortLimit;
     }
 
     #endregion
@@ -1749,6 +1754,28 @@ public sealed partial class UIBatchCollector : IDisposable
 
     private int CountGpuCohorts() => _gpuCohortCount;
 
+    /// <summary>
+    /// Sets the cohort budget for the current packet. Each run of the packet needs its own cohort,
+    /// and the cohorts of up to <see cref="MaxRunCohorts"/> earlier packets stay reserved until the
+    /// GPU and the presented swapchain image release them. A fixed budget therefore blocks a canvas
+    /// with many runs, such as the editor, forever: the next packet can never get cohorts while the
+    /// displayed packet still holds the previous ones. The budget grows with the run count instead.
+    /// </summary>
+    private void UpdateCanvasGpuCohortLimit()
+    {
+        int runs = 0;
+        foreach (var passGroups in _renderMaterialGroups)
+            for (int group = 0; group < passGroups.Value.Count; group++)
+                if (passGroups.Value[group].Entries.Count != 0)
+                    runs++;
+        foreach (var passGroups in _renderTextGroups)
+            for (int group = 0; group < passGroups.Value.Count; group++)
+                if (passGroups.Value[group] is { Atlas: not null, TotalGlyphs: > 0 })
+                    runs++;
+        long scaled = (long)runs * (MaxRunCohorts + 1);
+        _canvasGpuCohortLimit = (int)Math.Clamp(scaled, MaxCanvasGpuCohorts, MaxCanvasGpuCohortCeiling);
+    }
+
     private void BuildActiveGpuRunKeys()
     {
         _activeMaterialRunKeys.Clear();
@@ -1780,9 +1807,9 @@ public sealed partial class UIBatchCollector : IDisposable
                 return cohorts[i];
         if (cohorts.Count >= MaxRunCohorts)
             throw new InvalidOperationException($"UI material run ({renderPass}, {runId}) has no retired GPU cohort.");
-        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+        if (CountGpuCohorts() >= _canvasGpuCohortLimit)
             RetireInactiveGpuCohorts(renderer);
-        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+        if (CountGpuCohorts() >= _canvasGpuCohortLimit)
             throw new InvalidOperationException("UI GPU cohort budget is full while earlier draws remain in use.");
         MaterialGPUResources gpu = new();
         if (!_materialRunGPU.ContainsKey(key))
@@ -2491,9 +2518,9 @@ public sealed partial class UIBatchCollector : IDisposable
                 return cohorts[i];
         if (cohorts.Count >= MaxRunCohorts)
             throw new InvalidOperationException($"UI text run ({renderPass}, {runId}) has no retired GPU cohort.");
-        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+        if (CountGpuCohorts() >= _canvasGpuCohortLimit)
             RetireInactiveGpuCohorts(renderer);
-        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+        if (CountGpuCohorts() >= _canvasGpuCohortLimit)
             throw new InvalidOperationException("UI GPU cohort budget is full while earlier draws remain in use.");
 
         TextGPUResources gpu = new();
