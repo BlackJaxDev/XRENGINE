@@ -1,3 +1,5 @@
+using XREngine.Rendering.UI;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -17,6 +19,16 @@ internal readonly record struct VulkanPreparedCommandChainKey(
 {
     private readonly RecordedPacketKey _recordedPacketKey = RecordedPacketKey;
     internal VulkanIndirectDrawCommandIdentity IndirectCommand { get; init; }
+    internal UIStaticDrawContract StaticUiContract { get; init; }
+    internal VulkanRecordedBufferIdentity StaticUiBorderColorBuffer { get; init; }
+    internal VulkanRecordedBufferIdentity StaticUiBorderWidthBuffer { get; init; }
+    internal VulkanRecordedBufferIdentity StaticUiImageUvBuffer { get; init; }
+    internal VkImageDescriptorSnapshot StaticUiImageSnapshot { get; init; }
+    internal VulkanRecordedDescriptorResourceIdentity StaticUiImageResource { get; init; }
+    internal VulkanDescriptorPayload StaticUiImagePayload { get; init; }
+    internal uint StaticUiImageSet { get; init; }
+    internal uint StaticUiImageBinding { get; init; }
+    internal VulkanStaticUiTextNativeAuthority StaticUiText { get; init; }
 
     public RecordedPacketKey RecordedPacketKey
     {
@@ -43,6 +55,16 @@ internal readonly record struct VulkanPreparedCommandChainKey(
             DescriptorHeapBinding == other.DescriptorHeapBinding &&
             DescriptorHeapDraws.Equals(other.DescriptorHeapDraws) &&
             IndirectCommand.Matches(other.IndirectCommand) &&
+            StaticUiContract == other.StaticUiContract &&
+            StaticUiBorderColorBuffer == other.StaticUiBorderColorBuffer &&
+            StaticUiBorderWidthBuffer == other.StaticUiBorderWidthBuffer &&
+            StaticUiImageUvBuffer == other.StaticUiImageUvBuffer &&
+            StaticUiImageSnapshot == other.StaticUiImageSnapshot &&
+            StaticUiImageResource == other.StaticUiImageResource &&
+            StaticUiImagePayload == other.StaticUiImagePayload &&
+            StaticUiImageSet == other.StaticUiImageSet &&
+            StaticUiImageBinding == other.StaticUiImageBinding &&
+            StaticUiText == other.StaticUiText &&
             IsComplete == other.IsComplete &&
             recordedPacketKey.Matches(in otherRecordedPacketKey);
     }

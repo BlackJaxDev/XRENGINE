@@ -485,7 +485,9 @@ internal sealed partial class VulkanFrameLoop
             frameSlot,
             frameNumber,
             RuntimeEngine.Rendering.State.RenderFrameId,
-            in compatibility);
+            in compatibility,
+            _ownerRenderer,
+            captureDesktopWorldUi: false);
 
         RenderOutputRequest provisionalOutputContract = _explicitProductionOutputContract;
         RenderOutputTargetDescriptor outputTarget =
@@ -566,6 +568,15 @@ internal sealed partial class VulkanFrameLoop
                 "ExplicitOutput -> visible meshes",
                 "The bounded request queue rejected an accepted foreground cohort.");
         }
+
+        for (int index = 0; index < requestCount; index++)
+            if (_meshOperationRequestScratch[index].WorldUiCommand is not null)
+            {
+                VulkanMeshRenderRequest.ReleaseAuthoringLeasesAndClear(
+                    _meshOperationRequestScratch.AsSpan(0, requestCount));
+                throw new VulkanPlanPreconditionException(
+                    "An explicit output cannot consume a selected world UI draw without its output proof.");
+            }
 
         try
         {
@@ -870,7 +881,8 @@ internal sealed partial class VulkanFrameLoop
             in outputContract,
             logicalPlan,
             in plannerState,
-            in frozenPlanningSnapshot);
+            in frozenPlanningSnapshot,
+            _ownerRenderer);
         watchdog.RecordProgress();
         if (outputContract.RequiresCompleteFreshOutput)
         {

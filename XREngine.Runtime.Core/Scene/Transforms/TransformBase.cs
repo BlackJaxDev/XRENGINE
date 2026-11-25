@@ -438,7 +438,13 @@ namespace XREngine.Scene.Transforms
         public virtual SceneNode? SceneNode
         {
             get => _sceneNode;
-            set => SetField(ref _sceneNode, value);
+            set
+            {
+                using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this, _sceneNode, value);
+                SetFieldValidated(ref _sceneNode, value, this,
+                    static (transform, original, current, next) =>
+                        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireNodeAssignment(transform, original, current, next));
+            }
         }
 
         [YamlIgnore]
@@ -458,31 +464,16 @@ namespace XREngine.Scene.Transforms
         public virtual TransformBase? Parent
         {
             get => _parent;
-            set
-            {
-                if (ReferenceEquals(_parent, value))
-                    return;
-                using var mutation = PhysicsChainWorld.BeginHierarchyMutation(this, value?.World ?? World, value);
-                _parentAssignmentDepth++;
-                try { SetField(ref _parent, value); }
-                finally { --_parentAssignmentDepth; }
-            }
+            set => SetParentValue(value);
         }
 
+        /// <summary>Owns child links. Replacement copies the supplied list and retires the old list authority.</summary>
         [YamlIgnore]
         [Browsable(false)]
         public EventList<TransformBase> Children
         {
             get => _children;
-            set
-            {
-                if (value is not null && !ReferenceEquals(_children, value))
-                {
-                    using var mutation = PhysicsChainWorld.BeginChildrenMutation(this, value);
-                    value.ThreadSafe = true;
-                    SetField(ref _children, value);
-                }
-            }
+            set => ReplaceChildList(value);
         }
 
         [YamlIgnore]
@@ -899,26 +890,58 @@ namespace XREngine.Scene.Transforms
         #region Constructors
 
         private int _parentAssignmentDepth;
+        private EventList<TransformBase>? _childHandlerList;
+        private EventList<TransformBase>.SingleCancelableHandler? _childValidationHandler;
+        private EventList<TransformBase>.SingleHandler? _childAddedHandler;
+        private EventList<TransformBase>.SingleHandler? _childRemovedHandler;
 
         private void AttachChildListHandlers()
         {
             DetachChildListHandlers();
-            _children.PreAnythingAdded += ValidateChildListMutation;
-            _children.PreAnythingRemoved += ValidateChildListMutation;
-            _children.PostAnythingAdded += ChildAdded;
-            _children.PostAnythingRemoved += ChildRemoved;
+            EventList<TransformBase> source = _children;
+            _childHandlerList = source;
+            // These delegates allocate only when a list is installed or restored.
+            _childValidationHandler = child => ReferenceEquals(_children, source) && ValidateChildListMutation(child);
+            _childAddedHandler = child =>
+            {
+                if (ReferenceEquals(_children, source) && child is not null && source.Contains(child) &&
+                    child._parentAssignmentDepth == 0)
+                    child.Parent = this;
+            };
+            _childRemovedHandler = child =>
+            {
+                if (ReferenceEquals(_children, source) && child is not null && !source.Contains(child) &&
+                    ReferenceEquals(child.Parent, this) && child._parentAssignmentDepth == 0)
+                    child.Parent = null;
+            };
+            source.PreAnythingAdded += _childValidationHandler;
+            source.PreAnythingRemoved += _childValidationHandler;
+            source.PostAnythingAdded += _childAddedHandler;
+            source.PostAnythingRemoved += _childRemovedHandler;
         }
 
         private void DetachChildListHandlers()
         {
-            _children.PreAnythingAdded -= ValidateChildListMutation;
-            _children.PreAnythingRemoved -= ValidateChildListMutation;
-            _children.PostAnythingAdded -= ChildAdded;
-            _children.PostAnythingRemoved -= ChildRemoved;
+            if (_childHandlerList is not { } source) return;
+            source.PreAnythingAdded -= _childValidationHandler;
+            source.PreAnythingRemoved -= _childValidationHandler;
+            source.PostAnythingAdded -= _childAddedHandler;
+            source.PostAnythingRemoved -= _childRemovedHandler;
+            _childHandlerList = null;
+            _childValidationHandler = null;
+            _childAddedHandler = null;
+            _childRemovedHandler = null;
         }
 
-        private bool ValidateChildListMutation(TransformBase child)
-            => PhysicsChainWorld.ValidateChildListMutation(this, child);
+        /// <summary>Checks a child list change before the list writes the child.</summary>
+        protected virtual bool ValidateChildListMutation(TransformBase child)
+        {
+            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(this, child);
+            return PhysicsChainWorld.ValidateChildListMutation(this, child);
+        }
+
+        /// <summary>Reconnects derived child list handlers after cooked data restores a list.</summary>
+        protected virtual void OnChildListRestored() { }
 
         protected TransformBase() : this(null) { }
 
@@ -926,7 +949,7 @@ namespace XREngine.Scene.Transforms
         {
             _sceneNode = null;
             Depth = parent?.Depth + 1 ?? 0;
-            _children = new EventList<TransformBase>() { ThreadSafe = true };
+            _children = CreateChildList();
             AttachChildListHandlers();
 
 
@@ -943,20 +966,22 @@ namespace XREngine.Scene.Transforms
 
             // Deserialization may replace the EventList while property notifications are suppressed.
             // Re-attach invariants that are normally installed via property change callbacks.
-            _children ??= new EventList<TransformBase>() { ThreadSafe = true };
+            _children ??= CreateChildList();
             using var mutation = PhysicsChainWorld.BeginHierarchyMutation(
                 this, _parent?.World ?? World, _parent);
 
             _children.ThreadSafe = true;
             AttachChildListHandlers();
+            OnChildListRestored();
 
             // Ensure this transform appears in its parent's child list.
             if (_parent is not null)
             {
-                _parent._children ??= new EventList<TransformBase>() { ThreadSafe = true };
+                _parent._children ??= _parent.CreateChildList();
 
                 _parent._children.ThreadSafe = true;
                 _parent.AttachChildListHandlers();
+                _parent.OnChildListRestored();
 
                 lock (_parent._children)
                 {
@@ -1020,7 +1045,7 @@ namespace XREngine.Scene.Transforms
         /// Used by the physics system to derive a world matrix from a physics body into the components used by this transform.
         /// </summary>
         public void DeriveWorldMatrix(Matrix4x4 value, bool networkSmoothed = false)
-            => DeriveLocalMatrix(ParentInverseWorldMatrix * value, networkSmoothed);
+            => DeriveLocalMatrix(value * ParentInverseWorldMatrix, networkSmoothed);
 
         /// <summary>
         /// Derives components to create the local matrix from the given matrix.
@@ -1099,6 +1124,7 @@ namespace XREngine.Scene.Transforms
             EParentAssignmentMode mode,
             Action<TransformBase, TransformBase?>? onApplied = null)
         {
+            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(this, newParent);
             switch (mode)
             {
                 case EParentAssignmentMode.Immediate:
@@ -1699,54 +1725,44 @@ namespace XREngine.Scene.Transforms
         {
             if (propName is nameof(Parent) or nameof(World))
                 HierarchyStore?.RejectHierarchyMutationDuringEvaluation();
-            bool change = base.OnPropertyChanging(propName, field, @new);
-            if (change)
-            {
-                switch (propName)
-                {
-                    case nameof(Parent):
-                        if (@new is TransformBase candidate)
-                            for (TransformBase? ancestor = candidate; ancestor is not null; ancestor = ancestor.Parent)
-                                if (ReferenceEquals(ancestor, this))
-                                    throw new InvalidOperationException("A transform cannot be parented beneath itself.");
-                        _parent?._children.Remove(this);
-                        break;
-                    case nameof(Children):
-                        DetachChildListHandlers();
-                        lock (_children)
-                        {
-                            foreach (var child in _children)
-                                if (child is not null)
-                                {
-                                    child.Parent = null;
-                                    child.World = null;
-                                }
-                        }
-                        break;
-                }
-            }
-            return change;
+            return base.OnPropertyChanging(propName, field, @new);
         }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            TransformBase[]? replacedChildren = propName == nameof(Children)
+                ? [.. (EventList<TransformBase>)(object)field!]
+                : null;
             // World observers can activate components and mark this transform dirty.
             // Bind its matrix storage before those observers run.
             if (propName == nameof(World))
+            {
                 UpdateHierarchyStore();
+                ActiveWorldRemovalPermit?.MarkStoreDetached(this);
+            }
 
             base.OnPropertyChanged(propName, prev, field);
+            if (propName == nameof(World))
+                ActiveWorldRemovalPermit?.Validate();
             switch (propName)
             {
                 case nameof(Parent):
-                    if (_parent is not null)
+                    _activeLeafAttachment?.MarkCanonicalEffectsStarted(this, _activeParentAssignmentRevision);
+                    TransformBase? changedParent = field as TransformBase;
+                    RequireChangedParent(changedParent);
+                    if (changedParent is not null)
                     {
-                        Depth = _parent.Depth + 1;
-                        _parent._children.Add(this);
-                        if (_parent.World is not null) World = _parent.World;
+                        Depth = changedParent.Depth + 1;
+                        RequireChangedParent(changedParent);
+                        if (!changedParent._children.Contains(this))
+                            changedParent._children.Add(this);
+                        RequireChangedParent(changedParent);
+                        if (changedParent.World is { } world) SetInheritedWorld(changedParent, world);
                     }
                     else
                         Depth = 0;
-                    SceneNode?.World = World;
+                    RequireChangedParent(changedParent);
+                    if (SceneNode is { } parentChangedNode && !ReferenceEquals(parentChangedNode.World, World))
+                        parentChangedNode.World = World;
                     HierarchyStore?.HierarchyChanged();
                     MarkWorldModified();
                     break;
@@ -1758,6 +1774,11 @@ namespace XREngine.Scene.Transforms
                 case nameof(World):
                     _debugHandle?.UpdateWorld(World);
                     MarkWorldModified();
+                    if (ActiveWorldRemovalPermit is { } worldRemoval)
+                    {
+                        worldRemoval.Validate();
+                        break;
+                    }
                     if (SceneNode is not null)
                         SceneNode.World = World;
                     lock (_children)
@@ -1768,17 +1789,7 @@ namespace XREngine.Scene.Transforms
                     }
                     break;
                 case nameof(Children):
-                    AttachChildListHandlers();
-                    _children.ThreadSafe = true;
-                    lock (_children)
-                    {
-                        foreach (var child in _children)
-                            if (child is not null)
-                            {
-                                child.Parent = this;
-                                child.World = World;
-                            }
-                    }
+                    AttachReplacedChildren((EventList<TransformBase>)(object)field!, replacedChildren!);
                     break;
                 case nameof(SelectionRadius):
                     RemakeCapsule();
@@ -1786,20 +1797,13 @@ namespace XREngine.Scene.Transforms
             }
         }
 
-        private void ChildAdded(TransformBase e)
-        {
-            if (e._parentAssignmentDepth == 0)
-                e.Parent = this;
-        }
-
-        private void ChildRemoved(TransformBase e)
-        {
-            if (e._parentAssignmentDepth == 0)
-                e.Parent = null;
-        }
-
         protected override void OnDestroying()
         {
+            if (GetOwnedRetirement() is { } retirement)
+            {
+                DestroyOwnedHierarchy(retirement);
+                return;
+            }
             using var mutation = PhysicsChainWorld.BeginTransformDestructionMutation(this);
             //Unsubscribe from children events
             DetachChildListHandlers();
@@ -1847,7 +1851,11 @@ namespace XREngine.Scene.Transforms
         }
 
         internal void NotifySceneNodeActivated()
-            => OnSceneNodeActivated();
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
+            OnSceneNodeActivated();
+        }
 
         /// <summary>
         /// Called when play begins for the scene containing this transform.
@@ -1857,7 +1865,11 @@ namespace XREngine.Scene.Transforms
         }
 
         internal void NotifySceneNodeBeginPlay()
-            => OnSceneNodeBeginPlay();
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
+            OnSceneNodeBeginPlay();
+        }
 
         /// <summary>
         /// Called when the scene node this transform is attached to is deactivated in the scene.
@@ -1867,7 +1879,10 @@ namespace XREngine.Scene.Transforms
         }
 
         internal void NotifySceneNodeDeactivated()
-            => OnSceneNodeDeactivated();
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+            OnSceneNodeDeactivated();
+        }
 
         /// <summary>
         /// Called when play ends for the scene containing this transform.
@@ -1877,7 +1892,10 @@ namespace XREngine.Scene.Transforms
         }
 
         internal void NotifySceneNodeEndPlay()
-            => OnSceneNodeEndPlay();
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+            OnSceneNodeEndPlay();
+        }
 
         #endregion
 

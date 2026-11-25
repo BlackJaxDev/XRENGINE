@@ -10,6 +10,19 @@ namespace XREngine.Rendering.UI
 {
     public class UIDockingRootTransform : UIBoundableTransform
     {
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            switch (propName)
+            {
+                case nameof(LeftSizeWidth):
+                case nameof(RightSizeWidth):
+                case nameof(BottomSizeHeight):
+                    InvalidateArrange();
+                    break;
+            }
+        }
+
         private float _leftSizeWidth = 300.0f;
         private float _rightSizeWidth = 300.0f;
         private float _bottomSizeHeight = 200.0f;
@@ -83,45 +96,6 @@ namespace XREngine.Rendering.UI
                 dInfo.BottomLeft = new Vector2(0.0f, paddedRegion.Height - BottomSizeHeight);
             if (Bottom is not null)
                 UILayoutSystem.FitLayout(Bottom, new BoundingRectangleF(paddedRegion.X, paddedRegion.Y + paddedRegion.Height - BottomSizeHeight, paddedRegion.Width, BottomSizeHeight));
-        }
-
-        /// <summary>
-        /// Old layout path: called from OnLocalMatrixChanged.
-        /// Kept for compatibility.
-        /// </summary>
-        protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
-        {
-            if (SceneNode is not null)
-            {
-                while (SceneNode.Transform.Children.Count < 4)
-                {
-                    var node = SceneNode.NewChild();
-                    var tfm = node.SetTransform<UIBoundableTransform>();
-                    tfm.Name = $"DockingRootChild{SceneNode.Transform.Children.Count - 1}";
-                    tfm.MaxAnchor = new Vector2(1.0f, 1.0f);
-                    tfm.MinAnchor = new Vector2(0.0f, 0.0f);
-                }
-                while (SceneNode.Transform.Children.Count > 4)
-                {
-                    //SceneNode.Transform.Children.RemoveAt(SceneNode.Transform.Children.Count - 1);
-                }
-            }
-
-            if (Center?.PlacementInfo is UIDockingPlacementInfo aInfo)
-                aInfo.BottomLeft = new Vector2(LeftSizeWidth, BottomSizeHeight);
-            Center?.FitLayout(new BoundingRectangleF(parentRegion.X + LeftSizeWidth, parentRegion.Y + BottomSizeHeight, parentRegion.Width - LeftSizeWidth - RightSizeWidth, parentRegion.Height));
-
-            if (Left?.PlacementInfo is UIDockingPlacementInfo bInfo)
-                bInfo.BottomLeft = new Vector2(0.0f, BottomSizeHeight);
-            Left?.FitLayout(new BoundingRectangleF(parentRegion.X, parentRegion.Y + BottomSizeHeight, LeftSizeWidth, parentRegion.Height));
-
-            if (Right?.PlacementInfo is UIDockingPlacementInfo cInfo)
-                cInfo.BottomLeft = new Vector2(parentRegion.Width - RightSizeWidth, BottomSizeHeight);
-            Right?.FitLayout(new BoundingRectangleF(parentRegion.X + parentRegion.Width - RightSizeWidth, parentRegion.Y, RightSizeWidth, parentRegion.Height));
-
-            if (Bottom?.PlacementInfo is UIDockingPlacementInfo dInfo)
-                dInfo.BottomLeft = new Vector2(0.0f, parentRegion.Height - BottomSizeHeight);
-            Bottom?.FitLayout(new BoundingRectangleF(parentRegion.X, parentRegion.Y + parentRegion.Height - BottomSizeHeight, parentRegion.Width, BottomSizeHeight));
         }
 
         public override void VerifyPlacementInfo(TransformBase childTransform, ref ITransformChildPlacementInfo? placementInfo)

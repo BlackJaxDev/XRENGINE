@@ -37,6 +37,10 @@
       "description": "Selects which editor UI pipeline to create for unit testing.",
       "markdownDescription": "Supported values: `None`, `Native`, `IMGUI`."
     },
+    "VirtualCollectionFixtureItemCount": {
+      "type": "integer",
+      "description": "Shows a native virtual list with 100000 or 1000000 logical items when selected."
+    },
     "CameraUIDrawSpaceOnInit": {
       "$ref": "#/definitions/CameraUIDrawMode",
       "description": "Controls draw space and offscreen mode for unit testing camera UI.",

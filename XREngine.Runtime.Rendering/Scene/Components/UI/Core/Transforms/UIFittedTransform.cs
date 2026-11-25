@@ -10,6 +10,13 @@ namespace XREngine.Rendering.UI
     [XRTransformEditor("XREngine.Editor.TransformEditors.UIFittedTransformEditor")]
     public class UIFittedTransform : UIBoundableTransform
     {
+        protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
+        {
+            base.OnPropertyChanged(propName, prev, field);
+            if (propName == nameof(FitType))
+                InvalidateArrange();
+        }
+
         public enum EFitType
         {
             None,

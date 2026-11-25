@@ -35,7 +35,35 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public override bool IsGenerated => _bindingId.HasValue && _bindingId != InvalidBindingId;
 
+            internal virtual bool IsGenerationOwnerLive
+            {
+                get
+                {
+                    GenericRenderObject data = Data_Internal;
+                    return !IsRetired && Renderer.AcceptsBackendWork
+                        && OwnerGeneration == Renderer.BackendGeneration
+                        && data is not null && !data.IsDestroyed;
+                }
+            }
+
+            // Queued destruction can be vetoed. Construction can complete later.
+            // Neither state ends this wrapper's lifetime or consumes a retry.
+            internal virtual bool IsGenerationAttemptReady
+            {
+                get
+                {
+                    GenericRenderObject data = Data_Internal;
+                    return IsGenerationOwnerLive && !data.IsDestroyQueued
+                        && data.IsApiWrapperPublicationReady;
+                }
+            }
+
             internal uint? _bindingId;
+            private long _nativeObjectIncarnation;
+
+            /// <summary>Changes whenever this wrapper acquires or retires a native name.</summary>
+            internal long NativeObjectIncarnation
+                => System.Threading.Volatile.Read(ref _nativeObjectIncarnation);
 
             public virtual bool TryGetBindingId(out uint bindingId)
             {
@@ -52,7 +80,12 @@ namespace XREngine.Rendering.OpenGL
             }
 
             public GLObjectBase(OpenGLRenderer renderer) : base(renderer) { }
-            public GLObjectBase(OpenGLRenderer renderer, uint id) : base(renderer) => _bindingId = id;
+            public GLObjectBase(OpenGLRenderer renderer, uint id) : base(renderer)
+            {
+                _bindingId = id;
+                if (id != InvalidBindingId)
+                    System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
+            }
 
             public override void Destroy()
             {
@@ -141,11 +174,18 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
+                // Queued work can outlive its owner or backend. Check on the render thread,
+                // including after cleanup callbacks, before allocating another native name.
+                if (!IsGenerationAttemptReady)
+                    return;
                 //Debug.Out($"Generating OpenGL object {Type}");
                 PreGenerated();
+                if (!IsGenerationAttemptReady)
+                    return;
                 _bindingId = CreateObject();
                 if (_bindingId is not null && _bindingId != InvalidBindingId)
                 {
+                    System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
                     PostGenerated();
                     _invalidated = false;
                     _hasSentInvalidationWarning = false;
@@ -166,6 +206,7 @@ namespace XREngine.Rendering.OpenGL
 
                 RemoveCacheEntry(bindingId);
                 _bindingId = null;
+                System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
                 _invalidated = true;
                 _hasSentInvalidationWarning = false;
             }
@@ -806,6 +847,10 @@ namespace XREngine.Rendering.OpenGL
                 if (!IsGenerated)
                     return;
 
+                // Retire the prior name before any deletion callback or driver call.
+                // A failed delete must not leave an accepted output proof alive.
+                System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
+
                 if (Renderer.ShouldOrphanGLHandlesForShutdown)
                 {
                     OrphanForDeferredDelete();
@@ -852,6 +897,7 @@ namespace XREngine.Rendering.OpenGL
                         break;
                 }
                 _bindingId = null;
+                System.Threading.Interlocked.Increment(ref _nativeObjectIncarnation);
                 PostDeleted();
             }
 

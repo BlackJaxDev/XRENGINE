@@ -82,7 +82,54 @@ public partial class OpenGLRenderer
         if (blendWasEnabled)
             Api.Disable(EnableCap.Blend);
 
+        bool worldClear = _worldUiAttempt != 0UL;
+        int drawFbo = worldClear ? RawGL.GetInteger(GLEnum.DrawFramebufferBinding) : -1;
+        bool deferredClear = worldClear && drawFbo == (int)_worldUiDeferredId;
+        bool forwardClear = worldClear && drawFbo == (int)_worldUiForwardId;
+        bool selectedClear = deferredClear || forwardClear;
+        bool lateBackClear = worldClear && _worldUiPhase >= 5 && drawFbo == 0;
+        bool trackedOutputClear = worldClear && _worldUiPhase >= 2 &&
+            (IsWorldUiTrackedOutputFbo(drawFbo) ||
+             drawFbo > 0 && WorldUiFboAliasesTrackedTexture((uint)drawFbo));
+        bool changedDepthAfterReset = worldClear && _worldUiDepthCleared &&
+            !forwardClear && (drawFbo == (int)_worldUiDeferredId ||
+                drawFbo > 0 && WorldUiFboAliasesTrackedTexture((uint)drawFbo));
+        bool clearTargetValid = !selectedClear || WorldUiOwnerCurrent() &&
+            _worldUiPhase == 0 &&
+            (deferredClear
+                ? !_worldUiDepthCleared && color && depth && stencil &&
+                  _worldUiDeferredFbo is not null &&
+                  TryNativeWorldFbo(_worldUiDeferredFbo, out uint currentDeferredId) &&
+                  currentDeferredId == _worldUiDeferredId &&
+                  _worldUiDepth is not null &&
+                  WorldUiAttachmentMatches((uint)drawFbo,
+                      GLEnum.DepthStencilAttachment, _worldUiDepth) &&
+                  WorldUiClearStateMatches(depthStencil: true)
+                : _worldUiDepthCleared && !_worldUiForwardCleared &&
+                  color && !depth && !stencil &&
+                  _worldUiForwardFbo is not null &&
+                  _worldUiHdr is not null && _worldUiDepth is not null &&
+                  WorldUiFboMatches(_worldUiForwardFbo!, _worldUiHdr, _worldUiDepth) &&
+                  WorldUiClearStateMatches(depthStencil: false));
+        bool nativeCleanBefore = !selectedClear || Api.GetError() == GLEnum.NoError;
         Api.Clear(mask);
+        bool nativeCleanAfter = !selectedClear || Api.GetError() == GLEnum.NoError;
+        if (selectedClear)
+        {
+            if (clearTargetValid && nativeCleanBefore && nativeCleanAfter)
+            {
+                if (deferredClear)
+                    _worldUiDepthCleared = true;
+                else
+                    _worldUiForwardCleared = true;
+                if (_worldUiDepthCleared && _worldUiForwardCleared)
+                    _worldUiPhase = 1;
+            }
+            else
+                FailWorldUi("World UI GBuffer or ForwardPass clear lost its exact target, mask, or region.");
+        }
+        if (lateBackClear || trackedOutputClear || changedDepthAfterReset)
+            FailWorldUi("A later native clear replaced a world UI output target.");
         if (color)
             MarkImmediateHistoryBoundWrite();
 

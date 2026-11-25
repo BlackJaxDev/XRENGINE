@@ -142,7 +142,7 @@ public static class RecordCutsceneCommand
 
         List<SceneNode> rootNodes = [];
         foreach (XRScene scene in world.Scenes)
-            rootNodes.AddRange(scene.RootNodes);
+            rootNodes.AddRange(scene.SceneRoots);
 
         using CutsceneCapturePreparation preparation = new();
 

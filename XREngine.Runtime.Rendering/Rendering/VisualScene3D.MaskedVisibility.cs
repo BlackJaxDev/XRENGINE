@@ -5,6 +5,7 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Scene;
 
@@ -59,6 +60,7 @@ public partial class VisualScene3D
         bool collectMirrors,
         XRRenderPipelineInstance.RenderingState state,
         bool allowGpuCollection,
+        UIWorldCollectPacketSet? worldPacketSet,
         out int visibleRenderables)
     {
         visibleRenderables = 0;
@@ -144,7 +146,11 @@ public partial class VisualScene3D
             }
             if (modelDiagActive)
                 ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
-            renderable.CollectCommands(commands, camera);
+            if (renderable.FrozenWorldCommandSource is not null)
+                renderable.TryCollectFrozenWorldCommands(commands, camera, collectionVolume,
+                    containsOnly: false, packetSet: worldPacketSet);
+            else
+                renderable.CollectCommands(commands, camera);
         }
 
         return true;

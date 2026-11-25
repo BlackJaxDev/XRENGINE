@@ -1,0 +1,832 @@
+using System.Collections.Concurrent;
+using System.Numerics;
+using System.Runtime.InteropServices;
+using XREngine.Data.Geometry;
+using XREngine.Rendering.Info;
+using XREngine.Rendering.Commands;
+using XREngine.Rendering.UI;
+using XREngine.Rendering.UI.State;
+
+namespace XREngine.Components;
+
+public partial class UICanvasComponent
+{
+    [ThreadStatic]
+    private static UICanvasComponent? t_renderingCanvas;
+    internal static UICanvasComponent? RenderingCanvasForCurrentThread => t_renderingCanvas;
+    private readonly List<UIHitRecord> _publicationHitScratch = [];
+    private readonly List<UIScrollRecord> _publicationScrollScratch = [];
+    private readonly List<UIFocusScopeRecord> _publicationFocusScopeScratch = [];
+    private readonly List<UIRenderRecord> _publicationRenderScratch = [];
+    private readonly List<UIRenderRecord> _publicationOrderedRenderScratch = [];
+    private List<long> _publicationPainterOrder = [];
+    private List<long> _publicationPainterOrderCapture = [];
+    private readonly List<long> _publicationPainterOrderValidation = [];
+    private readonly Dictionary<long, UIRenderRecord> _publicationRenderByMembership = [];
+    private ulong _publicationPainterOrderRevision = ulong.MaxValue;
+    // Positions of the painter order that the last capture read. Publications share it.
+    private UIRenderPainterIndex? _publicationPainterIndex;
+    private bool _capturingPublication;
+    private bool _publicationCaptureReentered;
+    private readonly Dictionary<UIElementIdentity, int> _publicationLayoutIndices = [];
+    private object? _publicationLayoutIndexSource;
+    private readonly Dictionary<UIElementIdentity, (Vector2 Offset, Vector2 Maximum)> _scrollMetricRetry = [];
+    private readonly List<UIElementIdentity> _scrollMetricRetired = [];
+    private readonly ConcurrentDictionary<object, UIPublication> _presentedPublications =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly ConcurrentDictionary<object, (ulong FrameId, UIPublication Publication, ulong ReceiptId)> _renderedPublications =
+        new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<object, (UIPublication Source, Matrix4x4 CanvasToOutput,
+        Matrix4x4 WorldToCanvas, Matrix4x4 ClipToWorld, ECanvasDrawSpace DrawSpace,
+        float NearClipZ, float FarClipZ, UIPublication Mapped)>
+        _outputMappingCache = new(ReferenceEqualityComparer.Instance);
+    private readonly object _publicationGate = new();
+    private UIPublication? _candidatePublication;
+    private UIPublication? _collectingPublication;
+    private UIPublication? _currentPublication;
+    private Action<UIRenderRecord>? _collectPublishedUnbatched;
+    private string? _lastPublicationCaptureFailure;
+    private ulong _nextPublicationGeneration;
+    private ulong _nextHitGeneration;
+    private long _canvasLifetime = 1;
+
+    /// <summary>Gets the current canvas incarnation for deferred input requests.</summary>
+    public ulong PublicationLifetime => (ulong)Volatile.Read(ref _canvasLifetime);
+
+    /// <summary>Acquires the packet used by a render attempt. The caller must release it in a finally block.</summary>
+    private UIPublication? AcquireCurrentPublication()
+    {
+        lock (_publicationGate)
+        {
+            UIPublication? publication = _currentPublication;
+            publication?.Retain();
+            return publication;
+        }
+    }
+
+    /// <summary>Acquires the last packet accepted by an output. The caller must release it in a finally block.</summary>
+    public bool TryAcquirePresentedPublication(object output, out UIPublication? publication)
+    {
+        lock (_publicationGate)
+        {
+            if (_presentedPublications.TryGetValue(output, out publication))
+            {
+                publication.Retain();
+                return true;
+            }
+        }
+        publication = null;
+        return false;
+    }
+
+    /// <summary>Removes an output latch when an accepted image no longer contains this canvas.</summary>
+    public void ClearPresentedPublication(object output)
+    {
+        lock (_publicationGate)
+            if (_presentedPublications.TryRemove(output, out UIPublication? old))
+                old.Release();
+    }
+
+    /// <summary>Clear only the old presented packet before its release callbacks run.</summary>
+    internal void ClearPresentedPublicationIfSame(
+        object output, UIPublication expected)
+    {
+        UIPublication? removed = null;
+        lock (_publicationGate)
+            if (_presentedPublications.TryGetValue(output, out UIPublication? current) &&
+                ReferenceEquals(current, expected))
+                _presentedPublications.TryRemove(output, out removed);
+        removed?.Release();
+    }
+
+    /// <summary>Releases all packet references for a detached output.</summary>
+    public void RemovePublicationOutput(object output)
+    {
+        lock (_publicationGate)
+        {
+            if (_presentedPublications.TryRemove(output, out UIPublication? presented))
+                presented.Release();
+            if (_renderedPublications.TryRemove(output, out var rendered))
+                rendered.Publication.Release();
+            if (_outputMappingCache.Remove(output, out var mapping))
+            {
+                mapping.Source.Release();
+                mapping.Mapped.Release();
+            }
+        }
+    }
+
+    /// <summary>Gets draw values from the packet bound to the current collection.</summary>
+    public bool TryGetCollectingRenderRecord(long membershipId, out UIRenderRecord record)
+    {
+        if (_collectingPublication is { } publication)
+            return publication.TryGetRenderRecord(membershipId, out record);
+        record = default;
+        return false;
+    }
+
+    /// <summary>Acquires the exact rendered packet and receipt for one output frame. The caller must release the packet in a finally block.</summary>
+    public bool TryAcquireRenderedPublication(object output, ulong frameId,
+        out UIPublication? publication, out ulong receiptId)
+    {
+        lock (_publicationGate)
+        {
+            if (_renderedPublications.TryGetValue(output, out var receipt) &&
+                receipt.FrameId == frameId)
+            {
+                receipt.Publication.Retain();
+                publication = receipt.Publication;
+                receiptId = receipt.ReceiptId;
+                return true;
+            }
+        }
+        publication = null;
+        receiptId = 0;
+        return false;
+    }
+
+    /// <summary>Records an output completion for the exact packet used by that output.</summary>
+    public void MarkPresented(object output, UIPublication publication)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(publication);
+        lock (_publicationGate)
+        {
+            if (!IsActive || publication.CanvasLifetime != (ulong)_canvasLifetime)
+                return;
+            publication.Retain();
+            _presentedPublications.TryGetValue(output, out UIPublication? old);
+            _presentedPublications[output] = publication;
+            old?.Release();
+        }
+    }
+
+    private void CapturePublicationCandidate()
+    {
+        if (_capturingPublication)
+        {
+            _publicationCaptureReentered = true;
+            return;
+        }
+
+        _capturingPublication = true;
+        _publicationCaptureReentered = false;
+        try { CapturePublicationCandidateCore(); }
+        finally { _capturingPublication = false; }
+    }
+
+    private void CapturePublicationCandidateCore()
+    {
+        long lifetime = Volatile.Read(ref _canvasLifetime);
+        UICanvasTransform canvas = CanvasTransform;
+        ulong layoutGeneration = canvas.CurrentLayoutGeneration;
+        if (layoutGeneration == 0 || canvas.IsLayoutInvalidated || canvas.IsUpdatingLayout)
+            return;
+
+        UIChangeJournal journal = canvas.ChangeJournal;
+        if (!journal.TryGetCommittedCursor(out UICommittedChangeCursor committedCursor))
+            return;
+        long revision = committedCursor.Revision;
+        long worldCollectionRevision = DirectWorldChildrenRevision;
+        Matrix4x4 canvasWorldMatrix = canvas.WorldMatrix;
+        ECanvasDrawSpace authoringDrawSpace = canvas.DrawSpace;
+        bool authoringOffscreen = UseOffscreenRenderingForNonScreenSpaces();
+        BoundingRectangleF canvasBounds = canvas.GetActualBounds();
+        ulong painterRevision = _publicationPainterOrderRevision;
+        bool painterOrderChanged = VisualScene2D.TryCopyRenderableMembershipOrder(
+            ref painterRevision, _publicationPainterOrderCapture);
+        List<long> painterOrder = painterOrderChanged
+            ? _publicationPainterOrderCapture : _publicationPainterOrder;
+        // The index is immutable and keyed by revision, so a rejected capture can reuse it.
+        if (_publicationPainterIndex?.Revision != painterRevision)
+            _publicationPainterIndex = UIRenderPainterIndex.Create(painterOrder, painterRevision);
+        UIRenderPainterIndex painterIndex = _publicationPainterIndex;
+        UIPublication? previous;
+        lock (_publicationGate)
+        {
+            previous = _candidatePublication ?? _currentPublication;
+            previous?.Retain();
+        }
+        try
+        {
+        if (previous is not null && previous.LayoutGeneration == layoutGeneration &&
+            previous.ChangeRevision == revision &&
+            previous.WorldCollectionRevision == worldCollectionRevision && !painterOrderChanged &&
+            previous.AuthoringCanvasWorldMatrix == canvasWorldMatrix &&
+            previous.AuthoringDrawSpace == authoringDrawSpace &&
+            previous.AuthoringOffscreen == authoringOffscreen &&
+            previous.CanvasBounds == canvasBounds)
+            return;
+
+        ReadOnlyMemory<UIElementIdentity> identities = canvas.CurrentLayoutIdentities;
+        UILayoutOutputPageView? layoutPages = canvas.CurrentLayoutOutputPages;
+        ReadOnlyMemory<UILayoutNodeOutput> legacyLayout = layoutPages is null
+            ? canvas.CurrentLayoutOutputs : default;
+        if (identities.Length != (layoutPages?.Length ?? legacyLayout.Length))
+            return;
+        layoutPages ??= UILayoutOutputPageView.CopyFrom(legacyLayout.Span);
+
+        EnsurePublicationLayoutIndices(identities);
+        _scrollMetricRetired.Clear();
+        foreach (UIElementIdentity identity in _scrollMetricRetry.Keys)
+            if (!_publicationLayoutIndices.ContainsKey(identity))
+                _scrollMetricRetired.Add(identity);
+        for (int index = 0; index < _scrollMetricRetired.Count; index++)
+            _scrollMetricRetry.Remove(_scrollMetricRetired[index]);
+        bool directWorld = authoringDrawSpace != ECanvasDrawSpace.Screen && !authoringOffscreen;
+        bool sparse = previous is not null && TryCaptureSparse(previous, canvas, identities,
+            layoutPages, committedCursor, painterOrderChanged, worldCollectionRevision,
+            canvasWorldMatrix, authoringDrawSpace, authoringOffscreen, canvasBounds,
+            painterIndex, directWorld);
+        if (!sparse)
+            CaptureFull(canvas, layoutPages, painterOrder, identities.Length);
+        // A sparse capture describes only its edits; the publication applies them to the previous stores.
+        bool patched = sparse;
+        // A sparse capture checks its recaptured draws before it succeeds.
+        for (int index = 0; !sparse && index < _publicationRenderScratch.Count; index++)
+        {
+            UIRenderRecord record = _publicationRenderScratch[index];
+            if (!record.Visible || record.CaptureFailure is null &&
+                (directWorld ? record.FrozenWorldCommand is not null :
+                    record.SupportsBatch || record.FrozenCommand is not null))
+                continue;
+            string failure = record.CaptureFailure ??
+                $"UI.DrawCapture.MissingCommand: render member {record.MembershipId} has no frozen {(directWorld ? "world" : "canvas")} draw command.";
+            if (_lastPublicationCaptureFailure != failure)
+            {
+                _lastPublicationCaptureFailure = failure;
+                Debug.LogWarning(failure);
+            }
+            return;
+        }
+        bool hitsChanged;
+        UIHitRecord[]? hits = null;
+        UIRenderRecord[]? renders = null;
+        UIScrollRecord[] scroll;
+        UIFocusScopeRecord[] scopes;
+        if (patched)
+        {
+            hitsChanged = _sparseSpliced ? _sparseHitSplices.Count > 0 : _sparseHitPatches.Count > 0;
+            scroll = _sparseScrollReplacement ?? previous!.ScrollStorage;
+            scopes = _sparseScopeReplacement ?? previous!.FocusScopeStorage;
+        }
+        else
+        {
+            hitsChanged = previous is null ||
+                !SameRecords(CollectionsMarshal.AsSpan(_publicationHitScratch), previous.HitRecordStore);
+            bool scrollChanged = previous is null ||
+                !CollectionsMarshal.AsSpan(_publicationScrollScratch).SequenceEqual(previous.ScrollReceivers);
+            bool scopesChanged = previous is null ||
+                !CollectionsMarshal.AsSpan(_publicationFocusScopeScratch).SequenceEqual(previous.FocusScopes);
+            bool rendersChanged = previous is null ||
+                !SameRecords(CollectionsMarshal.AsSpan(_publicationRenderScratch), previous.RenderRecordStore);
+            // Null record arrays share the previous publication's store.
+            hits = hitsChanged ? _publicationHitScratch.ToArray() : null;
+            renders = rendersChanged ? _publicationRenderScratch.ToArray() : null;
+            scroll = scrollChanged
+                ? _publicationScrollScratch.ToArray() : previous!.ScrollStorage;
+            scopes = scopesChanged
+                ? _publicationFocusScopeScratch.ToArray() : previous!.FocusScopeStorage;
+        }
+        ulong hitGeneration = previous?.HitGeneration ?? ++_nextHitGeneration;
+        if (previous is not null && hitsChanged)
+            hitGeneration = ++_nextHitGeneration;
+        UIRenderSurface? surfaceWriter = null;
+        UIDrawPayload? quadPayload = null;
+        Matrix4x4 quadWorldMatrix = Matrix4x4.Identity;
+        if (authoringDrawSpace != ECanvasDrawSpace.Screen && authoringOffscreen &&
+            !TryPrepareOffscreenPublication(out surfaceWriter, out quadPayload,
+                out quadWorldMatrix, out string? surfaceFailure))
+        {
+            if (_lastPublicationCaptureFailure != surfaceFailure)
+            {
+                _lastPublicationCaptureFailure = surfaceFailure;
+                Debug.LogWarning(surfaceFailure ?? "UI.Canvas.SurfacePending: the offscreen target could not be prepared.");
+            }
+            return;
+        }
+        _lastPublicationCaptureFailure = null;
+        try
+        {
+        lock (_publicationGate)
+        {
+            // A capture adapter can mutate the tree while it copies draw values.
+            // Admit only the exact layout, journal, and painter census we read.
+            ulong validationPainterRevision = painterRevision;
+            bool quadPlacementChanged = false;
+            if (surfaceWriter is not null)
+            {
+                Matrix4x4 world = GetWorldSpaceCanvasMatrix(out Vector2 size);
+                quadPlacementChanged = Matrix4x4.CreateScale(size.X, size.Y, 1.0f) * world !=
+                    quadWorldMatrix;
+            }
+            if (_publicationCaptureReentered ||
+                lifetime != _canvasLifetime ||
+                !ReferenceEquals(canvas, CanvasTransform) ||
+                canvas.CurrentLayoutGeneration != layoutGeneration ||
+                !ReferenceEquals(canvas.ChangeJournal, journal) ||
+                !journal.TryGetCommittedCursor(out UICommittedChangeCursor beforeBuildCursor) ||
+                beforeBuildCursor != committedCursor ||
+                DirectWorldChildrenRevision != worldCollectionRevision ||
+                canvas.WorldMatrix != canvasWorldMatrix ||
+                canvas.DrawSpace != authoringDrawSpace ||
+                UseOffscreenRenderingForNonScreenSpaces() != authoringOffscreen ||
+                canvas.GetActualBounds() != canvasBounds ||
+                quadPlacementChanged ||
+                canvas.IsLayoutInvalidated || canvas.IsUpdatingLayout ||
+                VisualScene2D.TryCopyRenderableMembershipOrder(
+                    ref validationPainterRevision, _publicationPainterOrderValidation))
+                return;
+            UIPublication replacement = patched
+                ? CreateSparsePublication(previous!, ++_nextPublicationGeneration,
+                    layoutGeneration, hitGeneration, revision, layoutPages, scroll, scopes,
+                    surfaceWriter, quadPayload, quadWorldMatrix, painterIndex)
+                : new UIPublication(
+                    ++_nextPublicationGeneration, (ulong)lifetime, layoutGeneration, hitGeneration,
+                    revision, default, identities, hits, renders, canvasBounds,
+                    Matrix4x4.Identity, Matrix4x4.Identity, previous, scroll, scopes,
+                    layoutPages, canvasWorldMatrix, authoringDrawSpace, authoringOffscreen,
+                    surfaceWriter, quadPayload, quadWorldMatrix, painterIndex);
+            bool staleAfterBuild;
+            try
+            {
+                replacement.SetWorldCollectionRevision(worldCollectionRevision);
+                replacement.BuildWorldCommands(this);
+                bool postBuildQuadPlacementChanged = false;
+                if (surfaceWriter is not null)
+                {
+                    Matrix4x4 world = GetWorldSpaceCanvasMatrix(out Vector2 size);
+                    postBuildQuadPlacementChanged =
+                        Matrix4x4.CreateScale(size.X, size.Y, 1.0f) * world != quadWorldMatrix;
+                }
+                staleAfterBuild = _publicationCaptureReentered ||
+                    lifetime != _canvasLifetime ||
+                    !ReferenceEquals(canvas, CanvasTransform) ||
+                    canvas.CurrentLayoutGeneration != layoutGeneration ||
+                    !ReferenceEquals(canvas.ChangeJournal, journal) ||
+                    !journal.TryGetCommittedCursor(out UICommittedChangeCursor afterBuildCursor) ||
+                    afterBuildCursor != committedCursor ||
+                    DirectWorldChildrenRevision != worldCollectionRevision ||
+                    canvas.WorldMatrix != canvasWorldMatrix ||
+                    canvas.DrawSpace != authoringDrawSpace ||
+                    UseOffscreenRenderingForNonScreenSpaces() != authoringOffscreen ||
+                    canvas.GetActualBounds() != canvasBounds ||
+                    postBuildQuadPlacementChanged ||
+                    canvas.IsLayoutInvalidated || canvas.IsUpdatingLayout ||
+                    VisualScene2D.TryCopyRenderableMembershipOrder(
+                        ref validationPainterRevision, _publicationPainterOrderValidation);
+            }
+            catch
+            {
+                replacement.Release();
+                throw;
+            }
+            if (staleAfterBuild)
+            {
+                replacement.Release();
+                return;
+            }
+            UIPublication? oldCandidate = _candidatePublication;
+            _candidatePublication = replacement;
+            if (painterOrderChanged)
+                (_publicationPainterOrder, _publicationPainterOrderCapture) =
+                    (_publicationPainterOrderCapture, _publicationPainterOrder);
+            _publicationPainterOrderRevision = painterRevision;
+            AcceptSparseBasis(replacement, committedCursor);
+            oldCandidate?.Release();
+        }
+        }
+        finally { surfaceWriter?.Release(); }
+        }
+        finally { previous?.Release(); }
+    }
+
+    private int CaptureSubtreeEnds(UITransform transform)
+    {
+        if (!_publicationLayoutIndices.TryGetValue(transform.ElementIdentity, out int index))
+            return 0;
+        // Sparse ranges require layout order to be the preorder of the live tree.
+        if (index != _sparseExpectedIndex)
+            _sparseOrderValid = false;
+        _sparseExpectedIndex = index + 1;
+        int end = index + 1;
+        for (int childIndex = 0; childIndex < transform.Children.Count; childIndex++)
+            if (transform.Children[childIndex] is UITransform child)
+                end = Math.Max(end, CaptureSubtreeEnds(child));
+        _sparseSubtreeEnds[index] = end;
+        return end;
+    }
+
+    private void OrderPublicationRenders(IReadOnlyList<long> painterOrder)
+    {
+        _publicationRenderByMembership.Clear();
+        for (int index = 0; index < _publicationRenderScratch.Count; index++)
+        {
+            UIRenderRecord record = _publicationRenderScratch[index];
+            _publicationRenderByMembership[record.MembershipId] = record;
+        }
+        _publicationOrderedRenderScratch.Clear();
+        for (int index = 0; index < painterOrder.Count; index++)
+            if (_publicationRenderByMembership.TryGetValue(
+                painterOrder[index], out UIRenderRecord record))
+                _publicationOrderedRenderScratch.Add(record);
+        _publicationRenderScratch.Clear();
+        _publicationRenderScratch.AddRange(_publicationOrderedRenderScratch);
+    }
+
+    private void OrderPublicationFocusScopes()
+    {
+        for (int scopeIndex = 0; scopeIndex < _publicationFocusScopeScratch.Count; scopeIndex++)
+        {
+            UIFocusScopeRecord scope = _publicationFocusScopeScratch[scopeIndex];
+            int painterOrder = -1;
+            for (int renderIndex = 0; renderIndex < _publicationRenderScratch.Count; renderIndex++)
+                if (_publicationLayoutIndices.TryGetValue(
+                        _publicationRenderScratch[renderIndex].Identity, out int nodeIndex) &&
+                    scope.Contains(nodeIndex))
+                    painterOrder = renderIndex;
+            _publicationFocusScopeScratch[scopeIndex] = scope with { PainterOrder = painterOrder };
+        }
+    }
+
+    private void CaptureHitRecords(UICanvasTransform canvas, UITransform transform,
+        UILayoutOutputPageView layoutPages, UIPublicationCaptureContext context)
+    {
+        if (!_publicationLayoutIndices.TryGetValue(transform.ElementIdentity, out int layoutIndex))
+            return;
+        UIRuntimeCounters.Add(UIWorkCounter.PublicationCaptureNodesVisited);
+        RecordSparseNode(layoutIndex, transform, context);
+        if (!layoutPages[layoutIndex].Visible)
+            return;
+        UIElementIdentity focusScopeIdentity = context.FocusScopeIdentity;
+        UIElementIdentity virtualListIdentity = context.VirtualListIdentity;
+        UIElementIdentity virtualRowIdentity = context.VirtualRowIdentity;
+        UIVirtualRowLease virtualRowLease = context.VirtualRowLease;
+        ulong virtualProviderIncarnation = context.VirtualProviderIncarnation;
+        UICompositionOwner compositionOwner = context.CompositionOwner;
+
+        if (transform is UIBoundableTransform row && transform.Parent is UIListTransform list &&
+            list.TryGetVirtualRowLease(row, out UIVirtualRowLease rowLease))
+        {
+            virtualListIdentity = list.ElementIdentity;
+            virtualRowIdentity = row.ElementIdentity;
+            virtualRowLease = rowLease;
+            virtualProviderIncarnation = list.VirtualProviderIncarnation;
+        }
+
+        if (transform.SceneNode?.Components is { } nodeComponents)
+        {
+            // Resolve one inherited owner during the existing capture walk.
+            for (int index = 0; index < nodeComponents.Count; index++)
+                if (nodeComponents[index] is UICompositionLayerComponent { IsActiveInHierarchy: true } layer)
+                {
+                    compositionOwner = new UICompositionOwner(transform.ElementIdentity, layer.Kind);
+                    break;
+                }
+            for (int index = 0; index < nodeComponents.Count; index++)
+            {
+                if (nodeComponents[index] is not { IsActiveInHierarchy: true } owner)
+                    continue;
+                if (owner is UIContextMenuComponent { IsOpen: true } &&
+                    transform is UIBoundableTransform { BlocksInputBehind: true })
+                {
+                    focusScopeIdentity = transform.ElementIdentity;
+                    _publicationFocusScopeScratch.Add(new UIFocusScopeRecord(
+                        focusScopeIdentity, layoutIndex,
+                        _sparseSubtreeEnds[layoutIndex], transform.Depth, -1));
+                }
+                if (owner is IUIScrollReceiver receiver)
+                    _publicationScrollScratch.Add(new UIScrollRecord(owner, receiver,
+                        transform.ElementIdentity, layoutIndex,
+                        _sparseSubtreeEnds[layoutIndex], transform.Depth, index));
+            }
+        }
+
+        if (transform is UIBoundableTransform bounds && bounds.ActualSize.X > 0 && bounds.ActualSize.Y > 0 &&
+            transform.SceneNode?.Components is { } components)
+        {
+            for (int index = 0; index < components.Count; index++)
+            {
+                if (components[index] is not UIComponent { IsActiveInHierarchy: true } component)
+                    continue;
+                RenderInfo2D? renderInfo = component switch
+                {
+                    UIInteractableComponent interactable => interactable.RenderInfo2D,
+                    UIRenderableComponent renderable => renderable.RenderInfo2D,
+                    _ => null,
+                };
+                if (renderInfo is null || !renderInfo.IsVisible ||
+                    component is not UIInteractableComponent && !bounds.BlocksInputBehind)
+                {
+                    if (component is UIRenderableComponent hiddenRenderable)
+                        _publicationRenderScratch.Add(hiddenRenderable.CapturePublicationRenderRecord(
+                            in layoutPages[layoutIndex]) with { CompositionOwner = compositionOwner });
+                    continue;
+                }
+
+                if (component is UIRenderableComponent renderableComponent)
+                    _publicationRenderScratch.Add(renderableComponent.CapturePublicationRenderRecord(
+                        in layoutPages[layoutIndex]) with { CompositionOwner = compositionOwner });
+
+                long interactionRevision = component is UIInteractableComponent target
+                    ? target.InteractionRevision : 0;
+                RecordPointerDependencies(component, layoutIndex);
+                Vector2 acceptedSize = layoutPages[layoutIndex].ActualSize;
+                UIPointerGeometry pointerGeometry = CapturePointerGeometry(
+                    component, acceptedSize, layoutPages);
+                _publicationHitScratch.Add(new UIHitRecord(
+                    renderInfo, renderInfo.MembershipId, transform.ElementIdentity,
+                    interactionRevision, canvas.WorldMatrix * transform.InverseWorldMatrix,
+                    acceptedSize, bounds.GetCanvasRegion(canvas),
+                    UIClipRegion.ResolveCrop(bounds, false), layoutIndex,
+                    transform.Parent is UITransform parent &&
+                    _publicationLayoutIndices.TryGetValue(parent.ElementIdentity, out int parentIndex)
+                        ? parentIndex : -1,
+                    _sparseSubtreeEnds[layoutIndex], transform.Depth,
+                    renderInfo.LayerIndex, renderInfo.IndexWithinLayer,
+                    component is UIInteractableComponent, bounds.BlocksInputBehind,
+                    component is UIInteractableComponent focusTarget && focusTarget.IsTabStop,
+                    component is UIInteractableComponent indexedTarget ? indexedTarget.TabIndex : 0,
+                    focusScopeIdentity, virtualListIdentity, virtualRowIdentity,
+                    virtualRowLease, pointerGeometry, virtualProviderIncarnation));
+            }
+        }
+
+        UIPublicationCaptureContext childContext = new(focusScopeIdentity,
+            virtualListIdentity, virtualRowIdentity, virtualRowLease,
+            virtualProviderIncarnation, compositionOwner);
+        for (int index = 0; index < transform.Children.Count; index++)
+            if (transform.Children[index] is UITransform child)
+                CaptureHitRecords(canvas, child, layoutPages, childContext);
+    }
+
+    private UIPointerGeometry CapturePointerGeometry(UIComponent component, Vector2 acceptedSize,
+        UILayoutOutputPageView layoutPages)
+    {
+        if (component is IUIPointerMetadataSource metadataSource)
+            return new UIPointerGeometry(acceptedSize,
+                Metadata: metadataSource.CapturePointerMetadata(acceptedSize));
+
+        if (component is UISplitterHandleComponent splitter &&
+            splitter.SplitTarget is { IsDestroyed: false } splitTarget &&
+            _publicationLayoutIndices.TryGetValue(splitTarget.ElementIdentity, out int splitIndex) &&
+            layoutPages[splitIndex].Visible &&
+            splitter.TryCapturePointerGeometry(in layoutPages[splitIndex],
+                out UISplitterPointerMetrics splitMetrics))
+            return new UIPointerGeometry(acceptedSize, Splitter: splitMetrics);
+
+        if (component is not UIScrollbarComponent scrollbar ||
+            scrollbar.ScrollTarget is not { IsDestroyed: false } scrollTarget ||
+            scrollbar.ThumbTransform is not { IsDestroyed: false } thumb ||
+            !_publicationLayoutIndices.TryGetValue(scrollTarget.ElementIdentity, out int targetIndex) ||
+            !_publicationLayoutIndices.TryGetValue(thumb.ElementIdentity, out int thumbIndex) ||
+            !layoutPages[targetIndex].Visible || !layoutPages[thumbIndex].Visible)
+            return new UIPointerGeometry(acceptedSize);
+
+        ref readonly UILayoutNodeOutput acceptedTarget = ref layoutPages[targetIndex];
+        ref readonly UILayoutNodeOutput acceptedThumb = ref layoutPages[thumbIndex];
+        Vector2 settledOffset = scrollTarget.ScrollOffset;
+        Vector2 settledMaximum = scrollTarget.MaxScrollOffset;
+        UIElementIdentity targetIdentity = scrollTarget.ElementIdentity;
+        if (acceptedTarget.AcceptedScrollOffset != settledOffset ||
+            acceptedTarget.AcceptedMaxScrollOffset != settledMaximum)
+        {
+            var settled = (settledOffset, settledMaximum);
+            if (!_scrollMetricRetry.TryGetValue(targetIdentity, out var last) || last != settled)
+            {
+                _scrollMetricRetry[targetIdentity] = settled;
+                scrollTarget.InvalidateArrange();
+            }
+            return new UIPointerGeometry(acceptedSize);
+        }
+        _scrollMetricRetry.Remove(targetIdentity);
+        Vector2 thumbTranslation = acceptedThumb.LocalTranslation + acceptedThumb.PlacementTranslation;
+        return scrollbar.TryCapturePointerGeometry(acceptedSize, acceptedThumb.ActualSize,
+            thumbTranslation, acceptedTarget.AcceptedScrollOffset,
+            acceptedTarget.AcceptedMaxScrollOffset, out UIScrollbarPointerMetrics metrics)
+            ? new UIPointerGeometry(acceptedSize, metrics)
+            : new UIPointerGeometry(acceptedSize);
+    }
+
+    private void BeginPublicationCollection()
+    {
+        if (_collectingPublication is not null)
+        {
+            _renderPipeline.MeshRenderCommands.DiscardUpdatingCommands();
+            BatchCollector.DiscardCollectedCandidate();
+        }
+        lock (_publicationGate)
+        {
+            UIPublication? next = _candidatePublication ?? _currentPublication;
+            next?.Retain();
+            UIPublication? old = _collectingPublication;
+            _collectingPublication = next;
+            old?.Release();
+        }
+        BatchCollector.BeginPublicationCollection(_collectingPublication?.Generation ?? 0);
+    }
+
+    private void CollectPublishedCanvasDraws()
+    {
+        UIPublication? publication;
+        lock (_publicationGate)
+        {
+            publication = _collectingPublication;
+            publication?.Retain();
+        }
+        if (publication is null)
+            return;
+        try
+        {
+            BatchCollector.CollectPublishedRuns(publication,
+                _renderPipeline.MeshRenderCommands,
+                _collectPublishedUnbatched ??= CollectPublishedUnbatched);
+        }
+        finally { publication.Release(); }
+    }
+
+    private void CollectPublishedUnbatched(UIRenderRecord record)
+    {
+        RenderCommandMesh2D command = record.FrozenCommand ??
+            throw new InvalidOperationException(
+                "A published unbatched UI draw is missing its owner-captured command.");
+        if (!command.Enabled)
+            return;
+        command.OwnerRenderInfo = record.RenderInfo;
+        command.CollectedForRender(Camera2D);
+        _renderPipeline.MeshRenderCommands.AddCPU(command, Camera2D);
+    }
+
+    private bool CanCommitCollectedPublication()
+        => _collectingPublication is { } publication &&
+            BatchCollector.CollectedPublicationGeneration == publication.Generation &&
+            publication.CanvasLifetime == (ulong)Volatile.Read(ref _canvasLifetime);
+
+    private void CommitCollectedPublication()
+    {
+        lock (_publicationGate)
+        {
+            if (_collectingPublication is not { } candidate ||
+                candidate.CanvasLifetime != (ulong)_canvasLifetime)
+                return;
+            UIPublication? oldCurrent = _currentPublication;
+            Volatile.Write(ref _currentPublication, candidate);
+            if (ReferenceEquals(_candidatePublication, candidate))
+            {
+                _candidatePublication = null;
+                candidate.Release();
+            }
+            _collectingPublication = null;
+            oldCurrent?.Release();
+        }
+    }
+
+    private void RecordRenderedPublication(object output, UIPublication publication, ulong receiptId)
+        => RecordRenderedPublication(output, publication, receiptId, null, null);
+
+    private void RecordRenderedPublication(object output, UIPublication publication,
+        ulong receiptId, RenderFrameViewDescriptor? frozenView,
+        BoundingRectangle? frozenRegion)
+    {
+        if (publication.CanvasLifetime != (ulong)Volatile.Read(ref _canvasLifetime))
+            return;
+        if (output is XRViewport viewport &&
+            publication.CanvasBounds.Width > 0 && publication.CanvasBounds.Height > 0)
+        {
+            BoundingRectangle region = frozenRegion ?? viewport.Region;
+            Matrix4x4 canvasToOutput =
+                Matrix4x4.CreateTranslation(-publication.CanvasBounds.MinX,
+                    -publication.CanvasBounds.MinY, 0) *
+                Matrix4x4.CreateScale(region.Width / publication.CanvasBounds.Width,
+                    -region.Height / publication.CanvasBounds.Height, 1) *
+                Matrix4x4.CreateTranslation(region.MinX, region.MinY + region.Height, 0);
+            if (Matrix4x4.Invert(canvasToOutput, out Matrix4x4 outputToCanvas))
+            {
+                ECanvasDrawSpace drawSpace = publication.AuthoringDrawSpace;
+                Matrix4x4 worldToCanvas = Matrix4x4.Identity;
+                Matrix4x4 clipToWorld = Matrix4x4.Identity;
+                float nearClipZ = 0;
+                float farClipZ = 1;
+                if (drawSpace != ECanvasDrawSpace.Screen)
+                {
+                    if (publication.AuthoringOffscreen)
+                    {
+                        if (!Matrix4x4.Invert(publication.OffscreenQuadWorldMatrix,
+                                out Matrix4x4 normalizedWorldToCanvas))
+                            return;
+                        worldToCanvas = normalizedWorldToCanvas *
+                            Matrix4x4.CreateScale(publication.CanvasBounds.Width,
+                                publication.CanvasBounds.Height, 1.0f);
+                    }
+                    else if (!Matrix4x4.Invert(publication.AuthoringCanvasWorldMatrix,
+                                 out worldToCanvas))
+                        return;
+                    if (frozenView is { } view)
+                    {
+                        if (!Matrix4x4.Invert(view.ProjectionMatrix,
+                                out Matrix4x4 inverseProjection) ||
+                            !Matrix4x4.Invert(view.ViewMatrix,
+                                out Matrix4x4 cameraToWorld))
+                            return;
+                        clipToWorld = inverseProjection * cameraToWorld;
+                        nearClipZ = view.ReversedDepth
+                            ? 1.0f : view.DepthZeroToOne ? 0.0f : -1.0f;
+                        farClipZ = view.ReversedDepth
+                            ? view.DepthZeroToOne ? 0.0f : -1.0f : 1.0f;
+                    }
+                    else
+                    {
+                        XRCamera? camera = viewport.ActiveCamera;
+                        if (camera?.Transform is null)
+                            return;
+                        clipToWorld = camera.InverseProjectionMatrix * camera.Transform.RenderMatrix;
+                        nearClipZ = RenderClipSpacePolicy.DepthBufferToClipZ(
+                            camera.GetNearDepthValue(), RuntimeEngine.Rendering.EffectiveClipDepthRange);
+                        farClipZ = RenderClipSpacePolicy.DepthBufferToClipZ(
+                            camera.GetFarDepthValue(), RuntimeEngine.Rendering.EffectiveClipDepthRange);
+                    }
+                }
+                lock (_publicationGate)
+                {
+                    if (_outputMappingCache.TryGetValue(output, out var cache) &&
+                        ReferenceEquals(cache.Source, publication) &&
+                        cache.CanvasToOutput == canvasToOutput &&
+                        cache.WorldToCanvas == worldToCanvas &&
+                        cache.ClipToWorld == clipToWorld &&
+                        cache.DrawSpace == drawSpace &&
+                        cache.NearClipZ == nearClipZ && cache.FarClipZ == farClipZ)
+                        publication = cache.Mapped;
+                    else
+                    {
+                        UIPublication source = publication;
+                        publication = source.WithOutputMapping(canvasToOutput, outputToCanvas,
+                            drawSpace,
+                            new BoundingRectangleF(new Vector2(region.MinX, region.MinY),
+                                new Vector2(region.Width, region.Height)),
+                            worldToCanvas, clipToWorld, nearClipZ, farClipZ);
+                        source.Retain();
+                        bool hadOldMapping = _outputMappingCache.TryGetValue(output, out var oldMapping);
+                        _outputMappingCache[output] = (source, canvasToOutput,
+                            worldToCanvas, clipToWorld, drawSpace, nearClipZ, farClipZ, publication);
+                        if (hadOldMapping)
+                        {
+                            oldMapping.Source.Release();
+                            oldMapping.Mapped.Release();
+                        }
+                    }
+                    SetRenderedPublicationNoLock(output, publication, receiptId);
+                }
+                return;
+            }
+        }
+        lock (_publicationGate)
+            SetRenderedPublicationNoLock(output, publication, receiptId);
+    }
+
+    private void SetRenderedPublicationNoLock(object output, UIPublication publication, ulong receiptId)
+    {
+        if (publication.CanvasLifetime != (ulong)_canvasLifetime)
+            return;
+        publication.Retain();
+        _renderedPublications.TryGetValue(output, out var old);
+        _renderedPublications[output] = (RuntimeEngine.Rendering.State.RenderFrameId,
+            publication, receiptId);
+        old.Publication?.Release();
+    }
+
+    private void ClearPublications()
+    {
+        List<UIPublication> detached = [];
+        _sparseBasis = null;
+        _scrollMetricRetry.Clear();
+        _scrollMetricRetired.Clear();
+        lock (_publicationGate)
+        {
+            Interlocked.Increment(ref _canvasLifetime);
+            if (_candidatePublication is { } candidate)
+                detached.Add(candidate);
+            _candidatePublication = null;
+            if (_collectingPublication is { } collecting)
+                detached.Add(collecting);
+            _collectingPublication = null;
+            if (_currentPublication is { } current)
+                detached.Add(current);
+            Volatile.Write(ref _currentPublication, null);
+            foreach (var entry in _presentedPublications)
+                detached.Add(entry.Value);
+            _presentedPublications.Clear();
+            foreach (var entry in _renderedPublications)
+                detached.Add(entry.Value.Publication);
+            _renderedPublications.Clear();
+            foreach (var entry in _outputMappingCache)
+            {
+                detached.Add(entry.Value.Source);
+                detached.Add(entry.Value.Mapped);
+            }
+            _outputMappingCache.Clear();
+        }
+        ClearOffscreenPublicationHolders();
+        for (int index = 0; index < detached.Count; index++)
+            detached[index].Release();
+    }
+}

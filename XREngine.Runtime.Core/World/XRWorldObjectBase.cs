@@ -5,6 +5,7 @@ using System.Reflection;
 using MemoryPack;
 using XREngine.Components;
 using XREngine.Data.Core;
+using XREngine.Scene;
 using YamlDotNet.Serialization;
 
 namespace XREngine;
@@ -61,7 +62,7 @@ public static class RuntimeWorldObjectServices
 }
 
 [Serializable]
-public abstract class XRWorldObjectBase : XRObjectBase
+public abstract partial class XRWorldObjectBase : XRObjectBase
 {
     private static readonly ConcurrentDictionary<Type, ReplicationInfo?> ReplicatedTypes = [];
 
@@ -101,12 +102,82 @@ public abstract class XRWorldObjectBase : XRObjectBase
     public IRuntimeWorldContext? World
     {
         get => _world;
-        internal protected set
+        internal protected set => SetWorldValue(value);
+    }
+
+    /// <summary>Rechecks an exact structural owner after callbacks before a world write.</summary>
+    private protected void SetWorldValue(IRuntimeWorldContext? value, Action? validate = null)
+    {
+        if (_ownedWorldRemovalPermit is { } permit)
+        {
+            SetOwnedWorldValue(value, permit);
+            return;
+        }
+        using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this);
+        validate?.Invoke();
+        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(this, value);
+        using var mutation = PhysicsChainWorld.BeginWorldObjectMutation(this, _world, value);
+        validate?.Invoke();
+        if (ReferenceEquals(_world, value)) return;
+        bool notify = !ArePropertyNotificationsSuppressed;
+        if (notify && !OnPropertyChanging(nameof(World), _world, value)) return;
+        IRuntimeWorldContext? previous;
+        lock (SceneRootCollection.MutationGate)
+        {
+            validate?.Invoke();
+            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireDetachedWorld(this, value);
+            previous = _world;
+            ValidateWorldValueWrite(value);
+            SetField(ref _world, value, publishNotifications: false, propertyName: nameof(World));
+        }
+        if (notify) OnPropertyChanged(nameof(World), previous, value);
+    }
+
+    private XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit? _ownedWorldRemovalPermit;
+
+    internal XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit? ActiveWorldRemovalPermit
+        => _ownedWorldRemovalPermit is { Active: true } permit ? permit : null;
+
+    internal void SetOwnedWorldRemovalPermit(XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit permit)
+    {
+        if (_ownedWorldRemovalPermit is not null || !ReferenceEquals(permit.Target, this))
+            throw new InvalidOperationException("World removal already has an exact target.");
+        _ownedWorldRemovalPermit = permit;
+    }
+
+    internal void ClearOwnedWorldRemovalPermit(XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit permit)
+    {
+        if (ReferenceEquals(_ownedWorldRemovalPermit, permit))
+            _ownedWorldRemovalPermit = null;
+    }
+
+    private void SetOwnedWorldValue(IRuntimeWorldContext? value,
+        XREngine.Scene.Prefabs.OwnedHierarchyWorldRemovalPermit permit)
+    {
+        permit.Enter(this, value);
+        using (permit)
         {
             using var mutation = PhysicsChainWorld.BeginWorldObjectMutation(this, _world, value);
-            SetField(ref _world, value);
+            if (ArePropertyNotificationsSuppressed)
+                throw new InvalidOperationException("Owned world removal requires lifecycle notifications.");
+            if (!OnPropertyChanging(nameof(World), _world, value))
+                throw new InvalidOperationException("The owned world removal was vetoed.");
+            IRuntimeWorldContext? previous;
+            lock (SceneRootCollection.MutationGate)
+            {
+                permit.RequireCommit(this, value);
+                previous = _world;
+                ValidateWorldValueWrite(value);
+                SetField(ref _world, value, publishNotifications: false, propertyName: nameof(World));
+                permit.Commit();
+            }
+            OnPropertyChanged(nameof(World), previous, value);
+            permit.Complete();
         }
     }
+
+    /// <summary>Checks an opt-in owner immediately before a world field write.</summary>
+    protected virtual void ValidateWorldValueWrite(IRuntimeWorldContext? value) { }
 
     public TWorld? WorldAs<TWorld>() where TWorld : class
     {
@@ -168,6 +239,7 @@ public abstract class XRWorldObjectBase : XRObjectBase
         ReplicationInfo? replication = World is not null ? GetReplicationInfo() : null;
 
         base.OnPropertyChanged(propName, prev, field);
+        ValidateCreationNotification();
         switch (propName)
         {
             case nameof(World):
@@ -194,6 +266,7 @@ public abstract class XRWorldObjectBase : XRObjectBase
     protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
     {
         bool changed = base.OnPropertyChanging(propName, field, @new);
+        ValidateCreationNotification();
         if (changed && propName == nameof(World) && World is not null)
         {
             foreach ((ETickGroup group, int order, WorldTick tick) in _tickCache)
@@ -202,6 +275,9 @@ public abstract class XRWorldObjectBase : XRObjectBase
 
         return changed;
     }
+
+    /// <summary>Checks an opt-in creation owner after external observers run.</summary>
+    protected virtual void ValidateCreationNotification() { }
 
     protected override void OnDestroying()
     {

@@ -273,7 +273,7 @@ namespace XREngine
                     {
                         try
                         {
-                            SnapshotDiagnostics.Log($"Restoring existing scene key='{kvp.Key}' payloadBytes={kvp.Value.Length} currentRoots={scene.RootNodes?.Count ?? 0}");
+                            SnapshotDiagnostics.Log($"Restoring existing scene key='{kvp.Key}' payloadBytes={kvp.Value.Length} currentRoots={scene.SceneRoots?.Count ?? 0}");
                             if (!RestoreScene(scene, kvp.Value, runtimeInstance))
                                 complete = false;
                         }
@@ -300,7 +300,7 @@ namespace XREngine
                     SourceWorld.Scenes.Add(recreatedScene);
                     runtimeInstance?.LoadScene(recreatedScene);
                     SnapshotRestoredContent.Replace(recreatedScene, [], createdRenderAssets);
-                    SnapshotDiagnostics.Log($"Recreated scene '{recreatedScene.Name ?? "<unnamed>"}' roots={recreatedScene.RootNodes?.Count ?? 0}");
+                    SnapshotDiagnostics.Log($"Recreated scene '{recreatedScene.Name ?? "<unnamed>"}' roots={recreatedScene.SceneRoots?.Count ?? 0}");
                 }
 
                 // Remove scenes introduced after the snapshot. An invalid snapshot may be
@@ -313,7 +313,7 @@ namespace XREngine
 
                     foreach (var removedScene in scenesToRemove)
                     {
-                        SnapshotDiagnostics.Log($"Removing scene introduced after snapshot: '{removedScene.Name ?? "<unnamed>"}' roots={removedScene.RootNodes?.Count ?? 0}");
+                        SnapshotDiagnostics.Log($"Removing scene introduced after snapshot: '{removedScene.Name ?? "<unnamed>"}' roots={removedScene.SceneRoots?.Count ?? 0}");
                         runtimeInstance?.UnloadScene(removedScene);
                         SourceWorld.Scenes.Remove(removedScene);
                     }
@@ -333,10 +333,10 @@ namespace XREngine
 
                     foreach (var scene in SourceWorld.Scenes)
                     {
-                        if (scene.RootNodes is null)
+                        if (scene.SceneRoots is null)
                             continue;
 
-                        foreach (var root in scene.RootNodes)
+                        foreach (var root in scene.SceneRoots)
                         {
                             if (root is null)
                                 continue;
@@ -393,10 +393,10 @@ namespace XREngine
             var sceneRoots = new HashSet<SceneNode>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
             foreach (XRScene scene in world.Scenes)
             {
-                if (scene.RootNodes is null)
+                if (scene.SceneRoots is null)
                     continue;
 
-                foreach (SceneNode? root in scene.RootNodes)
+                foreach (SceneNode? root in scene.SceneRoots)
                     if (root is not null)
                         sceneRoots.Add(root);
             }
@@ -442,15 +442,15 @@ namespace XREngine
             }
 
             runtimeInstance?.UnloadScene(scene);
-            SceneNode[] replacedRoots = scene.RootNodes is { } currentRoots ? [.. currentRoots] : [];
+            SceneNode[] replacedRoots = scene.SceneRoots is { } currentRoots ? [.. currentRoots] : [];
 
             scene.Name = restoredScene.Name;
             scene.IsVisible = restoredScene.IsVisible;
-            scene.RootNodes = restoredScene.RootNodes ?? new List<SceneNode>();
+            scene.TakeSceneRootsFrom(restoredScene);
 
             runtimeInstance?.LoadScene(scene);
             SnapshotRestoredContent.Replace(scene, replacedRoots, createdRenderAssets);
-            SnapshotDiagnostics.Log($"RestoreScene end: target='{scene.Name ?? "<unnamed>"}' visible={scene.IsVisible} roots={scene.RootNodes.Count}");
+            SnapshotDiagnostics.Log($"RestoreScene end: target='{scene.Name ?? "<unnamed>"}' visible={scene.IsVisible} roots={scene.SceneRoots.Count}");
             return true;
         }
 
@@ -471,14 +471,14 @@ namespace XREngine
             {
                 XRScene scene = world.Scenes[sceneIndex];
                 Debug.Out(
-                    $"[SnapshotDiag] Scene[{sceneIndex}] '{scene.Name ?? "<unnamed>"}' Visible={scene.IsVisible} Roots={scene.RootNodes?.Count ?? 0}");
+                    $"[SnapshotDiag] Scene[{sceneIndex}] '{scene.Name ?? "<unnamed>"}' Visible={scene.IsVisible} Roots={scene.SceneRoots?.Count ?? 0}");
 
-                if (scene.RootNodes is null || scene.RootNodes.Count == 0)
+                if (scene.SceneRoots is null || scene.SceneRoots.Count == 0)
                     continue;
 
-                for (int rootIndex = 0; rootIndex < scene.RootNodes.Count; rootIndex++)
+                for (int rootIndex = 0; rootIndex < scene.SceneRoots.Count; rootIndex++)
                 {
-                    SceneNode? root = scene.RootNodes[rootIndex];
+                    SceneNode? root = scene.SceneRoots[rootIndex];
                     if (root is null)
                     {
                         Debug.Out($"[SnapshotDiag]   Root[{rootIndex}] <null>");

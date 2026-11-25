@@ -578,8 +578,8 @@ public static partial class EditorUnitTests
                                         if (createdCrowd.Count > 0)
                                         {
                                             crowd = createdCrowd;
-                                            importedScene.RootNodes.Remove(importedRoot);
-                                            importedScene.RootNodes.AddRange(createdSlotRoots);
+                                            importedScene.SceneRoots.Remove(importedRoot);
+                                            importedScene.SceneRoots.AddRange(createdSlotRoots);
                                             crowdSuspendedModels = new(crowd.Count);
                                             foreach (CrowdAvatar avatar in crowd)
                                                 crowdSuspendedModels.Add(SuspendSerializedPrefabModelPublication(avatar.Root));
@@ -600,7 +600,7 @@ public static partial class EditorUnitTests
                                         {
                                             SceneNode instance = SceneNodePrefabUtility.CloneHierarchy(importedRoot);
                                             instance.Name = $"{importedRoot.Name} Instance {instanceIndex + 1}";
-                                            importedScene.RootNodes.Add(instance);
+                                            importedScene.SceneRoots.Add(instance);
                                         }
                                     }
 
@@ -608,7 +608,7 @@ public static partial class EditorUnitTests
                                     if (importedScene.IsVisible && model.Kind is UnitTestModelImportKind.Static)
                                     {
                                         lock (importedStaticRootsLock)
-                                            importedStaticRoots.AddRange(importedScene.RootNodes);
+                                            importedStaticRoots.AddRange(importedScene.SceneRoots);
                                     }
                                     if (model.Kind is UnitTestModelImportKind.Animated && crowd is not null)
                                     {

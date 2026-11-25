@@ -289,8 +289,9 @@ namespace XREngine.Rendering.UI
         // Properties — Video Texture & Size
         // ═══════════════════════════════════════════════════════════════
 
-        /// <summary>The GPU texture that receives decoded video frames.</summary>
-        public XRTexture2D? VideoTexture => Material?.Textures[0] as XRTexture2D;
+        /// <summary>Gets the latest video texture. The caller must not keep it across frames.</summary>
+        public XRTexture2D? VideoTexture => Volatile.Read(ref _publishedVideoSurface)?.Texture ??
+            (Material?.Textures[0] as XRTexture2D);
 
         private IVector2? _widthHeight;
 
@@ -306,11 +307,8 @@ namespace XREngine.Rendering.UI
                 if (_widthHeight == value)
                     return;
 
+                // Decoder metadata is written by the render-frame producer.
                 _widthHeight = value;
-                if (value is null)
-                    return;
-
-                VideoTexture?.Resize((uint)value.Value.X, (uint)value.Value.Y);
             }
         }
 
@@ -510,7 +508,18 @@ namespace XREngine.Rendering.UI
         // Constructor & Material Setup
         // ═══════════════════════════════════════════════════════════════
 
-        public UIVideoComponent() : base(GetVideoMaterial(), true) { }
+        public UIVideoComponent() : base(GetVideoMaterial(), true)
+        {
+            _invalidateVideoVisual = InvalidateVideoVisual;
+            DisableBatching = true;
+            if (VideoTexture is { } texture)
+            {
+                VideoSurface placeholder = new(texture);
+                placeholder.Publish(++_nextVideoSurfaceGeneration);
+                _videoSurfaces.Add(placeholder);
+                Volatile.Write(ref _publishedVideoSurface, placeholder);
+            }
+        }
 
         /// <summary>
         /// Creates the default video material: an unlit textured quad with a
@@ -519,17 +528,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         private static XRMaterial GetVideoMaterial()
         {
-            var texture = new XRTexture2D(1u, 1u,
-                EPixelInternalFormat.Rgb8,
-                EPixelFormat.Rgb,
-                EPixelType.UnsignedByte)
-            {
-                Resizable = true,
-                MagFilter = ETexMagFilter.Linear,
-                MinFilter = ETexMinFilter.Linear,
-                UWrap = ETexWrapMode.ClampToEdge,
-                VWrap = ETexWrapMode.ClampToEdge,
-            };
+            var texture = CreateVideoTexture(1u, 1u, initializeBlack: true);
             return new XRMaterial([texture], XRShader.EngineShader(Path.Combine("Common", "UnlitTexturedForward.fs"), EShaderType.Fragment));
         }
 
@@ -540,32 +539,25 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            lock (_videoProducerGate)
+                _videoStreamStopPending = false;
+            RuntimeEngine.Time.Timer.RenderFrame += ProduceVideoFrame;
             StartStreamingPipeline();
         }
 
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            StopStreamingPipeline();
-        }
-
-        /// <summary>The video drains its frames from the material's uniform callback.</summary>
-        protected override bool UsesMaterialSettingUniformsCallback => true;
-
-        /// <summary>
-        /// Hooked into the material's uniform-setting phase. Runs on the
-        /// render thread, which is the only safe place to do GPU texture uploads.
-        /// </summary>
-        protected override void OnMaterialSettingUniforms(XRMaterialBase material, XRRenderProgram program)
-        {
-            base.OnMaterialSettingUniforms(material, program);
-
-            // Frames from another owner, for example a cutscene video track, replace the stream while they are active.
-            if (UploadExternalFrame())
-                return;
-
-            if (_streamingSession is not null)
-                DrainStreamingFramesOnMainThread(_streamingSession);
+            RuntimeEngine.Time.Timer.RenderFrame -= ProduceVideoFrame;
+            bool stopNow;
+            lock (_videoProducerGate)
+            {
+                if (_videoProducerActive != 0)
+                    _videoStreamStopPending = true;
+                stopNow = _videoProducerActive == 0;
+            }
+            if (stopNow)
+                StopStreamingPipeline();
         }
 
         // ═══════════════════════════════════════════════════════════════

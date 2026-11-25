@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Runtime.ExceptionServices;
 using Silk.NET.Core.Contexts;
 using Silk.NET.Input;
 using Silk.NET.Maths;
@@ -8,6 +9,7 @@ using Silk.NET.Windowing;
 using XREngine.Data.Vectors;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
+using XREngine.Rendering.UI.State;
 
 namespace XREngine.Runtime.Platform.Desktop.Windowing;
 
@@ -15,7 +17,8 @@ namespace XREngine.Runtime.Platform.Desktop.Windowing;
 /// Owns one Silk desktop window and its native input subscriptions. Callers may read published
 /// snapshots from other threads; native operations stay on the thread that created this object.
 /// </summary>
-internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
+internal sealed partial class DesktopSilkWindowBackend : IRuntimeWindowBackend, IRuntimeImeCandidateWindow,
+    IRuntimeDesktopDragPointerSource
 {
     private static readonly ConcurrentBag<DesktopSilkWindowBackend> AbandonedResources = new();
     private readonly IWindow _window;
@@ -45,8 +48,13 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     private IRuntimeWindowGlContext? _glContext;
     private IRuntimeWindowVulkanSurface? _vulkanSurface;
     private IDesktopInteractiveResizeHook? _resizeHook;
+    private DesktopWin32ImeHook? _imeHook;
+    internal sealed record ImeFocusToken(UIElementIdentity Identity, long Revision);
+    private ImeFocusToken _imeFocusToken = new(default, 0);
     private EInteractiveWindowResizeStrategy _resizeStrategy;
     private bool _interactiveResize;
+    private bool _renderDispatchActive;
+    private GlFlushDelegate? _glFlush;
 
     public DesktopSilkWindowBackend(IWindow window, RuntimeWindowCreateOptions options)
     {
@@ -92,6 +100,9 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate void GlClearDelegate(uint mask);
 
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
+    private delegate void GlFlushDelegate();
+
     private const uint GlColorBufferBit = 0x00004000u;
 
     public void Initialize(IRuntimeWindowEventSink sink)
@@ -124,6 +135,8 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
             PublishSurface();
             RefreshMonitors();
             InstallResizeHook();
+            InstallImeHook();
+            InstallDragPointerHook();
             Vector2D<int> requestedPosition = new(_options.Position.X, _options.Position.Y);
             if (_window.Position != requestedPosition)
                 _window.Position = requestedPosition;
@@ -139,6 +152,9 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
         catch
         {
             DesktopSilkWindowBackendFactory.UnregisterAuxiliaryWindow(this);
+            _imeHook?.Dispose();
+            _imeHook = null;
+            DisposeDragPointerHook();
             _resizeHook?.Dispose();
             _resizeHook = null;
             UnlinkWindow();
@@ -175,6 +191,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     {
         AssertOwnerThread();
         _window.DoEvents();
+        _dragPointerHook?.PollHover();
         SyncNativeFocusState();
         PublishSurface();
         PublishEvents(false);
@@ -188,8 +205,78 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     public void DispatchRender()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _glContext?.AssertOwnerThread();
-        _window.DoRender();
+        if (_glContext is not { } context)
+        {
+            _window.DoRender();
+            return;
+        }
+
+        context.AssertOwnerThread();
+        if (_renderDispatchActive)
+            throw new InvalidOperationException("A native OpenGL render dispatch is already active.");
+
+        // Silk swaps inside DoRender by default. Hold that swap until every
+        // required output has supplied its completion proof for this dispatch.
+        bool automaticSwap = _window.ShouldSwapAutomatically;
+        IRuntimeWindowEventSink? sink = _sink;
+        ulong token = 0UL;
+        bool began = false;
+        bool presented = false;
+        Exception? failure = null;
+        _renderDispatchActive = true;
+        try
+        {
+            _window.ShouldSwapAutomatically = false;
+            token = sink?.BeginOpenGlRenderDispatch() ?? 0UL;
+            began = true;
+            _window.DoRender();
+            if (automaticSwap && !_disposed && ReferenceEquals(sink, _sink)
+                && (sink?.CanPresentOpenGlRenderDispatch(token) ?? true)
+                && !_disposed && ReferenceEquals(sink, _sink))
+            {
+                FlushRenderDispatch(context);
+                context.SwapBuffers();
+                presented = true;
+            }
+        }
+        catch (Exception ex) { failure = ex; }
+        finally
+        {
+            if (!_disposed)
+            {
+                try { _window.ShouldSwapAutomatically = automaticSwap; }
+                catch (Exception ex) { failure ??= ex; }
+            }
+            try
+            {
+                if (began)
+                    sink?.CompleteOpenGlRenderDispatch(token, presented);
+            }
+            catch (Exception ex) { failure ??= ex; }
+            // Completion can insert retirement fences for partial native work.
+            // Submit them after cleanup when the front buffer stays unchanged.
+            if (!presented && !_disposed)
+            {
+                try { FlushRenderDispatch(context); }
+                catch (Exception ex) { failure ??= ex; }
+            }
+            _renderDispatchActive = false;
+        }
+        if (failure is not null)
+            ExceptionDispatchInfo.Capture(failure).Throw();
+    }
+
+    private void FlushRenderDispatch(IRuntimeWindowGlContext context)
+    {
+        context.AssertOwnerThread();
+        if (_glFlush is null)
+        {
+            nint address = context.GetProcAddress("glFlush");
+            if (address == 0)
+                throw new InvalidOperationException("The current OpenGL context does not expose glFlush.");
+            _glFlush = Marshal.GetDelegateForFunctionPointer<GlFlushDelegate>(address);
+        }
+        _glFlush();
     }
 
     public void RequestSize(IVector2 size)
@@ -284,6 +371,7 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
             _window.IsClosing = false;
             _closeRequested = false;
             PublishEvents(false);
+            RestoreDesktopDragPointer();
             return true;
         }
         catch
@@ -298,19 +386,25 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
         if (strategy == _resizeStrategy)
             return;
         EInteractiveWindowResizeStrategy previous = _resizeStrategy;
+        _imeHook?.Dispose();
+        _imeHook = null;
         _resizeHook?.Dispose();
         _resizeHook = null;
         try
         {
             _resizeStrategy = strategy;
             InstallResizeHook();
+            InstallImeHook();
         }
         catch
         {
+            _imeHook?.Dispose();
+            _imeHook = null;
             _resizeHook?.Dispose();
             _resizeHook = null;
             _resizeStrategy = previous;
             InstallResizeHook();
+            InstallImeHook();
             throw;
         }
     }
@@ -322,6 +416,30 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
         if (_input is not null)
             _resizeHook?.OnInputCreated(_input);
     }
+
+    private void InstallImeHook()
+    {
+        if (OperatingSystem.IsWindows() && _operatingSystemWindowHandle != 0)
+            _imeHook = new DesktopWin32ImeHook(this);
+    }
+
+    internal void RecordImeEvent(WindowImeEventKind kind, string text = "", int caretOffset = 0)
+    {
+        ImeFocusToken token = Volatile.Read(ref _imeFocusToken);
+        _inputAccumulator.RecordImeEvent(kind, text, caretOffset, token.Identity, token.Revision);
+    }
+
+    internal ImeFocusToken CaptureImeFocusToken() => Volatile.Read(ref _imeFocusToken);
+
+    internal void RecordImeEvent(ImeFocusToken token, WindowImeEventKind kind, string text = "", int caretOffset = 0)
+        => _inputAccumulator.RecordImeEvent(kind, text, caretOffset, token.Identity, token.Revision);
+
+    public void SetImeFocusTarget(UIElementIdentity identity, long focusEpoch)
+        => Volatile.Write(ref _imeFocusToken, new ImeFocusToken(identity, focusEpoch));
+
+    public bool IsImeAvailable => _imeHook is not null;
+    public void SetImeCandidatePosition(System.Numerics.Vector2 clientPosition)
+        => _imeHook?.SetCandidatePosition(clientPosition);
 
     internal void BeginNativeResize()
     {
@@ -355,6 +473,9 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
     {
         AssertOwnerThread();
         DesktopSilkWindowBackendFactory.UnregisterAuxiliaryWindow(this);
+        _imeHook?.Dispose();
+        _imeHook = null;
+        DisposeDragPointerHook();
         _resizeHook?.Dispose();
         _resizeHook = null;
         UnlinkWindow();
@@ -371,6 +492,9 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
             throw new InvalidOperationException("The native window cannot be destroyed from its close callback; retire renderer resources first and dispose after the callback returns.");
         _disposed = true;
         DesktopSilkWindowBackendFactory.UnregisterAuxiliaryWindow(this);
+        _imeHook?.Dispose();
+        _imeHook = null;
+        DisposeDragPointerHook();
         _resizeHook?.Dispose();
         _resizeHook = null;
         UnlinkWindow();
@@ -428,6 +552,8 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
             // Cancel Silk's immediate destruction while the callback is still on its stack.
             _window.IsClosing = false;
             _closeRequested = approved;
+            if (approved)
+                InvalidateDesktopDragPointer(Stopwatch.GetTimestamp());
             PublishEvents(approved);
             _closeCallbackDepth--;
         }
@@ -500,7 +626,8 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
 
     private void OnKeyChar(IKeyboard _, char value)
     {
-        _inputAccumulator.RecordTextInput(value);
+        if (_imeHook?.ConsumeResultCharacter(value) != true)
+            _inputAccumulator.RecordTextInput(value);
         _uiInputAccumulator.RecordTextInput(value);
     }
 
@@ -562,7 +689,12 @@ internal sealed class DesktopSilkWindowBackend : IRuntimeWindowBackend
             _window.WindowState == WindowState.Minimized,
             _interactiveResize,
             Stopwatch.GetTimestamp());
-        lock (_snapshotSync) _surface = snapshot;
+        lock (_snapshotSync)
+        {
+            _surface = snapshot;
+            _dragPointerState?.RefreshGeometry(snapshot,
+                new System.Numerics.Vector2(_clientScreenPosition.X, _clientScreenPosition.Y));
+        }
     }
 
     private void PublishClientScreenPosition()

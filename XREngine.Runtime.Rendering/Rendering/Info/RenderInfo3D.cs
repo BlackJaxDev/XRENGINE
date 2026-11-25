@@ -9,6 +9,7 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.UI;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Info
@@ -17,6 +18,34 @@ namespace XREngine.Rendering.Info
     {
         private IRuntimeRenderInfo3DRegistrationTarget? _registeredWorldInstance;
         private bool _reconcilingWorldRegistration;
+        private bool _collectionSuppressed;
+        private long _worldRegistrationIncarnation;
+
+        internal long WorldRegistrationIncarnation => Volatile.Read(ref _worldRegistrationIncarnation);
+
+        internal bool IsRegisteredInWorld(IRuntimeWorldContext expectedWorld)
+            => _registeredWorldInstance is RuntimeWorldRenderer renderer &&
+                ReferenceEquals(renderer.WorldContext, expectedWorld);
+
+        /// <summary>Gets the immutable command source of a scene proxy, if present.</summary>
+        [YamlIgnore]
+        internal IFrozenWorldCommandSource? FrozenWorldCommandSource { get; private set; }
+
+        /// <summary>Registers a packet source without adding a drawable scene item.</summary>
+        [YamlIgnore]
+        internal bool FrozenWorldPacketSourceOnly { get; private set; }
+
+        /// <summary>Sets the fixed packet source before this item joins a world.</summary>
+        internal void ConfigureFrozenWorldPacketSource(IFrozenWorldCommandSource source,
+            bool sourceOnly = false)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+            if (FrozenWorldCommandSource is not null || _registeredWorldInstance is not null ||
+                WorldInstance is not null || sourceOnly && source is not IFrozenWorldPacketSource)
+                throw new InvalidOperationException("The world packet source must be fixed before registration.");
+            FrozenWorldCommandSource = source;
+            FrozenWorldPacketSourceOnly = sourceOnly;
+        }
 
         public override ITreeNode? TreeNode => OctreeNode;
 
@@ -310,7 +339,7 @@ namespace XREngine.Rendering.Info
             bool collectMirrors) => 
             (!passes.IsShadowPass || CastsShadows) && 
             (collectMirrors || Owner is not MirrorCaptureComponent) &&
-            (camera is null || camera.RendersLayer(_layer)) &&
+            ((camera is null || camera.RendersLayer(_layer)) || FrozenWorldCommandSource is not null) &&
             Intersects(cullingVolume, containsOnly);
 
         public bool Intersects(IVolume? cullingVolume, bool containsOnly)
@@ -324,6 +353,37 @@ namespace XREngine.Rendering.Info
 
             var containment = ClassifyWorldCullingVolume(cullingVolume, worldCullingVolume.Value);
             return containsOnly ? containment == EContainment.Contains : containment != EContainment.Disjoint;
+        }
+
+        /// <summary>Captures the resolved world bound for an owner-built render packet.</summary>
+        internal Box? CaptureWorldCullingVolume() => ((IOctreeItem)this).WorldCullingVolume;
+
+        /// <summary>Collects a frozen proxy only while its render info is active.</summary>
+        internal ERenderInfoCollectResult TryCollectFrozenWorldCommands(
+            RenderCommandCollection passes, IRuntimeCullingCamera? camera,
+            IVolume? volume, bool containsOnly, UIWorldCollectPacketSet? packetSet)
+        {
+            if (IsDisposalRequested)
+                return ERenderInfoCollectResult.Disposed;
+            return FrozenWorldCommandSource?.CollectFrozenCommands(
+                passes, camera, volume, containsOnly, packetSet) ??
+                ERenderInfoCollectResult.RejectedForEveryCamera;
+        }
+
+        /// <summary>Tests one owner-captured child bound against the active collection volume.</summary>
+        internal static bool FrozenWorldVolumeIntersects(IVolume? volume, in Box bounds, bool containsOnly)
+        {
+            EContainment containment = ClassifyWorldCullingVolume(volume, bounds);
+            return containsOnly ? containment == EContainment.Contains : containment != EContainment.Disjoint;
+        }
+
+        /// <summary>Stops scene collection without changing authored visibility.</summary>
+        internal void SetCollectionSuppressed(bool suppressed)
+        {
+            if (_collectionSuppressed == suppressed)
+                return;
+            _collectionSuppressed = suppressed;
+            ReconcileWorldRegistration(disposing: false);
         }
 
         private static EContainment ClassifyWorldCullingVolume(IVolume? cullingVolume, in Box worldCullingVolume)
@@ -394,7 +454,8 @@ namespace XREngine.Rendering.Info
                 for (int attempt = 0; attempt < 16; attempt++)
                 {
                     IRuntimeRenderInfo3DRegistrationTarget? desired =
-                        !disposing && !IsDisposalRequested && IsVisible ? WorldInstance : null;
+                        !disposing && !_collectionSuppressed && !IsDisposalRequested && IsVisible
+                            ? WorldInstance : null;
                     IRuntimeRenderInfo3DRegistrationTarget? registered = _registeredWorldInstance;
                     if (ReferenceEquals(registered, desired))
                         return;
@@ -402,6 +463,7 @@ namespace XREngine.Rendering.Info
                     {
                         registered.RemoveRenderable3D(this);
                         _registeredWorldInstance = null;
+                        Interlocked.Increment(ref _worldRegistrationIncarnation);
                         continue;
                     }
                     if (desired is not null)
@@ -409,6 +471,7 @@ namespace XREngine.Rendering.Info
                         // An add callback may publish and then throw. Retain the
                         // attempted target so terminal disposal can retry removal.
                         _registeredWorldInstance = desired;
+                        Interlocked.Increment(ref _worldRegistrationIncarnation);
                         desired.AddRenderable3D(this);
                     }
                 }

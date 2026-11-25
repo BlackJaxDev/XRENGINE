@@ -121,19 +121,19 @@ SceneRoots:
           XRScene? scene = manager.Load<XRScene>(scenePath);
 
           scene.ShouldNotBeNull();
-          scene.RootNodes.Count.ShouldBe(2);
-          scene.RootNodes[0].Name.ShouldBe("Canvas Root");
-          scene.RootNodes[1].Name.ShouldBe("Parent Root");
-          scene.RootNodes[1].Layer.ShouldBe(7);
+          scene.SceneRoots.Count.ShouldBe(2);
+          scene.SceneRoots[0].Name.ShouldBe("Canvas Root");
+          scene.SceneRoots[1].Name.ShouldBe("Parent Root");
+          scene.SceneRoots[1].Layer.ShouldBe(7);
 
-          Transform canvasTransform = scene.RootNodes[0].Transform.ShouldBeOfType<Transform>();
+          Transform canvasTransform = scene.SceneRoots[0].Transform.ShouldBeOfType<Transform>();
           AssertVectorClose(canvasTransform.Translation, new Vector3(-2.0f, 0.5f, 9.0f));
 
-          SceneNode child = scene.RootNodes[1].FirstChild.ShouldNotBeNull();
+          SceneNode child = scene.SceneRoots[1].FirstChild.ShouldNotBeNull();
           child.Name.ShouldBe("Child Node");
           child.IsActiveSelf.ShouldBeFalse();
 
-          Transform parentTransform = scene.RootNodes[1].Transform.ShouldBeOfType<Transform>();
+          Transform parentTransform = scene.SceneRoots[1].Transform.ShouldBeOfType<Transform>();
           AssertVectorClose(parentTransform.Translation, new Vector3(1.0f, 2.0f, -3.0f));
           AssertVectorClose(parentTransform.Scale, new Vector3(1.0f, 2.0f, 3.0f));
           AssertQuaternionClose(parentTransform.Rotation, new Quaternion(0.0f, -0.70710677f, 0.0f, 0.70710677f));
@@ -271,15 +271,15 @@ SceneRoots:
           XRScene? scene = manager.Load<XRScene>(scenePath);
 
           scene.ShouldNotBeNull();
-          scene.RootNodes.Count.ShouldBe(2);
-          scene.RootNodes[0].Name.ShouldBe("Loose Root");
-          scene.RootNodes[1].Name.ShouldBe("Instanced Root");
-          scene.RootNodes[1].IsActiveSelf.ShouldBeTrue();
+          scene.SceneRoots.Count.ShouldBe(2);
+          scene.SceneRoots[0].Name.ShouldBe("Loose Root");
+          scene.SceneRoots[1].Name.ShouldBe("Instanced Root");
+          scene.SceneRoots[1].IsActiveSelf.ShouldBeTrue();
 
-          Transform prefabRootTransform = scene.RootNodes[1].Transform.ShouldBeOfType<Transform>();
+          Transform prefabRootTransform = scene.SceneRoots[1].Transform.ShouldBeOfType<Transform>();
           AssertVectorClose(prefabRootTransform.Translation, new Vector3(-2.0f, 1.0f, -9.0f));
 
-          SceneNode prefabChild = scene.RootNodes[1].FirstChild.ShouldNotBeNull();
+          SceneNode prefabChild = scene.SceneRoots[1].FirstChild.ShouldNotBeNull();
           prefabChild.Name.ShouldBe("Prefab Child");
           prefabChild.Layer.ShouldBe(1);
 
@@ -435,21 +435,21 @@ SceneRoots:
             XRScene? scene = manager.Load<XRScene>(scenePath);
 
             scene.ShouldNotBeNull();
-            scene.RootNodes.Count.ShouldBe(3);
+            scene.SceneRoots.Count.ShouldBe(3);
 
-            scene.RootNodes[0].TryGetComponent<CameraComponent>(out CameraComponent? cameraComponent).ShouldBeTrue();
+            scene.SceneRoots[0].TryGetComponent<CameraComponent>(out CameraComponent? cameraComponent).ShouldBeTrue();
             cameraComponent.ShouldNotBeNull();
             cameraComponent.Camera.Parameters.ShouldBeOfType<XRPerspectiveCameraParameters>().VerticalFieldOfView.ShouldBe(70.0f, 0.0001f);
             cameraComponent.Camera.NearZ.ShouldBe(0.5f, 0.0001f);
             cameraComponent.Camera.FarZ.ShouldBe(200.0f, 0.0001f);
 
-            scene.RootNodes[1].TryGetComponent<DirectionalLightComponent>(out DirectionalLightComponent? lightComponent).ShouldBeTrue();
+            scene.SceneRoots[1].TryGetComponent<DirectionalLightComponent>(out DirectionalLightComponent? lightComponent).ShouldBeTrue();
             lightComponent.ShouldNotBeNull();
             lightComponent.DiffuseIntensity.ShouldBe(2.5f, 0.0001f);
             lightComponent.Color.R.ShouldBe(0.8f, 0.0001f);
             lightComponent.CastsShadows.ShouldBeFalse();
 
-            scene.RootNodes[2].TryGetComponent<ModelComponent>(out ModelComponent? modelComponent).ShouldBeTrue();
+            scene.SceneRoots[2].TryGetComponent<ModelComponent>(out ModelComponent? modelComponent).ShouldBeTrue();
             modelComponent.ShouldNotBeNull();
             modelComponent.Model.ShouldNotBeNull();
             modelComponent.Model.Meshes.Count.ShouldBe(1);
@@ -664,17 +664,17 @@ SceneRoots:
             XRScene? scene = manager.Load<XRScene>(scenePath);
 
             scene.ShouldNotBeNull();
-            scene.RootNodes.Count.ShouldBe(1);
-            scene.RootNodes[0].Name.ShouldBe("Delta Root");
+            scene.SceneRoots.Count.ShouldBe(1);
+            scene.SceneRoots[0].Name.ShouldBe("Delta Root");
 
-            scene.RootNodes[0].TryGetComponent<DirectionalLightComponent>(out DirectionalLightComponent? removedLight).ShouldBeFalse();
-            scene.RootNodes[0].TryGetComponent<CameraComponent>(out CameraComponent? addedCamera).ShouldBeTrue();
+            scene.SceneRoots[0].TryGetComponent<DirectionalLightComponent>(out DirectionalLightComponent? removedLight).ShouldBeFalse();
+            scene.SceneRoots[0].TryGetComponent<CameraComponent>(out CameraComponent? addedCamera).ShouldBeTrue();
             addedCamera.ShouldNotBeNull();
             addedCamera.Camera.NearZ.ShouldBe(0.2f, 0.0001f);
             addedCamera.Camera.FarZ.ShouldBe(50.0f, 0.0001f);
 
-            scene.RootNodes[0].Transform.Children.Count.ShouldBe(1);
-            SceneNode addedChild = scene.RootNodes[0].FirstChild.ShouldNotBeNull();
+            scene.SceneRoots[0].Transform.Children.Count.ShouldBe(1);
+            SceneNode addedChild = scene.SceneRoots[0].FirstChild.ShouldNotBeNull();
             addedChild.Name.ShouldBe("Added Child");
             Transform addedChildTransform = addedChild.Transform.ShouldBeOfType<Transform>();
             AssertVectorClose(addedChildTransform.Translation, new Vector3(-2.0f, 0.0f, 0.0f));

@@ -130,6 +130,7 @@ namespace XREngine.Rendering.OpenGL
 
             private GLProgramCompileLinkQueue.ShaderInput[]? PrepareCompileInputs()
             {
+                ObserveWorldUiInitialSourceInputs();
                 var shaderData = Data.Shaders;
                 if (shaderData.Count == 0)
                     return [];

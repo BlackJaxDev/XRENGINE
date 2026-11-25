@@ -163,6 +163,42 @@ namespace XREngine.Rendering.Commands
             return true;
         }
 
+        internal bool ContainsEveryFrozenWorldSource(
+            ReadOnlySpan<XREngine.Rendering.UI.UIPublishedWorldMeshCommand> frozen)
+        {
+            for (int frozenIndex = 0; frozenIndex < frozen.Length; frozenIndex++)
+            {
+                RenderCommandMesh3D? source = frozen[frozenIndex].SourceWorldCommand;
+                if (source is null || !_membership.Contains(source))
+                    return false;
+            }
+            return true;
+        }
+
+        internal bool ReplaceFrozenWorldSources(
+            ReadOnlySpan<XREngine.Rendering.UI.UIPublishedWorldMeshCommand> frozen)
+        {
+            if (!ContainsEveryFrozenWorldSource(frozen))
+                return false;
+            _membership.EnsureCapacity(_membership.Count + frozen.Length);
+            for (int index = 0; index < _entries.Count; index++)
+            {
+                Entry existing = _entries[index];
+                for (int frozenIndex = 0; frozenIndex < frozen.Length; frozenIndex++)
+                {
+                    XREngine.Rendering.UI.UIPublishedWorldMeshCommand replacement = frozen[frozenIndex];
+                    if (!ReferenceEquals(existing.Command, replacement.SourceWorldCommand))
+                        continue;
+                    _membership.Remove(existing.Command);
+                    _membership.Add(replacement);
+                    _entries[index] = existing with { Command = replacement };
+                    _sortDirty = true;
+                    break;
+                }
+            }
+            return true;
+        }
+
         public void Clear()
         {
             _entries.Clear();
@@ -483,6 +519,8 @@ namespace XREngine.Rendering.Commands
                         _passMetadata[pass.Key] = new RenderPassMetadata(pass.Key, $"Pass{pass.Key}", ERenderGraphPassStage.Graphics);
                 }
             }
+            DrainRetiredUiPublicationClaims();
+            DrainRetiredWorldUiImages();
         }
 
         /// <summary>
@@ -499,6 +537,9 @@ namespace XREngine.Rendering.Commands
 
             foreach (ICollection<RenderCommand> pass in _renderingPasses.Values)
                 pass.Clear();
+            RetireUiPublicationClaimsNoLock(_updatingUiPublicationCommands);
+            RetireUiPublicationClaimsNoLock(_renderingUiPublicationCommands);
+            RetireWorldUiImagesNoLock();
 
             ClearSwapQueueNoLock(_updatingSwapQueue, _updatingSwapQueueMembership);
             ClearSwapQueueNoLock(_renderingSwapQueue, _renderingSwapQueueMembership);
@@ -646,6 +687,26 @@ namespace XREngine.Rendering.Commands
 
         private Dictionary<int, ICollection<RenderCommand>> _updatingPasses = [];
         private Dictionary<int, ICollection<RenderCommand>> _renderingPasses = [];
+        private HashSet<XREngine.Rendering.UI.UIPublication> _updatingUiPublicationCommands =
+            new(ReferenceEqualityComparer.Instance);
+        private HashSet<XREngine.Rendering.UI.UIPublication> _renderingUiPublicationCommands =
+            new(ReferenceEqualityComparer.Instance);
+        private readonly System.Collections.Concurrent.ConcurrentQueue<XREngine.Rendering.UI.UIPublication>
+            _retiredUiPublicationClaims = new();
+
+        private void RetireUiPublicationClaimsNoLock(
+            HashSet<XREngine.Rendering.UI.UIPublication> claims)
+        {
+            foreach (XREngine.Rendering.UI.UIPublication publication in claims)
+                _retiredUiPublicationClaims.Enqueue(publication);
+            claims.Clear();
+        }
+
+        private void DrainRetiredUiPublicationClaims()
+        {
+            while (_retiredUiPublicationClaims.TryDequeue(out XREngine.Rendering.UI.UIPublication? publication))
+                publication.Release();
+        }
         private readonly Dictionary<int, int> _renderingPassCommandCounts = [];
         private readonly Dictionary<int, int> _renderingPassMeshCommandCounts = [];
         private readonly Dictionary<int, ulong> _renderingPassCommandSetSignatures = [];
@@ -893,6 +954,8 @@ namespace XREngine.Rendering.Commands
                 passMetadata,
                 nativeAuthoredDecals);
             CapturePreparedImportedResourceGeneration(ownerPipeline);
+            _updatingWorldUiPackageGeneration = _updatingWorldUiReplacement is null
+                ? 0 : _updatingBackendReadyPackage.PackageGeneration;
             PrepareMeshOrderPublicationNoLock(scene, camera);
 
             XRViewport? submissionViewport = ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport;
@@ -982,8 +1045,8 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Abandons an unsubmitted private capture after its collection callback has
-        /// exited. No render-side consumer may own this collection when called.
+        /// Clears an unsubmitted image after collection or renderer retirement.
+        /// No render-side consumer may own this collection when called.
         /// </summary>
         internal void ResetUnsubmittedCapture()
         {
@@ -992,6 +1055,8 @@ namespace XREngine.Rendering.Commands
                 using var renderingBufferScope = EnterRenderingBufferWriteScope();
                 ClearPipelineTransitionPublicationsNoLock();
             }
+            DrainRetiredUiPublicationClaims();
+            DrainRetiredWorldUiImages();
         }
 
         /// <summary>Releases a completed one-shot output's canonical scene pin.
@@ -1115,6 +1180,10 @@ namespace XREngine.Rendering.Commands
             => AddCPU(item, camera: null);
 
         public void AddCPU(RenderCommand item, IRuntimeRenderCamera? camera)
+            => TryAddCPU(item, camera);
+
+        /// <summary>Reports whether a CPU command entered its selected pass.</summary>
+        internal bool TryAddCPU(RenderCommand item, IRuntimeRenderCamera? camera)
         {
             int pass = item.RenderPass;
             AABB? sortBounds = null;
@@ -1133,29 +1202,70 @@ namespace XREngine.Rendering.Commands
                         Debug.Rendering($"[RenderCommandCollection:AddCPU] MISSING_PASS pass={pass} cmd={item.GetType().Name} enabled={item.Enabled} owner={ownerName} updatingPassKeys=[{string.Join(",", _updatingPasses.Keys.OrderBy(static x => x))}]");
                         s_addCpuMissingPassDiagCount++;
                     }
-                    return; // No CPU pass found for this render command
+                    return false; // No CPU pass found for this render command
                 }
 
                 if (!TryReserveCollectedResourceNoLock(item))
-                    return;
+                    return false;
 
                 long sortOrderKey = GetSortOrderKey(pass);
                 int beforeCount = set.Count;
-                int sortPriority = 0;
-                if (set is SnapshotSortedRenderCommandCollection snapshotSet)
+                XREngine.Rendering.UI.UIPublication? newUiClaim =
+                    item is XREngine.Rendering.UI.IUiPublicationRenderCommand uiCommand &&
+                    !_updatingUiPublicationCommands.Contains(uiCommand.Publication)
+                        ? uiCommand.Publication : null;
+                // Claim before a command becomes visible to this collection. If the
+                // packet was already retired, no unowned command may be inserted.
+                newUiClaim?.Retain();
+                if (newUiClaim is not null)
                 {
-                    if (snapshotSet.TryAdd(item, sortOrderKey, renderDistance,
-                        out SnapshotSortedRenderCommandCollection.Entry entry))
-                        sortPriority = entry.TransparentSortPriority;
+                    try { _updatingUiPublicationCommands.Add(newUiClaim); }
+                    catch
+                    {
+                        newUiClaim.Release();
+                        throw;
+                    }
                 }
-                else
+
+                int sortPriority = 0;
+                try
                 {
-                    item.SortOrderKey = sortOrderKey;
-                    set.Add(item);
+                    if (set is SnapshotSortedRenderCommandCollection snapshotSet)
+                    {
+                        if (snapshotSet.TryAdd(item, sortOrderKey, renderDistance,
+                            out SnapshotSortedRenderCommandCollection.Entry entry))
+                            sortPriority = entry.TransparentSortPriority;
+                    }
+                    else
+                    {
+                        item.SortOrderKey = sortOrderKey;
+                        set.Add(item);
+                    }
+                }
+                catch
+                {
+                    // A collection implementation can throw after inserting. Keep
+                    // the claim whenever the command might already be visible.
+                    if (newUiClaim is not null && set.Count == beforeCount)
+                    {
+                        _updatingUiPublicationCommands.Remove(newUiClaim);
+                        newUiClaim.Release();
+                    }
+                    throw;
                 }
                 int afterCount = set.Count;
                 if (afterCount > beforeCount)
+                {
                     ObserveMeshOrderInsertionNoLock(item, camera, pass, sortOrderKey, sortBounds, fallbackPosition, sortPriority);
+                }
+                else
+                {
+                    if (newUiClaim is not null)
+                    {
+                        _updatingUiPublicationCommands.Remove(newUiClaim);
+                        newUiClaim.Release();
+                    }
+                }
                 ++_numCommandsRecentlyAddedToUpdate;
                 _updatingRevision++;
                 // Dirty-delta enqueue: only swap commands whose state has actually changed since
@@ -1181,6 +1291,7 @@ namespace XREngine.Rendering.Commands
                 {
                     _updatingSwapQueue.Add(item);
                 }
+                return afterCount > beforeCount;
             }
         }
 
@@ -1480,7 +1591,8 @@ namespace XREngine.Rendering.Commands
                     continue;
                 }
 
-                if (skipGpuCommands && cmd is IRenderCommandMesh meshCmd)
+                if (skipGpuCommands && cmd is IRenderCommandMesh meshCmd &&
+                    cmd is not XREngine.Rendering.UI.IUiPublicationRenderCommand)
                 {
                     // Skip mesh commands that should go through GPU dispatch.
                     // Optionally allow opt-out meshes to keep rendering on CPU for diagnostics.
@@ -2979,6 +3091,36 @@ namespace XREngine.Rendering.Commands
         public bool TryGetGpuPass(int renderPass, out GPURenderPassCollection gpuPass)
             => _gpuPasses.TryGetValue(renderPass, out gpuPass!);
 
+        /// <summary>Discards an uncommitted producer collection without touching the rendered frame.</summary>
+        public void DiscardUpdatingCommands()
+        {
+            using (_lock.EnterScope())
+            {
+                foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
+                    pass.Clear();
+                RetireUiPublicationClaimsNoLock(_updatingUiPublicationCommands);
+                if (_updatingWorldUiPackets is { } updatingWorldUi)
+                    _retiredWorldUiPackets.Enqueue(updatingWorldUi);
+                _updatingWorldUiPackets = null;
+                _updatingWorldUiWorld = null;
+                _updatingWorldUiGeneration = 0;
+                _updatingWorldUiConflict = false;
+                _updatingWorldUiReplacement = null;
+                _updatingWorldUiPackageGeneration = 0;
+                ClearSwapQueueNoLock(_updatingSwapQueue, _updatingSwapQueueMembership);
+                CancelCollectedResourcesNoLock();
+                if (_updatingPassSortOrderCounters.Count > 0)
+                    foreach (int passIndex in _updatingPassSortOrderCounters.Keys)
+                        _updatingPassSortOrderCounters[passIndex] = 0L;
+                _numCommandsRecentlyAddedToUpdate = 0;
+                _updatingRevision++;
+                _updatingBackendReadyPackage.Reset();
+                ResetMeshOrderCollectionNoLock();
+            }
+            DrainRetiredUiPublicationClaims();
+            DrainRetiredWorldUiImages();
+        }
+
         public void SwapBuffers()
         {
             using var sample = RuntimeEngine.Profiler.Start("RenderCommandCollection.SwapBuffers");
@@ -3001,6 +3143,9 @@ namespace XREngine.Rendering.Commands
                 FinalizePreparedImportedResourcesNoLock();
 
                 (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
+                (_updatingUiPublicationCommands, _renderingUiPublicationCommands) =
+                    (_renderingUiPublicationCommands, _updatingUiPublicationCommands);
+                SwapWorldUiImagesNoLock();
                 SwapCollectedResourcesNoLock();
                 (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
                 (_updatingSwapQueueMembership, _renderingSwapQueueMembership) = (_renderingSwapQueueMembership, _updatingSwapQueueMembership);
@@ -3088,6 +3233,7 @@ namespace XREngine.Rendering.Commands
                 {
                     foreach (var pass in _updatingPasses.Values)
                         pass.Clear();
+                    RetireUiPublicationClaimsNoLock(_updatingUiPublicationCommands);
                 }
 
                 // The collection lock excludes AddCPU while existing values are reset. Replacing
@@ -3104,6 +3250,8 @@ namespace XREngine.Rendering.Commands
                 ClearPreparedImportedResourceGeneration();
                 ResetMeshOrderCollectionNoLock();
             }
+            DrainRetiredUiPublicationClaims();
+            DrainRetiredWorldUiImages();
         }
 
         private void PublishRenderingCommandCountsNoLock(BackendReadyFramePackage package)

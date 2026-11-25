@@ -5,12 +5,20 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Trees;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.UI;
+using XREngine.Rendering.UI.State;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Info
 {
     public class RenderInfo2D : RenderInfo, IQuadtreeItem, IComparable<RenderInfo2D>, IRuntimeRenderInfo2DRegistrationItem
     {
+        private static long _nextMembershipId;
+
+        /// <summary>Identifies this render record independently of mutable painter order.</summary>
+        [YamlIgnore]
+        public long MembershipId { get; } = Interlocked.Increment(ref _nextMembershipId);
+
         private IRuntimeRenderInfo2DRegistrationTarget? _registeredCanvas;
         private bool _reconcilingCanvasRegistration;
 
@@ -100,19 +108,38 @@ namespace XREngine.Rendering.Info
         public bool DeeperThan(IQuadtreeItem other)
             => other is RenderInfo2D other2D && DeeperThan(other2D);
 
+        protected override bool OnPropertyChanging<T>(string? propName, T field, T value)
+        {
+            if (propName is nameof(LayerIndex) or nameof(IndexWithinLayer) &&
+                Owner is UIComponent { SceneNode: { IsTransformNull: false } } component &&
+                component.Transform is UITransform transform)
+                transform.GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+            return base.OnPropertyChanging(propName, field, value);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
-            try { base.OnPropertyChanged(propName, prev, field); }
+            try
+            {
+                try { base.OnPropertyChanged(propName, prev, field); }
+                finally
+                {
+                    if (propName is nameof(UserInterfaceCanvas) or nameof(IsVisible))
+                        ReconcileCanvasRegistration(disposing: false);
+                }
+                switch (propName)
+                {
+                    case nameof(CullingVolume):
+                        QuadtreeNode?.QueueItemMoved(this);
+                        break;
+                }
+            }
             finally
             {
-                if (propName is nameof(UserInterfaceCanvas) or nameof(IsVisible))
-                    ReconcileCanvasRegistration(disposing: false);
-            }
-            switch (propName)
-            {
-                case nameof(CullingVolume):
-                    QuadtreeNode?.QueueItemMoved(this);
-                    break;
+                if (propName is nameof(LayerIndex) or nameof(IndexWithinLayer) &&
+                    Owner is UIComponent { SceneNode: { IsTransformNull: false } } component &&
+                    component.Transform is UITransform transform)
+                    transform.RecordUIChange(UIChangeDomain.HitTest);
             }
         }
 
@@ -187,7 +214,7 @@ namespace XREngine.Rendering.Info
             else if (IndexWithinLayer < other.IndexWithinLayer)
                 return -1;
 
-            return 0;
+            return MembershipId.CompareTo(other.MembershipId);
         }
 
         protected override void RenderCullingVolume()

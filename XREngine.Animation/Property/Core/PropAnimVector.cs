@@ -40,12 +40,19 @@ namespace XREngine.Animation
         private bool _constrainKeyframedFPS = false;
         private bool _lerpConstrainedFPS = false;
         private VectorKeyframe<TValue>? _prevKeyframe;
+        private KeyframeTrack<TValueKey>? _prevKeyframeTrack;
+        private ulong _prevKeyframeExactEditGeneration;
 
         private TValue _currentPosition;
         private TValue _currentVelocity;
         private TValue _currentAcceleration;
 
         private BakedValueStore<TValue>? _baked;
+
+        internal override object? ExactBakedStore => _baked;
+        internal override int ExactBakedStoreCount => _baked?.Count ?? 0;
+        internal override (bool Constrain, bool Lerp) ExactSamplingFlags =>
+            (ConstrainKeyframedFPS, LerpConstrainedFPS);
 
         internal TValue[] CapturePublishedBakedValues()
             => _baked?.CaptureValues() ?? [];
@@ -317,6 +324,16 @@ namespace XREngine.Animation
                 CurrentVelocity = new TValue();
                 CurrentAcceleration = new TValue();
                 return;
+            }
+
+            if (!ReferenceEquals(_prevKeyframeTrack, Keyframes) ||
+                _prevKeyframeExactEditGeneration != Keyframes.ExactEditGeneration ||
+                _prevKeyframe is not null &&
+                !ReferenceEquals(_prevKeyframe.OwningTrack, Keyframes))
+            {
+                _prevKeyframe = null;
+                _prevKeyframeTrack = Keyframes;
+                _prevKeyframeExactEditGeneration = Keyframes.ExactEditGeneration;
             }
 
             float second = Keyframes.ResolveSampleTime(_currentTime, out float velocityScale, out bool clamped);

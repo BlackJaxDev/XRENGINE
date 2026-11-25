@@ -17,12 +17,15 @@ internal sealed class VulkanAcceptedFramePlanArena
         int frameSlot,
         ulong frameId,
         ulong sceneEpoch,
-        in VulkanPresentNowTargetCompatibilityKey compatibility)
+        in VulkanPresentNowTargetCompatibilityKey compatibility,
+        VulkanRenderer owner,
+        bool captureDesktopWorldUi)
     {
         if ((uint)frameSlot >= (uint)_slots.Length)
             throw new ArgumentOutOfRangeException(nameof(frameSlot));
         VulkanAcceptedFramePlan plan = _slots[frameSlot];
-        plan.Begin(frameSlot, frameId, sceneEpoch, in compatibility);
+        plan.Begin(frameSlot, frameId, sceneEpoch, in compatibility, owner,
+            captureDesktopWorldUi);
         return plan;
     }
 

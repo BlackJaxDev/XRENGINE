@@ -39,7 +39,7 @@ internal static class BrowserWorldCapabilityAudit
         {
             string sceneName = string.IsNullOrWhiteSpace(scene.Name) ? $"Scenes[{sceneIndex}]" : scene.Name;
             string scenePath = $"{world.Name ?? "startup-world"}/{sceneName}";
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
                 Visit(root, 0, scenePath);
             sceneIndex++;
         }

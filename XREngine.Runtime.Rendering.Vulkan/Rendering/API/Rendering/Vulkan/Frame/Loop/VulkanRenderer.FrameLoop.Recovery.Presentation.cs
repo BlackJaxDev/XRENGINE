@@ -22,6 +22,8 @@ namespace XREngine.Rendering.Vulkan
                 ref attempt,
                 "Vulkan.FrameLifecycle.DirtyAbortQueuePresent",
                 $"presenting rejected Vulkan frame {attempt.FrameNumber} ({rejectionStage})");
+            if (attempt.Flow == EDesktopFrameFlow.Stop)
+                return false;
             Result presentResult = dispatch.Result;
             bool presentationReleaseEnqueued =
                 dispatch.Dispatched &&
@@ -77,6 +79,16 @@ namespace XREngine.Rendering.Vulkan
                 hasValidFrameContent:
                     imageHasValidPresentedContent ||
                     recoveryFrameWritten);
+            if (accepted)
+            {
+                if (recoveryFrameWritten)
+                    _ownerRenderer.XRWindow.InvalidateVulkanUiPresentedImage(
+                        attempt.ImageIndex, attempt.OutputGeneration);
+                else if (imageHasValidPresentedContent)
+                    _ownerRenderer.XRWindow.MarkVulkanUiPresented(
+                        attempt.ImageIndex, attempt.OutputGeneration,
+                        attempt.PresentedSourceFrameId, newSceneContent: false);
+            }
             Exception? policyFailure = ApplyDesktopPresentPolicy(
                 ref attempt,
                 presentResult,

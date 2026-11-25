@@ -130,7 +130,7 @@ namespace XREngine.Editor.Mcp
             // If no parent, add to the scene's root
             if (parent is null && scene is not null)
             {
-                scene.RootNodes.Add(instance);
+                scene.SceneRoots.Add(instance);
                 if (scene.IsVisible)
                     context.World.RootNodes.Add(instance);
             }
@@ -152,7 +152,7 @@ namespace XREngine.Editor.Mcp
                         parentCapture.Transform.RemoveChild(instance.Transform, EParentAssignmentMode.Immediate);
                     else if (sceneCapture is not null)
                     {
-                        sceneCapture.RootNodes.Remove(instance);
+                        sceneCapture.SceneRoots.Remove(instance);
                         worldCapture.RootNodes.Remove(instance);
                     }
                     instance.IsActiveSelf = false;
@@ -163,7 +163,7 @@ namespace XREngine.Editor.Mcp
                         instance.Transform.SetParent(parentCapture.Transform, false, EParentAssignmentMode.Immediate);
                     else if (sceneCapture is not null)
                     {
-                        sceneCapture.RootNodes.Add(instance);
+                        sceneCapture.SceneRoots.Add(instance);
                         if (sceneCapture.IsVisible)
                             worldCapture.RootNodes.Add(instance);
                     }
@@ -329,7 +329,7 @@ namespace XREngine.Editor.Mcp
                 else
                 {
                     newNode = new SceneNode(nodeName);
-                    scene.RootNodes.Add(newNode);
+                    scene.SceneRoots.Add(newNode);
                     if (scene.IsVisible)
                         world.RootNodes.Add(newNode);
                 }
@@ -343,7 +343,7 @@ namespace XREngine.Editor.Mcp
                             parentTfm.RemoveChild(newNode.Transform, EParentAssignmentMode.Immediate);
                         else
                         {
-                            sceneCapture.RootNodes.Remove(newNode);
+                            sceneCapture.SceneRoots.Remove(newNode);
                             worldCapture.RootNodes.Remove(newNode);
                         }
                         newNode.IsActiveSelf = false;
@@ -354,7 +354,7 @@ namespace XREngine.Editor.Mcp
                             newNode.Transform.SetParent(parentTfm, false, EParentAssignmentMode.Immediate);
                         else
                         {
-                            sceneCapture.RootNodes.Add(newNode);
+                            sceneCapture.SceneRoots.Add(newNode);
                             if (sceneCapture.IsVisible)
                                 worldCapture.RootNodes.Add(newNode);
                         }
@@ -542,7 +542,7 @@ namespace XREngine.Editor.Mcp
                     clonedSceneId = clonedScene.ID,
                     clonedSceneName = clonedScene.Name,
                     isVisible = clonedScene.IsVisible,
-                    rootNodeCount = clonedScene.RootNodes.Count
+                    rootNodeCount = clonedScene.SceneRoots.Count
                 }));
         }
 

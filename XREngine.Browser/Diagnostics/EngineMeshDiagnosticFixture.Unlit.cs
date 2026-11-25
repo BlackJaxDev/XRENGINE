@@ -125,7 +125,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
         SceneNode node = new(name);
         Transform transform = node.SetTransform<Transform>();
         transform.Translation = translation;
-        _scene.RootNodes.Add(node);
+        _scene.SceneRoots.Add(node);
         ModelComponent component = node.AddComponent<ModelComponent>()
             ?? throw new InvalidOperationException("EngineMeshDiagnostic.UnlitComponentMissing.");
         component.Model = new Model(new SubMesh(mesh, material));

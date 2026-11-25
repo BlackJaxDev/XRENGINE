@@ -439,23 +439,34 @@ public static partial class EditorImGuiUI
     /// viewport drag/drop. Kept internal so editor automation can exercise the
     /// user-facing workflow without duplicating its loading or prefab logic.
     /// </summary>
-    internal static bool TryHandleDroppedSpawnableAsset(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition = null)
+    internal static bool TryHandleDroppedSpawnableAsset(RuntimeWorld world, SceneNode? parent, string path,
+        Vector3? worldPosition = null, Func<bool>? canApply = null)
     {
-        if (world is null || string.IsNullOrWhiteSpace(path))
+        if (world is null || string.IsNullOrWhiteSpace(path) || canApply?.Invoke() == false ||
+            !IsValidDropSpawnTarget(world, parent))
             return false;
 
         if (TryGetDroppedAssetLoadResult(path, out var cached))
         {
             if (cached.Prefab is not null)
-                return SpawnDroppedPrefab(world, parent, cached.Prefab, worldPosition, enqueueSceneEdit: true);
+                return SpawnDroppedPrefab(world, parent, cached.Prefab, worldPosition, enqueueSceneEdit: true,
+                    canApply: canApply);
 
             if (cached.Model is not null)
-                return SpawnDroppedModel(world, parent, cached.Model, path, worldPosition, enqueueSceneEdit: true);
+                return SpawnDroppedModel(world, parent, cached.Model, path, worldPosition, enqueueSceneEdit: true,
+                    canApply: canApply);
         }
 
-        QueueDroppedSpawnableAssetSpawn(world, parent, path, worldPosition);
+        QueueDroppedSpawnableAssetSpawn(world, parent, path, worldPosition, canApply);
         return true;
     }
+
+    /// <summary>
+    /// Accepts the world root, a live node in the world, or a node of a hidden scene
+    /// that the world still owns.
+    /// </summary>
+    private static bool IsValidDropSpawnTarget(RuntimeWorld world, SceneNode? parent)
+        => !world.IsDisposing && (parent is null || HierarchySceneOwnership.CanAuthor(parent, world));
 
     private static bool TryHandleDroppedAsset(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition = null)
     {
@@ -487,14 +498,16 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static bool SpawnDroppedPrefab(RuntimeWorld world, SceneNode? parent, XRPrefabSource prefab, Vector3? worldPosition, bool enqueueSceneEdit)
+    private static bool SpawnDroppedPrefab(RuntimeWorld world, SceneNode? parent, XRPrefabSource prefab,
+        Vector3? worldPosition, bool enqueueSceneEdit, Func<bool>? canApply = null)
     {
-        if (prefab is null)
+        if (prefab is null || canApply?.Invoke() == false || !IsValidDropSpawnTarget(world, parent))
             return false;
 
         if (enqueueSceneEdit)
         {
-            EnqueueSceneEdit(() => SpawnDroppedPrefab(world, parent, prefab, worldPosition, enqueueSceneEdit: false));
+            EnqueueSceneEdit(() => SpawnDroppedPrefab(world, parent, prefab, worldPosition,
+                enqueueSceneEdit: false, canApply: canApply));
             return true;
         }
 
@@ -509,37 +522,40 @@ public static partial class EditorImGuiUI
         return true;
     }
 
-    private static bool SpawnDroppedModel(RuntimeWorld world, SceneNode? parent, Model model, string path, Vector3? worldPosition, bool enqueueSceneEdit)
+    private static bool SpawnDroppedModel(RuntimeWorld world, SceneNode? parent, Model model, string path,
+        Vector3? worldPosition, bool enqueueSceneEdit, Func<bool>? canApply = null)
     {
-        if (model is null)
+        if (model is null || canApply?.Invoke() == false || !IsValidDropSpawnTarget(world, parent))
             return false;
 
         if (enqueueSceneEdit)
         {
-            EnqueueSceneEdit(() => SpawnDroppedModel(world, parent, model, path, worldPosition, enqueueSceneEdit: false));
+            EnqueueSceneEdit(() => SpawnDroppedModel(world, parent, model, path, worldPosition,
+                enqueueSceneEdit: false, canApply: canApply));
             return true;
         }
 
         if (_prefabPreviewActive)
             RevertPrefabPreview();
 
-        SpawnModelNode(world, parent, model, path, worldPosition);
-        return true;
+        return SpawnModelNode(world, parent, model, path, worldPosition);
     }
 
-    private static void QueueDroppedSpawnableAssetSpawn(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition)
+    private static void QueueDroppedSpawnableAssetSpawn(RuntimeWorld world, SceneNode? parent, string path,
+        Vector3? worldPosition, Func<bool>? canApply)
     {
         Guid trackingId = EditorJobTracker.TrackOperation($"Spawn {Path.GetFileName(path)}", "Loading dropped asset...");
-        _ = SpawnDroppedAssetWhenReadyAsync(world, parent, path, worldPosition, trackingId);
+        _ = SpawnDroppedAssetWhenReadyAsync(world, parent, path, worldPosition, trackingId, canApply);
     }
 
-    private static async Task SpawnDroppedAssetWhenReadyAsync(RuntimeWorld world, SceneNode? parent, string path, Vector3? worldPosition, Guid trackingId)
+    private static async Task SpawnDroppedAssetWhenReadyAsync(RuntimeWorld world, SceneNode? parent, string path,
+        Vector3? worldPosition, Guid trackingId, Func<bool>? canApply)
     {
         string? error = await TrySpawnDroppedAssetThroughDropPathAsync(
             world,
             parent,
             path,
-            worldPosition).ConfigureAwait(false);
+            worldPosition, canApply).ConfigureAwait(false);
         if (error is null)
             EditorJobTracker.Complete(trackingId, $"Spawned {Path.GetFileName(path)}");
         else
@@ -555,7 +571,8 @@ public static partial class EditorImGuiUI
         RuntimeWorld world,
         SceneNode? parent,
         string path,
-        Vector3? worldPosition)
+        Vector3? worldPosition,
+        Func<bool>? canApply = null)
     {
         try
         {
@@ -571,9 +588,16 @@ public static partial class EditorImGuiUI
             {
                 try
                 {
+                    if (canApply?.Invoke() == false || !IsValidDropSpawnTarget(world, parent))
+                    {
+                        completion.TrySetResult("The scene target changed before the dropped asset was ready.");
+                        return;
+                    }
                     bool spawned = result.Prefab is not null
-                        ? SpawnDroppedPrefab(world, parent, result.Prefab, worldPosition, enqueueSceneEdit: false)
-                        : SpawnDroppedModel(world, parent, result.Model!, path, worldPosition, enqueueSceneEdit: false);
+                        ? SpawnDroppedPrefab(world, parent, result.Prefab, worldPosition, enqueueSceneEdit: false,
+                            canApply: canApply)
+                        : SpawnDroppedModel(world, parent, result.Model!, path, worldPosition, enqueueSceneEdit: false,
+                            canApply: canApply);
                     completion.TrySetResult(spawned
                         ? null
                         : $"The editor could not spawn {Path.GetFileName(path)}.");
@@ -658,73 +682,21 @@ public static partial class EditorImGuiUI
         if (world is null || prefab is null)
             return false;
 
-        SceneNode instance = SceneNodePrefabUtility.Instantiate(prefab, world, parent, maintainWorldTransform: false);
-
+        // Build the instance detached; the structural edit owns its attachment and history.
+        SceneNode instance = SceneNodePrefabUtility.Instantiate(prefab, null, null, maintainWorldTransform: false);
+        instance.IsActiveSelf = false;
         ApplySpawnWorldPosition(instance, worldPosition);
-        FinalizeSpawnedPrefabNode(world, instance);
-        return true;
+        return PlaceSpawnedNode("Spawn Prefab", world, parent, instance, worldPosition.HasValue);
     }
 
-    private static void FinalizeSpawnedPrefabNode(RuntimeWorld world, SceneNode instance)
-    {
-        if (world is null || instance is null)
-            return;
-
-        var parentTfm = instance.Transform.Parent;
-        XRScene? owningScene = parentTfm?.SceneNode is SceneNode parent
-            ? FindSceneForNode(parent, world)
-            : ResolveDefaultSpawnScene(world);
-        if (parentTfm is null && owningScene is not null)
-        {
-            if (!owningScene.RootNodes.Contains(instance))
-                owningScene.RootNodes.Add(instance);
-
-            if (owningScene.IsVisible)
-            {
-                if (!world.RootNodes.Contains(instance))
-                    world.RootNodes.Add(instance);
-            }
-            else
-            {
-                world.RootNodes.Remove(instance);
-            }
-        }
-
-        // Record structural undo
-        using var interaction = Undo.BeginUserInteraction();
-        using var scope = Undo.BeginChange("Spawn Prefab");
-        Undo.TrackSceneNode(instance);
-        XRScene? sceneCapture = owningScene;
-        Undo.RecordStructuralChange("Spawn Prefab",
-            undoAction: () =>
-            {
-                if (parentTfm is not null)
-                    parentTfm.RemoveChild(instance.Transform, Scene.Transforms.EParentAssignmentMode.Immediate);
-                else
-                {
-                    sceneCapture?.RootNodes.Remove(instance);
-                    world.RootNodes.Remove(instance);
-                }
-                instance.IsActiveSelf = false;
-            },
-            redoAction: () =>
-            {
-                if (parentTfm is not null)
-                    instance.Transform.SetParent(parentTfm, false, Scene.Transforms.EParentAssignmentMode.Immediate);
-                else
-                {
-                    if (sceneCapture is not null && !sceneCapture.RootNodes.Contains(instance))
-                        sceneCapture.RootNodes.Add(instance);
-                    if ((sceneCapture is null || sceneCapture.IsVisible) && !world.RootNodes.Contains(instance))
-                        world.RootNodes.Add(instance);
-                }
-                instance.IsActiveSelf = true;
-                Undo.TrackSceneNode(instance);
-            });
-
-        Selection.SceneNode = instance;
-        MarkSceneHierarchyDirty(instance, owningScene, world);
-    }
+    /// <summary>
+    /// Places a detached spawned node under the parent, or as a root of the default spawn scene,
+    /// through the canonical hierarchy edit. A world position given before placement is kept.
+    /// </summary>
+    private static bool PlaceSpawnedNode(string description, RuntimeWorld world, SceneNode? parent,
+        SceneNode node, bool preserveWorld)
+        => HierarchySpawn.Place(description, world, parent, parent is null ? ResolveDefaultSpawnScene(world) : null,
+            node, preserveWorld && parent is not null);
 
     private static XRScene? ResolveDefaultSpawnScene(RuntimeWorld world)
     {
@@ -781,10 +753,23 @@ public static partial class EditorImGuiUI
             return false;
         }
 
+        // Detach the preview first so the spawn edit records the complete placement. The
+        // preview keeps its local transform, so attachment does not preserve the world matrix.
         SceneNode instance = _prefabPreviewNode;
+        DetachPrefabPreview(instance, world);
         ClearPrefabPreviewState();
-        FinalizeSpawnedPrefabNode(world, instance);
+        PlaceSpawnedNode("Spawn Prefab", world, parent, instance, preserveWorld: false);
         return true;
+    }
+
+    private static void DetachPrefabPreview(SceneNode node, RuntimeWorld? world)
+    {
+        var parentTransform = node.Transform.Parent;
+        if (parentTransform is not null)
+            parentTransform.RemoveChild(node.Transform, XREngine.Scene.Transforms.EParentAssignmentMode.Immediate);
+        else if (world is not null)
+            world.RootNodes.Remove(node);
+        node.IsActiveSelf = false;
     }
 
     private static void RevertPrefabPreview()
@@ -799,14 +784,7 @@ public static partial class EditorImGuiUI
         RuntimeWorld? world = _prefabPreviewWorld is not null
             ? _prefabPreviewWorld
             : node.World as RuntimeWorld;
-        var parentTransform = node.Transform.Parent;
-
-        if (parentTransform is not null)
-            parentTransform.RemoveChild(node.Transform, XREngine.Scene.Transforms.EParentAssignmentMode.Immediate);
-        else if (world is not null)
-            world.RootNodes.Remove(node);
-
-        node.IsActiveSelf = false;
+        DetachPrefabPreview(node, world);
         MarkSceneHierarchyDirty(node, owningScene: null, world);
         ClearPrefabPreviewState();
     }
@@ -820,22 +798,13 @@ public static partial class EditorImGuiUI
         _prefabPreviewActive = false;
     }
 
-    private static void SpawnModelNode(RuntimeWorld world, SceneNode? parent, Model model, string modelAssetPath, Vector3? worldPosition = null)
+    private static bool SpawnModelNode(RuntimeWorld world, SceneNode? parent, Model model, string modelAssetPath, Vector3? worldPosition = null)
     {
         if (world is null || model is null)
-            return;
+            return false;
 
-        SceneNode node;
-        if (parent is not null)
-        {
-            node = new SceneNode(parent);
-        }
-        else
-        {
-            node = new SceneNode(world);
-            world.RootNodes.Add(node);
-        }
-
+        // Build the node detached; the structural edit owns its attachment and history.
+        SceneNode node = new() { IsActiveSelf = false };
         string? name = model.Name;
         if (string.IsNullOrWhiteSpace(name))
             name = Path.GetFileNameWithoutExtension(modelAssetPath);
@@ -852,31 +821,6 @@ public static partial class EditorImGuiUI
         if (modelComponent is not null)
             modelComponent.Model = model;
 
-        // Record structural undo
-        var parentTfm = node.Transform.Parent;
-        using var interaction = Undo.BeginUserInteraction();
-        using var scope = Undo.BeginChange("Spawn Model");
-        Undo.TrackSceneNode(node);
-        Undo.RecordStructuralChange("Spawn Model",
-            undoAction: () =>
-            {
-                if (parentTfm is not null)
-                    parentTfm.RemoveChild(node.Transform, Scene.Transforms.EParentAssignmentMode.Immediate);
-                else
-                    world.RootNodes.Remove(node);
-                node.IsActiveSelf = false;
-            },
-            redoAction: () =>
-            {
-                if (parentTfm is not null)
-                    node.Transform.SetParent(parentTfm, false, Scene.Transforms.EParentAssignmentMode.Immediate);
-                else
-                    world.RootNodes.Add(node);
-                node.IsActiveSelf = true;
-                Undo.TrackSceneNode(node);
-            });
-
-        Selection.SceneNode = node;
-        MarkSceneHierarchyDirty(node, owningScene: null, world);
+        return PlaceSpawnedNode("Spawn Model", world, parent, node, worldPosition.HasValue);
     }
 }

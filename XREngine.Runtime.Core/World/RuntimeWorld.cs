@@ -463,7 +463,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         _lifecycle.RootNodes.RemoveDuringNodeDestroy(node);
         foreach (XRScene scene in _loadedScenes)
         {
-            scene.RootNodes.Remove(node);
+            scene.SceneRoots.Remove(node);
             if (_visibleRootsByScene.TryGetValue(scene, out HashSet<SceneNode>? roots))
                 roots.Remove(node);
         }
@@ -498,11 +498,11 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
         int pass = 0;
         do
         {
-            snapshotCount = scene.RootNodes.Count;
+            snapshotCount = scene.SceneRoots.Count;
             SceneNode[] snapshot = ArrayPool<SceneNode>.Shared.Rent(Math.Max(1, snapshotCount));
             try
             {
-                scene.RootNodes.CopyTo(0, snapshot, 0, snapshotCount);
+                scene.SceneRoots.CopyTo(snapshot, 0);
                 for (int i = 0; i < snapshotCount; i++)
                     LoadVisibleSceneRoot(scene, roots, snapshot[i]);
             }
@@ -551,7 +551,7 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
 
     private static bool HasUnloadedVisibleRoot(XRScene scene, HashSet<SceneNode> roots)
     {
-        List<SceneNode> sceneRoots = scene.RootNodes;
+        SceneRootCollection sceneRoots = scene.SceneRoots;
         for (int i = 0; i < sceneRoots.Count; i++)
         {
             SceneNode node = sceneRoots[i];

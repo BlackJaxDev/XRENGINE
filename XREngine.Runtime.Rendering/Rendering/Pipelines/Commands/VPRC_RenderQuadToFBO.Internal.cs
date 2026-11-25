@@ -6,6 +6,7 @@ using System.Numerics;
 using XREngine.Core.Attributes;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -224,14 +225,55 @@ namespace XREngine.Rendering.Pipelines.Commands
                     renderHeight);
             }
 
-            using var requiredSubmission = RequiredMeshSubmissionScope.EnterIf(RequiredForOutput);
-            if (!sourceFBO.Render(destFBO) && RequiredForOutput)
+            UIWorldRenderAttempt? worldAttempt = UIWorldRenderAttempt.Active;
+            EUIWorldOutputStage? worldStage = worldAttempt is null ? null :
+                SourceQuadFBOName == DefaultRenderPipeline.LightCombineFBOName &&
+                DestinationFBOName == DefaultRenderPipeline.ForwardPassFBOName
+                    ? EUIWorldOutputStage.LightCombine :
+                SourceQuadFBOName == DefaultRenderPipeline.PostProcessFBOName &&
+                DestinationFBOName == DefaultRenderPipeline.PostProcessOutputFBOName
+                    ? EUIWorldOutputStage.PostProcess :
+                SourceQuadFBOName == DefaultRenderPipeline.FinalPostProcessFBOName &&
+                DestinationFBOName == DefaultRenderPipeline.FinalPostProcessOutputFBOName
+                    ? EUIWorldOutputStage.FinalPostProcess : null;
+            ulong stepToken = 0UL;
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (worldStage.HasValue)
             {
-                string reason = $"Required fullscreen draw '{SourceQuadFBOName}' is not ready.";
-                if (sourceFBO.IsDestroyQueued || sourceFBO.IsDestroyed)
-                    throw new RequiredRenderCommandException(reason,
-                        new InvalidOperationException("The required fullscreen source was destroyed."));
-                throw new RenderResourcePreparationPendingException(reason);
+                XRTexture? source = activeInstance.GetTexture<XRTexture>(
+                    worldStage.Value switch
+                    {
+                        EUIWorldOutputStage.LightCombine => DefaultRenderPipeline.AlbedoOpacityTextureName,
+                        EUIWorldOutputStage.PostProcess => DefaultRenderPipeline.HDRSceneTextureName,
+                        _ => DefaultRenderPipeline.PostProcessOutputTextureName,
+                    });
+                if (renderer is null || source is null || destFBO is null ||
+                    sourceFBO.Material is not { } material ||
+                    !renderer.TryBeginUiWorldOutputStep(worldAttempt!.NativeToken,
+                        worldStage.Value, source, destFBO, sourceFBO.FullScreenMesh,
+                        material, activeInstance.RenderState.CurrentRenderRegion,
+                        out stepToken))
+                    throw new InvalidOperationException("World UI postprocess native proof was rejected.");
+            }
+            using var requiredSubmission = RequiredMeshSubmissionScope.EnterIf(RequiredForOutput);
+            try
+            {
+                bool rendered = sourceFBO.Render(destFBO);
+                if (!rendered && RequiredForOutput)
+                {
+                    string reason = $"Required fullscreen draw '{SourceQuadFBOName}' is not ready.";
+                    if (sourceFBO.IsDestroyQueued || sourceFBO.IsDestroyed)
+                        throw new RequiredRenderCommandException(reason,
+                            new InvalidOperationException("The required fullscreen source was destroyed."));
+                    throw new RenderResourcePreparationPendingException(reason);
+                }
+                if (stepToken != 0UL && (!rendered || !renderer!.CompleteUiWorldOutputStep(stepToken)))
+                    throw new InvalidOperationException("World UI postprocess native draw was not proved.");
+            }
+            finally
+            {
+                if (stepToken != 0UL)
+                    renderer!.AbortUiWorldOutputStep(stepToken);
             }
         }
 

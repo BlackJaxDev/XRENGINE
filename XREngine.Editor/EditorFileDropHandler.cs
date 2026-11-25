@@ -1,9 +1,8 @@
 using System;
 using System.IO;
 using System.Linq;
+using XREngine.Core.Files;
 using XREngine.Rendering;
-using XREngine.Rendering.Picking;
-using XREngine.Components.Scene.Mesh;
 
 namespace XREngine.Editor;
 
@@ -47,8 +46,6 @@ internal static class EditorFileDropHandler
 
     private static void ProcessFileDrop(XRWindow window, string[] paths)
     {
-        _ = window; // Currently unused; retained for future multi-window routing.
-
         if (ImGuiExternalPathDrop.TryHandleExternalDrop(paths))
             return;
 
@@ -72,34 +69,16 @@ internal static class EditorFileDropHandler
             return;
         }
 
-        string assetsRoot = Path.GetFullPath(assetManager.GameAssetsPath);
-        string normalizedSource = Path.GetFullPath(sourcePath);
-        string copiedPath = normalizedSource.StartsWith(assetsRoot, StringComparison.OrdinalIgnoreCase)
-            ? normalizedSource
-            : CopyIntoAssetsRoot(normalizedSource, assetsRoot);
-
-        if (string.IsNullOrWhiteSpace(copiedPath) || !File.Exists(copiedPath))
-        {
-            Debug.LogWarning("Failed to copy dropped file into Assets.");
-            return;
-        }
-
+        // Resolve the target before any file is created, so a refused drop leaves no files.
         if (Engine.State.MainPlayer?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
         {
             Debug.LogWarning("No editor camera pawn available to apply dropped texture.");
             return;
         }
 
-        if (!pawn.TryGetLastMeshHit(out MeshPickResult meshHit))
+        if (!pawn.TryCaptureNativeTextureDrop(window, out XRMaterial material, out Func<bool> admission))
         {
-            Debug.LogWarning("No mesh under the cursor to apply the dropped texture.");
-            return;
-        }
-
-        XRMaterial? material = GetMaterialForMesh(meshHit.Mesh);
-        if (material is null)
-        {
-            Debug.LogWarning("Target mesh has no material to receive a texture.");
+            Debug.LogWarning("The dropped texture has no current authored material target in this window.");
             return;
         }
 
@@ -109,57 +88,55 @@ internal static class EditorFileDropHandler
             return;
         }
 
-        XRTexture2D texture = new();
-        texture.Name = Path.GetFileNameWithoutExtension(copiedPath);
-        texture.FilePath = copiedPath;
-
-        if (!texture.Load3rdParty(copiedPath))
+        try
         {
-            Debug.LogWarning($"Failed to import texture from '{copiedPath}'.");
-            return;
+            ApplyDroppedTexture(assetManager, Path.GetFullPath(sourcePath), material, admission);
+        }
+        catch (Exception exception)
+        {
+            Debug.LogWarning($"The dropped texture was not applied: {exception.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Imports the dropped image as a texture asset and assigns it to the first material slot in one
+    /// Undo action. The texture contains the admitted image pixels. New files go through the asset
+    /// creation recovery journal, so Undo moves them back into the journal and Redo publishes them
+    /// again. The material's source document becomes dirty on apply, Undo, and Redo.
+    /// </summary>
+    private static void ApplyDroppedTexture(AssetManager assetManager, string sourcePath, XRMaterial material,
+        Func<bool> targetAdmission)
+    {
+        string assetsRoot = Path.GetFullPath(assetManager.GameAssetsPath!);
+        var recovery = assetManager.CreationRecovery;
+        bool Admitted() => ReferenceEquals(Engine.Assets, assetManager) &&
+            ReferenceEquals(assetManager.CreationRecovery, recovery) && recovery is not null &&
+            string.Equals(Path.GetFullPath(assetManager.GameAssetsPath!), assetsRoot, StringComparison.OrdinalIgnoreCase) &&
+            targetAdmission();
+        void RequireAdmission()
+        {
+            if (!Admitted())
+                throw new InvalidOperationException("The texture drop project or target changed.");
         }
 
-        string assetPath = AssetManager.VerifyAssetPath(texture, assetsRoot);
-        if (File.Exists(assetPath))
-            assetPath = AssetManager.GetUniqueAssetPath(assetPath);
+        XRTexture2D texture = NativeTextureFileImport.Read(sourcePath, assetsRoot, Admitted);
+        byte[] assetBytes = NativeAssetCreation.SerializeAsset(texture);
+        if (assetBytes.LongLength > NativeTextureFileImport.MaximumAssetBytes)
+            throw new InvalidDataException("The imported texture exceeds the asset byte limit.");
+        RequireAdmission();
 
-        texture.FilePath = assetPath;
-        assetManager.Save(texture);
-
-        material.Textures[0] = texture;
-    }
-
-    private static XRMaterial? GetMaterialForMesh(RenderableMesh mesh)
-    {
-        var renderer = mesh.CurrentLODRenderer ?? mesh.LODs.First?.Value.Renderer;
-        return renderer?.Material;
-    }
-
-    private static string CopyIntoAssetsRoot(string sourcePath, string assetsRoot)
-    {
-        string targetPath = Path.Combine(assetsRoot, Path.GetFileName(sourcePath));
-        targetPath = GetUniqueFilePath(targetPath);
-        File.Copy(sourcePath, targetPath, overwrite: false);
-        return targetPath;
-    }
-
-    private static string GetUniqueFilePath(string path)
-    {
-        if (!File.Exists(path))
-            return path;
-
-        string directory = Path.GetDirectoryName(path) ?? string.Empty;
-        string fileName = Path.GetFileNameWithoutExtension(path);
-        string extension = Path.GetExtension(path);
-        int index = 1;
-        string candidate;
-
-        do
-        {
-            candidate = Path.Combine(directory, $"{fileName} ({index++}){extension}");
-        }
-        while (File.Exists(candidate));
-
-        return candidate;
+        using var interaction = Undo.BeginUserInteraction();
+        using var scope = Undo.BeginChange("Drop Texture");
+        bool initialPublication = true;
+        NativeAssetCreation.Create("Drop Texture",
+            [new NativeAssetCreationFile(texture.FilePath!, assetBytes, texture.ID)], afterPublish: () =>
+            {
+                if (!initialPublication) return;
+                RequireAdmission();
+                initialPublication = false;
+            });
+        assetManager.NotifyExternalAssetSaved(texture, newAsset: true);
+        if (!UI.MaterialTextureSlotAction.ApplyInScope(material, 0, texture, "Drop Texture", Admitted))
+            throw new InvalidOperationException("The material target refused the imported texture.");
     }
 }

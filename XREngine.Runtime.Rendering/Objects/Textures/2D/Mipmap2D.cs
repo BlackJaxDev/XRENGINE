@@ -22,11 +22,14 @@ namespace XREngine.Rendering
         
         [field: MemoryPackIgnore]
         public event Action? Invalidated;
+        /// <summary>Publishes an owner edit made through the raw pixel storage.</summary>
         public void Invalidate()
         {
+            Interlocked.Increment(ref _resizeRevision);
             Interlocked.Add(ref _canonicalContentEpoch, 2);
             Invalidated?.Invoke();
         }
+        internal long DataRevision => Volatile.Read(ref _resizeRevision);
 
         /// <summary>Gets the epoch of the CPU image data and its description.</summary>
         internal int CanonicalContentEpoch => Volatile.Read(ref _canonicalContentEpoch);

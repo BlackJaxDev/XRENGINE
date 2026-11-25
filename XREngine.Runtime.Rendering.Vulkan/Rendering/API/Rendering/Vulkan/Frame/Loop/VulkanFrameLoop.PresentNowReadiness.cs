@@ -167,11 +167,15 @@ internal sealed partial class VulkanFrameLoop
             RenderFrameViewSetPublication.CaptureLatest();
         VulkanPresentNowTargetCompatibilityKey compatibility =
             CaptureDesktopTargetCompatibility();
+        attempt.RequiresWorldUiOutput |=
+            _ownerRenderer.XRWindow.HasSelectedVulkanWorldUiImage;
         acceptedPlan = _acceptedFramePlans.Begin(
             attempt.FrameSlot,
             attempt.FrameNumber,
             attempt.AcceptedSceneEpoch,
-            in compatibility);
+            in compatibility,
+            _ownerRenderer,
+            captureDesktopWorldUi: true);
         attempt.AcceptedFramePlan = acceptedPlan;
 
         RenderOutputRequest provisionalContract =
@@ -827,7 +831,8 @@ internal sealed partial class VulkanFrameLoop
             in outputContract,
             logicalPlan,
             in plannerState,
-            in frozenPlanningSnapshot);
+            in frozenPlanningSnapshot,
+            _ownerRenderer);
         return true;
     }
 

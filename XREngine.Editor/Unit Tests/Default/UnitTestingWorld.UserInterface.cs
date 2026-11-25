@@ -890,6 +890,7 @@ public static partial class EditorUnitTests
         public static UITextComponent AddFPSText(FontGlyphSet? font, SceneNode parentNode)
         {
             SceneNode textNode = new(parentNode) { Name = "TestTextNode" };
+            textNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
             UITextComponent text = textNode.AddComponent<UITextComponent>()!;
             text.DisableBatching = false;
             text.RenderPass = (int)EDefaultRenderPass.OnTopForward;
@@ -1164,7 +1165,14 @@ public static partial class EditorUnitTests
 
             FlushPendingCameraPreviewOverlays(rootCanvasNode);
 
-            AddFPSText(null, rootCanvasNode);
+            // Native editor diagnostics belong to its docked profiler panel.
+            if (Toggles.EditorType != UnitTestEditorType.Native)
+                AddFPSText(null, rootCanvasNode);
+
+            if (Toggles.VirtualCollectionFixtureItemCount != 0)
+                CreateVirtualCollectionFixture(rootCanvasNode, Toggles.VirtualCollectionFixtureItemCount);
+
+            CreateControlGallery(rootCanvasNode);
 
             createUiStopwatch.Stop();
             Debug.Rendering("[StartupUI] CreateEditorUI complete in {0:F1} ms.", createUiStopwatch.Elapsed.TotalMilliseconds);

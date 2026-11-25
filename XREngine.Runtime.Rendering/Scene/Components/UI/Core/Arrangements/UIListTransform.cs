@@ -64,7 +64,11 @@ namespace XREngine.Rendering.UI
         public float UpperVirtualBound
         {
             get => _upperVirtualBound;
-            set => SetField(ref _upperVirtualBound, value);
+            set
+            {
+                checked { _virtualBoundsIntentRevision++; }
+                SetField(ref _upperVirtualBound, value);
+            }
         }
         /// <summary>
         /// The lower bound of the virtual region.
@@ -72,16 +76,20 @@ namespace XREngine.Rendering.UI
         public float LowerVirtualBound
         {
             get => _lowerVirtualBound;
-            set => SetField(ref _lowerVirtualBound, value);
+            set
+            {
+                checked { _virtualBoundsIntentRevision++; }
+                SetField(ref _lowerVirtualBound, value);
+            }
         }
         public float VirtualRegionSize => UpperVirtualBound - LowerVirtualBound;
         public void SetVirtualBounds(float upper, float lower)
         {
             if (_upperVirtualBound == upper && _lowerVirtualBound == lower)
                 return;
-            _upperVirtualBound = upper;
-            _lowerVirtualBound = lower;
-            InvalidateArrange();
+            GetMutationCanvas()?.ChangeJournal.VerifyMutationAccess();
+            UpperVirtualBound = upper;
+            LowerVirtualBound = lower;
         }
 
         /// <summary>
@@ -92,7 +100,7 @@ namespace XREngine.Rendering.UI
         public float ContentScrollOffset
         {
             get => _contentScrollOffset;
-            set => SetField(ref _contentScrollOffset, value);
+            set => SetContentScrollOffsetCore(value, 0, static _ => { }, false);
         }
         public void SetVirtualBoundsRelativeToTop(float size)
         {
@@ -130,6 +138,8 @@ namespace XREngine.Rendering.UI
         /// </summary>
         protected override float MeasureChildrenWidth(Vector2 availableSize)
         {
+            if (_virtualProvider is not null && _horizontal)
+                return VirtualContentExtent;
             if (!_horizontal)
                 return base.MeasureChildrenWidth(availableSize);
 
@@ -163,6 +173,8 @@ namespace XREngine.Rendering.UI
         /// </summary>
         protected override float MeasureChildrenHeight(Vector2 availableSize)
         {
+            if (_virtualProvider is not null && !_horizontal)
+                return VirtualContentExtent;
             if (_horizontal)
                 return base.MeasureChildrenHeight(availableSize);
 
@@ -196,6 +208,11 @@ namespace XREngine.Rendering.UI
         /// </summary>
         protected override void ArrangeChildren(BoundingRectangleF childRegion)
         {
+            if (_virtualProvider is not null)
+            {
+                ArrangeVirtualRows(childRegion);
+                return;
+            }
             switch (ItemAlignment)
             {
                 case EListAlignment.TopOrLeft:
@@ -365,25 +382,6 @@ namespace XREngine.Rendering.UI
 
         #endregion
 
-        protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
-        {
-            //TODO: clip children that are outside of the parent region
-            //lock (Children)
-            {
-                switch (ItemAlignment)
-                {
-                    case EListAlignment.TopOrLeft:
-                        SizeChildrenLeftTop(parentRegion);
-                        break;
-                    case EListAlignment.Centered:
-                        SizeChildrenCentered(parentRegion);
-                        break;
-                    case EListAlignment.BottomOrRight:
-                        SizeChildrenRightBottom(parentRegion);
-                        break;
-                }
-            }
-        }
 
         private void SizeChildrenRightBottom(BoundingRectangleF parentRegion)
         {
@@ -574,6 +572,8 @@ namespace XREngine.Rendering.UI
 
         public override float GetMaxChildHeight()
         {
+            if (_virtualProvider is not null && !_horizontal)
+                return VirtualContentExtent;
             if (_horizontal)
                 return base.GetMaxChildHeight();
 
@@ -592,6 +592,8 @@ namespace XREngine.Rendering.UI
         }
         public override float GetMaxChildWidth()
         {
+            if (_virtualProvider is not null && _horizontal)
+                return VirtualContentExtent;
             if (!_horizontal)
                 return base.GetMaxChildWidth();
 

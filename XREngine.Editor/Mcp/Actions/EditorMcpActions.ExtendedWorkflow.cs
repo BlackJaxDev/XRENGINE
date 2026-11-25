@@ -45,13 +45,13 @@ namespace XREngine.Editor.Mcp
             var errors = new List<string>();
             var warnings = new List<string>();
 
-            if (scene.RootNodes.Any(node => node is null))
+            if (scene.SceneRoots.Any(node => node is null))
                 errors.Add("Scene contains null root node entries.");
 
             var visited = new HashSet<Guid>();
             var recursion = new HashSet<Guid>();
 
-            foreach (var root in scene.RootNodes)
+            foreach (var root in scene.SceneRoots)
             {
                 if (root is null)
                     continue;
@@ -62,7 +62,7 @@ namespace XREngine.Editor.Mcp
                 ValidateNodeRecursive(root, world, visited, recursion, errors, warnings, isRoot: true);
             }
 
-            int duplicateRootIds = scene.RootNodes
+            int duplicateRootIds = scene.SceneRoots
                 .Where(n => n is not null)
                 .GroupBy(n => n!.ID)
                 .Count(g => g.Count() > 1);
@@ -899,8 +899,8 @@ namespace XREngine.Editor.Mcp
                 change.Node.Transform.SetParent(null, preserveWorldTransform, EParentAssignmentMode.Immediate);
                 if (change.NewScene is not null)
                 {
-                    if (!change.NewScene.RootNodes.Contains(change.Node))
-                        change.NewScene.RootNodes.Add(change.Node);
+                    if (!change.NewScene.SceneRoots.Contains(change.Node))
+                        change.NewScene.SceneRoots.Add(change.Node);
                     if (change.NewScene.IsVisible && !world.RootNodes.Contains(change.Node))
                         world.RootNodes.Add(change.Node);
                 }
@@ -919,8 +919,8 @@ namespace XREngine.Editor.Mcp
                 change.Node.Transform.SetParent(null, preserveWorldTransform, EParentAssignmentMode.Immediate);
                 if (change.OldScene is not null)
                 {
-                    if (!change.OldScene.RootNodes.Contains(change.Node))
-                        change.OldScene.RootNodes.Add(change.Node);
+                    if (!change.OldScene.SceneRoots.Contains(change.Node))
+                        change.OldScene.SceneRoots.Add(change.Node);
                     if (change.OldScene.IsVisible && !world.RootNodes.Contains(change.Node))
                         world.RootNodes.Add(change.Node);
                 }
@@ -932,7 +932,7 @@ namespace XREngine.Editor.Mcp
             if (scene is null)
                 scene = FindSceneForNode(node, world);
 
-            scene?.RootNodes.Remove(node);
+            scene?.SceneRoots.Remove(node);
             world.RootNodes.Remove(node);
         }
 
@@ -1224,7 +1224,7 @@ namespace XREngine.Editor.Mcp
             var world = context.World;
             foreach (var scene in world.TargetWorld?.Scenes ?? [])
             {
-                foreach (var root in scene.RootNodes)
+                foreach (var root in scene.SceneRoots)
                 {
                     if (root is null)
                         continue;

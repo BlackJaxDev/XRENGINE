@@ -5,6 +5,7 @@ using System.Numerics;
 using XREngine;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Geometry;
+using XREngine.Data.Core;
 using XREngine.Editor.Services;
 using XREngine.Rendering;
 using XREngine.Rendering.Picking;
@@ -256,8 +257,6 @@ public static partial class EditorImGuiUI
 
     private static void UpdateMaterialPreview(RuntimeWorld world, XRMaterial material)
     {
-        _ = world;
-
         var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
         if (player?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
             return;
@@ -327,8 +326,6 @@ public static partial class EditorImGuiUI
 
     private static bool TryApplyMaterialDropToHoveredSubmesh(RuntimeWorld world, XRMaterial material)
     {
-        _ = world;
-
         var player = Engine.State.MainPlayer ?? Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One);
         if (player?.ControlledPawnComponent is not EditorFlyingCameraPawnComponent pawn)
         {
@@ -346,14 +343,23 @@ public static partial class EditorImGuiUI
         {
             if (modelComponent.TryGetSourceSubMesh(meshHit.Mesh, out var subMesh))
             {
-                using var interaction = Undo.BeginUserInteraction();
-                using var scope = Undo.BeginChange("Drop Material");
-                foreach (var lod in subMesh.LODs)
-                {
-                    Undo.Track(lod);
-                    lod.Material = material;
-                }
-                return true;
+                if (!ReferenceEquals(modelComponent.World, world) || modelComponent.Model is not { } model)
+                    return false;
+                var node = modelComponent.SceneNode;
+                var transform = node.Transform;
+                var document = world.TargetWorld;
+                var componentIdentity = ObjectConstructionIdentity.Capture(modelComponent);
+                var nodeIdentity = ObjectConstructionIdentity.Capture(node);
+                var transformIdentity = ObjectConstructionIdentity.Capture(transform);
+                bool Admission() => !world.IsDisposing && ReferenceEquals(world.TargetWorld, document) &&
+                    componentIdentity.IsCurrent && nodeIdentity.IsCurrent && transformIdentity.IsCurrent &&
+                    !modelComponent.IsDestroyed && !modelComponent.IsDestroyQueued &&
+                    !node.IsDestroyed && !node.IsDestroyQueued && !transform.IsDestroyed && !transform.IsDestroyQueued &&
+                    ReferenceEquals(modelComponent.SceneNode, node) && node.Components.Contains(modelComponent) &&
+                    ReferenceEquals(node.Transform, transform) && ReferenceEquals(node.World, world) &&
+                    ReferenceEquals(modelComponent.World, world) && ReferenceEquals(modelComponent.Model, model) &&
+                    modelComponent.TryGetSourceSubMesh(meshHit.Mesh, out var current) && ReferenceEquals(current, subMesh);
+                return UI.ModelSubMeshMaterialAction.Apply(model, subMesh, material, Admission);
             }
 
             Debug.LogWarning("Unable to resolve submesh for the hovered model.");

@@ -81,6 +81,72 @@ public sealed class SceneStreamingVolumeComponentTests
         host.AttachCount.ShouldBe(0);
     }
 
+    [Test]
+    public async Task DirectDestroyRejectsDeferredLoadAndDetachesOriginatingHost()
+    {
+        FakeStreamingHost deferredHost = new(deferLoad: true);
+        RuntimeSceneStreamingHostServices.Current = deferredHost;
+        QueuedThreadServices queuedThread = new();
+        RuntimeThreadServices.Current = queuedThread;
+        TestStreamingVolume pendingVolume = CreateVolume(new FakeWorld());
+
+        pendingVolume.Enter(new TestComponent());
+        pendingVolume.Destroy(true);
+        deferredHost.CompleteDeferredLoad();
+        await queuedThread.WaitForActionAsync();
+        queuedThread.Drain();
+        deferredHost.AttachCount.ShouldBe(0);
+
+        FakeStreamingHost originalHost = new();
+        RuntimeSceneStreamingHostServices.Current = originalHost;
+        RuntimeThreadServices.Current = new ImmediateThreadServices();
+        FakeWorld originalWorld = new();
+        TestStreamingVolume loadedVolume = CreateVolume(originalWorld);
+        loadedVolume.Enter(new TestComponent());
+        originalHost.AttachCount.ShouldBe(1);
+
+        RuntimeSceneStreamingHostServices.Current = new FakeStreamingHost();
+        loadedVolume.Destroy(true);
+        originalHost.DetachCount.ShouldBe(1);
+        originalHost.DetachedWorld.ShouldBeSameAs(originalWorld);
+    }
+
+    [Test]
+    public async Task QueuedDestroyRejectsCompletedLoadBeforeDestructionRuns()
+    {
+        FakeStreamingHost host = new(deferLoad: true);
+        RuntimeSceneStreamingHostServices.Current = host;
+        QueuedThreadServices queuedThread = new();
+        RuntimeThreadServices.Current = queuedThread;
+        TestStreamingVolume volume = CreateVolume(new FakeWorld());
+
+        volume.Enter(new TestComponent());
+        host.CompleteDeferredLoad();
+        await queuedThread.WaitForActionAsync();
+        volume.Destroy();
+        volume.IsDestroyQueued.ShouldBeTrue();
+        queuedThread.Drain();
+        host.AttachCount.ShouldBe(0);
+        volume.Destroy(true);
+    }
+
+    [Test]
+    public void DestroyDuringHostAttachRetiresTheJustAttachedScene()
+    {
+        FakeStreamingHost host = new();
+        RuntimeSceneStreamingHostServices.Current = host;
+        FakeWorld world = new();
+        TestStreamingVolume volume = CreateVolume(world);
+        host.OnAttach = () => volume.Destroy(true);
+
+        volume.Enter(new TestComponent());
+
+        volume.IsDestroyed.ShouldBeTrue();
+        host.AttachCount.ShouldBe(1);
+        host.DetachCount.ShouldBe(1);
+        host.DetachedWorld.ShouldBeSameAs(world);
+    }
+
     private static TestStreamingVolume CreateVolume(FakeWorld world)
     {
         TestStreamingVolume volume = new()
@@ -135,6 +201,7 @@ public sealed class SceneStreamingVolumeComponentTests
         public int DetachCount { get; private set; }
         public IRuntimeWorldContext? AttachedWorld { get; private set; }
         public IRuntimeWorldContext? DetachedWorld { get; private set; }
+        public Action? OnAttach { get; set; }
 
         public Task<IRuntimeSceneStreamingHandle?> LoadSceneAsync(string sceneAssetPath)
         {
@@ -146,6 +213,7 @@ public sealed class SceneStreamingVolumeComponentTests
         {
             AttachCount++;
             AttachedWorld = world;
+            OnAttach?.Invoke();
             return true;
         }
 
@@ -169,6 +237,41 @@ public sealed class SceneStreamingVolumeComponentTests
         {
             action();
             return true;
+        }
+    }
+
+    private sealed class QueuedThreadServices : IRuntimeThreadServices
+    {
+        private readonly Queue<Action> _actions = new();
+        private readonly TaskCompletionSource<bool> _queued = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool InvokeOnAppThread(
+            Action action,
+            string? reason = null,
+            bool executeNowIfAlreadyAppThread = false)
+        {
+            lock (_actions)
+                _actions.Enqueue(action);
+            _queued.TrySetResult(true);
+            return true;
+        }
+
+        public Task WaitForActionAsync()
+            => _queued.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        public void Drain()
+        {
+            while (true)
+            {
+                Action action;
+                lock (_actions)
+                {
+                    if (_actions.Count == 0)
+                        return;
+                    action = _actions.Dequeue();
+                }
+                action();
+            }
         }
     }
 

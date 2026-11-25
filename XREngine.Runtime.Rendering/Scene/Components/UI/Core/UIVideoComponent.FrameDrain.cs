@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using XREngine.Components;
 using XREngine.Audio;
 using XREngine.Data.Vectors;
@@ -479,12 +480,30 @@ namespace XREngine.Rendering.UI
             if (frame.PixelFormat != VideoPixelFormat.Rgb24 || frame.PackedData.IsEmpty)
                 return;
 
-            string? uploadError = null;
-            if (_gpuVideoActions?.UploadVideoFrame(frame, VideoTexture, out uploadError) == true)
+            VideoSurface? surface = AcquireVideoUploadSurface((uint)frame.Width, (uint)frame.Height);
+            if (surface is null)
+            {
+                _videoProducerFailure = "UI.Video.ProducerCapacity: all video textures still belong to published UI draws.";
                 return;
+            }
+
+            string? uploadError = null;
+            if (_gpuVideoActions?.UploadVideoFrame(frame, surface.Texture, out uploadError) == true)
+            {
+                if (Volatile.Read(ref _videoProducerDestroyed) != 0)
+                    return;
+                surface.Publish(++_nextVideoSurfaceGeneration);
+                Volatile.Write(ref _publishedVideoSurface, surface);
+                _videoProducerFailure = null;
+                QueueVideoVisualInvalidation();
+                return;
+            }
 
             if (!string.IsNullOrWhiteSpace(uploadError))
+            {
+                _videoProducerFailure = uploadError;
                 Debug.UIWarning(uploadError);
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════

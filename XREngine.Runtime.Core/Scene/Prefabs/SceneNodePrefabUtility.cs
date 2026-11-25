@@ -18,7 +18,7 @@ namespace XREngine.Scene.Prefabs
     /// <summary>
     /// Helper utilities for stamping prefab metadata onto scene nodes and cloning prefab hierarchies.
     /// </summary>
-    public static class SceneNodePrefabUtility
+    public static partial class SceneNodePrefabUtility
     {
         public delegate bool PrefabPropertyOverrideHandler(SceneNode targetNode, SceneNodePrefabPropertyOverride overrideData);
         public delegate TransformBase PrefabTransformCloneHandler(TransformBase sourceTransform);
@@ -504,9 +504,13 @@ namespace XREngine.Scene.Prefabs
             return clone;
         }
 
-        private static SceneNode CloneHierarchyBoundedCore(SceneNode template)
+        private static SceneNode CloneHierarchyBoundedCore(SceneNode template, ObjectConstructionContext? construction = null)
         {
             TransformBase clonedTransform = CloneTransformBounded(template.Transform);
+            construction?.RequireAllocation(clonedTransform);
+            if (construction is not null && (clonedTransform.IsDestroyed || clonedTransform.IsDestroyQueued ||
+                clonedTransform.SceneNode is not null || clonedTransform.Parent is not null || clonedTransform.World is not null))
+                throw new InvalidOperationException("An owned transform clone must be live, detached, and without a node owner.");
             SceneNode clone = new(template.Name ?? SceneNode.DefaultName, clonedTransform)
             {
                 IsActiveSelf = template.IsActiveSelf,
@@ -517,7 +521,7 @@ namespace XREngine.Scene.Prefabs
 
             foreach (XRComponent component in template.Components)
             {
-                if (!TryCloneComponentBounded(component, clone))
+                if (!TryCloneComponentBounded(component, clone, construction))
                 {
                     throw new InvalidOperationException(
                         $"Prefab node '{template.Name}' contains component '{component.GetType().FullName}' without a registered AOT clone handler. " +
@@ -527,7 +531,7 @@ namespace XREngine.Scene.Prefabs
 
             foreach (SceneNode child in EnumerateChildren(template))
             {
-                SceneNode childClone = CloneHierarchyBoundedCore(child);
+                SceneNode childClone = CloneHierarchyBoundedCore(child, construction);
                 childClone.Parent = clone;
             }
 
@@ -563,13 +567,21 @@ namespace XREngine.Scene.Prefabs
             return false;
         }
 
-        private static bool TryCloneComponentBounded(XRComponent source, SceneNode targetNode)
+        private static bool TryCloneComponentBounded(XRComponent source, SceneNode targetNode,
+            ObjectConstructionContext? construction = null)
         {
             Type sourceType = source.GetType();
             if (!TryGetComponentCloneHandler(sourceType, out PrefabComponentCloneHandler? handler) || handler is null)
                 return false;
 
             XRComponent? clone = handler(source, targetNode);
+            if (construction is not null && clone is not null)
+            {
+                construction.RequireAllocation(clone);
+                if (!ReferenceEquals(clone.SceneNode, targetNode) ||
+                    !targetNode.Components.Any(component => ReferenceEquals(component, clone)))
+                    throw new InvalidOperationException("An owned component clone did not attach to its target node.");
+            }
             return clone is not null;
         }
 

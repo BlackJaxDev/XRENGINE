@@ -1,4 +1,4 @@
-using System.Collections;
+using XREngine.Rendering.UI.State;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine;
@@ -27,39 +27,45 @@ namespace XREngine.Rendering.UI
         #region Canvas Layout Entry Points
 
         /// <summary>
-        /// Root method to update the layout of a canvas synchronously.
+        /// Requests the immutable canvas layout path.
         /// </summary>
         public static void UpdateCanvasLayout(UICanvasTransform canvas)
         {
-            using var sample = RuntimeEngine.Profiler.Start();
+            canvas.UpdateLayoutAsync();
+        }
 
-            // If the layout is not invalidated, or a parent canvas will control its layouting, don't update it as root canvas.
-            if (!canvas.IsLayoutInvalidated || canvas.IsNestedCanvas)
-                return;
+        /// <summary>Schedule the owning canvas without applying live geometry.</summary>
+        internal static void RequestAttachedLayout(UITransform transform)
+        {
+            UICanvasTransform canvas = transform.GetMutationCanvas() ??
+                throw new InvalidOperationException("Arrange requires an attached UI canvas.");
+            canvas.UpdateLayoutAsync();
+        }
 
-            // Cancel any pending async layout
-            canvas.CancelLayoutJob();
+        /// <summary>Read accepted canvas geometry or measure a detached tree with the value kernel.</summary>
+        internal static Vector2 MeasureAcceptedOrDetached(UITransform transform, Vector2 availableSize)
+        {
+            UICanvasTransform? canvas = transform.GetMutationCanvas();
+            if (canvas is null)
+            {
+                UILayoutSnapshot input = UILayoutSnapshot.CaptureRoot(transform, availableSize, []);
+                return UILayoutValueKernel.RunPaged(input, null, null)[0].DesiredSize;
+            }
 
-            canvas.SetLayoutInvalidated(false);
-            canvas.SetUpdatingLayout(true);
-            canvas.RaiseLayoutingStarted();
-
-            BoundingRectangleF bounds;
-            using (RuntimeEngine.Profiler.Start("UpdateCanvasLayout.GetRootCanvasBounds"))
-                bounds = canvas.GetRootCanvasBounds();
-
-            LogUI($"Canvas UpdateLayout: bounds={bounds.Translation} size={bounds.Extents}");
-
-            // Phase 1: Measure (bottom-up, can skip unchanged subtrees)
-            using (RuntimeEngine.Profiler.Start("UpdateCanvasLayout.MeasureTransform"))
-                MeasureTransform(canvas, bounds.Extents);
-
-            // Phase 2: Arrange (top-down, can skip unchanged subtrees)
-            using (RuntimeEngine.Profiler.Start("UpdateCanvasLayout.ArrangeTransform"))
-                ArrangeTransform(canvas, bounds);
-
-            canvas.SetUpdatingLayout(false);
-            canvas.RaiseLayoutingFinished();
+            canvas.UpdateLayoutAsync();
+            ReadOnlySpan<UIElementIdentity> identities = canvas.CurrentLayoutIdentities.Span;
+            UILayoutOutputPageView? pages = canvas.CurrentLayoutOutputPages;
+            for (int i = 0; i < identities.Length; i++)
+            {
+                if (identities[i] != transform.ElementIdentity)
+                    continue;
+                if (pages is not null)
+                    return pages[i].DesiredSize;
+                ReadOnlySpan<UILayoutNodeOutput> flat = canvas.CurrentLayoutOutputs.Span;
+                if (i < flat.Length)
+                    return flat[i].DesiredSize;
+            }
+            throw new InvalidOperationException("The canvas has no accepted layout result for this transform yet.");
         }
 
         /// <summary>
@@ -67,12 +73,10 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static void InvalidateCanvasLayout(UICanvasTransform canvas)
         {
-            canvas.IncrementLayoutVersionInternal();
-            canvas.SetLayoutInvalidated(true);
-
-            // When the canvas layout is invalidated (e.g., size change), we must also
-            // invalidate all children so they recalculate positions based on anchors.
-            InvalidateChildrenRecursive(canvas);
+            InvalidateLocal(canvas, true);
+            UIRuntimeCounters.Add(UIWorkCounter.GlobalInvalidations);
+            // Accepted child slots are part of the arrange cache key. A new canvas
+            // constraint therefore visits only descendants whose allocation changes.
         }
 
         /// <summary>
@@ -101,50 +105,39 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static void InvalidateLayout(UITransform transform)
         {
-            transform.IncrementLayoutVersionInternal();
-            if (transform.ParentCanvas != null && transform.ParentCanvas != transform)
-                transform.ParentCanvas.InvalidateLayout();
-            // NOTE: MarkLocalModified is NOT called here. Layout invalidation marks
-            // the layout as dirty (version-based) but does not dirty the matrix.
-            // The matrix is only marked dirty during the arrange phase when
-            // actual positions change (via OnResizeActual → MarkLocalModified).
-            // Properties that directly affect the matrix (Scale, DepthTranslation)
-            // call MarkLocalModified explicitly in OnPropertyChanged.
+            InvalidateLocal(transform, true);
             transform.RaiseLayoutInvalidated();
         }
 
-        /// <summary>
-        /// Invalidates only the measure phase.
-        /// </summary>
+        /// <summary>Invalidates measure dependencies without scanning descendants.</summary>
         public static void InvalidateMeasure(UITransform transform)
-        {
-            transform.IncrementLayoutVersionInternal();
+            => InvalidateLocal(transform, true);
 
-            // Propagate measure invalidation up for auto-sizing parents
-            if (transform.Parent is UIBoundableTransform parentBoundable && parentBoundable.UsesAutoSizing)
-                InvalidateMeasure(parentBoundable);
-
-            // Invalidate layout on the parent canvas, or on ourselves if we ARE the root canvas
-            if (transform.ParentCanvas != null && transform.ParentCanvas != transform)
-                transform.ParentCanvas.InvalidateLayout();
-            else if (transform is UICanvasTransform canvasSelf)
-                canvasSelf.InvalidateLayout();
-        }
-
-        /// <summary>
-        /// Invalidates only the arrange phase.
-        /// </summary>
+        /// <summary>Invalidates arrange dependencies while retaining measured sizes.</summary>
         public static void InvalidateArrange(UITransform transform)
-        {
-            // Only increment if we haven't already invalidated measure
-            if (!transform.NeedsMeasure)
-                transform.IncrementLayoutVersionInternal();
+            => InvalidateLocal(transform, false);
 
-            // Invalidate layout on the parent canvas, or on ourselves if we ARE the root canvas
-            if (transform.ParentCanvas != null && transform.ParentCanvas != transform)
-                transform.ParentCanvas.InvalidateLayout();
-            else if (transform is UICanvasTransform canvasSelf)
-                canvasSelf.InvalidateLayout();
+        private static void InvalidateLocal(UITransform transform, bool measure)
+        {
+            transform.RecordUIChange((measure ? UIChangeDomain.Measure : UIChangeDomain.None) |
+                UIChangeDomain.Arrange | UIChangeDomain.Transform | UIChangeDomain.Clip | UIChangeDomain.HitTest);
+            // The current layout entry walks through ancestor cache guards. Keep that path
+            // dirty, but retain all unrelated descendant caches. Worker scheduling consumes
+            // the journal later; no snapshot or descendant scan is needed at mutation time.
+            for (TransformBase? current = transform; current is not null; current = current.Parent)
+            {
+                if (current is not UITransform ui)
+                    continue;
+                if (measure)
+                    ui.IncrementLayoutVersionInternal();
+                else
+                    ui.IncrementArrangeVersionInternal();
+                if (!ReferenceEquals(ui, transform))
+                    UIRuntimeCounters.Add(UIWorkCounter.AncestorsInvalidated);
+                if (ui is UICanvasTransform canvas)
+                    canvas.SetLayoutInvalidated(true);
+            }
+            transform.GetMutationCanvas()?.SetLayoutInvalidated(true);
         }
 
         #endregion
@@ -156,27 +149,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static Vector2 MeasureTransform(UITransform transform, Vector2 availableSize)
         {
-            // For boundable transforms, use the specialized measure
-            if (transform is UIBoundableTransform boundable)
-                return MeasureBoundable(boundable, availableSize);
-
-            // Skip if already measured with same constraints
-            if (!transform.NeedsMeasure && XRMath.VectorsEqual(transform.LastMeasureConstraint, availableSize))
-                return transform.DesiredSize;
-
-            using var profiler = RuntimeEngine.Profiler.Start();
-
-            LogUI($"Measure UITransform: {transform.GetType().Name} available={availableSize}");
-
-            transform.SetLastMeasureConstraint(availableSize);
-
-            // Measure children and aggregate their sizes
-            Vector2 childrenSize = MeasureChildren(transform, availableSize);
-            transform.SetDesiredSize(childrenSize);
-
-            transform.SetLastMeasuredVersion();
-            LogUI($"  -> desired={childrenSize}");
-            return childrenSize;
+            return MeasureAcceptedOrDetached(transform, availableSize);
         }
 
         /// <summary>
@@ -184,120 +157,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static Vector2 MeasureBoundable(UIBoundableTransform transform, Vector2 availableSize)
         {
-            if (transform.IsCollapsed)
-            {
-                transform.SetDesiredSize(Vector2.Zero);
-                transform.SetLastMeasuredVersion();
-                return Vector2.Zero;
-            }
-
-            // Skip if already measured with same constraints and not dirty
-            if (!transform.NeedsMeasure && XRMath.VectorsEqual(transform.LastMeasureConstraint, availableSize))
-                return transform.DesiredSize;
-
-            using var profiler = RuntimeEngine.Profiler.Start();
-
-            LogUI($"Measure UIBoundableTransform: {transform.GetType().Name} available={availableSize}");
-
-            transform.SetLastMeasureConstraint(availableSize);
-
-            // Calculate desired size based on explicit dimensions or auto-sizing
-            float desiredWidth;
-            float desiredHeight;
-
-            if (transform.Width.HasValue)
-            {
-                desiredWidth = transform.Width.Value;
-            }
-            else
-            {
-                // Auto width: use callback or call instance method (allows overrides in derived classes)
-                if (transform.CalcAutoWidthCallback != null)
-                    desiredWidth = transform.CalcAutoWidthCallback(transform);
-                else
-                    desiredWidth = transform.InvokeMeasureChildrenWidth(availableSize);
-            }
-
-            if (transform.Height.HasValue)
-            {
-                desiredHeight = transform.Height.Value;
-            }
-            else
-            {
-                // Auto height: use callback or call instance method (allows overrides in derived classes)
-                if (transform.CalcAutoHeightCallback != null)
-                    desiredHeight = transform.CalcAutoHeightCallback(transform);
-                else
-                    desiredHeight = transform.InvokeMeasureChildrenHeight(availableSize);
-            }
-
-            Vector2 desiredSize = new(desiredWidth, desiredHeight);
-
-            // Apply size constraints
-            ClampSize(transform, ref desiredSize);
-
-            // Add margins to desired size for parent layout calculations
-            desiredSize = new Vector2(
-                ApplyHorizontalMargins(transform, desiredSize.X),
-                ApplyVerticalMargins(transform, desiredSize.Y)
-            );
-
-            // Always ensure all children are measured so their DesiredSize is populated.
-            // When Width/Height are explicit (e.g., the root canvas), the auto-sizing
-            // InvokeMeasureChildrenWidth/Height paths above are skipped, but the arrange
-            // phase (e.g., UIListTransform.ArrangeChildren) reads child DesiredSize for
-            // item sizing. Without this, children have DesiredSize = Zero and items overlap.
-            // The NeedsMeasure + LastMeasureConstraint guard prevents redundant work when
-            // children were already measured by the auto-sizing path.
-            MeasureChildren(transform, availableSize);
-
-            transform.SetDesiredSize(desiredSize);
-            transform.SetLastMeasuredVersion();
-
-            LogUI($"  -> desired={desiredSize}");
-            return desiredSize;
-        }
-
-        /// <summary>
-        /// Measures all child transforms and returns the aggregate size.
-        /// </summary>
-        public static Vector2 MeasureChildren(UITransform transform, Vector2 availableSize)
-        {
-            Vector2 maxSize = Vector2.Zero;
-            try
-            {
-                foreach (var child in transform.Children)
-                {
-                    if (child is UITransform uiChild && !uiChild.IsCollapsed)
-                    {
-                        var childSize = MeasureTransform(uiChild, availableSize);
-                        maxSize = Vector2.Max(maxSize, childSize);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.UI($"UILayoutSystem.MeasureChildren exception: {ex.Message}");
-            }
-            return maxSize;
-        }
-
-        /// <summary>
-        /// Measures children to determine required width.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static float MeasureChildrenWidth(UIBoundableTransform transform, Vector2 availableSize)
-        {
-            return transform.GetMaxChildWidth();
-        }
-
-        /// <summary>
-        /// Measures children to determine required height.
-        /// </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static float MeasureChildrenHeight(UIBoundableTransform transform, Vector2 availableSize)
-        {
-            return transform.GetMaxChildHeight();
+            return MeasureAcceptedOrDetached(transform, availableSize);
         }
 
         #endregion
@@ -309,27 +169,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static void ArrangeTransform(UITransform transform, BoundingRectangleF finalBounds)
         {
-            // For boundable transforms, use the specialized arrange
-            if (transform is UIBoundableTransform boundable)
-            {
-                ArrangeBoundable(boundable, finalBounds);
-                return;
-            }
-
-            // Skip if already arranged with same bounds
-            if (!transform.NeedsArrange && transform.LastArrangeBounds.Equals(finalBounds))
-                return;
-
-            using var profiler = RuntimeEngine.Profiler.Start();
-
-            LogUI($"Arrange UITransform: {transform.GetType().Name} bounds={finalBounds.Translation} size={finalBounds.Extents}");
-
-            transform.SetLastArrangeBounds(finalBounds);
-            transform.OnResizeActualInternal(finalBounds);
-            transform.SetLastArrangedVersion();
-
-            // Arrange children within the same region
-            ArrangeChildren(transform, finalBounds);
+            RequestAttachedLayout(transform);
         }
 
         /// <summary>
@@ -337,31 +177,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static void ArrangeBoundable(UIBoundableTransform transform, BoundingRectangleF finalBounds)
         {
-            // Skip if already arranged with same bounds and not dirty
-            if (!transform.NeedsArrange && transform.LastArrangeBounds.Equals(finalBounds))
-                return;
-
-            using var profiler = RuntimeEngine.Profiler.Start();
-
-            LogUI($"Arrange UIBoundableTransform: {transform.GetType().Name} bounds={finalBounds.Translation} size={finalBounds.Extents}");
-
-            transform.SetLastArrangeBounds(finalBounds);
-            
-            // Pass the full parent bounds to OnResizeActual.
-            // Margin handling is done entirely within GetActualBounds to avoid double-application.
-            transform.OnResizeActualInternal(finalBounds);
-
-            // OnResizeActual already calls MarkLocalModified(deferred) when bounds changed.
-            // No need for a second ShouldMarkLocalMatrixChanged / MarkLocalModified call here.
-
-            transform.SetLastArrangedVersion();
-
-            // Get actual bounds for children
-            var actualBounds = transform.GetActualBounds();
-            LogUI($"  -> actual pos={actualBounds.Translation} size={actualBounds.Extents}");
-
-            // Arrange children - calls the virtual method which can be overridden
-            transform.InvokeArrangeChildren(actualBounds);
+            RequestAttachedLayout(transform);
         }
 
         /// <summary>
@@ -369,18 +185,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static void ArrangeChildren(UITransform transform, BoundingRectangleF childRegion)
         {
-            try
-            {
-                foreach (var child in transform.Children)
-                {
-                    if (child is UITransform uiChild)
-                        ArrangeTransform(uiChild, childRegion);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.UI($"UILayoutSystem.ArrangeChildren exception: {ex.Message}");
-            }
+            RequestAttachedLayout(transform);
         }
 
         /// <summary>
@@ -388,21 +193,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static void ArrangeChildrenBoundable(UIBoundableTransform transform, BoundingRectangleF childRegion)
         {
-            var paddedRegion = ApplyPadding(transform, childRegion);
-            try
-            {
-                foreach (var child in transform.Children)
-                {
-                    if (child is UIBoundableTransform uiChild)
-                        ArrangeBoundable(uiChild, paddedRegion);
-                    else if (child is UITransform uiTfm)
-                        ArrangeTransform(uiTfm, paddedRegion);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.UI($"UILayoutSystem.ArrangeChildrenBoundable exception: {ex.Message}");
-            }
+            RequestAttachedLayout(transform);
         }
 
         #endregion
@@ -444,7 +235,7 @@ namespace XREngine.Rendering.UI
                 // Translation is used as the translation from the min anchor, and width is used as the translation from the max anchor.
                 float rawWidth = (maxX + (transform.Width ?? 0)) - (minX + transform.Translation.X);
                 // Subtract both left and right margins for stretched anchors
-                size.X = rawWidth - transform.Margins.X - transform.Margins.Z;
+                size.X = UILayoutSizeRules.NonnegativeFiniteExtent(rawWidth - transform.Margins.X - transform.Margins.Z);
             }
             if (sameY)
             {
@@ -457,7 +248,7 @@ namespace XREngine.Rendering.UI
                 // Translation is used as the translation from the min anchor, and height is used as the translation from the max anchor.
                 float rawHeight = (maxY + (transform.Height ?? 0)) - (minY + transform.Translation.Y);
                 // Subtract both bottom and top margins for stretched anchors
-                size.Y = rawHeight - transform.Margins.Y - transform.Margins.W;
+                size.Y = UILayoutSizeRules.NonnegativeFiniteExtent(rawHeight - transform.Margins.Y - transform.Margins.W);
             }
 
             // Clamp the size to the min and max size.
@@ -505,8 +296,8 @@ namespace XREngine.Rendering.UI
 
             bottomLeftTranslation = new(minX + marginX, minY + marginY);
 
-            LogUI($"  GetActualBounds: anchors minX={minX} minY={minY} maxX={maxX} maxY={maxY} sameX={sameX} sameY={sameY}");
-            LogUI($"    -> bottomLeft={bottomLeftTranslation} size={size}");
+            if (EnableDebugLogging) LogUI($"  GetActualBounds: anchors minX={minX} minY={minY} maxX={maxX} maxY={maxY} sameX={sameX} sameY={sameY}");
+            if (EnableDebugLogging) LogUI($"    -> bottomLeft={bottomLeftTranslation} size={size}");
         }
 
         #endregion
@@ -555,18 +346,9 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public static BoundingRectangleF ApplyPadding(UIBoundableTransform transform, BoundingRectangleF bounds)
         {
-            var padding = transform.Padding;
-            float left = padding.X;
-            float bottom = padding.Y;
-            float right = padding.Z;
-            float top = padding.W;
-
-            Vector2 size = bounds.Extents;
-            Vector2 pos = bounds.Translation;
-
-            pos += new Vector2(left, bottom);
-            size -= new Vector2(left + right, bottom + top);
-            return new BoundingRectangleF(pos, size);
+            Vector4 padding = transform.Padding;
+            return new BoundingRectangleF(bounds.Translation + new Vector2(padding.X, padding.Y),
+                UILayoutSizeRules.InsetSize(bounds.Extents, padding));
         }
 
         /// <summary>
@@ -590,182 +372,17 @@ namespace XREngine.Rendering.UI
 
         #endregion
 
-        #region Async Layout (Coroutine-based)
-
-        /// <summary>
-        /// Helper class to track processed count across coroutine calls.
-        /// </summary>
-        public class LayoutCounter
-        {
-            public int Count;
-            public void Increment() => Count++;
-            public void Reset() => Count = 0;
-        }
-
-        /// <summary>
-        /// Coroutine that performs layout in two phases, yielding periodically to avoid frame hitches.
-        /// </summary>
-        public static IEnumerable LayoutCoroutine(UICanvasTransform canvas, int maxItemsPerFrame)
-        {
-            var bounds = canvas.GetRootCanvasBounds();
-            var counter = new LayoutCounter();
-
-            // Phase 1: Measure pass (bottom-up traversal with yields)
-            foreach (var step in MeasureCoroutine(canvas, bounds.Extents, counter, maxItemsPerFrame))
-            {
-                if (counter.Count >= maxItemsPerFrame)
-                {
-                    counter.Reset();
-                    yield return null; // Yield to next frame
-                }
-            }
-
-            yield return null; // Yield between phases
-
-            counter.Reset();
-
-            // Phase 2: Arrange pass (top-down traversal with yields)
-            foreach (var step in ArrangeCoroutine(canvas, bounds, counter, maxItemsPerFrame))
-            {
-                if (counter.Count >= maxItemsPerFrame)
-                {
-                    counter.Reset();
-                    yield return null; // Yield to next frame
-                }
-            }
-        }
-
-        /// <summary>
-        /// Coroutine for the measure phase.
-        /// </summary>
-        public static IEnumerable MeasureCoroutine(UITransform transform, Vector2 availableSize, LayoutCounter counter, int maxItemsPerFrame)
-        {
-            // Measure this transform
-            MeasureTransform(transform, availableSize);
-            counter.Increment();
-            yield return null;
-
-            // Recursively measure children
-            foreach (var child in transform.Children)
-            {
-                if (child is UIBoundableTransform boundableChild)
-                {
-                    foreach (var step in MeasureChildCoroutine(boundableChild, availableSize, counter, maxItemsPerFrame))
-                        yield return step;
-                }
-                else if (child is UITransform uiChild)
-                {
-                    MeasureTransform(uiChild, availableSize);
-                    counter.Increment();
-                    yield return null;
-                }
-            }
-        }
-
-        private static IEnumerable MeasureChildCoroutine(UIBoundableTransform child, Vector2 availableSize, LayoutCounter counter, int maxItemsPerFrame)
-        {
-            // Skip if child doesn't need measuring
-            if (!child.NeedsMeasure)
-                yield break;
-
-            MeasureBoundable(child, availableSize);
-            counter.Increment();
-            yield return null;
-
-            // Recursively measure grandchildren
-            foreach (var grandchild in child.Children)
-            {
-                if (grandchild is UIBoundableTransform boundableGrandchild)
-                {
-                    foreach (var step in MeasureChildCoroutine(boundableGrandchild, availableSize, counter, maxItemsPerFrame))
-                        yield return step;
-                }
-                else if (grandchild is UITransform uiGrandchild)
-                {
-                    MeasureTransform(uiGrandchild, availableSize);
-                    counter.Increment();
-                    yield return null;
-                }
-            }
-        }
-
-        /// <summary>
-        /// Coroutine for the arrange phase.
-        /// </summary>
-        public static IEnumerable ArrangeCoroutine(UIBoundableTransform transform, BoundingRectangleF bounds, LayoutCounter counter, int maxItemsPerFrame)
-        {
-            // Arrange this transform
-            ArrangeBoundable(transform, bounds);
-            counter.Increment();
-            yield return null;
-
-            // Get child region after arranging self
-            var childRegion = ApplyPadding(transform, transform.GetActualBounds());
-
-            // Recursively arrange children
-            foreach (var child in transform.Children)
-            {
-                if (child is UIBoundableTransform boundableChild)
-                {
-                    foreach (var step in ArrangeChildCoroutine(boundableChild, childRegion, counter, maxItemsPerFrame))
-                        yield return step;
-                }
-                else if (child is UITransform uiChild)
-                {
-                    ArrangeTransform(uiChild, childRegion);
-                    counter.Increment();
-                    yield return null;
-                }
-            }
-        }
-
-        private static IEnumerable ArrangeChildCoroutine(UIBoundableTransform child, BoundingRectangleF bounds, LayoutCounter counter, int maxItemsPerFrame)
-        {
-            // Skip if child doesn't need arranging AND bounds haven't changed.
-            // Using the same dual guard as the synchronous ArrangeBoundable path
-            // to handle cases where NeedsArrange was cleared but position changed
-            // (e.g., split panel Y offset shifts on height-only window resize).
-            if (!child.NeedsArrange && child.LastArrangeBounds.Equals(bounds))
-                yield break;
-
-            ArrangeBoundable(child, bounds);
-            counter.Increment();
-            yield return null;
-
-            // Get child's child region
-            var grandchildRegion = ApplyPadding(child, child.GetActualBounds());
-
-            // Recursively arrange grandchildren
-            foreach (var grandchild in child.Children)
-            {
-                if (grandchild is UIBoundableTransform boundableGrandchild)
-                {
-                    foreach (var step in ArrangeChildCoroutine(boundableGrandchild, grandchildRegion, counter, maxItemsPerFrame))
-                        yield return step;
-                }
-                else if (grandchild is UITransform uiGrandchild)
-                {
-                    ArrangeTransform(uiGrandchild, grandchildRegion);
-                    counter.Increment();
-                    yield return null;
-                }
-            }
-        }
-
-        #endregion
-
         #region Legacy FitLayout Support
 
         /// <summary>
-        /// Legacy single-pass layout method for boundable transforms.
+        /// Requests canvas layout for a boundable transform.
         /// </summary>
         public static void FitLayout(UIBoundableTransform transform, BoundingRectangleF parentBounds)
         {
-            using var profiler = RuntimeEngine.Profiler.Start();
-
-            // Use the two-phase approach for better dirty tracking
-            MeasureBoundable(transform, parentBounds.Extents);
-            ArrangeBoundable(transform, parentBounds);
+            UICanvasTransform canvas = transform.GetMutationCanvas() ??
+                throw new InvalidOperationException("A boundable transform needs a canvas for layout.");
+            canvas.SetLayoutInvalidated(true);
+            canvas.UpdateLayoutAsync();
         }
 
         #endregion

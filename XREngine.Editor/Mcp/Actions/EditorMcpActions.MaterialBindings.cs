@@ -49,7 +49,7 @@ public sealed partial class EditorMcpActions
         {
             if (context.World.TargetWorld is { } world)
                 foreach (XRScene scene in world.Scenes)
-                    foreach (SceneNode root in scene.RootNodes)
+                    foreach (SceneNode root in scene.SceneRoots)
                         if (root is not null)
                             roots.Add(root);
             foreach (SceneNode root in context.World.RootNodes)
@@ -515,7 +515,7 @@ public sealed partial class EditorMcpActions
         }
         HashSet<SceneNode> seen = new(ReferenceEqualityComparer.Instance);
         IEnumerable<SceneNode> roots = world.TargetWorld is { } targetWorld
-            ? targetWorld.Scenes.SelectMany(scene => scene.RootNodes).Concat(world.RootNodes)
+            ? targetWorld.Scenes.SelectMany(scene => scene.SceneRoots).Concat(world.RootNodes)
             : world.RootNodes;
         foreach (SceneNode root in roots)
         {
@@ -549,7 +549,7 @@ public sealed partial class EditorMcpActions
         string? failure = null;
         HashSet<SceneNode> seenNodes = new(ReferenceEqualityComparer.Instance);
         IEnumerable<SceneNode> roots = world.TargetWorld is { } targetWorld
-            ? targetWorld.Scenes.SelectMany(scene => scene.RootNodes).Concat(world.RootNodes)
+            ? targetWorld.Scenes.SelectMany(scene => scene.SceneRoots).Concat(world.RootNodes)
             : world.RootNodes;
         foreach (SceneNode root in roots)
         {

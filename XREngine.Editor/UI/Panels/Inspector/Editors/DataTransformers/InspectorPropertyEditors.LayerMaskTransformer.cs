@@ -37,16 +37,9 @@ public static partial class InspectorPropertyEditors
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
-            if (Property is null || Targets is null || propName is not nameof(Value) || !IsFocused)
+            if (!CanWriteSource || propName is not nameof(Value))
                 return;
-
-            var newMask = new LayerMask(Value ?? 0);
-            foreach (var target in Targets)
-            {
-                if (target is null)
-                    continue;
-                Property.SetValue(target, newMask);
-            }
+            UpdateSourceValue(_ => new LayerMask(Value ?? 0));
         }
     }
 }

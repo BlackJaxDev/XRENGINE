@@ -40,8 +40,67 @@ namespace XREngine.Editor;
 /// The system uses <see cref="AsyncLocal{T}"/> to track user interaction context per async flow.
 /// </para>
 /// </remarks>
-public static class Undo
+public static partial class Undo
 {
+    private static int _openStructuralMutations;
+
+    /// <summary>Records one inverse before callbacks and holds replay until the command finishes.</summary>
+    internal static StructuralChangeHandle BeginStructuralMutation(string description, Action undoAction, Action redoAction)
+    {
+        lock (_sync)
+        {
+            if (!RecordingAllowed || _replayInProgress || _scopeStack.Count == 0)
+                throw new InvalidOperationException("A structural mutation requires an open user change scope outside Undo/Redo.");
+            ChangeScope scope = _scopeStack.Peek();
+            StructuralUndoStep step = new(description, undoAction, redoAction);
+            scope.AddStructuralStep(step);
+            _openStructuralMutations++;
+            return new StructuralChangeHandle(scope, step);
+        }
+    }
+
+    internal static bool RemoveRestoredStructuralStep(ChangeScope scope, StructuralUndoStep step)
+    {
+        lock (_sync)
+            return !scope.Completed && _scopeStack.Contains(scope) && scope.Steps.Remove(step);
+    }
+
+    internal static void ReconcileStructuralProperty(ChangeScope scope, StructuralUndoStep owner,
+        XRBase target, string propertyName, object? original, object? current, IUndoPropertyReplayGuard? replayGuard = null)
+    {
+        lock (_sync)
+        {
+            int ownerIndex = scope.Steps.IndexOf(owner);
+            if (scope.Completed || !_scopeStack.Contains(scope) || ownerIndex < 0)
+                throw new InvalidOperationException("The structural property's owning change scope is no longer open.");
+            PropertyChangeStep? existing = scope.Changes.FirstOrDefault(change =>
+                ReferenceEquals(change.Target, target) && string.Equals(change.PropertyName, propertyName, StringComparison.Ordinal));
+            int index = existing is null ? -1 : scope.Steps.IndexOf(existing);
+            if (index >= 0 && index < ownerIndex)
+                throw new InvalidOperationException("A structural command cannot replace an earlier property edit.");
+            if (existing is not null)
+            {
+                scope.Changes.Remove(existing);
+                scope.Steps.Remove(existing);
+            }
+            if (Equals(original, current))
+                return;
+            PropertyChangeStep captured = new(target, propertyName, original, current, requireSetterCompletion: true, replayGuard);
+            scope.Changes.Add(captured);
+            if (index >= 0)
+                scope.Steps.Insert(index, captured);
+            else
+                scope.AddStructuralStep(captured);
+        }
+    }
+
+    internal static void ReleaseStructuralMutation()
+    {
+        lock (_sync)
+            _openStructuralMutations--;
+        DrainHistoryResources();
+    }
+
     /// <summary>
     /// Synchronization object for thread-safe access to shared state.
     /// </summary>
@@ -78,6 +137,11 @@ public static class Undo
     /// stack when undone and cleared when new changes are made.
     /// </summary>
     private static readonly Stack<UndoAction> _redoStack = new();
+
+    // A replay holds its source entry until the action succeeds. Other history
+    // edits can invalidate that transfer while the action runs outside the lock.
+    private static long _historyRevision;
+    private static bool _replayInProgress;
 
     /// <summary>
     /// Maps input interfaces to their registered keyboard shortcut handlers.
@@ -363,7 +427,8 @@ public static class Undo
 
             var action = new UndoAction(description, [step], DateTime.UtcNow);
             _undoStack.Push(action);
-            _redoStack.Clear();
+            ClearHistoryStackLocked(_redoStack);
+            _historyRevision++;
             addedImmediate = true;
         }
 
@@ -470,8 +535,8 @@ public static class Undo
     /// </returns>
     /// <remarks>
     /// <para>
-    /// This method first flushes any pending change scopes, then pops the most recent action
-    /// from the undo stack, applies the old values, and pushes the action to the redo stack.
+    /// This method flushes pending scopes and applies the most recent action. It moves
+    /// the action to the redo stack only after the action succeeds and history stays current.
     /// </para>
     /// <para>
     /// Property change recording is suppressed during the undo operation to prevent the
@@ -482,27 +547,7 @@ public static class Undo
     /// </para>
     /// </remarks>
     public static bool TryUndo()
-    {
-        // Ensure any open change scopes are committed before undoing
-        FlushPendingScopes();
-
-        UndoAction? action;
-        lock (_sync)
-        {
-            if (_undoStack.Count == 0)
-                return false;
-
-            // Move action from undo stack to redo stack
-            action = _undoStack.Pop();
-            _redoStack.Push(action);
-        }
-
-        // Apply the undo operation with recording suppressed
-        ApplyUndo(action);
-        ProcessPendingTransformRefresh();
-        RaiseHistoryChanged();
-        return true;
-    }
+        => TryReplay(undo: true);
 
     /// <summary>
     /// Attempts to redo the most recently undone action from the redo stack.
@@ -512,8 +557,8 @@ public static class Undo
     /// </returns>
     /// <remarks>
     /// <para>
-    /// This method first flushes any pending change scopes, then pops the most recent action
-    /// from the redo stack, applies the new values, and pushes the action back to the undo stack.
+    /// This method flushes pending scopes and applies the most recent action. It moves
+    /// the action to the undo stack only after the action succeeds and history stays current.
     /// </para>
     /// <para>
     /// Property change recording is suppressed during the redo operation to prevent the
@@ -524,26 +569,60 @@ public static class Undo
     /// </para>
     /// </remarks>
     public static bool TryRedo()
-    {
-        // Ensure any open change scopes are committed before redoing
-        FlushPendingScopes();
+        => TryReplay(undo: false);
 
-        UndoAction? action;
+    private static bool TryReplay(bool undo)
+    {
         lock (_sync)
         {
-            if (_redoStack.Count == 0)
+            if (_replayInProgress || _openStructuralMutations != 0)
                 return false;
-
-            // Move action from redo stack back to undo stack
-            action = _redoStack.Pop();
-            _undoStack.Push(action);
+            _replayInProgress = true;
         }
 
-        // Apply the redo operation with recording suppressed
-        ApplyRedo(action);
-        ProcessPendingTransformRefresh();
-        RaiseHistoryChanged();
-        return true;
+        try
+        {
+            FlushPendingScopes();
+
+            UndoAction action;
+            long revision;
+            lock (_sync)
+            {
+                Stack<UndoAction> source = undo ? _undoStack : _redoStack;
+                if (source.Count == 0)
+                    return false;
+                action = source.Peek();
+                revision = _historyRevision;
+            }
+
+            if (undo)
+                ApplyUndo(action);
+            else
+                ApplyRedo(action);
+
+            lock (_sync)
+            {
+                Stack<UndoAction> source = undo ? _undoStack : _redoStack;
+                Stack<UndoAction> destination = undo ? _redoStack : _undoStack;
+                if (_historyRevision != revision || source.Count == 0 ||
+                    !ReferenceEquals(source.Peek(), action))
+                    return false;
+
+                source.Pop();
+                destination.Push(action);
+                _historyRevision++;
+            }
+
+            ProcessPendingTransformRefresh();
+            RaiseHistoryChanged();
+            return true;
+        }
+        finally
+        {
+            lock (_sync)
+                _replayInProgress = false;
+            DrainHistoryResources();
+        }
     }
 
     /// <summary>
@@ -558,8 +637,9 @@ public static class Undo
     {
         lock (_sync)
         {
-            _undoStack.Clear();
-            _redoStack.Clear();
+            ClearHistoryStackLocked(_undoStack);
+            ClearHistoryStackLocked(_redoStack);
+            _historyRevision++;
         }
 
         RaiseHistoryChanged();
@@ -679,9 +759,9 @@ public static class Undo
             return;
 
         Track(scene);
-        for (int i = 0; i < scene.RootNodes.Count; i++)
+        for (int i = 0; i < scene.SceneRoots.Count; i++)
         {
-            SceneNode node = scene.RootNodes[i];
+            SceneNode node = scene.SceneRoots[i];
             TrackSceneNode(node);
 
             lock (_sync)
@@ -898,6 +978,8 @@ public static class Undo
 
     private static void RecordSceneNodeDestroy(SceneNode node)
     {
+        if (OwnedHierarchyUndoReleaseScope.Contains(node))
+            return;
         if (Volatile.Read(ref _suppressRecordingCount) > 0 || !EditorState.InEditMode)
             return;
 
@@ -1038,7 +1120,8 @@ public static class Undo
             var step = new PropertyChangeStep(target, propertyName, previousValue, newValue);
             var action = new UndoAction(BuildDescription(step), [step], DateTime.UtcNow);
             _undoStack.Push(action);
-            _redoStack.Clear(); // Clear redo stack when new changes are made
+            ClearHistoryStackLocked(_redoStack);
+            _historyRevision++;
             addedImmediate = true;
         }
 
@@ -1104,42 +1187,63 @@ public static class Undo
     private static void CompleteScope(ChangeScope scope)
     {
         UndoAction? committedAction = null;
-        lock (_sync)
+        bool invalidScopeOrder = false;
+        try
         {
-            // Prevent double-completion
-            if (scope.Completed)
-                return;
-
-            // Verify LIFO order
-            if (_scopeStack.Count == 0 || !ReferenceEquals(_scopeStack.Peek(), scope))
+            lock (_sync)
             {
-                Debug.LogWarning("Change scopes must be disposed in LIFO order.");
-                //Recover by removing all scopes until we find the target
-                while (_scopeStack.Count > 0)
+                if (scope.Completed)
+                    return;
+                if (_scopeStack.Count == 0 || !ReferenceEquals(_scopeStack.Peek(), scope))
                 {
-                    var popped = _scopeStack.Pop();
-                    if (ReferenceEquals(popped, scope))
-                        break;
+                    invalidScopeOrder = true;
+                    while (_scopeStack.Count > 0)
+                    {
+                        ChangeScope popped = _scopeStack.Pop();
+                        popped.Completed = true;
+                        ReleaseScopeResourcesLocked(popped);
+                        if (ReferenceEquals(popped, scope))
+                            break;
+                    }
+                    return;
                 }
-                return;
+
+                _scopeStack.Pop();
+                scope.Completed = true;
+                if (scope.IsCanceled || scope.Steps.Count == 0)
+                {
+                    ReleaseScopeResourcesLocked(scope);
+                    return;
+                }
+
+                try
+                {
+                    var steps = scope.Steps.Select(s => s.Clone()).ToList();
+                    committedAction = new UndoAction(scope.Description, steps, scope.TimestampUtc);
+                    _undoStack.Push(committedAction);
+                    TransferScopeResourcesLocked(scope, committedAction);
+                }
+                catch
+                {
+                    ReleaseScopeResourcesLocked(scope);
+                    throw;
+                }
+                ClearHistoryStackLocked(_redoStack);
+                _historyRevision++;
             }
 
-            _scopeStack.Pop();
-            scope.Completed = true;
-
-            // Don't commit if canceled or empty
-            if (scope.IsCanceled || scope.Steps.Count == 0)
-                return;
-
-            // Clone changes to prevent external modification
-            var steps = scope.Steps.Select(s => s.Clone()).ToList();
-            committedAction = new UndoAction(scope.Description, steps, scope.TimestampUtc);
-            _undoStack.Push(committedAction);
-            _redoStack.Clear();
+            if (committedAction is not null)
+                RaiseHistoryChanged();
         }
-
-        if (committedAction is not null)
-            RaiseHistoryChanged();
+        finally
+        {
+            try
+            {
+                if (invalidScopeOrder)
+                    Debug.LogWarning("Change scopes must be disposed in LIFO order.");
+            }
+            finally { DrainHistoryResources(); }
+        }
     }
 
     /// <summary>
@@ -1234,7 +1338,8 @@ public static class Undo
     /// </summary>
     private static void RaiseHistoryChanged()
     {
-        HistoryChanged?.Invoke();
+        try { HistoryChanged?.Invoke(); }
+        finally { DrainHistoryResources(); }
     }
 
     /// <summary>
@@ -1739,7 +1844,7 @@ public static class Undo
             List<SceneRootPlacement> placements = [];
             foreach (XRScene scene in world.TargetWorld?.Scenes ?? [])
             {
-                int index = scene.RootNodes.FindIndex(root => ReferenceEquals(root, node));
+                int index = scene.SceneRoots.IndexOf(node);
                 if (index >= 0)
                     placements.Add(new SceneRootPlacement(scene, index));
             }
@@ -1775,13 +1880,13 @@ public static class Undo
 
         public void Restore(SceneNode node)
         {
-            if (scene.RootNodes.Any(root => ReferenceEquals(root, node)))
+            if (scene.SceneRoots.Any(root => ReferenceEquals(root, node)))
                 return;
 
-            if (index < 0 || index >= scene.RootNodes.Count)
-                scene.RootNodes.Add(node);
+            if (index < 0 || index >= scene.SceneRoots.Count)
+                scene.SceneRoots.Add(node);
             else
-                scene.RootNodes.Insert(index, node);
+                scene.SceneRoots.Insert(index, node);
         }
     }
 
@@ -1921,6 +2026,8 @@ public static class Undo
         /// </summary>
         internal List<IUndoStep> Steps { get; } = [];
 
+        internal List<UndoHistoryResource>? Resources { get; set; }
+
         /// <summary>
         /// Gets a value indicating whether this scope has been canceled.
         /// Canceled scopes do not commit their changes when disposed.
@@ -2054,6 +2161,7 @@ public static class Undo
     /// <param name="propertyName">The name of the changed property.</param>
     /// <param name="previousValue">The original value before the change.</param>
     /// <param name="newValue">The new value after the change.</param>
+    /// <param name="requireSetterCompletion">Whether a failed setter must stop later replay attempts.</param>
     /// <remarks>
     /// <para>
     /// Caches reflection metadata (<see cref="PropertyInfo"/> and <see cref="FieldInfo"/>)
@@ -2063,8 +2171,10 @@ public static class Undo
     /// Can restore either the original value (<see cref="ApplyOld"/>) or the new value (<see cref="ApplyNew"/>).
     /// </para>
     /// </remarks>
-    internal sealed class PropertyChangeStep(XRBase target, string propertyName, object? previousValue, object? newValue) : IUndoStep
+    internal sealed class PropertyChangeStep(XRBase target, string propertyName, object? previousValue, object? newValue,
+        bool requireSetterCompletion = false, IUndoPropertyReplayGuard? replayGuard = null) : IUndoStep
     {
+        private bool _incompleteReplay;
         /// <summary>
         /// Cached PropertyInfo for the property, resolved lazily.
         /// </summary>
@@ -2115,7 +2225,10 @@ public static class Undo
         /// Creates a copy of this step for storage in the undo stack.
         /// </summary>
         /// <returns>A new <see cref="PropertyChangeStep"/> with the same values.</returns>
-        public PropertyChangeStep Clone() => new(Target, PropertyName, OriginalValue, CurrentValue);
+        public PropertyChangeStep Clone() => new(Target, PropertyName, OriginalValue, CurrentValue, requireSetterCompletion, replayGuard)
+        {
+            _incompleteReplay = this._incompleteReplay
+        };
 
         /// <inheritdoc />
         IUndoStep IUndoStep.Clone() => Clone();
@@ -2133,23 +2246,39 @@ public static class Undo
         /// <param name="value">The value to set.</param>
         private void Apply(object? value)
         {
-            if (!TrySetValue(value))
+            if (requireSetterCompletion && _incompleteReplay)
+                throw new InvalidOperationException($"The previous replay of '{PropertyName}' did not complete its callbacks.");
+            try
             {
-                Debug.LogWarning($"Undo failed to set '{PropertyName}' on {Target.GetType().Name}.");
-                return;
-            }
+                using IDisposable? admission = replayGuard?.Enter(Target, PropertyName);
+                if (!TrySetValue(value))
+                {
+                    if (requireSetterCompletion)
+                        throw new InvalidOperationException($"The replay of '{PropertyName}' did not complete its callbacks.");
+                    Debug.LogWarning($"Undo failed to set '{PropertyName}' on {Target.GetType().Name}.");
+                    return;
+                }
+                replayGuard?.RequireCurrent();
 
 #if DEBUG || EDITOR
-            // Debug warning for transforms without a world (may indicate detached transform)
-            if (Target is TransformBase transform && transform.World is null)
-            {
-                string name = transform.SceneNode?.Name ?? transform.Name ?? transform.GetType().Name;
-                Debug.LogWarning($"Undo applied '{PropertyName}' on transform '{name}', but World is null.");
-            }
+                // Debug warning for transforms without a world (may indicate detached transform)
+                if (Target is TransformBase transform && transform.World is null)
+                {
+                    string name = transform.SceneNode?.Name ?? transform.Name ?? transform.GetType().Name;
+                    Debug.LogWarning($"Undo applied '{PropertyName}' on transform '{name}', but World is null.");
+                }
 #endif
 
-            // Trigger any post-change processing (e.g., transform matrix recalculation)
-            PostApplyChange(Target, PropertyName);
+                PostApplyChange(Target, PropertyName);
+                replayGuard?.RequireCurrent();
+            }
+            catch (Exception failure)
+            {
+                if (requireSetterCompletion)
+                    _incompleteReplay = true;
+                replayGuard?.Failed(failure);
+                throw;
+            }
         }
 
         /// <summary>
@@ -2276,6 +2405,7 @@ public static class Undo
     private sealed class UndoAction(string description, List<IUndoStep> steps, DateTime timestampUtc)
     {
         private readonly List<IUndoStep> _steps = steps;
+        internal List<UndoHistoryResource>? Resources { get; set; }
 
         /// <summary>The creation order of this action.</summary>
         public long Sequence { get; } = Interlocked.Increment(ref _lastActionSequence);

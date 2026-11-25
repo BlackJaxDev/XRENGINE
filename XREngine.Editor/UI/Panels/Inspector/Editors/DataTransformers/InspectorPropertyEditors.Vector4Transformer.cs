@@ -47,19 +47,17 @@ public static partial class InspectorPropertyEditors
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
-            if (Property is null || Targets is null || propName is not nameof(X) and not nameof(Y) and not nameof(Z) and not nameof(W) || !IsFocused)
+            if (!CanWriteSource || propName is not nameof(X) and not nameof(Y) and not nameof(Z) and not nameof(W))
                 return;
-            var newVector = new Vector4(
-                X ?? 0.0f,
-                Y ?? 0.0f,
-                Z ?? 0.0f,
-                W ?? 0.0f);
-            foreach (var target in Targets)
+            UpdateSourceValue(previous =>
             {
-                if (target is null)
-                    continue;
-                Property.SetValue(target, newVector);
-            }
+                Vector4 value = previous is Vector4 source ? source : default;
+                if (propName == nameof(X)) value.X = X ?? 0.0f;
+                if (propName == nameof(Y)) value.Y = Y ?? 0.0f;
+                if (propName == nameof(Z)) value.Z = Z ?? 0.0f;
+                if (propName == nameof(W)) value.W = W ?? 0.0f;
+                return value;
+            });
         }
     }
 }

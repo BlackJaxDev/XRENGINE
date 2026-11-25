@@ -205,7 +205,7 @@ public static class CutsceneResidencyAssetKeys
             if (scenes[s] is not { } scene)
                 continue;
 
-            var roots = scene.RootNodes;
+            var roots = scene.SceneRoots;
             for (int r = 0; r < roots.Count; r++)
                 if (ReferenceEquals(roots[r], root))
                     return scene;
@@ -248,7 +248,7 @@ public static class CutsceneResidencyAssetKeys
             return 0;
 
         int rootIndex = 0;
-        var roots = scene.RootNodes;
+        var roots = scene.SceneRoots;
         for (int i = 0; i < roots.Count; i++)
         {
             if (roots[i] is not { } root)

@@ -17,6 +17,11 @@ internal unsafe partial class VkMeshRenderer
 	{
 		public CommandBuffer CommandBuffer;
 		public PendingMeshDraw Draw;
+		public XRFrameBuffer? Target;
+		public VulkanWorldUiNativeProof? WorldUiProof;
+		public VulkanAcceptedFramePlan? WorldUiPlan;
+		public ulong WorldUiNativeToken;
+		public bool WorldUiProofRequired;
 		public XRMaterial Material;
 		public RenderPass RenderPass;
 		public bool UseDynamicRendering;

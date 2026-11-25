@@ -1,5 +1,8 @@
+using XREngine.Rendering.UI.State;
 using XREngine.Data.Colors;
 using XREngine.Scene;
+using XREngine.Input;
+using XREngine.Input.Devices;
 
 namespace XREngine.Rendering.UI
 {
@@ -10,6 +13,8 @@ namespace XREngine.Rendering.UI
             TextComponent?.Text is { Length: > 0 } text ? text : base.AccessibilityName;
         public override bool AccessibilityActivate()
         {
+            if (!CanInteract)
+                return false;
             OnInteract();
             return true;
         }
@@ -18,15 +23,68 @@ namespace XREngine.Rendering.UI
         private ColorF4 _highlightBackgroundColor = ColorF4.DarkGray;
         private ColorF4 _defaultTextColor = ColorF4.Gray;
         private ColorF4 _highlightTextColor = ColorF4.White;
+        private UIMaterialComponent? _focusRingMaterial;
+        private ColorF4 _focusRingColor = ColorF4.White;
+
+        /// <summary>Border material that displays the keyboard focus ring.</summary>
+        public UIMaterialComponent? FocusRingMaterial
+        {
+            get => _focusRingMaterial;
+            set
+            {
+                if (ReferenceEquals(_focusRingMaterial, value))
+                    return;
+                if (_focusRingMaterial is { IsDestroyed: false } previous)
+                    previous.BatchBorderColor = ColorF4.Transparent;
+                SetField(ref _focusRingMaterial, value);
+                UpdateFocusRing();
+            }
+        }
+
+        public ColorF4 FocusRingColor
+        {
+            get => _focusRingColor;
+            set
+            {
+                if (SetField(ref _focusRingColor, value))
+                    UpdateFocusRing();
+            }
+        }
+
+        private void UpdateFocusRing()
+        {
+            if (_focusRingMaterial is { IsDestroyed: false } ring)
+                ring.BatchBorderColor = IsFocused && CanInteract ? FocusRingColor : ColorF4.Transparent;
+        }
 
         protected override void OnMouseDirectOverlapEnter()
             => Highlight();
         protected override void OnMouseDirectOverlapLeave()
-            => Unhighlight();
+        {
+            if (!IsFocused)
+                Unhighlight();
+        }
         protected override void OnGamepadNavigateEnter()
             => Highlight();
         protected override void OnGamepadNavigateLeave()
-            => Unhighlight();
+        {
+            if (!IsFocused && !IsMouseDirectlyOver)
+                Unhighlight();
+        }
+
+        protected override void OnGotFocus()
+        {
+            base.OnGotFocus();
+            Highlight();
+            UpdateFocusRing();
+        }
+
+        protected override void OnLostFocus()
+        {
+            base.OnLostFocus();
+            if (!IsMouseDirectlyOver)
+                Unhighlight();
+        }
 
         public void RegisterClickActions(params Action<UIInteractableComponent>[] actions)
         {
@@ -39,16 +97,42 @@ namespace XREngine.Rendering.UI
                 InteractAction -= action;
         }
 
+        public override void RegisterInput(IInputRegistration input)
+        {
+            base.RegisterInput(input);
+            input.RegisterKeyStateChange(EKey.Enter, ActivateKey);
+            input.RegisterKeyStateChange(EKey.Space, ActivateKey);
+        }
+
+        private void ActivateKey(bool pressed)
+        {
+            if (pressed)
+                OnInteract();
+        }
+
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
 
-            var bg = BackgroundMaterialComponent?.Material;
-            bg?.SetVector4(BackgroundColorUniformName, DefaultBackgroundColor);
+            var component = BackgroundMaterialComponent;
+            component?.SetQuadColor(BackgroundColorUniformName, DefaultBackgroundColor);
 
             var text = TextComponent;
             if (text is not null)
                 text.Color = DefaultTextColor;
+            UpdateFocusRing();
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            base.OnComponentDeactivated();
+            UpdateFocusRing();
+        }
+
+        public override void CancelForRecycle()
+        {
+            FocusRingMaterial = null;
+            base.CancelForRecycle();
         }
 
         public UIMaterialComponent? BackgroundMaterialComponent => GetSiblingComponent<UIMaterialComponent>();
@@ -85,6 +169,9 @@ namespace XREngine.Rendering.UI
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
+                case nameof(IsFocused):
+                    UpdateFocusRing();
+                    break;
                 case nameof(BackgroundColorUniformName):
                     {
                         if (!IsHighlighted)
@@ -119,6 +206,12 @@ namespace XREngine.Rendering.UI
                             SetTextHighlighted();
                         break;
                     }
+                case nameof(IsEnabled):
+                    if (IsEnabled && (IsFocused || IsMouseDirectlyOver))
+                        Highlight();
+                    else if (!IsEnabled)
+                        Unhighlight();
+                    break;
             }
         }
 
@@ -131,7 +224,7 @@ namespace XREngine.Rendering.UI
 
         protected virtual void Highlight()
         {
-            if (IsHighlighted)
+            if (IsHighlighted || !IsEnabled)
                 return;
 
             IsHighlighted = true;
@@ -160,8 +253,8 @@ namespace XREngine.Rendering.UI
 
         private void SetBackgroundHighlighted()
         {
-            var bg = BackgroundMaterialComponent?.Material;
-            bg?.SetVector4(BackgroundColorUniformName, HighlightBackgroundColor);
+            var component = BackgroundMaterialComponent;
+            component?.SetQuadColor(BackgroundColorUniformName, HighlightBackgroundColor);
         }
 
         private void SetTextDefault()
@@ -173,8 +266,8 @@ namespace XREngine.Rendering.UI
 
         private void SetBackgroundDefault()
         {
-            var bg = BackgroundMaterialComponent?.Material;
-            bg?.SetVector4(BackgroundColorUniformName, DefaultBackgroundColor);
+            var component = BackgroundMaterialComponent;
+            component?.SetQuadColor(BackgroundColorUniformName, DefaultBackgroundColor);
         }
     }
 }

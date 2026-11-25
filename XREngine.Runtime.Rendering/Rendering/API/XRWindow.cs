@@ -14,6 +14,7 @@ using XREngine.Rendering.Compute;
 using XREngine.Rendering.Vulkan;
 using XREngine.Rendering.Occlusion;
 using XREngine.Rendering.Shadows;
+using XREngine.Rendering.UI;
 using XREngine.Scene;
 
 namespace XREngine.Rendering
@@ -22,7 +23,7 @@ namespace XREngine.Rendering
     /// Connects an owned desktop window backend to an API-specific engine renderer.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
+    public sealed partial class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
     {
         private long _completedRenderWindowIntervalSequence;
         private const long VrMirrorOffKeepAlivePresentRateHz = 2;
@@ -80,6 +81,11 @@ namespace XREngine.Rendering
                 if (owner._renderer is not null)
                     owner.RenderCallback(deltaSeconds);
             }
+            public ulong BeginOpenGlRenderDispatch() => owner.BeginOpenGlRenderDispatch();
+            public bool CanPresentOpenGlRenderDispatch(ulong dispatchToken)
+                => owner.CanPresentOpenGlRenderDispatch(dispatchToken);
+            public void CompleteOpenGlRenderDispatch(ulong dispatchToken, bool presented)
+                => owner.CompleteOpenGlRenderDispatch(dispatchToken, presented);
         }
 
         #endregion
@@ -97,6 +103,8 @@ namespace XREngine.Rendering
         public event Action<XRWindow, bool>? FocusChanged;
         public event Action<XRWindow, string[]>? FileDropped;
         public event Action<XRWindow>? ClosingRequested;
+        /// <summary>Fires on the native owner thread after close policy accepts a request.</summary>
+        public event Action<XRWindow, WindowCloseApproval>? CloseApproved;
         public event Action<XRWindow, Vector2D<int>>? FramebufferResized;
         public event Action? RenderViewportsCallback;
         public event Action? PostRenderViewportsCallback;
@@ -119,6 +127,10 @@ namespace XREngine.Rendering
         private bool _approvedNativeCloseInProgress;
         private int _closeRequestedOrApproved;
         private int _pendingCloseRequested;
+        private int _nativeCloseApplicationShutdownIntent;
+        private int _nativeCloseRequestActive;
+        private WindowCloseApproval? _pendingNativeCloseApproval;
+        private long _nextNativeCloseRequestSequence;
         private int _approvedNativeCloseCompletionPending;
         private int _pendingFramebufferResize;
         private int _pendingFramebufferResizeWidth;
@@ -424,12 +436,13 @@ namespace XREngine.Rendering
             }
         }
 
-        private void DisableRenderingPermanently(string reason, Exception? exception = null)
+        private void DisableRenderingPermanently(string reason,
+            Exception? exception = null, bool allowDuringRecreation = false)
         {
             if (_renderPermanentlyDisabled)
                 return;
 
-            if (_rendererRecreationInProgress)
+            if (_rendererRecreationInProgress && !allowDuringRecreation)
                 return;
 
             _renderPermanentlyDisabled = true;
@@ -530,9 +543,14 @@ namespace XREngine.Rendering
             _desktopBackend?.RequestSize(new IVector2(width, height));
         }
 
-        public void RequestClose()
+        public void RequestClose() => RequestCloseCore(applicationShutdownIntent: false);
+
+        internal void RequestCloseForApplicationShutdown()
+            => RequestCloseCore(applicationShutdownIntent: true);
+
+        private void RequestCloseCore(bool applicationShutdownIntent)
         {
-            if (_isDisposed || _isDisposing)
+            if (_isDisposed || _isDisposing || _approvedNativeCloseInProgress)
                 return;
 
             MarkCloseRequestedOrApproved();
@@ -541,19 +559,19 @@ namespace XREngine.Rendering
             {
                 RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
                     this,
-                    RequestCloseOnWindowThread,
+                    () => RequestCloseOnWindowThread(applicationShutdownIntent),
                     $"Viewport.CloseWindow.WindowThread[{GetHashCode()}]");
                 return;
             }
 
             if (RuntimeEngine.IsRenderThread)
             {
-                RequestCloseOnRenderThread();
+                RequestCloseOnRenderThread(applicationShutdownIntent);
                 return;
             }
 
             RuntimeEngine.EnqueueRenderThreadTask(
-                RequestCloseOnRenderThread,
+                () => RequestCloseOnRenderThread(applicationShutdownIntent),
                 $"Viewport.CloseWindow[{GetHashCode()}]",
                 RenderThreadJobKind.RequiresGraphicsContext);
         }
@@ -680,63 +698,95 @@ namespace XREngine.Rendering
             }
         }
 
-        private void RequestCloseOnRenderThread()
+        private void RequestCloseOnRenderThread(bool applicationShutdownIntent)
         {
-            if (_isDisposed || _isDisposing)
+            if (_isDisposed || _isDisposing || _approvedNativeCloseInProgress)
                 return;
 
             MarkCloseRequestedOrApproved();
 
             if (RuntimeEngine.IsDispatchingRenderFrame)
             {
-                Interlocked.Exchange(ref _pendingCloseRequested, 1);
+                QueueDeferredCloseRequest(applicationShutdownIntent);
                 return;
             }
 
-            PerformCloseRequest();
+            PerformCloseRequest(applicationShutdownIntent);
         }
 
-        private void RequestCloseOnWindowThread()
+        private void RequestCloseOnWindowThread(bool applicationShutdownIntent)
         {
-            if (_isDisposed || _isDisposing)
+            if (_isDisposed || _isDisposing || _approvedNativeCloseInProgress)
                 return;
 
             MarkCloseRequestedOrApproved();
             WarnIfNotNativeWindowThread("Window.Close");
-            PerformCloseRequest();
+            PerformCloseRequest(applicationShutdownIntent);
         }
 
         private void ProcessDeferredCloseRequest()
         {
-            if (Interlocked.Exchange(ref _pendingCloseRequested, 0) == 0)
+            int pending = Interlocked.Exchange(ref _pendingCloseRequested, 0);
+            if (pending == 0)
                 return;
+            if (Volatile.Read(ref _nativeCloseRequestActive) != 0)
+            {
+                Interlocked.CompareExchange(ref _pendingCloseRequested, pending, 0);
+                return;
+            }
 
             if (IsNativeEventPumpExternallyOwned)
             {
                 RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
                     this,
-                    RequestCloseOnWindowThread,
+                    () => RequestCloseOnWindowThread(pending == 2),
                     $"Viewport.CloseWindow.DeferredWindowThread[{GetHashCode()}]");
                 return;
             }
 
-            PerformCloseRequest();
+            PerformCloseRequest(pending == 2);
         }
 
-        private void PerformCloseRequest()
+        private void QueueDeferredCloseRequest(bool applicationShutdownIntent)
         {
+            // The latest queued request supplies the next native callback's intent.
+            Interlocked.Exchange(ref _pendingCloseRequested, applicationShutdownIntent ? 2 : 1);
+        }
+
+        private void PerformCloseRequest(bool applicationShutdownIntent)
+        {
+            if (_isDisposed || _isDisposing || _approvedNativeCloseInProgress)
+                return;
+            // A nested request cannot replace the active callback's decision or packet.
+            if (Interlocked.CompareExchange(ref _nativeCloseRequestActive, 1, 0) != 0)
+                return;
             MarkCloseRequestedOrApproved();
             try
             {
+                // The native callback is synchronous. A queued or unrelated close cannot inherit this intent.
+                Volatile.Write(ref _nativeCloseApplicationShutdownIntent,
+                    applicationShutdownIntent ? 1 : 0);
                 _desktopBackend?.RequestClose();
+                if (_pendingNativeCloseApproval is { } approval)
+                {
+                    _pendingNativeCloseApproval = null;
+                    Interlocked.Exchange(ref _pendingCloseRequested, 0);
+                    PublishCloseApproval(approval);
+                }
             }
             catch (Exception ex)
             {
+                _pendingNativeCloseApproval = null;
                 ClearCloseRequestedOrApproved();
                 Debug.RenderingWarning(
                     "[XRWindow] Window.Close failed for hash={0}. {1}",
                     GetHashCode(),
                     ex);
+            }
+            finally
+            {
+                Volatile.Write(ref _nativeCloseApplicationShutdownIntent, 0);
+                Volatile.Write(ref _nativeCloseRequestActive, 0);
             }
         }
 
@@ -1546,6 +1596,7 @@ namespace XREngine.Rendering
 
         private bool DestroyRenderer(AbstractRenderer renderer, string reason, bool waitForGpu)
         {
+            long retiringBackendGeneration = renderer.BackendGeneration;
             Debug.Rendering(
                 "[XRWindow] Destroying renderer for hash={0}. RendererType={1} WaitForGpu={2} Reason={3}",
                 GetHashCode(),
@@ -1628,10 +1679,18 @@ namespace XREngine.Rendering
             }
 
             if (waitForGpu)
+            {
                 TryRendererCleanupStep(renderer, reason,
                     "RetirePhysicsChainOutputPages",
                     () => XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.Instance
                         .NotifyOutputProducerKnownIdle(renderer));
+                TryRendererCleanupStep(renderer, reason,
+                    "RetireUIBatchCohorts",
+                    () => UIBatchCollector.NotifyRendererKnownIdle(renderer, retiringBackendGeneration));
+                TryRendererCleanupStep(renderer, reason,
+                    "RetireUIDrawPublications",
+                    () => renderer.RetireUiPublicationReceiptsKnownIdle(retiringBackendGeneration));
+            }
 
             bool wrappersDestroyed = TryRendererCleanupStep(
                 renderer,
@@ -2018,11 +2077,16 @@ namespace XREngine.Rendering
             {
                 try
                 {
+                    viewport.InvalidateRetainedWorldUiImageAfterRendererRetirement();
                     viewport.RenderPipelineInstance.InvalidatePhysicalResources();
                     viewport.RefreshRenderPipelineOutputBinding();
                 }
                 catch (Exception ex)
                 {
+                    if (viewport.HasAnyRetainedWorldUiImage)
+                        DisableRenderingPermanently(
+                            "A retained world UI image could not be cleared after renderer replacement.",
+                            ex, allowDuringRecreation: true);
                     Debug.RenderingWarning(
                         "[XRWindow] Failed to invalidate viewport pipeline resources after renderer recovery. Window={0} Viewport={1} Error={2}",
                         GetHashCode(),
@@ -2283,6 +2347,9 @@ namespace XREngine.Rendering
 
         private bool HandleDesktopCloseRequested()
         {
+            ulong requestSequence = (ulong)Interlocked.Increment(ref _nextNativeCloseRequestSequence);
+            bool applicationShutdownIntent =
+                Interlocked.Exchange(ref _nativeCloseApplicationShutdownIntent, 0) != 0;
             MarkCloseRequestedOrApproved();
             ClosingRequested?.Invoke(this);
             PublishWindowEventSnapshot(closeRequested: true, closeApproved: false);
@@ -2295,6 +2362,7 @@ namespace XREngine.Rendering
             }
 
             PublishWindowEventSnapshot(closeRequested: true, closeApproved: true);
+            WindowCloseApproval approval = new(requestSequence, applicationShutdownIntent);
             if (!RuntimeRenderingHostServices.Factories.QuiesceForWindowRendererTeardown(this))
             {
                 _renderer.AbandonShutdownTeardown();
@@ -2311,6 +2379,7 @@ namespace XREngine.Rendering
                 // unwinds. Do not queue a render-thread job here: quiescing the final window stops
                 // the engine timer, and render-thread jobs drain only during a timer render dispatch.
                 Interlocked.Exchange(ref _approvedNativeCloseCompletionPending, 1);
+                RecordApprovedNativeClose(approval);
                 return true;
             }
 
@@ -2318,7 +2387,36 @@ namespace XREngine.Rendering
                 () => TryBeginExternalPumpDispose("DesktopClose"),
                 $"XRWindow.DesktopClose[{GetHashCode()}]",
                 RenderThreadJobKind.RequiresGraphicsContext);
+            RecordApprovedNativeClose(approval);
             return true;
+        }
+
+        private void RecordApprovedNativeClose(WindowCloseApproval approval)
+        {
+            if (Volatile.Read(ref _nativeCloseRequestActive) != 0)
+                _pendingNativeCloseApproval = approval;
+            else
+            {
+                Interlocked.Exchange(ref _pendingCloseRequested, 0);
+                PublishCloseApproval(approval);
+            }
+        }
+
+        private void PublishCloseApproval(WindowCloseApproval approval)
+        {
+            Action<XRWindow, WindowCloseApproval>? observers = CloseApproved;
+            if (observers is null)
+                return;
+            foreach (Delegate observer in observers.GetInvocationList())
+            {
+                try { ((Action<XRWindow, WindowCloseApproval>)observer)(this, approval); }
+                catch (Exception error)
+                {
+                    Debug.RenderingWarning(
+                        "[XRWindow] An approved close observer failed. Window={0} Request={1} Error={2}",
+                        GetHashCode(), approval.RequestSequence, error);
+                }
+            }
         }
 
         /// <summary>
@@ -3095,6 +3193,10 @@ namespace XREngine.Rendering
                 RenderCallbackStageTimings.Add(RenderCallbackStageTimings.Stage.ViewportsCallback, viewportsCallbackStart);
                 long desktopWorkStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
+                if (frameRenderer.BackendId == RendererBackendId.Vulkan &&
+                    frameRenderer.SupportsCheckedWorldUiOutput)
+                    BeginVulkanWorldUiRenderDispatch();
+
                 // Viewport/pipeline rendering is isolated so that exceptions during scene rendering
                 // do not prevent Vulkan's RenderFrameCallback (acquire/record/submit/present) from
                 // executing. In OpenGL the window swap is handled by Silk.NET automatically, but
@@ -3217,7 +3319,10 @@ namespace XREngine.Rendering
                     try
                     {
                         if (!windowHeldForXrFrame)
+                        {
+                            CaptureWindowUiFrame(renderFrameId);
                             frameRenderer.RenderWindow(delta);
+                        }
                         else
                         {
                             // The pre-render pass still queued this callback's shadow
@@ -3330,6 +3435,9 @@ namespace XREngine.Rendering
             }
             finally
             {
+                if (frameRenderer.BackendId == RendererBackendId.Vulkan &&
+                    _activeVulkanWorldDispatchToken != 0UL)
+                    EndVulkanWorldUiRenderDispatch();
                 ReleaseRenderSurfaceLatch();
                 frameRenderer.Active = false;
                 if (ReferenceEquals(AbstractRenderer.Current, frameRenderer))
@@ -4037,6 +4145,7 @@ namespace XREngine.Rendering
 
         private void CompleteDispose()
         {
+            ReleaseWindowUiPublications();
             Interlocked.Exchange(ref _pendingCloseRequested, 0);
             Interlocked.Exchange(ref _externalNativeEventPumpActive, 0);
             _approvedNativeCloseInProgress = false;

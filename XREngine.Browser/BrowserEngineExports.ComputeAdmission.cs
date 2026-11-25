@@ -13,7 +13,7 @@ public static partial class BrowserEngineExports
             return;
         HashSet<SceneNode> visited = new(ReferenceEqualityComparer.Instance);
         foreach (XRScene scene in world.Scenes)
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
                 Visit(root, 0);
 
         void Visit(SceneNode node, int depth)

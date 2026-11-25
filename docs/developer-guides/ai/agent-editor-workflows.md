@@ -39,6 +39,12 @@ Existing agent chats must read the updated instructions before their next
 build. After all builds stop, `dotnet build-server shutdown` releases retained
 MSBuild and compiler servers. Do not use it during another task's build.
 
+Bootstrap and the editor retain their Windows target. Their managed code can
+compile on Linux through the same wrapper after restore. The audio adapter uses
+NAudio component packages and does not require Windows Forms or
+`EnableWindowsTargeting`. This does not establish native Linux editor support:
+Windows audio APIs, native tools, and graphics need separate runtime validation.
+
 Editor CLI:
 
 ```powershell

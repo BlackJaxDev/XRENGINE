@@ -26,6 +26,32 @@ namespace XREngine.Rendering.OpenGL
             public XRMeshRenderer MeshRenderer => Data.Parent;
             public XRMesh? Mesh => MeshRenderer.Mesh;
 
+            internal override bool IsGenerationOwnerLive
+            {
+                get
+                {
+                    XRMeshRenderer.BaseVersion data = Data;
+                    XRMeshRenderer? parent = data?.Parent;
+                    return base.IsGenerationOwnerLive && parent is not null && !parent.IsDestroyed;
+                }
+            }
+
+            internal override bool IsGenerationAttemptReady => TryGetGenerationMaterial(out _);
+
+            internal bool TryGetGenerationMaterial(out XRMaterial? material)
+            {
+                XRMeshRenderer.BaseVersion data = Data;
+                XRMeshRenderer? parent = data?.Parent;
+                material = parent?.Material;
+                if (!base.IsGenerationAttemptReady || parent is null
+                    || parent.IsDestroyed || parent.IsDestroyQueued)
+                    return false;
+                // Material can be replaced while the same parent/wrapper remains live.
+                // Use this captured reference for this readiness/preparation attempt.
+                return material is null || (!material.IsDestroyed && !material.IsDestroyQueued
+                    && material.IsApiWrapperPublicationReady);
+            }
+
             public override EGLObjectType Type => EGLObjectType.VertexArray;
 
             public delegate void DelSettingUniforms(GLRenderProgram vertexProgram, GLRenderProgram materialProgram);
@@ -635,7 +661,9 @@ namespace XREngine.Rendering.OpenGL
             }
         }
 
-        public void RenderMesh(GLMeshRenderer manager, bool preservePreviouslyBound = true, uint instances = 1)
+        public void RenderMesh(GLMeshRenderer manager, bool preservePreviouslyBound = true,
+            uint instances = 1, XRMaterial? effectiveMaterial = null,
+            XRRenderProgram? nativeMaterialProgram = null, uint nativeProgramId = 0)
         {
             // Profiler instrumentation removed from this hot path - called per mesh per frame
             if (SuppressDrawsForOomRecovery)
@@ -646,14 +674,15 @@ namespace XREngine.Rendering.OpenGL
 
             GLMeshRenderer? prev = ActiveMeshRenderer;
             BindMeshRenderer(manager);
-            RenderCurrentMesh(instances);
+            RenderCurrentMesh(instances, effectiveMaterial, nativeMaterialProgram, nativeProgramId);
             BindMeshRenderer(preservePreviouslyBound ? prev : null);
         }
 
         /// <summary>
         /// Render the currently bound mesh.
         /// </summary>
-        public void RenderCurrentMesh(uint instances = 1)
+        public void RenderCurrentMesh(uint instances = 1, XRMaterial? effectiveMaterial = null,
+            XRRenderProgram? nativeMaterialProgram = null, uint nativeProgramId = 0)
         {
             // Profiler instrumentation removed from this hot path - called per mesh per frame
             if (SuppressDrawsForOomRecovery)
@@ -703,12 +732,9 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, patchEbo);
                     ApplyPatchParameters(ActiveMeshRenderer);
-                    Api.DrawElementsInstanced(
-                        GLEnum.Patches,
-                        patchControlPoints,
-                        ToGLEnum(ActiveMeshRenderer.TrianglesElementType),
-                        null,
-                        instances);
+                    DrawUiCheckedElements(ActiveMeshRenderer, EPrimitiveType.Patches,
+                        GLEnum.Patches, patchControlPoints, ActiveMeshRenderer.TrianglesElementType,
+                        instances, effectiveMaterial, nativeMaterialProgram, nativeProgramId);
                     RecordActiveDrawCoverage(indirect: false, instances);
                     if (instances != 0) MarkImmediateHistoryBoundWrite();
                     RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
@@ -730,7 +756,9 @@ namespace XREngine.Rendering.OpenGL
                 if (ActiveMeshRenderer.ShouldLogModelDrawDiagnostic())
                     ActiveMeshRenderer.LogModelDrawDiagnostic("DrawElementsInstanced triangles", instances, $"ebo={triEbo}");
                 GLRenderQuery? samplesProbe = ActiveMeshRenderer.BeginBatchedTextSamplesProbe();
-                Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
+                DrawUiCheckedElements(ActiveMeshRenderer, EPrimitiveType.Triangles,
+                    GLEnum.Triangles, triangles, ActiveMeshRenderer.TrianglesElementType,
+                    instances, effectiveMaterial, nativeMaterialProgram, nativeProgramId);
                 RecordActiveDrawCoverage(indirect: false, instances);
                 ActiveMeshRenderer.EndBatchedTextSamplesProbe(samplesProbe, instances, triangles);
                 if (instances != 0) MarkImmediateHistoryBoundWrite();
@@ -753,7 +781,9 @@ namespace XREngine.Rendering.OpenGL
                 && lineBuffer.TryGetBindingId(out uint lineEbo) && lineEbo != 0)
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, lineEbo);
-                Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
+                DrawUiCheckedElements(ActiveMeshRenderer, EPrimitiveType.Lines,
+                    GLEnum.Lines, lines, ActiveMeshRenderer.LineIndicesElementType,
+                    instances, effectiveMaterial, nativeMaterialProgram, nativeProgramId);
                 RecordActiveDrawCoverage(indirect: false, instances);
                 if (instances != 0) MarkImmediateHistoryBoundWrite();
                 RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
@@ -766,7 +796,9 @@ namespace XREngine.Rendering.OpenGL
                 && pointBuffer.TryGetBindingId(out uint pointEbo) && pointEbo != 0)
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, pointEbo);
-                Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
+                DrawUiCheckedElements(ActiveMeshRenderer, EPrimitiveType.Points,
+                    GLEnum.Points, points, ActiveMeshRenderer.PointIndicesElementType,
+                    instances, effectiveMaterial, nativeMaterialProgram, nativeProgramId);
                 RecordActiveDrawCoverage(indirect: false, instances);
                 if (instances != 0) MarkImmediateHistoryBoundWrite();
                 RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();

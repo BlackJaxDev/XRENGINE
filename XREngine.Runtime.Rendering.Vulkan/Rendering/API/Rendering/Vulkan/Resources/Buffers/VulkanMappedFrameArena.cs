@@ -554,6 +554,49 @@ internal unsafe sealed class VulkanMappedFrameArena
         return true;
     }
 
+    /// <summary>
+    /// Opens a host read of one current writable slice. Takes the writer gate of the slice's
+    /// frame slot like <see cref="TryBeginWrite"/>, so no write to that slot runs during the
+    /// read, but <see cref="EndRead"/> does not mark the bytes dirty.
+    /// </summary>
+    internal bool TryBeginRead(VulkanMappedFrameSlice slice, out VulkanMappedFrameReadScope scope)
+    {
+        scope = default;
+        int frameSlot = slice.FrameSlot;
+        if ((uint)frameSlot >= (uint)MaximumFrameSlotCount)
+            return false;
+
+        int currentThreadId = Environment.CurrentManagedThreadId;
+        if (Interlocked.CompareExchange(ref _slotWriterDepths[frameSlot], 1, 0) != 0)
+            return false;
+        if (Volatile.Read(ref _teardownDepth) != 0)
+        {
+            ReleaseSlotWriterGate(frameSlot);
+            return false;
+        }
+
+        Volatile.Write(ref _slotWriterThreadIds[frameSlot], currentThreadId);
+        if (!TryValidateWritableSlice(slice, out Chunk? chunk) || chunk is null)
+        {
+            ReleaseSlotWriterGate(frameSlot);
+            return false;
+        }
+
+        try
+        {
+            scope = new VulkanMappedFrameReadScope(this, slice,
+                new ReadOnlySpan<byte>(
+                    (byte*)chunk.MappedPtr + checked((nint)slice.Offset),
+                    checked((int)slice.Length)));
+            return true;
+        }
+        catch
+        {
+            ReleaseSlotWriterGate(frameSlot);
+            throw;
+        }
+    }
+
     // This method reads the mapped memory. The chunks can be device-local host-visible memory,
     // where CPU reads are uncached and slow, so do not call it on a per-frame path.
     internal bool TryWriteIfChanged<T>(in VulkanMappedFrameSlice slice, in T value) where T : unmanaged
@@ -872,6 +915,17 @@ internal unsafe sealed class VulkanMappedFrameArena
         MarkDirty(slice);
         ReleaseSlotWriterGate(frameSlot);
         slice.Allocation!.ReleaseAuthoring();
+    }
+
+    /// <summary>Closes the host read that <see cref="TryBeginRead"/> opened and releases the slot writer gate.</summary>
+    internal void EndRead(in VulkanMappedFrameSlice slice)
+    {
+        int frameSlot = slice.FrameSlot;
+        if ((uint)frameSlot >= (uint)_chunks.Length || (uint)frameSlot >= (uint)MaximumFrameSlotCount ||
+            Volatile.Read(ref _slotWriterDepths[frameSlot]) != 1 ||
+            Volatile.Read(ref _slotWriterThreadIds[frameSlot]) != Environment.CurrentManagedThreadId)
+            throw new InvalidOperationException("Mapped-frame read scope lost its host access owner.");
+        ReleaseSlotWriterGate(frameSlot);
     }
 
     private bool TryAllocateReservation_NoLock(object owner, uint size, out VulkanMappedFrameReservation reservation)

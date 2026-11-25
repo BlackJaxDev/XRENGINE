@@ -337,7 +337,7 @@ public sealed class UnitTestingWorldModelImportSettingsTests
             var world = BootstrapWorldFactory.CreateUnitTestWorld(setUI: false, isServer: false);
 
             SkyboxComponent? skybox = world.Scenes
-                .SelectMany(scene => scene.RootNodes)
+                .SelectMany(scene => scene.SceneRoots)
                 .SelectMany(root => root.FindAllDescendantComponents<SkyboxComponent>())
                 .SingleOrDefault();
 

@@ -5,6 +5,8 @@ namespace XREngine.Rendering.Models.Materials
     public abstract class ShaderArrayBase(string name, IShaderVarOwner? owner) : ShaderVar(name, owner)
     {
         public abstract int Length { get; }
+        internal abstract ShaderVar[]? CaptureValues { get; }
+        internal abstract ShaderVar CloneValues(Func<ShaderVar, ShaderVar> capture);
     }
     public class ShaderArray<T> : ShaderArrayBase where T : ShaderVar
     {
@@ -20,6 +22,21 @@ namespace XREngine.Rendering.Models.Materials
             }
         }
         public override int Length => _value.Length;
+        internal override ShaderVar[]? CaptureValues => _value.Values;
+        internal override ShaderVar CloneValues(Func<ShaderVar, ShaderVar> capture)
+        {
+            T[]? values = _value.Values;
+            ShaderArrayValueHandler<T> handler = new();
+            if (values is not null)
+            {
+                T[] copy = new T[values.Length];
+                for (int index = 0; index < copy.Length; index++)
+                    if (values[index] is { } value)
+                        copy[index] = (T)capture(value);
+                handler.Values = copy;
+            }
+            return new ShaderArray<T>(handler, Name, null);
+        }
         protected override void SetProgramUniform(XRRenderProgram program, string location)
         {
             //throw new NotImplementedException();

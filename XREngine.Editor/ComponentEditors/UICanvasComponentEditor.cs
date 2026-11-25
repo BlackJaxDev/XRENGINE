@@ -47,7 +47,7 @@ public sealed class UICanvasComponentEditor : IXRComponentEditor
             $"{canvas.CanvasTransform.ActualWidth.ToString("0.##", CultureInfo.InvariantCulture)} x {canvas.CanvasTransform.ActualHeight.ToString("0.##", CultureInfo.InvariantCulture)}");
         DrawReadOnlyField("Input Component", DescribeComponent(canvas.GetInputComponent()));
         DrawReadOnlyField("Offscreen Active", canvas.UseOffscreenRenderingForNonScreenSpaces() ? "Yes" : "No");
-        DrawReadOnlyField("Async Layout", canvas.CanvasTransform.UseAsyncLayout ? "Enabled" : "Disabled");
+        DrawReadOnlyField("Layout", "Bounded worker scheduling");
 
         ImGui.Spacing();
     }
@@ -91,23 +91,12 @@ public sealed class UICanvasComponentEditor : IXRComponentEditor
 
         if (ImGui.Button("Invalidate Layout"))
         {
-            canvas.CanvasTransform.InvalidateLayout();
             EnqueueSceneEdit(canvas.CanvasTransform.InvalidateLayout);
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("Update Layout"))
-        {
-            canvas.CanvasTransform.UpdateLayout();
-            EnqueueSceneEdit(canvas.CanvasTransform.UpdateLayout);
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("Update Async"))
-        {
-            canvas.CanvasTransform.UpdateLayoutAsync();
+        if (ImGui.Button("Request Layout"))
             EnqueueSceneEdit(canvas.CanvasTransform.UpdateLayoutAsync);
-        }
 
         ImGui.Spacing();
     }

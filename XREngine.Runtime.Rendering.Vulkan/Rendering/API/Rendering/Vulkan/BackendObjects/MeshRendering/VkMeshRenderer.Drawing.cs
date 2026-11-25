@@ -14,6 +14,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.UI;
 
 using VkBufferHandle = Silk.NET.Vulkan.Buffer;
 
@@ -86,7 +87,10 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		int frameDataImageIndex,
 		out string failureReason,
-		out bool pipelineUnavailable)
+		out bool pipelineUnavailable,
+		VulkanWorldUiNativeProof? worldUiProof = null,
+		VulkanAcceptedFramePlan? worldUiPlan = null,
+		ulong worldUiNativeToken = 0UL)
 	{
 		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
@@ -106,7 +110,10 @@ internal unsafe partial class VkMeshRenderer
 				drawUniformSlot,
 				frameDataImageIndex,
 				out failureReason,
-				out pipelineUnavailable);
+				out pipelineUnavailable,
+				worldUiProof,
+				worldUiPlan,
+				worldUiNativeToken);
 		}
 	}
 
@@ -126,7 +133,10 @@ internal unsafe partial class VkMeshRenderer
 		int drawUniformSlot,
 		int frameDataImageIndex,
 		out string failureReason,
-		out bool pipelineUnavailable)
+		out bool pipelineUnavailable,
+		VulkanWorldUiNativeProof? worldUiProof,
+		VulkanAcceptedFramePlan? worldUiPlan,
+		ulong worldUiNativeToken)
 	{
 		failureReason = string.Empty;
 		pipelineUnavailable = false;
@@ -139,6 +149,17 @@ internal unsafe partial class VkMeshRenderer
 			 !BackendContext.Resources.TryRetainFrameDataAllocation(commandBuffer, family)))
 		{
 			failureReason = "capture frame-data family retired";
+			return false;
+		}
+		bool worldProofRequired = worldUiPlan?.RequiresWorldUiOutput == true ||
+			draw.WorldUiCommand is not null ||
+			worldUiProof?.RequiresNativeDrawProof(target) == true;
+		if (worldProofRequired &&
+			(worldUiProof is null || worldUiPlan is null ||
+			 !worldUiProof.IsBoundToPlan(worldUiPlan,
+				 worldUiNativeToken)))
+		{
+			failureReason = "retained world UI indexed draw has no accepted native proof";
 			return false;
 		}
 		ActivateDrawMaterializationSnapshot(draw);
@@ -160,6 +181,11 @@ internal unsafe partial class VkMeshRenderer
 		{
 			CommandBuffer = commandBuffer,
 			Draw = draw,
+			Target = target,
+			WorldUiProof = worldUiProof,
+			WorldUiPlan = worldUiPlan,
+			WorldUiNativeToken = worldUiNativeToken,
+			WorldUiProofRequired = worldProofRequired,
 			Material = material,
 			RenderPass = renderPass,
 			UseDynamicRendering = useDynamicRendering,
@@ -199,7 +225,7 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		// Use the non-indexed fallback if no indexed draw succeeds.
-		if (!drew && Mesh is not null &&
+		if (!drew && Mesh is not null && !worldProofRequired &&
 			!XREngine.Rendering.Commands.NativeUberMaterialSourceEncoder.RequiresPrimitiveTileDiscard(
 				material.ShadowBindingSourceMaterial ?? material))
 			drew = TryRecordNonIndexedDraw(ref state, skipLinePointDraws);
@@ -208,6 +234,8 @@ internal unsafe partial class VkMeshRenderer
 		// earlier indexed failures from the result of this logical draw.
 		if (!drew)
 		{
+			if (worldProofRequired)
+				state.FailureReason ??= "retained world UI indexed command did not issue";
 			failureReason = state.FailureReason ?? string.Empty;
 			pipelineUnavailable = state.PipelineFailureObserved;
 			if (failureReason.Length > 0)
@@ -324,8 +352,12 @@ internal unsafe partial class VkMeshRenderer
 
 		bool descriptorsBound;
 		string descriptorFailure;
+		VulkanWorldUiDescriptorBindingWitness worldDescriptorWitness = default;
 		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.BindDescriptors"))
-			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer, state.Material, state.Draw, state.DrawUniformSlot, state.FrameDataImageIndex, state.PassIndex, out descriptorFailure);
+			descriptorsBound = BindDescriptorsIfAvailable(state.CommandBuffer,
+				state.Material, state.Draw, state.DrawUniformSlot,
+				state.FrameDataImageIndex, state.PassIndex, out descriptorFailure,
+				state.WorldUiProofRequired, out worldDescriptorWitness);
 		if (!descriptorsBound)
 		{
 			state.FailureReason = $"indexed descriptors unavailable: {descriptorFailure}";
@@ -340,8 +372,99 @@ internal unsafe partial class VkMeshRenderer
 		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.CmdDrawIndexed"))
 		{
 			CommandOperations.BindIndexBufferTracked(state.CommandBuffer, indexHandle, 0, ToVkIndexType(size));
-			Api!.CmdDrawIndexed(state.CommandBuffer, indexCount, state.Draw.Instances, 0, 0, 0);
+			VulkanProgramInterfaceEntry? retainedWorldInterface = null;
+			try
+			{
+				if (state.Draw.WorldUiCommand is { } worldUiCommand &&
+					(!HasExactWorldUiProgram(state.Draw,
+						worldUiCommand, out retainedWorldInterface) ||
+					 !ForceWorldUiPipelineAtIssue(in state, topology, pipeline) ||
+					 !ForceWorldUiDescriptorSetsAtIssue(
+						 state.CommandBuffer, in worldDescriptorWitness,
+						 state.Material) ||
+					 !WorldUiUniformsMatch(worldUiCommand, in state.Draw,
+						 state.Material, retainedWorldInterface!,
+						 in worldDescriptorWitness,
+						 state.FrameDataImageIndex, state.DrawUniformSlot)))
+				{
+					state.FailureReason = "retained world UI compiled shader, pipeline or descriptor owner changed";
+					return false;
+				}
+				if (state.WorldUiProofRequired &&
+					state.Draw.WorldUiCommand is null &&
+					(!HasExactWorldUiFactoryProgram(state.Draw,
+						state.Material, out retainedWorldInterface) ||
+					 !ForceWorldUiPipelineAtIssue(in state, topology, pipeline) ||
+					 !ForceWorldUiDescriptorSetsAtIssue(
+						 state.CommandBuffer, in worldDescriptorWitness,
+						 state.Material)))
+				{
+					state.FailureReason = "world UI output stage compiled shader, pipeline or descriptor owner changed";
+					return false;
+				}
+				VulkanWorldUiDrawToken worldDrawToken = default;
+				bool worldOutputStage = false;
+				if (state.Draw.WorldUiCommand is { } worldCommand)
+				{
+					EPrimitiveType worldTopology = topology switch
+					{
+						PrimitiveTopology.TriangleList => EPrimitiveType.Triangles,
+						PrimitiveTopology.LineList => EPrimitiveType.Lines,
+						PrimitiveTopology.PointList => EPrimitiveType.Points,
+						_ => (EPrimitiveType)(-1),
+					};
+					if (state.WorldUiProof is null || state.WorldUiPlan is null ||
+						!state.WorldUiProof.TryBeginWorldIndexedDraw(
+							state.WorldUiPlan, state.WorldUiNativeToken,
+							worldCommand, state.Target, MeshRenderer,
+							worldTopology, size, indexCount,
+							state.Draw.Instances, out worldDrawToken))
+					{
+						state.FailureReason = "retained world UI indexed intent changed before native issue";
+						return false;
+					}
+				}
+				else if (state.WorldUiProofRequired)
+				{
+					worldOutputStage = true;
+					if (state.WorldUiProof is null ||
+						state.WorldUiPlan is null ||
+						!state.WorldUiProof.TryBeginStageIndexedDraw(
+							state.WorldUiPlan, state.WorldUiNativeToken,
+							state.Target, MeshRenderer, state.Material,
+							topology, indexCount, state.Draw.Instances,
+							out worldDrawToken))
+					{
+						state.FailureReason = "world UI output stage lacks exact native draw authority";
+						return false;
+					}
+				}
+				try
+				{
+					Api!.CmdDrawIndexed(state.CommandBuffer, indexCount, state.Draw.Instances, 0, 0, 0);
+					if (worldDrawToken.Serial != 0UL &&
+						!(worldOutputStage
+							? state.WorldUiProof!.CompleteStageIndexedDraw(worldDrawToken)
+							: state.WorldUiProof!.CompleteWorldIndexedDraw(
+								state.Draw.WorldUiCommand!, worldDrawToken)))
+					{
+						state.FailureReason = "retained world UI indexed issue lost its native owner";
+						return false;
+					}
+				}
+				finally
+				{
+					if (worldDrawToken.Serial != 0UL)
+						state.WorldUiProof!.FailWorldIndexedDraw(worldDrawToken);
+				}
 			_program?.RecordShaderCommandCoverage(ShaderCommandKind.Graphics, indirect: false, instancingKnown: true, instanced: state.Draw.Instances > 1);
+			}
+			finally
+			{
+				if (retainedWorldInterface is not null)
+					BackendContext.Resources.ProgramInterfaces.Release(
+						retainedWorldInterface);
+			}
 		}
 
 		return true;
@@ -2188,10 +2311,16 @@ internal unsafe partial class VkMeshRenderer
 		=> BindDescriptorsIfAvailable(commandBuffer, material, draw, drawUniformSlot, frameDataImageIndex, passIndex, out _);
 
 	private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot, int frameDataImageIndex, int passIndex, out string failureReason)
+		=> BindDescriptorsIfAvailable(commandBuffer, material, draw,
+			drawUniformSlot, frameDataImageIndex, passIndex,
+			out failureReason, false, out _);
+
+	private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot, int frameDataImageIndex, int passIndex, out string failureReason, bool worldUiProofRequired, out VulkanWorldUiDescriptorBindingWitness worldUiWitness)
 	{
+		worldUiWitness = default;
 		failureReason = string.Empty;
 		if (_program is null)
-			return true;
+			return !worldUiProofRequired;
 
 		string meshName = Mesh?.Name ?? "UnnamedMesh";
 		string programName = _program.Data?.Name ?? "UnnamedProgram";
@@ -2219,7 +2348,7 @@ internal unsafe partial class VkMeshRenderer
 					TimeSpan.FromSeconds(1),
 					"[VulkanDescriptor] final presentation BindDescriptorsIfAvailable result=true because program has no descriptor bindings mesh='{0}' prog='{1}'.",
 					meshName, programName);
-			return true;
+			return !worldUiProofRequired;
 		}
 
 		if (!EnsureDescriptorSets(material, drawUniformSlot, imageIndex, draw.ProgramBindingSnapshot))
@@ -2325,6 +2454,11 @@ internal unsafe partial class VkMeshRenderer
 
 		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 		{
+			if (worldUiProofRequired)
+			{
+				failureReason = "retained world UI descriptor heap is unsupported";
+				return false;
+			}
 			if (!RefreshDescriptorHeapAutoUniformBindings(
 					imageIndex,
 					drawUniformSlot,
@@ -2378,6 +2512,13 @@ internal unsafe partial class VkMeshRenderer
 			return true;
 		}
 
+		if (worldUiProofRequired &&
+			!TryBeginWorldUiDescriptorWitness(material, imageIndex,
+				out worldUiWitness))
+		{
+			failureReason = "retained world UI descriptor owner is unavailable";
+			return false;
+		}
 		bool bound = BindMeshDescriptorSets(
 			commandBuffer,
 			_program,
@@ -2385,7 +2526,8 @@ internal unsafe partial class VkMeshRenderer
 			sets,
 			imageIndex,
 			drawUniformSlot,
-			out failureReason);
+			out failureReason, ref worldUiWitness);
+		worldUiWitness.Complete = bound && worldUiProofRequired;
 		if (traceWindowPresentation)
 			Debug.VulkanEvery(
 				$"Vulkan.FinalPresentation.BindDescriptors.Result.{BindingId}.{programName}.{bound}",
@@ -2413,6 +2555,23 @@ internal unsafe partial class VkMeshRenderer
 		int frameIndex,
 		int drawUniformSlot,
 		out string failureReason,
+		ulong sealedFrameDataGeneration = 0)
+	{
+		VulkanWorldUiDescriptorBindingWitness witness = default;
+		return BindMeshDescriptorSets(commandBuffer, program,
+			pipelineLayout, sets, frameIndex, drawUniformSlot,
+			out failureReason, ref witness, sealedFrameDataGeneration);
+	}
+
+	private bool BindMeshDescriptorSets(
+		CommandBuffer commandBuffer,
+		VkRenderProgram program,
+		PipelineLayout pipelineLayout,
+		DescriptorSet[] sets,
+		int frameIndex,
+		int drawUniformSlot,
+		out string failureReason,
+		ref VulkanWorldUiDescriptorBindingWitness worldUiWitness,
 		ulong sealedFrameDataGeneration = 0)
 	{
 		failureReason = string.Empty;
@@ -2481,6 +2640,13 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			oneSet[0] = sets[setIndex];
+			if (worldUiWitness.Allocation is not null &&
+				!TryCaptureWorldUiBoundSet(ref worldUiWitness,
+					setIndex, oneSet[0], dynamicOffsets))
+			{
+				failureReason = "retained world UI descriptor set lost native publication";
+				return false;
+			}
 			CommandOperations.BindDescriptorSetsTracked(
 				commandBuffer,
 				PipelineBindPoint.Graphics,
@@ -2488,6 +2654,12 @@ internal unsafe partial class VkMeshRenderer
 				(uint)setIndex,
 				oneSet,
 				dynamicOffsets);
+			if (worldUiWitness.Allocation is not null &&
+				!WorldUiBoundSetCurrent(worldUiWitness, setIndex))
+			{
+				failureReason = "retained world UI native descriptor changed during binding";
+				return false;
+			}
 		}
 		return true;
 	}

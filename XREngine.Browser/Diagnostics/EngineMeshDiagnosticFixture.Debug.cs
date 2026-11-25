@@ -28,7 +28,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
     {
         SceneNode node = new("Registered engine debug drawing");
         node.SetTransform<Transform>();
-        _scene.RootNodes.Add(node);
+        _scene.SceneRoots.Add(node);
         _debugDraw = node.AddComponent(static () => new DebugDrawComponent())
             ?? throw new InvalidOperationException("EngineMeshDiagnostic.DebugComponentMissing.");
         _renderWorld.AddWorldObject(_debugDraw);

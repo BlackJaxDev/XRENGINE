@@ -20,21 +20,77 @@ namespace XREngine.Animation
         public EKeyframeWeightedMode WeightedMode
         {
             get => _weightedMode;
-            set => SetField(ref _weightedMode, value);
+            set => SetWeightField(ref _weightedMode, value, nameof(WeightedMode));
         }
 
         /// <summary>Normalized duration of the incoming tangent handle.</summary>
         public float InWeight
         {
             get => _inWeight;
-            set => SetField(ref _inWeight, SanitizeWeight(value));
+            set => SetWeightField(ref _inWeight, SanitizeWeight(value),
+                nameof(InWeight));
         }
 
         /// <summary>Normalized duration of the outgoing tangent handle.</summary>
         public float OutWeight
         {
             get => _outWeight;
-            set => SetField(ref _outWeight, SanitizeWeight(value));
+            set => SetWeightField(ref _outWeight, SanitizeWeight(value),
+                nameof(OutWeight));
+        }
+
+        private void SetWeightField<T>(ref T field, T value, string propertyName)
+        {
+            T before = field;
+            bool changed;
+            try
+            {
+                changed = SetField(ref field, value, propertyName);
+            }
+            catch
+            {
+                // A PropertyChanged observer can throw after SetField has committed.
+                // Conservatively invalidate a committed change and keep its original failure.
+                if (!EqualityComparer<T>.Default.Equals(field, before))
+                    try { OwningTrack?.OnChanged(); }
+                    catch (Exception notificationError)
+                    {
+                        try
+                        {
+                            System.Diagnostics.Trace.TraceError(
+                                "Could not publish a committed weighted key change: {0}",
+                                notificationError);
+                        }
+                        catch { /* Never replace the original setter failure. */ }
+                    }
+                throw;
+            }
+            if (changed) OwningTrack?.OnChanged();
+        }
+
+        internal void CaptureAuthoredWeights(out EKeyframeWeightedMode mode,
+            out float inWeight, out float outWeight)
+        {
+            mode = _weightedMode;
+            inWeight = _inWeight;
+            outWeight = _outWeight;
+        }
+
+        internal static bool IsValidAuthoredWeights(EKeyframeWeightedMode mode,
+            float inWeight, float outWeight)
+            => (mode & ~EKeyframeWeightedMode.Both) ==
+                EKeyframeWeightedMode.None &&
+                float.IsFinite(inWeight) &&
+                inWeight is >= 0 and <= 1 && float.IsFinite(outWeight) &&
+                outWeight is >= 0 and <= 1;
+
+        /// <summary>Writes an already validated weight snapshot without exposing a partial edit.</summary>
+        internal void RestoreAuthoredWeightsWithoutNotification(
+            EKeyframeWeightedMode mode, float inWeight, float outWeight)
+        {
+            _weightedMode = mode;
+            _inWeight = inWeight;
+            _outWeight = outWeight;
         }
 
         public FloatKeyframe()

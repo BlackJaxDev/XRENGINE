@@ -174,7 +174,7 @@ public static partial class EditorImGuiUI
         {
             if (!scene.IsVisible)
                 ImGui.TextDisabled("Hidden scene");
-            DrawSceneHierarchyNodes(scene.RootNodes, world, scene);
+            DrawSceneHierarchyNodes(scene.SceneRoots, world, scene);
         }
         ImGui.PopID();
     }
@@ -246,7 +246,7 @@ public static partial class EditorImGuiUI
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Editor-only gizmos, tools and UI. Not saved with the world.");
         if (open)
-            DrawSceneHierarchyNodes(editorScene.RootNodes, world, editorScene);
+            DrawSceneHierarchyNodes(editorScene.SceneRoots, world, editorScene);
         ImGui.PopID();
     }
 

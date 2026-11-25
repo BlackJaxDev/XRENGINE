@@ -1,3 +1,4 @@
+using XREngine.Rendering.UI.State;
 using XREngine.Extensions;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -14,7 +15,7 @@ namespace XREngine.Rendering.UI
     /// Represents a UI component with area that can be aligned within its parent.
     /// </summary>
     [XRTransformEditor("XREngine.Editor.TransformEditors.UIBoundableTransformEditor")]
-    public class UIBoundableTransform : UITransform
+    public partial class UIBoundableTransform : UITransform
     {
         public UIBoundableTransform() : base(null)
         {
@@ -40,6 +41,30 @@ namespace XREngine.Rendering.UI
             get => _actualSize;
             protected set => SetField(ref _actualSize, value);
         }
+        internal override void ApplyCalculatedLayout(in UILayoutNodeOutput output, Vector2 placement)
+        {
+            IsApplyingCalculatedLayout = true;
+            try
+            {
+                SetDesiredSize(output.DesiredSize);
+                SetLastMeasureConstraint(output.MeasureConstraint);
+                SetLastArrangeBounds(output.AllocatedBounds);
+                bool sizeChanged = !XRMath.VectorsEqual(_actualSize, output.ActualSize);
+                bool positionChanged = !XRMath.VectorsEqual(_actualLocalBottomLeftTranslation, output.LocalTranslation + placement);
+                if (sizeChanged)
+                    ActualSize = output.ActualSize;
+                if (positionChanged)
+                    ActualLocalBottomLeftTranslation = output.LocalTranslation + placement;
+                if (sizeChanged || positionChanged || ShouldMarkLocalMatrixChanged())
+                    MarkLocalModified(true);
+                SetLastMeasuredVersion();
+                SetLastArrangedVersion();
+            }
+            finally
+            {
+                IsApplyingCalculatedLayout = false;
+            }
+        }
         /// <summary>
         /// The width of the component after layout has been applied.
         /// </summary>
@@ -56,7 +81,11 @@ namespace XREngine.Rendering.UI
         public float? Width
         {
             get => _width;
-            set => SetField(ref _width, value);
+            set
+            {
+                AdvanceWidthWriteIntent();
+                SetField(ref _width, value);
+            }
         }
 
         private float? _height = null;
@@ -66,7 +95,11 @@ namespace XREngine.Rendering.UI
         public float? Height
         {
             get => _height;
-            set => SetField(ref _height, value);
+            set
+            {
+                AdvanceHeightWriteIntent();
+                SetField(ref _height, value);
+            }
         }
 
         private float? _minHeight, _minWidth, _maxHeight, _maxWidth;
@@ -171,6 +204,20 @@ namespace XREngine.Rendering.UI
                 case nameof(MaxHeight):
                 case nameof(MaxWidth):
                 case nameof(NormalizedPivot):
+                case nameof(CalcAutoHeightCallback):
+                case nameof(CalcAutoWidthCallback):
+                    InvalidateMeasure();
+                    break;
+                case nameof(ActualSize):
+                case nameof(AxisAlignedRegion):
+                    // Derived geometry changes publication, not the authored layout read set.
+                    RecordUIChange(UIChangeDomain.Visual | UIChangeDomain.Clip | UIChangeDomain.HitTest);
+                    break;
+                case nameof(BlocksInputBehind):
+                    RecordUIChange(UIChangeDomain.HitTest);
+                    break;
+                case nameof(ExcludeFromParentAutoCalcWidth):
+                case nameof(ExcludeFromParentAutoCalcHeight):
                     InvalidateMeasure();
                     break;
                 case nameof(MinAnchor):
@@ -221,7 +268,7 @@ namespace XREngine.Rendering.UI
                 mtx *= p.GetRelativeItemMatrix();
                 p.RelativePositioningChanged = false;
             }
-            if (!XRMath.VectorsEqual(Scale, Vector3.One) || RotationRadians >= float.Epsilon)
+            if (!XRMath.VectorsEqual(Scale, Vector3.One) || MathF.Abs(RotationRadians) >= float.Epsilon)
             {
                 mtx *=
                     Matrix4x4.CreateTranslation(new Vector3(LocalPivotTranslation, 0.0f)) *
@@ -336,7 +383,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public override Vector2 Measure(Vector2 availableSize)
         {
-            return UILayoutSystem.MeasureBoundable(this, availableSize);
+            return base.Measure(availableSize);
         }
 
         /// <summary>
@@ -368,7 +415,7 @@ namespace XREngine.Rendering.UI
         /// </summary>
         public override void Arrange(BoundingRectangleF finalBounds)
         {
-            UILayoutSystem.ArrangeBoundable(this, finalBounds);
+            base.Arrange(finalBounds);
         }
 
         /// <summary>
@@ -446,19 +493,16 @@ namespace XREngine.Rendering.UI
         {
             using var profiler = RuntimeEngine.Profiler.Start("UIBoundableTransform.GetMaxChildWidth");
 
-            //lock (Children)
-            //{
-                var children = Children.
-                    Where(x => x is UIBoundableTransform b && !b.IsCollapsed && !b.ExcludeFromParentAutoCalcWidth).
-                    Cast<UIBoundableTransform>();
-                float maxWidth = 0.0f;
-                foreach (var child in children)
-                {
-                    float width = child.ApplyHorizontalMargins(child.GetWidth());
-                    maxWidth = Math.Max(maxWidth, width);
-                }
-                return maxWidth;
-            //}
+            float maxWidth = 0.0f;
+            for (int i = 0; i < Children.Count; i++)
+            {
+                if (Children[i] is not UIBoundableTransform child || child.IsCollapsed || child.ExcludeFromParentAutoCalcWidth)
+                    continue;
+
+                float width = child.ApplyHorizontalMargins(child.GetWidth());
+                maxWidth = Math.Max(maxWidth, width);
+            }
+            return maxWidth;
         }
 
         /// <summary>
@@ -469,19 +513,16 @@ namespace XREngine.Rendering.UI
         {
             using var profiler = RuntimeEngine.Profiler.Start("UIBoundableTransform.GetMaxChildHeight");
 
-            //lock (Children)
-            //{
-                var children = Children.
-                    Where(x => x is UIBoundableTransform b && !b.IsCollapsed && !b.ExcludeFromParentAutoCalcHeight).
-                    Cast<UIBoundableTransform>();
-                float maxHeight = 0.0f;
-                foreach (var child in children)
-                {
-                    float height = child.ApplyVerticalMargins(child.GetHeight());
-                    maxHeight = Math.Max(maxHeight, height);
-                }
-                return maxHeight;
-            //}
+            float maxHeight = 0.0f;
+            for (int i = 0; i < Children.Count; i++)
+            {
+                if (Children[i] is not UIBoundableTransform child || child.IsCollapsed || child.ExcludeFromParentAutoCalcHeight)
+                    continue;
+
+                float height = child.ApplyVerticalMargins(child.GetHeight());
+                maxHeight = Math.Max(maxHeight, height);
+            }
+            return maxHeight;
         }
 
         public BoundingRectangleF GetActualBounds()
@@ -522,21 +563,7 @@ namespace XREngine.Rendering.UI
         /// Applies padding to the bounds, reducing the available area for children.
         /// </summary>
         public BoundingRectangleF ApplyPadding(BoundingRectangleF bounds)
-        {
-            var padding = Padding;
-            float left = padding.X;
-            float bottom = padding.Y;
-            float right = padding.Z;
-            float top = padding.W;
-
-            Vector2 size = bounds.Extents;
-            Vector2 pos = bounds.Translation;
-
-            pos += new Vector2(left, bottom);
-            size -= new Vector2(left + right, bottom + top);
-            bounds = new BoundingRectangleF(pos, size);
-            return bounds;
-        }
+            => UILayoutSystem.ApplyPadding(this, bounds);
 
         /// <summary>
         /// Applies margins to the bounds, reducing the available area.

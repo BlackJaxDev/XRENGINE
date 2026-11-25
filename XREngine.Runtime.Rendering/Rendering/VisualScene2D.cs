@@ -170,8 +170,28 @@ namespace XREngine.Scene
         public IReadOnlyList<RenderInfo2D> Renderables => _renderables;
         private readonly List<RenderInfo2D> _renderables = [];
         private readonly HashSet<RenderInfo2D> _renderableSet = [];
+        private ulong _renderableMembershipRevision;
         private readonly ConcurrentQueue<(RenderInfo2D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
         private readonly object _renderablesLock = new();
+
+        /// <summary>Copies insertion order only when UI membership has changed.</summary>
+        public bool TryCopyRenderableMembershipOrder(ref ulong observedRevision, List<long> destination)
+        {
+            ArgumentNullException.ThrowIfNull(destination);
+            lock (_renderablesLock)
+            {
+                if (_destroyed)
+                    return false;
+                ProcessPendingRenderableOperations();
+                if (observedRevision == _renderableMembershipRevision)
+                    return false;
+                destination.Clear();
+                for (int index = 0; index < _renderables.Count; index++)
+                    destination.Add(_renderables[index].MembershipId);
+                observedRevision = _renderableMembershipRevision;
+                return true;
+            }
+        }
 
         public void AddRenderable(RenderInfo2D renderable)
         {
@@ -239,12 +259,14 @@ namespace XREngine.Scene
                         {
                             _renderables.Add(operation.renderable);
                             RenderTree.Add(operation.renderable);
+                            _renderableMembershipRevision++;
                         }
                     }
                     else if (_renderableSet.Remove(operation.renderable))
                     {
                         _renderables.Remove(operation.renderable);
                         RenderTree.Remove(operation.renderable);
+                        _renderableMembershipRevision++;
                     }
                 }
             }

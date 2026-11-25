@@ -94,9 +94,12 @@ public static class AdvancedLatePassEligibilityValidator
             return false;
         }
 
+        // UI materials keep the opaque mode that batch lowering requires, but they blend through explicit raster
+        // state and draw in painter order. The UserInterface kind admits them to the late lanes.
         bool rejectOpaqueOrMasked =
             isOpaqueOrMasked &&
             renderPass != (int)EDefaultRenderPass.OnTopForward &&
+            metadata.Kind != EAdvancedLatePassKind.UserInterface &&
             !IsVerifiedSoftOutlineBase(material, renderPass, metadata) &&
             !verifiedSourceOrdered;
         if (!TryValidateLatePass(metadata, rejectOpaqueOrMasked, out rejectionReason))
@@ -192,7 +195,8 @@ public static class AdvancedLatePassEligibilityValidator
                 KindBit(EAdvancedLatePassKind.SortedAlpha) |
                 KindBit(EAdvancedLatePassKind.ParticipatingTransparency) |
                 KindBit(EAdvancedLatePassKind.Refraction) |
-                KindBit(EAdvancedLatePassKind.SpecialEffects),
+                KindBit(EAdvancedLatePassKind.SpecialEffects) |
+                KindBit(EAdvancedLatePassKind.UserInterface),
             (int)EDefaultRenderPass.PostBloomForward =>
                 KindBit(EAdvancedLatePassKind.SortedAlpha) |
                 KindBit(EAdvancedLatePassKind.OnTopOverlay) |
@@ -211,7 +215,8 @@ public static class AdvancedLatePassEligibilityValidator
                 KindBit(EAdvancedLatePassKind.DepthPeeling),
             (int)EDefaultRenderPass.OnTopForward =>
                 KindBit(EAdvancedLatePassKind.OnTopOverlay) |
-                KindBit(EAdvancedLatePassKind.SpecialEffects),
+                KindBit(EAdvancedLatePassKind.SpecialEffects) |
+                KindBit(EAdvancedLatePassKind.UserInterface),
             _ => 0u,
         };
         return expectedKinds != 0u;

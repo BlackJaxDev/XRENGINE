@@ -284,7 +284,7 @@ public static class Program
     {
         var scene = new XRScene("Managed Server Scene");
         var root = new SceneNode("Managed Server Root");
-        scene.RootNodes.Add(root);
+        scene.SceneRoots.Add(root);
         if (networkKinematic)
         {
             // The plain-transform marker anchors a nonempty replicated scene without asset dependencies.

@@ -6,13 +6,14 @@ using System.Runtime.Serialization;
 using XREngine.Data.Core;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
+using XREngine.Scene.Prefabs;
 using XREngine.Data.Runtime.AotParity;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Components
 {
     [Serializable]
-    public abstract class XRComponent : RuntimeWorldObjectBase
+    public abstract partial class XRComponent : RuntimeWorldObjectBase
     {
         /// <summary>
         /// Global event for when a component is created.
@@ -34,6 +35,7 @@ namespace XREngine.Components
             {
                 if (_isActive == value)
                     return;
+                using HierarchyMutationLease structural = new(this);
                 using var mutation = this is PhysicsChainComponent chain
                     ? PhysicsChainWorld.BeginComponentMutation(chain) : null;
                 SetField(ref _isActive, value);
@@ -77,13 +79,22 @@ namespace XREngine.Components
             return (T)NewFromFactory(node, typeof(T), factory, requireExactType: false);
         }
 
-        private static XRComponent NewFromFactory(SceneNode node, Type type, Func<XRComponent> factory, bool requireExactType)
+        internal static T NewGuarded<T>(SceneNode node, Func<T> factory,
+            RuntimeComponentCreationReceipt receipt) where T : XRComponent
         {
-            RuntimeComponentConstructionContext context = RuntimeComponentConstructionContext.Push(node, type, requireExactType);
+            ArgumentNullException.ThrowIfNull(factory);
+            return (T)NewFromFactory(node, typeof(T), factory, requireExactType: false, receipt);
+        }
+
+        private static XRComponent NewFromFactory(SceneNode node, Type type, Func<XRComponent> factory,
+            bool requireExactType, RuntimeComponentCreationReceipt? receipt = null)
+        {
+            RuntimeComponentConstructionContext context = RuntimeComponentConstructionContext.Push(node, type, requireExactType, receipt);
             XRComponent? component = null;
             try
             {
                 component = factory();
+                receipt?.Validate();
                 if (component is null || !ReferenceEquals(component, context.Claimed) ||
                     (requireExactType && component.GetType() != type))
                 {
@@ -92,7 +103,8 @@ namespace XREngine.Components
             }
             catch
             {
-                context.Claimed?.AbortComponentConstruction();
+                if (receipt is null)
+                    context.Claimed?.AbortComponentConstruction();
                 throw;
             }
             finally
@@ -103,14 +115,19 @@ namespace XREngine.Components
             try
             {
                 component.ConstructionSetSceneNode(node);
+                receipt?.Validate();
                 component.OnTransformChanged();
+                receipt?.Validate();
                 component.World = node.World;
+                receipt?.MarkWorldAssigned();
                 ComponentCreated?.Invoke(component);
+                receipt?.Validate();
                 return component;
             }
             catch
             {
-                component.AbortComponentConstruction();
+                if (receipt is null)
+                    component.AbortComponentConstruction();
                 throw;
             }
         }
@@ -200,10 +217,17 @@ namespace XREngine.Components
         }
 
         internal void ConstructionBindSceneNode(SceneNode node)
-            => SetField(ref _sceneNode, node, publishNotifications: false, nameof(SceneNode));
+        {
+            using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this, _sceneNode, node);
+            SetFieldValidated(ref _sceneNode, node, this,
+                static (component, original, current, next) =>
+                    XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(component, original, current, next),
+                publishNotifications: false, nameof(SceneNode));
+        }
 
         internal void ConstructionSetSceneNode(SceneNode node)
         {
+            XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireLink(this, node);
             if (ReferenceEquals(_sceneNode, node))
             {
                 if (_sceneNodeEventsSubscribed)
@@ -220,7 +244,50 @@ namespace XREngine.Components
             _sceneNodeEventsSubscribed = true;
         }
 
-        private void AbortComponentConstruction()
+        internal void AbortGuardedConstruction(RuntimeComponentCreationReceipt receipt)
+        {
+            if (!receipt.CanAbortClaimed || !ReferenceEquals(receipt.Component, this))
+                return;
+            CreationReceipt = receipt;
+            receipt.BeginAbort();
+            try { AbortComponentConstruction(receipt); }
+            finally
+            {
+                receipt.EndAbort();
+                CreationReceipt = null;
+            }
+        }
+
+        private void AbortComponentConstruction(RuntimeComponentCreationReceipt? receipt = null)
+        {
+            // Owned clone failure transfers this allocation without running arbitrary teardown.
+            if (XREngine.Scene.Prefabs.HierarchyConstructionScope.Retains(this))
+                return;
+            if (receipt is null)
+            {
+                PrepareComponentAbort();
+                try { AbortFailedConstruction(); }
+                catch { DeferExistingObjectCachePublication(); }
+                return;
+            }
+
+            try
+            {
+                receipt.ValidateDestructionOwner();
+                if (AbortFailedConstruction(() =>
+                    {
+                        receipt.AdmitAbortLifetime();
+                        PrepareComponentAbort();
+                    }, receipt.ValidateDestructionOwner))
+                    receipt.CompleteAbort();
+            }
+            catch (Exception cleanupFailure)
+            {
+                receipt.RecordCleanupFailure(cleanupFailure);
+            }
+        }
+
+        private void PrepareComponentAbort()
         {
             _constructionFailed = true;
             if (_sceneNode is not null)
@@ -231,8 +298,6 @@ namespace XREngine.Components
                 if (!_sceneNode.IsTransformNull)
                     _sceneNode.Transform.RenderMatrixChanged -= OnTransformRenderWorldMatrixChanged;
             }
-            try { AbortFailedConstruction(); }
-            catch { DeferExistingObjectCachePublication(); }
         }
 
         private SceneNode _sceneNode;
@@ -240,6 +305,15 @@ namespace XREngine.Components
         private bool _constructionFailed;
         private bool _clearTicksOnStop = true;
         private bool _componentActivated;
+        internal RuntimeComponentCreationReceipt? CreationReceipt { get; set; }
+
+        protected override void ValidateNameWrite() => CreationReceipt?.Validate();
+        protected override void ValidateCreationNotification() => CreationReceipt?.Validate();
+        protected override void ValidateWorldValueWrite(IRuntimeWorldContext? value)
+        {
+            CreationReceipt?.ValidateIntrinsicOwner();
+            CreationReceipt?.ValidateWorldWrite(value);
+        }
 
         internal bool IsComponentActivated => _componentActivated;
 
@@ -253,7 +327,13 @@ namespace XREngine.Components
         public SceneNode SceneNode
         {
             get => _sceneNode;
-            private set => SetField(ref _sceneNode, value);
+            private set
+            {
+                using XREngine.Scene.Prefabs.HierarchyMutationLease structural = new(this, _sceneNode, value);
+                SetFieldValidated(ref _sceneNode, value, this,
+                    static (component, original, current, next) =>
+                        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(component, original, current, next));
+            }
         }
 
         /// <summary>
@@ -343,7 +423,10 @@ namespace XREngine.Components
 
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
+            if (propName == nameof(World))
+                CreationReceipt?.ValidateWorldWrite(@new as IRuntimeWorldContext);
             bool change = base.OnPropertyChanging(propName, field, @new);
+            CreationReceipt?.Validate();
             if (change)
             {
                 switch (propName)
@@ -358,10 +441,15 @@ namespace XREngine.Components
                         if (field is IRuntimeWorldContext previousWorld &&
                             !ReferenceEquals(previousWorld, @new))
                         {
-                            TryDeactivateComponent();
+                            if (ActiveWorldRemovalPermit is { } worldRemoval)
+                                worldRemoval.Retirement.StopLifecycle(this, EOwnedHierarchyLifecycle.Deactivate);
+                            else
+                                TryDeactivateComponent();
                         }
                         break;
                     case nameof(SceneNode):
+                        XREngine.Scene.Prefabs.HierarchyConstructionScope.RequireAssignment(
+                            this, field as SceneNode, _sceneNode, @new as SceneNode);
                         var oldNode = _sceneNode;
                         if (oldNode is not null)
                         {
@@ -373,19 +461,23 @@ namespace XREngine.Components
                         break;
                 }
             }
+            CreationReceipt?.Validate();
             return change;
         }
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            CreationReceipt?.Validate();
 
             switch (propName)
             {
                 case nameof(World):
+                    ActiveWorldRemovalPermit?.Validate();
                     RuntimeWorldObjectServices.Current?.OnRuntimeObjectWorldChanged(
                         this,
                         ((RuntimeWorldObjectBase)this).World,
                         IsActiveInHierarchy);
+                    ActiveWorldRemovalPermit?.Validate();
                     if (this is PhysicsChainComponent
                         && PhysicsChainWorld.IsWorldMutationActive
                         && World is not null
@@ -418,6 +510,8 @@ namespace XREngine.Components
         /// </summary>
         private void TryActivateComponent()
         {
+            using HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
             if (_componentActivated)
                 return;
             using var mutation = this is PhysicsChainComponent chain
@@ -430,6 +524,12 @@ namespace XREngine.Components
         /// Ensures deactivation runs at most once until the component is activated again.
         /// </summary>
         private void TryDeactivateComponent()
+        {
+            using HierarchyMutationLease structural = new(this);
+            DeactivateCore();
+        }
+
+        private void DeactivateCore()
         {
             if (!_componentActivated)
                 return;
@@ -459,7 +559,11 @@ namespace XREngine.Components
         }
 
         internal void NotifyBeginPlay()
-            => OnBeginPlay();
+        {
+            using HierarchyMutationLease structural = new(this);
+            ObjectDisposedException.ThrowIf(IsDestroyed, this);
+            OnBeginPlay();
+        }
 
         /// <summary>
         /// If true, all registered ticks will be unregistered when the component is set to inactive.
@@ -495,7 +599,10 @@ namespace XREngine.Components
         }
 
         internal void NotifyEndPlay()
-            => OnEndPlay();
+        {
+            using HierarchyMutationLease structural = new(this);
+            OnEndPlay();
+        }
 
         /// <summary>
         /// This method is called when the component is set to active in the world.
@@ -513,7 +620,9 @@ namespace XREngine.Components
 
         protected override void OnDestroying()
         {
+            CreationReceipt?.ValidateDestructionOwner();
             base.OnDestroying();
+            CreationReceipt?.ValidateDestructionOwner();
 
             //Unsubscribe from scene node events
             if (_sceneNode is not null)
@@ -529,6 +638,8 @@ namespace XREngine.Components
 
             if (!_constructionFailed)
                 ComponentDestroyed?.Invoke(this);
+            CreationReceipt?.ValidateDestructionOwner();
+            GetOwnedRetirement()?.CompleteCanonicalCleanup(this);
         }
 
         protected virtual void RemovedFromSceneNode(SceneNode sceneNode)
@@ -551,21 +662,26 @@ namespace XREngine.Components
         {
         }
 
-        internal void NotifyOwningSceneNodePostDeserialize()
+        internal void NotifyOwningSceneNodePostDeserialize(Action? validateConstruction = null)
         {
             if (_sceneNode is null)
                 return;
 
             World = _sceneNode.World;
+            validateConstruction?.Invoke();
 
             if (_sceneNode.IsTransformNull)
                 return;
 
             OnTransformChanging();
+            validateConstruction?.Invoke();
             OnTransformChanged();
+            validateConstruction?.Invoke();
 
             if (IsActiveInHierarchy)
                 TryActivateComponent();
+
+            validateConstruction?.Invoke();
 
             OwningSceneNodePostDeserialize();
         }

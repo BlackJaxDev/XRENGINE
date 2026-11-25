@@ -31,7 +31,7 @@ namespace XREngine.Rendering
     /// Can either be a window or render texture.
     /// </summary>
     [RuntimeOnly]
-    public sealed class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost, IRuntimeLocalPlayerViewport, IRuntimePointerContactSource
+    public sealed partial class XRViewport : XRBase, IRuntimeViewportGrabSource, IRuntimeViewportHost, IRuntimeLocalPlayerViewport, IRuntimePointerContactSource
     {
         #region Fields
 
@@ -205,6 +205,64 @@ namespace XREngine.Rendering
         public bool Suppress3DSceneRendering { get; set; }
 
         /// <summary>
+        /// Returns the first reason that this viewport cannot admit checked retained world UI,
+        /// or null when every output condition holds. Each reason is a constant string.
+        /// </summary>
+        private string? ResolveRetainedWorldUiUnsupportedReason(XRCamera camera)
+        {
+            if (_renderPipeline.AssignedPipeline is not DefaultRenderPipeline worldUiPipeline ||
+                !worldUiPipeline.SupportsRetainedWorldUiColorProfile(camera))
+                return "UI.WorldOutputUnsupported: the render pipeline does not support the retained world UI color profile.";
+            if ((MeshSubmissionStrategyOverride ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy()) !=
+                    EMeshSubmissionStrategy.CpuDirect)
+                return "UI.WorldOutputUnsupported: checked world UI requires CPU-direct mesh submission.";
+            if (Window is not { } worldUiWindow)
+                return "UI.WorldOutputUnsupported: checked world UI requires a window output.";
+            if (worldUiWindow.Viewports.Count != 1 ||
+                !ReferenceEquals(worldUiWindow.Viewports[0], this))
+                return "UI.WorldOutputUnsupported: checked world UI requires one viewport in its window.";
+            if (RuntimeRenderingHostServices.Presentation.IsWindowScenePanelPresentationEnabled &&
+                !RuntimeRenderingHostServices.Presentation.ForceFullViewport)
+                return "UI.WorldOutputUnsupported: checked world UI does not support scene panel presentation.";
+            if (worldUiWindow.HasUntrackedLateWorldUiOutput)
+                return "UI.WorldOutputUnsupported: the window has untracked late world UI output.";
+            if (!worldUiWindow.Renderer.SupportsCheckedWorldUiOutput)
+                return "UI.WorldOutputUnsupported: the active renderer does not support checked world UI output.";
+            if (!worldUiWindow.Renderer.CanAdmitUiWorldOutputImage(worldUiWindow, _renderPipeline))
+                return "UI.WorldOutputUnsupported: the renderer cannot admit the world UI output image.";
+            if (ResolveScreenSpaceUICanvas() is not null)
+                return "UI.WorldOutputUnsupported: checked world UI does not support a screen-space canvas in the same output.";
+            return null;
+        }
+
+        /// <summary>Requests checked retained world UI for a supported window output.</summary>
+        public bool EnableRetainedWorldUiColor
+        {
+            get => _enableRetainedWorldUiColor;
+            set => SetField(ref _enableRetainedWorldUiColor, value);
+        }
+
+        private bool _enableRetainedWorldUiColor;
+
+        private UIWorldRenderAttempt? _worldUiRenderAttempt;
+
+        internal bool HasRenderingRetainedWorldUiImage =>
+            (MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands)
+                .HasRenderingWorldUiReplacement;
+
+        internal bool HasAnyRetainedWorldUiImage =>
+            _renderPipeline.MeshRenderCommands.HasAnyWorldUiReplacement;
+
+        internal bool TryGetRenderingRetainedWorldUiImageKey(
+            out RenderCommandCollection commands, out long packageGeneration)
+        {
+            commands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            packageGeneration = commands.RenderingBackendReadyPackage.PackageGeneration;
+            return commands.HasRenderingWorldUiReplacement && packageGeneration > 0;
+        }
+
+        /// <summary>
         /// When true, post-processing should keep the previous auto-exposure state instead
         /// of adapting from the current frame. Render-on-demand editor views use this while
         /// the cached 3D frame may be stale or settling.
@@ -303,7 +361,7 @@ namespace XREngine.Rendering
             get => _window;
             set
             {
-                if (!SetField(ref _window, value))
+                if (_detachingSceneBinding || !SetField(ref _window, value))
                     return;
 
                 RefreshRenderPipelineOutputBinding();
@@ -649,6 +707,9 @@ namespace XREngine.Rendering
             get => _cameraComponent;
             set
             {
+                if (_detachingSceneBinding)
+                    return;
+
                 // A claim keeps the viewport camera. The new value becomes the camera that returns when the last claim ends.
                 if (_cameraClaims.Count > 0)
                 {
@@ -811,7 +872,11 @@ namespace XREngine.Rendering
         public XRCamera? Camera
         {
             get => _camera;
-            set => SetField(ref _camera, value);
+            set
+            {
+                if (!_detachingSceneBinding)
+                    SetField(ref _camera, value);
+            }
         }
 
         /// <summary>
@@ -1495,6 +1560,7 @@ namespace XREngine.Rendering
         /// <returns>True if the change should proceed, false to cancel the change.</returns>
         protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
         {
+            ulong bindingRevision = _sceneBindingRevision;
             bool change = base.OnPropertyChanging(propName, field, @new);
             if (change)
             {
@@ -1515,7 +1581,8 @@ namespace XREngine.Rendering
                         break;
                 }
             }
-            return change;
+            return change && (propName is not (nameof(CameraComponent) or nameof(Camera) or nameof(Window)) ||
+                !_detachingSceneBinding && bindingRevision == _sceneBindingRevision);
         }
 
         /// <summary>
@@ -1569,6 +1636,7 @@ namespace XREngine.Rendering
                     Debug.Rendering($"[XRViewport] After EnsureViewportBoundToCamera: VP[{Index}] Camera.Viewports.Count={ActiveCamera?.Viewports.Count ?? -1}");
                     break;
                 case nameof(ScreenSpaceUserInterfaceOverride):
+                case nameof(AllowUIRender):
                     ResizeCameraComponentUI();
                     break;
                 case nameof(SetRenderPipelineFromCamera):
@@ -1832,7 +1900,24 @@ namespace XREngine.Rendering
             if (allowScreenSpaceUICollectVisible)
                 CollectVisible_ScreenSpaceUI();
 
+            if (EnableRetainedWorldUiColor && exactOutputCollection &&
+                world is RuntimeWorldRenderer &&
+                worldOverride is null && cameraOverride is null &&
+                stereoRightEyeCamera is null && renderCommandsOverride is null &&
+                collectionVolumeOverride is null &&
+                commandCollection == _renderPipeline.MeshRenderCommands)
+            {
+                // Checked world UI was requested for this output. A configuration that cannot
+                // admit it reports why instead of drawing the unchecked route without notice.
+                if (ResolveRetainedWorldUiUnsupportedReason(camera) is { } unsupported)
+                    UI.State.UIFailureDiagnostics.Report(unsupported);
+                else
+                    _ = commandCollection.TryReplaceDirectWorldCanvas(world.WorldContext, camera);
+            }
+
             PrepareBackendReadyFramePackage(commandCollection, !collectMirrors);
+            if (world is RuntimeWorldRenderer sealedWorld)
+                commandCollection.SealUpdatingWorldUiReplacement(sealedWorld.WorldContext);
             if (exactOutputCollection)
             {
                 ulong generation = unchecked(
@@ -2764,6 +2849,9 @@ namespace XREngine.Rendering
                 using RuntimeTimerFrame.ScopedRenderDeltaOverride renderDeltaScope =
                     PushSceneRenderDeltaScope(consumeSkippedDelta: IsDesktopFacingOutput() && !shadowPass);
 
+                // The swapped (rendering) command buffers. Retained world UI and the deformation prepass read them.
+                var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+
                 LastRenderedTargetFBO = targetFbo;
                 _ = Interlocked.Increment(ref _sceneRenderSequenceId);
                 bool tracksDesktopHistory = !Suppress3DSceneRendering && !shadowPass && IsDesktopFacingOutput();
@@ -2828,6 +2916,8 @@ namespace XREngine.Rendering
                         // resize deferrals do not make native diagnostics disappear.
                         RenderScreenSpaceUIOverlay(targetFbo);
                         frozenHistoryCandidate.Discard();
+                        if (activeCommands.HasRenderingWorldUiReplacement)
+                            Window?.FailRetainedWorldUiAttempt();
                         return false;
                     }
                     frozenDesktopView = capturedView;
@@ -2836,7 +2926,6 @@ namespace XREngine.Rendering
                 // Visibility-driven compute deformation (skinning/blendshapes) for OpenGL. It runs after
                 // history acceptance so rejected frames do not latch cached deformation outputs. Vulkan
                 // records its deformation producer inside the frame at the first raster consumer.
-                var activeCommands = MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
                 if (!RuntimeEngine.Rendering.State.IsVulkan &&
                     !Suppress3DSceneRendering &&
                     SkinningPrepassDispatcher.OwnsDeformation(IsVrEyeOutput, shadowPass))
@@ -2844,10 +2933,24 @@ namespace XREngine.Rendering
                     using (RuntimeEngine.Rendering.State.PushRenderingPipeline(_renderPipeline))
                         SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
                 }
-                bool recorded;
-                bool outputCompletionAuthoringStarted;
+                UIWorldRenderAttempt? worldUiAttempt = null;
+                if (activeCommands.HasRenderingWorldUiReplacement &&
+                    !TryBeginRetainedWorldUiRender(activeCommands, world, camera,
+                        targetFbo, worldOverride, cameraOverride, shadowPass,
+                        forcedMaterial, outputCompletionRequest,
+                        consumedCollectGenerationOverride, frozenDesktopView,
+                        out worldUiAttempt))
+                {
+                    frozenHistoryCandidate.Discard();
+                    Window?.FailRetainedWorldUiAttempt();
+                    return false;
+                }
+                bool recorded = false;
+                bool outputCompletionAuthoringStarted = false;
                 try
                 {
+                    using UIWorldRenderAttempt.Scope worldUiScope =
+                        worldUiAttempt?.EnterScope() ?? default;
                     recorded = _renderPipeline.TryRenderWithFrozenDesktopHistory(
                         world.VisualScene,
                         camera,
@@ -2879,6 +2982,44 @@ namespace XREngine.Rendering
                 {
                     if (tracksDesktopHistory)
                         DiscardUnresolvedDesktopFrameViewHistory(issuedSequence);
+                    if (worldUiAttempt is not null)
+                    {
+                        bool accepted = false;
+                        try
+                        {
+                            accepted = worldUiAttempt.Complete(recorded);
+                            recorded &= accepted;
+                        }
+                        finally
+                        {
+                            if (!accepted)
+                                DiscardRetainedWorldUiHistory();
+                        }
+                    }
+                }
+
+                if (recorded && worldUiAttempt is null &&
+                    EnableRetainedWorldUiColor &&
+                    !activeCommands.HasRenderingWorldUiReplacement &&
+                    targetFbo is null && worldOverride is null &&
+                    cameraOverride is null && !shadowPass &&
+                    forcedMaterial is null && !outputCompletionRequest.IsDefined &&
+                    Window is { } readyWindow &&
+                    _renderPipeline.AssignedPipeline is DefaultRenderPipeline readyProfile &&
+                    readyProfile.SupportsRetainedWorldUiColorProfile(camera) &&
+                    readyWindow.Renderer.BackendId == RendererBackendId.OpenGL &&
+                    readyWindow.Renderer.SupportsCheckedWorldUiOutput)
+                {
+                    try
+                    {
+                        readyWindow.Renderer.ObserveUiWorldOutputImageReadiness(
+                            readyWindow, _renderPipeline);
+                    }
+                    catch (Exception error)
+                    {
+                        Debug.RenderingWarning(
+                            "World UI native readiness observation failed: {0}", error);
+                    }
                 }
 
                 completionDisposition = outputCompletionAuthoringStarted
@@ -2898,6 +3039,109 @@ namespace XREngine.Rendering
                     commandCount: GetRenderingCommandCountForTelemetry(),
                     elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
                 return recorded;
+            }
+        }
+
+        private bool TryBeginRetainedWorldUiRender(
+            RenderCommandCollection commands, IRuntimeRenderWorld world,
+            XRCamera camera, XRFrameBuffer? targetFbo,
+            IRuntimeRenderWorld? worldOverride, XRCamera? cameraOverride,
+            bool shadowPass, XRMaterial? forcedMaterial,
+            in RenderOutputRequest outputCompletionRequest,
+            long? consumedCollectGenerationOverride,
+            RenderFrameViewDescriptor? frozenDesktopView,
+            out UIWorldRenderAttempt? attempt)
+        {
+            attempt = null;
+            XRWindow? window = Window;
+            if (!EnableRetainedWorldUiColor || window is null ||
+                world is not RuntimeWorldRenderer runtimeWorld ||
+                worldOverride is not null || cameraOverride is not null ||
+                targetFbo is not null || shadowPass || forcedMaterial is not null ||
+                outputCompletionRequest.IsDefined ||
+                consumedCollectGenerationOverride.HasValue ||
+                Suppress3DSceneRendering || !_renderingFrameOutputSceneDue ||
+                !IsDesktopFacingOutput() ||
+                frozenDesktopView is not { } view ||
+                view.SourceCameraIdentity != camera.RenderIdentity ||
+                !ReferenceEquals(commands, _renderPipeline.MeshRenderCommands) ||
+                !ReferenceEquals(_renderingExactOutputCommandCollection, commands) ||
+                _renderingExactOutputCollectionGeneration == 0UL ||
+                _renderPipeline.AssignedPipeline is not DefaultRenderPipeline profile ||
+                !profile.SupportsRetainedWorldUiColorProfile(camera) ||
+                (MeshSubmissionStrategyOverride ??
+                    RuntimeEngine.Rendering.ResolveRequestedMeshSubmissionStrategy()) !=
+                    EMeshSubmissionStrategy.CpuDirect ||
+                window.ActiveWorldUiDispatchToken == 0UL ||
+                (RuntimeRenderingHostServices.Presentation.IsWindowScenePanelPresentationEnabled &&
+                    !RuntimeRenderingHostServices.Presentation.ForceFullViewport) ||
+                !window.Renderer.SupportsCheckedWorldUiOutput ||
+                !window.Renderer.CanAdmitUiWorldOutputImage(window, _renderPipeline) ||
+                window.HasUntrackedLateWorldUiOutput ||
+                window.Viewports.Count != 1 ||
+                !ReferenceEquals(window.Viewports[0], this) ||
+                ResolveScreenSpaceUICanvas() is not null)
+                return false;
+
+            var extent = window.RenderFramebufferSize;
+            if (_region.X != 0 || _region.Y != 0 ||
+                _region.Width != extent.X || _region.Height != extent.Y ||
+                InternalWidth != extent.X || InternalHeight != extent.Y ||
+                view.ViewRect.X != 0 || view.ViewRect.Y != 0 ||
+                view.ViewRect.Width != (uint)extent.X ||
+                view.ViewRect.Height != (uint)extent.Y)
+                return false;
+
+            BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+            if (package.State != EBackendReadyFramePackageState.Published ||
+                package.PackageGeneration <= 0 ||
+                package.Identity.CommandGeneration != profile.CommandGeneration ||
+                package.Identity.ResourceGeneration != _renderPipeline.ResourceGeneration ||
+                package.Identity.ViewportWidth != extent.X ||
+                package.Identity.ViewportHeight != extent.Y ||
+                !commands.TryRetainRenderingWorldUiImage(runtimeWorld.WorldContext,
+                    package.PackageGeneration, out UIWorldCollectPacketSet? packets,
+                    out UIPublication? publication) ||
+                packets is null || publication is null)
+                return false;
+
+            if (packets.Count != 1 ||
+                !packets.TryGetAt(0, out object? key, out UIPublication? selected) ||
+                key is not UICanvasComponent canvas ||
+                !ReferenceEquals(selected, publication))
+            {
+                packets.Release();
+                return false;
+            }
+
+            UIWorldRenderAttempt candidate = _worldUiRenderAttempt ??= new();
+            if (!candidate.TryBegin(this, window, _renderPipeline, commands,
+                    package.PackageGeneration, packets,
+                    publication, canvas, new BoundingRectangle(extent.X, extent.Y),
+                    view))
+                return false;
+            attempt = candidate;
+            return true;
+        }
+
+        internal void DiscardRetainedWorldUiHistory()
+            => _frameViewHistoryLedger.Clear();
+
+        internal void InvalidateRetainedWorldUiImageAfterRendererRetirement()
+        {
+            RenderCommandCollection commands = _renderPipeline.MeshRenderCommands;
+            if (!commands.HasAnyWorldUiReplacement)
+                return;
+            try { _ = commands.InvalidateWorldUiReplacementAfterRendererRetirement(); }
+            finally
+            {
+                _pendingExactOutputCollectionGeneration = 0UL;
+                _pendingExactOutputPackageGeneration = 0L;
+                _pendingExactOutputCommandCollection = null;
+                _renderingExactOutputCollectionGeneration = 0UL;
+                _renderingExactOutputCommandCollection = null;
+                _renderingFrameOutputSceneDue = false;
+                DiscardRetainedWorldUiHistory();
             }
         }
 
@@ -3853,6 +4097,8 @@ namespace XREngine.Rendering
         /// </summary>
         private void ResizeCameraComponentUI()
         {
+            if (!AllowUIRender)
+                return;
             var overlay = ScreenSpaceUserInterfaceOverride ?? ScreenSpaceUserInterfaceCamera?.GetUserInterfaceOverlay();
             if (overlay is null)
                 return;

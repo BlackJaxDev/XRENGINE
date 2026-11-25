@@ -58,7 +58,7 @@ namespace XREngine.Scene
         /// <summary>
         /// Thread-safe collection of components attached to this node.
         /// </summary>
-        private readonly EventList<XRComponent> _components = new() { ThreadSafe = true };
+        private readonly EventList<XRComponent> _components;
 
         /// <summary>
         /// The transform that defines this node's position, rotation, and scale in the scene.
@@ -149,6 +149,7 @@ namespace XREngine.Scene
         public SceneNode(SceneNode parent, string name, TransformBase? transform = null)
 #pragma warning restore CS8618
         {
+            _components = new(new HierarchyListAuthority<XRComponent>(this));
             Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
             Transform.Parent = parent?.Transform;
 
@@ -166,6 +167,7 @@ namespace XREngine.Scene
         public SceneNode(string name, TransformBase? transform = null)
 #pragma warning restore CS8618
         {
+            _components = new(new HierarchyListAuthority<XRComponent>(this));
             Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
 
             Name = name;
@@ -183,6 +185,7 @@ namespace XREngine.Scene
         public SceneNode(IRuntimeWorldContext? world, string? name = null, TransformBase? transform = null)
 #pragma warning restore CS8618
         {
+            _components = new(new HierarchyListAuthority<XRComponent>(this));
             Transform = transform ?? (TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform();
 
             World = world;
@@ -243,6 +246,8 @@ namespace XREngine.Scene
         /// </remarks>
         private EventList<XRComponent> ComponentsInternal => _components;
 
+        internal bool OwnsComponentList(object list) => ReferenceEquals(_components, list);
+
         /// <summary>
         /// True after the node has received a begin play call and until end play is invoked.
         /// </summary>
@@ -264,6 +269,10 @@ namespace XREngine.Scene
             get => [.. _components];
             set
             {
+                if (value is not null)
+                    foreach (XRComponent component in value)
+                        if (component is not null)
+                            HierarchyConstructionScope.RequireLink(this, component);
                 _components.Clear();
                 if (value is null)
                     return;
@@ -273,6 +282,7 @@ namespace XREngine.Scene
                     if (component is null)
                         continue;
 
+                    HierarchyConstructionScope.RequireLink(this, component);
                     _components.Add(component);
                 }
             }
@@ -289,10 +299,24 @@ namespace XREngine.Scene
             get => _isActiveSelf;
             set
             {
-                if (_isActiveSelf == value)
-                    return;
-                using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
-                SetField(ref _isActiveSelf, value);
+                AdvanceActivityIntent();
+                Action? previousGuard = _guardedLeafActivation;
+                long previousIntent = _guardedLeafActivationIntent;
+                _guardedLeafActivation = null;
+                _guardedLeafActivationIntent = 0;
+                try
+                {
+                    if (_isActiveSelf == value)
+                        return;
+                    using HierarchyMutationLease structural = new(this);
+                    using var mutation = PhysicsChainWorld.BeginNodeActivationMutation(this);
+                    SetField(ref _isActiveSelf, value);
+                }
+                finally
+                {
+                    _guardedLeafActivation = previousGuard;
+                    _guardedLeafActivationIntent = previousIntent;
+                }
             }
         }
 
@@ -391,7 +415,13 @@ namespace XREngine.Scene
                     SetTransform((TransformBase)RuntimeSceneNodeServices.Current.CreateDefaultTransform());
                 return _transform!;
             }
-            private set => SetField(ref _transform, value);
+            private set
+            {
+                using HierarchyMutationLease mutation = new(this, _transform, value);
+                SetFieldValidated(ref _transform, value, this,
+                    static (node, original, current, next) =>
+                        HierarchyConstructionScope.RequireTransformAssignment(node, original, current, next));
+            }
         }
 
         /// <summary>
@@ -403,6 +433,7 @@ namespace XREngine.Scene
             get => _transform?.Parent?.SceneNode;
             set
             {
+                HierarchyConstructionScope.RequireLink(this, value);
                 if (_transform is null)
                     return;
 
@@ -471,6 +502,10 @@ namespace XREngine.Scene
             }
             set
             {
+                if (value is not null)
+                    foreach (SceneNode child in value)
+                        if (child is not null)
+                            HierarchyConstructionScope.RequireLink(this, child);
                 Transform.Clear();
                 if (value is null)
                     return;
@@ -578,6 +613,12 @@ namespace XREngine.Scene
                             return false;
                         break;
                     case nameof(World):
+                        if (ActiveWorldRemovalPermit is { } worldRemoval)
+                        {
+                            worldRemoval.Retirement.StopLifecycle(this, EOwnedHierarchyLifecycle.Deactivate);
+                            worldRemoval.Validate();
+                            break;
+                        }
                         if (field is IRuntimeWorldContext previousWorld &&
                             !previousWorld.IsPlaySessionActive &&
                             IsActiveInHierarchy)
@@ -586,6 +627,8 @@ namespace XREngine.Scene
                         }
                         break;
                     case nameof(Transform):
+                        HierarchyConstructionScope.RequireTransformAssignment(
+                            this, field as TransformBase, _transform, (TransformBase)(object)@new!);
                         if (_transform != null)
                             UnlinkTransform();
                         break;
@@ -596,16 +639,25 @@ namespace XREngine.Scene
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            Action? activationGuard = propName == nameof(IsActiveSelf) ? _guardedLeafActivation : null;
+            long activationIntent = _guardedLeafActivationIntent;
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
                 case nameof(IsActiveSelf):
-                    if (IsActiveSelf)
+                    if (activationGuard is not null)
+                        ActivateGuardedLeafCore(activationGuard, activationIntent);
+                    else if (IsActiveSelf)
                         OnActivated();
                     else
                         OnDeactivated();
                     break;
                 case nameof(World):
+                    if (ActiveWorldRemovalPermit is { } worldRemoval)
+                    {
+                        worldRemoval.Validate();
+                        break;
+                    }
                     Transform.World = World;
                     if (World is not null)
                     {

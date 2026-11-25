@@ -538,7 +538,7 @@ public sealed class GaussianAvatarSplatComponent : XRComponent, IRenderable, IRe
                 XRScene? scene = scenes[s];
                 if (scene is null)
                     continue;
-                IReadOnlyList<SceneNode> roots = scene.RootNodes;
+                IReadOnlyList<SceneNode> roots = scene.SceneRoots;
                 for (int r = roots.Count - 1; r >= 0; r--)
                 {
                     if (roots[r] is { IsActiveSelf: true } root)

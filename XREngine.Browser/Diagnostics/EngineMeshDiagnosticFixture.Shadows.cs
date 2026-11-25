@@ -46,7 +46,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
         SceneNode casterNode = new("Directional shadow caster");
         _shadowCasterTransform = casterNode.SetTransform<Transform>();
         _shadowCasterTransform.Translation = new Vector3(0, 0, -1);
-        _scene.RootNodes.Add(casterNode);
+        _scene.SceneRoots.Add(casterNode);
         ModelComponent caster = casterNode.AddComponent<ModelComponent>()
             ?? throw new InvalidOperationException("EngineMeshDiagnostic.ShadowCasterMissing.");
         caster.Model = new Model(new SubMesh(_shadowCasterMesh, _material));

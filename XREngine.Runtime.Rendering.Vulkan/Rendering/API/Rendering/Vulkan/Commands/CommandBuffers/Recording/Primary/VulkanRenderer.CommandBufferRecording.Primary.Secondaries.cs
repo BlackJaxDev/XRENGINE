@@ -9,9 +9,11 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Silk.NET.Vulkan;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan
 {
@@ -821,7 +823,9 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.ScheduledCommandChainCache is null ||
                 runCount <= 0 ||
                 recordingState.ActiveInlineQuery is not null ||
-                firstContext.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline)
+                (firstContext.PipelineInstance?.Pipeline is UserInterfaceRenderPipeline &&
+                 !IsEligibleStaticUiDraw(recordingState.Ops.Stream, startIndex,
+                     dynamicOverlay: false)))
             {
                 return false;
             }
@@ -1144,9 +1148,23 @@ namespace XREngine.Rendering.Vulkan
                                 ref chain.PreparedKeyReference;
                             ref readonly VulkanPreparedCommandChainKey authorityKey =
                                 ref authority.PreparedKey;
+                            UIStaticDrawContract currentUiContract =
+                                chain.SourceCount == 1 &&
+                                IsEligibleStaticUiDraw(recordingState.Ops.Stream,
+                                    chain.SourceStartIndex, dynamicOverlay: false)
+                                    ? recordingState.Ops.GetMeshDraw(chain.SourceStartIndex)
+                                        .Draw.StaticUiCandidate.Contract
+                                    : default;
                             needsRecording =
                                 !chainKey.IsComplete ||
-                                !chainKey.Matches(in authorityKey);
+                                authorityKey.StaticUiContract != currentUiContract ||
+                                !chainKey.Matches(in authorityKey) ||
+                                !MatchesCurrentStaticUiImageAuthority(
+                                    in currentUiContract, in authorityKey,
+                                    recordingState.Ops.Stream, chain.SourceStartIndex) ||
+                                !MatchesCurrentStaticUiTextAuthority(
+                                    in currentUiContract, in authorityKey,
+                                    recordingState.Ops.Stream, chain.SourceStartIndex);
                         }
                     }
 
@@ -1372,6 +1390,7 @@ namespace XREngine.Rendering.Vulkan
                         CapturePreparedMeshCommandChainKey(
                             batch.PreparedFrame,
                             chain,
+                            recordingState.Ops,
                             startIndex,
                             out string preparedKeyFailureReason);
                     if (!preparedKey.IsComplete)
@@ -1810,6 +1829,7 @@ namespace XREngine.Rendering.Vulkan
         private VulkanPreparedCommandChainKey CapturePreparedMeshCommandChainKey(
             VulkanPreparedFrameRecording preparedFrame,
             CommandChain chain,
+            FrameOperationSequence operations,
             int scheduledStartIndex,
             out string failureReason)
         {
@@ -1825,6 +1845,27 @@ namespace XREngine.Rendering.Vulkan
             VulkanDescriptorHeapDrawIdentityBuffer heapDraws = default;
             heapDraws.Initialize(0);
             bool complete = chain.SourceCount > 0;
+            UIStaticDrawContract staticUiContract = default;
+            uint staticUiImageSet = uint.MaxValue;
+            uint staticUiImageBinding = uint.MaxValue;
+            VkRenderProgram? staticUiProgram = null;
+            if (chain.SourceCount == 1 &&
+                operations.GetHeader(chain.SourceStartIndex).OpCode ==
+                    EVulkanPrimaryPlanNodeKind.MeshDraw)
+            {
+                UIStaticDrawCandidate sourceCandidate = operations
+                    .GetMeshDraw(chain.SourceStartIndex).Draw.StaticUiCandidate;
+                if (sourceCandidate.IsDefined)
+                {
+                    if (!IsEligibleStaticUiDraw(operations.Stream,
+                            chain.SourceStartIndex, dynamicOverlay: false))
+                    {
+                        failureReason = "static UI draw lost its current backend or receipt";
+                        return VulkanPreparedCommandChainKey.Incomplete;
+                    }
+                    staticUiContract = sourceCandidate.Contract;
+                }
+            }
             int descriptorSetCount = 0;
             for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
             {
@@ -1841,7 +1882,16 @@ namespace XREngine.Rendering.Vulkan
                 ref readonly VkPreparedMeshDraw preparedDraw =
                     ref preparedFrame.GetMeshDrawForOwnerValidation(preparedIndex);
                 VulkanPreparedMeshDrawState state = preparedDraw.RecordingState;
+                UIIndexedDrawIntent intent = staticUiContract.Intent;
+                if (staticUiContract.IsDefined &&
+                    !MatchesPreparedStaticUiPrimitive(in intent, in state))
+                {
+                    failureReason = "prepared indexed UI primitive does not match its frozen draw";
+                    return VulkanPreparedCommandChainKey.Incomplete;
+                }
                 VkRenderProgram program = preparedFrame.GetMeshDrawColdData(state.ColdDataIndex).Program;
+                if (staticUiContract.IsText)
+                    staticUiProgram = program;
                 PipelineLayout layout = state.PipelineLayout;
                 if (program is null ||
                     program.BindingId == 0u ||
@@ -1849,6 +1899,13 @@ namespace XREngine.Rendering.Vulkan
                     layout.Handle == 0UL)
                 {
                     failureReason = "program or pipeline-layout identity is incomplete";
+                    return VulkanPreparedCommandChainKey.Incomplete;
+                }
+                if ((staticUiContract.IsImage || staticUiContract.IsText) &&
+                    !TryFindBindfulStaticUiImageBinding(program,
+                        out staticUiImageSet, out staticUiImageBinding))
+                {
+                    failureReason = "static UI image program is not a single bindful sampler";
                     return VulkanPreparedCommandChainKey.Incomplete;
                 }
 
@@ -1938,6 +1995,46 @@ namespace XREngine.Rendering.Vulkan
                 complete = false;
             }
 
+            VulkanRecordedBufferIdentity borderColorBuffer = default;
+            VulkanRecordedBufferIdentity borderWidthBuffer = default;
+            VulkanRecordedBufferIdentity imageUvBuffer = default;
+            VkImageDescriptorSnapshot imageSnapshot = default;
+            VulkanRecordedDescriptorResourceIdentity imageResource = default;
+            VulkanDescriptorPayload imagePayload = default;
+            VulkanStaticUiTextNativeAuthority textAuthority = default;
+            if (staticUiContract.IsBorder &&
+                (!staticUiContract.IsDefined ||
+                 !TryCaptureStaticUiBorderBuffer(staticUiContract.BorderColorBuffer!, 3u, out borderColorBuffer) ||
+                 !TryCaptureStaticUiBorderBuffer(staticUiContract.BorderWidthBuffer!, 4u, out borderWidthBuffer) ||
+                 !ContainsStaticUiBorderBuffer(exactDescriptorSets, in borderColorBuffer) ||
+                 !ContainsStaticUiBorderBuffer(exactDescriptorSets, in borderWidthBuffer)))
+            {
+                failureReason = "prepared border UI buffers or descriptor resources changed";
+                return VulkanPreparedCommandChainKey.Incomplete;
+            }
+            if (staticUiContract.IsImage &&
+                (!staticUiContract.IsDefined ||
+                 !TryCaptureStaticUiBorderBuffer(staticUiContract.ImageUvBuffer!, 3u, out imageUvBuffer) ||
+                 !ContainsStaticUiBorderBuffer(exactDescriptorSets, in imageUvBuffer) ||
+                 !TryCaptureBindfulStaticUiImage(staticUiContract.ImageTexture!,
+                     staticUiImageSet, staticUiImageBinding, in exactDescriptorSets,
+                     out imageSnapshot, out imageResource, out imagePayload)))
+            {
+                failureReason = "prepared bindful UI image or descriptor payload changed";
+                return VulkanPreparedCommandChainKey.Incomplete;
+            }
+            if (staticUiContract.IsText &&
+                (!staticUiContract.IsDefined ||
+                 staticUiProgram is null ||
+                 !TryCaptureStaticUiTextAuthority(in staticUiContract,
+                     staticUiProgram,
+                     in exactDescriptorSets, staticUiImageSet,
+                     staticUiImageBinding, out textAuthority)))
+            {
+                failureReason = "prepared text UI buffers or private atlas changed";
+                return VulkanPreparedCommandChainKey.Incomplete;
+            }
+
             RecordedPacketKey preparedPacketKey =
                 chain.DependencySignature.RecordedPacketKey with
                 {
@@ -1960,7 +2057,359 @@ namespace XREngine.Rendering.Vulkan
                 DescriptorHeapDraws: heapDraws,
                 RecordedPacketKey: preparedPacketKey,
                 IsComplete: complete && preparedPacketKey.IsComplete &&
-                heapDraws.IsComplete);
+                heapDraws.IsComplete)
+            {
+                StaticUiContract = staticUiContract,
+                StaticUiBorderColorBuffer = borderColorBuffer,
+                StaticUiBorderWidthBuffer = borderWidthBuffer,
+                StaticUiImageUvBuffer = imageUvBuffer,
+                StaticUiImageSnapshot = imageSnapshot,
+                StaticUiImageResource = imageResource,
+                StaticUiImagePayload = imagePayload,
+                StaticUiImageSet = staticUiImageSet,
+                StaticUiImageBinding = staticUiImageBinding,
+                StaticUiText = textAuthority,
+            };
+        }
+
+        private bool MatchesCurrentStaticUiImageAuthority(
+            in UIStaticDrawContract contract,
+            in VulkanPreparedCommandChainKey authority,
+            FrameOperationStream operations,
+            int sourceIndex)
+        {
+            if (!contract.IsImage)
+                return true;
+            if (!contract.IsDefined ||
+                !TryCaptureStaticUiBorderBuffer(contract.ImageUvBuffer!, 3u,
+                    out VulkanRecordedBufferIdentity currentUv) ||
+                currentUv != authority.StaticUiImageUvBuffer)
+                return false;
+            PendingMeshDraw draw = operations.GetMeshDraw(sourceIndex).Draw;
+            if (draw.PreparedProgram is not { } program ||
+                !TryFindBindfulStaticUiImageBinding(program,
+                    out uint setIndex, out uint bindingIndex) ||
+                setIndex != authority.StaticUiImageSet ||
+                bindingIndex != authority.StaticUiImageBinding)
+                return false;
+            ref readonly RecordedPacketKey recordedKey =
+                ref VulkanPreparedCommandChainKey.GetRecordedPacketKeyReference(in authority);
+            ref readonly VulkanRecordedDescriptorSetIdentityBuffer sets =
+                ref RecordedPacketKey.GetDescriptorSetsReference(in recordedKey);
+            return TryCaptureBindfulStaticUiImage(contract.ImageTexture!,
+                    setIndex, bindingIndex, in sets,
+                    out VkImageDescriptorSnapshot snapshot,
+                    out VulkanRecordedDescriptorResourceIdentity imageResource,
+                    out VulkanDescriptorPayload payload) &&
+                MatchesStaticUiImageReuseAuthority(in authority, in currentUv,
+                    in snapshot, in imageResource, in payload,
+                    setIndex, bindingIndex);
+        }
+
+        private bool MatchesCurrentStaticUiTextAuthority(
+            in UIStaticDrawContract contract,
+            in VulkanPreparedCommandChainKey authority,
+            FrameOperationStream operations, int sourceIndex)
+        {
+            if (!contract.IsText)
+                return true;
+            if (!contract.IsDefined || !authority.StaticUiText.IsComplete)
+                return false;
+            PendingMeshDraw draw = operations.GetMeshDraw(sourceIndex).Draw;
+            if (draw.PreparedProgram is not { } program ||
+                !TryFindBindfulStaticUiImageBinding(program,
+                    out uint atlasSet, out uint atlasBinding))
+                return false;
+            ref readonly RecordedPacketKey recordedKey =
+                ref VulkanPreparedCommandChainKey.GetRecordedPacketKeyReference(in authority);
+            ref readonly VulkanRecordedDescriptorSetIdentityBuffer sets =
+                ref RecordedPacketKey.GetDescriptorSetsReference(in recordedKey);
+            return TryCaptureStaticUiTextAuthority(in contract, program, in sets,
+                    atlasSet, atlasBinding,
+                    out VulkanStaticUiTextNativeAuthority current) &&
+                MatchesStaticUiTextReuseAuthority(in authority, in current);
+        }
+
+        internal static bool MatchesStaticUiTextReuseAuthority(
+            in VulkanPreparedCommandChainKey authority,
+            in VulkanStaticUiTextNativeAuthority current)
+            => authority.IsComplete && authority.StaticUiContract.IsText &&
+                current.IsComplete && current == authority.StaticUiText;
+
+        internal static bool MatchesStaticUiImageReuseAuthority(
+            in VulkanPreparedCommandChainKey authority,
+            in VulkanRecordedBufferIdentity uv,
+            in VkImageDescriptorSnapshot snapshot,
+            in VulkanRecordedDescriptorResourceIdentity image,
+            in VulkanDescriptorPayload payload,
+            uint setIndex, uint bindingIndex)
+            => authority.IsComplete && authority.StaticUiContract.IsImage &&
+                authority.StaticUiImageUvBuffer == uv &&
+                authority.StaticUiImageSnapshot == snapshot &&
+                authority.StaticUiImageResource == image &&
+                authority.StaticUiImagePayload == payload &&
+                authority.StaticUiImageSet == setIndex &&
+                authority.StaticUiImageBinding == bindingIndex;
+
+        private bool TryCaptureStaticUiTextAuthority(
+            in UIStaticDrawContract contract, VkRenderProgram program,
+            in VulkanRecordedDescriptorSetIdentityBuffer sets,
+            uint atlasSet, uint atlasBinding,
+            out VulkanStaticUiTextNativeAuthority authority)
+        {
+            authority = default;
+            if (!contract.IsDefined || !contract.IsText ||
+                !TryCaptureStaticUiTextBuffer(program, "GlyphTransformsBuffer",
+                    contract.TextGlyphTransforms!, 0, in sets, out var transforms) ||
+                !TryCaptureStaticUiTextBuffer(program, "GlyphTexCoordsBuffer",
+                    contract.TextGlyphTexCoords!, 1, in sets, out var texCoords) ||
+                !TryCaptureStaticUiTextBuffer(program, "TextInstanceBuffer",
+                    contract.TextInstances!, 2, in sets, out var instances) ||
+                !TryCaptureStaticUiTextBuffer(program, "GlyphTextIndexBuffer",
+                    contract.TextGlyphIndices!, 3, in sets, out var glyphIndices) ||
+                !TryCaptureStaticUiTextBuffer(program, "GlyphDrawIndexBuffer",
+                    contract.TextDrawIndices!, 4, in sets, out var drawIndices) ||
+                !TryCaptureBindfulStaticUiImage(contract.TextAtlas!, atlasSet,
+                    atlasBinding, in sets, out VkImageDescriptorSnapshot atlas,
+                    out VulkanRecordedDescriptorResourceIdentity image,
+                    out VulkanDescriptorPayload imagePayload))
+                return false;
+            authority = new(transforms, texCoords, instances,
+                glyphIndices, drawIndices, atlas, image, imagePayload,
+                atlasSet, atlasBinding);
+            return authority.IsComplete && contract.IsDefined;
+        }
+
+        private bool TryCaptureStaticUiTextBuffer(
+            VkRenderProgram program, string name, XRDataBuffer buffer,
+            uint expectedBinding, in VulkanRecordedDescriptorSetIdentityBuffer sets,
+            out VulkanStaticUiTextBufferAuthority authority)
+        {
+            authority = default;
+            if (!TryCaptureStaticUiBorderBuffer(buffer, expectedBinding,
+                    out VulkanRecordedBufferIdentity nativeBuffer))
+                return false;
+            DescriptorBindingInfo? selected = null;
+            foreach (DescriptorBindingInfo binding in program.DescriptorBindings)
+            {
+                if (binding.Name != name)
+                    continue;
+                if (selected is not null || binding.DescriptorType !=
+                    DescriptorType.StorageBuffer ||
+                    VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding) != 1 ||
+                    program.IsDescriptorSetExternallyOwned(binding.Set))
+                    return false;
+                selected = binding;
+            }
+            if (selected is not { } reflected)
+                return false;
+            VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+            lock (tracker.SyncRoot)
+            {
+                if (GetCurrentVulkanResourceGeneration(ObjectType.Buffer,
+                        nativeBuffer.BufferHandle) != nativeBuffer.AllocationGeneration)
+                    return false;
+                for (int index = 0; index < sets.Count; index++)
+                {
+                    VulkanRecordedDescriptorSetIdentity set = sets.Get(index);
+                    if (set.SetIndex != reflected.Set ||
+                        !tracker.PublishedDescriptorSets.TryGetValue(
+                            set.DescriptorSetHandle,
+                            out VulkanPublishedDescriptorSetSnapshot? published) ||
+                        !published.IsNativePublicationKnown ||
+                        published.DescriptorSetLifetimeGeneration !=
+                            set.DescriptorSetLifetimeGeneration ||
+                        published.Generation != set.PublicationGeneration ||
+                        published.Generation != set.PayloadGeneration ||
+                        !tracker.DescriptorSetLifetimes.TryGetValue(
+                            set.DescriptorSetHandle,
+                            out VulkanDescriptorSetLifetimeRecord? live) ||
+                        live.Generation != set.PayloadGeneration ||
+                        !live.Payloads.TryGetValue((reflected.Binding, 0u),
+                            out VulkanDescriptorPayload payload) ||
+                        payload.DescriptorType != DescriptorType.StorageBuffer ||
+                        payload.PrimaryHandle != nativeBuffer.BufferHandle ||
+                        payload.PrimaryGeneration !=
+                            nativeBuffer.AllocationGeneration ||
+                        payload.Offset != 0 || payload.Range == 0 ||
+                        payload.Range > nativeBuffer.Range)
+                        continue;
+                    authority = new(nativeBuffer, payload,
+                        reflected.Set, reflected.Binding);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool TryFindBindfulStaticUiImageBinding(VkRenderProgram program,
+            out uint setIndex, out uint bindingIndex)
+        {
+            if (!TryFindBindfulStaticUiImageBinding(program.DescriptorBindings,
+                    out setIndex, out bindingIndex))
+                return false;
+            return !program.IsDescriptorSetExternallyOwned(setIndex);
+        }
+
+        internal static bool TryFindBindfulStaticUiImageBinding(
+            IReadOnlyList<DescriptorBindingInfo> bindings,
+            out uint setIndex, out uint bindingIndex)
+        {
+            setIndex = uint.MaxValue;
+            bindingIndex = uint.MaxValue;
+            foreach (DescriptorBindingInfo binding in bindings)
+            {
+                if (VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding))
+                    return false;
+                bool imageBinding = binding.DescriptorType is
+                    DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or
+                    DescriptorType.Sampler or DescriptorType.StorageImage or
+                    DescriptorType.InputAttachment or
+                    DescriptorType.UniformTexelBuffer or DescriptorType.StorageTexelBuffer;
+                if (imageBinding && binding.Name != "Texture0")
+                    return false;
+                if (binding.Name != "Texture0")
+                    continue;
+                if (setIndex != uint.MaxValue ||
+                    binding.DescriptorType != DescriptorType.CombinedImageSampler ||
+                    VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding) != 1)
+                    return false;
+                setIndex = binding.Set;
+                bindingIndex = binding.Binding;
+            }
+            return setIndex != uint.MaxValue;
+        }
+
+        private bool TryCaptureBindfulStaticUiImage(XRTexture2D texture,
+            uint setIndex, uint bindingIndex,
+            in VulkanRecordedDescriptorSetIdentityBuffer sets,
+            out VkImageDescriptorSnapshot snapshot,
+            out VulkanRecordedDescriptorResourceIdentity imageResource,
+            out VulkanDescriptorPayload payload)
+        {
+            snapshot = default;
+            imageResource = default;
+            payload = default;
+            if (ResourceRuntime.BackendObjects.Get(texture) is not IVkImageDescriptorSource source)
+                return false;
+            lock (source.DescriptorSnapshotSyncRoot)
+            {
+                if (!source.TryGetDescriptorSnapshot(ImageViewType.Type2D,
+                        ImageAspectFlags.ColorBit, "static UI image cache", false, out snapshot) ||
+                    !snapshot.IsReady || snapshot.Image.Handle == 0 ||
+                    snapshot.View.Handle == 0 || snapshot.Sampler.Handle == 0 ||
+                    snapshot.Generation == 0 || snapshot.Format == Format.Undefined ||
+                    snapshot.Aspect != ImageAspectFlags.ColorBit ||
+                    snapshot.Samples != SampleCountFlags.Count1Bit ||
+                    snapshot.ViewType != ImageViewType.Type2D ||
+                    snapshot.MipLevels == 0 || snapshot.ArrayLayers != 1 ||
+                    (snapshot.Usage & ImageUsageFlags.SampledBit) == 0 ||
+                    snapshot.TrackedLayout != ImageLayout.ShaderReadOnlyOptimal)
+                    return false;
+
+                VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+                lock (tracker.SyncRoot)
+                {
+                    ulong viewGeneration = GetCurrentVulkanResourceGeneration(
+                        ObjectType.ImageView, snapshot.View.Handle);
+                    ulong samplerGeneration = GetCurrentVulkanResourceGeneration(
+                        ObjectType.Sampler, snapshot.Sampler.Handle);
+                    ulong imageGeneration = GetCurrentVulkanResourceGeneration(
+                        ObjectType.Image, snapshot.Image.Handle);
+                    if (viewGeneration == 0 || samplerGeneration == 0 || imageGeneration == 0)
+                        return false;
+                    if (!tracker.ImageViewBackingImages.TryGetValue(
+                            snapshot.View.Handle, out ulong backingImage) ||
+                        backingImage != snapshot.Image.Handle)
+                        return false;
+                    for (int index = 0; index < sets.Count; index++)
+                    {
+                        VulkanRecordedDescriptorSetIdentity set = sets.Get(index);
+                        if (set.SetIndex != setIndex ||
+                            !tracker.PublishedDescriptorSets.TryGetValue(
+                                set.DescriptorSetHandle,
+                                out VulkanPublishedDescriptorSetSnapshot? published) ||
+                            !published.IsNativePublicationKnown ||
+                            published.DescriptorSetLifetimeGeneration !=
+                                set.DescriptorSetLifetimeGeneration ||
+                            published.Generation != set.PublicationGeneration ||
+                            published.Generation != set.PayloadGeneration ||
+                            !tracker.DescriptorSetLifetimes.TryGetValue(
+                                set.DescriptorSetHandle, out VulkanDescriptorSetLifetimeRecord? live) ||
+                            live.Generation != set.PayloadGeneration ||
+                            !live.Payloads.TryGetValue((bindingIndex, 0u), out payload) ||
+                            payload.DescriptorType != DescriptorType.CombinedImageSampler ||
+                            payload.PrimaryHandle != snapshot.View.Handle ||
+                            payload.PrimaryGeneration != viewGeneration ||
+                            payload.SecondaryHandle != snapshot.Sampler.Handle ||
+                            payload.SecondaryGeneration != samplerGeneration ||
+                            payload.ImageLayout != snapshot.TrackedLayout)
+                            continue;
+                        imageResource = new VulkanRecordedDescriptorResourceIdentity(
+                            ObjectType.Image, snapshot.Image.Handle, imageGeneration,
+                            snapshot.TrackedLayout);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private bool TryCaptureStaticUiBorderBuffer(XRDataBuffer source, uint binding,
+            out VulkanRecordedBufferIdentity identity)
+        {
+            identity = default;
+            if (ResourceRuntime.BackendObjects.Get(source) is not VkDataBuffer native ||
+                native.BufferHandle is not { Handle: not 0 } buffer ||
+                native.AllocatedByteSize == 0)
+                return false;
+            ulong generation = GetCurrentVulkanResourceGeneration(ObjectType.Buffer, buffer.Handle);
+            if (generation == 0)
+                return false;
+            identity = new VulkanRecordedBufferIdentity(
+                EVulkanRecordedBufferBindingKind.Descriptor, binding,
+                buffer.Handle, generation, 0UL, native.AllocatedByteSize);
+            return true;
+        }
+
+        private static bool ContainsStaticUiBorderBuffer(
+            in VulkanRecordedDescriptorSetIdentityBuffer sets,
+            in VulkanRecordedBufferIdentity buffer)
+        {
+            if (!buffer.IsComplete || !sets.IsComplete)
+                return false;
+            for (int setIndex = 0; setIndex < sets.Count; setIndex++)
+            {
+                VulkanRecordedDescriptorSetIdentity set = sets.Get(setIndex);
+                ref readonly VulkanRecordedDescriptorResourceIdentityBuffer resources =
+                    ref VulkanRecordedDescriptorSetIdentity.GetResourcesReference(in set);
+                for (int resourceIndex = 0; resourceIndex < resources.Count; resourceIndex++)
+                {
+                    VulkanRecordedDescriptorResourceIdentity resource = resources.Get(resourceIndex);
+                    if (resource.Type == ObjectType.Buffer &&
+                        resource.Handle == buffer.BufferHandle &&
+                        resource.Generation == buffer.AllocationGeneration)
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        internal static bool MatchesPreparedStaticUiPrimitive(
+            in UIIndexedDrawIntent intent,
+            in VulkanPreparedMeshDrawState state)
+        {
+            if (intent.Topology != EPrimitiveType.Triangles ||
+                intent.IndexOffset != 0 || state.PrimitiveCount != 1 ||
+                state.InstanceCount != intent.Instances ||
+                intent.ElementType is not (IndexSize.TwoBytes or IndexSize.FourBytes))
+                return false;
+            VulkanPreparedMeshPrimitive primitive = state.Primitive0;
+            return primitive.Indexed && primitive.IndexBuffer.Handle != 0 &&
+                primitive.Topology == PrimitiveTopology.TriangleList &&
+                primitive.ElementCount == intent.IndexCount &&
+                primitive.IndexType == (intent.ElementType == IndexSize.TwoBytes
+                    ? IndexType.Uint16 : IndexType.Uint32);
         }
 
         private void LogScheduledMeshCommandChainPreparationFallback(string reason)

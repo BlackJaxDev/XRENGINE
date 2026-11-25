@@ -1,6 +1,7 @@
 ﻿using MemoryPack;
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using XREngine.Core;
 using YamlDotNet.Serialization;
@@ -74,7 +75,11 @@ namespace XREngine.Data.Core
                     ObjectsCacheInternal.Remove(obj.ID, out _);
         }
 
-        public XRObjectBase() => Generate();
+        public XRObjectBase()
+        {
+            CurrentObjectCachePublicationScope?.RecordConstruction(this);
+            Generate();
+        }
 
         /// <summary>
         /// False for objects that are reached only through their owner and never resolved by ID,
@@ -92,6 +97,7 @@ namespace XREngine.Data.Core
         /// </summary>
         protected XRObjectBase(bool deferObjectCachePublication)
         {
+            CurrentObjectCachePublicationScope?.RecordConstruction(this);
             if (!deferObjectCachePublication)
             {
                 Generate();
@@ -106,11 +112,23 @@ namespace XREngine.Data.Core
         }
         ~XRObjectBase()
         {
-            Destroy();
+            if (ShouldQueueFinalizerDestruction())
+                Destroy();
         }
+
+        /// <summary>
+        /// Determines whether automatic finalization requests deferred destruction.
+        /// Overrides must be nonblocking and must not call application callbacks.
+        /// Explicit destruction does not use this hook.
+        /// </summary>
+        protected virtual bool ShouldQueueFinalizerDestruction() => true;
 
         public virtual void Generate()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Generate);
+            ObjectConstructionIdentityGuard.RequireIdentityMutation(this);
+            ObjectConstructionIdentityGuard.RequireOwningBatch(this, CurrentObjectCachePublicationScope?.ConstructionIdentityGuard);
+            CurrentObjectCachePublicationScope?.RequireGeneratedOrigin(this);
             SetObjectID(Guid.NewGuid(), publishNotifications: false);
             IsDestroyed = false;
             ClearDestroyQueuedFlag();
@@ -134,6 +152,11 @@ namespace XREngine.Data.Core
 
         protected void PublishObjectCacheRegistration()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Publish);
+            ObjectConstructionIdentityGuard.RequireIdentityMutation(this);
+            ObjectConstructionIdentityGuard.RequireOwningBatch(this, CurrentObjectCachePublicationScope?.ConstructionIdentityGuard);
+            if (CurrentObjectCachePublicationScope?.TryDeferOwnedPublication(this) == true)
+                return;
             lock (ObjectCacheMutationLock)
                 PublishObjectCacheRegistrationUnderLock();
         }
@@ -141,6 +164,7 @@ namespace XREngine.Data.Core
         /// <summary>Enlists a constructor-deferred object in the active publication batch.</summary>
         protected void JoinDeferredObjectCachePublication()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Publish);
             if (!_constructorObjectCachePublicationDeferred)
                 return;
 
@@ -153,6 +177,7 @@ namespace XREngine.Data.Core
         /// <summary>Removes this object from global discovery until derived construction completes.</summary>
         protected void DeferExistingObjectCachePublication()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Unpublish);
             lock (ObjectCacheMutationLock)
             {
                 if (!_isRegisteredInObjectCache)
@@ -169,6 +194,9 @@ namespace XREngine.Data.Core
 
         protected virtual void PublishObjectCacheRegistrationUnderLock()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Publish);
+            ObjectConstructionIdentityGuard.RequireOwningBatch(this,
+                CurrentObjectCachePublicationScope?.ConstructionIdentityGuard, requirePublishing: true);
             if (IsDestroyed)
                 throw new InvalidOperationException($"Destroyed object '{GetType().FullName}' cannot be published in the global object cache.");
 
@@ -187,7 +215,7 @@ namespace XREngine.Data.Core
                 }
 
                 // Collision, update ID and try again.
-                SetObjectID(Guid.NewGuid(), publishNotifications: false);
+                SetObjectID(Guid.NewGuid(), publishNotifications: false, allowOwnedPublicationCollision: true);
                 if (tries++ > 10)
                     throw new Exception("Failed to generate a unique ID for an object."); // Highly unlikely.
             }
@@ -212,6 +240,7 @@ namespace XREngine.Data.Core
                 for (int index = 0; index < objects.Count; index++)
                 {
                     XRObjectBase value = objects[index];
+                    using ObjectLifetimeMutationLease lifetime = new(value, EObjectLifetimeMutation.Publish);
                     if (value.IsDestroyed)
                     {
                         if (allowDestroyedMembers)
@@ -261,6 +290,7 @@ namespace XREngine.Data.Core
         /// </summary>
         protected void AbortFailedConstruction()
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.AbortConstruction);
             if (IsDestroyed)
                 return;
 
@@ -284,6 +314,34 @@ namespace XREngine.Data.Core
             }
         }
 
+        /// <summary>Aborts a guarded construction only if its owner remains current after cleanup callbacks.</summary>
+        protected bool AbortFailedConstruction(Action onAdmitted, Action validate)
+        {
+            ArgumentNullException.ThrowIfNull(onAdmitted);
+            ArgumentNullException.ThrowIfNull(validate);
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.AbortConstruction);
+            if (IsDestroyed)
+                return false;
+
+            onAdmitted();
+            ClearDestroyQueuedFlag();
+            OnDestroying();
+            validate();
+            lock (ObjectCacheMutationLock)
+            {
+                validate();
+                if (_isRegisteredInObjectCache)
+                {
+                    if (ObjectsCacheInternal.TryGetValue(ID, out XRObjectBase? current) && ReferenceEquals(current, this))
+                        ObjectsCacheInternal.TryRemove(ID, out _);
+                    _isRegisteredInObjectCache = false;
+                }
+                _constructorObjectCachePublicationDeferred = false;
+                IsDestroyed = true;
+            }
+            return true;
+        }
+
         /// <summary>
         /// Adopts a stable identifier derived from persistent source identity.
         /// Importers use this before serialization so unchanged object graphs retain
@@ -298,8 +356,13 @@ namespace XREngine.Data.Core
             ID = persistentID;
         }
 
-        private void SetObjectID(Guid value, bool publishNotifications, bool persistentIdentity = false)
+        private void SetObjectID(Guid value, bool publishNotifications, bool persistentIdentity = false,
+            bool allowOwnedPublicationCollision = false)
         {
+            using ObjectLifetimeMutationLease lifetime = new(this, EObjectLifetimeMutation.Identity);
+            ObjectConstructionIdentityGuard.RequireIdentityMutation(this, allowOwnedPublicationCollision);
+            if (!allowOwnedPublicationCollision)
+                CurrentObjectCachePublicationScope?.RequireConstructionIdentityChange(this);
             Guid previous = _id;
             bool wasRegistered = _isRegisteredInObjectCache;
             if (previous == value)
@@ -344,8 +407,12 @@ namespace XREngine.Data.Core
         public string? Name
         {
             get => _name;
-            set => SetField(ref _name, value);
+            set => SetFieldValidated(ref _name, value, this,
+                static (obj, _, _, _) => obj.ValidateNameWrite());
         }
+
+        /// <summary>Checks an opt-in owner before a name field write.</summary>
+        protected virtual void ValidateNameWrite() { }
 
         /// <summary>
         /// True if the object has been destroyed and no longer exists in a valid state.
@@ -355,9 +422,12 @@ namespace XREngine.Data.Core
         [MemoryPackIgnore]
         public bool IsDestroyed { get; private set; } = false;
 
-        private int _destroyQueued;
-        private static readonly ConcurrentQueue<XRObjectBase> _objectsToDestroy = new();
+        private long _pendingDestructionToken;
+        private static long s_nextDestructionToken;
+        private static readonly ConcurrentQueue<(XRObjectBase Target, long Token)> _objectsToDestroy = new();
+        private static readonly ConcurrentQueue<(XRObjectBase Target, long Token)> _deferredObjectsToDestroy = new();
         private static long s_pendingDestructionCount;
+        private static int s_drainingPendingDestructions;
 
         /// <summary>
         /// True after this object has been queued for deferred destruction.
@@ -365,10 +435,10 @@ namespace XREngine.Data.Core
         [YamlIgnore]
         [Browsable(false)]
         [MemoryPackIgnore]
-        public bool IsDestroyQueued => Volatile.Read(ref _destroyQueued) != 0;
+        public bool IsDestroyQueued => Volatile.Read(ref _pendingDestructionToken) != 0;
 
         /// <summary>
-        /// Number of objects waiting in the global deferred-destruction queue.
+        /// Number of current deferred-destruction requests.
         /// </summary>
         [YamlIgnore]
         [Browsable(false)]
@@ -383,26 +453,79 @@ namespace XREngine.Data.Core
         }
 
         /// <summary>
-        /// Processes all objects that have been requested to be destroyed.
-        /// Must be called by the engine repeatedly at some interval.
+        /// Processes ready destruction requests. A busy or deferred request stays pending
+        /// until the engine calls this method again.
         /// </summary>
         public static void ProcessPendingDestructions()
         {
-            while (_objectsToDestroy.TryDequeue(out XRObjectBase? obj))
-                obj.Destroy(true);
+            if (Interlocked.CompareExchange(ref s_drainingPendingDestructions, 1, 0) != 0)
+                return;
+            try
+            {
+                while (_deferredObjectsToDestroy.TryDequeue(out var deferred))
+                    _objectsToDestroy.Enqueue(deferred);
+                while (_objectsToDestroy.TryDequeue(out var entry))
+                {
+                    XRObjectBase value = entry.Target;
+                    if (Volatile.Read(ref value._pendingDestructionToken) != entry.Token)
+                        continue;
+                    bool claimed = false;
+                    ExceptionDispatchInfo? failure = null;
+                    try
+                    {
+                        claimed = value.TryEnterQueuedDispatch(entry.Token);
+                        if (claimed)
+                        {
+                            try { value.Destroy(true); }
+                            catch
+                            {
+                                // A virtual override can release state before it calls base.
+                                // Do not retry that partial cleanup automatically.
+                                value.ClearDestroyQueuedFlag(entry.Token);
+                                throw;
+                            }
+                        }
+                    }
+                    catch (Exception exception) { failure = ExceptionDispatchInfo.Capture(exception); }
+                    finally
+                    {
+                        try { if (claimed) value.ExitQueuedDispatch(); }
+                        catch (Exception exception) { failure ??= ExceptionDispatchInfo.Capture(exception); }
+                        finally
+                        {
+                            try
+                            {
+                                if (Volatile.Read(ref value._pendingDestructionToken) == entry.Token)
+                                    _deferredObjectsToDestroy.Enqueue(entry);
+                            }
+                            catch (Exception exception) { failure ??= ExceptionDispatchInfo.Capture(exception); }
+                        }
+                    }
+                    failure?.Throw();
+                }
+            }
+            finally { Volatile.Write(ref s_drainingPendingDestructions, 0); }
         }
 
         public virtual void Destroy(bool now = false)
         {
+            using ObjectLifetimeMutationLease lifetime = new(this,
+                now ? EObjectLifetimeMutation.DestroyNow : EObjectLifetimeMutation.QueueDestruction);
             if (IsDestroyed)
                 return;
 
             if (!now)
             {
-                if (Interlocked.Exchange(ref _destroyQueued, 1) == 0)
+                if (Volatile.Read(ref _pendingDestructionToken) == 0)
                 {
-                    Interlocked.Increment(ref s_pendingDestructionCount);
-                    _objectsToDestroy.Enqueue(this);
+                    long token = Interlocked.Increment(ref s_nextDestructionToken);
+                    if (token <= 0)
+                        throw new InvalidOperationException("The destruction request token is exhausted.");
+                    if (Interlocked.CompareExchange(ref _pendingDestructionToken, token, 0) == 0)
+                    {
+                        Interlocked.Increment(ref s_pendingDestructionCount);
+                        _objectsToDestroy.Enqueue((this, token));
+                    }
                 }
                 return;
             }
@@ -418,7 +541,8 @@ namespace XREngine.Data.Core
                 {
                     if (_isRegisteredInObjectCache)
                     {
-                        ObjectsCacheInternal.Remove(ID, out _);
+                        if (ObjectsCacheInternal.TryGetValue(ID, out XRObjectBase? current) && ReferenceEquals(current, this))
+                            ObjectsCacheInternal.TryRemove(ID, out _);
                         _isRegisteredInObjectCache = false;
                     }
                     IsDestroyed = true;
@@ -435,7 +559,13 @@ namespace XREngine.Data.Core
 
         private void ClearDestroyQueuedFlag()
         {
-            if (Interlocked.Exchange(ref _destroyQueued, 0) == 1)
+            if (Interlocked.Exchange(ref _pendingDestructionToken, 0) != 0)
+                Interlocked.Decrement(ref s_pendingDestructionCount);
+        }
+
+        private void ClearDestroyQueuedFlag(long token)
+        {
+            if (Interlocked.CompareExchange(ref _pendingDestructionToken, 0, token) == token)
                 Interlocked.Decrement(ref s_pendingDestructionCount);
         }
 

@@ -1,6 +1,7 @@
 using Silk.NET.Maths;
 using System.Threading;
 using XREngine.Input.Devices;
+using XREngine.Rendering.UI.State;
 
 namespace XREngine.Rendering;
 
@@ -110,6 +111,12 @@ public readonly record struct WindowKeyTransition(EKey Key, bool IsDown);
 
 public readonly record struct WindowMouseButtonTransition(EMouseButton Button, bool IsDown);
 
+public enum WindowImeEventKind { Start, Update, Commit, Cancel }
+
+/// <summary>One ordered platform IME transition for the focused native text control.</summary>
+public readonly record struct WindowImeEvent(WindowImeEventKind Kind, string Text, int CaretOffset,
+    UIElementIdentity FocusIdentity = default, long FocusRevision = 0);
+
 public readonly record struct WindowInputSnapshot(
     ulong Sequence,
     int KeyboardCount,
@@ -137,6 +144,8 @@ public readonly record struct WindowInputSnapshot(
     long TimestampTicks,
     int PublicationThreadId)
 {
+    public WindowImeEvent[] ImeEvents { get; init; } = [];
+    public ReadOnlySpan<WindowImeEvent> ImeEventSpan => ImeEvents ?? Array.Empty<WindowImeEvent>();
     public bool HasKeyboard => KeyboardCount > 0;
     public bool HasMouse => MouseCount > 0;
     public bool HasGamepad => GamepadCount > 0 && PrimaryGamepad.IsConnected;
@@ -165,6 +174,9 @@ public sealed class WindowInputSnapshotAccumulator
     private EMouseButton[] _pressedMouseButtonSnapshot = [];
     private bool _pressedMouseButtonsChanged;
     private readonly List<char> _textInputCharacters = new(16);
+    private readonly List<WindowImeEvent> _imeEvents = new(8);
+    private readonly List<WindowImeEvent> _unconsumedImeEvents = new(8);
+    private WindowImeEvent[] _unconsumedImeEventSnapshot = [];
     private readonly List<WindowInputEvent> _orderedEvents = new(64);
     private readonly List<WindowInputEvent> _unconsumedOrderedEvents = new(64);
     private readonly List<char> _unconsumedTextInputCharacters = new(16);
@@ -240,6 +252,8 @@ public sealed class WindowInputSnapshotAccumulator
             _unconsumedMouseButtonTransitionSnapshot = [];
             _unconsumedTextInputCharacters.Clear();
             _unconsumedTextInputCharacterSnapshot = [];
+            _unconsumedImeEvents.Clear();
+            _unconsumedImeEventSnapshot = [];
             _unconsumedOrderedEvents.Clear();
             _unconsumedPointerDeltaX = 0.0f;
             _unconsumedPointerDeltaY = 0.0f;
@@ -255,6 +269,7 @@ public sealed class WindowInputSnapshotAccumulator
                 KeyTransitions = [],
                 MouseButtonTransitions = [],
                 TextInputCharacters = [],
+                ImeEvents = [],
             };
 
             return snapshot;
@@ -307,6 +322,21 @@ public sealed class WindowInputSnapshotAccumulator
                 _textInputCharacters.Add(character);
                 _orderedEvents.Add(new WindowInputEvent(WindowInputEventKind.Text, default, default, false, character, 0, 0));
             }
+        }
+    }
+
+    public void RecordImeEvent(WindowImeEventKind kind, string text = "", int caretOffset = 0,
+        UIElementIdentity focusIdentity = default, long focusRevision = 0)
+    {
+        lock (_sync)
+        {
+            // A pending preedit frame is superseded by the next one. Result and
+            // lifetime transitions remain ordered and are never coalesced away.
+            if (kind == WindowImeEventKind.Update && _imeEvents.Count > 0 &&
+                _imeEvents[^1].Kind == WindowImeEventKind.Update)
+                _imeEvents[^1] = new(kind, text, caretOffset, focusIdentity, focusRevision);
+            else
+                _imeEvents.Add(new(kind, text, caretOffset, focusIdentity, focusRevision));
         }
     }
 
@@ -412,6 +442,20 @@ public sealed class WindowInputSnapshotAccumulator
                 _unconsumedTextInputCharacterSnapshot = [.. _unconsumedTextInputCharacters];
             }
 
+            if (_imeEvents.Count > 0)
+            {
+                foreach (WindowImeEvent item in _imeEvents)
+                {
+                    if (item.Kind == WindowImeEventKind.Update && _unconsumedImeEvents.Count > 0 &&
+                        _unconsumedImeEvents[^1].Kind == WindowImeEventKind.Update)
+                        _unconsumedImeEvents[^1] = item;
+                    else
+                        _unconsumedImeEvents.Add(item);
+                }
+                _imeEvents.Clear();
+                _unconsumedImeEventSnapshot = [.. _unconsumedImeEvents];
+            }
+
             if (_orderedEvents.Count > 0)
             {
                 _unconsumedOrderedEvents.AddRange(_orderedEvents);
@@ -466,6 +510,7 @@ public sealed class WindowInputSnapshotAccumulator
                 System.Diagnostics.Stopwatch.GetTimestamp(),
                 Environment.CurrentManagedThreadId)
             {
+                ImeEvents = _unconsumedImeEventSnapshot,
             };
 
             _latest = snapshot;

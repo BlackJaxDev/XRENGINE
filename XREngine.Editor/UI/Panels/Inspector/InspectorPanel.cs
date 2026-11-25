@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Numerics;
 using System.Reflection;
+using XREngine.Components;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
@@ -8,27 +9,93 @@ using XREngine.Scene;
 
 namespace XREngine.Editor;
 
-public class InspectorPanel : EditorPanel
+public partial class InspectorPanel : EditorPanel
 {
+    private bool _destroyingOwner;
     private object?[]? _inspectedObjects;
+    private ulong _inspectedTargetIntentRevision;
+
+    private sealed class SupersededTargetWriteException : Exception { }
+
     public object?[]? InspectedObjects
     {
         get => _inspectedObjects;
-        set => SetField(ref _inspectedObjects, value);
+        set => SetInspectedObjects(value);
+    }
+
+    private bool SetInspectedObjects(object?[]? value)
+    {
+        ulong intent = ++_inspectedTargetIntentRevision;
+        try
+        {
+            return SetFieldValidated(ref _inspectedObjects, value, (Panel: this, Intent: intent),
+                static (state, original, current, _) =>
+                {
+                    if (state.Panel._destroyingOwner || state.Panel.IsDestroyed ||
+                        state.Panel.IsDestroyQueued || state.Panel._inspectedTargetIntentRevision != state.Intent ||
+                        !ReferenceEquals(original, current))
+                        throw new SupersededTargetWriteException();
+                }, propertyName: nameof(InspectedObjects));
+        }
+        catch (SupersededTargetWriteException)
+        {
+            return false;
+        }
     }
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
+        ulong acceptedIntent = _inspectedTargetIntentRevision;
+        object?[]? acceptedTargets = field as object?[];
         base.OnPropertyChanged(propName, prev, field);
+        if (_destroyingOwner)
+            return;
         switch (propName)
         {
             case nameof(InspectedObjects):
-                RemakeChildren();
+                if (!IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                    return;
+                if (prev is object?[] previous &&
+                    (field is not object?[] next || previous.Length != next.Length ||
+                     previous.Where((item, index) => !ReferenceEquals(item, next[index])).Any()))
+                {
+                    if (!HideDetailEditor())
+                    {
+                        if (IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                        {
+                            bool waitsForFocus = _detailHideWaitsForFocus;
+                            if (PhysicsChainWorld.IsWorldMutationActive)
+                            {
+                                // Revoke old row bindings now. Structural view changes must wait.
+                                List<PropertyInfo> properties = GetMatchingProperties(acceptedTargets);
+                                if (!IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                                    return;
+                                Properties = properties;
+                                _virtualPropertyProvider?.Reset(properties, acceptedTargets);
+                                QueueDeferredTargetRefresh();
+                                return;
+                            }
+                            SuspendStaleDetailEditor();
+                            if (_virtualPropertyList is not null)
+                                RemakeChildren();
+                            if (waitsForFocus && IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                                QueueDeferredTargetRefresh();
+                        }
+                        return;
+                    }
+                }
+                if (IsCurrentTargetNotification(acceptedIntent, acceptedTargets))
+                    RemakeChildren();
                 break;
         }
     }
 
+    private bool IsCurrentTargetNotification(ulong intent, object?[]? targets)
+        => !_destroyingOwner && !IsDestroyed && !IsDestroyQueued &&
+           _inspectedTargetIntentRevision == intent && ReferenceEquals(_inspectedObjects, targets);
+
     private bool _isLocked = false;
+    private bool _inspectingAsset;
     public bool IsLocked
     {
         get => _isLocked;
@@ -37,59 +104,179 @@ public class InspectorPanel : EditorPanel
 
     protected override void OnComponentActivated()
     {
+        if (_destroyingOwner)
+            return;
         base.OnComponentActivated();
-        RemakeChildren();
+        SubscribePlayModeTransitions();
+        bool hadPlaySnapshot = _playInspectedTargets is not null;
+        if (hadPlaySnapshot && Engine.PlayMode.State == EPlayModeState.Edit)
+            RestorePlayModeState();
+        if (!IsActiveInHierarchy || IsDestroyed || IsDestroyQueued)
+            return;
+        if (_virtualPropertyList is null)
+            RemakeChildren();
+        if (!IsActiveInHierarchy || IsDestroyed || IsDestroyQueued)
+            return;
+        if (_targetRefreshPending)
+            QueueDeferredTargetRefresh();
+        QueuePropertyColumnLayout();
         Selection.SelectionChanged += OnSelectionChanged;
+        NativeAssetSelection.SelectionChanged += OnNativeAssetSelectionChanged;
+        if (hadPlaySnapshot)
+            return;
+        if (!IsLocked && DidGlobalSelectionChangeWhileHidden())
+        {
+            if (NativeAssetSelection.SelectedTarget is { } assetTarget)
+            {
+                if (!_inspectingAsset || InspectedObjects is not { Length: 1 } selected ||
+                    !ReferenceEquals(selected[0], assetTarget))
+                    OnNativeAssetSelectionChanged(assetTarget);
+            }
+            else
+            {
+                SceneNode[] selected = Selection.SceneNodes;
+                if (_inspectingAsset || InspectedObjects is not { } current || current.Length != selected.Length ||
+                    selected.Where((node, index) => !ReferenceEquals(node, current[index])).Any())
+                    OnSelectionChanged(selected);
+            }
+        }
+        RestoreViewState();
     }
 
     protected override void OnComponentDeactivated()
     {
+        CancelPropertyColumnLayoutTick();
+        if (_destroyingOwner)
+        {
+            ReleaseSelectionSubscriptions();
+            base.OnComponentDeactivated();
+            return;
+        }
+        if (_playInspectedTargets is null)
+            CaptureViewState();
+        StopDetailFocusRestore(clearSavedBinding: false);
+        PauseDeferredTargetRefresh();
         base.OnComponentDeactivated();
+        ReleaseSelectionSubscriptions();
+        ReleaseVirtualPropertyList();
+    }
+
+    protected override void OnDestroying()
+    {
+        _destroyingOwner = true;
+        UnsubscribePlayModeTransitions();
+        ReleaseSelectionSubscriptions();
+        StopDetailFocusRestore();
+        StopDeferredTargetRefresh();
+        DetachTerminalProvider(_virtualPropertyList);
+        DetachTerminalProvider(_componentList);
+        DetachTerminalProvider(_componentPicker);
+        ReleaseVirtualPropertyOwners(terminal: true);
+        ReleaseComponentViewOwners();
+        base.OnDestroying();
+    }
+
+    private static void DetachTerminalProvider(UIListTransform? list)
+    {
+        if (list is null)
+            return;
+        try { list.DetachVirtualProviderForOwnerTeardown(); }
+        catch (AggregateException error)
+        {
+            Debug.LogException(error, "Virtual inspector row cleanup failed during owner destruction.");
+        }
+    }
+
+    private void ReleaseSelectionSubscriptions()
+    {
         Selection.SelectionChanged -= OnSelectionChanged;
+        NativeAssetSelection.SelectionChanged -= OnNativeAssetSelectionChanged;
     }
 
     private void OnSelectionChanged(SceneNode[] obj)
     {
+        if (_destroyingOwner)
+            return;
+        if (obj.Length == 0 && Engine.PlayMode.State == EPlayModeState.EnteringPlay)
+            CapturePlayModeState();
         if (!IsLocked)
+        {
+            _componentGeneration++;
+            _componentTargets = [.. obj];
+            _inspectorView = InspectorView.Properties;
+            _inspectingAsset = false;
+            NativeAssetSelection.Clear();
             InspectedObjects = obj;
+        }
+    }
+
+    private void OnNativeAssetSelectionChanged(object? target)
+    {
+        if (_destroyingOwner)
+            return;
+        if (IsLocked)
+            return;
+        if (target is null)
+        {
+            _componentGeneration++;
+            if (_inspectingAsset)
+                InspectedObjects = null;
+            _inspectingAsset = false;
+            return;
+        }
+        _componentGeneration++;
+        _componentTargets = [];
+        _inspectorView = InspectorView.Properties;
+        _inspectingAsset = true;
+        InspectedObjects = [target];
     }
 
     private void RemakeChildren()
     {
+        if (PhysicsChainWorld.IsWorldMutationActive)
+        {
+            QueueDeferredTargetRefresh();
+            return;
+        }
         using var sample = Engine.Profiler.Start("InspectorPanel.RemakeChildren");
-        SceneNode.Transform.Clear();
-        CreatePropertyList(SceneNode, this);
+        if (_virtualPropertyList is not null)
+        {
+            RefreshVirtualProperties();
+            return;
+        }
+        foreach (var child in SceneNode.Transform.Children.ToArray())
+            child.SceneNode?.Destroy(true);
+        CreateVirtualPropertyList();
     }
 
-    /// <summary>
-    /// Get the properties that are common to all the inspected objects.
-    /// </summary>
-    /// <returns></returns>
+    /// <summary>Gets property metadata that is valid for every selected object.</summary>
     private static List<PropertyInfo> GetMatchingProperties(object?[]? objects)
     {
         using var sample = Engine.Profiler.Start("InspectorPanel.GetMatchingProperties");
         List<PropertyInfo> matching = [];
         if (objects is null)
             return matching;
-        
+
         bool first = true;
-        foreach (var obj in objects)
+        foreach (object? obj in objects)
         {
             if (obj is null)
                 continue;
-
-            var props = obj.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
-            foreach (var prop in props)
+            Type type = obj.GetType();
+            if (first)
             {
-                if (prop is null || prop.GetIndexParameters().Length > 0)
-                    continue;
-
-                if (first)
-                    matching.Add(prop);
-                else
-                    matching = [.. matching.Intersect([prop])];
+                foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                    if (property.GetIndexParameters().Length == 0)
+                        matching.Add(property);
+                first = false;
+                continue;
             }
-            first = false;
+            for (int i = matching.Count - 1; i >= 0; i--)
+            {
+                PropertyInfo property = matching[i];
+                if (property.DeclaringType?.IsAssignableFrom(type) != true)
+                    matching.RemoveAt(i);
+            }
         }
         return matching;
     }
@@ -100,7 +287,7 @@ public class InspectorPanel : EditorPanel
     {
         using var sample = Engine.Profiler.Start("InspectorPanel.CreatePropertyList");
         var listNode = parentNode.NewChild<UIMaterialComponent>(out var menuMat);
-        menuMat.Material = MakeBackgroundMaterial();
+        ApplyBackground(menuMat);
         var listTfm = listNode.SetTransform<UIListTransform>();
         listTfm.DisplayHorizontal = false;
         listTfm.ItemSpacing = 0.0f;

@@ -117,6 +117,8 @@ public sealed class VulkanTodoP2ValidationTests : GpuTestBase
     public void UiMaterialComponent_SetQuadMaterial_ReusesExistingMesh()
     {
         var component = new UIMaterialComponent();
+        component.Mesh.ShouldBeNull();
+        component.Material.ShouldNotBeNull(); // Explicit legacy access materializes an isolated fallback.
         XRMeshRenderer? originalMesh = component.Mesh;
         originalMesh.ShouldNotBeNull();
 

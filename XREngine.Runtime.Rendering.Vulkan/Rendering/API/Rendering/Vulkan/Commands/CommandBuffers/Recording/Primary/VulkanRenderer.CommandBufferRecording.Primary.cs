@@ -115,6 +115,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     FinalizePrimaryCommandRecording(ref recordingState);
                     FinalizeOutputCompletionReceipts(ref recordingState);
+                    FinalizeUiPublicationReceipts(ref recordingState);
                 }
 
                 using (VulkanCpuStageScope endCommandBufferStage =
@@ -123,6 +124,7 @@ namespace XREngine.Rendering.Vulkan
                     if (!EndPrimaryCommandBuffer(ref recordingState))
                         return false;
                     RecordVisibleMeshDrawCohort(in recordingState.Ops);
+                    CommitRecordedUiPublicationReceipts(ref recordingState);
                     if (recordingState.AdvancedQueueOverlap is { } overlap)
                     {
                         ConsolidateAdvancedQueueOverlapSubmissionMarkers(overlap);

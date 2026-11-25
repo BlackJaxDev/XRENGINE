@@ -1,6 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
+using XREngine.Components;
 using XREngine.Data.Core;
 using XREngine.Scene.Transforms;
+using XREngine.Scene.Prefabs;
 
 namespace XREngine.Scene
 {
@@ -32,18 +34,51 @@ namespace XREngine.Scene
         /// </remarks>
         private void UnlinkTransform()
         {
-            if (_transform is null)
+            if (_transform is not { } oldTransform)
                 return;
 
+            IRuntimeWorldContext? oldWorld = oldTransform.World;
+            bool guarded = PhysicsChainWorld.RequiresCanonicalTransformUnlink(this, oldTransform, oldWorld);
+            ObjectConstructionIdentity nodeIdentity = guarded ? ObjectConstructionIdentity.Capture(this) : default;
+            ObjectConstructionIdentity transformIdentity = guarded ? ObjectConstructionIdentity.Capture(oldTransform) : default;
+            TransformBase? oldParent = oldTransform.OwnedRetirementParent;
+            ObjectConstructionIdentity? parentIdentity = guarded && oldParent is not null
+                ? ObjectConstructionIdentity.Capture(oldParent) : null;
+            IRuntimeWorldContext? nodeWorld = World;
+            EventList<TransformBase> oldChildren = oldTransform.OwnedRetirementChildren!;
+            ObjectConstructionIdentity childrenIdentity = guarded ? ObjectConstructionIdentity.Capture(oldChildren) : default;
+
+            void RequireOldTransform(bool sceneNodeCleared = false, bool worldCleared = false,
+                bool parentCleared = false)
+            {
+                if (!guarded)
+                    return;
+                if (!nodeIdentity.IsCurrent || !transformIdentity.IsCurrent || !childrenIdentity.IsCurrent ||
+                    parentIdentity?.IsCurrent == false || !ReferenceEquals(_transform, oldTransform) ||
+                    !ReferenceEquals(World, nodeWorld) ||
+                    !ReferenceEquals(oldTransform.OwnedRetirementNode, sceneNodeCleared ? null : this) ||
+                    !ReferenceEquals(oldTransform.World, worldCleared ? null : oldWorld) ||
+                    !ReferenceEquals(oldTransform.OwnedRetirementParent, parentCleared ? null : oldParent) ||
+                    !ReferenceEquals(oldTransform.OwnedRetirementChildren, oldChildren) || oldChildren.Count != 0)
+                    throw new InvalidOperationException("The old transform changed during canonical unlink.");
+            }
+
+            RequireOldTransform();
             if (IsActiveInHierarchy)
                 DeactivateTransform();
+            RequireOldTransform();
             if (HasBegunPlay)
                 EndPlayTransform();
-            _transform.PropertyChanged -= TransformPropertyChangedHandler;
-            _transform.PropertyChanging -= TransformPropertyChangingHandler;
-            _transform.SceneNode = null;
-            _transform.World = null;
-            _transform.Parent = null;
+            RequireOldTransform();
+            oldTransform.PropertyChanged -= TransformPropertyChangedHandler;
+            oldTransform.PropertyChanging -= TransformPropertyChangingHandler;
+            oldTransform.SceneNode = null;
+            RequireOldTransform(sceneNodeCleared: true);
+            using (PhysicsChainWorld.BeginCanonicalTransformUnlink(this, oldTransform, oldWorld))
+                oldTransform.ClearWorldForCanonicalUnlink(() => RequireOldTransform(sceneNodeCleared: true));
+            RequireOldTransform(sceneNodeCleared: true, worldCleared: true);
+            oldTransform.Parent = null;
+            RequireOldTransform(sceneNodeCleared: true, worldCleared: true, parentCleared: true);
         }
 
         /// <summary>
@@ -95,6 +130,13 @@ namespace XREngine.Scene
                     OnParentChanged();
                     break;
                 case nameof(TransformBase.World):
+                    if (sender is TransformBase changedTransform &&
+                        changedTransform.ActiveWorldRemovalPermit is { } worldRemoval &&
+                        ReferenceEquals(changedTransform, _transform))
+                    {
+                        worldRemoval.Validate();
+                        break;
+                    }
                     World = Transform.World;
                     break;
             }
@@ -191,6 +233,9 @@ namespace XREngine.Scene
         /// </summary>
         public void SetTransform(TransformBase transform, ETransformSetFlags flags = ETransformSetFlags.Default)
         {
+            using HierarchyMutationLease structural = new(this, _transform, transform);
+            TransformBase? expectedTransform = _transform;
+            HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
             if (!RuntimeSceneNodeServices.Current.TryValidateTransformAssignment(this, transform, out string? warningMessage))
             {
                 if (!string.IsNullOrWhiteSpace(warningMessage))
@@ -198,18 +243,27 @@ namespace XREngine.Scene
                 return;
             }
 
+            HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
+
             if (flags.HasFlag(ETransformSetFlags.ClearNewChildren))
                 transform.Clear();
 
+            HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
+
             if (flags.HasFlag(ETransformSetFlags.RetainCurrentParent))
                 transform.SetParent(_transform?.Parent, flags.HasFlag(ETransformSetFlags.RetainWorldTransform), EParentAssignmentMode.Immediate);
+
+            HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
 
             if (flags.HasFlag(ETransformSetFlags.RetainCurrentChildren) && _transform is not null)
             {
                 bool maintainWorldTransform = flags.HasFlag(ETransformSetFlags.RetainedChildrenMaintainWorldTransform);
                 var copy = _transform.Children.ToArray();
                 foreach (var child in copy)
+                {
                     transform.AddChild(child, maintainWorldTransform, EParentAssignmentMode.Immediate);
+                    HierarchyConstructionScope.RequireTransformAssignment(this, expectedTransform, _transform, transform);
+                }
             }
 
             Transform = transform;

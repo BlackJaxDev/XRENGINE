@@ -141,6 +141,16 @@ namespace XREngine.Animation
                 OnLoopChanged();
             }
         }
+
+        internal bool TrySetLoopedWithoutNotification(bool expected, bool desired)
+        {
+            if (_looped != expected)
+                return false;
+            _looped = desired;
+            return true;
+        }
+
+        internal void PublishLoopedChange() => OnLoopChanged();
         /// <summary>
         /// Sets the current time within the animation.
         /// Do not use to progress forward or backward every frame, instead use Progress().

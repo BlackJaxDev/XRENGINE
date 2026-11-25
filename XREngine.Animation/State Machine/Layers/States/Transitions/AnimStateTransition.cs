@@ -74,6 +74,9 @@ namespace XREngine.Animation
             set => SetField(ref _customBlendFunction, value);
         }
 
+        internal bool IsCurrentCustomBlendFunction(PropAnimFloat value)
+            => ReferenceEquals(_customBlendFunction, value);
+
         private int _priority = 0;
         /// <summary>
         /// If multiple transitions evaluate to true at the same time, this dictates which transition will occur.

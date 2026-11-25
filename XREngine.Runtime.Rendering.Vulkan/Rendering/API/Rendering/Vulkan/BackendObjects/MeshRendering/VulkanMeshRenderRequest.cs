@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Compute;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -73,6 +74,8 @@ internal readonly record struct VulkanMeshRenderRequest(
     internal ulong SkinnedOutputSetIdentity { get; init; }
     /// <summary>Rejects a deferred draw that cannot enter the accepted frame.</summary>
     internal bool RequiredForOutput { get; init; }
+    internal UIStaticDrawCandidate StaticUiCandidate { get; init; }
+    internal UIPublishedWorldMeshCommand? WorldUiCommand { get; init; }
 
     internal static void ReleaseAuthoringLease(ref VulkanMeshRenderRequest request)
     {

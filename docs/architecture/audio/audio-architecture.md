@@ -66,6 +66,24 @@ native scene components. If a requested backend is not registered, creation
 reports the missing backend by name. `AudioData` keeps its serialized type in
 `XREngine.Data`; its WAV/MP3 decoder is supplied by the desktop NAudio leaf.
 
+### NAudio component boundary
+
+`XREngine.Audio.NAudio` references `NAudio.Core`, `NAudio.WinMM`,
+`NAudio.Wasapi`, and `NAudio.Asio` at 2.3.0, plus `NAudio.Sdl2` at 2.2.6.
+Core supplies the mixer and WAV/MP3 stream types. WinMM supplies wave input,
+wave output, ACM conversion, and MP3 decompression. Wasapi supplies Core Audio
+device queries. Asio supplies driver discovery. Sdl2 supplies SDL device queries.
+The adapter does not reference the NAudio umbrella package, MIDI, or WinForms.
+
+`NAudioCodecServices.DecodeMp3` and `NAudioFileDecoder.DecodeMp3` use
+`Mp3FileReaderBase` with `AcmMp3FrameDecompressor`. This matches the factory in
+[NAudio 2.3.0's umbrella reader](https://github.com/naudio/NAudio/blob/c89fee940ee6f8d7374d18714a6b85d8b7a18ab0/NAudio/Mp3FileReader.cs).
+The [Core reader constructors](https://github.com/naudio/NAudio/blob/c89fee940ee6f8d7374d18714a6b85d8b7a18ab0/NAudio.Core/Wave/WaveStreams/Mp3FileReaderBase.cs)
+keep file streams reader-owned and supplied streams caller-owned. WAV handling,
+PCM conversion, error handling, and public engine codec interfaces are unchanged.
+ACM and the Windows device APIs still require Windows. Removing the Forms
+framework reference does not make those APIs portable.
+
 The default listener keeps its legacy behavior (`AudioArchitectureV2=false`),
 but owns an `IAudioListenerBackend` supplied by the OpenAL leaf. Portable
 `ListenerContext`, `AudioSource`, and `AudioBuffer` call that backend for native

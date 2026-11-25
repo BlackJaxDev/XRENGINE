@@ -1,4 +1,5 @@
 using System;
+using XREngine.Rendering.UI.State;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Diagnostics;
@@ -11,19 +12,112 @@ using XREngine.Rendering.Models.Materials;
 namespace XREngine.Rendering.UI;
 
 /// <summary>
-/// Collects UI render data during the collect-visible thread and dispatches
-/// batched instanced draws during the render thread.
+/// Collects ordered UI runs and draws each compatible run with isolated GPU storage.
 /// <para>
-/// Material quads (from <see cref="UIMaterialComponent"/>) are collected into a single instanced draw per render pass.
-/// Text quads (from <see cref="UITextComponent"/>) are collected into a single instanced draw per render pass per font atlas.
+/// Material quads from <see cref="UIMaterialComponent"/> and text quads from
+/// <see cref="UITextComponent"/> retain painter order across run boundaries.
 /// </para>
 /// <para>
-/// This drastically reduces draw call overhead for complex UIs by replacing N individual
-/// draw calls with just 1-2 instanced dispatches.
+/// Each run can combine several primitives into one instanced draw.
 /// </para>
 /// </summary>
-public sealed class UIBatchCollector : IDisposable
+public sealed partial class UIBatchCollector : IDisposable
 {
+    private static readonly object CollectorRegistryGate = new();
+    private static readonly List<WeakReference<UIBatchCollector>> CollectorRegistry = [];
+    private static readonly List<(AbstractRenderer Renderer, long Generation,
+        MaterialGPUResources? Material, TextGPUResources? Text)> DeferredCohortRetirement = [];
+    private static readonly List<ReceiptLease> UnclaimedReceiptLeases = [];
+    private const int MaxUnclaimedReceiptLeases = 512;
+    private static int s_pendingReceiptReservations;
+
+    public UIBatchCollector()
+    {
+        lock (CollectorRegistryGate)
+            CollectorRegistry.Add(new WeakReference<UIBatchCollector>(this));
+    }
+
+    /// <summary>
+    /// Releases cohorts for an exact renderer generation after its owner has
+    /// completed GPU drain and backend teardown preparation.
+    /// </summary>
+    public static void NotifyRendererKnownIdle(AbstractRenderer renderer, long backendGeneration)
+    {
+        ArgumentNullException.ThrowIfNull(renderer);
+        lock (CollectorRegistryGate)
+        {
+            for (int index = UnclaimedReceiptLeases.Count - 1; index >= 0; index--)
+            {
+                ReceiptLease lease = UnclaimedReceiptLeases[index];
+                if (!ReferenceEquals(lease.Renderer, renderer) || lease.BackendGeneration != backendGeneration) continue;
+                lease.Fence?.Dispose();
+                lease.Fence = null;
+                UnclaimedReceiptLeases.RemoveAt(index);
+            }
+            for (int index = DeferredCohortRetirement.Count - 1; index >= 0; index--)
+            {
+                var deferred = DeferredCohortRetirement[index];
+                if (!ReferenceEquals(deferred.Renderer, renderer) || deferred.Generation != backendGeneration)
+                    continue;
+                ForceReleaseReceipt(deferred.Material?.Receipt);
+                ForceReleaseReceipt(deferred.Text?.Receipt);
+                if (deferred.Material is not null) DestroyMaterialGPU(deferred.Material);
+                deferred.Text?.Dispose();
+                DeferredCohortRetirement.RemoveAt(index);
+            }
+            for (int index = CollectorRegistry.Count - 1; index >= 0; index--)
+            {
+                if (!CollectorRegistry[index].TryGetTarget(out UIBatchCollector? collector) || collector._disposed)
+                {
+                    CollectorRegistry.RemoveAt(index);
+                    continue;
+                }
+                collector.RetireKnownIdleRenderer(renderer, backendGeneration);
+                collector.RetireBackdropKnownIdle(renderer, backendGeneration);
+            }
+            RetireQuarantinedBackdropKnownIdle(renderer, backendGeneration);
+        }
+    }
+
+    private void RetireKnownIdleRenderer(AbstractRenderer renderer, long backendGeneration)
+    {
+        _staleMaterialRunKeys.Clear();
+        foreach (var pair in _materialRunGPU)
+            if (ReferenceEquals(pair.Key.Renderer, renderer) && pair.Key.BackendGeneration == backendGeneration)
+                _staleMaterialRunKeys.Add(pair.Key);
+        foreach (var key in _staleMaterialRunKeys)
+        {
+            List<MaterialGPUResources> cohorts = _materialRunGPU[key];
+            while (cohorts.Count != 0)
+            {
+                MaterialGPUResources gpu = cohorts[^1];
+                ForceReleaseReceipt(gpu.Receipt);
+                gpu.Receipt = null;
+                DestroyMaterialGPU(gpu);
+                cohorts.RemoveAt(cohorts.Count - 1);
+                _gpuCohortCount--;
+            }
+            _materialRunGPU.Remove(key);
+        }
+        _staleTextRunKeys.Clear();
+        foreach (var pair in _textGPU)
+            if (ReferenceEquals(pair.Key.Renderer, renderer) && pair.Key.BackendGeneration == backendGeneration)
+                _staleTextRunKeys.Add(pair.Key);
+        foreach (var key in _staleTextRunKeys)
+        {
+            List<TextGPUResources> cohorts = _textGPU[key];
+            while (cohorts.Count != 0)
+            {
+                TextGPUResources gpu = cohorts[^1];
+                ForceReleaseReceipt(gpu.Receipt);
+                gpu.Receipt = null;
+                gpu.Dispose();
+                cohorts.RemoveAt(cohorts.Count - 1);
+                _gpuCohortCount--;
+            }
+            _textGPU.Remove(key);
+        }
+    }
     private const string TextAtlasTypeUniformName = "TextAtlasType";
     private const string MsdfDistanceRangeUniformName = "MsdfDistanceRange";
     private const string MsdfDistanceRangeMiddleUniformName = "MsdfDistanceRangeMiddle";
@@ -36,6 +130,8 @@ public sealed class UIBatchCollector : IDisposable
     private const int TextRenderLayerOutline = 1;
     private const int TextRenderLayerFill = 2;
     private const uint TextInstanceVec4Count = 8;
+    private static readonly bool BatchDiagnosticsEnabled =
+        string.Equals(Environment.GetEnvironmentVariable("XRE_UI_BATCH_DIAGNOSTICS"), "1", StringComparison.Ordinal);
     private static int s_textAddDiagCount;
     private static int s_textMarkerDiagCount;
     private static int s_textRenderDiagCount;
@@ -83,6 +179,9 @@ public sealed class UIBatchCollector : IDisposable
         public Vector4 Color;
         public Vector4 UIXYWH;
         public Vector4 UV;
+        public Vector4 BorderColor;
+        public float BorderWidth;
+        public ulong PrimitiveHandle;
     }
 
     /// <summary>
@@ -96,8 +195,9 @@ public sealed class UIBatchCollector : IDisposable
         public Vector4 OutlineColor;
         public float OutlineThickness;
         public Vector4 UIXYWH;
-        public int GlyphOffset;
+        public UITextLayoutResult Layout;
         public int GlyphCount;
+        public ulong PrimitiveHandle;
     }
 
     /// <summary>
@@ -105,8 +205,13 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     private sealed class TextBatchData
     {
+        public ulong RunId;
+        public UICompositionOwner CompositionOwner;
+        public ulong CompositionSegmentIdentity;
+        public ulong CompositionSegmentRevision;
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Atlas;
+        public UITextureSnapshot? AtlasSnapshot;
         public int AtlasType;
         public float DistanceRange;
         public float DistanceRangeMiddle;
@@ -114,13 +219,16 @@ public sealed class UIBatchCollector : IDisposable
         public int DebugMode;
         public bool HasOutline;
         public readonly List<TextEntry> Entries = [];
-        public readonly List<(Vector4 transform, Vector4 uvs)> Glyphs = [];
         public int TotalGlyphs;
 
         public void Clear()
         {
+            CompositionOwner = default;
+            CompositionSegmentIdentity = 0;
+            CompositionSegmentRevision = 0;
             CropRegion = null;
             Atlas = null;
+            AtlasSnapshot = null;
             AtlasType = TextAtlasBitmap;
             DistanceRange = 0.0f;
             DistanceRangeMiddle = 0.5f;
@@ -128,7 +236,6 @@ public sealed class UIBatchCollector : IDisposable
             DebugMode = 0;
             HasOutline = false;
             Entries.Clear();
-            Glyphs.Clear();
             TotalGlyphs = 0;
         }
     }
@@ -138,33 +245,57 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     private sealed class MaterialQuadBatchData
     {
+        public ulong RunId;
+        public UICompositionOwner CompositionOwner;
+        public ulong CompositionSegmentIdentity;
+        public ulong CompositionSegmentRevision;
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Texture;
+        public UITextureSnapshot? ImageSnapshot;
         public bool ImageSrgb;
+        public bool Border;
+        public UIBackdropRequest Backdrop;
         public readonly List<MaterialQuadEntry> Entries = [];
 
         public void Clear()
         {
+            CompositionOwner = default;
+            CompositionSegmentIdentity = 0;
+            CompositionSegmentRevision = 0;
             CropRegion = null;
             Texture = null;
+            ImageSnapshot = null;
             ImageSrgb = false;
+            Border = false;
+            Backdrop = default;
             Entries.Clear();
         }
     }
 
+    /// <summary>
+    /// Holds the runs of one render pass in painter order. The pool owns and reuses runs
+    /// that it creates. Adopted runs belong to a collected record page and stay unchanged.
+    /// </summary>
     private sealed class BatchPool<T> where T : class, new()
     {
         public readonly List<T> Items = [];
         public int Count;
+        private readonly List<T> _ownedActive = [];
+        private readonly Stack<T> _spare = [];
 
         public T Acquire(out int index)
         {
-            index = Count;
-            if (index == Items.Count)
-                Items.Add(new T());
+            T item = _spare.Count != 0 ? _spare.Pop() : new T();
+            _ownedActive.Add(item);
+            index = Adopt(item);
+            return item;
+        }
 
-            Count++;
-            return Items[index];
+        /// <summary>Adds a run that another owner keeps. <see cref="Reset"/> does not clear it.</summary>
+        public int Adopt(T item)
+        {
+            Items.Add(item);
+            return Count++;
         }
 
         public T this[int index] => Items[index];
@@ -183,9 +314,13 @@ public sealed class UIBatchCollector : IDisposable
 
         public void Reset(Action<T> clear)
         {
-            for (int i = 0; i < Count; i++)
-                clear(Items[i]);
-
+            foreach (T item in _ownedActive)
+            {
+                clear(item);
+                _spare.Push(item);
+            }
+            _ownedActive.Clear();
+            Items.Clear();
             Count = 0;
         }
     }
@@ -193,10 +328,16 @@ public sealed class UIBatchCollector : IDisposable
     private sealed class CollectPassState
     {
         public EBatchMarkerKind? ActiveKind;
+        public UICompositionOwner ActiveCompositionOwner;
+        public ulong ActiveCompositionSegmentIdentity;
+        public int ActiveZIndex;
         public BoundingRectangle? ActiveCropRegion;
         public XRTexture2D? ActiveMaterialTexture;
+        public UITextureSnapshot? ActiveMaterialImageSnapshot;
         public bool ActiveMaterialImageSrgb;
+        public bool ActiveMaterialBorder;
         public XRTexture2D? ActiveTextAtlas;
+        public UITextureSnapshot? ActiveTextAtlasSnapshot;
         public int ActiveTextAtlasType;
         public float ActiveTextDistanceRange;
         public float ActiveTextDistanceRangeMiddle;
@@ -207,10 +348,16 @@ public sealed class UIBatchCollector : IDisposable
         public void Reset()
         {
             ActiveKind = null;
+            ActiveCompositionOwner = default;
+            ActiveCompositionSegmentIdentity = 0;
+            ActiveZIndex = 0;
             ActiveCropRegion = null;
             ActiveMaterialTexture = null;
+            ActiveMaterialImageSnapshot = null;
             ActiveMaterialImageSrgb = false;
+            ActiveMaterialBorder = false;
             ActiveTextAtlas = null;
+            ActiveTextAtlasSnapshot = null;
             ActiveTextAtlasType = TextAtlasBitmap;
             ActiveTextDistanceRange = 0.0f;
             ActiveTextDistanceRangeMiddle = 0.5f;
@@ -275,7 +422,7 @@ public sealed class UIBatchCollector : IDisposable
         public override void Render()
         {
             OnPreRender();
-            if (_kind == EBatchMarkerKind.Text && s_textMarkerDiagCount++ < 40)
+            if (BatchDiagnosticsEnabled && _kind == EBatchMarkerKind.Text && s_textMarkerDiagCount++ < 40)
             {
                 Debug.Log(
                     ELogCategory.UI,
@@ -306,8 +453,188 @@ public sealed class UIBatchCollector : IDisposable
     // Rendering side (read on render thread)
     private Dictionary<int, BatchPool<MaterialQuadBatchData>> _renderMaterialGroups = [];
     private Dictionary<int, BatchPool<TextBatchData>> _renderTextGroups = [];
+    private ulong _nextRunId;
+    private readonly HashSet<ulong> _claimedPreviousRunIds = [];
+    private readonly Dictionary<ulong, (int Pass, MaterialQuadBatchData Run)> _oldMaterialRunByHandle = [];
+    private readonly Dictionary<ulong, (int Pass, TextBatchData Run)> _oldTextRunByHandle = [];
+    internal int LastRunReconcileVisitCount { get; private set; }
+
+    private ulong AllocateRunId()
+    {
+        ulong id = ++_nextRunId;
+        return id == 0 ? ++_nextRunId : id;
+    }
 
     private readonly Dictionary<int, MarkerPool> _markerPools = [];
+    /// <summary>
+    /// One item of the committed painter stream: a run marker, or an unbatched record
+    /// when <see cref="GroupIndex"/> is negative. The reuse path replays this stream.
+    /// </summary>
+    private readonly record struct PublishedMarker(int Page, int Offset, int Pass, int ZIndex,
+        EBatchMarkerKind Kind, int GroupIndex);
+    private List<PublishedMarker> _collectPublishedMarkers = [];
+    private List<PublishedMarker> _renderPublishedMarkers = [];
+    private UIRecordStore<UIRenderRecord>? _collectPublishedStorage;
+    private UIRecordStore<UIRenderRecord>? _renderPublishedStorage;
+    private UICompositionSegmentSet? _collectCompositionStorage;
+    private UICompositionSegmentSet? _renderCompositionStorage;
+    private long _publishedCollectionEpoch;
+    private bool _reusePublishedRuns;
+
+    private static void ReleasePublicationStorage(
+        UIRecordStore<UIRenderRecord>? firstStore, UICompositionSegmentSet? firstSet,
+        UIRecordStore<UIRenderRecord>? secondStore = null, UICompositionSegmentSet? secondSet = null)
+    {
+        List<Exception>? failures = null;
+        try { firstSet?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { firstStore?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { secondSet?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { secondStore?.Release(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        if (failures is not null)
+            throw new AggregateException("UI published storage cleanup failed.", failures);
+    }
+    /// <summary>Draws authored by the currently published frozen UI packet.</summary>
+    public int ExpectedPublishedDrawIntentCount => _renderPublishedRunMarkers + _renderUnbatchedDrawCount;
+
+    /// <summary>Gets whether a visible batched text record of the committed packet has no layout yet.</summary>
+    public bool HasPendingPublishedTextLayout => _renderPendingTextLayout;
+    internal ulong RetainedRunReuseCount { get; private set; }
+    private sealed class RetainedPrimitiveSlot
+    {
+        public long MembershipId;
+        public UIElementIdentity Identity;
+        public uint Generation;
+        /// <summary>The number of collected record pages that draw this primitive.</summary>
+        public int PageRefs;
+        public bool Occupied;
+        public bool Registered;
+    }
+    private readonly object _primitiveSlotGate = new();
+    private readonly List<RetainedPrimitiveSlot> _primitiveSlots = [];
+    private readonly Stack<int> _freePrimitiveSlots = [];
+    private readonly Dictionary<(long MembershipId, UIElementIdentity Identity), int> _slotByIdentity = [];
+    private readonly Dictionary<long, int> _registeredSlotByMembership = [];
+    private uint _nextPrimitiveGeneration;
+
+    internal ulong GetRetainedPrimitiveHandle(long membershipId)
+    {
+        lock (_primitiveSlotGate)
+        {
+            if (_registeredSlotByMembership.TryGetValue(membershipId, out int registered))
+                return PrimitiveHandle(registered);
+            foreach (var entry in _slotByIdentity)
+                if (entry.Key.MembershipId == membershipId)
+                    return PrimitiveHandle(entry.Value);
+            return 0;
+        }
+    }
+
+    internal ulong GetRetainedPrimitiveHandle(long membershipId, UIElementIdentity identity)
+    {
+        lock (_primitiveSlotGate)
+            return _slotByIdentity.TryGetValue((membershipId, identity), out int index)
+                ? PrimitiveHandle(index) : 0;
+    }
+
+    private ulong PrimitiveHandle(int index)
+        => ((ulong)_primitiveSlots[index].Generation << 32) | (uint)index;
+
+    /// <summary>Reserves one stable primitive slot for an active UI membership.</summary>
+    internal ulong RegisterPrimitiveMembership(long membershipId, UIElementIdentity identity)
+    {
+        if (membershipId <= 0 || !identity.IsValid)
+            throw new ArgumentException("A batch primitive requires a valid membership and element identity.");
+        lock (_primitiveSlotGate)
+        {
+            ulong handle = RetainPrimitiveLocked(membershipId, identity);
+            int index = (int)(uint)handle;
+            if (_registeredSlotByMembership.TryGetValue(membershipId, out int previous) && previous != index)
+                _primitiveSlots[previous].Registered = false;
+            _registeredSlotByMembership[membershipId] = index;
+            _primitiveSlots[index].Registered = true;
+            return handle;
+        }
+    }
+
+    /// <summary>Ends owner registration without invalidating an older published GPU cohort.</summary>
+    internal void UnregisterPrimitiveMembership(long membershipId, ulong handle)
+    {
+        lock (_primitiveSlotGate)
+        {
+            if (!_registeredSlotByMembership.TryGetValue(membershipId, out int index) ||
+                PrimitiveHandle(index) != handle)
+                return;
+            RetainedPrimitiveSlot slot = _primitiveSlots[index];
+            if (slot.PageRefs != 0)
+            {
+                // A collected page still draws this primitive. It keeps the handle until the page drops.
+                slot.Registered = false;
+                _registeredSlotByMembership.Remove(membershipId);
+                return;
+            }
+            ReleasePrimitiveSlotLocked(index);
+        }
+    }
+
+    private ulong RetainPrimitiveLocked(long membershipId, UIElementIdentity identity)
+    {
+        if (!_slotByIdentity.TryGetValue((membershipId, identity), out int index))
+        {
+            index = _freePrimitiveSlots.Count != 0 ? _freePrimitiveSlots.Pop() : _primitiveSlots.Count;
+            if (index == _primitiveSlots.Count)
+                _primitiveSlots.Add(new RetainedPrimitiveSlot());
+            _slotByIdentity.Add((membershipId, identity), index);
+        }
+        RetainedPrimitiveSlot slot = _primitiveSlots[index];
+        if (!slot.Occupied)
+        {
+            uint next = ++_nextPrimitiveGeneration;
+            slot.Generation = next == 0 ? ++_nextPrimitiveGeneration : next;
+        }
+        slot.MembershipId = membershipId;
+        slot.Identity = identity;
+        slot.Occupied = true;
+        return PrimitiveHandle(index);
+    }
+
+    /// <summary>Adds one collected-page reference to the primitive of a record.</summary>
+    private ulong RetainPagePrimitiveLocked(long membershipId, UIElementIdentity identity)
+    {
+        ulong handle = RetainPrimitiveLocked(membershipId, identity);
+        _primitiveSlots[(int)(uint)handle].PageRefs++;
+        return handle;
+    }
+
+    /// <summary>Removes one collected-page reference and frees an unregistered slot at zero.</summary>
+    private void ReleasePagePrimitiveLocked(ulong handle)
+    {
+        int index = (int)(uint)handle;
+        if ((uint)index >= (uint)_primitiveSlots.Count)
+            return;
+        RetainedPrimitiveSlot slot = _primitiveSlots[index];
+        if (!slot.Occupied || PrimitiveHandle(index) != handle || slot.PageRefs == 0)
+            return;
+        if (--slot.PageRefs == 0 && !slot.Registered)
+            ReleasePrimitiveSlotLocked(index);
+    }
+
+    private void ReleasePrimitiveSlotLocked(int index)
+    {
+        RetainedPrimitiveSlot slot = _primitiveSlots[index];
+        _slotByIdentity.Remove((slot.MembershipId, slot.Identity));
+        if (slot.Registered && _registeredSlotByMembership.TryGetValue(slot.MembershipId, out int registered) && registered == index)
+            _registeredSlotByMembership.Remove(slot.MembershipId);
+        slot.Occupied = false;
+        slot.Registered = false;
+        slot.PageRefs = 0;
+        slot.MembershipId = 0;
+        slot.Identity = default;
+        _freePrimitiveSlots.Push(index);
+    }
 
     #endregion
 
@@ -318,11 +645,59 @@ public sealed class UIBatchCollector : IDisposable
     private XRDataBuffer<Vector4>? _matQuadColorBuf;      // binding 1: vec4 per instance
     private XRDataBuffer<Vector4>? _matQuadBoundsBuf;     // binding 2: vec4 per instance
     private XRDataBuffer<Vector4>? _matQuadUvBuf;         // textured binding 3: UV rectangle per instance
-    private readonly Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> _materialTextureMeshes = [];
-    private readonly List<(XRTexture2D Texture, bool Srgb)> _staleMaterialTextures = [];
+    private XRDataBuffer<Vector4>? _matQuadBorderWidthBuf; // border binding 4: width per instance
+    private XRDataBuffer<uint>? _matQuadDrawIndexBuf;      // desktop binding 5: draw order → stable slot
+    private XRMeshRenderer? _matQuadBorderMesh;
+    private XRMeshRenderer? _matQuadBackdropMesh;
+    private XRTexture2D? _matQuadBackdropTexture;
+    private Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> _materialTextureMeshes = [];
+    private List<(XRTexture2D Texture, bool Srgb)> _staleMaterialTextures = [];
     private const int MaxMaterialTextureMeshes = 64;
+    private const int MaxRunCohorts = 4;
+    private const int MaxCanvasGpuCohorts = 256;
+    private const uint MaxRetainedQuadSlotsPerRun = 1u << 20;
+    private const uint MaxRetainedGlyphSlotsPerRun = 1u << 20;
     private uint _matQuadCapacity;
     private bool _matQuadNeedsPush;
+    private bool _legacyMaterialGpuCreated;
+    private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration, int Pass, ulong RunId), List<MaterialGPUResources>> _materialRunGPU = [];
+    private readonly List<(AbstractRenderer Renderer, long BackendGeneration, int Pass, ulong RunId)> _staleMaterialRunKeys = [];
+    private readonly HashSet<(int Pass, ulong RunId)> _activeMaterialRunKeys = [];
+    private int _gpuCohortCount;
+
+    private sealed class MaterialGPUResources
+    {
+        public XRMeshRenderer? Mesh;
+        public XRDataBuffer<Vector4>? Transform;
+        public XRDataBuffer<Vector4>? Color;
+        public XRDataBuffer<Vector4>? Bounds;
+        public XRDataBuffer<Vector4>? Uv;
+        public XRDataBuffer<Vector4>? BorderWidth;
+        public XRDataBuffer<uint>? DrawIndex;
+        public XRMeshRenderer? BorderMesh;
+        public XRMeshRenderer? BackdropMesh;
+        public XRTexture2D? BackdropTexture;
+        public Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> TextureMeshes = [];
+        public List<(XRTexture2D Texture, bool Srgb)> StaleTextures = [];
+        public uint Capacity;
+        public bool NeedsPush;
+        public readonly List<MaterialQuadEntry> UploadedEntries = [];
+        public readonly RetainedQuadSlots Slots = new();
+        public readonly List<MaterialQuadEntry> UploadedSlots = [];
+        public readonly List<bool> InitializedSlots = [];
+        public readonly List<uint> UploadedDrawIndices = [];
+        public readonly List<uint> CurrentDrawIndices = [];
+        public readonly List<(uint Slot, MaterialQuadEntry Entry)> ScratchSlots = [];
+        public bool HasUploadedEntries;
+        public bool HasUploadedBorder;
+        public bool HasUploadedImage;
+        public int UploadedVariant = -1;
+        public bool UsedUv;
+        public bool UsedBorderWidth;
+        public XRGpuFence? Fence;
+        public bool Submitted;
+        public ReceiptLease? Receipt;
+    }
 
     #endregion
 
@@ -335,9 +710,26 @@ public sealed class UIBatchCollector : IDisposable
         public XRDataBuffer<Vector4>? GlyphTexCoordsBuf;   // binding 1: vec4 per glyph
         public XRDataBuffer<Vector4>? TextInstanceBuf;      // binding 2: TextInstanceVec4Count × vec4 per text
         public XRDataBuffer<uint>? GlyphTextIndexBuf;       // binding 3: uint per glyph → text index
+        public XRDataBuffer<uint>? GlyphDrawIndexBuf;       // desktop binding 4: painter order → stable glyph slot
         public uint GlyphCapacity;
+        public uint DrawCapacity;
         public uint TextCapacity;
+        public readonly RetainedGlyphRanges GlyphRanges = new();
+        public readonly RetainedQuadSlots TextSlots = new();
+        public readonly List<RetainedGlyphRanges.Allocation?> ActiveGlyphRanges = [];
+        public readonly List<uint> ActiveTextSlots = [];
+        public readonly List<(uint Slot, TextEntry Entry)> SortedTextSlots = [];
+        public readonly List<(uint Offset, uint Count, int EntryIndex)> DirtyGlyphRanges = [];
+        public readonly List<TextEntry> UploadedTextSlots = [];
+        public readonly List<bool> InitializedTextSlots = [];
+        public readonly List<uint> UploadedDrawIndices = [];
+        public readonly List<uint> CurrentDrawIndices = [];
         public bool NeedsPush;
+        public readonly List<TextEntry> UploadedEntries = [];
+        public bool HasUploadedData;
+        public XRGpuFence? Fence;
+        public bool Submitted;
+        public ReceiptLease? Receipt;
 
         public void Dispose()
         {
@@ -348,25 +740,188 @@ public sealed class UIBatchCollector : IDisposable
             GlyphTexCoordsBuf?.Destroy();
             TextInstanceBuf?.Destroy();
             GlyphTextIndexBuf?.Destroy();
+            GlyphDrawIndexBuf?.Destroy();
             meshRenderer?.Destroy();
             mesh?.Destroy();
             material?.Destroy();
+            Fence?.Dispose();
+            Fence = null;
             GlyphTransformsBuf = null;
             GlyphTexCoordsBuf = null;
             TextInstanceBuf = null;
             GlyphTextIndexBuf = null;
+            GlyphDrawIndexBuf = null;
             Mesh = null;
         }
     }
 
-    private readonly Dictionary<XRTexture2D, TextGPUResources> _textGPU = [];
+    private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration, XRTexture2D Atlas, int Pass, ulong RunId), List<TextGPUResources>> _textGPU = [];
+    private readonly List<(AbstractRenderer Renderer, long BackendGeneration, XRTexture2D Atlas, int Pass, ulong RunId)> _staleTextRunKeys = [];
+    private readonly HashSet<(XRTexture2D Atlas, int Pass, ulong RunId)> _activeTextRunKeys = [];
+    internal int LastActiveRunBuildVisitCount { get; private set; }
     private bool _disposed;
+
+    private sealed class ReceiptLease(AbstractRenderer renderer, ulong id)
+    {
+        public readonly AbstractRenderer Renderer = renderer;
+        public readonly long BackendGeneration = renderer.BackendGeneration;
+        public readonly ulong Id = id;
+        public XRGpuFence? Fence;
+        public bool Sealed;
+        public bool Authored;
+        public int Claims;
+        public readonly UIReceiptCompletionProbe Completion = new(renderer, id);
+
+        // The fallback renderer consumes its retirement entry on the first
+        // successful query. All cohorts sharing this receipt must observe that
+        // single proof, including cohorts inspected on later frames.
+        public bool IsRetired
+        {
+            get
+            {
+                return Sealed && Completion.IsRetired;
+            }
+        }
+
+        public void Release()
+        {
+            if (--Claims == 0)
+            {
+                Fence?.Dispose();
+                Fence = null;
+            }
+        }
+    }
+
+    private ReceiptLease? _activeReceipt;
+
+    internal UIReceiptCompletionProbe BeginPublicationReceipt(ulong receiptId)
+    {
+        if (receiptId == 0 || _activeReceipt is not null)
+            throw new InvalidOperationException("A UI publication receipt is already active or has no identity.");
+        AbstractRenderer renderer = AbstractRenderer.Current ??
+            throw new InvalidOperationException("A UI publication receipt requires an active renderer.");
+        SweepDeferredCohorts(renderer);
+        SweepBackdropSurfacesForRenderer(renderer);
+        lock (CollectorRegistryGate)
+        {
+            if (UnclaimedReceiptLeases.Count + s_pendingReceiptReservations >= MaxUnclaimedReceiptLeases)
+                throw new InvalidOperationException("The UI receipt retirement budget is full.");
+            s_pendingReceiptReservations++;
+        }
+        _activeReceipt = new ReceiptLease(renderer, receiptId);
+        BeginBackdropAuthoring();
+        return _activeReceipt.Completion;
+    }
+
+    public void FailCurrentUiPublicationAuthoring(string reason)
+        => _activeReceipt?.Renderer.FailCurrentUiPublicationAuthoring(reason);
+
+    public void SealPublicationReceipt(ulong receiptId, XRGpuFence? completionFence, bool authored)
+    {
+        ReceiptLease lease = _activeReceipt ??
+            throw new InvalidOperationException("No UI publication receipt is active.");
+        if (lease.Id != receiptId)
+            throw new InvalidOperationException("UI publication receipt identity mismatch.");
+        _activeReceipt = null;
+        lease.Fence = completionFence;
+        lease.Sealed = true;
+        lease.Authored = authored;
+        lease.Completion.Seal(authored, completionFence);
+        SealBackdropSurface(lease.Completion);
+        lock (CollectorRegistryGate)
+        {
+            s_pendingReceiptReservations--;
+            if (lease.Claims == 0)
+            {
+                if (lease.IsRetired)
+                    lease.Fence?.Dispose();
+                else
+                    UnclaimedReceiptLeases.Add(lease);
+            }
+        }
+    }
+
+    private void Claim(MaterialGPUResources gpu)
+    {
+        if (_activeReceipt is not { } lease)
+            return;
+        if (gpu.Receipt is not null)
+            throw new InvalidOperationException("A UI GPU cohort still belongs to a publication receipt.");
+        gpu.Receipt = lease;
+        lease.Claims++;
+    }
+
+    private void Claim(TextGPUResources gpu)
+    {
+        if (_activeReceipt is not { } lease)
+            return;
+        if (gpu.Receipt is not null)
+            throw new InvalidOperationException("A UI GPU cohort still belongs to a publication receipt.");
+        gpu.Receipt = lease;
+        lease.Claims++;
+    }
+
+    private static bool ReleaseRetiredReceipt(ref ReceiptLease? lease)
+    {
+        if (lease is null)
+            return true;
+        if (!lease.IsRetired)
+            return false;
+        lease.Release();
+        lease = null;
+        return true;
+    }
+
+    private static void ForceReleaseReceipt(ReceiptLease? lease)
+    {
+        if (lease is not null)
+            lease.Release();
+    }
 
     #endregion
 
     #region Public State
 
     private bool _enabled = true;
+    private UIPublication? _renderingPublication;
+    private BoundingRectangle _rasterRegion;
+    private bool _hasRasterRegion;
+
+    /// <summary>Sets the exact owner-frozen packet being rendered by this canvas.</summary>
+    public void BindRenderingPublication(UIPublication? publication)
+    {
+        if (ReferenceEquals(_renderingPublication, publication))
+            return;
+        publication?.Retain();
+        UIPublication? previous = _renderingPublication;
+        _renderingPublication = publication;
+        previous?.Release();
+    }
+
+    /// <summary>Reads a frozen source record from the currently rendering packet.</summary>
+    public bool TryGetRenderingRecord(long membershipId, out UIRenderRecord record)
+    {
+        if (_renderingPublication is { } publication)
+            return publication.TryGetRenderRecord(membershipId, out record);
+        record = default;
+        return false;
+    }
+
+    /// <summary>Supplies the active target region after viewport/FBO selection.</summary>
+    public void BeginRasterMapping(BoundingRectangle renderRegion)
+    {
+        _rasterRegion = renderRegion;
+        _hasRasterRegion = true;
+    }
+
+    public void EndRasterMapping() => _hasRasterRegion = false;
+    /// <summary>The owner publication selected when this collection started.</summary>
+    public ulong CollectedPublicationGeneration { get; private set; }
+
+    /// <summary>Tags the next collect pass with its immutable canvas publication.</summary>
+    public void BeginPublicationCollection(ulong generation)
+        => CollectedPublicationGeneration = generation;
     /// <summary>
     /// When false, batch collection is disabled and components fall back to individual rendering.
     /// </summary>
@@ -391,9 +946,172 @@ public sealed class UIBatchCollector : IDisposable
         }
     }
 
+    /// <summary>
+    /// Checks whether the collected runs can use isolated GPU storage on the current render owner.
+    /// The caller must keep collection and rendering serialized until it swaps the candidate.
+    /// </summary>
+    public bool CanCommitCollectedBatches()
+    {
+        bool hasRuns = false;
+        foreach (var groups in _collectMaterialGroups.Values)
+            hasRuns |= groups.Count != 0;
+        foreach (var groups in _collectTextGroups.Values)
+            hasRuns |= groups.Count != 0;
+        if (!hasRuns)
+            return true;
+
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
+            return false;
+        RendererBackendId backend = renderer.BackendId;
+        if (backend != RendererBackendId.OpenGL && backend != RendererBackendId.Vulkan)
+            return true;
+        if (backend == RendererBackendId.Vulkan &&
+            (renderer is not IRuntimeRendererHost host ||
+             !host.TryGetBackendCapability<IGpuBufferContentReuseCapability>(out var reuse) || reuse is null))
+            return false;
+
+        foreach (var passGroups in _collectMaterialGroups)
+        {
+            for (int group = 0; group < passGroups.Value.Count; group++)
+            {
+                var key = (renderer, renderer.BackendGeneration, passGroups.Key, passGroups.Value[group].RunId);
+                if (!_materialRunGPU.TryGetValue(key, out var cohorts) || cohorts.Count < MaxRunCohorts)
+                    continue;
+                bool ready = false;
+                for (int i = 0; i < cohorts.Count; i++)
+                    if (CanReuseMaterialGPU(cohorts[i]))
+                    {
+                        ready = true;
+                        break;
+                    }
+                if (!ready)
+                    return false;
+            }
+        }
+
+        foreach (var passGroups in _collectTextGroups)
+        {
+            for (int group = 0; group < passGroups.Value.Count; group++)
+            {
+                TextBatchData batch = passGroups.Value[group];
+                if (batch.Atlas is null || batch.TotalGlyphs == 0)
+                    continue;
+                var key = (renderer, renderer.BackendGeneration, batch.Atlas, passGroups.Key, batch.RunId);
+                if (!_textGPU.TryGetValue(key, out var cohorts) || cohorts.Count < MaxRunCohorts)
+                    continue;
+                bool ready = false;
+                for (int i = 0; i < cohorts.Count; i++)
+                    if (CanReuseTextGPU(cohorts[i]))
+                    {
+                        ready = true;
+                        break;
+                    }
+                if (!ready)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>Preflights every published run before the first marker can issue a draw.</summary>
+    public bool CanRenderPublishedBatches()
+    {
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
+            return !HasBatchData;
+        SweepDeferredCohorts(renderer);
+        lock (CollectorRegistryGate)
+            if (UnclaimedReceiptLeases.Count + s_pendingReceiptReservations >= MaxUnclaimedReceiptLeases)
+                return false;
+        if (renderer.BackendId != RendererBackendId.OpenGL &&
+            renderer.BackendId != RendererBackendId.Vulkan)
+            return true;
+        RetireInactiveGpuCohorts(renderer);
+        int newCohorts = 0;
+        foreach (var passGroups in _renderMaterialGroups)
+        {
+            for (int group = 0; group < passGroups.Value.Count; group++)
+            {
+                if (passGroups.Value[group].Entries.Count == 0)
+                    continue;
+                var key = (renderer, renderer.BackendGeneration, passGroups.Key, passGroups.Value[group].RunId);
+                if (_materialRunGPU.TryGetValue(key, out var cohorts))
+                {
+                    bool ready = false;
+                    foreach (MaterialGPUResources gpu in cohorts)
+                        if (CanReuseMaterialGPU(gpu)) { ready = true; break; }
+                    if (ready) continue;
+                    if (cohorts.Count >= MaxRunCohorts) return false;
+                }
+                newCohorts++;
+            }
+        }
+        foreach (var passGroups in _renderTextGroups)
+        {
+            for (int group = 0; group < passGroups.Value.Count; group++)
+            {
+                TextBatchData batch = passGroups.Value[group];
+                if (batch.Atlas is null || batch.TotalGlyphs == 0)
+                    continue;
+                var key = (renderer, renderer.BackendGeneration, batch.Atlas, passGroups.Key, batch.RunId);
+                if (_textGPU.TryGetValue(key, out var cohorts))
+                {
+                    bool ready = false;
+                    foreach (TextGPUResources gpu in cohorts)
+                        if (CanReuseTextGPU(gpu)) { ready = true; break; }
+                    if (ready) continue;
+                    if (cohorts.Count >= MaxRunCohorts) return false;
+                }
+                newCohorts++;
+            }
+        }
+        return CountGpuCohorts() + newCohorts <= MaxCanvasGpuCohorts;
+    }
+
     #endregion
 
     #region Collect-Visible Thread API
+
+    /// <summary>
+    /// Collects one ordered, owner-frozen render packet. The caller supplies normal
+    /// render commands for non-batch primitives at their exact stream position.
+    /// </summary>
+    public void CollectPublishedRuns(UIPublication publication, RenderCommandCollection passes,
+        Action<UIRenderRecord> collectUnbatched)
+    {
+        ArgumentNullException.ThrowIfNull(publication);
+        ArgumentNullException.ThrowIfNull(passes);
+        ArgumentNullException.ThrowIfNull(collectUnbatched);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        long collectionEpoch = Interlocked.Increment(ref _publishedCollectionEpoch);
+        BeginPublicationCollection(publication.Generation);
+        UIRecordStore<UIRenderRecord> records = publication.RenderRecordStore;
+        _reusePublishedRuns = ReferenceEquals(records, _renderPublishedStorage) &&
+            ReferenceEquals(publication.CompositionStorage, _renderCompositionStorage);
+        if (_reusePublishedRuns)
+        {
+            RetainedRunReuseCount++;
+            EmitCommittedPublishedStream(records, passes, collectUnbatched, collectionEpoch);
+            return;
+        }
+
+        records.Retain();
+        UICompositionSegmentSet composition = publication.CompositionStorage;
+        try { composition.Retain(); }
+        catch
+        {
+            records.Release();
+            throw;
+        }
+        UIRecordStore<UIRenderRecord>? oldCollectStorage = _collectPublishedStorage;
+        UICompositionSegmentSet? oldCollectComposition = _collectCompositionStorage;
+        _collectPublishedStorage = records;
+        _collectCompositionStorage = composition;
+        _collectPublishedMarkers.Clear();
+        try { CollectPublishedPages(records, composition, passes, collectUnbatched, collectionEpoch); }
+        finally { ReleasePublicationStorage(oldCollectStorage, oldCollectComposition); }
+    }
 
     /// <summary>
     /// Register a material quad for batched rendering.
@@ -409,16 +1127,43 @@ public sealed class UIBatchCollector : IDisposable
         BoundingRectangle? cropRegion = null,
         XRTexture2D? texture = null,
         Vector4 uv = default,
-        bool imageSrgb = false)
+        bool imageSrgb = false,
+        bool border = false,
+        Vector4 borderColor = default,
+        float borderWidth = 0.0f,
+        ulong primitiveHandle = 0,
+        UICompositionOwner compositionOwner = default,
+        ulong compositionSegmentIdentity = 0,
+        ulong compositionSegmentRevision = 0,
+        UIBackdropRequest backdrop = default)
+        => AddMaterialQuadCore(renderPass, zIndex, passes, in worldMatrix, in color,
+            in uixywh, cropRegion, texture, uv, imageSrgb, border,
+            borderColor, borderWidth, primitiveHandle, compositionOwner,
+            compositionSegmentIdentity, compositionSegmentRevision, backdrop, null);
+
+    private void AddMaterialQuadCore(
+        int renderPass, int zIndex, RenderCommandCollection passes,
+        in Matrix4x4 worldMatrix, in Vector4 color, in Vector4 uixywh,
+        BoundingRectangle? cropRegion, XRTexture2D? texture, Vector4 uv,
+        bool imageSrgb, bool border, Vector4 borderColor, float borderWidth,
+        ulong primitiveHandle, UICompositionOwner compositionOwner,
+        ulong compositionSegmentIdentity, ulong compositionSegmentRevision,
+        UIBackdropRequest backdrop, UITextureSnapshot? imageSnapshot)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
 
         MaterialQuadBatchData batch;
-        if (state.ActiveKind == EBatchMarkerKind.Material && state.ActiveCropRegion == cropRegion &&
+        if (state.ActiveCompositionOwner == compositionOwner &&
+            state.ActiveCompositionSegmentIdentity == compositionSegmentIdentity &&
+            state.ActiveKind == EBatchMarkerKind.Material && state.ActiveZIndex == zIndex &&
+            state.ActiveCropRegion == cropRegion &&
             ReferenceEquals(state.ActiveMaterialTexture, texture) &&
+            ReferenceEquals(state.ActiveMaterialImageSnapshot, imageSnapshot) &&
             state.ActiveMaterialImageSrgb == imageSrgb &&
-            groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
+            state.ActiveMaterialBorder == border &&
+            groups.TryGet(state.ActiveGroupIndex, out var existingBatch) &&
+            existingBatch.Backdrop == backdrop)
         {
             batch = existingBatch;
         }
@@ -426,24 +1171,47 @@ public sealed class UIBatchCollector : IDisposable
         {
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
+            batch.RunId = AllocateRunId();
+            batch.CompositionOwner = compositionOwner;
+            batch.CompositionSegmentIdentity = compositionSegmentIdentity;
+            batch.CompositionSegmentRevision = compositionSegmentRevision;
+            state.ActiveCompositionOwner = compositionOwner;
+            state.ActiveCompositionSegmentIdentity = compositionSegmentIdentity;
             batch.CropRegion = cropRegion;
             batch.Texture = texture;
+            batch.ImageSnapshot = imageSnapshot;
             batch.ImageSrgb = imageSrgb;
+            batch.Border = border;
+            batch.Backdrop = backdrop;
             state.ActiveKind = EBatchMarkerKind.Material;
+            state.ActiveZIndex = zIndex;
             state.ActiveCropRegion = cropRegion;
             state.ActiveMaterialTexture = texture;
+            state.ActiveMaterialImageSnapshot = imageSnapshot;
             state.ActiveMaterialImageSrgb = imageSrgb;
+            state.ActiveMaterialBorder = border;
             state.ActiveTextAtlas = null;
             state.ActiveGroupIndex = groupIndex;
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Material, groupIndex));
         }
 
+        AppendMaterialEntry(batch, in worldMatrix, in color, in uixywh, uv, borderColor, borderWidth, primitiveHandle);
+    }
+
+    private static void AppendMaterialEntry(MaterialQuadBatchData batch,
+        in Matrix4x4 worldMatrix, in Vector4 color, in Vector4 uixywh, Vector4 uv,
+        Vector4 borderColor, float borderWidth, ulong primitiveHandle)
+    {
+        UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
         batch.Entries.Add(new MaterialQuadEntry
         {
             WorldMatrix = worldMatrix,
             Color = color,
             UIXYWH = uixywh,
-            UV = uv
+            UV = uv,
+            BorderColor = borderColor,
+            BorderWidth = borderWidth,
+            PrimitiveHandle = primitiveHandle
         });
     }
 
@@ -474,14 +1242,37 @@ public sealed class UIBatchCollector : IDisposable
         float distanceRangeMiddle,
         float msdfFillBias,
         int debugMode,
-        List<(Vector4 transform, Vector4 uvs)> glyphs,
-        BoundingRectangle? cropRegion = null)
+        UITextLayoutResult layout,
+        BoundingRectangle? cropRegion = null,
+        ulong primitiveHandle = 0,
+        UICompositionOwner compositionOwner = default,
+        ulong compositionSegmentIdentity = 0,
+        ulong compositionSegmentRevision = 0)
+        => AddTextQuadCore(renderPass, zIndex, passes, fontAtlas,
+            in worldMatrix, in textColor, in outlineColor, outlineThickness,
+            in uixywh, atlasType, distanceRange, distanceRangeMiddle,
+            msdfFillBias, debugMode, layout, cropRegion, primitiveHandle,
+            compositionOwner, compositionSegmentIdentity,
+            compositionSegmentRevision, null);
+
+    private void AddTextQuadCore(
+        int renderPass, int zIndex, RenderCommandCollection passes,
+        XRTexture2D fontAtlas, in Matrix4x4 worldMatrix,
+        in Vector4 textColor, in Vector4 outlineColor,
+        float outlineThickness, in Vector4 uixywh, int atlasType,
+        float distanceRange, float distanceRangeMiddle, float msdfFillBias,
+        int debugMode, UITextLayoutResult layout, BoundingRectangle? cropRegion,
+        ulong primitiveHandle, UICompositionOwner compositionOwner,
+        ulong compositionSegmentIdentity, ulong compositionSegmentRevision,
+        UITextureSnapshot? atlasSnapshot)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectTextGroups, renderPass);
 
         TextBatchData batch;
-        if (TextBatchMatches(state, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode, cropRegion) &&
+        if (state.ActiveCompositionOwner == compositionOwner &&
+            state.ActiveCompositionSegmentIdentity == compositionSegmentIdentity && TextBatchMatches(state, zIndex, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode, cropRegion) &&
+            ReferenceEquals(state.ActiveTextAtlasSnapshot, atlasSnapshot) &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
@@ -490,16 +1281,25 @@ public sealed class UIBatchCollector : IDisposable
         {
             batch = groups.Acquire(out int groupIndex);
             batch.Clear();
+            batch.RunId = AllocateRunId();
+            batch.CompositionOwner = compositionOwner;
+            batch.CompositionSegmentIdentity = compositionSegmentIdentity;
+            batch.CompositionSegmentRevision = compositionSegmentRevision;
+            state.ActiveCompositionOwner = compositionOwner;
+            state.ActiveCompositionSegmentIdentity = compositionSegmentIdentity;
             batch.CropRegion = cropRegion;
             batch.Atlas = fontAtlas;
+            batch.AtlasSnapshot = atlasSnapshot;
             batch.AtlasType = atlasType;
             batch.DistanceRange = distanceRange;
             batch.DistanceRangeMiddle = distanceRangeMiddle;
             batch.MsdfFillBias = msdfFillBias;
             batch.DebugMode = debugMode;
             state.ActiveKind = EBatchMarkerKind.Text;
+            state.ActiveZIndex = zIndex;
             state.ActiveCropRegion = cropRegion;
             state.ActiveTextAtlas = fontAtlas;
+            state.ActiveTextAtlasSnapshot = atlasSnapshot;
             state.ActiveTextAtlasType = atlasType;
             state.ActiveTextDistanceRange = distanceRange;
             state.ActiveTextDistanceRangeMiddle = distanceRangeMiddle;
@@ -509,9 +1309,20 @@ public sealed class UIBatchCollector : IDisposable
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Text, groupIndex));
         }
 
-        int glyphOffset = batch.Glyphs.Count;
-        for (int i = 0; i < glyphs.Count; i++)
-            batch.Glyphs.Add(glyphs[i]);
+        AppendTextEntry(batch, renderPass, zIndex, state.ActiveGroupIndex, fontAtlas,
+            in worldMatrix, in textColor, in outlineColor, outlineThickness, in uixywh,
+            atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode,
+            layout, primitiveHandle);
+    }
+
+    private static void AppendTextEntry(TextBatchData batch, int renderPass, int zIndex,
+        int groupIndex, XRTexture2D fontAtlas, in Matrix4x4 worldMatrix,
+        in Vector4 textColor, in Vector4 outlineColor, float outlineThickness,
+        in Vector4 uixywh, int atlasType, float distanceRange, float distanceRangeMiddle,
+        float msdfFillBias, int debugMode, UITextLayoutResult layout, ulong primitiveHandle)
+    {
+        UIRuntimeCounters.Add(UIWorkCounter.BatchEntriesCollected);
+        int glyphCount = layout.Glyphs.Length;
 
         batch.Entries.Add(new TextEntry
         {
@@ -520,25 +1331,26 @@ public sealed class UIBatchCollector : IDisposable
             OutlineColor = outlineColor,
             OutlineThickness = outlineThickness,
             UIXYWH = uixywh,
-            GlyphOffset = glyphOffset,
-            GlyphCount = glyphs.Count,
+            Layout = layout,
+            GlyphCount = glyphCount,
+            PrimitiveHandle = primitiveHandle,
         });
         batch.HasOutline |= outlineThickness > 0.0f && outlineColor.W > 0.0f;
-        batch.TotalGlyphs += glyphs.Count;
+        batch.TotalGlyphs += glyphCount;
 
-        if (s_textAddDiagCount++ < 40)
+        if (BatchDiagnosticsEnabled && s_textAddDiagCount++ < 40)
         {
-            var firstGlyph = glyphs.Count > 0 ? glyphs[0] : default;
+            UITextLayoutGlyph firstGlyph = glyphCount > 0 ? layout.Glyphs.Span[0] : default;
             Debug.Log(
                 ELogCategory.UI,
                 "[FpsTextDiag] UIBatchCollector.AddTextQuad #{0}: pass={1} z={2} group={3} entries={4} totalGlyphs={5} glyphs={6} atlasType={7} range={8:F2} middle={9:F2} bias={10:F2} debugMode={11} color=({12:F2},{13:F2},{14:F2},{15:F2}) worldT=({16:F1},{17:F1},{18:F1}) bounds=({19:F1},{20:F1},{21:F1},{22:F1}) firstTfm=({23:F2},{24:F2},{25:F2},{26:F2}) firstUv=({27:F5},{28:F5},{29:F5},{30:F5}) atlas=({31}x{32})",
                 s_textAddDiagCount,
                 renderPass,
                 zIndex,
-                state.ActiveGroupIndex,
+                groupIndex,
                 batch.Entries.Count,
                 batch.TotalGlyphs,
-                glyphs.Count,
+                glyphCount,
                 atlasType,
                 distanceRange,
                 distanceRangeMiddle,
@@ -555,14 +1367,14 @@ public sealed class UIBatchCollector : IDisposable
                 uixywh.Y,
                 uixywh.Z,
                 uixywh.W,
-                firstGlyph.transform.X,
-                firstGlyph.transform.Y,
-                firstGlyph.transform.Z,
-                firstGlyph.transform.W,
-                firstGlyph.uvs.X,
-                firstGlyph.uvs.Y,
-                firstGlyph.uvs.Z,
-                firstGlyph.uvs.W,
+                firstGlyph.Transform.X,
+                firstGlyph.Transform.Y,
+                firstGlyph.Transform.Z,
+                firstGlyph.Transform.W,
+                firstGlyph.Uvs.X,
+                firstGlyph.Uvs.Y,
+                firstGlyph.Uvs.Z,
+                firstGlyph.Uvs.W,
                 fontAtlas.Width,
                 fontAtlas.Height);
         }
@@ -579,13 +1391,61 @@ public sealed class UIBatchCollector : IDisposable
     #region Swap Buffers
 
     /// <summary>
+    /// Discards only the uncommitted collect side. The caller must first discard
+    /// the paired RenderCommandCollection updating commands so no marker still
+    /// refers to a reused slot.
+    /// </summary>
+    public void DiscardCollectedCandidate()
+    {
+        Interlocked.Increment(ref _publishedCollectionEpoch);
+        UIRecordStore<UIRenderRecord>? oldCollectStorage = _collectPublishedStorage;
+        UICompositionSegmentSet? oldCollectComposition = _collectCompositionStorage;
+        CollectedPublicationGeneration = 0;
+        _reusePublishedRuns = false;
+        _collectPublishedStorage = null;
+        _collectCompositionStorage = null;
+        _collectPublishedMarkers.Clear();
+        AbandonPendingPages();
+        ResetCollectedPageSummary();
+        foreach (var groups in _collectMaterialGroups.Values)
+            groups.Reset(static batch => batch.Clear());
+        foreach (var groups in _collectTextGroups.Values)
+            groups.Reset(static batch => batch.Clear());
+        foreach (var state in _collectPassStates.Values)
+            state.Reset();
+        foreach (var markerPool in _markerPools.Values)
+            markerPool.ResetUsage();
+        ReleasePublicationStorage(oldCollectStorage, oldCollectComposition);
+    }
+
+    /// <summary>
     /// Swaps collecting and rendering batch data.
     /// Call between collect-visible and render, alongside <see cref="Rendering.Commands.RenderCommandCollection.SwapBuffers"/>.
     /// </summary>
     public void SwapBuffers()
     {
+        Interlocked.Increment(ref _publishedCollectionEpoch);
+        UIRuntimeCounters.Add(UIWorkCounter.BatchCollectionResets);
+        if (_reusePublishedRuns)
+        {
+            _reusePublishedRuns = false;
+                foreach (var state in _collectPassStates.Values)
+                state.Reset();
+            foreach (var markerPool in _markerPools.Values)
+                markerPool.ResetUsage();
+            return;
+        }
         (_collectMaterialGroups, _renderMaterialGroups) = (_renderMaterialGroups, _collectMaterialGroups);
         (_collectTextGroups, _renderTextGroups) = (_renderTextGroups, _collectTextGroups);
+        (_collectPublishedMarkers, _renderPublishedMarkers) = (_renderPublishedMarkers, _collectPublishedMarkers);
+        CommitCollectedPageSummary();
+        UIRecordStore<UIRenderRecord>? oldRenderStorage = _renderPublishedStorage;
+        UICompositionSegmentSet? oldRenderComposition = _renderCompositionStorage;
+        _renderPublishedStorage = _collectPublishedStorage;
+        _renderCompositionStorage = _collectCompositionStorage;
+        _collectPublishedStorage = null;
+        _collectCompositionStorage = null;
+        _collectPublishedMarkers.Clear();
 
         foreach (var groups in _collectMaterialGroups.Values)
             groups.Reset(static batch => batch.Clear());
@@ -595,6 +1455,10 @@ public sealed class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
+        // The render side no longer reads runs that left the page set before this swap.
+        RecycleRetiredPageRuns();
+        AbandonPendingPages();
+        ReleasePublicationStorage(oldRenderStorage, oldRenderComposition);
     }
 
     /// <summary>
@@ -603,6 +1467,27 @@ public sealed class UIBatchCollector : IDisposable
     /// </summary>
     public void Clear()
     {
+        Interlocked.Increment(ref _publishedCollectionEpoch);
+        UIRecordStore<UIRenderRecord>? oldCollectStorage = _collectPublishedStorage;
+        UIRecordStore<UIRenderRecord>? oldRenderStorage = _renderPublishedStorage;
+        UICompositionSegmentSet? oldCollectComposition = _collectCompositionStorage;
+        UICompositionSegmentSet? oldRenderComposition = _renderCompositionStorage;
+        CollectedPublicationGeneration = 0;
+        _reusePublishedRuns = false;
+        _collectPublishedStorage = null;
+        _collectCompositionStorage = null;
+        _renderPublishedStorage = null;
+        _renderCompositionStorage = null;
+        _collectPublishedMarkers.Clear();
+        _renderPublishedMarkers.Clear();
+        ClearPublishedPages();
+        lock (_primitiveSlotGate)
+        {
+            _slotByIdentity.Clear();
+            _registeredSlotByMembership.Clear();
+            _primitiveSlots.Clear();
+            _freePrimitiveSlots.Clear();
+        }
         foreach (var groups in _collectMaterialGroups.Values)
             groups.Reset(static batch => batch.Clear());
         foreach (var groups in _renderMaterialGroups.Values)
@@ -617,6 +1502,8 @@ public sealed class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
+        ReleasePublicationStorage(oldCollectStorage, oldCollectComposition,
+            oldRenderStorage, oldRenderComposition);
     }
 
     #endregion
@@ -650,6 +1537,278 @@ public sealed class UIBatchCollector : IDisposable
 
     #region GPU Resource Management — Material Quads
 
+    private bool CanReuseMaterialGPU(MaterialGPUResources gpu)
+    {
+        if (gpu.Receipt is not null)
+        {
+            if (!ReleaseRetiredReceipt(ref gpu.Receipt))
+                return false;
+            gpu.Submitted = false;
+        }
+        if (!gpu.Submitted)
+            return true;
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan)
+            return HasCompletedOrAbandonedVulkanFence(gpu.Fence) &&
+                CanReuseVulkanBuffer(gpu.Transform) && CanReuseVulkanBuffer(gpu.Color) &&
+                CanReuseVulkanBuffer(gpu.Bounds) &&
+                CanReuseVulkanBuffer(gpu.DrawIndex) &&
+                (!gpu.UsedUv || CanReuseVulkanBuffer(gpu.Uv)) &&
+                (!gpu.UsedBorderWidth || CanReuseVulkanBuffer(gpu.BorderWidth));
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.OpenGL)
+            return IsFenceSignaled(gpu.Fence);
+        return AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+    }
+
+    private bool CanReuseTextGPU(TextGPUResources gpu)
+    {
+        if (gpu.Receipt is not null)
+        {
+            if (!ReleaseRetiredReceipt(ref gpu.Receipt))
+                return false;
+            gpu.Submitted = false;
+        }
+        if (!gpu.Submitted)
+            return true;
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan)
+            return HasCompletedOrAbandonedVulkanFence(gpu.Fence) &&
+                CanReuseVulkanBuffer(gpu.GlyphTransformsBuf) &&
+                CanReuseVulkanBuffer(gpu.GlyphTexCoordsBuf) &&
+                CanReuseVulkanBuffer(gpu.TextInstanceBuf) &&
+                CanReuseVulkanBuffer(gpu.GlyphTextIndexBuf) &&
+                CanReuseVulkanBuffer(gpu.GlyphDrawIndexBuf);
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.OpenGL)
+            return IsFenceSignaled(gpu.Fence);
+        return AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+    }
+
+    private static bool CanReuseVulkanBuffer(XRDataBuffer? buffer)
+    {
+        if (buffer is null)
+            return true;
+        return AbstractRenderer.Current is IRuntimeRendererHost host &&
+            host.TryGetBackendCapability<IGpuBufferContentReuseCapability>(out var reuse) &&
+            reuse?.QueryBufferContentReuse(buffer) == EGpuBufferContentReuseStatus.Ready;
+    }
+
+    private static bool IsFenceSignaled(XRGpuFence? fence)
+        => fence is not null && fence.SubmissionStatus == EGpuFenceSubmissionStatus.Submitted &&
+           fence.Poll() == EGpuFenceStatus.Signaled;
+
+    private static bool HasCompletedOrAbandonedVulkanFence(XRGpuFence? fence)
+    {
+        if (fence is null)
+            return false;
+        return IsCompletedOrAbandonedVulkanSubmission(
+            fence.SubmissionStatus, fence.FirstFailureDiagnostic?.NativeSubmission,
+            fence.SubmissionStatus == EGpuFenceSubmissionStatus.Submitted && fence.Poll() == EGpuFenceStatus.Signaled);
+    }
+
+    /// <summary>Only a completed submission or a proven never-submitted rollback can release a cohort.</summary>
+    internal static bool IsCompletedOrAbandonedVulkanSubmission(
+        EGpuFenceSubmissionStatus status, EGpuFenceNativeSubmission? nativeSubmission, bool signaled)
+        => status == EGpuFenceSubmissionStatus.Submitted && signaled ||
+           status == EGpuFenceSubmissionStatus.Failed &&
+           nativeSubmission == EGpuFenceNativeSubmission.NotCalled;
+
+    private void RetireInactiveGpuCohorts(AbstractRenderer renderer)
+    {
+        SweepDeferredCohorts(renderer);
+        BuildActiveGpuRunKeys();
+        _staleMaterialRunKeys.Clear();
+        foreach (var pair in _materialRunGPU)
+        {
+            var key = pair.Key;
+            if (!ReferenceEquals(key.Renderer, renderer) || key.BackendGeneration != renderer.BackendGeneration ||
+                _activeMaterialRunKeys.Contains((key.Pass, key.RunId)))
+                continue;
+            bool ready = true;
+            foreach (MaterialGPUResources gpu in pair.Value)
+                if (!CanReuseMaterialGPU(gpu))
+                {
+                    ready = false;
+                    break;
+                }
+            if (ready)
+                _staleMaterialRunKeys.Add(key);
+        }
+        foreach (var key in _staleMaterialRunKeys)
+        {
+            List<MaterialGPUResources> cohorts = _materialRunGPU[key];
+            while (cohorts.Count != 0)
+            {
+                MaterialGPUResources gpu = cohorts[^1];
+                DestroyMaterialGPU(gpu);
+                cohorts.RemoveAt(cohorts.Count - 1);
+                _gpuCohortCount--;
+            }
+            _materialRunGPU.Remove(key);
+        }
+
+        _staleTextRunKeys.Clear();
+        foreach (var pair in _textGPU)
+        {
+            var key = pair.Key;
+            bool active = _activeTextRunKeys.Contains((key.Atlas, key.Pass, key.RunId));
+            if (!ReferenceEquals(key.Renderer, renderer) || key.BackendGeneration != renderer.BackendGeneration || active)
+                continue;
+            bool ready = true;
+            foreach (TextGPUResources gpu in pair.Value)
+                if (!CanReuseTextGPU(gpu))
+                {
+                    ready = false;
+                    break;
+                }
+            if (ready)
+                _staleTextRunKeys.Add(key);
+        }
+        foreach (var key in _staleTextRunKeys)
+        {
+            List<TextGPUResources> cohorts = _textGPU[key];
+            while (cohorts.Count != 0)
+            {
+                TextGPUResources gpu = cohorts[^1];
+                gpu.Dispose();
+                cohorts.RemoveAt(cohorts.Count - 1);
+                _gpuCohortCount--;
+            }
+            _textGPU.Remove(key);
+        }
+    }
+
+    private static void SweepDeferredCohorts(AbstractRenderer renderer)
+    {
+        lock (CollectorRegistryGate)
+        {
+            for (int index = UnclaimedReceiptLeases.Count - 1; index >= 0; index--)
+            {
+                ReceiptLease lease = UnclaimedReceiptLeases[index];
+                if (!ReferenceEquals(lease.Renderer, renderer) || !lease.IsRetired) continue;
+                lease.Fence?.Dispose();
+                lease.Fence = null;
+                UnclaimedReceiptLeases.RemoveAt(index);
+            }
+            for (int index = DeferredCohortRetirement.Count - 1; index >= 0; index--)
+            {
+                var deferred = DeferredCohortRetirement[index];
+                if (!ReferenceEquals(deferred.Renderer, renderer) ||
+                    deferred.Material?.Receipt is { } materialLease && !materialLease.IsRetired ||
+                    deferred.Text?.Receipt is { } textLease && !textLease.IsRetired)
+                    continue;
+                ForceReleaseReceipt(deferred.Material?.Receipt);
+                ForceReleaseReceipt(deferred.Text?.Receipt);
+                if (deferred.Material is not null) DestroyMaterialGPU(deferred.Material);
+                deferred.Text?.Dispose();
+                DeferredCohortRetirement.RemoveAt(index);
+            }
+        }
+    }
+
+    private int CountGpuCohorts() => _gpuCohortCount;
+
+    private void BuildActiveGpuRunKeys()
+    {
+        _activeMaterialRunKeys.Clear();
+        _activeTextRunKeys.Clear();
+        LastActiveRunBuildVisitCount = 0;
+        foreach (var pass in _renderMaterialGroups)
+            for (int index = 0; index < pass.Value.Count; index++)
+            {
+                LastActiveRunBuildVisitCount++;
+                _activeMaterialRunKeys.Add((pass.Key, pass.Value[index].RunId));
+            }
+        foreach (var pass in _renderTextGroups)
+            for (int index = 0; index < pass.Value.Count; index++)
+            {
+                LastActiveRunBuildVisitCount++;
+                TextBatchData batch = pass.Value[index];
+                if (batch.Atlas is not null)
+                    _activeTextRunKeys.Add((batch.Atlas, pass.Key, batch.RunId));
+            }
+    }
+
+    private MaterialGPUResources AcquireMaterialGPU(AbstractRenderer renderer, int renderPass, ulong runId)
+    {
+        var key = (renderer, renderer.BackendGeneration, renderPass, runId);
+        if (!_materialRunGPU.TryGetValue(key, out var cohorts))
+            cohorts = [];
+        for (int i = 0; i < cohorts.Count; i++)
+            if (CanReuseMaterialGPU(cohorts[i]))
+                return cohorts[i];
+        if (cohorts.Count >= MaxRunCohorts)
+            throw new InvalidOperationException($"UI material run ({renderPass}, {runId}) has no retired GPU cohort.");
+        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+            RetireInactiveGpuCohorts(renderer);
+        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+            throw new InvalidOperationException("UI GPU cohort budget is full while earlier draws remain in use.");
+        MaterialGPUResources gpu = new();
+        if (!_materialRunGPU.ContainsKey(key))
+            _materialRunGPU.Add(key, cohorts);
+        cohorts.Add(gpu);
+        _gpuCohortCount++;
+        return gpu;
+    }
+
+    private void LoadMaterialGPU(MaterialGPUResources gpu)
+    {
+        _matQuadMesh = gpu.Mesh;
+        _matQuadTransformBuf = gpu.Transform;
+        _matQuadColorBuf = gpu.Color;
+        _matQuadBoundsBuf = gpu.Bounds;
+        _matQuadUvBuf = gpu.Uv;
+        _matQuadBorderWidthBuf = gpu.BorderWidth;
+        _matQuadDrawIndexBuf = gpu.DrawIndex;
+        _matQuadBorderMesh = gpu.BorderMesh;
+        _matQuadBackdropMesh = gpu.BackdropMesh;
+        _matQuadBackdropTexture = gpu.BackdropTexture;
+        _materialTextureMeshes = gpu.TextureMeshes;
+        _staleMaterialTextures = gpu.StaleTextures;
+        _matQuadCapacity = gpu.Capacity;
+        _matQuadNeedsPush = gpu.NeedsPush;
+    }
+
+    private void StoreMaterialGPU(MaterialGPUResources gpu)
+    {
+        gpu.Mesh = _matQuadMesh;
+        gpu.Transform = _matQuadTransformBuf;
+        gpu.Color = _matQuadColorBuf;
+        gpu.Bounds = _matQuadBoundsBuf;
+        gpu.Uv = _matQuadUvBuf;
+        gpu.BorderWidth = _matQuadBorderWidthBuf;
+        gpu.DrawIndex = _matQuadDrawIndexBuf;
+        gpu.BorderMesh = _matQuadBorderMesh;
+        gpu.BackdropMesh = _matQuadBackdropMesh;
+        gpu.BackdropTexture = _matQuadBackdropTexture;
+        gpu.TextureMeshes = _materialTextureMeshes;
+        gpu.StaleTextures = _staleMaterialTextures;
+        gpu.Capacity = _matQuadCapacity;
+        gpu.NeedsPush = _matQuadNeedsPush;
+    }
+
+    private static bool MaterialEntriesMatch(MaterialGPUResources gpu, List<MaterialQuadEntry> entries)
+    {
+        if (!gpu.HasUploadedEntries || gpu.UploadedEntries.Count != entries.Count)
+            return false;
+        for (int index = 0; index < entries.Count; index++)
+        {
+            MaterialQuadEntry old = gpu.UploadedEntries[index];
+            MaterialQuadEntry current = entries[index];
+            if (old.WorldMatrix != current.WorldMatrix || old.Color != current.Color ||
+                old.UIXYWH != current.UIXYWH || old.UV != current.UV ||
+                old.BorderColor != current.BorderColor || old.BorderWidth != current.BorderWidth ||
+                old.PrimitiveHandle != current.PrimitiveHandle)
+                return false;
+        }
+        return true;
+    }
+
+    private static void RememberMaterialEntries(MaterialGPUResources gpu, List<MaterialQuadEntry> entries)
+    {
+        gpu.UploadedEntries.Clear();
+        for (int index = 0; index < entries.Count; index++)
+            gpu.UploadedEntries.Add(entries[index]);
+        gpu.HasUploadedEntries = true;
+    }
+
     private void EnsureMaterialQuadMesh()
     {
         if (_matQuadMesh is not null)
@@ -657,30 +1816,12 @@ public sealed class UIBatchCollector : IDisposable
 
         // Create the batched material
         bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
-        XRShader[] shaders = webGpu ? [] :
-        [
-            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.fs"), EShaderType.Fragment)
-        ];
+        XRShader[] shaders = webGpu ? [] : UIBatchMaterialPrototype.Solid.CreateDesktopShaders();
 
         var material = new XRMaterial(Array.Empty<ShaderVar>(), shaders)
         {
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
-            RenderOptions = new RenderingParameters
-            {
-                CullMode = ECullMode.None,
-                DepthTest = new DepthTest
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = !webGpu
-                },
-                StencilTest = new StencilTest
-                {
-                    Enabled = ERenderParamUsage.Disabled
-                },
-                BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
-            }
+            RenderOptions = UIBatchMaterialPrototype.Solid.CreateRenderOptions(webGpu)
         };
         if (webGpu)
             material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedV2;
@@ -710,6 +1851,9 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadTransformBuf?.Destroy();
         _matQuadColorBuf?.Destroy();
         _matQuadBoundsBuf?.Destroy();
+        _matQuadUvBuf?.Destroy();
+        _matQuadBorderWidthBuf?.Destroy();
+        _matQuadDrawIndexBuf?.Destroy();
 
         // Transform buffer: 4 vec4 rows per matrix, so elementCount = capacity * 4
         _matQuadTransformBuf = new XRDataBuffer<Vector4>(
@@ -744,16 +1888,63 @@ public sealed class UIBatchCollector : IDisposable
         };
         mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf;
 
-        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
+        _matQuadUvBuf = new XRDataBuffer<Vector4>(
+            "QuadUvBuffer", EBufferTarget.ShaderStorageBuffer, _matQuadCapacity)
         {
-            _matQuadUvBuf = new XRDataBuffer<Vector4>(
-                "QuadUvBuffer", EBufferTarget.ShaderStorageBuffer, _matQuadCapacity)
+            Usage = EBufferUsage.StreamDraw,
+            BindingIndexOverride = 3,
+            DisposeOnPush = false
+        };
+        if (AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+        {
+            _matQuadBorderWidthBuf = new XRDataBuffer<Vector4>(
+                "QuadBorderWidthBuffer", EBufferTarget.ShaderStorageBuffer, _matQuadCapacity)
             {
                 Usage = EBufferUsage.StreamDraw,
-                BindingIndexOverride = 3,
+                BindingIndexOverride = 4,
                 DisposeOnPush = false
             };
+            _matQuadDrawIndexBuf = new XRDataBuffer<uint>(
+                "QuadDrawIndexBuffer", EBufferTarget.ShaderStorageBuffer, _matQuadCapacity)
+            {
+                Usage = EBufferUsage.StreamDraw,
+                BindingIndexOverride = 5,
+                DisposeOnPush = false
+            };
+            mesh.Buffers["QuadDrawIndexBuffer"] = _matQuadDrawIndexBuf;
         }
+    }
+
+    private XRMeshRenderer EnsureMaterialBorderMesh()
+    {
+        if (_matQuadBorderMesh is not null)
+            return _matQuadBorderMesh;
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
+            throw new NotSupportedException("A cooked WebGPU border primitive is not available.");
+        EnsureMaterialQuadMesh();
+        XRMaterial material = new(Array.Empty<ShaderVar>(),
+            UIBatchMaterialPrototype.Border.CreateDesktopShaders())
+        {
+            Name = "UIBatchBorder",
+            RenderPass = (int)EDefaultRenderPass.TransparentForward,
+            RenderOptions = UIBatchMaterialPrototype.Border.CreateRenderOptions(false)
+        };
+        XRMeshRenderer mesh = new(_matQuadMesh!.Mesh!, material)
+        {
+            Name = "UIBatchBorderRenderer",
+            GenerationPriority = EMeshGenerationPriority.RenderPipeline,
+            CaptureUniformsOnRender = true
+        };
+        mesh.Buffers["QuadTransformBuffer"] = _matQuadTransformBuf!;
+        mesh.Buffers["QuadColorBuffer"] = _matQuadColorBuf!;
+        mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf!;
+        mesh.Buffers["QuadUvBuffer"] = _matQuadUvBuf!;
+        mesh.Buffers["QuadBorderWidthBuffer"] = _matQuadBorderWidthBuf!;
+        mesh.Buffers["QuadDrawIndexBuffer"] = _matQuadDrawIndexBuf!;
+        DisableShaderPipelines(mesh);
+        mesh.EnsureRenderPipelineVersionsCreated();
+        _matQuadBorderMesh = mesh;
+        return mesh;
     }
 
     private XRMeshRenderer EnsureMaterialTextureMesh(XRTexture2D texture, bool srgb)
@@ -777,28 +1968,20 @@ public sealed class UIBatchCollector : IDisposable
             _materialTextureMeshes.Remove(stale);
         }
         if (_materialTextureMeshes.Count >= MaxMaterialTextureMeshes)
-            throw new NotSupportedException("WebGPU.UI.ImageTextureBudgetExceeded: at most 64 distinct image and color-space bindings may be visible in one frame.");
+            throw new NotSupportedException("UI.ImageTextureBudgetExceeded: at most 64 distinct image and color-space bindings may be visible in one frame.");
 
         EnsureMaterialQuadMesh();
-        XRMaterial material = new(Array.Empty<ShaderVar>(), [texture], Array.Empty<XRShader>())
+        bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
+        XRShader[] shaders = webGpu ? [] : UIBatchMaterialPrototype.Image.CreateDesktopShaders();
+        XRMaterial material = new(Array.Empty<ShaderVar>(), [texture], shaders)
         {
             Name = "UIBatchMaterialTexture",
             SurfaceTextureBindings = [new(EMaterialTextureSemantic.BaseColor, texture, IsSrgb: srgb)],
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
-            RenderOptions = new RenderingParameters
-            {
-                CullMode = ECullMode.None,
-                DepthTest = new DepthTest
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false
-                },
-                StencilTest = new StencilTest { Enabled = ERenderParamUsage.Disabled },
-                BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
-            }
+            RenderOptions = UIBatchMaterialPrototype.Image.CreateRenderOptions(webGpu)
         };
-        material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV2;
+        if (webGpu)
+            material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV2;
         XRMeshRenderer mesh = new(_matQuadMesh!.Mesh!, material)
         {
             Name = "UIBatchMaterialTextureRenderer",
@@ -809,6 +1992,9 @@ public sealed class UIBatchCollector : IDisposable
         mesh.Buffers["QuadColorBuffer"] = _matQuadColorBuf!;
         mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf!;
         mesh.Buffers["QuadUvBuffer"] = _matQuadUvBuf!;
+        if (!webGpu)
+            mesh.Buffers["QuadDrawIndexBuffer"] = _matQuadDrawIndexBuf!;
+        mesh.BindingPublishers.Add(new UIRequiredTextureBindings(texture));
         DisableShaderPipelines(mesh);
         mesh.EnsureRenderPipelineVersionsCreated();
         _materialTextureMeshes.Add(key, mesh);
@@ -824,11 +2010,16 @@ public sealed class UIBatchCollector : IDisposable
         return false;
     }
 
-    private void UploadMaterialQuadData(List<MaterialQuadEntry> entries, bool textured)
+    private void UploadMaterialQuadData(List<MaterialQuadEntry> entries, bool textured, bool border, MaterialGPUResources? cohort)
     {
         uint count = (uint)entries.Count;
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU && count > 65536)
             throw new NotSupportedException("WebGPU.UI.QuadCapacityExceeded: one screen UI quad group admits at most 65536 instances.");
+        if (cohort is not null)
+        {
+            UploadRetainedMaterialData(entries, textured, border, cohort);
+            return;
+        }
 
         // Resize if needed
         if (count > _matQuadCapacity)
@@ -838,22 +2029,41 @@ public sealed class UIBatchCollector : IDisposable
             _matQuadColorBuf!.Resize(_matQuadCapacity);
             _matQuadBoundsBuf!.Resize(_matQuadCapacity);
             _matQuadUvBuf?.Resize(_matQuadCapacity);
+            _matQuadBorderWidthBuf?.Resize(_matQuadCapacity);
             _matQuadNeedsPush = true;
+            if (cohort is not null)
+            {
+                cohort.HasUploadedBorder = false;
+                cohort.HasUploadedImage = false;
+            }
+        }
+
+        // A cohort is writable only after its prior draw has completed. Compare
+        // against that cohort's own uploaded snapshot, not another frame's run.
+        bool fullUpload = _matQuadNeedsPush || cohort is null || !cohort.HasUploadedEntries ||
+            border && !cohort.HasUploadedBorder || textured && !cohort.HasUploadedImage ||
+            cohort.UploadedEntries.Count < entries.Count;
+        if (!fullUpload)
+        {
+            UploadChangedMaterialRanges(entries, cohort!.UploadedEntries, textured, border);
+            return;
         }
 
         // Write transform data (4 × vec4 per instance = 16 floats per matrix)
-        bool fullUpload = _matQuadNeedsPush;
         uint transformElementCount = fullUpload ? _matQuadCapacity * 4u : count * 4u;
         uint instanceElementCount = fullUpload ? _matQuadCapacity : count;
         XRBufferWriter<Vector4> transformWriter = _matQuadTransformBuf!.Alloc<Vector4>(transformElementCount);
         XRBufferWriter<Vector4> colorWriter = _matQuadColorBuf!.Alloc<Vector4>(instanceElementCount);
         XRBufferWriter<Vector4> boundsWriter = _matQuadBoundsBuf!.Alloc<Vector4>(instanceElementCount);
-        XRBufferWriter<Vector4> uvWriter = textured
+        XRBufferWriter<Vector4> uvWriter = textured || border
             ? _matQuadUvBuf!.Alloc<Vector4>(instanceElementCount) : default;
+        XRBufferWriter<Vector4> borderWidthWriter = border
+            ? _matQuadBorderWidthBuf!.Alloc<Vector4>(instanceElementCount) : default;
         Span<Vector4> transforms = transformWriter.Span;
         Span<Vector4> colors = colorWriter.Span;
         Span<Vector4> bounds = boundsWriter.Span;
-        Span<Vector4> uvs = textured ? uvWriter.Span : default;
+        Span<Vector4> uvs = textured || border ? uvWriter.Span : default;
+        Span<Vector4> borderWidths = border ? borderWidthWriter.Span : default;
         int transformIndex = 0;
 
         for (int i = 0; i < entries.Count; i++)
@@ -866,35 +2076,274 @@ public sealed class UIBatchCollector : IDisposable
             bounds[i] = e.UIXYWH;
             if (textured)
                 uvs[i] = e.UV;
+            else if (border)
+            {
+                uvs[i] = e.BorderColor;
+                borderWidths[i] = new Vector4(e.BorderWidth, 0, 0, 0);
+            }
         }
 
         transformWriter.Commit();
         colorWriter.Commit();
         boundsWriter.Commit();
-        if (textured)
+        if (textured || border)
             uvWriter.Commit();
+        if (border)
+            borderWidthWriter.Commit();
+        UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted,
+            ((long)transformElementCount + instanceElementCount * (border ? 4L : textured ? 3L : 2L)) * 16L);
+        UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, border ? 5 : textured ? 4 : 3);
         _matQuadNeedsPush = false;
     }
+
+    private void UploadRetainedMaterialData(List<MaterialQuadEntry> entries, bool textured, bool border,
+        MaterialGPUResources gpu)
+    {
+        List<uint> draw = gpu.CurrentDrawIndices;
+        List<(uint Slot, MaterialQuadEntry Entry)> slots = gpu.ScratchSlots;
+        draw.Clear();
+        slots.Clear();
+        gpu.Slots.BeginFrame();
+        for (int index = 0; index < entries.Count; index++)
+        {
+            MaterialQuadEntry entry = entries[index];
+            uint slot = gpu.Slots.Reserve(entry.PrimitiveHandle, index).Index;
+            draw.Add(slot);
+            slots.Add((slot, entry));
+        }
+        gpu.Slots.EndFrame();
+        uint storageCount = gpu.Slots.HighWater;
+        if (storageCount > MaxRetainedQuadSlotsPerRun)
+            throw new InvalidOperationException("A UI quad run exceeds its retained GPU slot budget.");
+        slots.Sort(static (a, b) => a.Slot.CompareTo(b.Slot));
+
+        bool full = _matQuadNeedsPush || !gpu.HasUploadedEntries ||
+            gpu.UploadedVariant != (border ? 2 : textured ? 1 : 0);
+        if (storageCount > _matQuadCapacity)
+        {
+            _matQuadCapacity = NextPowerOf2(storageCount);
+            _matQuadTransformBuf!.Resize(_matQuadCapacity * 4);
+            _matQuadColorBuf!.Resize(_matQuadCapacity);
+            _matQuadBoundsBuf!.Resize(_matQuadCapacity);
+            _matQuadUvBuf!.Resize(_matQuadCapacity);
+            _matQuadBorderWidthBuf!.Resize(_matQuadCapacity);
+            _matQuadDrawIndexBuf!.Resize(_matQuadCapacity);
+            full = true;
+        }
+        while (gpu.UploadedSlots.Count < storageCount)
+        {
+            gpu.UploadedSlots.Add(default);
+            gpu.InitializedSlots.Add(false);
+        }
+
+        if (full)
+        {
+            // The full write clears holes in the CPU/GPU buffers. Their old snapshots
+            // are no longer resident, even if a later member has identical values.
+            for (int index = 0; index < gpu.InitializedSlots.Count; index++)
+                gpu.InitializedSlots[index] = false;
+            XRBufferWriter<Vector4> transforms = _matQuadTransformBuf!.Alloc<Vector4>(storageCount * 4);
+            XRBufferWriter<Vector4> colors = _matQuadColorBuf!.Alloc<Vector4>(storageCount);
+            XRBufferWriter<Vector4> bounds = _matQuadBoundsBuf!.Alloc<Vector4>(storageCount);
+            XRBufferWriter<Vector4> uvs = textured || border
+                ? _matQuadUvBuf!.Alloc<Vector4>(storageCount) : default;
+            XRBufferWriter<Vector4> widths = border
+                ? _matQuadBorderWidthBuf!.Alloc<Vector4>(storageCount) : default;
+            XRBufferWriter<uint> indices = _matQuadDrawIndexBuf!.Alloc<uint>((uint)draw.Count);
+            transforms.Span.Clear();
+            colors.Span.Clear();
+            bounds.Span.Clear();
+            if (textured || border) uvs.Span.Clear();
+            if (border) widths.Span.Clear();
+            indices.Span.Clear();
+            foreach ((uint slot, MaterialQuadEntry entry) in slots)
+            {
+                int matrix = checked((int)slot * 4);
+                WriteMatrix4x4(transforms.Span, ref matrix, in entry.WorldMatrix);
+                colors.Span[(int)slot] = entry.Color;
+                bounds.Span[(int)slot] = entry.UIXYWH;
+                if (textured || border)
+                    uvs.Span[(int)slot] = border ? entry.BorderColor : entry.UV;
+                if (border)
+                    widths.Span[(int)slot] = new Vector4(entry.BorderWidth, 0, 0, 0);
+            }
+            for (int index = 0; index < draw.Count; index++)
+                indices.Span[index] = draw[index];
+            transforms.Commit();
+            colors.Commit();
+            bounds.Commit();
+            if (textured || border) uvs.Commit();
+            if (border) widths.Commit();
+            indices.Commit();
+            UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted,
+                (long)storageCount * (64L + 16L + 16L +
+                    (textured || border ? 16L : 0L) + (border ? 16L : 0L)) + draw.Count * 4L);
+            UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, border ? 6 : textured ? 5 : 4);
+        }
+        else
+        {
+            for (int field = 0; field < (border ? 5 : textured ? 4 : 3); field++)
+            {
+                int first = 0;
+                while (first < slots.Count)
+                {
+                    while (first < slots.Count && !MaterialSlotFieldChanged(slots[first], gpu, field, border))
+                        first++;
+                    if (first == slots.Count) break;
+                    int end = first + 1;
+                    while (end < slots.Count && slots[end].Slot == slots[end - 1].Slot + 1 &&
+                        MaterialSlotFieldChanged(slots[end], gpu, field, border))
+                        end++;
+                    uint offset = slots[first].Slot;
+                    uint count = (uint)(end - first);
+                    XRBufferWriter<Vector4> writer = field switch
+                    {
+                        0 => _matQuadTransformBuf!.AllocAt<Vector4>(offset * 4, count * 4),
+                        1 => _matQuadColorBuf!.AllocAt<Vector4>(offset, count),
+                        2 => _matQuadBoundsBuf!.AllocAt<Vector4>(offset, count),
+                        3 => _matQuadUvBuf!.AllocAt<Vector4>(offset, count),
+                        _ => _matQuadBorderWidthBuf!.AllocAt<Vector4>(offset, count),
+                    };
+                    for (int index = first; index < end; index++)
+                    {
+                        MaterialQuadEntry entry = slots[index].Entry;
+                        int local = index - first;
+                        switch (field)
+                        {
+                            case 0:
+                                int matrix = local * 4;
+                                WriteMatrix4x4(writer.Span, ref matrix, in entry.WorldMatrix);
+                                break;
+                            case 1: writer.Span[local] = entry.Color; break;
+                            case 2: writer.Span[local] = entry.UIXYWH; break;
+                            case 3: writer.Span[local] = border ? entry.BorderColor : entry.UV; break;
+                            default: writer.Span[local] = new Vector4(entry.BorderWidth, 0, 0, 0); break;
+                        }
+                    }
+                    writer.Commit();
+                    UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, count * (field == 0 ? 64L : 16L));
+                    UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+                    first = end;
+                }
+            }
+            List<uint> previous = gpu.UploadedDrawIndices;
+            int firstDraw = 0;
+            while (firstDraw < draw.Count)
+            {
+                while (firstDraw < draw.Count && firstDraw < previous.Count && draw[firstDraw] == previous[firstDraw])
+                    firstDraw++;
+                if (firstDraw == draw.Count) break;
+                int end = firstDraw + 1;
+                while (end < draw.Count && (end >= previous.Count || draw[end] != previous[end])) end++;
+                XRBufferWriter<uint> writer = _matQuadDrawIndexBuf!.AllocAt<uint>((uint)firstDraw, (uint)(end - firstDraw));
+                for (int index = firstDraw; index < end; index++)
+                    writer.Span[index - firstDraw] = draw[index];
+                writer.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (end - firstDraw) * 4L);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+                firstDraw = end;
+            }
+        }
+
+        foreach ((uint slot, MaterialQuadEntry entry) in slots)
+        {
+            gpu.UploadedSlots[(int)slot] = entry;
+            gpu.InitializedSlots[(int)slot] = true;
+        }
+        gpu.UploadedDrawIndices.Clear();
+        gpu.UploadedDrawIndices.AddRange(draw);
+        _matQuadNeedsPush = false;
+    }
+
+    private static bool MaterialSlotFieldChanged((uint Slot, MaterialQuadEntry Entry) value,
+        MaterialGPUResources gpu, int field, bool border)
+        => !gpu.InitializedSlots[(int)value.Slot] ||
+           MaterialFieldChanged(value.Entry, gpu.UploadedSlots[(int)value.Slot], field, border);
+
+    private void UploadChangedMaterialRanges(List<MaterialQuadEntry> entries,
+        List<MaterialQuadEntry> previous, bool textured, bool border)
+    {
+        for (int field = 0; field < (border ? 5 : textured ? 4 : 3); field++)
+        {
+            int first = 0;
+            while (first < entries.Count)
+            {
+                while (first < entries.Count && !MaterialFieldChanged(entries[first], previous[first], field, border))
+                    first++;
+                if (first == entries.Count)
+                    break;
+                int end = first + 1;
+                while (end < entries.Count && MaterialFieldChanged(entries[end], previous[end], field, border))
+                    end++;
+
+                uint offset = (uint)first;
+                uint count = (uint)(end - first);
+                XRBufferWriter<Vector4> writer = field switch
+                {
+                    0 => _matQuadTransformBuf!.AllocAt<Vector4>(offset * 4, count * 4),
+                    1 => _matQuadColorBuf!.AllocAt<Vector4>(offset, count),
+                    2 => _matQuadBoundsBuf!.AllocAt<Vector4>(offset, count),
+                    3 => _matQuadUvBuf!.AllocAt<Vector4>(offset, count),
+                    _ => _matQuadBorderWidthBuf!.AllocAt<Vector4>(offset, count),
+                };
+                Span<Vector4> data = writer.Span;
+                for (int index = first; index < end; index++)
+                {
+                    MaterialQuadEntry entry = entries[index];
+                    int local = index - first;
+                    switch (field)
+                    {
+                        case 0:
+                            int matrixOffset = local * 4;
+                            WriteMatrix4x4(data, ref matrixOffset, in entry.WorldMatrix);
+                            break;
+                        case 1: data[local] = entry.Color; break;
+                        case 2: data[local] = entry.UIXYWH; break;
+                        case 3: data[local] = border ? entry.BorderColor : entry.UV; break;
+                        default: data[local] = new Vector4(entry.BorderWidth, 0, 0, 0); break;
+                    }
+                }
+                writer.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, count * (field == 0 ? 64L : 16L));
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+                first = end;
+            }
+        }
+    }
+
+    private static bool MaterialFieldChanged(in MaterialQuadEntry current, in MaterialQuadEntry previous, int field, bool border)
+        => field switch
+        {
+            0 => current.WorldMatrix != previous.WorldMatrix,
+            1 => current.Color != previous.Color,
+            2 => current.UIXYWH != previous.UIXYWH,
+            3 => border ? current.BorderColor != previous.BorderColor : current.UV != previous.UV,
+            _ => current.BorderWidth != previous.BorderWidth,
+        };
 
     #endregion
 
     #region GPU Resource Management — Text Quads
 
-    private TextGPUResources EnsureTextGPUResources(XRTexture2D fontAtlas)
+    private TextGPUResources EnsureTextGPUResources(AbstractRenderer renderer, XRTexture2D fontAtlas, int renderPass, ulong runId)
     {
-        if (_textGPU.TryGetValue(fontAtlas, out var gpu))
-            return gpu;
+        var key = (renderer, renderer.BackendGeneration, fontAtlas, renderPass, runId);
+        if (!_textGPU.TryGetValue(key, out var cohorts))
+            cohorts = [];
+        for (int i = 0; i < cohorts.Count; i++)
+            if (CanReuseTextGPU(cohorts[i]))
+                return cohorts[i];
+        if (cohorts.Count >= MaxRunCohorts)
+            throw new InvalidOperationException($"UI text run ({renderPass}, {runId}) has no retired GPU cohort.");
+        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+            RetireInactiveGpuCohorts(renderer);
+        if (CountGpuCohorts() >= MaxCanvasGpuCohorts)
+            throw new InvalidOperationException("UI GPU cohort budget is full while earlier draws remain in use.");
 
-        gpu = new TextGPUResources();
+        TextGPUResources gpu = new();
 
         bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
-        XRShader[] shaders = webGpu ? [] :
-        [
-            XRShader.EngineShader(Path.Combine("Common", "UITextBatched.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UITextBatchedStereoMV2.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UITextBatchedStereoNV.vs"), EShaderType.Vertex),
-            XRShader.EngineShader(Path.Combine("Common", "UITextBatched.fs"), EShaderType.Fragment)
-        ];
+        XRShader[] shaders = webGpu ? [] : UIBatchMaterialPrototype.Text.CreateDesktopShaders();
 
         ShaderVar[] parameters =
         [
@@ -911,21 +2360,7 @@ public sealed class UIBatchCollector : IDisposable
         {
             Name = "UIBatchTextMaterial",
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
-            RenderOptions = new RenderingParameters
-            {
-                CullMode = ECullMode.None,
-                DepthTest = new DepthTest
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = !webGpu
-                },
-                StencilTest = new StencilTest
-                {
-                    Enabled = ERenderParamUsage.Disabled
-                },
-                BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
-            }
+            RenderOptions = UIBatchMaterialPrototype.Text.CreateRenderOptions(webGpu)
         };
         if (webGpu)
             material.EngineSemantic = EngineMaterialSemanticIdentity.UITextBatchedBitmapV2;
@@ -938,16 +2373,46 @@ public sealed class UIBatchCollector : IDisposable
             gpu.Mesh.Mesh.Name = "UIBatchTextQuadMesh";
         gpu.Mesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
         gpu.Mesh.CaptureUniformsOnRender = true;
+        gpu.Mesh.BindingPublishers.Add(new UIRequiredTextureBindings(fontAtlas));
         DisableShaderPipelines(gpu.Mesh);
         gpu.Mesh.EnsureRenderPipelineVersionsCreated();
 
         gpu.GlyphCapacity = 256;
+        gpu.DrawCapacity = 256;
         gpu.TextCapacity = 32;
         CreateTextBuffers(gpu);
         gpu.NeedsPush = true; // Ensure first upload allocates GPU buffers via PushData
 
-        _textGPU[fontAtlas] = gpu;
+        if (!_textGPU.ContainsKey(key))
+            _textGPU.Add(key, cohorts);
+        cohorts.Add(gpu);
+        _gpuCohortCount++;
         return gpu;
+    }
+
+    private static bool TextDataMatches(TextGPUResources gpu, TextBatchData batch)
+    {
+        if (!gpu.HasUploadedData || gpu.UploadedEntries.Count != batch.Entries.Count)
+            return false;
+        for (int index = 0; index < batch.Entries.Count; index++)
+        {
+            TextEntry old = gpu.UploadedEntries[index];
+            TextEntry current = batch.Entries[index];
+            if (old.WorldMatrix != current.WorldMatrix || old.TextColor != current.TextColor ||
+                old.OutlineColor != current.OutlineColor || old.OutlineThickness != current.OutlineThickness ||
+                old.UIXYWH != current.UIXYWH || !ReferenceEquals(old.Layout, current.Layout) ||
+                old.GlyphCount != current.GlyphCount || old.PrimitiveHandle != current.PrimitiveHandle)
+                return false;
+        }
+        return true;
+    }
+
+    private static void RememberTextData(TextGPUResources gpu, TextBatchData batch)
+    {
+        gpu.UploadedEntries.Clear();
+        for (int index = 0; index < batch.Entries.Count; index++)
+            gpu.UploadedEntries.Add(batch.Entries[index]);
+        gpu.HasUploadedData = true;
     }
 
     private static XRMeshRenderer.BaseVersion GetImmediateRenderVersion(XRMeshRenderer mesh)
@@ -977,6 +2442,7 @@ public sealed class UIBatchCollector : IDisposable
         gpu.GlyphTexCoordsBuf?.Destroy();
         gpu.TextInstanceBuf?.Destroy();
         gpu.GlyphTextIndexBuf?.Destroy();
+        gpu.GlyphDrawIndexBuf?.Destroy();
 
         // Glyph transforms: vec4 per glyph
         gpu.GlyphTransformsBuf = new XRDataBuffer<Vector4>(
@@ -1021,6 +2487,18 @@ public sealed class UIBatchCollector : IDisposable
             DisposeOnPush = false
         };
         mesh.Buffers["GlyphTextIndexBuffer"] = gpu.GlyphTextIndexBuf;
+        if (AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+        {
+            gpu.GlyphDrawIndexBuf = new XRDataBuffer<uint>(
+                "GlyphDrawIndexBuffer", EBufferTarget.ShaderStorageBuffer,
+                gpu.DrawCapacity, integral: true)
+            {
+                Usage = EBufferUsage.StreamDraw,
+                BindingIndexOverride = 4,
+                DisposeOnPush = false
+            };
+            mesh.Buffers["GlyphDrawIndexBuffer"] = gpu.GlyphDrawIndexBuf;
+        }
     }
 
     private static BatchPool<T> GetOrCreatePool<T>(Dictionary<int, BatchPool<T>> pools, int renderPass) where T : class, new()
@@ -1060,44 +2538,102 @@ public sealed class UIBatchCollector : IDisposable
 
     private void RenderBatchMarker(int renderPass, EBatchMarkerKind kind, int groupIndex)
     {
-        if (!Enabled)
-            return;
-
-        if (kind == EBatchMarkerKind.Material)
-            RenderMaterialGroup(renderPass, groupIndex);
-        else
-            RenderTextGroup(renderPass, groupIndex);
+        try
+        {
+            if (kind == EBatchMarkerKind.Material)
+                RenderMaterialGroup(renderPass, groupIndex);
+            else
+                RenderTextGroup(renderPass, groupIndex);
+        }
+        catch (Exception error)
+        {
+            FailCurrentUiPublicationAuthoring(error.Message);
+            throw;
+        }
     }
 
     private void RenderMaterialGroup(int renderPass, int groupIndex)
     {
         if (!_renderMaterialGroups.TryGetValue(renderPass, out var groups) ||
-            !groups.TryGet(groupIndex, out var batch) ||
-            batch.Entries.Count == 0)
+            !groups.TryGet(groupIndex, out var batch))
         {
+            // A marker names a group that collection did not produce; its draws are lost.
+            FailCurrentUiPublicationAuthoring(
+                "UI.Batch.GroupMissing: a published material batch marker has no collected group.");
+            return;
+        }
+        if (batch.Entries.Count == 0)
+            return;
+
+        XRTexture2D? backdropTexture = null;
+        BoundingRectangle backdropRegion = default;
+        if (batch.Backdrop.IsDefined && !TryGetBackdropCapture(out backdropTexture, out backdropRegion))
+        {
+            FailCurrentUiPublicationAuthoring("UI.BackdropBlur.CaptureMissing: no checked capture is ready in this output attempt.");
             return;
         }
 
+        AbstractRenderer renderer = AbstractRenderer.Current ??
+            throw new InvalidOperationException("UI batching requires an active renderer.");
+        RendererBackendId backendId = renderer.BackendId;
+        bool isolatedCohort = backendId == RendererBackendId.Vulkan || backendId == RendererBackendId.OpenGL;
+        MaterialGPUResources? cohort = isolatedCohort ? AcquireMaterialGPU(renderer, renderPass, batch.RunId) : null;
+        if (cohort is not null)
+        {
+            Claim(cohort);
+            LoadMaterialGPU(cohort);
+        }
+        else
+            _legacyMaterialGpuCreated = true;
+        bool drawSubmitted = false;
+        try
+        {
         using var sample = RuntimeEngine.Profiler.Start();
         RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
         bool profileGpu = profiler.ShouldInstrumentCommandScopes;
+        int variant = batch.Backdrop.IsDefined ? 3 : batch.Border ? 2 : batch.Texture is not null ? 1 : 0;
+        bool uploadRequired = cohort is null || cohort.UploadedVariant != variant ||
+            batch.Border && !cohort.HasUploadedBorder ||
+            (batch.Texture is not null || batch.Backdrop.IsDefined) && !cohort.HasUploadedImage ||
+            !MaterialEntriesMatch(cohort, batch.Entries);
 
-        if (profileGpu)
+        try
         {
-            using (profiler.StartScope($"UIBatchMaterialUpload[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
+            if (uploadRequired && profileGpu)
+            {
+                using (profiler.StartScope($"UIBatchMaterialUpload[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
+                {
+                    EnsureMaterialQuadMesh();
+                    UploadMaterialQuadData(batch.Entries, batch.Texture is not null || batch.Backdrop.IsDefined, batch.Border, cohort);
+                }
+            }
+            else if (uploadRequired)
             {
                 EnsureMaterialQuadMesh();
-                UploadMaterialQuadData(batch.Entries, batch.Texture is not null);
+                UploadMaterialQuadData(batch.Entries, batch.Texture is not null || batch.Backdrop.IsDefined, batch.Border, cohort);
             }
         }
-        else
+        catch
         {
-            EnsureMaterialQuadMesh();
-            UploadMaterialQuadData(batch.Entries, batch.Texture is not null);
+            if (cohort is not null)
+            {
+                cohort.HasUploadedEntries = false;
+                cohort.NeedsPush = true;
+            }
+            throw;
+        }
+        if (cohort is not null && uploadRequired)
+        {
+            RememberMaterialEntries(cohort, batch.Entries);
+            cohort.HasUploadedBorder |= batch.Border;
+            cohort.HasUploadedImage |= batch.Texture is not null || batch.Backdrop.IsDefined;
+            cohort.UploadedVariant = variant;
         }
 
-        XRMeshRenderer materialQuadMesh = batch.Texture is { } texture
-            ? EnsureMaterialTextureMesh(texture, batch.ImageSrgb) : _matQuadMesh!;
+        XRMeshRenderer materialQuadMesh = batch.Backdrop.IsDefined
+            ? EnsureBackdropMesh(backdropTexture!) : batch.Border ? EnsureMaterialBorderMesh() :
+            batch.Texture is { } texture
+                ? EnsureMaterialTextureMesh(texture, batch.ImageSrgb) : _matQuadMesh!;
 
         var version = GetImmediateRenderVersion(materialQuadMesh);
         bool prepared;
@@ -1116,15 +2652,19 @@ public sealed class UIBatchCollector : IDisposable
         }
 
         if (!prepared)
+        {
+            FailCurrentUiPublicationAuthoring("The published UI material draw is not prepared for rendering.");
             return;
+        }
 
-        Debug.UIEvery(
-            "UIBatchCollector.RenderMaterialQuadBatch",
-            TimeSpan.FromSeconds(5),
-            "[UIBatch] RenderMaterialQuadBatch: pass={0}, entries={1}, capacity={2}",
-            renderPass, batch.Entries.Count, _matQuadCapacity);
+        if (BatchDiagnosticsEnabled)
+            Debug.UIEvery(
+                "UIBatchCollector.RenderMaterialQuadBatch",
+                TimeSpan.FromSeconds(5),
+                "[UIBatch] RenderMaterialQuadBatch: pass={0}, entries={1}, capacity={2}",
+                renderPass, batch.Entries.Count, _matQuadCapacity);
 
-        if (s_materialRenderDiagCount++ < 40)
+        if (BatchDiagnosticsEnabled && s_materialRenderDiagCount++ < 40)
         {
             MaterialQuadEntry firstEntry = batch.Entries[0];
             Vector4 unitQuad = new(0.0f, 0.0f, 1.0f, 1.0f);
@@ -1153,39 +2693,195 @@ public sealed class UIBatchCollector : IDisposable
         if (materialQuadMesh.Material is { } material && material.RenderPass != renderPass)
             material.RenderPass = renderPass;
 
-        ApplyBatchCropping(batch.CropRegion);
+        if (batch.Backdrop.IsDefined && materialQuadMesh.Material is { } backdropMaterial)
+        {
+            backdropMaterial.SetVector2("CaptureOrigin", new Vector2(backdropRegion.X, backdropRegion.Y));
+            backdropMaterial.SetVector2("CaptureSize", new Vector2(backdropRegion.Width, backdropRegion.Height));
+            backdropMaterial.SetFloat("BlurStrength", batch.Backdrop.BlurStrength);
+        }
+
+        UIStaticDrawCandidate cacheCandidate = CaptureStaticDrawCandidate(renderer, materialQuadMesh, batch, cohort);
+        using UIStaticDrawScope cacheScope = new(in cacheCandidate);
+        ulong backdropDrawScope = 0UL;
+        ulong backdropOutputScope = 0UL;
+        if (batch.Backdrop.IsDefined)
+        {
+            UIIndexedDrawIntent expected = UIIndexedDrawIntent.Capture(materialQuadMesh,
+                EPrimitiveType.Triangles, checked((uint)batch.Entries.Count));
+            if (!renderer.TryBeginUiIndexedDrawScope([expected], out backdropDrawScope))
+            {
+                FailCurrentUiPublicationAuthoring("UI.BackdropBlur.DrawScopeRejected: the panel has no exact native draw scope.");
+                return;
+            }
+        }
+        bool backdropManagedDrawSucceeded = false;
         try
         {
+            if (batch.Backdrop.IsDefined &&
+                !renderer.TryBeginUiBackdropConsumerDrawScope(_activeBackdropWindow!,
+                    _activeBackdropRegion, _activeBackdropDispatch, out backdropOutputScope))
+                FailCurrentUiPublicationAuthoring(
+                    "UI.BackdropBlur.OutputScopeRejected: the panel has no exact native output scope.");
+            if (batch.Backdrop.IsDefined && backdropOutputScope == 0UL)
+                return;
+            ApplyBatchCropping(batch.CropRegion);
             if (profileGpu)
             {
                 using (profiler.StartScope($"UIBatchMaterialDraw[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
+                {
+                    drawSubmitted = true;
                     materialQuadMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
+                }
             }
             else
             {
+                drawSubmitted = true;
                 materialQuadMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batch.Entries.Count);
             }
+            backdropManagedDrawSucceeded = true;
         }
         finally
         {
-            DisableBatchCropping();
+            try
+            {
+                if (backdropDrawScope != 0UL)
+                {
+                    bool indexedComplete = renderer.CompleteUiIndexedDrawScope(backdropDrawScope);
+                    bool outputComplete = backdropOutputScope != 0UL &&
+                        renderer.CompleteUiBackdropConsumerDrawScope(backdropOutputScope);
+                    if (backdropManagedDrawSucceeded && indexedComplete && outputComplete)
+                        AcknowledgeBackdropConsumer(renderPass, batch.RunId);
+                    else
+                        FailCurrentUiPublicationAuthoring(
+                            "UI.BackdropBlur.ConsumerIncomplete: the required native panel draw or output was not acknowledged.");
+                }
+            }
+            finally
+            {
+                if (backdropDrawScope != 0UL)
+                    renderer.AbortUiBackdropConsumerDrawScope();
+                DisableBatchCropping();
+            }
         }
+        }
+        finally
+        {
+            if (cohort is not null)
+            {
+                StoreMaterialGPU(cohort);
+                if (drawSubmitted && isolatedCohort)
+                {
+                    // Optional buffers are created for later variants but only
+                    // acquire native contents when a draw actually binds them.
+                    // Remember every variant ever submitted through this cohort.
+                    cohort.UsedUv |= batch.Texture is not null || batch.Border;
+                    cohort.UsedBorderWidth |= batch.Border;
+                    cohort.Submitted = true;
+                    XRGpuFence? previous = cohort.Fence;
+                    cohort.Fence = null;
+                    previous?.Dispose();
+                    if (_activeReceipt is null)
+                        cohort.Fence = renderer.InsertGpuFence() ??
+                            throw new InvalidOperationException("UI batching requires a GPU completion fence.");
+                }
+            }
+        }
+    }
+
+    private UIStaticDrawCandidate CaptureStaticDrawCandidate(AbstractRenderer renderer,
+        XRMeshRenderer mesh, MaterialQuadBatchData batch, MaterialGPUResources? cohort)
+    {
+        if (renderer.BackendId != RendererBackendId.Vulkan || cohort is null ||
+            batch.Backdrop.IsDefined ||
+            !batch.CompositionOwner.IsExplicit || batch.CompositionOwner.Kind != EUICompositionLayerKind.StaticChrome ||
+            batch.CompositionSegmentIdentity == 0 || batch.CompositionSegmentRevision == 0 ||
+            _activeReceipt is not { } receipt || !ReferenceEquals(receipt.Renderer, renderer) ||
+            _renderingPublication is not { AuthoringDrawSpace: ECanvasDrawSpace.Screen,
+                DrawSpace: ECanvasDrawSpace.Screen, AuthoringOffscreen: false } publication ||
+            !ReferenceEquals(publication.RenderRecordStore, _renderPublishedStorage) ||
+            !ReferenceEquals(publication.CompositionStorage, _renderCompositionStorage))
+            return default;
+
+        XRDataBuffer? borderColor = null;
+        XRDataBuffer? borderWidth = null;
+        XRDataBuffer? imageUv = null;
+        UITextureSnapshot? imageSnapshot = null;
+        ulong borderColorRevision = 0;
+        ulong borderWidthRevision = 0;
+        ulong imageUvRevision = 0;
+        if (batch.Border)
+        {
+            if (!ReferenceEquals(mesh, cohort.BorderMesh) ||
+                cohort.Uv is not { } uv || cohort.BorderWidth is not { } width ||
+                !mesh.Buffers.TryGetValue("QuadUvBuffer", out XRDataBuffer? meshUv) ||
+                !mesh.Buffers.TryGetValue("QuadBorderWidthBuffer", out XRDataBuffer? meshWidth) ||
+                !ReferenceEquals(meshUv, uv) || !ReferenceEquals(meshWidth, width))
+                return default;
+            borderColor = uv;
+            borderWidth = width;
+            borderColorRevision = uv.Revision;
+            borderWidthRevision = width.Revision;
+        }
+        else if (batch.Texture is { } texture)
+        {
+            if (batch.ImageSnapshot is not { } snapshot ||
+                !ReferenceEquals(snapshot.Texture, texture) ||
+                !cohort.TextureMeshes.TryGetValue((texture, batch.ImageSrgb), out XRMeshRenderer? imageMesh) ||
+                !ReferenceEquals(mesh, imageMesh) || cohort.Uv is not { } uv ||
+                !mesh.Buffers.TryGetValue("QuadUvBuffer", out XRDataBuffer? meshUv) ||
+                !ReferenceEquals(meshUv, uv))
+                return default;
+            imageSnapshot = snapshot;
+            imageUv = uv;
+            imageUvRevision = uv.Revision;
+        }
+
+        UIIndexedDrawIntent intent = UIIndexedDrawIntent.Capture(mesh,
+            EPrimitiveType.Triangles, checked((uint)batch.Entries.Count));
+        UIStaticDrawContract contract = new(publication.CanvasLifetime, batch.CompositionOwner,
+            batch.CompositionSegmentIdentity, batch.CompositionSegmentRevision, batch.RunId,
+            renderer.BackendGeneration, intent)
+        {
+            CapturedMesh = mesh.Mesh,
+            IsBorder = batch.Border,
+            BorderColorBuffer = borderColor,
+            BorderColorRevision = borderColorRevision,
+            BorderWidthBuffer = borderWidth,
+            BorderWidthRevision = borderWidthRevision,
+            IsImage = imageSnapshot is not null,
+            ImageSnapshot = imageSnapshot,
+            ImageTexture = imageSnapshot?.Texture,
+            ImageSrgb = imageSnapshot is not null && batch.ImageSrgb,
+            ImageUvBuffer = imageUv,
+            ImageUvRevision = imageUvRevision,
+        };
+        return contract.IsDefined ? new(contract, renderer, receipt.Id) : default;
     }
 
     private void RenderTextGroup(int renderPass, int groupIndex)
     {
         Interlocked.Increment(ref s_textGroupCalls);
         if (!_renderTextGroups.TryGetValue(renderPass, out var groups) ||
-            !groups.TryGet(groupIndex, out var batchData) ||
-            batchData.Atlas is null ||
-            batchData.Entries.Count == 0 ||
-            batchData.TotalGlyphs == 0)
+            !groups.TryGet(groupIndex, out var batchData))
+        {
+            // A marker names a group that collection did not produce; its text is lost.
+            FailCurrentUiPublicationAuthoring(
+                "UI.Batch.GroupMissing: a published text batch marker has no collected group.");
+            return;
+        }
+        if (batchData.Entries.Count == 0 || batchData.TotalGlyphs == 0)
+            return;
+        if (batchData.Atlas is null)
         {
             Interlocked.Increment(ref s_textEmptyGroupCalls);
+            FailCurrentUiPublicationAuthoring(
+                "UI.TextCapture.AtlasPending: a published text batch group has no font atlas.");
             return;
         }
 
-        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU &&
+        AbstractRenderer renderer = AbstractRenderer.Current ??
+            throw new InvalidOperationException("UI text batching requires an active renderer.");
+        if (renderer.BackendId == RendererBackendId.WebGPU &&
             (batchData.AtlasType != TextAtlasBitmap || batchData.DebugMode != 0))
             throw new NotSupportedException("WebGPU.UI.TextProfileUnsupported: screen text requires a bitmap atlas and normal shading.");
 
@@ -1197,12 +2893,13 @@ public sealed class UIBatchCollector : IDisposable
         if (profileGpu)
         {
             using (profiler.StartScope($"UIBatchTextEnsureResources[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
-                gpu = EnsureTextGPUResources(batchData.Atlas);
+                gpu = EnsureTextGPUResources(renderer, batchData.Atlas, renderPass, batchData.RunId);
         }
         else
         {
-            gpu = EnsureTextGPUResources(batchData.Atlas);
+            gpu = EnsureTextGPUResources(renderer, batchData.Atlas, renderPass, batchData.RunId);
         }
+        Claim(gpu);
 
         XRMeshRenderer textMesh = gpu.Mesh!;
         var material = textMesh.Material;
@@ -1217,13 +2914,14 @@ public sealed class UIBatchCollector : IDisposable
         material?.SetInt(TextRenderLayerUniformName, TextRenderLayerCombined);
         material?.SetInt(TextRenderLayerVertexUniformName, TextRenderLayerCombined);
 
-        if (s_textRenderDiagCount++ < 40)
+        if (BatchDiagnosticsEnabled && s_textRenderDiagCount++ < 40)
         {
             var firstEntry = batchData.Entries[0];
-            var firstGlyph = firstEntry.GlyphCount > 0
-                ? batchData.Glyphs[firstEntry.GlyphOffset]
+            UITextLayoutGlyph firstGlyph = firstEntry.GlyphCount > 0
+                ? firstEntry.Layout.Glyphs.Span[0]
                 : default;
-            string projectedGlyph = GetProjectedGlyphSummary(in firstEntry.WorldMatrix, in firstGlyph.transform);
+            Vector4 firstTransform = firstGlyph.Transform;
+            string projectedGlyph = GetProjectedGlyphSummary(in firstEntry.WorldMatrix, in firstTransform);
             Debug.Log(
                 ELogCategory.UI,
                 "[FpsTextDiag] UIBatchCollector.RenderTextGroup #{0}: pass={1} group={2} entries={3} totalGlyphs={4} atlasType={5} range={6:F2} middle={7:F2} bias={8:F2} debugMode={9} glyphCap={10} textCap={11} material={12} mesh={13} color=({14:F2},{15:F2},{16:F2},{17:F2}) worldT=({18:F1},{19:F1},{20:F1}) bounds=({21:F1},{22:F1},{23:F1},{24:F1}) firstTfm=({25:F2},{26:F2},{27:F2},{28:F2}) firstUv=({29:F5},{30:F5},{31:F5},{32:F5}) projected={33}",
@@ -1252,26 +2950,38 @@ public sealed class UIBatchCollector : IDisposable
                 firstEntry.UIXYWH.Y,
                 firstEntry.UIXYWH.Z,
                 firstEntry.UIXYWH.W,
-                firstGlyph.transform.X,
-                firstGlyph.transform.Y,
-                firstGlyph.transform.Z,
-                firstGlyph.transform.W,
-                firstGlyph.uvs.X,
-                firstGlyph.uvs.Y,
-                firstGlyph.uvs.Z,
-                firstGlyph.uvs.W,
+                firstGlyph.Transform.X,
+                firstGlyph.Transform.Y,
+                firstGlyph.Transform.Z,
+                firstGlyph.Transform.W,
+                firstGlyph.Uvs.X,
+                firstGlyph.Uvs.Y,
+                firstGlyph.Uvs.Z,
+                firstGlyph.Uvs.W,
                 projectedGlyph);
         }
 
-        if (profileGpu)
+        bool textUploadRequired = !TextDataMatches(gpu, batchData);
+        try
         {
-            using (profiler.StartScope($"UIBatchTextUpload[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
+            if (textUploadRequired && profileGpu)
+            {
+                using (profiler.StartScope($"UIBatchTextUpload[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
+                    FinalizeAndUploadTextData(batchData, gpu, batchData.Atlas);
+            }
+            else if (textUploadRequired)
+            {
                 FinalizeAndUploadTextData(batchData, gpu, batchData.Atlas);
+            }
         }
-        else
+        catch
         {
-            FinalizeAndUploadTextData(batchData, gpu, batchData.Atlas);
+            gpu.HasUploadedData = false;
+            gpu.NeedsPush = true;
+            throw;
         }
+        if (textUploadRequired)
+            RememberTextData(gpu, batchData);
 
         var version = GetImmediateRenderVersion(gpu.Mesh!);
         Interlocked.Increment(ref s_textPrepareTotalCalls);
@@ -1295,13 +3005,14 @@ public sealed class UIBatchCollector : IDisposable
 
         if (!prepared)
         {
+            FailCurrentUiPublicationAuthoring("The published UI text draw is not prepared for rendering: " + prepareReason);
             Interlocked.Increment(ref s_textPrepareFailureCount);
             s_textLastPrepareReason = prepareReason;
             if (!s_textPrepareReasonCounts.TryGetValue(prepareReason, out int reasonCount))
                 reasonCount = 0;
             s_textPrepareReasonCounts[prepareReason] = reasonCount + 1;
 
-            if (s_textPrepareDiagCount++ < 40)
+            if (BatchDiagnosticsEnabled && s_textPrepareDiagCount++ < 40)
             {
                 string prepareDetail = textMesh.GetLastPrepareDetail();
                 Debug.Log(
@@ -1319,23 +3030,33 @@ public sealed class UIBatchCollector : IDisposable
                     string.IsNullOrEmpty(prepareDetail) ? "<none>" : prepareDetail);
             }
 
-            MaybeLogTextPrepareSummary();
+            if (BatchDiagnosticsEnabled)
+                MaybeLogTextPrepareSummary();
             return;
         }
 
         s_textLastPreparedFrame = RuntimeEngine.Rendering.State.RenderFrameId;
-        MaybeLogTextPrepareSummary();
+        if (BatchDiagnosticsEnabled)
+            MaybeLogTextPrepareSummary();
 
+        bool textDrawSubmitted = false;
+        UIStaticDrawCandidate cacheCandidate = CaptureStaticTextDrawCandidate(
+            renderer, textMesh, batchData, gpu);
         ApplyBatchCropping(batchData.CropRegion);
         try
         {
+            using UIStaticDrawScope cacheScope = new(in cacheCandidate);
             if (profileGpu)
             {
                 using (profiler.StartScope($"UIBatchTextDraw[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
+                {
+                    textDrawSubmitted = true;
                     textMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
+                }
             }
             else
             {
+                textDrawSubmitted = true;
                 textMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, (uint)batchData.TotalGlyphs);
             }
         }
@@ -1344,7 +3065,75 @@ public sealed class UIBatchCollector : IDisposable
             material?.SetInt(TextRenderLayerUniformName, TextRenderLayerCombined);
             material?.SetInt(TextRenderLayerVertexUniformName, TextRenderLayerCombined);
             DisableBatchCropping();
+            if (textDrawSubmitted && (renderer.BackendId == RendererBackendId.OpenGL ||
+                renderer.BackendId == RendererBackendId.Vulkan))
+            {
+                gpu.Submitted = true;
+                XRGpuFence? previous = gpu.Fence;
+                gpu.Fence = null;
+                previous?.Dispose();
+                if (_activeReceipt is null)
+                    gpu.Fence = renderer.InsertGpuFence() ??
+                        throw new InvalidOperationException("UI text batching requires a GPU completion fence.");
+            }
+            else if (textDrawSubmitted)
+                gpu.Submitted = true;
         }
+    }
+
+    private UIStaticDrawCandidate CaptureStaticTextDrawCandidate(
+        AbstractRenderer renderer, XRMeshRenderer mesh,
+        TextBatchData batch, TextGPUResources gpu)
+    {
+        if (renderer.BackendId != RendererBackendId.Vulkan ||
+            !ReferenceEquals(mesh, gpu.Mesh) ||
+            batch.AtlasSnapshot is not { } snapshot ||
+            !ReferenceEquals(snapshot.Texture, batch.Atlas) ||
+            !batch.CompositionOwner.IsExplicit ||
+            batch.CompositionOwner.Kind != EUICompositionLayerKind.StaticChrome ||
+            batch.CompositionSegmentIdentity == 0 ||
+            batch.CompositionSegmentRevision == 0 ||
+            _activeReceipt is not { } receipt ||
+            !ReferenceEquals(receipt.Renderer, renderer) ||
+            _renderingPublication is not
+            { AuthoringDrawSpace: ECanvasDrawSpace.Screen,
+              DrawSpace: ECanvasDrawSpace.Screen,
+              AuthoringOffscreen: false } publication ||
+            !ReferenceEquals(publication.RenderRecordStore, _renderPublishedStorage) ||
+            !ReferenceEquals(publication.CompositionStorage, _renderCompositionStorage) ||
+            gpu.GlyphTransformsBuf is null || gpu.GlyphTexCoordsBuf is null ||
+            gpu.TextInstanceBuf is null || gpu.GlyphTextIndexBuf is null ||
+            gpu.GlyphDrawIndexBuf is null)
+            return default;
+
+        UIIndexedDrawIntent intent = UIIndexedDrawIntent.Capture(mesh,
+            EPrimitiveType.Triangles, checked((uint)batch.TotalGlyphs));
+        UIStaticDrawContract contract = new(publication.CanvasLifetime,
+            batch.CompositionOwner, batch.CompositionSegmentIdentity,
+            batch.CompositionSegmentRevision, batch.RunId,
+            renderer.BackendGeneration, intent)
+        {
+            CapturedMesh = mesh.Mesh,
+            IsText = true,
+            TextAtlasSnapshot = snapshot,
+            TextAtlas = snapshot.Texture,
+            TextAtlasType = batch.AtlasType,
+            TextDistanceRange = batch.DistanceRange,
+            TextDistanceRangeMiddle = batch.DistanceRangeMiddle,
+            TextMsdfFillBias = batch.MsdfFillBias,
+            TextDebugMode = batch.DebugMode,
+            TextGlyphTransforms = gpu.GlyphTransformsBuf,
+            TextGlyphTransformsRevision = gpu.GlyphTransformsBuf.Revision,
+            TextGlyphTexCoords = gpu.GlyphTexCoordsBuf,
+            TextGlyphTexCoordsRevision = gpu.GlyphTexCoordsBuf.Revision,
+            TextInstances = gpu.TextInstanceBuf,
+            TextInstancesRevision = gpu.TextInstanceBuf.Revision,
+            TextGlyphIndices = gpu.GlyphTextIndexBuf,
+            TextGlyphIndicesRevision = gpu.GlyphTextIndexBuf.Revision,
+            TextDrawIndices = gpu.GlyphDrawIndexBuf,
+            TextDrawIndicesRevision = gpu.GlyphDrawIndexBuf.Revision,
+        };
+        return contract.IsDefined ? new(contract, renderer, receipt.Id) : default;
     }
 
     private static void MaybeLogTextPrepareSummary()
@@ -1402,6 +3191,11 @@ public sealed class UIBatchCollector : IDisposable
 
     private void FinalizeAndUploadTextData(TextBatchData batchData, TextGPUResources gpu, XRTexture2D atlas)
     {
+        if (AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+        {
+            UploadRetainedTextData(batchData, gpu);
+            return;
+        }
         uint totalGlyphs = (uint)batchData.TotalGlyphs;
         uint textCount = (uint)batchData.Entries.Count;
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU &&
@@ -1426,6 +3220,14 @@ public sealed class UIBatchCollector : IDisposable
         }
         if (resized)
             gpu.NeedsPush = true;
+
+        if (!gpu.NeedsPush && gpu.HasUploadedData &&
+            gpu.UploadedEntries.Count == batchData.Entries.Count &&
+            HaveSameGlyphCounts(gpu.UploadedEntries, batchData.Entries))
+        {
+            UploadChangedTextRanges(batchData.Entries, gpu);
+            return;
+        }
 
         bool fullUpload = gpu.NeedsPush;
         uint glyphElementCount = fullUpload ? gpu.GlyphCapacity : totalGlyphs;
@@ -1457,15 +3259,15 @@ public sealed class UIBatchCollector : IDisposable
             // Write glyph data
             for (int g = 0; g < entry.GlyphCount; g++)
             {
-                var (transform, uvs) = batchData.Glyphs[entry.GlyphOffset + g];
-                glyphTransforms[glyphIndex] = transform;
-                glyphUvs[glyphIndex] = uvs;
+                UITextLayoutGlyph glyph = entry.Layout.Glyphs.Span[g];
+                glyphTransforms[glyphIndex] = glyph.Transform;
+                glyphUvs[glyphIndex] = glyph.Uvs;
                 glyphIndices[glyphIndex] = (uint)t;
                 glyphIndex++;
             }
         }
 
-        if (s_textUploadDiagCount++ < 40)
+        if (BatchDiagnosticsEnabled && s_textUploadDiagCount++ < 40)
         {
             Debug.Log(
                 ELogCategory.UI,
@@ -1485,7 +3287,338 @@ public sealed class UIBatchCollector : IDisposable
         glyphUvWriter.Commit();
         textInstanceWriter.Commit();
         glyphIndexWriter.Commit();
+        UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted,
+            (long)glyphElementCount * 36L + (long)textElementCount * 16L);
+        UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, 4);
         gpu.NeedsPush = false;
+    }
+
+    private static void UploadRetainedTextData(TextBatchData batch, TextGPUResources gpu)
+    {
+        List<RetainedGlyphRanges.Allocation?> allocations = gpu.ActiveGlyphRanges;
+        List<uint> textSlots = gpu.ActiveTextSlots;
+        List<(uint Slot, TextEntry Entry)> sortedTextSlots = gpu.SortedTextSlots;
+        List<uint> drawIndices = gpu.CurrentDrawIndices;
+        allocations.Clear();
+        textSlots.Clear();
+        sortedTextSlots.Clear();
+        drawIndices.Clear();
+        gpu.GlyphRanges.BeginFrame();
+        gpu.TextSlots.BeginFrame();
+        for (int textIndex = 0; textIndex < batch.Entries.Count; textIndex++)
+        {
+            TextEntry entry = batch.Entries[textIndex];
+            uint textSlot = gpu.TextSlots.Reserve(entry.PrimitiveHandle, textIndex).Index;
+            textSlots.Add(textSlot);
+            sortedTextSlots.Add((textSlot, entry));
+            RetainedGlyphRanges.Allocation? allocation = entry.GlyphCount == 0 ? null :
+                gpu.GlyphRanges.Reserve(entry.PrimitiveHandle, textIndex, entry.GlyphCount);
+            allocations.Add(allocation);
+            if (allocation is null)
+                continue;
+            for (int glyph = 0; glyph < entry.GlyphCount; glyph++)
+                drawIndices.Add(checked(allocation.Offset + (uint)glyph));
+        }
+        gpu.GlyphRanges.EndFrame();
+        gpu.TextSlots.EndFrame();
+        sortedTextSlots.Sort(static (a, b) => a.Slot.CompareTo(b.Slot));
+
+        uint storageCount = gpu.GlyphRanges.HighWater;
+        uint drawCount = (uint)drawIndices.Count;
+        uint textCount = gpu.TextSlots.HighWater;
+        if (storageCount > MaxRetainedGlyphSlotsPerRun || drawCount > MaxRetainedGlyphSlotsPerRun)
+            throw new InvalidOperationException("A UI text run exceeds its retained GPU glyph budget.");
+        if (textCount > MaxRetainedQuadSlotsPerRun)
+            throw new InvalidOperationException("A UI text run exceeds its retained GPU instance budget.");
+        bool full = gpu.NeedsPush;
+        if (storageCount > gpu.GlyphCapacity)
+        {
+            gpu.GlyphCapacity = NextPowerOf2(storageCount);
+            gpu.GlyphTransformsBuf!.Resize(gpu.GlyphCapacity);
+            gpu.GlyphTexCoordsBuf!.Resize(gpu.GlyphCapacity);
+            gpu.GlyphTextIndexBuf!.Resize(gpu.GlyphCapacity);
+            full = true;
+        }
+        if (drawCount > gpu.DrawCapacity)
+        {
+            gpu.DrawCapacity = NextPowerOf2(drawCount);
+            gpu.GlyphDrawIndexBuf!.Resize(gpu.DrawCapacity);
+            full = true;
+        }
+        if (textCount > gpu.TextCapacity)
+        {
+            gpu.TextCapacity = NextPowerOf2(textCount);
+            gpu.TextInstanceBuf!.Resize(gpu.TextCapacity * TextInstanceVec4Count);
+            full = true;
+        }
+        while (gpu.UploadedTextSlots.Count < textCount)
+        {
+            gpu.UploadedTextSlots.Add(default);
+            gpu.InitializedTextSlots.Add(false);
+        }
+
+        if (full)
+        {
+            for (int index = 0; index < gpu.InitializedTextSlots.Count; index++)
+                gpu.InitializedTextSlots[index] = false;
+            XRBufferWriter<Vector4> transforms = gpu.GlyphTransformsBuf!.Alloc<Vector4>(storageCount);
+            XRBufferWriter<Vector4> uvs = gpu.GlyphTexCoordsBuf!.Alloc<Vector4>(storageCount);
+            XRBufferWriter<uint> textIndices = gpu.GlyphTextIndexBuf!.Alloc<uint>(storageCount);
+            XRBufferWriter<uint> draw = gpu.GlyphDrawIndexBuf!.Alloc<uint>(drawCount);
+            XRBufferWriter<Vector4> instances = gpu.TextInstanceBuf!.Alloc<Vector4>(textCount * TextInstanceVec4Count);
+            transforms.Span.Clear();
+            uvs.Span.Clear();
+            textIndices.Span.Clear();
+            draw.Span.Clear();
+            instances.Span.Clear();
+            for (int textIndex = 0; textIndex < batch.Entries.Count; textIndex++)
+            {
+                TextEntry entry = batch.Entries[textIndex];
+                RetainedGlyphRanges.Allocation? allocation = allocations[textIndex];
+                if (allocation is null) continue;
+                for (int glyph = 0; glyph < entry.GlyphCount; glyph++)
+                {
+                    uint slot = allocation.Offset + (uint)glyph;
+                    UITextLayoutGlyph value = entry.Layout.Glyphs.Span[glyph];
+                    transforms.Span[(int)slot] = value.Transform;
+                    uvs.Span[(int)slot] = value.Uvs;
+                    textIndices.Span[(int)slot] = textSlots[textIndex];
+                }
+            }
+            for (int index = 0; index < drawIndices.Count; index++)
+                draw.Span[index] = drawIndices[index];
+            foreach ((uint slot, TextEntry entry) in sortedTextSlots)
+                WriteRetainedTextInstance(entry,
+                    instances.Span.Slice(checked((int)slot * (int)TextInstanceVec4Count), (int)TextInstanceVec4Count));
+            transforms.Commit();
+            uvs.Commit();
+            textIndices.Commit();
+            draw.Commit();
+            instances.Commit();
+            UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted,
+                (long)storageCount * 36L + (long)drawCount * 4L +
+                (long)textCount * TextInstanceVec4Count * 16L);
+            UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, 5);
+        }
+        else
+        {
+            UploadChangedGlyphRanges(batch, gpu, geometry: true);
+            UploadChangedGlyphRanges(batch, gpu, geometry: false);
+            int firstText = 0;
+            while (firstText < sortedTextSlots.Count)
+            {
+                while (firstText < sortedTextSlots.Count &&
+                    gpu.InitializedTextSlots[(int)sortedTextSlots[firstText].Slot] &&
+                    !TextInstanceChanged(sortedTextSlots[firstText].Entry,
+                        gpu.UploadedTextSlots[(int)sortedTextSlots[firstText].Slot])) firstText++;
+                if (firstText == sortedTextSlots.Count) break;
+                int endText = firstText + 1;
+                while (endText < sortedTextSlots.Count &&
+                    sortedTextSlots[endText].Slot == sortedTextSlots[endText - 1].Slot + 1 &&
+                    (!gpu.InitializedTextSlots[(int)sortedTextSlots[endText].Slot] ||
+                     TextInstanceChanged(sortedTextSlots[endText].Entry,
+                         gpu.UploadedTextSlots[(int)sortedTextSlots[endText].Slot]))) endText++;
+                uint offset = sortedTextSlots[firstText].Slot * TextInstanceVec4Count;
+                uint count = (uint)(endText - firstText) * TextInstanceVec4Count;
+                XRBufferWriter<Vector4> instances = gpu.TextInstanceBuf!.AllocAt<Vector4>(offset, count);
+                for (int index = firstText; index < endText; index++)
+                    WriteRetainedTextInstance(sortedTextSlots[index].Entry,
+                        instances.Span.Slice((index - firstText) * (int)TextInstanceVec4Count, (int)TextInstanceVec4Count));
+                instances.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)count * 16L);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+                firstText = endText;
+            }
+
+            List<uint> previous = gpu.UploadedDrawIndices;
+            int first = 0;
+            while (first < drawIndices.Count)
+            {
+                while (first < drawIndices.Count && first < previous.Count &&
+                    drawIndices[first] == previous[first]) first++;
+                if (first == drawIndices.Count) break;
+                int end = first + 1;
+                while (end < drawIndices.Count &&
+                    (end >= previous.Count || drawIndices[end] != previous[end])) end++;
+                XRBufferWriter<uint> draw = gpu.GlyphDrawIndexBuf!.AllocAt<uint>((uint)first, (uint)(end - first));
+                for (int index = first; index < end; index++)
+                    draw.Span[index - first] = drawIndices[index];
+                draw.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (end - first) * 4L);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+                first = end;
+            }
+        }
+        for (int textIndex = 0; textIndex < batch.Entries.Count; textIndex++)
+        {
+            RetainedGlyphRanges.Allocation? allocation = allocations[textIndex];
+            if (allocation is null) continue;
+            allocation.Layout = batch.Entries[textIndex].Layout;
+            allocation.TextIndex = checked((int)textSlots[textIndex]);
+        }
+        foreach ((uint slot, TextEntry entry) in sortedTextSlots)
+        {
+            gpu.UploadedTextSlots[(int)slot] = entry;
+            gpu.InitializedTextSlots[(int)slot] = true;
+        }
+        gpu.UploadedDrawIndices.Clear();
+        gpu.UploadedDrawIndices.AddRange(drawIndices);
+        gpu.NeedsPush = false;
+    }
+
+    private static void UploadChangedGlyphRanges(TextBatchData batch, TextGPUResources gpu, bool geometry)
+    {
+        List<(uint Offset, uint Count, int EntryIndex)> dirty = gpu.DirtyGlyphRanges;
+        dirty.Clear();
+        for (int index = 0; index < batch.Entries.Count; index++)
+        {
+            RetainedGlyphRanges.Allocation? allocation = gpu.ActiveGlyphRanges[index];
+            if (allocation is null) continue;
+            bool changed = geometry
+                ? !ReferenceEquals(allocation.Layout, batch.Entries[index].Layout)
+                : allocation.TextIndex != checked((int)gpu.ActiveTextSlots[index]);
+            if (changed)
+                dirty.Add((allocation.Offset, (uint)batch.Entries[index].GlyphCount, index));
+        }
+        dirty.Sort(static (a, b) => a.Offset.CompareTo(b.Offset));
+        for (int first = 0; first < dirty.Count;)
+        {
+            int end = first + 1;
+            uint last = checked(dirty[first].Offset + dirty[first].Count);
+            while (end < dirty.Count && dirty[end].Offset == last)
+                last = checked(last + dirty[end++].Count);
+            uint count = last - dirty[first].Offset;
+            if (geometry)
+            {
+                XRBufferWriter<Vector4> transforms = gpu.GlyphTransformsBuf!.AllocAt<Vector4>(dirty[first].Offset, count);
+                XRBufferWriter<Vector4> uvs = gpu.GlyphTexCoordsBuf!.AllocAt<Vector4>(dirty[first].Offset, count);
+                for (int index = first; index < end; index++)
+                {
+                    UITextLayoutResult layout = batch.Entries[dirty[index].EntryIndex].Layout;
+                    int baseIndex = checked((int)(dirty[index].Offset - dirty[first].Offset));
+                    for (int glyph = 0; glyph < dirty[index].Count; glyph++)
+                    {
+                        UITextLayoutGlyph value = layout.Glyphs.Span[glyph];
+                        transforms.Span[baseIndex + glyph] = value.Transform;
+                        uvs.Span[baseIndex + glyph] = value.Uvs;
+                    }
+                }
+                transforms.Commit();
+                uvs.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)count * 32L);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, 2);
+            }
+            else
+            {
+                XRBufferWriter<uint> indices = gpu.GlyphTextIndexBuf!.AllocAt<uint>(dirty[first].Offset, count);
+                for (int index = first; index < end; index++)
+                {
+                    int baseIndex = checked((int)(dirty[index].Offset - dirty[first].Offset));
+                    indices.Span.Slice(baseIndex, checked((int)dirty[index].Count))
+                        .Fill(gpu.ActiveTextSlots[dirty[index].EntryIndex]);
+                }
+                indices.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)count * 4L);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+            }
+            first = end;
+        }
+    }
+
+    private static void WriteRetainedTextInstances(List<TextEntry> entries, int first, int end,
+        Span<Vector4> destination)
+    {
+        int index = 0;
+        for (int textIndex = first; textIndex < end; textIndex++)
+        {
+            TextEntry entry = entries[textIndex];
+            WriteMatrix4x4(destination, ref index, in entry.WorldMatrix);
+            destination[index++] = entry.TextColor;
+            destination[index++] = entry.UIXYWH;
+            destination[index++] = entry.OutlineColor;
+            destination[index++] = new Vector4(entry.OutlineThickness, 0, 0, 0);
+        }
+    }
+
+    private static void WriteRetainedTextInstance(TextEntry entry, Span<Vector4> destination)
+    {
+        int index = 0;
+        WriteMatrix4x4(destination, ref index, in entry.WorldMatrix);
+        destination[index++] = entry.TextColor;
+        destination[index++] = entry.UIXYWH;
+        destination[index++] = entry.OutlineColor;
+        destination[index] = new Vector4(entry.OutlineThickness, 0, 0, 0);
+    }
+
+    private static bool HaveSameGlyphCounts(List<TextEntry> previous, List<TextEntry> current)
+    {
+        for (int index = 0; index < current.Count; index++)
+            if (previous[index].GlyphCount != current[index].GlyphCount)
+                return false;
+        return true;
+    }
+
+    private static bool TextInstanceChanged(in TextEntry current, in TextEntry previous)
+        => current.WorldMatrix != previous.WorldMatrix || current.TextColor != previous.TextColor ||
+           current.UIXYWH != previous.UIXYWH || current.OutlineColor != previous.OutlineColor ||
+           current.OutlineThickness != previous.OutlineThickness;
+
+    private static void UploadChangedTextRanges(List<TextEntry> entries, TextGPUResources gpu)
+    {
+        List<TextEntry> previous = gpu.UploadedEntries;
+        int first = 0;
+        while (first < entries.Count)
+        {
+            while (first < entries.Count && !TextInstanceChanged(entries[first], previous[first]))
+                first++;
+            if (first == entries.Count) break;
+            int end = first + 1;
+            while (end < entries.Count && TextInstanceChanged(entries[end], previous[end])) end++;
+            uint elementOffset = (uint)first * TextInstanceVec4Count;
+            uint elementCount = (uint)(end - first) * TextInstanceVec4Count;
+            XRBufferWriter<Vector4> writer = gpu.TextInstanceBuf!.AllocAt<Vector4>(elementOffset, elementCount);
+            Span<Vector4> destination = writer.Span;
+            int writeIndex = 0;
+            for (int index = first; index < end; index++)
+            {
+                TextEntry entry = entries[index];
+                WriteMatrix4x4(destination, ref writeIndex, in entry.WorldMatrix);
+                destination[writeIndex++] = entry.TextColor;
+                destination[writeIndex++] = entry.UIXYWH;
+                destination[writeIndex++] = entry.OutlineColor;
+                destination[writeIndex++] = new Vector4(entry.OutlineThickness, 0, 0, 0);
+            }
+            writer.Commit();
+            UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)elementCount * 16);
+            UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges);
+            first = end;
+        }
+
+        int glyphOffset = 0;
+        for (int index = 0; index < entries.Count; index++)
+        {
+            TextEntry entry = entries[index];
+            if (!ReferenceEquals(entry.Layout, previous[index].Layout) && entry.GlyphCount != 0)
+            {
+                uint offset = (uint)glyphOffset;
+                uint count = (uint)entry.GlyphCount;
+                XRBufferWriter<Vector4> transforms = gpu.GlyphTransformsBuf!.AllocAt<Vector4>(offset, count);
+                XRBufferWriter<Vector4> uvs = gpu.GlyphTexCoordsBuf!.AllocAt<Vector4>(offset, count);
+                Span<Vector4> transformSpan = transforms.Span;
+                Span<Vector4> uvSpan = uvs.Span;
+                for (int glyph = 0; glyph < entry.GlyphCount; glyph++)
+                {
+                    UITextLayoutGlyph value = entry.Layout.Glyphs.Span[glyph];
+                    transformSpan[glyph] = value.Transform;
+                    uvSpan[glyph] = value.Uvs;
+                }
+                transforms.Commit();
+                uvs.Commit();
+                UIRuntimeCounters.Add(UIWorkCounter.BufferBytesCommitted, (long)count * 32);
+                UIRuntimeCounters.Add(UIWorkCounter.BufferCommitRanges, 2);
+            }
+            glyphOffset += entry.GlyphCount;
+        }
     }
 
     #endregion
@@ -1493,15 +3626,60 @@ public sealed class UIBatchCollector : IDisposable
     #region Helpers
 
     private static void DisableBatchCropping()
-        => AbstractRenderer.Current?.SetCroppingEnabled(false);
-
-    private static void ApplyBatchCropping(BoundingRectangle? cropRegion)
     {
         AbstractRenderer? renderer = AbstractRenderer.Current;
         if (renderer is null) return;
-        renderer.SetCroppingEnabled(cropRegion.HasValue);
-        if (cropRegion is { } region)
-            renderer.CropRenderArea(region);
+        BoundingRectangle prior = RuntimeEngine.Rendering.State.RenderingPipelineState?.CurrentCropRegion ?? BoundingRectangle.Empty;
+        if (prior.Width > 0 && prior.Height > 0)
+        {
+            renderer.SetCroppingEnabled(true);
+            renderer.CropRenderArea(prior);
+        }
+        else
+            renderer.SetCroppingEnabled(false);
+    }
+
+    private void ApplyBatchCropping(BoundingRectangle? cropRegion)
+    {
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null) return;
+        BoundingRectangle prior = RuntimeEngine.Rendering.State.RenderingPipelineState?.CurrentCropRegion ?? BoundingRectangle.Empty;
+        if (cropRegion is not { } region)
+        {
+            renderer.SetCroppingEnabled(prior.Width > 0 && prior.Height > 0);
+            if (prior.Width > 0 && prior.Height > 0) renderer.CropRenderArea(prior);
+            return;
+        }
+        if (_hasRasterRegion && _renderingPublication is { } publication)
+            region = MapCanvasCropToRaster(region, publication.CanvasBounds, _rasterRegion);
+        if (prior.Width > 0 && prior.Height > 0)
+        {
+            int left = Math.Max(region.X, prior.X);
+            int bottom = Math.Max(region.Y, prior.Y);
+            int right = Math.Min(region.X + region.Width, prior.X + prior.Width);
+            int top = Math.Min(region.Y + region.Height, prior.Y + prior.Height);
+            region = new BoundingRectangle(left, bottom, Math.Max(0, right - left), Math.Max(0, top - bottom));
+        }
+        renderer.SetCroppingEnabled(true);
+        renderer.CropRenderArea(region);
+    }
+
+    internal static BoundingRectangle MapCanvasCropToRaster(BoundingRectangle crop,
+        BoundingRectangleF canvas, BoundingRectangle raster)
+    {
+        if (canvas.Width <= 0 || canvas.Height <= 0 || raster.Width <= 0 || raster.Height <= 0)
+            return BoundingRectangle.Empty;
+        float scaleX = (float)raster.Width / canvas.Width;
+        float scaleY = (float)raster.Height / canvas.Height;
+        int left = Math.Clamp((int)MathF.Floor(raster.X + (crop.X - canvas.X) * scaleX),
+            raster.X, raster.X + raster.Width);
+        int bottom = Math.Clamp((int)MathF.Floor(raster.Y + (crop.Y - canvas.Y) * scaleY),
+            raster.Y, raster.Y + raster.Height);
+        int right = Math.Clamp((int)MathF.Ceiling(raster.X + (crop.X + crop.Width - canvas.X) * scaleX),
+            raster.X, raster.X + raster.Width);
+        int top = Math.Clamp((int)MathF.Ceiling(raster.Y + (crop.Y + crop.Height - canvas.Y) * scaleY),
+            raster.Y, raster.Y + raster.Height);
+        return new BoundingRectangle(left, bottom, Math.Max(0, right - left), Math.Max(0, top - bottom));
     }
 
     /// <summary>The shared screen batch has one authored straight-alpha raster profile.</summary>
@@ -1558,6 +3736,7 @@ public sealed class UIBatchCollector : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool TextBatchMatches(
         CollectPassState state,
+        int zIndex,
         XRTexture2D fontAtlas,
         int atlasType,
         float distanceRange,
@@ -1566,6 +3745,7 @@ public sealed class UIBatchCollector : IDisposable
         int debugMode,
         BoundingRectangle? cropRegion)
         => state.ActiveKind == EBatchMarkerKind.Text &&
+           state.ActiveZIndex == zIndex &&
            state.ActiveCropRegion == cropRegion &&
            ReferenceEquals(state.ActiveTextAtlas, fontAtlas) &&
            state.ActiveTextAtlasType == atlasType &&
@@ -1602,7 +3782,117 @@ public sealed class UIBatchCollector : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        Clear();
+        List<Exception>? failures = null;
+        try { BindRenderingPublication(null); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        lock (CollectorRegistryGate)
+        {
+            for (int index = CollectorRegistry.Count - 1; index >= 0; index--)
+                if (!CollectorRegistry[index].TryGetTarget(out UIBatchCollector? collector) ||
+                    ReferenceEquals(collector, this))
+                    CollectorRegistry.RemoveAt(index);
+        }
+        try { Clear(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        try { DisposeBackdropSurfaces(); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
+        foreach (var pair in _materialRunGPU)
+            foreach (MaterialGPUResources cohort in pair.Value)
+            {
+                if (cohort.Receipt is { } lease && !lease.IsRetired)
+                {
+                    try
+                    {
+                        lock (CollectorRegistryGate)
+                            DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, cohort, null));
+                    }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
+                    continue;
+                }
+                if (cohort.Receipt is not null)
+                {
+                    try { ForceReleaseReceipt(cohort.Receipt); }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
+                    cohort.Receipt = null;
+                }
+                try { DestroyMaterialGPU(cohort); }
+                catch (Exception failure)
+                {
+                    (failures ??= []).Add(failure);
+                    lock (CollectorRegistryGate)
+                        DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, cohort, null));
+                }
+            }
+        _materialRunGPU.Clear();
+        if (_legacyMaterialGpuCreated)
+            try { DestroyLegacyMaterialGPU(); }
+            catch (Exception failure) { (failures ??= []).Add(failure); }
+        foreach (var pair in _textGPU)
+            foreach (TextGPUResources gpu in pair.Value)
+            {
+                if (gpu.Receipt is { } lease && !lease.IsRetired)
+                {
+                    try
+                    {
+                        lock (CollectorRegistryGate)
+                            DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, null, gpu));
+                    }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
+                    continue;
+                }
+                if (gpu.Receipt is not null)
+                {
+                    try { ForceReleaseReceipt(gpu.Receipt); }
+                    catch (Exception failure) { (failures ??= []).Add(failure); }
+                    gpu.Receipt = null;
+                }
+                try { gpu.Dispose(); }
+                catch (Exception failure)
+                {
+                    (failures ??= []).Add(failure);
+                    lock (CollectorRegistryGate)
+                        DeferredCohortRetirement.Add((pair.Key.Renderer, pair.Key.BackendGeneration, null, gpu));
+                }
+            }
+        _textGPU.Clear();
+        _gpuCohortCount = 0;
+        if (failures is not null)
+            throw new AggregateException("UI batch collector cleanup failed.", failures);
+    }
+
+    private static void DestroyMaterialGPU(MaterialGPUResources gpu)
+    {
+        gpu.Fence?.Dispose();
+        gpu.Fence = null;
+        XRMeshRenderer? meshRenderer = gpu.Mesh;
+        XRMesh? mesh = meshRenderer?.Mesh;
+        XRMaterial? material = meshRenderer?.Material;
+        gpu.Transform?.Destroy();
+        gpu.Color?.Destroy();
+        gpu.Bounds?.Destroy();
+        gpu.Uv?.Destroy();
+        gpu.BorderWidth?.Destroy();
+        gpu.DrawIndex?.Destroy();
+        XRMaterial? borderMaterial = gpu.BorderMesh?.Material;
+        gpu.BorderMesh?.Destroy();
+        borderMaterial?.Destroy();
+        XRMaterial? backdropMaterial = gpu.BackdropMesh?.Material;
+        gpu.BackdropMesh?.Destroy();
+        backdropMaterial?.Destroy();
+        foreach (XRMeshRenderer texturedMesh in gpu.TextureMeshes.Values)
+        {
+            XRMaterial? texturedMaterial = texturedMesh.Material;
+            texturedMesh.Destroy();
+            texturedMaterial?.Destroy();
+        }
+        gpu.TextureMeshes.Clear();
+        meshRenderer?.Destroy();
+        mesh?.Destroy();
+        material?.Destroy();
+    }
+
+    private void DestroyLegacyMaterialGPU()
+    {
         XRMeshRenderer? meshRenderer = _matQuadMesh;
         XRMesh? mesh = meshRenderer?.Mesh;
         XRMaterial? material = meshRenderer?.Material;
@@ -1610,6 +3900,14 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadColorBuf?.Destroy();
         _matQuadBoundsBuf?.Destroy();
         _matQuadUvBuf?.Destroy();
+        _matQuadBorderWidthBuf?.Destroy();
+        _matQuadDrawIndexBuf?.Destroy();
+        XRMaterial? borderMaterial = _matQuadBorderMesh?.Material;
+        _matQuadBorderMesh?.Destroy();
+        borderMaterial?.Destroy();
+        XRMaterial? backdropMaterial = _matQuadBackdropMesh?.Material;
+        _matQuadBackdropMesh?.Destroy();
+        backdropMaterial?.Destroy();
         foreach (XRMeshRenderer texturedMesh in _materialTextureMeshes.Values)
         {
             XRMaterial? texturedMaterial = texturedMesh.Material;
@@ -1625,11 +3923,12 @@ public sealed class UIBatchCollector : IDisposable
         _matQuadColorBuf = null;
         _matQuadBoundsBuf = null;
         _matQuadUvBuf = null;
+        _matQuadBorderWidthBuf = null;
+        _matQuadDrawIndexBuf = null;
+        _matQuadBorderMesh = null;
+        _matQuadBackdropMesh = null;
+        _matQuadBackdropTexture = null;
         _matQuadMesh = null;
-
-        foreach (var gpu in _textGPU.Values)
-            gpu.Dispose();
-        _textGPU.Clear();
     }
 
     #endregion

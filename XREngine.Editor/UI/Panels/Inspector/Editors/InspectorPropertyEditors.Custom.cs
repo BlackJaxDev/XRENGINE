@@ -303,9 +303,9 @@ public static partial class InspectorPropertyEditors
         return values;
     }
 
-    private static void CreateInspectorButton(SceneNode parent, string text, Action onClick)
+    private static UIButtonComponent CreateInspectorButton(SceneNode parent, string text, Action onClick)
     {
-        NativeUIElements.CreateButton(parent, text, _ =>
+        var (_, button, _, _) = NativeUIElements.CreateButton(parent, text, _ =>
         {
             try
             {
@@ -316,11 +316,12 @@ public static partial class InspectorPropertyEditors
                 Debug.LogException(ex, $"Inspector action '{text}' failed.");
             }
         });
+        return button;
     }
 
     private static UIListTransform EnsureVerticalLayout(SceneNode node)
     {
-        var list = node.SetTransform<UIListTransform>();
+        var list = node.GetTransformAs<UIListTransform>(true)!;
         list.DisplayHorizontal = false;
         list.ItemSpacing = 6.0f;
         list.ItemAlignment = EListAlignment.TopOrLeft;
@@ -331,7 +332,7 @@ public static partial class InspectorPropertyEditors
     private static SceneNode CreateInspectorCard(SceneNode parent)
     {
         var cardNode = parent.NewChild<UIMaterialComponent>(out var matComp);
-        matComp.Material = EditorPanel.MakeBackgroundMaterial();
+        EditorPanel.ApplyBackground(matComp);
         var cardLayout = cardNode.SetTransform<UIListTransform>();
         cardLayout.DisplayHorizontal = false;
         cardLayout.ItemSpacing = 2.0f;

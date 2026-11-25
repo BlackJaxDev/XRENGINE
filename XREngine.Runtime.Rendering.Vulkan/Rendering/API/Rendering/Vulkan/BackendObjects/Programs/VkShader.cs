@@ -65,6 +65,37 @@ internal sealed unsafe partial class VkShader(
         public bool IsCompilePending { get; private set; }
         public ShaderCompileStatus CompileStatus { get; private set; } = ShaderCompileStatus.Empty;
         public VulkanShaderArtifact? LastArtifact { get; private set; }
+        /// <summary>Reads the shader input that owns the current native module.</summary>
+        internal bool TryGetCurrentCompiledArtifact(
+            out long sourceRevision, out int configVersion,
+            out ulong moduleHandle, out string? artifactIdentity,
+            out string? entryPoint)
+        {
+            sourceRevision = _compiledSourceRevision;
+            configVersion = _compiledShaderConfigVersion;
+            moduleHandle = _shaderModule.Handle;
+            VulkanShaderArtifact? artifact = LastArtifact;
+            artifactIdentity = artifact?.Identity;
+            entryPoint = artifact?.EntryPoint;
+            return IsGenerated && IsCompiled && !IsCompilePending &&
+                CompileStatus.IsCompiled &&
+                !CompileStatus.IsCompilePending &&
+                !CompileStatus.HasFailure &&
+                moduleHandle != 0UL && artifact is not null &&
+                sourceRevision == Data.SourceRevision &&
+                configVersion == RuntimeEngine.Rendering.Settings.ShaderConfigVersion &&
+                artifact.ShaderConfigVersion == configVersion &&
+                artifact.UsesVulkanClipDepthRemap ==
+                    _compiledUsesVulkanClipDepthRemap &&
+                string.Equals(artifact.TransformFeedbackPlanIdentity,
+                    _compiledTransformFeedbackPlanIdentity,
+                    StringComparison.Ordinal) &&
+                !string.IsNullOrEmpty(artifactIdentity) &&
+                !string.IsNullOrEmpty(entryPoint) &&
+                string.Equals(CompileStatus.ArtifactIdentity,
+                    artifactIdentity, StringComparison.Ordinal) &&
+                _shaderStageCreateInfo.Module.Handle == moduleHandle;
+        }
         public VulkanShaderCompileFailure? LastCompileFailure { get; private set; }
         internal event Action<VkShader>? ShaderInvalidated;
 

@@ -87,7 +87,7 @@ public sealed class RenderBenchProductionScene : IDisposable
         World = new XRWorld("RenderBench Production Scene");
         XRScene scene = new("RenderBench Production Scene Root");
         SceneNode root = new("RenderBench Production Root");
-        scene.RootNodes.Add(root);
+        scene.SceneRoots.Add(root);
         World.Scenes.Add(scene);
 
         _boxMesh = XRMesh.Shapes.SolidBox(new Vector3(-0.5f), new Vector3(0.5f));
@@ -682,7 +682,7 @@ public sealed class RenderBenchProductionScene : IDisposable
         if (_candidateNodes.ContainsKey(7))
             return;
 
-        SceneNode root = World.Scenes[0].RootNodes[0];
+        SceneNode root = World.Scenes[0].SceneRoots[0];
         XRMaterial leftOccluder = CreateMaterial("Heavy Occluder Left", new ColorF4(0.30f, 0.30f, 0.30f, 1.0f));
         XRMaterial rightOccluder = CreateMaterial("Heavy Occluder Right", new ColorF4(0.40f, 0.40f, 0.40f, 1.0f));
         _occluderMaterials.Add(leftOccluder);
@@ -718,7 +718,7 @@ public sealed class RenderBenchProductionScene : IDisposable
 
         XRMaterial opaque = CreateMaterial("Masked Coverage Opaque Control", ColorF4.White);
         _occluderMaterials.Add(opaque);
-        SceneNode root = World.Scenes[0].RootNodes[0];
+        SceneNode root = World.Scenes[0].SceneRoots[0];
         Vector3 panelPosition = new(-2.0f, 1.0f, 3.0f);
         // Eight world units leave a genuinely covered interior over multiple 64-pixel
         // coarse tiles at the scenario resolution. Palette candidate 1 remains outside;
@@ -763,7 +763,7 @@ public sealed class RenderBenchProductionScene : IDisposable
     {
         if ((uint)id >= MaximumCandidates)
             throw new ArgumentOutOfRangeException(nameof(id), id, $"Candidate ids must be in [0, {MaximumCandidates - 1}].");
-        if (!_candidateNodes.TryAdd(id, AddBox(World.Scenes[0].RootNodes[0], $"Candidate {id}", position, scale, material)))
+        if (!_candidateNodes.TryAdd(id, AddBox(World.Scenes[0].SceneRoots[0], $"Candidate {id}", position, scale, material)))
             throw new InvalidOperationException($"Candidate {id} already exists.");
         _candidateIdsByMaterial.Add(material, id);
     }
@@ -783,7 +783,7 @@ public sealed class RenderBenchProductionScene : IDisposable
     /// <summary>Provides deterministic direct light for normal Advanced fixture shading.</summary>
     private void AddAdvancedFixtureDirectionalLight()
     {
-        SceneNode node = World.Scenes[0].RootNodes[0].NewChild("Advanced Fixture Directional Light");
+        SceneNode node = World.Scenes[0].SceneRoots[0].NewChild("Advanced Fixture Directional Light");
         Transform transform = node.SetTransform<Transform>();
         transform.Rotation = Quaternion.CreateFromYawPitchRoll(
             XRMath.DegToRad(-120.0f),

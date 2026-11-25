@@ -79,6 +79,16 @@ namespace XREngine.Rendering
         public virtual XREngine.Rendering.RenderGraph.Diagnostics.IRenderGraphPlanDiagnosticsSource? PlanDiagnostics => null;
 
         public long BackendGeneration { get; }
+
+        /// <summary>Gets a native proof for the active window dispatch, if one exists.</summary>
+        internal virtual bool TryGetCurrentUiBackdropOutputOverwriteProof(
+            XRWindow window, out UI.UIBackdropOutputOverwriteProof proof)
+        {
+            proof = default;
+            return false;
+        }
+
+        internal virtual void InvalidateUiBackdropOutputOverwriteProof() { }
         public virtual bool IsBackendReplacementFrameReady => true;
         /// <summary>
         /// Whether a render-command exception must abort the complete frame rather than
@@ -88,6 +98,311 @@ namespace XREngine.Rendering
         internal virtual bool AdvancedPickingSourceRequiresSubmissionAcceptance => false;
         private int _acceptsBackendWork = 1;
         private long _nextOutputCompletionReceiptId;
+        private static long s_nextUiPublicationReceiptId;
+        private readonly Dictionary<ulong, (UI.UIPublication Publication, XRGpuFence? Fence,
+            long BackendGeneration)> _uiPublicationFallbackFences = [];
+        private readonly object _uiPublicationFallbackGate = new();
+        private readonly Dictionary<ulong, (ulong FrameId, string? FailureReason)> _uiPublicationAuthoring = [];
+        private readonly object _uiPublicationAuthoringGate = new();
+        [ThreadStatic] private static ulong _currentUiPublicationReceiptId;
+
+        /// <summary>The independently owned UI draw cohort on this render thread.</summary>
+        public ulong CurrentUiPublicationReceiptId => _currentUiPublicationReceiptId;
+
+        /// <summary>Starts exact native draw proof for one frozen UI mesh command.</summary>
+        internal virtual bool TryBeginUiIndexedDrawScope(
+            UI.UIPublishedWorldMeshCommand command,
+            ReadOnlySpan<UI.UIIndexedDrawIntent> expected,
+            out ulong scopeId)
+        {
+            scopeId = 0UL;
+            return false;
+        }
+
+        internal virtual bool TryBeginUiIndexedDrawScope(
+            ReadOnlySpan<UI.UIIndexedDrawIntent> expected, out ulong scopeId)
+        {
+            scopeId = 0UL;
+            return false;
+        }
+
+        /// <summary>Reports one actual native indexed draw in the active UI scope.</summary>
+        internal virtual void AcknowledgeUiIndexedDraw(
+            ulong scopeId, in UI.UIIndexedDrawIntent actual, bool nativeSucceeded)
+            => throw new NotSupportedException("This renderer has no exact UI indexed draw acknowledgement.");
+
+        /// <summary>Ends exact native draw proof for one frozen UI mesh command.</summary>
+        internal virtual bool CompleteUiIndexedDrawScope(ulong scopeId) => false;
+
+        /// <summary>Fails an unfinished native UI draw scope before frame submission.</summary>
+        internal virtual void AbortUiIndexedDrawScope() { }
+
+        /// <summary>Checks the destination of one backdrop consumer at native draw issue.</summary>
+        internal virtual bool TryBeginUiBackdropConsumerDrawScope(
+            XRWindow window, BoundingRectangle region, ulong dispatchToken, out ulong scopeId)
+        {
+            scopeId = 0UL;
+            return false;
+        }
+
+        internal virtual bool CompleteUiBackdropConsumerDrawScope(ulong scopeId) => false;
+        internal virtual void AbortUiBackdropConsumerDrawScope() { }
+
+        /// <summary>Reports whether the backend can check the complete world UI output chain.</summary>
+        internal virtual bool SupportsCheckedWorldUiOutput => false;
+
+        /// <summary>True when native world output is checked after managed authoring.</summary>
+        internal virtual bool DefersUiWorldOutputNativeValidation => false;
+
+        /// <summary>Publishes native readiness after an ordinary window render.</summary>
+        internal virtual void ObserveUiWorldOutputImageReadiness(
+            XRWindow window, XRRenderPipelineInstance pipeline) { }
+
+        /// <summary>Reads a prior native-ready generation without GPU access.</summary>
+        internal virtual bool CanAdmitUiWorldOutputImage(
+            XRWindow window, XRRenderPipelineInstance pipeline) => false;
+
+        internal virtual bool TryBeginUiWorldOutputAttempt(
+            XRWindow window, XRRenderPipelineInstance pipeline,
+            UI.UIPublication publication, BoundingRectangle region,
+            ulong dispatchToken, ulong receiptId,
+            in RenderFrameViewDescriptor frozenView, out ulong token)
+        {
+            token = 0UL;
+            return false;
+        }
+
+        internal virtual bool CompleteUiWorldOutputAttempt(ulong token,
+            out string? failure)
+        {
+            failure = "The backend has no checked world UI output attempt.";
+            return false;
+        }
+
+        internal virtual void AbortUiWorldOutputAttempt(ulong token) { }
+        internal virtual bool IsUiWorldOutputAttemptStillValid(ulong token) => false;
+
+        internal virtual bool TryBeginUiWorldOutputStep(ulong attemptToken,
+            UI.EUIWorldOutputStage stage, XRTexture source,
+            XRFrameBuffer? destination, XRMeshRenderer mesh, XRMaterial material,
+            BoundingRectangle region, out ulong stepToken)
+        {
+            stepToken = 0UL;
+            return false;
+        }
+
+        internal virtual bool CompleteUiWorldOutputStep(ulong stepToken) => false;
+        internal virtual void AbortUiWorldOutputStep(ulong stepToken) { }
+
+        internal bool TryBeginUiPublicationReceipt(
+            UI.UIPublication publication, int expectedDrawIntents,
+            bool requiresSwapchainPresentation, out ulong receiptId)
+        {
+            ArgumentNullException.ThrowIfNull(publication);
+            if (_currentUiPublicationReceiptId != 0UL || expectedDrawIntents < 0)
+            {
+                receiptId = 0UL;
+                return false;
+            }
+            receiptId = unchecked((ulong)Interlocked.Increment(ref s_nextUiPublicationReceiptId));
+            if (receiptId == 0UL)
+                receiptId = unchecked((ulong)Interlocked.Increment(ref s_nextUiPublicationReceiptId));
+            if (!TryReserveUiPublicationReceipt(receiptId, publication,
+                    expectedDrawIntents, requiresSwapchainPresentation))
+            {
+                receiptId = 0UL;
+                return false;
+            }
+            try
+            {
+                lock (_uiPublicationAuthoringGate)
+                    _uiPublicationAuthoring.Add(receiptId,
+                        (RuntimeEngine.Rendering.State.RenderFrameId, null));
+            }
+            catch
+            {
+                // Backend reservation owns a publication claim. If frontend
+                // bookkeeping fails, no draw has started and it must be canceled.
+                CancelUiPublicationReceiptBeforeAuthoringCore(receiptId);
+                throw;
+            }
+            _currentUiPublicationReceiptId = receiptId;
+            return true;
+        }
+
+        /// <summary>Stops tagging unrelated operations while a multipass UI receipt remains reserved.</summary>
+        internal void SuspendUiPublicationReceipt(ulong receiptId)
+        {
+            if (receiptId == 0UL || _currentUiPublicationReceiptId != receiptId)
+                throw new InvalidOperationException("The UI publication receipt is not active on this render thread.");
+            _currentUiPublicationReceiptId = 0UL;
+        }
+
+        /// <summary>Tags only the operations authored by the next published UI draw.</summary>
+        internal void ResumeUiPublicationReceipt(ulong receiptId)
+        {
+            if (receiptId == 0UL || _currentUiPublicationReceiptId != 0UL)
+                throw new InvalidOperationException("Another UI publication receipt is active on this render thread.");
+            lock (_uiPublicationAuthoringGate)
+                if (!_uiPublicationAuthoring.ContainsKey(receiptId))
+                    throw new InvalidOperationException("The UI publication receipt has already ended.");
+            _currentUiPublicationReceiptId = receiptId;
+        }
+
+        internal void FailCurrentUiPublicationAuthoring(string reason)
+        {
+            if (_currentUiPublicationReceiptId == 0UL)
+                return;
+            lock (_uiPublicationAuthoringGate)
+                if (_uiPublicationAuthoring.TryGetValue(_currentUiPublicationReceiptId, out var state))
+                    _uiPublicationAuthoring[_currentUiPublicationReceiptId] =
+                        (state.FrameId, state.FailureReason ?? reason);
+            OnUiPublicationAuthoringFailed(_currentUiPublicationReceiptId, reason);
+        }
+
+        internal bool CompleteUiPublicationReceipt(
+            ulong receiptId, bool succeeded, out XRGpuFence? completionFence)
+        {
+            if (receiptId == 0UL || _currentUiPublicationReceiptId != receiptId)
+                throw new InvalidOperationException("The UI publication receipt is not active on this render thread.");
+            (ulong FrameId, string? FailureReason) state;
+            lock (_uiPublicationAuthoringGate)
+                if (!_uiPublicationAuthoring.Remove(receiptId, out state))
+                    throw new InvalidOperationException("The UI publication receipt has already ended.");
+            string? failureReason = state.FailureReason;
+            bool complete = succeeded && failureReason is null;
+            _currentUiPublicationReceiptId = 0UL;
+            bool completed = CompleteUiPublicationReceiptCore(receiptId, complete, failureReason, out completionFence);
+            // Backends that do not require atomic frames still report the named reason.
+            if (!completed)
+                UI.State.UIFailureDiagnostics.Report(failureReason ?? (succeeded
+                    ? "UI.Canvas.PublicationReceiptIncomplete: the backend did not complete the UI publication receipt."
+                    : "UI.Canvas.PublicationReceiptIncomplete: the published canvas did not author every required draw."));
+            return completed;
+        }
+
+        /// <summary>Cancel a reserved UI receipt before its first draw starts.</summary>
+        internal void CancelUiPublicationReceiptBeforeAuthoring(ulong receiptId)
+        {
+            if (receiptId == 0UL || _currentUiPublicationReceiptId != receiptId)
+                throw new InvalidOperationException("The UI publication receipt is not active on this render thread.");
+            _currentUiPublicationReceiptId = 0UL;
+            lock (_uiPublicationAuthoringGate)
+                _uiPublicationAuthoring.Remove(receiptId);
+            CancelUiPublicationReceiptBeforeAuthoringCore(receiptId);
+        }
+
+        /// <summary>
+        /// Abandons a reserved receipt whose later required pass never authored.
+        /// Unlike pre-authoring cancellation, this path allows partial native work
+        /// and lets the backend retain its packet until that work is retired.
+        /// </summary>
+        internal void AbortUiPublicationReceipt(ulong receiptId, string reason)
+        {
+            if (receiptId == 0UL)
+                return;
+            lock (_uiPublicationAuthoringGate)
+                if (!_uiPublicationAuthoring.Remove(receiptId))
+                    return;
+            if (_currentUiPublicationReceiptId == receiptId)
+                _currentUiPublicationReceiptId = 0UL;
+            UI.State.UIFailureDiagnostics.Report(reason);
+            try { OnUiPublicationAuthoringFailed(receiptId, reason); }
+            finally { _ = CompleteUiPublicationReceiptCore(receiptId, false, reason, out _); }
+        }
+
+        /// <summary>Fails unfinished canvas draws before the frame's output is submitted.</summary>
+        internal int AbortUnfinishedUiPublicationReceipts(ulong frameId)
+        {
+            AbortUiIndexedDrawScope();
+            List<ulong>? unfinished = null;
+            lock (_uiPublicationAuthoringGate)
+                foreach (var entry in _uiPublicationAuthoring)
+                    if (entry.Value.FrameId == frameId)
+                        (unfinished ??= []).Add(entry.Key);
+            if (unfinished is null)
+                return 0;
+            for (int index = 0; index < unfinished.Count; index++)
+                AbortUiPublicationReceipt(unfinished[index],
+                    "UI.Canvas.RequiredPassMissing: a published draw pass did not finish before output submission.");
+            return unfinished.Count;
+        }
+
+        protected virtual void CancelUiPublicationReceiptBeforeAuthoringCore(ulong receiptId)
+        {
+            UI.UIPublication? publication = null;
+            lock (_uiPublicationFallbackGate)
+                if (_uiPublicationFallbackFences.Remove(receiptId, out var entry))
+                    publication = entry.Publication;
+            publication?.Release();
+        }
+
+        protected virtual bool TryReserveUiPublicationReceipt(
+            ulong receiptId, UI.UIPublication publication, int expectedDrawIntents,
+            bool requiresSwapchainPresentation)
+        {
+            lock (_uiPublicationFallbackGate)
+            {
+                if (_uiPublicationFallbackFences.Count >= 512)
+                    return false;
+                publication.Retain();
+                _uiPublicationFallbackFences.Add(receiptId, (publication, null, BackendGeneration));
+                return true;
+            }
+        }
+        protected virtual void OnUiPublicationAuthoringFailed(ulong receiptId, string reason) { }
+        protected virtual bool CompleteUiPublicationReceiptCore(
+            ulong receiptId, bool succeeded, string? failureReason, out XRGpuFence? completionFence)
+        {
+            // Direct backends may have authored part of a failed packet. Keep
+            // their cohorts behind a fence even though input cannot advance.
+            completionFence = InsertGpuFence();
+            lock (_uiPublicationFallbackGate)
+                if (_uiPublicationFallbackFences.TryGetValue(receiptId, out var entry))
+                    _uiPublicationFallbackFences[receiptId] =
+                        (entry.Publication, completionFence, entry.BackendGeneration);
+            return succeeded && completionFence is not null;
+        }
+        public virtual bool IsUiPublicationReceiptRetired(ulong receiptId)
+        {
+            lock (_uiPublicationFallbackGate)
+            {
+                if (!_uiPublicationFallbackFences.TryGetValue(receiptId, out var entry) ||
+                    entry.Fence?.Poll() != EGpuFenceStatus.Signaled)
+                    return false;
+                _uiPublicationFallbackFences.Remove(receiptId);
+                entry.Publication.Release();
+                return true;
+            }
+        }
+        /// <summary>Release direct-backend UI packets after this renderer and GPU are idle.</summary>
+        public void RetireUiPublicationReceiptsKnownIdle(long backendGeneration)
+        {
+            List<UI.UIPublication> detached = [];
+            List<ulong> receiptIds = [];
+            lock (_uiPublicationFallbackGate)
+            {
+                foreach (var receipt in _uiPublicationFallbackFences)
+                    if (receipt.Value.BackendGeneration == backendGeneration)
+                    {
+                        receiptIds.Add(receipt.Key);
+                        detached.Add(receipt.Value.Publication);
+                    }
+                for (int index = 0; index < receiptIds.Count; index++)
+                    _uiPublicationFallbackFences.Remove(receiptIds[index]);
+            }
+            for (int index = 0; index < detached.Count; index++)
+                detached[index].Release();
+        }
+        internal virtual bool TryAcceptPresentedUiPublicationReceipt(
+            ulong receiptId, uint imageIndex, ulong outputGeneration,
+            ulong sourceFrameId) => false;
+        internal virtual bool TryAcceptReplayedUiPublicationReceipt(
+            ulong receiptId, uint sourceImageIndex, ulong sourceOutputGeneration,
+            uint targetImageIndex, ulong targetOutputGeneration,
+            ulong sourceFrameId) => false;
+        internal virtual void InvalidatePresentedUiPublicationImage(
+            uint imageIndex, ulong outputGeneration) { }
 
         /// <summary>
         /// False after quiescing starts. Retired generations may destroy their existing
@@ -1427,6 +1742,12 @@ namespace XREngine.Rendering
         #endregion
 
         #region Blitting
+        /// <summary>Copies one checked window backbuffer region into a full color target.</summary>
+        public virtual FrameBufferBlitSubmission TryBlitBackbufferRegionToFBO(
+            XRWindow window, BoundingRectangle region, XRFrameBuffer destination)
+            => FrameBufferBlitSubmission.Rejected(
+                "This renderer cannot check a window backbuffer capture.");
+
         /// <summary>
         /// Blits the contents of one framebuffer to another.
         /// </summary>

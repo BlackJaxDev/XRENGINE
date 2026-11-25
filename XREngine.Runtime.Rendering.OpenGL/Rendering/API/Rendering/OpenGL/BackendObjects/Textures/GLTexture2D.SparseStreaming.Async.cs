@@ -455,7 +455,7 @@ public partial class GLTexture2D
         }
     }
 
-    private static unsafe void UploadSparseResidentMipmaps(
+    private unsafe void UploadSparseResidentMipmaps(
         GL gl,
         SparseTextureStreamingTransitionRequest request,
         SparseTextureStreamingSupport support,
@@ -483,6 +483,7 @@ public partial class GLTexture2D
                 && region.HasArea)
             {
                 using DataSource regionData = CreateSparseMipRegionData(mip, region, sourceBytesPerPixel);
+                AdvanceNativeWriteGeneration();
                 gl.TexSubImage2D(
                     target,
                     mipLevel,
@@ -496,6 +497,7 @@ public partial class GLTexture2D
                 continue;
             }
 
+            AdvanceNativeWriteGeneration();
             gl.TexSubImage2D(
                 target,
                 mipLevel,

@@ -665,7 +665,7 @@ public static partial class EditorImGuiUI
                 if (scene is null || scene.IsEditorOnly)
                     continue;
 
-                var roots = scene.RootNodes;
+                var roots = scene.SceneRoots;
                 for (int rootIndex = 0; rootIndex < roots.Count; rootIndex++)
                     AddVisibleHierarchyNodes(roots[rootIndex], 0, output);
             }
@@ -683,7 +683,7 @@ public static partial class EditorImGuiUI
 
         if (_showEditorSceneHierarchy && EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene is not null)
         {
-            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.RootNodes;
+            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.SceneRoots;
             for (int rootIndex = 0; rootIndex < editorRoots.Count; rootIndex++)
                 AddVisibleHierarchyNodes(editorRoots[rootIndex], 0, output);
         }
@@ -750,7 +750,7 @@ public static partial class EditorImGuiUI
                 if (scene is null || scene.IsEditorOnly)
                     continue;
 
-                var roots = scene.RootNodes;
+                var roots = scene.SceneRoots;
                 for (int rootIndex = 0; rootIndex < roots.Count; rootIndex++)
                     SetHierarchyNodeExpandedRecursive(roots[rootIndex], expanded);
             }
@@ -768,7 +768,7 @@ public static partial class EditorImGuiUI
 
         if (_showEditorSceneHierarchy && EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene is not null)
         {
-            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.RootNodes;
+            var editorRoots = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene.SceneRoots;
             for (int rootIndex = 0; rootIndex < editorRoots.Count; rootIndex++)
                 SetHierarchyNodeExpandedRecursive(editorRoots[rootIndex], expanded);
         }
@@ -1095,7 +1095,7 @@ public static partial class EditorImGuiUI
             return;
         }
 
-        operation.OwningScene?.RootNodes.Add(operation.DuplicateNode);
+        operation.OwningScene?.SceneRoots.Add(operation.DuplicateNode);
         world.RootNodes.Add(operation.DuplicateNode);
     }
 
@@ -1108,7 +1108,7 @@ public static partial class EditorImGuiUI
         }
 
         world.RootNodes.Remove(operation.DuplicateNode);
-        operation.OwningScene?.RootNodes.Remove(operation.DuplicateNode);
+        operation.OwningScene?.SceneRoots.Remove(operation.DuplicateNode);
     }
 
     private static void RestoreHierarchyAssetReferences(SceneNode source, SceneNode clone)
@@ -1624,7 +1624,7 @@ public static partial class EditorImGuiUI
             if (scene is null)
                 continue;
 
-            var sceneRoots = scene.RootNodes;
+            var sceneRoots = scene.SceneRoots;
             for (int rootIndex = 0; rootIndex < sceneRoots.Count; rootIndex++)
             {
                 SceneNode? root = sceneRoots[rootIndex];
@@ -1644,7 +1644,7 @@ public static partial class EditorImGuiUI
                 if (scene is null || !scene.IsEditorOnly)
                     continue;
 
-                var sceneRoots = scene.RootNodes;
+                var sceneRoots = scene.SceneRoots;
                 for (int rootIndex = 0; rootIndex < sceneRoots.Count; rootIndex++)
                 {
                     SceneNode? root = sceneRoots[rootIndex];
@@ -1676,47 +1676,10 @@ public static partial class EditorImGuiUI
     }
 
     private static void ToggleSceneVisibility(XRScene scene, RuntimeWorld world, bool visible)
-    {
-        if (scene.IsVisible == visible)
-            return;
-
-        using var _ = Undo.TrackChange("Toggle Scene Visibility", scene);
-        scene.IsVisible = visible;
-        scene.MarkDirty();
-    }
+        => HierarchySceneActions.SetVisibility(scene, world, visible);
 
     private static void UnloadSceneFromWorld(XRScene scene, RuntimeWorld world)
-    {
-        var targetWorld = world.TargetWorld;
-        if (targetWorld is null)
-            return;
-
-        bool wasVisible = scene.IsVisible;
-
-        scene.IsVisible = false;
-        world.UnloadScene(scene);
-        targetWorld.Scenes.Remove(scene);
-        ClearSelectionForScene(scene, world);
-        scene.MarkDirty();
-
-        // Record structural undo
-        using var interaction = Undo.BeginUserInteraction();
-        using var scope = Undo.BeginChange("Unload Scene");
-        Undo.RecordStructuralChange("Unload Scene",
-            undoAction: () =>
-            {
-                targetWorld.Scenes.Add(scene);
-                world.LoadScene(scene);
-                scene.IsVisible = wasVisible;
-                Undo.TrackScene(scene);
-            },
-            redoAction: () =>
-            {
-                scene.IsVisible = false;
-                world.UnloadScene(scene);
-                targetWorld.Scenes.Remove(scene);
-            });
-    }
+        => HierarchySceneActions.Unload(scene, world);
 
     private static void ClearSelectionForScene(XRScene scene, RuntimeWorld world)
     {
@@ -1734,27 +1697,7 @@ public static partial class EditorImGuiUI
     }
 
     private static XRScene? FindSceneForNode(SceneNode? node, RuntimeWorld? world)
-    {
-        if (node is null)
-            return null;
-
-        var instance = world ?? TryGetActiveWorldInstance();
-        var targetWorld = instance?.TargetWorld;
-        if (targetWorld is null)
-            return null;
-
-        SceneNode? root = GetHierarchyRoot(node);
-        if (root is null)
-            return null;
-
-        foreach (var scene in targetWorld.Scenes)
-        {
-            if (scene.RootNodes.Contains(root))
-                return scene;
-        }
-
-        return null;
-    }
+        => HierarchySceneOwnership.FindOwningScene(node, world ?? TryGetActiveWorldInstance());
 
     private static SceneNode? GetHierarchyRoot(SceneNode node)
     {
@@ -1783,52 +1726,15 @@ public static partial class EditorImGuiUI
     /// <summary>
     /// Reparent a dragged node under a new parent with structural undo.
     /// </summary>
-    private static void ReparentHierarchyNode(SceneNode droppedNode, TransformBase newParent, RuntimeWorld world, XRScene? owningScene)
+    private static void ReparentHierarchyNode(SceneNode droppedNode, TransformBase newParent, RuntimeWorld world,
+        XRScene? owningScene)
     {
-        var draggedTfm = droppedNode.Transform;
-        var oldParent = draggedTfm.Parent;
-        bool wasRoot = oldParent is null;
-        string nodeName = droppedNode.Name ?? SceneNode.DefaultName;
-
-        using var interaction = Undo.BeginUserInteraction();
-        using var scope = Undo.BeginChange($"Reparent {nodeName}");
-
-        // Remove from root lists if it was a root node
-        if (wasRoot)
-        {
-            world.RootNodes.Remove(droppedNode);
-            owningScene?.RootNodes.Remove(droppedNode);
-        }
-
-        draggedTfm.SetParent(newParent, true, EParentAssignmentMode.Immediate);
-
-        var worldCapture = world;
-        var sceneCapture = owningScene;
-        Undo.RecordStructuralChange($"Reparent {nodeName}",
-            undoAction: () =>
-            {
-                if (wasRoot)
-                {
-                    draggedTfm.SetParent(null, true, EParentAssignmentMode.Immediate);
-                    sceneCapture?.RootNodes.Add(droppedNode);
-                    worldCapture.RootNodes.Add(droppedNode);
-                }
-                else
-                {
-                    draggedTfm.SetParent(oldParent, true, EParentAssignmentMode.Immediate);
-                }
-            },
-            redoAction: () =>
-            {
-                if (wasRoot)
-                {
-                    worldCapture.RootNodes.Remove(droppedNode);
-                    sceneCapture?.RootNodes.Remove(droppedNode);
-                }
-                draggedTfm.SetParent(newParent, true, EParentAssignmentMode.Immediate);
-            });
-
-        MarkSceneHierarchyDirty(droppedNode, owningScene, world);
+        if (!HierarchySceneOwnership.CanAuthor(droppedNode, world) ||
+            !HierarchySceneOwnership.CanAuthor(newParent.SceneNode, world))
+            return;
+        HierarchyMutation.Execute($"Reparent {droppedNode.Name ?? SceneNode.DefaultName}",
+            () => new(HierarchyPlacement.Capture(droppedNode, world),
+                HierarchyPlacement.Attached(droppedNode, world, newParent), preserveWorld: true));
     }
 
     /// <summary>

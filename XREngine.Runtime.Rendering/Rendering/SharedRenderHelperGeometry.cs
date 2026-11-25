@@ -74,6 +74,7 @@ internal static class SharedRenderHelperGeometry
         lock (SyncRoot)
         {
             entry.Mesh = mesh;
+            entry.CanonicalGeometryRevision = mesh.GeometryRevision;
             entry.ConstructionCount++;
             entry.ConstructionDuration += constructionDuration;
             entry.IsCreating = false;
@@ -147,6 +148,42 @@ internal static class SharedRenderHelperGeometry
         return XRMesh.Create(triangle);
     }
 
+    /// <summary>Checks the cache-owned fullscreen triangle and its exact coverage geometry.</summary>
+    internal static bool IsCurrentFullscreenTriangle(XRMesh? mesh)
+    {
+        lock (SyncRoot)
+        {
+            if (mesh is null || mesh.IsDestroyed ||
+                !ReferenceEquals(FullscreenTriangleEntry.Mesh, mesh) ||
+                !MatchesFullscreenTriangleContent(
+                    mesh, FullscreenTriangleEntry.CanonicalGeometryRevision))
+                return false;
+            return true;
+        }
+    }
+
+    internal static bool MatchesFullscreenTriangleContent(XRMesh? mesh,
+        long canonicalGeometryRevision)
+    {
+        if (mesh is null || mesh.IsDestroyed ||
+            mesh.GeometryRevision != canonicalGeometryRevision ||
+            mesh.VertexCount != 3 || mesh.Triangles is not { Count: 1 } triangles ||
+            triangles[0].Point0 != 0 || triangles[0].Point1 != 1 ||
+            triangles[0].Point2 != 2 ||
+            mesh.Lines is { Count: > 0 } || mesh.Points is { Count: > 0 })
+            return false;
+        try
+        {
+            return mesh.GetPosition(0) == new Vector3(-1, -1, 0) &&
+                mesh.GetPosition(1) == new Vector3(3, -1, 0) &&
+                mesh.GetPosition(2) == new Vector3(-1, 3, 0);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static XRMesh CreateFullscreenQuad()
     {
         VertexTriangle lowerRight = new(
@@ -189,6 +226,7 @@ internal static class SharedRenderHelperGeometry
         public string Name { get; } = name;
         public Func<XRMesh> Factory { get; } = factory;
         public XRMesh? Mesh { get; set; }
+        public long CanonicalGeometryRevision { get; set; }
         public int ActiveLeaseCount { get; set; }
         public int PeakLeaseCount { get; set; }
         public long TotalAcquireCount { get; set; }

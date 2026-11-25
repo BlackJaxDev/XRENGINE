@@ -181,14 +181,14 @@ public sealed class SnapshotDiagnosticsTests
         AssertAnimationTrackPreserved(snapshotComponentClone.Animation, "snapshot component");
 
         var scene = new XRScene("Snapshot Scene");
-        scene.RootNodes.Add(sceneNode);
+        scene.SceneRoots.Add(sceneNode);
 
         byte[] directScenePayload = CookedBinarySerializer.Serialize(scene);
         Assert.That(translationY.Keyframes.Last!.Second, Is.EqualTo(1.0f), "direct scene serialization mutated its source track");
         var directSceneClone = (XRScene)CookedBinarySerializer.Deserialize(
             typeof(XRScene),
             directScenePayload)!;
-        AnimationClip? directSceneClip = directSceneClone.RootNodes
+        AnimationClip? directSceneClip = directSceneClone.SceneRoots
             .Single()
             .GetComponent<AnimationClipComponent>()?
             .Animation;
@@ -199,7 +199,7 @@ public sealed class SnapshotDiagnosticsTests
         Assert.That(translationY.Keyframes.Last!.Second, Is.EqualTo(1.0f), "snapshot scene serialization mutated its source track");
         XRScene? restoredScene = SnapshotBinarySerializer.Deserialize<XRScene>(payload);
         AnimationClip? restoredClip = restoredScene?
-            .RootNodes
+            .SceneRoots
             .Single()
             .GetComponent<AnimationClipComponent>()?
             .Animation;
@@ -224,7 +224,7 @@ public sealed class SnapshotDiagnosticsTests
         Assert.That(restoredTranslationY.Keyframes.First.Next, Is.SameAs(restoredTranslationY.Keyframes.Last));
         Assert.That(restoredTranslationY.GetValue(0.5f), Is.EqualTo(4.0f).Within(0.0001f));
 
-        SceneNode restoredNode = restoredScene!.RootNodes.Single();
+        SceneNode restoredNode = restoredScene!.SceneRoots.Single();
         AnimationClipComponent restoredComponent =
             restoredNode.GetComponent<AnimationClipComponent>()!;
         restoredComponent.EvaluateAtTime(0.5f);
@@ -243,12 +243,12 @@ public sealed class SnapshotDiagnosticsTests
         component.Model = new Model(new SubMesh(mesh, material: null));
 
         var scene = new XRScene("Snapshot Model Scene");
-        scene.RootNodes.Add(sceneNode);
+        scene.SceneRoots.Add(sceneNode);
 
         byte[]? payload = SnapshotBinarySerializer.Serialize(scene);
         XRScene? restoredScene = SnapshotBinarySerializer.Deserialize<XRScene>(payload);
         ModelComponent? restoredComponent = restoredScene?
-            .RootNodes
+            .SceneRoots
             .Single()
             .GetComponent<ModelComponent>();
 
@@ -293,11 +293,11 @@ public sealed class SnapshotDiagnosticsTests
         component.Model = new Model(new SubMesh(mesh, material: null));
 
         var scene = new XRScene("Snapshot Skinned Model Scene");
-        scene.RootNodes.Add(rigNode);
+        scene.SceneRoots.Add(rigNode);
 
         byte[]? payload = SnapshotBinarySerializer.Serialize(scene);
         XRScene restoredScene = SnapshotBinarySerializer.Deserialize<XRScene>(payload)!;
-        SceneNode restoredRig = restoredScene.RootNodes.Single();
+        SceneNode restoredRig = restoredScene.SceneRoots.Single();
         SceneNode restoredRoot = restoredRig.GetChild(0)!;
         SceneNode restoredBone = restoredRoot.GetChild(0)!;
         ModelComponent restoredComponent = restoredRig
@@ -343,11 +343,11 @@ public sealed class SnapshotDiagnosticsTests
         chain.EndOffset = Vector3.Zero;
 
         var scene = new XRScene("Snapshot Physics Chain Scene");
-        scene.RootNodes.Add(rigNode);
+        scene.SceneRoots.Add(rigNode);
 
         byte[]? payload = SnapshotBinarySerializer.Serialize(scene);
         XRScene restoredScene = SnapshotBinarySerializer.Deserialize<XRScene>(payload)!;
-        SceneNode restoredRig = restoredScene.RootNodes.Single();
+        SceneNode restoredRig = restoredScene.SceneRoots.Single();
         SceneNode restoredRoot = restoredRig.GetChild(0)!;
         SceneNode restoredBone1 = restoredRoot.GetChild(0)!;
         SceneNode restoredBone2 = restoredBone1.GetChild(0)!;

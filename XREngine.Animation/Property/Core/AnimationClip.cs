@@ -70,6 +70,26 @@ namespace XREngine.Animation
             set => SetField(ref _lengthInSeconds, value);
         }
 
+        internal bool PrepareLengthChange(float expected, float desired)
+            => _lengthInSeconds == expected &&
+                (expected == desired || ArePropertyNotificationsSuppressed ||
+                 OnPropertyChanging(nameof(LengthInSeconds), expected, desired));
+
+        internal bool TrySetLengthWithoutNotification(float expected, float desired)
+        {
+            if (_lengthInSeconds != expected || !float.IsFinite(desired) || desired < 0)
+                return false;
+            SetField(ref _lengthInSeconds, desired, publishNotifications: false,
+                propertyName: nameof(LengthInSeconds));
+            return true;
+        }
+
+        internal void PublishLengthChange(float previous, float current)
+        {
+            if (previous != current && !ArePropertyNotificationsSuppressed)
+                OnPropertyChanged(nameof(LengthInSeconds), previous, current);
+        }
+
         private bool _looped = false;
         /// <summary>
         /// Whether or not the animation should loop when the longest sub-animation reaches the end.
@@ -78,6 +98,26 @@ namespace XREngine.Animation
         {
             get => _looped;
             set => SetField(ref _looped, value);
+        }
+
+        internal bool PrepareLoopedChange(bool expected, bool desired)
+            => _looped == expected &&
+                (expected == desired || ArePropertyNotificationsSuppressed ||
+                 OnPropertyChanging(nameof(Looped), expected, desired));
+
+        internal bool TrySetLoopedWithoutNotification(bool expected, bool desired)
+        {
+            if (_looped != expected)
+                return false;
+            SetField(ref _looped, desired, publishNotifications: false,
+                propertyName: nameof(Looped));
+            return true;
+        }
+
+        internal void PublishLoopedChange(bool previous, bool current)
+        {
+            if (previous != current && !ArePropertyNotificationsSuppressed)
+                OnPropertyChanged(nameof(Looped), previous, current);
         }
 
         private EAnimationClipKind _clipKind = EAnimationClipKind.Unknown;

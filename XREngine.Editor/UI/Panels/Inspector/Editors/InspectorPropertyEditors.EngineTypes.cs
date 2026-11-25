@@ -1,4 +1,6 @@
 using System.Reflection;
+using XREngine.Data.Colors;
+using XREngine.Editor.UI;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
 
@@ -6,7 +8,7 @@ namespace XREngine.Editor;
 
 public static partial class InspectorPropertyEditors
 {
-    public static class EngineTypes
+    public static partial class EngineTypes
     {
         public static void CreateQuaternionEditor(SceneNode node, PropertyInfo info, object?[]? objects)
         {
@@ -63,14 +65,19 @@ public static partial class InspectorPropertyEditors
 
         public static void CreateColorEditor(SceneNode node, PropertyInfo info, object?[]? objects)
         {
-            //Render a box with the color.
-            //On click, open a color picker dialog.
+            var color = node.AddComponent<UIColorSelectorComponent>()!;
+            node.AddComponent<UIMaterialComponent>()!.SetBatchBorderStyle(ColorF4.White, ColorF4.Gray, 1);
+            var popup = node.AddComponent<NativePropertyPopupHost>()!;
+            color.Popup = popup.CreatePopup();
+            color.EditingStarted += _ => color.PopupPosition = popup.GetPosition();
+            color.Binding = new EditorColorPropertyBinding(info, objects ?? []);
+            color.IsReadOnly = !info.CanWrite;
+            color.AccessibilityLabel = info.Name;
         }
 
         public static void CreatePropAnimFloatEditor(SceneNode node, PropertyInfo info, object?[]? objects)
         {
-            //Render a box with the spline curve.
-            //On click, open a spline editor dialog.
+            CreateFloatAnimationDetail(node, info, objects);
         }
     }
 }

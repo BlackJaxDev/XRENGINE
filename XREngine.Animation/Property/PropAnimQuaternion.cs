@@ -13,6 +13,11 @@ namespace XREngine.Animation
         private DelGetValue<Quaternion> _getValue;
         private BakedValueStore<Quaternion>? _baked = null;
 
+        internal override object? ExactBakedStore => _baked;
+        internal override int ExactBakedStoreCount => _baked?.Count ?? 0;
+        internal override (bool Constrain, bool Lerp) ExactSamplingFlags =>
+            (ConstrainKeyframedFPS, LerpConstrainedFPS);
+
         internal Quaternion[] CapturePublishedBakedValues() => _baked?.CaptureValues() ?? [];
 
         internal void RestorePublishedBakedValues(Quaternion[] values, EAnimationValueCompressionAlgorithm encodedCompression)
@@ -255,6 +260,8 @@ namespace XREngine.Animation
         }
 
         private QuaternionKeyframe? _prevKeyframe;
+        private KeyframeTrack<QuaternionKeyframe>? _prevKeyframeTrack;
+        private ulong _prevKeyframeExactEditGeneration;
 
         protected override void OnProgressed(float delta)
         {
@@ -266,7 +273,16 @@ namespace XREngine.Animation
                 return;
             }
 
-            _prevKeyframe ??= Keyframes.GetKeyBefore(_currentTime);
+            if (!ReferenceEquals(_prevKeyframeTrack, Keyframes) ||
+                _prevKeyframeExactEditGeneration != Keyframes.ExactEditGeneration ||
+                _prevKeyframe is not null &&
+                !ReferenceEquals(_prevKeyframe.OwningTrack, Keyframes))
+            {
+                _prevKeyframe = null;
+                _prevKeyframeTrack = Keyframes;
+                _prevKeyframeExactEditGeneration = Keyframes.ExactEditGeneration;
+            }
+            _prevKeyframe ??= Keyframes.GetKeyBefore(_currentTime) ?? Keyframes.First;
 
             if (Keyframes.Count == 0)
             {

@@ -8,6 +8,7 @@ Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet
 Broker dependency entries updated for the standalone 0.2.0 MIT release. Unrelated license records remain from the previous inventory because the refresh could not retrieve all license files.
 
 Notes:
+- NAudio component entries were reconciled on 2026-10-23 after a successful full generator run. Unrelated prior metadata and license texts are retained where this checkout could not resolve them.
 - `Owner` is derived from a GitHub repository URL when available, otherwise from the NuGet nuspec `authors` field (best-effort).
 - This lists direct `PackageReference`s from solution projects, not all transitive dependencies.
 - NVIDIA proprietary SDK binaries (DLSS/NGX, Reflex, Streamline) are **not redistributed** and are expected to be provided by end users via `ThirdParty/NVIDIA/SDK/win-x64/`.
@@ -67,8 +68,11 @@ Notes:
 | Microsoft.CodeAnalysis.Analyzers | 3.11.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.Analyzers-3.11.0-MIT.txt) | XREngine.SourceGenerators.csproj |
 | Microsoft.CodeAnalysis.CSharp | 4.14.0 | dotnet | [MIT](licenses/nuget/Microsoft.CodeAnalysis.CSharp-4.14.0-MIT.txt) | XREngine.SourceGenerators.csproj |
 | Microsoft.NET.Test.Sdk | 18.8.1 | microsoft | [MIT](licenses/nuget/Microsoft.NET.Test.Sdk-18.8.1-MIT.txt) | XREngine.UnitTests.csproj |
-| NAudio | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio-2.3.0-MIT.txt) | XREngine.Audio.NAudio.csproj |
+| NAudio.Asio | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio.Asio-2.3.0-MIT.txt) | XREngine.Audio.NAudio.csproj |
+| NAudio.Core | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio.Core-2.3.0-MIT.txt) | XREngine.Audio.NAudio.csproj |
 | NAudio.Sdl2 | 2.2.6 | alextnull | [MIT](licenses/nuget/NAudio.Sdl2-2.2.6-MIT.txt) | XREngine.Audio.NAudio.csproj |
+| NAudio.Wasapi | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio.Wasapi-2.3.0-MIT.txt) | XREngine.Audio.NAudio.csproj |
+| NAudio.WinMM | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio.WinMM-2.3.0-MIT.txt) | XREngine.Audio.NAudio.csproj |
 | NDILibDotNetCoreBase | 2024.7.22.1 | eliaspuurunen | [MIT](licenses/nuget/NDILibDotNetCoreBase-2024.7.22.1-MIT.txt) | XREngine.Editor.csproj, XREngine.VRClient.csproj |
 | Newtonsoft.Json | 13.0.4 | JamesNK | [MIT](licenses/nuget/Newtonsoft.Json-13.0.4-MIT.txt) | XREngine.Editor.csproj, XREngine.Runtime.Bootstrap.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.Host.csproj, XREngine.Server.csproj |
 | NUnit | 4.6.1 | nunit | [MIT](licenses/nuget/NUnit-4.6.1-MIT.txt) | XREngine.UnitTests.csproj |

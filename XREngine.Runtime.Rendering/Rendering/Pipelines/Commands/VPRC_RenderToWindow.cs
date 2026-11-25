@@ -6,6 +6,7 @@ using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Shaders.Compilation;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Pipelines.Commands;
 
@@ -44,7 +45,8 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
         bool FlipSourceYOnVulkan,
         bool WebLinearCopy,
         int PipelineResourceGeneration,
-        bool PublishesWindowSource);
+        bool PublishesWindowSource,
+        UIBackdropOutputOverwriteCandidate? OutputOverwriteCandidate);
 
     /// <summary>
     /// Publishes presentation state with exact source-resource ownership so an
@@ -53,7 +55,8 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
     private sealed class PresentBindingPublisher(
         VPRC_RenderToWindow owner) :
         IRenderResourceBindingPublisher,
-        IWindowPresentationBindingPublisher
+        IWindowPresentationBindingPublisher,
+        IWindowOutputOverwriteCandidateProvider
     {
         private const int DeferredPublicationCapacity = 1024;
         private readonly object _generationSync = new();
@@ -197,6 +200,14 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
             }
         }
 
+        public bool TryGetWindowOutputOverwriteCandidate(
+            out UIBackdropOutputOverwriteCandidate candidate)
+        {
+            UIBackdropOutputOverwriteCandidate? captured = GetBindingState(out _).OutputOverwriteCandidate;
+            candidate = captured.GetValueOrDefault();
+            return captured.HasValue;
+        }
+
         private PresentBindingState GetBindingState(out bool hasDeferredSnapshot)
         {
             lock (_activationSync)
@@ -221,7 +232,8 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
                 owner.FlipSourceYOnVulkan,
                 owner._webLinearCopy,
                 ActivePipelineInstance.ResourceGeneration,
-                owner._publishesWindowSource);
+                owner._publishesWindowSource,
+                owner._resolvedOutputOverwriteCandidate);
         }
 
         private ulong GetGeneration(in PresentBindingState state)
@@ -335,6 +347,10 @@ void main()
 
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
+    private DefaultRenderPipeline? _worldUiFactoryOwner;
+    private long _canonicalGeometryRevision = -1;
+    private long _canonicalVertexShaderRevision = -1;
+    private long _canonicalFragmentShaderRevision = -1;
     private XRMaterial? _arrayMirrorMaterial;
     private XRQuadFrameBuffer? _arrayMirrorQuad;
     private XRMaterial? _stereoMaterial;
@@ -347,6 +363,7 @@ void main()
     private AbstractRenderer? _resolvedSourceRenderer;
     private RenderTextureSamplingState _resolvedSourceSamplingState;
     private bool _publishesWindowSource;
+    private UIBackdropOutputOverwriteCandidate? _resolvedOutputOverwriteCandidate;
     private string? _cachedPassSourceTextureName;
     private string? _cachedPassSourceFboName;
     private string? _cachedRenderGraphPassName;
@@ -363,6 +380,14 @@ void main()
     public bool ClearStencil { get; set; }
     public bool FlipSourceYOnVulkan { get; set; }
 
+    internal void SetWorldUiFactoryOwner(DefaultRenderPipeline owner)
+    {
+        if (_worldUiFactoryOwner is not null &&
+            !ReferenceEquals(_worldUiFactoryOwner, owner))
+            throw new InvalidOperationException("Window present factory owner changed.");
+        _worldUiFactoryOwner = owner;
+    }
+
     internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
     {
         if (WebPipelineRasterProgram.IsActive)
@@ -371,8 +396,23 @@ void main()
             ?? instance.ActiveGeneration?.Key.Stereo
             ?? false;
 
+        bool createdMaterial = _material is null;
         _material ??= CreatePresentMaterial(PresentShaderCode);
+        bool createdQuad = _quad is null;
         _quad ??= CreatePresentQuad(_material, useMultiview: false);
+        if (createdMaterial && createdQuad &&
+            ReferenceEquals(ParentPipeline, _worldUiFactoryOwner) &&
+            _material.FragmentShaders.Count == 1 &&
+            string.Equals(_material.FragmentShaders[0].Source?.Text,
+                PresentShaderCode, StringComparison.Ordinal))
+            _worldUiFactoryOwner!.StampWorldUiPresentQuad(_quad);
+        if (_canonicalGeometryRevision < 0 && _quad.FullScreenMesh.Mesh is { } geometry &&
+            _material.VertexShaders.Count == 1 && _material.FragmentShaders.Count == 1)
+        {
+            _canonicalGeometryRevision = geometry.GeometryRevision;
+            _canonicalVertexShaderRevision = _material.VertexShaders[0].SourceRevision;
+            _canonicalFragmentShaderRevision = _material.FragmentShaders[0].SourceRevision;
+        }
         if (!stereoGeneration)
             return;
 
@@ -391,12 +431,16 @@ void main()
         _webLinearCopy = false;
         if (_quad is not null)
         {
+            _worldUiFactoryOwner?.ForgetWorldUiPresentQuad(_quad);
             _quad.Destroy();
             _quad = null;
         }
 
         _material?.Destroy();
         _material = null;
+        _canonicalGeometryRevision = -1;
+        _canonicalVertexShaderRevision = -1;
+        _canonicalFragmentShaderRevision = -1;
 
         if (_arrayMirrorQuad is not null)
         {
@@ -419,6 +463,7 @@ void main()
 
     protected override void Execute()
     {
+        AbstractRenderer.Current?.InvalidateUiBackdropOutputOverwriteProof();
         bool web = WebPipelineRasterProgram.IsActive;
         if (!web && _quad is null)
         {
@@ -630,30 +675,70 @@ void main()
             renderer.TrackWindowPresentSource(sourceTexture, sourceFrameBuffer);
 
         using var areaScope = instance.RenderState.PushRenderArea(region);
-        if (ClearColor || ClearDepth || ClearStencil)
-            RuntimeEngine.Rendering.State.Clear(ClearColor, ClearDepth, ClearStencil);
+        UIWorldRenderAttempt? worldAttempt = UIWorldRenderAttempt.Active;
+        ulong worldStepToken = 0UL;
+        if (worldAttempt is not null)
+        {
+            if (isLeaseBackedOutputTarget || useBoundOutputFbo ||
+                sourceIsStereoArray || !ReferenceEquals(quad, _quad) ||
+                !ReferenceEquals(ParentPipeline, _worldUiFactoryOwner) ||
+                _material is null || ClearColor || ClearDepth || ClearStencil ||
+                !string.Equals(SourceTextureName,
+                    DefaultRenderPipeline.FinalPostProcessOutputTextureName,
+                    StringComparison.Ordinal) ||
+                !renderer.TryBeginUiWorldOutputStep(worldAttempt.NativeToken,
+                    EUIWorldOutputStage.WindowPresent, sourceTexture, null,
+                    quad.FullScreenMesh, _material, region,
+                    out worldStepToken))
+                throw new InvalidOperationException(
+                    "World UI window presentation proof was rejected.");
+        }
 
         try
         {
+            if (ClearColor || ClearDepth || ClearStencil)
+                RuntimeEngine.Rendering.State.Clear(ClearColor, ClearDepth,
+                    ClearStencil);
             _resolvedSourceTexture = sourceTexture;
             _resolvedSourceFrameBuffer = sourceFrameBuffer;
             _resolvedSourceRenderer = renderer;
             _resolvedSourceSamplingState = sourceSamplingState;
             _publishesWindowSource = !isLeaseBackedOutputTarget && !useBoundOutputFbo;
             _webLinearCopy = web && useBoundOutputFbo;
+            _resolvedOutputOverwriteCandidate = !web &&
+                renderer.BackendId == RendererBackendId.OpenGL &&
+                !isLeaseBackedOutputTarget && !useBoundOutputFbo &&
+                !sourceIsStereoArray && targetWindow is not null &&
+                targetWindow.ActiveOpenGlDispatchToken != 0UL &&
+                ReferenceEquals(quad, _quad) && _material is not null &&
+                quad.FullScreenMesh.Mesh is { } presentGeometry
+                    ? UIBackdropOutputContract.CreateCanonicalWindowPresentCandidate(
+                        renderer, targetWindow, renderer.BackendGeneration,
+                        targetWindow.ActiveOpenGlDispatchToken, region,
+                        quad.FullScreenMesh, presentGeometry, _material,
+                        _canonicalGeometryRevision, _canonicalVertexShaderRevision,
+                        _canonicalFragmentShaderRevision, PresentShaderCode)
+                    : null;
             // SourceTexture is published by PresentBindingPublisher while the
             // draw snapshot is captured. Eager quad preflight runs before that
             // publication and would reject the draw for its not-yet-bound source.
             quad.EnqueueRender();
+            if (worldStepToken != 0UL &&
+                !renderer.CompleteUiWorldOutputStep(worldStepToken))
+                throw new InvalidOperationException(
+                    "World UI window presentation was not proved.");
         }
         finally
         {
+            if (worldStepToken != 0UL)
+                renderer.AbortUiWorldOutputStep(worldStepToken);
             _resolvedSourceTexture = null;
             _resolvedSourceFrameBuffer = null;
             _resolvedSourceRenderer = null;
             _resolvedSourceSamplingState = default;
             _publishesWindowSource = false;
             _webLinearCopy = false;
+            _resolvedOutputOverwriteCandidate = null;
         }
     }
 
@@ -820,7 +905,9 @@ void main()
                     Enabled = ERenderParamUsage.Disabled,
                     Function = EComparison.Always,
                     UpdateDepth = false,
-                }
+                },
+                StencilTest = new StencilTest { Enabled = ERenderParamUsage.Disabled },
+                BlendModeAllDrawBuffers = BlendMode.Disabled(),
             }
         };
 

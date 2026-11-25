@@ -1,6 +1,7 @@
 using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Scene.Transforms;
+using XREngine.Rendering.UI.State;
 
 namespace XREngine.Rendering.UI
 {
@@ -18,6 +19,114 @@ namespace XREngine.Rendering.UI
             ScrollableYMin = 0.0f;
             ScrollableXMax = 0.0f;
             ScrollableYMax = 0.0f;
+        }
+        private Vector2 _scrollOffset;
+        private Vector2 _contentExtent;
+        private Vector2 _viewportExtent;
+        // The scroll used to place the currently applied child geometry can
+        // lag behind the newly authored ScrollOffset while layout is pending.
+        private Vector2 _appliedPlacementScrollOffset;
+        private bool _layoutApplyPending;
+        private bool _hasAcceptedScrollGeometry;
+
+        /// <summary>Positive X scrolls right and positive Y scrolls down.</summary>
+        public Vector2 ScrollOffset
+        {
+            get => _scrollOffset;
+            set
+            {
+                if (!float.IsFinite(value.X) || !float.IsFinite(value.Y))
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                value = Vector2.Max(value, Vector2.Zero);
+                if (_hasAcceptedScrollGeometry)
+                    value = Vector2.Min(value, MaxScrollOffset);
+                if (SetField(ref _scrollOffset, value))
+                {
+                    InvalidateArrange();
+                    RecordUIChange(UIChangeDomain.Arrange | UIChangeDomain.Transform | UIChangeDomain.HitTest);
+                }
+            }
+        }
+
+        /// <summary>Accepted logical content size. Virtual lists contribute their total logical extent.</summary>
+        public Vector2 ContentExtent => _contentExtent;
+        public Vector2 ViewportExtent => _viewportExtent;
+        public Vector2 MaxScrollOffset => Vector2.Max(Vector2.Zero, _contentExtent - _viewportExtent);
+
+        /// <summary>Updates scroll limits from accepted geometry before layout input capture.</summary>
+        public void SynchronizeScroll(Vector2 viewportExtent)
+        {
+            // A rejected worker result can leave some descendants with new
+            // geometry and others with old geometry. Keep the last settled
+            // limits until the next complete owner apply repairs them.
+            if (_layoutApplyPending)
+                return;
+            if (!float.IsFinite(viewportExtent.X) || !float.IsFinite(viewportExtent.Y) ||
+                viewportExtent.X <= 0 || viewportExtent.Y <= 0)
+                return;
+
+            Vector2 content = Vector2.Zero;
+            bool hasMeasuredChild = Children.Count == 0;
+            for (int i = 0; i < Children.Count; i++)
+            {
+                if (Children[i] is not UIBoundableTransform child)
+                    continue;
+                if (child is UIListTransform list && list.VirtualProvider is not null)
+                {
+                    hasMeasuredChild = true;
+                    if (list.DisplayHorizontal)
+                        content.X = MathF.Max(content.X, list.VirtualContentExtent);
+                    else
+                        content.Y = MathF.Max(content.Y, list.VirtualContentExtent);
+                    continue;
+                }
+                if (child.ActualWidth <= 0 || child.ActualHeight <= 0)
+                    continue;
+                hasMeasuredChild = true;
+                // Recover unscrolled content coordinates from the accepted
+                // placement. Positive X moves content left; positive Y moves it up.
+                Vector2 start = child.ActualLocalBottomLeftTranslation -
+                    new Vector2(Padding.X, Padding.Y) +
+                    new Vector2(_appliedPlacementScrollOffset.X, -_appliedPlacementScrollOffset.Y);
+                Vector2 end = start + child.ActualSize;
+                content = Vector2.Max(content, end);
+                // Top-anchored content grows toward negative local Y. Measure its
+                // distance from the viewport top as well as its positive end.
+                content.Y = MathF.Max(content.Y, viewportExtent.Y - start.Y);
+            }
+            if (!hasMeasuredChild)
+                return;
+            _viewportExtent = viewportExtent;
+            _contentExtent = Vector2.Max(content, viewportExtent);
+            _hasAcceptedScrollGeometry = true;
+            ScrollOffset = Vector2.Min(_scrollOffset, MaxScrollOffset);
+        }
+
+        /// <summary>Settles limits after all children received a layout result.</summary>
+        internal void SynchronizeAppliedScroll(Vector2 viewportExtent, Vector2 placementScrollOffset)
+        {
+            _appliedPlacementScrollOffset = placementScrollOffset;
+            _layoutApplyPending = false;
+            SynchronizeScroll(viewportExtent);
+        }
+
+        internal void MarkLayoutApplyPending() => _layoutApplyPending = true;
+
+        /// <summary>Moves the viewport to include a top-down content rectangle.</summary>
+        public void ScrollIntoView(Vector2 contentStart, Vector2 contentEnd)
+        {
+            if (!_hasAcceptedScrollGeometry)
+                return;
+            Vector2 offset = ScrollOffset;
+            if (contentStart.X < offset.X)
+                offset.X = contentStart.X;
+            else if (contentEnd.X > offset.X + ViewportExtent.X)
+                offset.X = contentEnd.X - ViewportExtent.X;
+            if (contentStart.Y < offset.Y)
+                offset.Y = contentStart.Y;
+            else if (contentEnd.Y > offset.Y + ViewportExtent.Y)
+                offset.Y = contentEnd.Y - ViewportExtent.Y;
+            ScrollOffset = offset;
         }
         private bool _scrollable;
         public bool Scrollable
@@ -74,10 +183,6 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _scrollableYMax, value);
         }
 
-        protected override void OnResizeChildComponents(BoundingRectangleF parentRegion)
-        {
-            base.OnResizeChildComponents(parentRegion);
-        }
         public override void VerifyPlacementInfo(TransformBase childTransform, ref ITransformChildPlacementInfo? placementInfo)
         {
             base.VerifyPlacementInfo(childTransform, ref placementInfo);

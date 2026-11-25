@@ -156,7 +156,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
 
             SceneNode cameraNode = new("Engine mesh diagnostic camera");
             Transform cameraTransform = cameraNode.SetTransform<Transform>();
-            _scene.RootNodes.Add(cameraNode);
+            _scene.SceneRoots.Add(cameraNode);
             XROrthographicCameraParameters parameters = new(2, 2, 0, 4) { InheritAspectRatio = false };
             parameters.SetOriginCentered();
             XRCamera camera = new(cameraTransform, parameters)
@@ -230,7 +230,7 @@ internal sealed partial class EngineMeshDiagnosticFixture : IDisposable
         SceneNode node = new(name);
         Transform transform = node.SetTransform<Transform>();
         transform.Translation = translation;
-        _scene.RootNodes.Add(node);
+        _scene.SceneRoots.Add(node);
         ModelComponent component = node.AddComponent<ModelComponent>()
             ?? throw new InvalidOperationException("EngineMeshDiagnostic.ComponentMissing: ModelComponent registration failed.");
         component.Model = new Model(new SubMesh(_mesh, _material));

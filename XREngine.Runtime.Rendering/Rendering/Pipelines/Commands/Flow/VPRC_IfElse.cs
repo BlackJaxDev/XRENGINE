@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using XREngine.Rendering;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -86,6 +87,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
 
             bool cond = _condition is { } condition ? condition.Evaluate() : ConditionEvaluator?.Invoke() ?? false;
+            UIWorldPassManifest.Active?.RecordBranch(this, cond);
             ViewportRenderCommandContainer? next = cond ? TrueCommands : FalseCommands;
             instance.BranchTrace.Record(this, next);
             ExecuteBranch(instance, next);

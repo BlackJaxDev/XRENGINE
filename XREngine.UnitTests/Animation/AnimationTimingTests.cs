@@ -10,6 +10,42 @@ namespace XREngine.UnitTests.Animation;
 public sealed class AnimationTimingTests
 {
     [Test]
+    public void TrackLength_AfterThrowingAnimationNotification_ContinuesToUpdateAnimation()
+    {
+        var animation = new PropAnimFloat(2.0f, looped: false, useKeyframes: true);
+        static void Fail(BaseAnimation _) => throw new InvalidOperationException("Length callback failed");
+        animation.LengthChanged += Fail;
+
+        Assert.Throws<InvalidOperationException>(() => animation.Keyframes.LengthInSeconds = 3.0f);
+        animation.LengthChanged -= Fail;
+        animation.Keyframes.LengthInSeconds = 4.0f;
+
+        animation.LengthInSeconds.ShouldBe(4.0f);
+        animation.Keyframes.LengthInSeconds.ShouldBe(4.0f);
+    }
+
+    [Test]
+    public void Remove_WithThrowingChangedHandler_LeavesTrackLinksConsistent()
+    {
+        var animation = new PropAnimFloat(2.0f, looped: false, useKeyframes: true);
+        var first = new FloatKeyframe(0.25f, 1.0f, 0.0f, EVectorInterpType.Linear);
+        var second = new FloatKeyframe(1.25f, 2.0f, 0.0f, EVectorInterpType.Linear);
+        animation.Keyframes.Add(first, second);
+        animation.Keyframes.Changed += _ => throw new InvalidOperationException("Changed callback failed");
+
+        Assert.Throws<InvalidOperationException>(() => second.Remove());
+
+        animation.Keyframes.Count.ShouldBe(1);
+        animation.Keyframes.First.ShouldBeSameAs(first);
+        animation.Keyframes.Last.ShouldBeSameAs(first);
+        first.Next.ShouldBeNull();
+        second.Prev.ShouldBeNull();
+        second.Next.ShouldBeNull();
+        second.OwningTrack.ShouldBeNull();
+        animation.Keyframes.Cast<Keyframe>().ToArray().ShouldBe([first]);
+    }
+
+    [Test]
     public void FrameIndexConstructors_PreserveAuthoredFrameIdentity()
     {
         var keyframe = new FloatKeyframe(12, 24.0f, 5.0f, 0.0f, EVectorInterpType.Linear);

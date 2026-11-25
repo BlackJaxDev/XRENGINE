@@ -124,7 +124,7 @@ public static class BakeWorldFactory
             if (scene.Name == CameraRigSceneName)
                 continue;
 
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
                 yield return root;
         }
     }

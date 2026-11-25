@@ -10,7 +10,7 @@ using XREngine.Rendering.Pipelines.Commands;
 
 namespace XREngine.Rendering;
 
-internal sealed class RenderPipelineGpuProfiler
+internal sealed partial class RenderPipelineGpuProfiler
 {
     public static RenderPipelineGpuProfiler Instance { get; } = new();
     private const ulong PartialPublishDelayFrames = 3;
@@ -192,12 +192,14 @@ internal sealed class RenderPipelineGpuProfiler
 
     private sealed class PipelineTimingHistory
     {
-        public PipelineTimingHistory(string pipelineName)
+        public PipelineTimingHistory(string pipelineName, long generation)
         {
             PipelineName = pipelineName;
+            Generation = generation;
         }
 
         public string PipelineName { get; }
+        public long Generation { get; }
         public string BackendName { get; set; } = string.Empty;
         public string StatusMessage { get; set; } = string.Empty;
         public DateTimeOffset FirstSampleTimestamp { get; set; }
@@ -218,6 +220,18 @@ internal sealed class RenderPipelineGpuProfiler
         public List<PipelineWorstFrame> WorstFrames { get; } = [];
         public Dictionary<string, PipelineNodeTimingStats> NodesByPath { get; } = new(StringComparer.Ordinal);
         public Dictionary<string, PipelineNodeTimingStats> RenderThreadNodesByPath { get; } = new(StringComparer.Ordinal);
+        public List<PipelineNodeTimingStats> RankedNodes { get; } = [];
+        public int[][] RankHeaps { get; } = [[], [], []];
+        public int[][] RankPositions { get; } = [[], [], []];
+        public GpuPipelineNodeRankRow[][] PublishedRanks { get; } =
+            [new GpuPipelineNodeRankRow[MaximumRankRows],
+                new GpuPipelineNodeRankRow[MaximumRankRows],
+                new GpuPipelineNodeRankRow[MaximumRankRows]];
+        public int[] RankFrontier { get; } = new int[MaximumRankRows + 1];
+        public int PublishedRankCount { get; set; }
+        public long RankRevision { get; set; }
+        public ulong LastRankFrameId { get; set; }
+        public bool HasRankFrame { get; set; }
     }
 
     private readonly record struct PipelineFrameSummary(
@@ -237,11 +251,14 @@ internal sealed class RenderPipelineGpuProfiler
         public double RenderThreadUnattributedMilliseconds { get; init; }
         public int SampleCount { get; init; }
         public required GpuPipelineTimingNodeData Root { get; init; }
+        public string HottestPath { get; init; } = string.Empty;
+        public double HottestPathMilliseconds { get; init; }
     }
 
     private sealed class PipelineNodeTimingStats
     {
         public string Path { get; init; } = string.Empty;
+        public int RankSlot { get; set; } = -1;
         public string Name { get; init; } = string.Empty;
         public int Depth { get; init; }
         public bool IsPotentialShaderOrMaterialNode { get; init; }
@@ -333,6 +350,7 @@ internal sealed class RenderPipelineGpuProfiler
     private readonly Dictionary<string, PipelineTimingHistory> _pipelineTimingHistories = new(StringComparer.Ordinal);
     private int _timingHistoryVersion;
     private RenderPipelineTimingSnapshot _timingSnapshot = RenderPipelineTimingSnapshot.Empty;
+    private long _nextTimingHistoryGeneration;
     private readonly List<PendingScope> _pendingScopes = [];
     private readonly List<OrphanedQuery> _orphanedQueries = [];
     private readonly List<ulong> _frameRemovalScratch = [];
@@ -473,6 +491,123 @@ internal sealed class RenderPipelineGpuProfiler
 
         Debug.WriteAuxiliaryLog(fileName, content);
         return true;
+    }
+
+    /// <summary>Copies the newest captured frame times. Returns the total available sample count.</summary>
+    public int CopyTimingHistory(string pipelineName, Span<double> destination, out ulong newestFrameId)
+        => CopyTimingHistory(pipelineName, destination, out newestFrameId, out _);
+
+    /// <summary>Copies captured frame times with their exact history generation.</summary>
+    public int CopyTimingHistory(string pipelineName, Span<double> destination,
+        out ulong newestFrameId, out long historyGeneration)
+    {
+        newestFrameId = 0;
+        historyGeneration = 0;
+        if (string.IsNullOrWhiteSpace(pipelineName))
+            return 0;
+        lock (_lock)
+        {
+            if (!_pipelineTimingHistories.TryGetValue(pipelineName, out PipelineTimingHistory? history))
+                return 0;
+            historyGeneration = history.Generation;
+            newestFrameId = history.LastFrameId;
+            int total = history.FrameSummaries.Count;
+            int copied = Math.Min(total, destination.Length);
+            int start = total - copied;
+            for (int index = 0; index < copied; index++)
+                destination[index] = history.FrameSummaries[start + index].FrameMilliseconds;
+            return total;
+        }
+    }
+
+    /// <summary>Copies bounded history values while the pipeline history is stable.</summary>
+    public bool TryCopyHistoryDetails(string pipelineName,
+        Span<GpuPipelineHistoryFrame> recentFrames,
+        Span<GpuPipelineHistoryFrame> worstFrames,
+        out GpuPipelineHistorySummary summary)
+    {
+        summary = default;
+        if (string.IsNullOrWhiteSpace(pipelineName))
+            return false;
+        lock (_lock)
+        {
+            if (!_pipelineTimingHistories.TryGetValue(pipelineName, out PipelineTimingHistory? history) ||
+                history.FrameCount == 0)
+                return false;
+            double average = history.TotalFrameMilliseconds / history.FrameCount;
+            double variance = Math.Max(0.0,
+                history.TotalFrameMillisecondsSquared / history.FrameCount - average * average);
+            summary = new(history.Generation, history.LastFrameId, history.FrameCount, history.FrameSummaries.Count,
+                history.WorstFrames.Count,
+                history.TotalTimerSampleCount, average, Math.Sqrt(variance),
+                history.MinFrameMilliseconds, history.MinFrameId,
+                history.MaxFrameMilliseconds, history.MaxFrameId);
+            int copied = Math.Min(recentFrames.Length, history.FrameSummaries.Count);
+            int start = history.FrameSummaries.Count - copied;
+            for (int index = 0; index < copied; index++)
+            {
+                PipelineFrameSummary frame = history.FrameSummaries[start + index];
+                recentFrames[index] = new(frame.FrameId, frame.Timestamp, frame.FrameMilliseconds,
+                    frame.RenderThreadMilliseconds, frame.RenderThreadUnattributedMilliseconds,
+                    frame.SampleCount);
+            }
+            for (int index = 0; index < Math.Min(worstFrames.Length, history.WorstFrames.Count); index++)
+            {
+                PipelineWorstFrame frame = history.WorstFrames[index];
+                worstFrames[index] = new(frame.FrameId, frame.Timestamp, frame.FrameMilliseconds,
+                    frame.RenderThreadMilliseconds, frame.RenderThreadUnattributedMilliseconds,
+                    frame.SampleCount, frame.HottestPath, frame.HottestPathMilliseconds);
+            }
+            return true;
+        }
+    }
+
+    /// <summary>Copies a bounded prefix of one exact retained worst-frame tree.</summary>
+    public bool TryCopyWorstFrameTree(string pipelineName, long historyGeneration,
+        ulong frameId, Span<GpuPipelineTimingTreeRow> destination,
+        out int copied, out bool truncated)
+    {
+        copied = 0;
+        truncated = false;
+        if (string.IsNullOrWhiteSpace(pipelineName) || historyGeneration <= 0)
+            return false;
+        lock (_lock)
+        {
+            if (!_pipelineTimingHistories.TryGetValue(pipelineName, out PipelineTimingHistory? history) ||
+                history.Generation != historyGeneration)
+                return false;
+            PipelineWorstFrame? selected = null;
+            for (int index = 0; index < history.WorstFrames.Count; index++)
+                if (history.WorstFrames[index].FrameId == frameId)
+                {
+                    selected = history.WorstFrames[index];
+                    break;
+                }
+            if (selected is null)
+                return false;
+            List<(GpuPipelineTimingNodeData[] Nodes, int NextIndex, int Depth)> stack =
+                [(new[] { selected.Root }, 0, 0)];
+            while (stack.Count != 0 && copied < destination.Length)
+            {
+                int top = stack.Count - 1;
+                var branch = stack[top];
+                if (branch.NextIndex >= branch.Nodes.Length)
+                {
+                    stack.RemoveAt(top);
+                    continue;
+                }
+                GpuPipelineTimingNodeData node = branch.Nodes[branch.NextIndex];
+                stack[top] = (branch.Nodes, branch.NextIndex + 1, branch.Depth);
+                destination[copied++] = new(node.Name, branch.Depth,
+                    node.ElapsedMs, node.SampleCount);
+                if (node.Children.Length != 0)
+                    stack.Add((node.Children, 0, branch.Depth + 1));
+            }
+            while (stack.Count != 0 && stack[^1].NextIndex >= stack[^1].Nodes.Length)
+                stack.RemoveAt(stack.Count - 1);
+            truncated = stack.Count != 0;
+            return true;
+        }
     }
 
     public bool TryDumpAllTimingHistories(out string[] fileNames, out string? error)
@@ -1390,6 +1525,9 @@ internal sealed class RenderPipelineGpuProfiler
 
             if (ShouldRetainWorstFrame(history, frameMilliseconds))
             {
+                GpuPipelineTimingNodeData capturedRoot = ToPacket(root);
+                string hottestPath = GetHottestGpuPipelinePath(
+                    capturedRoot, out double hottestPathMilliseconds);
                 history.WorstFrames.Add(new PipelineWorstFrame
                 {
                     FrameId = frame.FrameId,
@@ -1398,12 +1536,23 @@ internal sealed class RenderPipelineGpuProfiler
                     RenderThreadMilliseconds = renderThreadMilliseconds,
                     RenderThreadUnattributedMilliseconds = renderThreadUnattributedMilliseconds,
                     SampleCount = sampleCount,
-                    Root = ToPacket(root),
+                    Root = capturedRoot,
+                    HottestPath = hottestPath,
+                    HottestPathMilliseconds = hottestPathMilliseconds,
                 });
                 history.WorstFrames.Sort(static (left, right) => right.FrameMilliseconds.CompareTo(left.FrameMilliseconds));
                 if (history.WorstFrames.Count > TimingDumpWorstFrameLimit)
                     history.WorstFrames.RemoveAt(history.WorstFrames.Count - 1);
             }
+        }
+        for (int i = 0; i < frame.Roots.Count; i++)
+        {
+            PipelineTimingHistory history = _pipelineTimingHistories[frame.Roots[i].Name];
+            if (history.HasRankFrame && history.LastRankFrameId == frame.FrameId)
+                continue;
+            PublishNodeRanksNoLock(history);
+            history.LastRankFrameId = frame.FrameId;
+            history.HasRankFrame = true;
         }
     }
 
@@ -1419,7 +1568,7 @@ internal sealed class RenderPipelineGpuProfiler
         if (_pipelineTimingHistories.TryGetValue(pipelineName, out PipelineTimingHistory? existing))
             return existing;
 
-        PipelineTimingHistory created = new(pipelineName);
+        PipelineTimingHistory created = new(pipelineName, ++_nextTimingHistoryGeneration);
         _pipelineTimingHistories.Add(pipelineName, created);
         return created;
     }
@@ -1442,9 +1591,13 @@ internal sealed class RenderPipelineGpuProfiler
                 IsPotentialShaderOrMaterialNode = IsPotentialShaderOrMaterialNode(path),
             };
             history.NodesByPath.Add(path, stats);
+            if (depth > 0)
+                AddRankedNodeNoLock(history, stats);
         }
 
         stats.AddFrameSample(frameId, timestamp, node.TotalNanoseconds / 1_000_000.0, node.SampleCount);
+        if (stats.RankSlot >= 0)
+            UpdateRankedNodeNoLock(history, stats.RankSlot);
 
         for (int i = 0; i < node.Children.Count; i++)
         {

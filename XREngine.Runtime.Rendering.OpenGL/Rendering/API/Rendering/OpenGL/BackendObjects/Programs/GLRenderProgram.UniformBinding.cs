@@ -6,6 +6,7 @@ using XREngine.Data.Profiling;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.OpenGL
 {
@@ -13,6 +14,59 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLRenderProgram
         {
+            private XRShader? _worldUiInitialShader0, _worldUiInitialShader1;
+            private long _worldUiInitialRevision0, _worldUiInitialRevision1;
+            private bool _worldUiInitialInputsCaptured, _worldUiInitialInputsChanged;
+            private readonly object _worldUiSourceInputsLock = new();
+
+            // Capture before source preparation. A hot reload never becomes the
+            // authority for a previously captured retained world draw.
+            private void ObserveWorldUiInitialSourceInputs()
+            {
+                lock (_worldUiSourceInputsLock)
+                {
+                    if (Data.Shaders.Count != 2)
+                    {
+                        if (_worldUiInitialInputsCaptured)
+                            _worldUiInitialInputsChanged = true;
+                        return;
+                    }
+                    XRShader first = Data.Shaders[0];
+                    XRShader second = Data.Shaders[1];
+                    if (!_worldUiInitialInputsCaptured)
+                    {
+                        _worldUiInitialShader0 = first;
+                        _worldUiInitialShader1 = second;
+                        _worldUiInitialRevision0 = first.SourceRevision;
+                        _worldUiInitialRevision1 = second.SourceRevision;
+                        _worldUiInitialInputsCaptured = true;
+                        return;
+                    }
+                    if (!ReferenceEquals(first, _worldUiInitialShader0) ||
+                        !ReferenceEquals(second, _worldUiInitialShader1) ||
+                        first.SourceRevision != _worldUiInitialRevision0 ||
+                        second.SourceRevision != _worldUiInitialRevision1)
+                        _worldUiInitialInputsChanged = true;
+                }
+            }
+
+            internal bool HasUnchangedInitialWorldUiSources(XRShader vertex,
+                XRShader fragment)
+            {
+                lock (_worldUiSourceInputsLock)
+                    if (!_worldUiInitialInputsCaptured)
+                        return false;
+                ObserveWorldUiInitialSourceInputs();
+                lock (_worldUiSourceInputsLock)
+                    return IsLinked && !_replacementProgramPending &&
+                        !HasPendingAsyncWork && !_worldUiInitialInputsChanged &&
+                        _worldUiInitialInputsCaptured && BindingId != 0u &&
+                        ((ReferenceEquals(vertex, _worldUiInitialShader0) &&
+                          ReferenceEquals(fragment, _worldUiInitialShader1)) ||
+                         (ReferenceEquals(fragment, _worldUiInitialShader0) &&
+                          ReferenceEquals(vertex, _worldUiInitialShader1)));
+            }
+
             private static readonly GLEnum[] IntegerUploadTypes =
             [
                 GLEnum.Int, GLEnum.Bool, GLEnum.Sampler2D, GLEnum.Sampler3D, GLEnum.SamplerCube,
@@ -691,6 +745,19 @@ namespace XREngine.Rendering.OpenGL
 
                 meta = default;
                 return false;
+            }
+
+            internal bool HasActiveUniformType(string name, GLEnum expectedType)
+                => IsLinked && TryGetUniformMetadata(name, out UniformInfo meta) &&
+                    meta.Size == 1 && meta.Type == expectedType;
+
+            internal bool TryGetActiveUniformType(string name, out GLEnum type)
+            {
+                type = default;
+                if (!IsLinked || !TryGetUniformMetadata(name, out UniformInfo meta))
+                    return false;
+                type = meta.Size == 1 ? meta.Type : default;
+                return true;
             }
 
             private static bool TryGetArrayUniformAliases(string name, out string firstElementName, out string baseName)

@@ -297,6 +297,7 @@ public sealed partial class VulkanRenderer :
 
     private void CleanUpNativeOwnership(bool gpuIdleAlreadyEstablished)
     {
+        long retiringBackendGeneration = BackendGeneration;
         try
         {
             _frameLoop.CleanUp(waitForGpu: !gpuIdleAlreadyEstablished, gpuIdleAlreadyEstablished);
@@ -309,6 +310,8 @@ public sealed partial class VulkanRenderer :
                 VulkanNativeOwnershipQuarantine.Retain(this);
             throw;
         }
+        if (_frameLoop.CleanupGpuIdleProven)
+            VulkanUiPublicationReceiptLedger.RetireKnownIdle(this, retiringBackendGeneration);
         VulkanNativeOwnershipQuarantine.Release(this);
         DisposeNativeApi();
     }

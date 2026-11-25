@@ -16,16 +16,15 @@ public abstract class UIVirtualInputComponent : UIInteractableComponent
 
     protected UIVirtualInputComponent() => RegisterInputsOnFocus = false;
 
-    [YamlIgnore]
-    public bool IsPressed => _pointerOwner is not null;
-
     internal bool IsCapturedBy(object owner) => ReferenceEquals(_pointerOwner, owner);
 
     internal bool BeginPointer(object owner, Vector2 localPosition)
     {
-        if (_pointerOwner is not null || !IsActiveInHierarchy || !UITransform.IsVisibleInHierarchy)
+        if (_pointerOwner is not null || !CanInteract)
             return false;
         _pointerOwner = owner;
+        base.PointerPressed(localPosition);
+        IsCaptured = true;
         UpdatePointer(localPosition);
         return true;
     }
@@ -39,8 +38,11 @@ public abstract class UIVirtualInputComponent : UIInteractableComponent
     protected void CancelPointer()
     {
         _pointerOwner = null;
+        base.PointerCancelled();
         ResetValue();
     }
+
+    public override void PointerCancelled() => CancelPointer();
 
     internal abstract void UpdatePointer(Vector2 localPosition);
     internal virtual ushort ButtonMask => 0;

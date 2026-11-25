@@ -419,7 +419,7 @@ public sealed partial class GaussianBakePipeline
                 if (scene is null)
                     continue;
 
-                foreach (SceneNode? root in scene.RootNodes)
+                foreach (SceneNode? root in scene.SceneRoots)
                 {
                     if (root is not null)
                         roots.Add(root);

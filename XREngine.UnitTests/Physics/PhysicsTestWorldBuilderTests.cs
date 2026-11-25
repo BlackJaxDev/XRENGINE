@@ -125,12 +125,12 @@ public sealed class PhysicsTestWorldBuilderTests
         LitBoxBatchComponent originalBatch = playground.GetComponent<LitBoxBatchComponent>()
             .ShouldNotBeNull();
         XRScene scene = new("Physics Snapshot Scene");
-        scene.RootNodes.Add(root);
+        scene.SceneRoots.Add(root);
 
         byte[] payload = SnapshotBinarySerializer.Serialize(scene).ShouldNotBeNull();
         XRScene restoredScene = SnapshotBinarySerializer.Deserialize<XRScene>(payload)
             .ShouldNotBeNull();
-        SceneNode[] restoredNodes = restoredScene.RootNodes
+        SceneNode[] restoredNodes = restoredScene.SceneRoots
             .SelectMany(EnumerateHierarchy)
             .ToArray();
         LitBoxBatchComponent restoredBatch = restoredNodes

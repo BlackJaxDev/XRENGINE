@@ -24,7 +24,7 @@ public static partial class EditorUnitTests
 
         var scene = new XRScene("Math Intersections Scene");
         var rootNode = new SceneNode("Root Node");
-        scene.RootNodes.Add(rootNode);
+        scene.SceneRoots.Add(rootNode);
 
         Pawns.CreatePlayerPawn(setUI, isServer, rootNode);
         rootNode.IterateComponents<CameraComponent>(static camera =>

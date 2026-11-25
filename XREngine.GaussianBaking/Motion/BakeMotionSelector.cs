@@ -103,7 +103,7 @@ public static class BakeMotionSelector
             if (scene is null)
                 continue;
 
-            foreach (SceneNode? sceneRoot in scene.RootNodes)
+            foreach (SceneNode? sceneRoot in scene.SceneRoots)
             {
                 if (sceneRoot is not SceneNode root)
                     continue;

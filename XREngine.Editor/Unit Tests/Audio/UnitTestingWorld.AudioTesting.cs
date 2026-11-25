@@ -20,7 +20,7 @@ public static partial class EditorUnitTests
 
         var scene = new XRScene("Audio Testing Scene");
         var rootNode = new SceneNode("Root Node");
-        scene.RootNodes.Add(rootNode);
+        scene.SceneRoots.Add(rootNode);
 
         SceneNode? playerPawnNode = Pawns.CreatePlayerPawn(setUI, isServer, rootNode);
 

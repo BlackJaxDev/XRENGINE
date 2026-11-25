@@ -17,6 +17,7 @@ using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -688,6 +689,14 @@ internal unsafe partial class VkMeshRenderer(
                 DeformationOutputWitness = deformationOutputWitness,
                 SkinnedOutputSetIdentity = skinnedOutputSetIdentity,
                 RequiredForOutput = requiredForOutput,
+                StaticUiCandidate = indexedIndirect is null &&
+                    AbstractRenderer.Current is { } activeBackend &&
+                    ReferenceEquals(activeBackend.ApiWrapperIdentityOwner, BackendContext) &&
+                    UIStaticDrawScope.TryCapture(activeBackend, MeshRenderer,
+                        context.UiPublicationReceiptId, instances,
+                        out UIStaticDrawCandidate staticUiCandidate)
+                        ? staticUiCandidate : default,
+                WorldUiCommand = UIWorldRenderAttempt.Active?.CurrentDraw,
             };
         }
         catch
@@ -720,7 +729,18 @@ internal unsafe partial class VkMeshRenderer(
         }
         if (scheduleResult is VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.Scheduled
             or VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.AlreadyReady)
+        {
+            if (context.UiPublicationReceiptId != 0UL &&
+                !VulkanUiPublicationReceiptLedger.RecordQueued(context.UiPublicationReceiptId))
+            {
+                failureReason = "The UI publication draw was not admitted to its receipt.";
+                return false;
+            }
             return true;
+        }
+
+        if (context.UiPublicationReceiptId != 0UL)
+            VulkanUiPublicationReceiptLedger.Fail(context.UiPublicationReceiptId);
 
         CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
         Debug.VulkanWarningEvery(
@@ -1165,6 +1185,8 @@ internal unsafe partial class VkMeshRenderer(
                 request.PreparationCompatibilitySignature,
             IndirectTopology = request.IndexedIndirect?.Topology ?? EPrimitiveType.Triangles,
             IndexedIndirectAuthoringLease = request.IndexedIndirect?.AuthoringLease,
+            StaticUiCandidate = request.StaticUiCandidate,
+            WorldUiCommand = request.WorldUiCommand,
         };
         draw = draw with
         {

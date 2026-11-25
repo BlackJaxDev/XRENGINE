@@ -29,7 +29,7 @@ internal static partial class RuntimeDataLayoutScenario
                     int transformCount = 0;
                     for (int avatar = 0; avatar < avatars; avatar++)
                     {
-                        SceneNode instance = template.Instantiate(scene.WorldHost.CoreWorld, scene.World.Scenes[0].RootNodes[0]);
+                        SceneNode instance = template.Instantiate(scene.WorldHost.CoreWorld, scene.World.Scenes[0].SceneRoots[0]);
                         instances[avatar] = instance;
                         if (instance.Transform is Transform placement)
                             placement.Translation += new Vector3((avatar % 8) * 2.0f - 7.0f, 0, (avatar / 8) * 2.0f);

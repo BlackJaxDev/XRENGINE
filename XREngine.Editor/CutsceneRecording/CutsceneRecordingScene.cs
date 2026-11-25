@@ -79,7 +79,7 @@ internal sealed class CutsceneRecordingScene
         _rootNodes.Clear();
         foreach (XRScene scene in RuntimeWorld.TargetWorld?.Scenes ?? [])
         {
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
                 _rootNodes.Add(root);
         }
 

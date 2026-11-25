@@ -49,7 +49,7 @@ internal sealed partial class EngineMeshDiagnosticFixture
     {
         SceneNode node = new(name);
         node.SetTransform<Transform>();
-        _scene.RootNodes.Add(node);
+        _scene.SceneRoots.Add(node);
         return node;
     }
 

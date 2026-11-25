@@ -52,7 +52,7 @@ public sealed class RollingBallDesktopVrHost : IRollingBallPlatformHost
         SceneNode? rig = null;
         foreach (XRScene scene in world.Scenes)
         {
-            foreach (SceneNode root in scene.RootNodes)
+            foreach (SceneNode root in scene.SceneRoots)
             {
                 rig = root.FindDescendantByName("Player Rig", StringComparison.Ordinal);
                 if (rig is not null)

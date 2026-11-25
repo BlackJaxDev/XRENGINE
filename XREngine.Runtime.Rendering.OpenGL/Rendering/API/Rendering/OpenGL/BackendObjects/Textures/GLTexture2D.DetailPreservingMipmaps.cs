@@ -9,6 +9,7 @@ public partial class GLTexture2D
 
     public override void GenerateMipmaps()
     {
+        AdvanceNativeWriteGeneration();
         if (!TryGenerateMipmapsWithDetailPreservingCompute())
             base.GenerateMipmaps();
     }

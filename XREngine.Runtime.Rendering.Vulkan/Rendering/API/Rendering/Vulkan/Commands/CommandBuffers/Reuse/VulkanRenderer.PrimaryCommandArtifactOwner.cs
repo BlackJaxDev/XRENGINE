@@ -23,6 +23,61 @@ internal sealed class PrimaryCommandArtifactOwner(
             private readonly int[] _recordedDynamicUiTerminalOperationIndices =
                 new int[VulkanAcceptedFramePlan.UiCapacity];
             private int _recordedDynamicUiTerminalOperationCount;
+            private readonly ulong[] _recordedUiPublicationReceipts =
+                new ulong[VulkanAcceptedFramePlan.UiCapacity];
+            private int _recordedUiPublicationReceiptCount;
+            private readonly ulong[] _pendingUiPublicationReceipts =
+                new ulong[VulkanAcceptedFramePlan.UiCapacity];
+            private int _pendingUiPublicationReceiptCount;
+
+            public ReadOnlySpan<ulong> RecordedUiPublicationReceipts
+                => _recordedUiPublicationReceipts.AsSpan(0, _recordedUiPublicationReceiptCount);
+
+            public void CapturePendingUiPublicationReceipts(ReadOnlySpan<ulong> receiptIds)
+            {
+                if (receiptIds.Length > _pendingUiPublicationReceipts.Length ||
+                    _pendingUiPublicationReceiptCount != 0)
+                    throw new VulkanPlanPreconditionException(
+                        "A primary command artifact cannot retain the UI receipt attempt.");
+                receiptIds.CopyTo(_pendingUiPublicationReceipts);
+                _pendingUiPublicationReceiptCount = receiptIds.Length;
+                for (int index = 0; index < receiptIds.Length; index++)
+                    if (!VulkanUiPublicationReceiptLedger.MarkArtifactReferenced(receiptIds[index]))
+                        throw new VulkanPlanPreconditionException(
+                            "A UI receipt lost its command artifact claim.");
+            }
+
+            public void CaptureRecordedUiPublicationReceipts(ReadOnlySpan<ulong> receiptIds)
+            {
+                if (receiptIds.Length > _recordedUiPublicationReceipts.Length)
+                    throw new VulkanAcceptedFramePlanCapacityException(
+                        EVulkanAcceptedFrameLane.Ui,
+                        _recordedUiPublicationReceipts.Length, receiptIds.Length);
+                if (_recordedUiPublicationReceiptCount != 0)
+                    throw new InvalidOperationException(
+                        "A primary command artifact still owns an earlier UI publication.");
+                receiptIds.CopyTo(_recordedUiPublicationReceipts);
+                _recordedUiPublicationReceiptCount = receiptIds.Length;
+                _pendingUiPublicationReceipts.AsSpan(
+                    0, _pendingUiPublicationReceiptCount).Clear();
+                _pendingUiPublicationReceiptCount = 0;
+            }
+
+            public void RetireRecordedUiPublicationReceipts()
+            {
+                for (int index = 0; index < _pendingUiPublicationReceiptCount; index++)
+                    VulkanUiPublicationReceiptLedger.RetireArtifact(
+                        _pendingUiPublicationReceipts[index]);
+                _pendingUiPublicationReceipts.AsSpan(
+                    0, _pendingUiPublicationReceiptCount).Clear();
+                _pendingUiPublicationReceiptCount = 0;
+                for (int index = 0; index < _recordedUiPublicationReceiptCount; index++)
+                    VulkanUiPublicationReceiptLedger.RetireArtifact(
+                        _recordedUiPublicationReceipts[index]);
+                _recordedUiPublicationReceipts.AsSpan(
+                    0, _recordedUiPublicationReceiptCount).Clear();
+                _recordedUiPublicationReceiptCount = 0;
+            }
 
             public CommandBuffer PrimaryCommandBuffer { get; } = primaryCommandBuffer;
             public CommandBuffer DynamicUiSecondaryCommandBuffer { get; set; } = dynamicUiSecondaryCommandBuffer;

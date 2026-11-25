@@ -119,6 +119,7 @@ namespace XREngine
         private static readonly object LogWriterLock = new();
         private static readonly object ConsoleEntriesLock = new();
         private static readonly List<LogEntry> _consoleEntries = new();
+        private static ulong _consoleEntriesRevision = 1;
         private static readonly Dictionary<string, IRuntimeDebugTextLog> AuxiliaryLogWriters = new(StringComparer.OrdinalIgnoreCase);
         private static readonly Dictionary<ELogCategory, IRuntimeDebugTextLog?> LogWriters = new()
         {
@@ -152,13 +153,37 @@ namespace XREngine
         }
 
         /// <summary>
+        /// Copies a changed console image into caller-owned storage. The caller must retain
+        /// the destination with its returned revision. Unchanged images do not copy or allocate.
+        /// </summary>
+        public static ulong CopyConsoleEntriesTo(List<ConsoleEntrySnapshot> destination, ulong previousRevision)
+        {
+            ArgumentNullException.ThrowIfNull(destination);
+            lock (ConsoleEntriesLock)
+            {
+                if (previousRevision == _consoleEntriesRevision)
+                    return previousRevision;
+                destination.Clear();
+                for (int index = 0; index < _consoleEntries.Count; index++)
+                {
+                    LogEntry entry = _consoleEntries[index];
+                    destination.Add(new(entry, entry.RepeatCount));
+                }
+                return _consoleEntriesRevision;
+            }
+        }
+
+        /// <summary>
         /// Clears all console log entries.
         /// </summary>
         public static void ClearConsoleEntries()
         {
             lock (ConsoleEntriesLock)
             {
+                if (_consoleEntries.Count == 0)
+                    return;
                 _consoleEntries.Clear();
+                _consoleEntriesRevision++;
             }
         }
 
@@ -169,7 +194,8 @@ namespace XREngine
         {
             lock (ConsoleEntriesLock)
             {
-                _consoleEntries.RemoveAll(e => e.Category == category);
+                if (_consoleEntries.RemoveAll(e => e.Category == category) != 0)
+                    _consoleEntriesRevision++;
             }
         }
 
@@ -185,6 +211,7 @@ namespace XREngine
                     if (lastEntry.Message == message && lastEntry.Category == category)
                     {
                         lastEntry.RepeatCount++;
+                        _consoleEntriesRevision++;
                         return;
                     }
                 }
@@ -193,6 +220,7 @@ namespace XREngine
                     _consoleEntries.RemoveAt(0);
                 addedEntry = new LogEntry(message, category, DateTime.Now);
                 _consoleEntries.Add(addedEntry);
+                _consoleEntriesRevision++;
             }
 
             ConsoleEntryAdded?.Invoke(addedEntry);

@@ -12,7 +12,7 @@ using XREngine.Data.Transforms;
 
 namespace XREngine.Rendering
 {
-    public abstract class XRMaterialBase : GenericRenderObject
+    public abstract partial class XRMaterialBase : GenericRenderObject
     {
         private bool _materialTeardownRequested;
         protected void BeginMaterialTeardown() => _materialTeardownRequested = true;
@@ -92,6 +92,9 @@ namespace XREngine.Rendering
         public bool HasSettingVertexUniformHandlers => SettingVertexUniforms is not null;
         public bool HasSettingUniformsHandlers
             => _settingUniforms is not null;
+
+        internal bool HasOnlyPublicationUniformHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
+            => _settingUniforms is null || _settingUniforms == handler;
 
         /// <summary>Checks one engine-owned publisher without allocating a delegate invocation list.</summary>
         protected bool HasOnlySettingUniformsHandler(Action<XRMaterialBase, XRRenderProgram>? handler)
@@ -263,6 +266,7 @@ namespace XREngine.Rendering
             get => _textures;
             set
             {
+                AdvanceTextureListWriteIntent();
                 ObjectDisposedException.ThrowIf(_materialTeardownRequested, this);
                 _textureSetterDepth++;
                 try { SetField(ref _textures, value ?? []); }

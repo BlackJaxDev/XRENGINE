@@ -58,7 +58,7 @@ public static class BootstrapWorldFactory
         string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         var scene = new XRScene("Main Scene");
         var rootNode = new SceneNode("Root Node");
-        scene.RootNodes.Add(rootNode);
+        scene.SceneRoots.Add(rootNode);
 
         SceneNode? characterPawnModelParentNode = BootstrapPawnFactory.CreatePlayerPawn(setUI, isServer, rootNode);
 
@@ -304,7 +304,7 @@ public static class BootstrapWorldFactory
 
             var scene = new XRScene("Main Scene");
             var rootNode = new SceneNode("Root Node");
-            scene.RootNodes.Add(rootNode);
+            scene.SceneRoots.Add(rootNode);
 
             rootNode.AddComponent<NetworkDiscoveryComponent>("Network Discovery");
             long afterNetworkDiscoveryMs = stopwatch.ElapsedMilliseconds;
@@ -352,7 +352,7 @@ public static class BootstrapWorldFactory
     {
         var scene = new XRScene("Server Scene");
         var rootNode = new SceneNode("Server Root");
-        scene.RootNodes.Add(rootNode);
+        scene.SceneRoots.Add(rootNode);
         rootNode.AddComponent<NetworkDiscoveryComponent>("Network Discovery");
         return CreateBootstrapWorld("Server World", scene);
     }

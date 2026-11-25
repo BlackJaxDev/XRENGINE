@@ -48,21 +48,17 @@ public static partial class InspectorPropertyEditors
         {
             base.OnPropertyChanged(propName, prev, field);
 
-            if (Property is null || Targets is null || propName is not nameof(Yaw) and not nameof(Pitch) and not nameof(Roll) || !IsFocused)
+            if (!CanWriteSource || propName is not nameof(Yaw) and not nameof(Pitch) and not nameof(Roll))
                 return;
-
-            var newQuat = Quaternion.CreateFromYawPitchRoll(
-                Yaw ?? 0.0f,
-                Pitch ?? 0.0f,
-                Roll ?? 0.0f);
-
-            foreach (var target in Targets)
+            UpdateSourceValue(previous =>
             {
-                if (target is null)
-                    continue;
-
-                Property.SetValue(target, newQuat);
-            }
+                Quaternion source = previous is Quaternion rotation ? rotation : Quaternion.Identity;
+                Vector3 angles = XRMath.QuaternionToEuler(source);
+                if (propName == nameof(Yaw)) angles.Y = Yaw ?? 0.0f;
+                if (propName == nameof(Pitch)) angles.X = Pitch ?? 0.0f;
+                if (propName == nameof(Roll)) angles.Z = Roll ?? 0.0f;
+                return Quaternion.CreateFromYawPitchRoll(angles.Y, angles.X, angles.Z);
+            });
         }
     }
 }

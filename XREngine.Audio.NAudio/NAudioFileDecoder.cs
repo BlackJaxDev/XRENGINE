@@ -8,7 +8,8 @@ public sealed class NAudioFileDecoder : IAudioFileDecoder
 {
     public DecodedAudioFile DecodeMp3(string filePath)
     {
-        using Mp3FileReader reader = new(filePath);
+        // Use ACM decoding and let the reader own the file stream.
+        using Mp3FileReaderBase reader = new(filePath, static format => new AcmMp3FrameDecompressor(format));
         using WaveStream pcmStream = WaveFormatConversionStream.CreatePcmStream(reader);
         byte[] samples = ReadAll(pcmStream);
         return new DecodedAudioFile(samples, AudioData.EPCMType.Short,

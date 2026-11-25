@@ -22,20 +22,7 @@ public static partial class InspectorPropertyEditors
         }
 
         public static Action<SceneNode, PropertyInfo, object?[]?> CreateDateTimeEditor()
-            => (n, prop, objects) =>
-            {
-                var matComp = n.AddComponent<UIMaterialComponent>()!;
-                var mat = CreateUIOutlineMaterial()!;
-                //mat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-                matComp!.Material = mat;
-                n.NewChild(out UIDateTimeInputComponent dateTimeInput);
-                void GotFocus(UIInteractableComponent comp) => mat.SetVector4(OutlineColorUniformName, ColorF4.White);
-                void LostFocus(UIInteractableComponent comp) => mat.SetVector4(OutlineColorUniformName, ColorF4.Gray);
-                dateTimeInput.MouseDirectOverlapEnter += GotFocus;
-                dateTimeInput.MouseDirectOverlapLeave += LostFocus;
-                dateTimeInput.Property = prop;
-                dateTimeInput.Targets = objects;
-            };
+            => static (node, property, targets) => TextEditor<UITextInputComponent>(node, property, targets);
 
         public static Action<SceneNode, PropertyInfo, object?[]?> CreateDecimalEditor()
         {

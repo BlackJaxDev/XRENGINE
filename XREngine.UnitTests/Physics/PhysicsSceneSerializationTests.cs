@@ -491,7 +491,7 @@ public sealed class PhysicsSceneSerializationTests
             XRScene restoredScene = SnapshotBinarySerializer
                 .Deserialize<XRScene>(scenePayload)
                 .ShouldNotBeNull();
-            SceneNode[] restoredNodes = restoredScene.RootNodes
+            SceneNode[] restoredNodes = restoredScene.SceneRoots
                 .SelectMany(EnumerateHierarchy)
                 .ToArray();
 

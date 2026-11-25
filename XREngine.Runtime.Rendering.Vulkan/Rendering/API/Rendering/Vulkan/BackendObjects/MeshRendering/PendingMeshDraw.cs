@@ -5,6 +5,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.UI;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -62,6 +63,8 @@ internal readonly record struct PendingMeshDraw(
     internal IRenderResourceLeaseOwner? IndexedIndirectAuthoringLease { get; init; }
     internal DeformationOutputWitness DeformationOutputWitness { get; init; }
     internal ulong SkinnedOutputSetIdentity { get; init; }
+    internal UIStaticDrawCandidate StaticUiCandidate { get; init; }
+    internal UIPublishedWorldMeshCommand? WorldUiCommand { get; init; }
 
     internal AdvancedGpuSceneDrawIdentity CanonicalDrawIdentity
         => CanonicalDrawIdentitySnapshot.Primary;

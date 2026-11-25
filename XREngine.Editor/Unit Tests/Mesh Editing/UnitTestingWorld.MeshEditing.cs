@@ -29,7 +29,7 @@ public static partial class EditorUnitTests
 
         var scene = new XRScene("Mesh Editing Scene");
         var rootNode = new SceneNode("Root Node");
-        scene.RootNodes.Add(rootNode);
+        scene.SceneRoots.Add(rootNode);
 
         var pawn = Pawns.CreateMeshEditingPawn(rootNode, setUI);
 

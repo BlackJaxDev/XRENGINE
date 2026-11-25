@@ -89,6 +89,10 @@ public partial class GLTexture2D
         if (IsPushing)
             return;
 
+        // A queued or repeated upload must retire a world-output proof even when
+        // the managed source data and the native texture name stay unchanged.
+        AdvanceNativeWriteGeneration();
+
         try
         {
             using var sample = RuntimeEngine.Profiler.Start("GLTexture2D.PushData");
@@ -865,12 +869,14 @@ public partial class GLTexture2D
         {
             if (GLSubmitTracer.Enabled)
                 TracePreSubmit("TexImage2DMultisample.NoData", levels: 0, width, height, mipLevel, fullPush: fullPush);
+            AdvanceNativeWriteGeneration();
             Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, width, height, Data.FixedSampleLocations);
         }
         else
         {
             if (GLSubmitTracer.Enabled)
                 TracePreSubmit("TexImage2D.NoData", levels: 0, width, height, mipLevel, fullPush: fullPush);
+            AdvanceNativeWriteGeneration();
             Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, IntPtr.Zero.ToPointer());
         }
     }
@@ -941,6 +947,7 @@ public partial class GLTexture2D
                     pbo?.Bind();
                     if (GLSubmitTracer.Enabled)
                         TracePreSubmit("TexSubImage2D.PBO", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                    AdvanceNativeWriteGeneration();
                     Api.TexSubImage2D(glTarget, mipLevel, 0, 0, width, height, pixelFormat, pixelType, null);
                     pbo?.Unbind();
                 }
@@ -948,6 +955,7 @@ public partial class GLTexture2D
                 {
                     if (GLSubmitTracer.Enabled)
                         TracePreSubmit("TexSubImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                    AdvanceNativeWriteGeneration();
                     Api.TexSubImage2D(glTarget, mipLevel, 0, 0, width, height, pixelFormat, pixelType, data.Address.Pointer);
                 }
             }
@@ -958,12 +966,14 @@ public partial class GLTexture2D
 
                 if (GLSubmitTracer.Enabled)
                     TracePreSubmit("TexImage2DMultisample", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                AdvanceNativeWriteGeneration();
                 Api.TexImage2DMultisample(glTarget, Data.MultiSampleCount, internalPixelFormat, width, height, Data.FixedSampleLocations);
             }
             else if (data is not null)
             {
                 if (GLSubmitTracer.Enabled)
                     TracePreSubmit("TexImage2D", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                AdvanceNativeWriteGeneration();
                 Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, data.Address.Pointer);
             }
             else
@@ -971,6 +981,7 @@ public partial class GLTexture2D
                 pbo?.Bind();
                 if (GLSubmitTracer.Enabled)
                     TracePreSubmit("TexImage2D.PBO", levels: 0, width, height, mipLevel, fullPush: fullPush);
+                AdvanceNativeWriteGeneration();
                 Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, null);
                 pbo?.Unbind();
             }
@@ -1088,6 +1099,7 @@ public partial class GLTexture2D
             if (GLSubmitTracer.Enabled)
                 TracePreSubmit("TexImage2D.RowsFallback", levels: 0, width, height, mipLevel, fullPush: fullPush);
             long fallbackUploadStart = TextureRuntimeDiagnostics.StartTiming();
+            AdvanceNativeWriteGeneration();
             Api.TexImage2D(glTarget, mipLevel, internalPixelFormat, width, height, 0, pixelFormat, pixelType, data.Address.Pointer);
             RuntimeEngine.Rendering.Stats.RecordTextureUpload(
                 data.Length,
@@ -1114,6 +1126,7 @@ public partial class GLTexture2D
         if (GLSubmitTracer.VerboseEnabled)
             TracePreSubmit("TexSubImage2D.Rows", levels: 0, width, (uint)rowCount, mipLevel, xOffset: 0, yOffset: (uint)startRow, fullPush: fullPush);
         long uploadStart = TextureRuntimeDiagnostics.StartTiming();
+        AdvanceNativeWriteGeneration();
         Api.TexSubImage2D(glTarget, mipLevel, 0, startRow, width, (uint)rowCount, pixelFormat, pixelType, rowPointer);
         RuntimeEngine.Rendering.Stats.RecordTextureUpload(
             rowBytes * rowCount,

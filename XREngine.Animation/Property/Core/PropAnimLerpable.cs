@@ -33,6 +33,8 @@ namespace XREngine.Animation
         private bool _constrainKeyframedFPS = false;
         private bool _lerpConstrainedFPS = false;
         private LerpableKeyframe<TValue>? _prevKeyframe = null;
+        private KeyframeTrack<TValueKey>? _prevKeyframeTrack;
+        private ulong _prevKeyframeExactEditGeneration;
         private TValue _currentPosition;
         private BakedValueStore<TValue>? _baked = null;
 
@@ -201,6 +203,16 @@ namespace XREngine.Animation
             {
                 CurrentPosition = GetValueBakedBySecond(_currentTime);
                 return;
+            }
+
+            if (!ReferenceEquals(_prevKeyframeTrack, Keyframes) ||
+                _prevKeyframeExactEditGeneration != Keyframes.ExactEditGeneration ||
+                _prevKeyframe is not null &&
+                !ReferenceEquals(_prevKeyframe.OwningTrack, Keyframes))
+            {
+                _prevKeyframe = null;
+                _prevKeyframeTrack = Keyframes;
+                _prevKeyframeExactEditGeneration = Keyframes.ExactEditGeneration;
             }
 
             var prevKf = _prevKeyframe ??= Keyframes.First;

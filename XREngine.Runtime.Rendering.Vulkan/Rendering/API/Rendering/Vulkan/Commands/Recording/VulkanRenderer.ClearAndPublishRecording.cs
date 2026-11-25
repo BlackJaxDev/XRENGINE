@@ -38,7 +38,10 @@ namespace XREngine.Rendering.Vulkan
             in SwapchainRecordingTarget swapchainTarget,
             uint activeRenderLayerCount = 0u,
             uint activeRenderViewMask = 0u,
-            bool suppressColorClear = false)
+            bool suppressColorClear = false,
+            VulkanWorldUiNativeProof? worldUiProof = null,
+            VulkanAcceptedFramePlan? worldUiPlan = null,
+            ulong worldUiNativeToken = 0UL)
         {
             _ = imageIndex;
             bool clearColor = payload.ClearColor && !suppressColorClear;
@@ -149,7 +152,48 @@ namespace XREngine.Rendering.Vulkan
             SkipSwapchainDepthClear:
 
                 if (count > 0)
+                {
                     Api!.CmdClearAttachments(commandBuffer, count, attachments, 1, rectPtr);
+
+                    if (worldUiProof is not null)
+                    {
+                        bool issuedColor = false;
+                        bool issuedDepth = false;
+                        bool issuedStencil = false;
+                        ColorF4 issuedColorValue = default;
+                        float issuedDepthValue = 0f;
+                        uint issuedStencilValue = 0u;
+                        for (uint clearIndex = 0; clearIndex < count; clearIndex++)
+                        {
+                            ClearAttachment attachment = attachments[clearIndex];
+                            if ((attachment.AspectMask & ImageAspectFlags.ColorBit) != 0)
+                            {
+                                ClearColorValue value = attachment.ClearValue.Color;
+                                issuedColorValue = new(value.Float32_0, value.Float32_1,
+                                    value.Float32_2, value.Float32_3);
+                                issuedColor = true;
+                            }
+                            if ((attachment.AspectMask & ImageAspectFlags.DepthBit) != 0)
+                            {
+                                issuedDepthValue = attachment.ClearValue.DepthStencil.Depth;
+                                issuedDepth = true;
+                            }
+                            if ((attachment.AspectMask & ImageAspectFlags.StencilBit) != 0)
+                            {
+                                issuedStencilValue = attachment.ClearValue.DepthStencil.Stencil;
+                                issuedStencil = true;
+                            }
+                        }
+                        if (worldUiPlan is null ||
+                            !worldUiProof.ObserveNativeClear(worldUiPlan,
+                                worldUiNativeToken, null, clearArea,
+                                issuedColor, issuedDepth, issuedStencil,
+                                issuedColorValue, issuedDepthValue,
+                                issuedStencilValue))
+                            throw new VulkanPlanPreconditionException(
+                                "A selected world UI swapchain clear lost its native owner.");
+                    }
+                }
 
                 return;
             }
@@ -192,8 +236,53 @@ namespace XREngine.Rendering.Vulkan
 
             if (fboCount > 0)
             {
+                bool issuedColor = false;
+                bool issuedDepth = false;
+                bool issuedStencil = false;
+                bool mixedColorClear = false;
+                ColorF4 issuedColorValue = default;
+                float issuedDepthValue = 0f;
+                uint issuedStencilValue = 0u;
+                for (int clearIndex = 0; clearIndex < (int)fboCount; clearIndex++)
+                {
+                    ClearAttachment attachment = fboAttachments[clearIndex];
+                    if ((attachment.AspectMask & ImageAspectFlags.ColorBit) != 0)
+                    {
+                        ClearColorValue value = attachment.ClearValue.Color;
+                        ColorF4 next = new(value.Float32_0, value.Float32_1,
+                            value.Float32_2, value.Float32_3);
+                        if (issuedColor &&
+                            (issuedColorValue.R != next.R ||
+                             issuedColorValue.G != next.G ||
+                             issuedColorValue.B != next.B ||
+                             issuedColorValue.A != next.A))
+                            mixedColorClear = true;
+                        issuedColorValue = next;
+                        issuedColor = true;
+                    }
+                    if ((attachment.AspectMask & ImageAspectFlags.DepthBit) != 0)
+                    {
+                        issuedDepth = true;
+                        issuedDepthValue = attachment.ClearValue.DepthStencil.Depth;
+                    }
+                    if ((attachment.AspectMask & ImageAspectFlags.StencilBit) != 0)
+                    {
+                        issuedStencil = true;
+                        issuedStencilValue = attachment.ClearValue.DepthStencil.Stencil;
+                    }
+                }
                 fixed (ClearAttachment* fboAttachmentsPtr = fboAttachments)
                     Api!.CmdClearAttachments(commandBuffer, fboCount, fboAttachmentsPtr, 1, rectPtr);
+
+                if (worldUiProof is not null &&
+                    (worldUiPlan is null || mixedColorClear ||
+                     !worldUiProof.ObserveNativeClear(worldUiPlan,
+                         worldUiNativeToken, target, clearArea,
+                         issuedColor, issuedDepth, issuedStencil,
+                         issuedColorValue, issuedDepthValue,
+                         issuedStencilValue)))
+                    throw new VulkanPlanPreconditionException(
+                        "A selected world UI clear lost its pinned native target.");
 
                 if (payload.ClearDepth)
                     VulkanShadowAtlasDiagnostics.RecordWriterDepthClear(target.Name, payload.Depth, clearArea);

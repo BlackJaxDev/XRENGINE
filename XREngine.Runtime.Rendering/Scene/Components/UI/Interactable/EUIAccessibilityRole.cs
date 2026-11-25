@@ -6,5 +6,14 @@ public enum EUIAccessibilityRole
     None,
     Button,
     TextBox,
-    CheckBox
+    CheckBox,
+    RadioButton,
+    Slider,
+    ComboBox,
+    ColorWell,
+    ScrollRegion,
+    TableRow,
+    Tab,
+    TreeItem,
+    Splitter
 }

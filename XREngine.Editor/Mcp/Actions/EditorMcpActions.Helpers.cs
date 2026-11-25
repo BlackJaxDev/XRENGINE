@@ -68,7 +68,7 @@ namespace XREngine.Editor.Mcp
             {
                 foreach (var scene in world.TargetWorld.Scenes)
                 {
-                    foreach (var root in scene.RootNodes)
+                    foreach (var root in scene.SceneRoots)
                     {
                         if (root is null)
                             continue;
@@ -103,7 +103,7 @@ namespace XREngine.Editor.Mcp
             if (world.TargetWorld is not null)
             {
                 foreach (var scene in world.TargetWorld.Scenes)
-                    foreach (var root in scene.RootNodes)
+                    foreach (var root in scene.SceneRoots)
                         if (root is not null && FindObjectInHierarchy(root, objectId) is { } found)
                             return found;
             }
@@ -348,7 +348,7 @@ namespace XREngine.Editor.Mcp
 
             foreach (var scene in targetWorld.Scenes)
             {
-                if (scene.RootNodes.Contains(root))
+                if (scene.SceneRoots.Contains(root))
                     return scene;
             }
 

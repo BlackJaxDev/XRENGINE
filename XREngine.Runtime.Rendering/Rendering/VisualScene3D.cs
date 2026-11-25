@@ -13,6 +13,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
+using XREngine.Rendering.UI;
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Vulkan;
 using YamlDotNet.Serialization;
@@ -164,7 +165,21 @@ namespace XREngine.Scene
 
         private void CollectRenderedItems(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors, bool allowGpuCollection)
         {
+            UIWorldCollectPacketSet? worldPacketSet = RetainFrozenWorldPacketSetForCollection();
+            try { CollectRenderedItemsCore(commands, collectionVolume, camera,
+                collectMirrors, allowGpuCollection, worldPacketSet); }
+            finally { worldPacketSet?.Release(); }
+        }
+
+        private void CollectRenderedItemsCore(RenderCommandCollection commands,
+            IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors,
+            bool allowGpuCollection, UIWorldCollectPacketSet? worldPacketSet)
+        {
             using var sample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems", ProfilerScopeKind.AlwaysOnHotPathLoop);
+            if (worldPacketSet?.ExpectedWorld is { } packetWorld)
+                commands.ObserveWorldUiPacketSet(packetWorld, worldPacketSet);
+            else
+                commands.ObserveUnsupportedWorldUiTraversal();
             int visibleRenderables = 0;
             bool modelDiagActive = ModelRenderDiagnostics.HasActiveTrace;
             int commandsBefore = modelDiagActive ? commands.GetUpdatingCommandCount() : 0;
@@ -173,7 +188,8 @@ namespace XREngine.Scene
             {
                 using var gpuSample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItems.Gpu", ProfilerScopeKind.AlwaysOnHotPathLoop);
                 long gpuPathStart = CollectVisibleStageTimings.StartPath();
-                visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera, collectMirrors, modelDiagActive, allowGpuCollection);
+                visibleRenderables = CollectRenderedItemsGpu(commands, collectionVolume, camera,
+                    collectMirrors, modelDiagActive, allowGpuCollection, worldPacketSet);
                 CollectVisibleStageTimings.EndPath(ECollectVisiblePath.GpuCollection, gpuPathStart, visibleRenderables);
             }
             else
@@ -189,7 +205,8 @@ namespace XREngine.Scene
                         : "VisualScene3D.CollectRenderedItems.Octree",
                     ProfilerScopeKind.AlwaysOnHotPathLoop);
                 CollectionContextStack contextStack = t_collectionContextStack ??= new CollectionContextStack();
-                contextStack.Push(this, commands, camera, collectMirrors, modelDiagActive);
+                contextStack.Push(this, commands, camera, collectionVolume,
+                    false, collectMirrors, modelDiagActive, worldPacketSet);
                 try
                 {
                     cpuTree.CollectVisible(
@@ -231,8 +248,17 @@ namespace XREngine.Scene
 
         public IReadOnlyList<RenderInfo3D> Renderables => _renderables;
         private readonly List<RenderInfo3D> _renderables = [];
+        private readonly List<IFrozenWorldPacketSource> _frozenWorldPacketSources = [];
+        private readonly Dictionary<RenderInfo3D, IFrozenWorldPacketSource?> _registeredPacketSourceOnly = [];
+        private long _frozenWorldPacketSourceRevision;
         private readonly HashSet<RenderInfo3D> _renderableSet = [];
         private readonly object _renderablesSync = new();
+        internal bool ContainsRegisteredDrawable(RenderInfo3D info)
+        {
+            lock (_renderablesSync)
+                return _renderableSet.Contains(info) &&
+                    !_registeredPacketSourceOnly.ContainsKey(info);
+        }
         private readonly ConcurrentQueue<(RenderInfo3D renderable, bool add)> _pendingRenderableOperations = new(); // staged until PreCollectVisible runs on the collect visible thread
         private long _shadowCasterMembershipRevision;
         private bool IsGpuCulling => _isGpuDispatchActive;
@@ -559,7 +585,23 @@ namespace XREngine.Scene
                     {
                         if (_renderableSet.Add(operation.renderable))
                         {
+                            if (operation.renderable.FrozenWorldPacketSourceOnly)
+                            {
+                                IFrozenWorldPacketSource? source = operation.renderable.FrozenWorldCommandSource as IFrozenWorldPacketSource;
+                                _registeredPacketSourceOnly.Add(operation.renderable, source);
+                                if (source is not null)
+                                {
+                                    _frozenWorldPacketSources.Add(source);
+                                    _frozenWorldPacketSourceRevision++;
+                                }
+                                continue;
+                            }
                             _renderables.Add(operation.renderable);
+                            if (operation.renderable.FrozenWorldCommandSource is IFrozenWorldPacketSource packetSource)
+                            {
+                                _frozenWorldPacketSources.Add(packetSource);
+                                _frozenWorldPacketSourceRevision++;
+                            }
                             operation.renderable.SwapBuffersCallback += OnRenderableSwapBuffers;
                             TrackRenderable(operation.renderable);
 
@@ -583,6 +625,15 @@ namespace XREngine.Scene
                     }
                     else if (_renderableSet.Remove(operation.renderable))
                     {
+                        if (_registeredPacketSourceOnly.Remove(operation.renderable, out IFrozenWorldPacketSource? sourceOnly))
+                        {
+                            if (sourceOnly is not null)
+                            {
+                                _frozenWorldPacketSources.Remove(sourceOnly);
+                                _frozenWorldPacketSourceRevision++;
+                            }
+                            continue;
+                        }
                         UntrackRenderable(operation.renderable);
                         operation.renderable.SwapBuffersCallback -= OnRenderableSwapBuffers;
 
@@ -594,6 +645,11 @@ namespace XREngine.Scene
                             ActiveCpuRenderTree.Remove(operation.renderable);
 
                         _renderables.Remove(operation.renderable);
+                        if (operation.renderable.FrozenWorldCommandSource is IFrozenWorldPacketSource packetSource)
+                        {
+                            _frozenWorldPacketSources.Remove(packetSource);
+                            _frozenWorldPacketSourceRevision++;
+                        }
                         if (operation.renderable.CastsShadows)
                             System.Threading.Interlocked.Increment(ref _shadowCasterMembershipRevision);
 
@@ -703,7 +759,9 @@ namespace XREngine.Scene
             }
         }
 
-        private int CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume, IRuntimeCullingCamera? camera, bool collectMirrors, bool modelDiagActive, bool allowGpuCollection)
+        private int CollectRenderedItemsGpu(RenderCommandCollection commands, IVolume? collectionVolume,
+            IRuntimeCullingCamera? camera, bool collectMirrors, bool modelDiagActive,
+            bool allowGpuCollection, UIWorldCollectPacketSet? worldPacketSet)
         {
             using var sample = RuntimeEngine.Profiler.Start("VisualScene3D.CollectRenderedItemsGpu");
             int visibleRenderables = 0;
@@ -746,7 +804,7 @@ namespace XREngine.Scene
                     bool allowed = renderable.AllowRender(renderVolume, commands, camera, false, collectMirrors);
                     if (!allowed)
                     {
-                        if (shadowOnlyCasterCensus && IsRejectedShadowOnlyCasterCandidate(renderable))
+                        if (shadowOnlyCasterCensus && IsRejectedShadowOnlyCasterCandidate(renderable, worldPacketSet))
                         {
                             shadowOnlyCasterCandidates++;
                             casterCapture?.Record(
@@ -762,14 +820,26 @@ namespace XREngine.Scene
                     visibleRenderables++;
                     if (modelDiagActive)
                         ModelRenderDiagnostics.LogVisibilityAccepted(renderable, commands, camera, collectMirrors);
-                    ERenderInfoCollectResult collectResult = renderable.TryCollectCommands(
-                        commands,
-                        camera,
-                        out RenderInfo.DelAddRenderCommandsCallback? invokedCallback);
+                    RenderInfo.DelAddRenderCommandsCallback? invokedCallback = null;
+                    ERenderInfoCollectResult collectResult = renderable.FrozenWorldCommandSource is not null
+                        ? renderable.TryCollectFrozenWorldCommands(commands, camera, collectionVolume,
+                            containsOnly: false, packetSet: worldPacketSet)
+                        : renderable.TryCollectCommands(commands, camera, out invokedCallback);
+                    if (shadowOnlyCasterCensus &&
+                        renderable.FrozenWorldCommandSource?.HasFrozenShadowCasters(
+                            worldPacketSet) == true)
+                    {
+                        // A main view cannot prove that every frozen child layer and bound was collected.
+                        // Keep shadow collection enabled for the entire frozen source.
+                        shadowOnlyCasterCandidates++;
+                        casterCapture?.Record(renderable,
+                            EShadowOnlyCasterCandidateReason.ShadowPassOnly, null);
+                    }
                     // A camera-dependent pre-collection callback can reject this camera and accept a shadow camera, for
                     // example an HLOD source that a far main camera hides. Such a caster gets no collection from this view.
                     if (shadowOnlyCasterCensus &&
-                        IsCollectedShadowOnlyCasterCandidate(renderable, collectResult, out EShadowOnlyCasterCandidateReason reason))
+                        IsCollectedShadowOnlyCasterCandidate(renderable, collectResult,
+                            worldPacketSet, out EShadowOnlyCasterCandidateReason reason))
                     {
                         shadowOnlyCasterCandidates++;
                         casterCapture?.Record(renderable, reason, invokedCallback);

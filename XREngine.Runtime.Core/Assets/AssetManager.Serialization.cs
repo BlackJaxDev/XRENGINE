@@ -167,6 +167,7 @@ namespace XREngine
             var builder = new DeserializerBuilder()
                 .IgnoreUnmatchedProperties()
                 .EnablePrivateConstructors()
+                .IncludeNonPublicProperties()
                 .WithEnforceNullability()
                 .WithEnforceRequiredMembers()
                 .WithDuplicateKeyChecking()

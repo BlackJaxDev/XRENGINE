@@ -1,6 +1,8 @@
 ﻿using System.Collections;
 using System.ComponentModel;
+using MemoryPack;
 using XREngine.Data.Core;
+using YamlDotNet.Serialization;
 
 namespace XREngine.Animation
 {
@@ -10,8 +12,31 @@ namespace XREngine.Animation
         public event Action<BaseKeyframeTrack>? Changed;
         public event DelLengthChange? LengthChanged;
 
+        [NonSerialized]
+        private ulong _changedNotificationRevision;
+        [NonSerialized]
+        private bool _changedNotificationRevisionExhausted;
+
+        [MemoryPackIgnore, YamlIgnore, Browsable(false)]
+        internal ulong ChangedNotificationRevision => _changedNotificationRevision;
+
+        [MemoryPackIgnore, YamlIgnore, Browsable(false)]
+        internal bool CanAdvanceChangedNotificationRevision =>
+            !_changedNotificationRevisionExhausted &&
+            _changedNotificationRevision < ulong.MaxValue;
+
+        internal bool CanReserveChangedNotifications(int advances)
+            => advances >= 0 && !_changedNotificationRevisionExhausted &&
+                _changedNotificationRevision < ulong.MaxValue - (ulong)advances;
+
         protected internal void OnChanged()
         {
+            if (!CanAdvanceChangedNotificationRevision)
+            {
+                _changedNotificationRevisionExhausted = true;
+                throw new InvalidOperationException("The animation track changed notification revision is exhausted.");
+            }
+            _changedNotificationRevision++;
             ++Revision;
             Changed?.Invoke(this);
         }
@@ -20,10 +45,107 @@ namespace XREngine.Animation
         /// Changes each time the keys change. A retained key is valid for a search only at the same revision.
         /// </summary>
         internal int Revision { get; private protected set; }
-        protected internal void OnLengthChanged(float prevLength) => LengthChanged?.Invoke(prevLength, this);
+
+        [MemoryPackIgnore]
+        internal object? ExactLengthNotificationOwner { get; private set; }
+
+        protected internal void OnLengthChanged(float prevLength)
+            => PublishLengthChanged(prevLength, null);
+
+        internal void PublishLengthChanged(float prevLength, object? exactOwner)
+        {
+            object? previousOwner = ExactLengthNotificationOwner;
+            ExactLengthNotificationOwner = exactOwner;
+            try { LengthChanged?.Invoke(prevLength, this); }
+            finally { ExactLengthNotificationOwner = previousOwner; }
+        }
+
+        internal bool HasExclusiveLengthRelay(DelLengthChange expected)
+        {
+            int matches = 0;
+            if (LengthChanged is null)
+                return false;
+            foreach (Delegate handler in LengthChanged.GetInvocationList())
+            {
+                if (handler.Equals(expected))
+                    matches++;
+                else if (handler.Target is BasePropAnimKeyframed)
+                    return false;
+            }
+            return matches == 1;
+        }
 
         protected internal abstract Keyframe? FirstKey { get; internal set; }
         protected internal abstract Keyframe? LastKey { get; internal set; }
+
+        [MemoryPackIgnore]
+        internal ulong ExactEditGeneration { get; private set; }
+
+        internal bool CanAdvanceExactEditGeneration => ExactEditGeneration < ulong.MaxValue;
+
+        internal void AdvanceExactEditGeneration() => ExactEditGeneration++;
+
+        internal bool TrySetExactLength(float expectedLength, float desiredLength,
+            ReadOnlySpan<Keyframe> order, ReadOnlySpan<float> expectedSeconds,
+            ReadOnlySpan<int> expectedFrames, ReadOnlySpan<float> desiredSeconds,
+            ReadOnlySpan<int> desiredFrames)
+        {
+            if (!CanAdvanceExactEditGeneration || _lengthInSeconds != expectedLength ||
+                !float.IsFinite(desiredLength) || desiredLength < 0 ||
+                order.Length != expectedSeconds.Length || order.Length != expectedFrames.Length ||
+                order.Length != desiredSeconds.Length || order.Length != desiredFrames.Length ||
+                !HasExactOrder(order))
+                return false;
+            float lastSecond = float.NegativeInfinity;
+            for (int index = 0; index < order.Length; index++)
+            {
+                Keyframe key = order[index];
+                if (key.Second != expectedSeconds[index] ||
+                    key.AuthoredFrameIndex != expectedFrames[index] ||
+                    !float.IsFinite(desiredSeconds[index]) || desiredSeconds[index] < 0 ||
+                    desiredSeconds[index] < lastSecond || desiredFrames[index] < -1)
+                    return false;
+                lastSecond = desiredSeconds[index];
+            }
+            SetField(ref _lengthInSeconds, desiredLength, publishNotifications: false,
+                propertyName: nameof(LengthInSeconds));
+            for (int index = 0; index < order.Length; index++)
+                order[index].SetExactEditState(this,
+                    index == 0 ? null : order[index - 1],
+                    index + 1 == order.Length ? null : order[index + 1],
+                    desiredSeconds[index], desiredFrames[index]);
+            AdvanceExactEditGeneration();
+            return true;
+        }
+
+        internal bool HasExactOrder(ReadOnlySpan<Keyframe> order)
+        {
+            if (Count != order.Length ||
+                !ReferenceEquals(FirstKey,
+                    order.Length == 0 ? null : order[0]) ||
+                !ReferenceEquals(LastKey,
+                    order.Length == 0 ? null : order[^1]))
+                return false;
+            Keyframe? previous = null;
+            Keyframe? current = FirstKey;
+            for (int index = 0; index < order.Length; index++)
+            {
+                if (current is null || !ReferenceEquals(current, order[index]) ||
+                    !ReferenceEquals(current.OwningTrack, this) ||
+                    !ReferenceEquals(current.Prev, previous) ||
+                    !ReferenceEquals(current.Next,
+                        index + 1 < order.Length ? order[index + 1] : null))
+                    return false;
+                previous = current;
+                current = current.Next;
+            }
+            return current is null;
+        }
+
+        internal virtual bool TryApplyExactKeyEdit(
+            ReadOnlySpan<Keyframe> expected, ReadOnlySpan<Keyframe> desired,
+            Keyframe key, float expectedSecond, int expectedFrame,
+            float desiredSecond, int desiredFrame) => false;
 
         private float _lengthInSeconds = 0.0f;
         private EKeyframeInfinityMode _preInfinityMode = EKeyframeInfinityMode.Loop;

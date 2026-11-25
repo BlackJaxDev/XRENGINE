@@ -534,7 +534,7 @@ public sealed class MeshResidencyBackend : IResidencyBackend, IDisposable
             {
                 if (scenes[s] is not { } scene)
                     continue;
-                var sceneRoots = scene.RootNodes;
+                var sceneRoots = scene.SceneRoots;
                 for (int n = 0; n < sceneRoots.Count; n++)
                     if (sceneRoots[n] is { } sceneRoot && seen.Add(sceneRoot))
                         roots.Add(sceneRoot);

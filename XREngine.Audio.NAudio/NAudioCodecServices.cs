@@ -8,7 +8,8 @@ public sealed class NAudioCodecServices : IAudioCodecServices
     public byte[] DecodeMp3(byte[] encoded)
     {
         using MemoryStream input = new(encoded, writable: false);
-        using Mp3FileReader reader = new(input);
+        // Use ACM decoding and leave the supplied stream with its caller.
+        using Mp3FileReaderBase reader = new(input, static format => new AcmMp3FrameDecompressor(format));
         return ReadAll(reader);
     }
 

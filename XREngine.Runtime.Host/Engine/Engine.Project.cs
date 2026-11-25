@@ -77,6 +77,7 @@ namespace XREngine
             CurrentProject = project;
 
             ConfigureProjectDirectories(project);
+            Assets.InvalidateAuthoringContext();
             Assets.SyncMetadataWithAssets();
 
             using (SuppressSettingsCascades())
@@ -113,6 +114,7 @@ namespace XREngine
         public static void UnloadProject()
         {
             RuntimeEngine.Rendering.ProjectDefaultSettings = null;
+            Assets?.UnloadAuthoringProject();
 
             if (CurrentProject is null)
                 return;
@@ -1144,15 +1146,12 @@ namespace XREngine
             EnsureDirectory(project.ConfigDirectory);
             EnsureDirectory(effectiveCacheDirectory);
 
-            if (project.AssetsDirectory is not null)
-                Assets.GameAssetsPath = project.AssetsDirectory;
-            if (effectiveMetadataDirectory is not null)
-                Assets.GameMetadataPath = effectiveMetadataDirectory;
+            Assets.ConfigureAuthoringRoots(project.AssetsDirectory, effectiveMetadataDirectory,
+                effectiveCacheDirectory, project.ProjectDirectory);
             if (project.PackagesDirectory is not null)
                 Assets.PackagesPath = project.PackagesDirectory;
             if (project.IntermediateDirectory is not null)
                 Assets.LibrariesPath = project.IntermediateDirectory;
-            Assets.GameCachePath = effectiveCacheDirectory;
         }
 
         private static void LogUnexpectedProjectEntries(XRProject project)

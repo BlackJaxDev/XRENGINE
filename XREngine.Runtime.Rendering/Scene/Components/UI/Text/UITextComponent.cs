@@ -1,8 +1,12 @@
 using System;
+using XREngine.Rendering.UI.State;
 using System.Collections.Generic;
+using System.Collections.Frozen;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using XREngine.Components;
+using XREngine.Data;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -53,7 +57,7 @@ namespace XREngine.Rendering.UI
     /// - When <see cref="AnimatableTransforms"/> is enabled, per-glyph translation/scale/rotation can be applied via <see cref="GlyphRelativeTransforms"/>.
     /// - Auto sizing is supported through <see cref="UIBoundableTransform.CalcAutoWidthCallback"/> and <see cref="UIBoundableTransform.CalcAutoHeightCallback"/>.
     /// </remarks>
-    public class UITextComponent : UIRenderableComponent
+    public partial class UITextComponent : UIRenderableComponent
     {
         private static bool UseWebGpuBatchOnly =>
             RuntimeEngineMaterialConstructionServices.Target == EngineMaterialConstructionTarget.WebGpuCooked ||
@@ -73,10 +77,36 @@ namespace XREngine.Rendering.UI
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            UITextShapingBackendRegistry.Changed += ShapingBackendChanged;
             // Cooked component hydration does not raise Text/Font property notifications.
             // Resolve the preloaded font and build glyph layout after transform wiring.
-            if (!string.IsNullOrEmpty(Text))
+            if (!string.IsNullOrEmpty(Text) && !TryGetAcceptedLayoutResult(out _, out _))
+            {
                 UpdateText(forceRemake: false);
+                // A local rebuild must return to the canvas publication path,
+                // including fixed-size text whose glyph count does not change.
+                BoundableTransform.InvalidateMeasure();
+            }
+        }
+
+        protected override void OnComponentDeactivated()
+        {
+            UITextShapingBackendRegistry.Changed -= ShapingBackendChanged;
+            base.OnComponentDeactivated();
+        }
+
+        private void ShapingBackendChanged()
+        {
+            if (!UseShapedText ||
+                System.Threading.Interlocked.Exchange(ref _pendingShapingBackendInvalidation, 1) != 0)
+                return;
+            RuntimeEngine.InvokeOnAppThread(() =>
+            {
+                System.Threading.Interlocked.Exchange(ref _pendingShapingBackendInvalidation, 0);
+                if (UseShapedText && System.Threading.Volatile.Read(ref _layoutFontObserverDisposed) == 0 &&
+                    SceneNode?.Transform is UIBoundableTransform transform)
+                    transform.InvalidateMeasure();
+            }, "UITextComponent.ShapingBackendChanged");
         }
 
         #endregion
@@ -97,10 +127,25 @@ namespace XREngine.Rendering.UI
         #region Glyph State / Buffers
 
         private readonly List<(Vector4 transform, Vector4 uvs)> _glyphs = [];
+        private UITextLayoutInput? _layoutInput;
+        private UITextLayoutResult? _layoutResult;
+        private Vector2 _layoutResultActualSize;
+        private UITextureSnapshot? _publicationAtlasSnapshot;
+        private FontGlyphSet? _layoutInputFont;
+        private long _layoutInputBackendGeneration;
+        private int _pendingShapingBackendInvalidation;
+        private long _textRevision;
         private XRDataBuffer<Vector4>? _uvsBuffer;
         private XRDataBuffer<Vector4>? _transformsBuffer;
         private XRDataBuffer<float>? _rotationsBuffer;
         private readonly Lock _glyphLock = new();
+        private FrozenDictionary<int, (Vector2 translation, Vector2 scale, float rotation)> _glyphOverrides =
+            FrozenDictionary<int, (Vector2 translation, Vector2 scale, float rotation)>.Empty;
+        private Dictionary<int, (Vector2 translation, Vector2 scale, float rotation)>? _capturedGlyphOverrides;
+        private long _glyphOverrideRevision;
+        private long _writtenGlyphOverrideRevision = -1;
+        private UITextLayoutResult? _writtenGlyphLayout;
+        private XRDataBuffer? _writtenGlyphBuffer;
 
         /// <summary>
         /// When true, the next render will push full buffer contents (e.g., after a resize).
@@ -154,17 +199,91 @@ namespace XREngine.Rendering.UI
         public string? Text
         {
             get => _text;
-            set => SetField(ref _text, value);
+            set
+            {
+                ++_textWriteIntentRevision;
+                Action? previousAdmission = _activeTextWriteAdmission;
+                _activeTextWriteAdmission = null;
+                try { SetField(ref _text, value); }
+                finally
+                {
+                    if (_activeTextWriteAdmission is null)
+                        _activeTextWriteAdmission = previousAdmission;
+                }
+            }
         }
 
         private FontGlyphSet? _font;
+        private FontGlyphSet? _observedLayoutFont;
+        private int _pendingFontMetricInvalidation;
+        private int _layoutFontObserverDisposed;
         /// <summary>
         /// The font to use for the text.
         /// </summary>
         public FontGlyphSet? Font
         {
             get => _font;
-            set => SetField(ref _font, value);
+            set
+            {
+                if (ReferenceEquals(_font, value))
+                    return;
+                if (_observedLayoutFont is not null)
+                    _observedLayoutFont.LayoutMetricsChanged -= FontLayoutMetricsChanged;
+                _observedLayoutFont = null;
+                try { SetField(ref _font, value); }
+                finally { ObserveLayoutFont(); }
+            }
+        }
+
+        private FontGlyphSet EnsureLayoutFont()
+        {
+            _font ??= FontGlyphSet.LoadDefaultUIFont();
+            ObserveLayoutFont();
+            return _font;
+        }
+
+        private void ObserveLayoutFont()
+        {
+            if (ReferenceEquals(_observedLayoutFont, _font))
+                return;
+            if (_observedLayoutFont is not null)
+                _observedLayoutFont.LayoutMetricsChanged -= FontLayoutMetricsChanged;
+            _observedLayoutFont = _font;
+            if (_observedLayoutFont is not null)
+                _observedLayoutFont.LayoutMetricsChanged += FontLayoutMetricsChanged;
+        }
+
+        private void FontLayoutMetricsChanged(FontGlyphSet font)
+        {
+            if (!ReferenceEquals(_font, font) ||
+                System.Threading.Volatile.Read(ref _layoutFontObserverDisposed) != 0 ||
+                System.Threading.Interlocked.Exchange(ref _pendingFontMetricInvalidation, 1) != 0)
+                return;
+
+            RuntimeEngine.InvokeOnAppThread(() =>
+            {
+                System.Threading.Interlocked.Exchange(ref _pendingFontMetricInvalidation, 0);
+                if (System.Threading.Volatile.Read(ref _layoutFontObserverDisposed) == 0 &&
+                    ReferenceEquals(_font, _observedLayoutFont) &&
+                    SceneNode?.Transform is UIBoundableTransform transform)
+                    transform.InvalidateMeasure();
+            }, "UITextComponent.FontLayoutMetricsChanged");
+        }
+
+        protected override void OnDestroying()
+        {
+            RetireAcceptedLayoutObservers();
+            UITextShapingBackendRegistry.Changed -= ShapingBackendChanged;
+            System.Threading.Volatile.Write(ref _layoutFontObserverDisposed, 1);
+            if (_observedLayoutFont is not null)
+                _observedLayoutFont.LayoutMetricsChanged -= FontLayoutMetricsChanged;
+            _observedLayoutFont = null;
+            try { DestroyOwnedStandalone(); }
+            finally
+            {
+                ReleasePublicationAtlas();
+                base.OnDestroying();
+            }
         }
 
         private string? _publishedFontAssetPath;
@@ -390,7 +509,7 @@ namespace XREngine.Rendering.UI
             switch (e.PropertyName)
             {
                 case nameof(UIBoundableTransform.ActualSize):
-                    if (HasAuthoredOrMaterializedText && BoundsAffectGlyphLayout())
+                    if (!BoundableTransform.IsApplyingCalculatedLayout && HasAuthoredOrMaterializedText && BoundsAffectGlyphLayout())
                         UpdateText(false, false);
                     break;
             }
@@ -416,17 +535,117 @@ namespace XREngine.Rendering.UI
             return transform.X + transform.Z;
         }
 
-        //TODO: return and cache max width and height when calculating glyphs instead
         private float CalcAutoWidth(UIBoundableTransform transform)
         {
-            using (_glyphLock.EnterScope())
-                return CalcAutoWidthNoLock();
+            return MeasureIntrinsic(transform).X;
         }
 
         private float CalcAutoHeight(UIBoundableTransform transform)
         {
-            using (_glyphLock.EnterScope())
-                return CalcAutoHeightNoLock();
+            return MeasureIntrinsic(transform).Y;
+        }
+
+        private Vector2 MeasureIntrinsic(UIBoundableTransform transform)
+        {
+            UITextLayoutInput? input = CaptureLayoutInput();
+            if (input is null)
+                return Vector2.Zero;
+            if (input.ShapingRequest is not null)
+                throw new InvalidOperationException("UI.ShapedLayoutPending: use the accepted canvas layout result.");
+            float width = WrapMode == FontGlyphSet.EWrapMode.None ? float.MaxValue : transform.ActualWidth;
+            if (width <= 0.0f)
+                width = float.MaxValue;
+            return UITextLayoutKernel.Measure(input, new(width, float.MaxValue)).IntrinsicSize;
+        }
+
+        /// <summary>Capture text and font values on the UI owner thread.</summary>
+        public UITextLayoutInput? CaptureLayoutInput()
+        {
+            FontGlyphSet font = EnsureLayoutFont();
+            if (!font.TryCaptureLayoutMetrics(out FrozenDictionary<int, UIRuneMetrics> metrics,
+                out Vector2 atlasSize, out float emSize, out long fontRevision))
+            {
+                if (UseShapedText)
+                    throw new NotSupportedException("UI.ShapedFontMetricsUnavailable: the font has no atlas metrics.");
+                return null;
+            }
+
+            float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
+            float spacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
+            float dpiScale = BoundableTransform.GetCanvasTransform()?.DpiScale ?? 1.0f;
+            string text = Text ?? string.Empty;
+            float? fontSize = FontSize;
+            FontGlyphSet.EWrapMode wrap = WrapMode;
+            float lineSpacing = DefaultLineSpacing + outlineSpacing;
+            EHorizontalAlignment horizontal = HorizontalAlignment;
+            EVerticalAlignment vertical = VerticalAlignment;
+            Vector4 margins = BoundableTransform.Margins;
+            bool shapedText = UseShapedText;
+            string language = ShapeLanguage;
+            UITextDirection direction = ShapeDirection;
+            string? featureSource = OpenTypeFeatures;
+            UITextShapingBackendState backendState = UITextShapingBackendRegistry.State;
+            long backendGeneration = backendState.Generation;
+            UITextLayoutInput? previous = _layoutInput;
+            if (previous is not null && ReferenceEquals(_layoutInputFont, _font) &&
+                previous.Text == text &&
+                previous.FontRevision == fontRevision && previous.FontSize == fontSize &&
+                previous.Wrap == wrap && previous.Spacing == spacing &&
+                previous.LineSpacing == lineSpacing &&
+                previous.HorizontalAlignment == horizontal &&
+                previous.VerticalAlignment == vertical &&
+                previous.Margins == margins && previous.AtlasSize == atlasSize &&
+                previous.EmSize == emSize && previous.DpiScale == dpiScale &&
+                (previous.ShapingRequest is not null) == shapedText &&
+                (!shapedText || _layoutInputBackendGeneration == backendGeneration &&
+                    previous.ShapingRequest is { } request &&
+                    request.Face.ContentIdentity == GetRequiredShapingFace(font).ContentIdentity &&
+                    request.Language == language && request.Direction == direction &&
+                    previous.ShapingFeatureSource == featureSource) &&
+                (ReferenceEquals(previous.Runes, metrics) || MetricsEqual(previous.Runes, metrics)) &&
+                (!shapedText || ReferenceEquals(backendState, UITextShapingBackendRegistry.State)))
+                return previous;
+
+            IUITextWorkerShapingBackend? backend = shapedText ?
+                backendState.Backend as IUITextWorkerShapingBackend : null;
+            if (shapedText && backend is null)
+                throw new NotSupportedException("UI.WorkerShapingBackendUnavailable: install a thread-safe shaping backend.");
+            UITextShapingRequest? shapingRequest = shapedText ? CaptureShapingRequest(text, font,
+                language, direction, featureSource, backend!) : null;
+            if (shapedText && (!ReferenceEquals(backendState, UITextShapingBackendRegistry.State) ||
+                !ReferenceEquals(font, _font) || (Text ?? string.Empty) != text ||
+                FontSize != fontSize || WrapMode != wrap || ShapeLanguage != language ||
+                ShapeDirection != direction || OpenTypeFeatures != featureSource ||
+                UseShapedText != shapedText || HorizontalAlignment != horizontal ||
+                VerticalAlignment != vertical || BoundableTransform.Margins != margins ||
+                (BoundableTransform.GetCanvasTransform()?.DpiScale ?? 1.0f) != dpiScale ||
+                ResolveLayoutSpacingForOutputPixels(OutlineAffectsSpacing ? OutlineThickness : 0.0f) != spacing ||
+                DefaultLineSpacing + (OutlineAffectsSpacing ? OutlineThickness : 0.0f) != lineSpacing))
+                throw new InvalidOperationException("UI.ShapingInputsChanged: text inputs changed during shaping.");
+            if (shapedText && (!font.TryCaptureLayoutMetrics(out _, out Vector2 currentAtlas,
+                out float currentEm, out long currentRevision) ||
+                currentRevision != fontRevision || currentAtlas != atlasSize || currentEm != emSize))
+                throw new InvalidOperationException("UI.ShapingInputsChanged: font metrics changed during shaping.");
+            _layoutInput = new(text, metrics, ++_textRevision, fontRevision,
+                emSize, atlasSize, fontSize, wrap, spacing,
+                lineSpacing, horizontal, vertical,
+                margins, dpiScale, ShapingRequest: shapingRequest,
+                ShapingBackendGeneration: shapedText ? backendGeneration : 0,
+                ShapingFeatureSource: featureSource);
+            _layoutInputFont = _font;
+            _layoutInputBackendGeneration = backendGeneration;
+            return _layoutInput;
+        }
+
+        private static bool MetricsEqual(FrozenDictionary<int, UIRuneMetrics> left,
+            FrozenDictionary<int, UIRuneMetrics> right)
+        {
+            if (left.Count != right.Count)
+                return false;
+            foreach ((int rune, UIRuneMetrics metric) in left)
+                if (!right.TryGetValue(rune, out UIRuneMetrics other) || other != metric)
+                    return false;
+            return true;
         }
 
         private float CalcAutoWidthNoLock()
@@ -436,8 +655,8 @@ namespace XREngine.Rendering.UI
                 if (string.IsNullOrEmpty(Text))
                     return 0.0f;
 
-                _font ??= FontGlyphSet.LoadDefaultUIFont();
-                return MeasureWidth(Text, _font, FontSize ?? 30.0f);
+                FontGlyphSet font = EnsureLayoutFont();
+                return MeasureWidth(Text, font, FontSize ?? 30.0f);
             }
 
             return _glyphs.Max(g => g.transform.X + g.transform.Z);
@@ -457,9 +676,27 @@ namespace XREngine.Rendering.UI
 
         #region Property Change Handling
 
+        protected override UIChangeDomain GetUIChangeDomain(string? propertyName)
+            => propertyName switch
+            {
+                nameof(Text) or nameof(Font) or nameof(FontSize) or nameof(WrapMode) or
+                nameof(UseShapedText) or nameof(ShapeLanguage) or nameof(ShapeDirection) or
+                nameof(OpenTypeFeatures) or
+                nameof(HorizontalAlignment) or nameof(VerticalAlignment) or nameof(OutlineAffectsSpacing) =>
+                    UIChangeDomain.Text | UIChangeDomain.Measure | UIChangeDomain.Arrange | UIChangeDomain.Visual,
+                nameof(OutlineThickness) when OutlineAffectsSpacing =>
+                    UIChangeDomain.Text | UIChangeDomain.Measure | UIChangeDomain.Arrange | UIChangeDomain.Visual,
+                nameof(GlyphRelativeTransforms) or nameof(AnimatableTransforms) => UIChangeDomain.Text | UIChangeDomain.Visual,
+                nameof(NonVertexShadersOverride) or nameof(DisableBatching) => UIChangeDomain.Visual | UIChangeDomain.Topology,
+                nameof(HideOverflow) => UIChangeDomain.Clip | UIChangeDomain.HitTest,
+                _ => base.GetUIChangeDomain(propertyName),
+            };
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
+            Action? textAdmission = propName == nameof(Text) ? _activeTextWriteAdmission : null;
             base.OnPropertyChanged(propName, prev, field);
+            textAdmission?.Invoke();
             // YAML assigns properties before ComponentsSerialized gives the component an owner.
             // OnComponentActivated builds the authored text after its transform is wired.
             if (SceneNode is null)
@@ -484,6 +721,19 @@ namespace XREngine.Rendering.UI
                 case nameof(Text):
                     UpdateText(false);
                     break;
+                case nameof(FontSize):
+                case nameof(WrapMode):
+                case nameof(UseShapedText):
+                case nameof(HorizontalAlignment):
+                case nameof(VerticalAlignment):
+                    UpdateText(false);
+                    break;
+                case nameof(ShapeLanguage):
+                case nameof(ShapeDirection):
+                case nameof(OpenTypeFeatures):
+                    if (UseShapedText)
+                        UpdateText(false);
+                    break;
                 case nameof(RenderPass):
                     {
                         var mat = RenderCommand3D.Mesh?.Material;
@@ -507,7 +757,7 @@ namespace XREngine.Rendering.UI
                         var mat = Mesh?.Material;
                         if (mat is not null)
                             mat.SetVector4(TextColorUniformName, Color);
-                        else
+                        else if (!CanDeferStandaloneText())
                             UpdateText(true);
                     }
                     break;
@@ -516,7 +766,7 @@ namespace XREngine.Rendering.UI
                         var mat = Mesh?.Material;
                         if (mat is not null)
                             mat.SetVector4(OutlineColorUniformName, OutlineColor);
-                        else
+                        else if (!CanDeferStandaloneText())
                             UpdateText(true);
                     }
                     break;
@@ -525,7 +775,7 @@ namespace XREngine.Rendering.UI
                         var mat = Mesh?.Material;
                         if (mat is not null)
                             mat.SetFloat(OutlineThicknessUniformName, OutlineThickness);
-                        else
+                        else if (!CanDeferStandaloneText())
                             UpdateText(true);
 
                         if (OutlineAffectsSpacing)
@@ -542,11 +792,12 @@ namespace XREngine.Rendering.UI
                         var mat = Mesh?.Material;
                         if (mat is not null)
                             mat.SetFloat(MsdfFillBiasUniformName, MsdfFillBias);
-                        else
+                        else if (!CanDeferStandaloneText())
                             UpdateText(true);
                     }
                     break;
             }
+            textAdmission?.Invoke();
         }
 
         #endregion
@@ -560,11 +811,16 @@ namespace XREngine.Rendering.UI
         /// <param name="forceRemake"></param>
         protected virtual void UpdateText(bool forceRemake, bool invalidateLayout = true)
         {
-            _font ??= FontGlyphSet.LoadDefaultUIFont();
+            FontGlyphSet font = EnsureLayoutFont();
+            if (!ReferenceEquals(_capturedGlyphOverrides, GlyphRelativeTransforms))
+                CaptureGlyphOverrides();
             //Task.Run(() =>
             //{
-                VerifyCreated(forceRemake, _font.Atlas);
+                VerifyCreated(forceRemake, font.Atlas);
                 uint count;
+                UITextLayoutInput? input = CaptureLayoutInput();
+                if (input?.ShapingRequest is not null)
+                    return;
                 using (_glyphLock.EnterScope())
                 {
                     var tfm = BoundableTransform;
@@ -574,14 +830,55 @@ namespace XREngine.Rendering.UI
                         w = float.MaxValue;
                     if (h <= 0.0f)
                         h = float.MaxValue;
-                    float outlineSpacing = OutlineAffectsSpacing ? OutlineThickness : 0.0f;
-                    float glyphSpacing = ResolveLayoutSpacingForOutputPixels(outlineSpacing);
-                    _font.GetQuads(Text, _glyphs, FontSize, w, h, WrapMode, glyphSpacing, DefaultLineSpacing + outlineSpacing);
-                    AlignQuads(tfm, w, h);
-                    count = (uint)(_glyphs?.Count ?? 0);
+                    _glyphs.Clear();
+                    _layoutResult = input is null ? null : UITextLayoutKernel.Measure(input, new(w, h));
+                    _layoutResultActualSize = tfm.ActualSize;
+                    if (_layoutResult is not null)
+                        foreach (UITextLayoutGlyph glyph in _layoutResult.Glyphs.Span)
+                            _glyphs.Add((glyph.Transform, glyph.Uvs));
+                    count = (uint)_glyphs.Count;
                 }
                 ResizeGlyphCount(count, invalidateLayout);
             //});
+        }
+
+        /// <summary>Apply text geometry from an accepted layout generation on the UI owner thread.</summary>
+        public bool ApplyLayoutResult(UITextLayoutResult result, Vector2 actualSize)
+        {
+            UITextLayoutInput? input = _layoutInput;
+            if (input is null || result.TextRevision != input.TextRevision ||
+                result.FontRevision != input.FontRevision ||
+                BoundableTransform.ActualSize != actualSize)
+                return false;
+
+            FontGlyphSet font = EnsureLayoutFont();
+            VerifyCreated(false, font.Atlas);
+            using (_glyphLock.EnterScope())
+            {
+                _glyphs.Clear();
+                foreach (UITextLayoutGlyph glyph in result.Glyphs.Span)
+                    _glyphs.Add((glyph.Transform, glyph.Uvs));
+                _layoutResult = result;
+                _layoutResultActualSize = actualSize;
+                ResizeGlyphCount((uint)_glyphs.Count, invalidateLayout: false);
+            }
+            return true;
+        }
+
+        /// <summary>Returns placed caret geometry only for the currently captured text and font.</summary>
+        public bool TryGetCurrentLayoutResult(out UITextLayoutResult result)
+        {
+            UITextLayoutInput? input = CaptureLayoutInput();
+            UITextLayoutResult? current = _layoutResult;
+            if (input is not null && current is not null &&
+                current.TextRevision == input.TextRevision && current.FontRevision == input.FontRevision &&
+                _layoutResultActualSize == BoundableTransform.ActualSize)
+            {
+                result = current;
+                return true;
+            }
+            result = null!;
+            return false;
         }
 
         /// <summary>Rebuilds attached text after a restore changes its value without property notifications.</summary>
@@ -682,32 +979,80 @@ namespace XREngine.Rendering.UI
         /// </summary>
         /// <param name="forceRemake"></param>
         /// <param name="atlas"></param>
-        private void VerifyCreated(bool forceRemake, XRTexture2D? atlas)
+        private EFontAtlasType? _createdAtlasType;
+
+        private void VerifyCreated(bool forceRemake, XRTexture2D? atlas, bool requireStandalone = false)
         {
             // Browser screen text is rendered by the shared bitmap batch. Building this
             // legacy per-component mesh would synchronously load desktop GLSL stages.
             if (UseWebGpuBatchOnly)
                 return;
+            if (_retiringStandalone || _installingStandalone)
+                return;
+            // A caller may clear or replace Mesh without passing through our normal
+            // retirement path. Settle that old private bundle before making another.
+            if (_ownedStandaloneRenderer is not null &&
+                !ReferenceEquals(Mesh, _ownedStandaloneRenderer))
+                DestroyOwnedStandalone();
 
-            var mesh = Mesh;
-            if ((!forceRemake && mesh is not null) || atlas is null)
+            if (!requireStandalone && CanDeferStandaloneText())
                 return;
 
-            if (mesh is not null)
+            var mesh = Mesh;
+            if (atlas is null)
+                return;
+            // A renderer supplied by the caller belongs to the caller. Its material and
+            // callbacks are not ours to replace when text or atlas metadata changes.
+            if (mesh is not null && !ReferenceEquals(mesh, _ownedStandaloneRenderer))
+                return;
+            if (!forceRemake && mesh is not null && _createdAtlasType == Font?.AtlasType &&
+                ReferenceEquals(Material, mesh.Material))
             {
-                mesh.SettingUniforms -= MeshRend_SettingUniforms;
-                mesh.PreparingRenderData -= MeshRend_PreparingRenderData;
-                mesh.Destroy();
+                // The font can replace its atlas without changing text geometry.
+                if (ReferenceEquals(mesh.Material, _ownedStandaloneMaterial) && mesh.Material is { } material)
+                {
+                    if (material.Textures.Count > 0 && !ReferenceEquals(material.Textures[0], atlas))
+                        material.Textures[0] = atlas;
+                    material.SetFloat(MsdfDistanceRangeUniformName, Font?.DistanceRange ?? 0.0f);
+                    material.SetFloat(MsdfDistanceRangeMiddleUniformName, Font?.DistanceRangeMiddle ?? 0.5f);
+                }
+                return;
             }
 
+            XRMaterial? authoredMaterial = Material is { } existingMaterial &&
+                !ReferenceEquals(existingMaterial, _ownedStandaloneMaterial)
+                ? existingMaterial : null;
+            if (mesh is not null)
+            {
+                DestroyOwnedStandalone();
+                if (Mesh is not null)
+                    return;
+            }
+            if (!ReferenceEquals(Font?.Atlas, atlas))
+                return;
+
+            XRMaterial materialForRenderer = Material ?? authoredMaterial ?? CreateMaterial(atlas);
+            XRMesh geometry = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false));
             var rend = new XRMeshRenderer(
-                XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
-                CreateMaterial(atlas));
+                geometry,
+                materialForRenderer);
 
             rend.SettingUniforms += MeshRend_SettingUniforms;
             rend.PreparingRenderData += MeshRend_PreparingRenderData;
             CreateSSBOs(rend);
-            Mesh = rend;
+            _ownedStandaloneRenderer = rend;
+            _ownedStandaloneGeometry = geometry;
+            _ownedStandaloneMaterial = ReferenceEquals(materialForRenderer, authoredMaterial) ||
+                ReferenceEquals(materialForRenderer, Material) ? null : materialForRenderer;
+            _installingStandalone = true;
+            try { Mesh = rend; }
+            finally { _installingStandalone = false; }
+            if (!ReferenceEquals(Mesh, rend))
+            {
+                DestroyOwnedStandalone();
+                return;
+            }
+            _createdAtlasType = Font?.AtlasType;
         }
 
         /// <summary>
@@ -729,7 +1074,7 @@ namespace XREngine.Rendering.UI
             XRShader vertexShader = XRShader.EngineShader(Path.Combine("Common", AnimatableTransforms ? "TextRotatable.vs" : "Text.vs"), EShaderType.Vertex);
             XRShader stereoVertexShader = XRShader.EngineShader(Path.Combine("Common", AnimatableTransforms ? "TextRotatableStereo.vs" : "TextStereo.vs"), EShaderType.Vertex);
             XRShader[] nonVertexShaders = NonVertexShadersOverride ?? [XRShader.EngineShader(Path.Combine("Common", fragmentShaderName), EShaderType.Fragment)];
-            Debug.WriteAuxiliaryLog("text-material-diagnostics.log", $"UITextComponent.CreateMaterial: shader={fragmentShaderName}, atlasType={Font?.AtlasType}, glyphs={Font?.Glyphs?.Count ?? 0}, atlas='{atlas.OriginalPath ?? atlas.FilePath ?? "<null>"}', fontAsset='{Font?.FilePath ?? "<null>"}', fontOriginal='{Font?.OriginalPath ?? "<null>"}', text='{SummarizeTextForDiagnostics(Text ?? string.Empty)}'");
+            Debug.WriteAuxiliaryLog("text-material-diagnostics.log", $"UITextComponent.CreateMaterial: shader={fragmentShaderName}, atlasType={Font?.AtlasType}, glyphs={Font?.LayoutGlyphCount ?? 0}, atlas='{atlas.OriginalPath ?? atlas.FilePath ?? "<null>"}', fontAsset='{Font?.FilePath ?? "<null>"}', fontOriginal='{Font?.OriginalPath ?? "<null>"}', text='{SummarizeTextForDiagnostics(Text ?? string.Empty)}'");
             ShaderVar[] parameters =
             [
                 new ShaderVector4(Color, TextColorUniformName),
@@ -800,8 +1145,12 @@ namespace XREngine.Rendering.UI
             }
         }
 
+        private static readonly bool FpsTextDiagnosticsEnabled =
+            string.Equals(Environment.GetEnvironmentVariable("XRE_UI_BATCH_DIAGNOSTICS"), "1", StringComparison.Ordinal);
+
         private bool IsFpsTextDiagnosticTarget()
-            => SceneNode?.Name == "TestTextNode";
+            => FpsTextDiagnosticsEnabled &&
+               SceneNode?.Name == "TestTextNode";
 
         private void LogFpsTextRenderHook(string hook)
         {
@@ -847,28 +1196,31 @@ namespace XREngine.Rendering.UI
         private static int _resizeGlyphDiagCount = 0;
         private void ResizeGlyphCount(uint count, bool invalidateLayout)
         {
-            if (_resizeGlyphDiagCount < 10)
+            using (_glyphLock.EnterScope())
             {
-                _resizeGlyphDiagCount++;
-                Debug.Log(ELogCategory.UI, $"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
-            }
-            RenderCommand3D.Instances = count;
-            RenderCommand2D.Instances = count;
-            if (_allocatedGlyphCount < count)
-            {
-                _allocatedGlyphCount = count;
-                _transformsBuffer?.Resize(_allocatedGlyphCount);
-                _uvsBuffer?.Resize(_allocatedGlyphCount);
-                _rotationsBuffer?.Resize(_allocatedGlyphCount);
-                _pushFull = true;
-            }
-            _dataChanged = true;
+                if (IsFpsTextDiagnosticTarget() && _resizeGlyphDiagCount < 10)
+                {
+                    _resizeGlyphDiagCount++;
+                    Debug.Log(ELogCategory.UI, $"[FpsTextDiag] ResizeGlyphCount #{_resizeGlyphDiagCount} node='{SceneNode?.Name}' count={count} textLen={Text?.Length ?? -1} alloc={_allocatedGlyphCount} mesh={(Mesh is not null)} material={(Mesh?.Material is not null)}");
+                }
+                if (_allocatedGlyphCount < count)
+                {
+                    _transformsBuffer?.Resize(count);
+                    _uvsBuffer?.Resize(count);
+                    _rotationsBuffer?.Resize(count);
+                    _allocatedGlyphCount = count;
+                    _pushFull = true;
+                }
+                RenderCommand3D.Instances = count;
+                RenderCommand2D.Instances = count;
+                _dataChanged = true;
 
-            if (invalidateLayout)
-            {
-                var tfm = BoundableTransform;
-                if (tfm.UsesAutoSizing)
-                    tfm.InvalidateLayout();
+                if (invalidateLayout)
+                {
+                    var tfm = BoundableTransform;
+                    if (tfm.UsesAutoSizing)
+                        tfm.InvalidateLayout();
+                }
             }
         }
 
@@ -893,57 +1245,61 @@ namespace XREngine.Rendering.UI
         /// <param name="meshRend"></param>
         private void CreateSSBOs(XRMeshRenderer meshRend)
         {
-            string transformsBindingName = "GlyphTransformsBuffer";
-            string uvsBindingName = $"GlyphTexCoordsBuffer";
-            string rotationsBindingName = "GlyphRotationsBuffer";
-
-            //TODO: use memory mapping instead of pushing
-
-            //_allocatedGlyphCount = GetAllocationLength();
-
-            meshRend.Buffers.Remove(transformsBindingName);
-            _transformsBuffer?.Destroy();
-            _transformsBuffer = new(transformsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
+            using (_glyphLock.EnterScope())
             {
-                //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
-                Usage = AnimatableTransforms ? EBufferUsage.StreamDraw : EBufferUsage.StaticCopy,
-                BindingIndexOverride = 0,
-                DisposeOnPush = false
-            };
-            meshRend.Buffers.Add(transformsBindingName, _transformsBuffer);
+                string transformsBindingName = "GlyphTransformsBuffer";
+                string uvsBindingName = $"GlyphTexCoordsBuffer";
+                string rotationsBindingName = "GlyphRotationsBuffer";
 
-            meshRend.Buffers.Remove(uvsBindingName);
-            _uvsBuffer?.Destroy();
-            _uvsBuffer = new(uvsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
-            {
-                //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
-                //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
-                Usage = EBufferUsage.StaticCopy,
-                BindingIndexOverride = 1,
-                DisposeOnPush = false
-            };
-            meshRend.Buffers.Add(uvsBindingName, _uvsBuffer);
+                //TODO: use memory mapping instead of pushing
 
-            meshRend.Buffers.Remove(rotationsBindingName);
-            _rotationsBuffer?.Destroy();
+                //_allocatedGlyphCount = GetAllocationLength();
 
-            if (AnimatableTransforms)
-            {
-                _rotationsBuffer = new(rotationsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
+                meshRend.Buffers.Remove(transformsBindingName);
+                _transformsBuffer?.Destroy();
+                _transformsBuffer = new(transformsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
+                {
+                    //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+                    //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
+                    Usage = AnimatableTransforms ? EBufferUsage.StreamDraw : EBufferUsage.StaticCopy,
+                    BindingIndexOverride = 0,
+                    DisposeOnPush = false
+                };
+                meshRend.Buffers.Add(transformsBindingName, _transformsBuffer);
+
+                meshRend.Buffers.Remove(uvsBindingName);
+                _uvsBuffer?.Destroy();
+                _uvsBuffer = new(uvsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
                 {
                     //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
                     //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
                     Usage = EBufferUsage.StaticCopy,
-                    BindingIndexOverride = 2,
+                    BindingIndexOverride = 1,
                     DisposeOnPush = false
                 };
-                meshRend.Buffers.Add(rotationsBindingName, _rotationsBuffer);
-            }
+                meshRend.Buffers.Add(uvsBindingName, _uvsBuffer);
 
-            _dataChanged = true;
-            _pushFull = true;
-            LogFpsTextRenderHook("CreateSSBOs");
+                meshRend.Buffers.Remove(rotationsBindingName);
+                _rotationsBuffer?.Destroy();
+                _rotationsBuffer = null;
+
+                if (AnimatableTransforms)
+                {
+                    _rotationsBuffer = new(rotationsBindingName, EBufferTarget.ShaderStorageBuffer, _allocatedGlyphCount)
+                    {
+                        //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
+                        //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
+                        Usage = EBufferUsage.StaticCopy,
+                        BindingIndexOverride = 2,
+                        DisposeOnPush = false
+                    };
+                    meshRend.Buffers.Add(rotationsBindingName, _rotationsBuffer);
+                }
+
+                _dataChanged = true;
+                _pushFull = true;
+                LogFpsTextRenderHook("CreateSSBOs");
+            }
         }
 
         /// <summary>
@@ -951,7 +1307,25 @@ namespace XREngine.Rendering.UI
         /// This will update the transforms buffer with the new values.
         /// </summary>
         public void MarkGlyphTransformsChanged()
-            => _dataChanged = true;
+        {
+            CaptureGlyphOverrides();
+            if (SceneNode is not null)
+                UITransform.RecordUIChange(UIChangeDomain.Text | UIChangeDomain.Visual);
+            _dataChanged = true;
+        }
+
+        private void CaptureGlyphOverrides()
+        {
+            if (GlyphRelativeTransforms.Count > UIDrawStateCapture.MaximumArrayLength)
+                throw new NotSupportedException("Text glyph overrides exceed the bounded draw capture profile.");
+            var snapshot = GlyphRelativeTransforms.ToFrozenDictionary();
+            using (_glyphLock.EnterScope())
+            {
+                _glyphOverrides = snapshot;
+                _capturedGlyphOverrides = GlyphRelativeTransforms;
+                _glyphOverrideRevision++;
+            }
+        }
 
         #endregion
 
@@ -960,156 +1334,188 @@ namespace XREngine.Rendering.UI
         /// <summary>
         /// Writes the glyph data to the SSBOs.
         /// </summary>
-        private unsafe void WriteData()
+        private void WriteData(bool force = false)
         {
-            if (_transformsBuffer is null || _uvsBuffer is null)
-                return;
-            
-            (Vector4 transform, Vector4 uvs)[] glyphsCopy;
             using (_glyphLock.EnterScope())
-                glyphsCopy = [.. _glyphs];
-
-            if (IsFpsTextDiagnosticTarget() && _fpsTextWriteDiagCount++ < 40)
             {
-                var firstTransform = glyphsCopy.Length > 0 ? glyphsCopy[0].transform : Vector4.Zero;
-                var firstUvs = glyphsCopy.Length > 0 ? glyphsCopy[0].uvs : Vector4.Zero;
-                var lastTransform = glyphsCopy.Length > 0 ? glyphsCopy[^1].transform : Vector4.Zero;
-                Debug.Log(
-                    ELogCategory.UI,
-                    "[FpsTextDiag] UITextComponent.WriteData #{0} node='{1}' glyphs={2} firstTfm=({3:F2},{4:F2},{5:F2},{6:F2}) firstUv=({7:F5},{8:F5},{9:F5},{10:F5}) lastTfm=({11:F2},{12:F2},{13:F2},{14:F2}) color=({15:F2},{16:F2},{17:F2},{18:F2})",
-                    _fpsTextWriteDiagCount,
-                    SceneNode?.Name ?? "<null>",
-                    glyphsCopy.Length,
-                    firstTransform.X,
-                    firstTransform.Y,
-                    firstTransform.Z,
-                    firstTransform.W,
-                    firstUvs.X,
-                    firstUvs.Y,
-                    firstUvs.Z,
-                    firstUvs.W,
-                    lastTransform.X,
-                    lastTransform.Y,
-                    lastTransform.Z,
-                    lastTransform.W,
-                    Color.R,
-                    Color.G,
-                    Color.B,
-                    Color.A);
-            }
-
-            float* tfmPtr = (float*)_transformsBuffer.ClientSideSource!.Address.Pointer;
-            float* uvsPtr = (float*)_uvsBuffer.ClientSideSource!.Address.Pointer;
-
-            for (int i = 0; i < glyphsCopy.Length; i++)
-            {
-                (Vector4 transform, Vector4 uvs) = glyphsCopy[i];
-
-                if (AnimatableTransforms && GlyphRelativeTransforms.TryGetValue(i, out var relative))
+                if (_layoutResult is not { } layout || _transformsBuffer?.ClientSideSource is null ||
+                    _uvsBuffer?.ClientSideSource is null || !HasGlyphStorage(layout.Glyphs.Length))
+                    return;
+                if (!force && ReferenceEquals(_writtenGlyphLayout, layout) &&
+                    ReferenceEquals(_writtenGlyphBuffer, _transformsBuffer) &&
+                    _writtenGlyphOverrideRevision == _glyphOverrideRevision)
+                    return;
+                int changedGlyphs = UIGlyphBufferWriter.Write(layout, _glyphOverrides, AnimatableTransforms,
+                    _transformsBuffer!, _uvsBuffer!, _rotationsBuffer, force);
+                _writtenGlyphLayout = layout;
+                _writtenGlyphOverrideRevision = _glyphOverrideRevision;
+                _writtenGlyphBuffer = _transformsBuffer;
+                _dataChanged = false;
+                _pushFull = false;
+                if (changedGlyphs > 0)
                 {
-                    transform.X += relative.translation.X;
-                    transform.Y += relative.translation.Y;
-                    transform.Z *= relative.scale.X;
-                    transform.W *= relative.scale.Y;
-
-                    if (_rotationsBuffer is not null)
-                        ((float*)_rotationsBuffer.ClientSideSource!.Address.Pointer)[i] = relative.rotation;
+                    UIRuntimeCounters.Add(UIWorkCounter.GlyphCopies);
+                    UIRuntimeCounters.Add(UIWorkCounter.GlyphsCopied, changedGlyphs);
                 }
-
-                *tfmPtr++ = transform.X;
-                *tfmPtr++ = transform.Y;
-                *tfmPtr++ = transform.Z;
-                *tfmPtr++ = transform.W;
-                //Debug.Out(i.ToString() + ": " + transform.ToString());
-
-                *uvsPtr++ = uvs.X;
-                *uvsPtr++ = uvs.Y;
-                *uvsPtr++ = uvs.Z;
-                *uvsPtr++ = uvs.W;
-                //Debug.Out(uvs.ToString());
+                if (IsFpsTextDiagnosticTarget() && _fpsTextWriteDiagCount++ < 40)
+                    Debug.Log(ELogCategory.UI, "UITextComponent.WriteData glyphs={0} changed={1}", layout.Glyphs.Length, changedGlyphs);
             }
         }
 
-        /// <summary>
-        /// Pushes the sub-data of the SSBOs to the GPU.
-        /// </summary>
-        private void PushSubBuffers()
-        {
-            WriteData();
-            _transformsBuffer?.CommitDirtyBytes(0u, _transformsBuffer.Length);
-            _uvsBuffer?.CommitDirtyBytes(0u, _uvsBuffer.Length);
-            _rotationsBuffer?.CommitDirtyBytes(0u, _rotationsBuffer.Length);
-        }
+        private bool HasGlyphStorage(int glyphCount)
+            => UIGlyphBufferWriter.HasStorage(glyphCount, _allocatedGlyphCount, AnimatableTransforms,
+                _transformsBuffer, _uvsBuffer, _rotationsBuffer);
 
-        /// <summary>
-        /// Pushes the full data of the SSBOs to the GPU.
-        /// </summary>
-        private void PushBuffers()
-        {
-            WriteData();
-            _transformsBuffer?.CommitDirtyBytes(0u, _transformsBuffer.Length);
-            _uvsBuffer?.CommitDirtyBytes(0u, _uvsBuffer.Length);
-            _rotationsBuffer?.CommitDirtyBytes(0u, _rotationsBuffer.Length);
-        }
+        /// <summary>Commits only the changed, used glyph spans.</summary>
+        private void PushSubBuffers() => WriteData();
+
+        /// <summary>Commits the used glyph spans after storage changes.</summary>
+        private void PushBuffers() => WriteData(force: true);
 
         #endregion
 
         #region Batched Rendering
 
+        protected override bool CanCapturePublicationUniforms => GetType() == typeof(UITextComponent);
+
+        /// <summary>Copies glyph values from the accepted text result before deferred draw capture.</summary>
+        protected override bool TryCapturePublicationPayload(in UILayoutNodeOutput output,
+            UIDrawPayloadBuilder builder, out UIDrawPayload? payload, out string? failure)
+        {
+            payload = null;
+            failure = null;
+            VerifyCreated(false, Font?.Atlas, requireStandalone: true);
+            XRMeshRenderer? renderer = RenderCommand2D.Mesh;
+            if (!CanCapturePublicationUniforms || renderer is null || !renderer.HasOnlySettingUniformsHandler(MeshRend_SettingUniforms) ||
+                !renderer.HasOnlyRenderDataPreparationHandler(MeshRend_PreparingRenderData))
+            {
+                failure = "UI.TextCapture.CallbackAdapterRequired: custom text callbacks require an owned data adapter.";
+                return false;
+            }
+            if (renderer.Material is { } material)
+            {
+                material.SetVector4(TextColorUniformName, Color);
+                material.SetVector4(OutlineColorUniformName, OutlineColor);
+                material.SetFloat(OutlineThicknessUniformName, OutlineThickness);
+                material.SetFloat(MsdfDistanceRangeUniformName, Font?.DistanceRange ?? 0.0f);
+                material.SetFloat(MsdfDistanceRangeMiddleUniformName, Font?.DistanceRangeMiddle ?? 0.5f);
+                material.SetFloat(MsdfFillBiasUniformName, MsdfFillBias);
+            }
+            WriteData();
+            using (_glyphLock.EnterScope())
+            {
+                if (_layoutResult is not { } layout || _transformsBuffer?.ClientSideSource is null ||
+                    _uvsBuffer?.ClientSideSource is null || !HasGlyphStorage(layout.Glyphs.Length))
+                {
+                    failure = "UI.TextCapture.LayoutPending: the accepted text result and glyph storage must be ready.";
+                    return false;
+                }
+                RenderCommand2D.Instances = (uint)layout.Glyphs.Length;
+                builder.UseCommittedGlyphRevisions = true;
+                builder.UsedGlyphCount = NonVertexShadersOverride is null ? (uint)layout.Glyphs.Length : null;
+                return builder.TryCapture(RenderCommand2D, true, out payload, out failure);
+            }
+        }
+
+        /// <summary>Captures immutable text geometry and draw values for one canvas publication.</summary>
+        public override UIRenderRecord CapturePublicationRenderRecord(in UILayoutNodeOutput output)
+        {
+            UITextLayoutResult? layout;
+            using (_glyphLock.EnterScope())
+                layout = _layoutResult;
+            FontGlyphSet? font = Font;
+            UIRenderRecord record = base.CapturePublicationRenderRecord(in output);
+            if (record.SupportsBatch)
+                RetireOwnedStandaloneIfBatched();
+            XRTexture2D? atlas = font?.Atlas;
+            UITextureSnapshot? snapshot = null;
+            string? failure = record.CaptureFailure;
+            bool visible = record.Visible;
+            if (layout is null && !string.IsNullOrEmpty(Text) && visible)
+                failure = "UI.TextCapture.LayoutPending: text requires an accepted layout result.";
+            else if (layout is null || layout.Glyphs.Length == 0)
+                visible = false;
+            if (visible && record.SupportsBatch)
+            {
+                if (atlas is null)
+                    failure = "UI.TextCapture.AtlasPending: text requires a complete font atlas.";
+                else if (_publicationAtlasSnapshot is { } current && current.Matches(atlas))
+                    snapshot = current;
+                else if (!UITextureSnapshot.TryAcquire(atlas, out snapshot, out string? textureFailure))
+                    failure = textureFailure;
+                else
+                {
+                    ReleasePublicationAtlas();
+                    _publicationAtlasSnapshot = snapshot;
+                    snapshot!.SourceChanged += PublicationAtlasChanged;
+                }
+                if (snapshot is not null)
+                    atlas = snapshot.Texture;
+            }
+            else
+                ReleasePublicationAtlas();
+            return record with
+            {
+                Visible = visible,
+                CaptureFailure = failure,
+                AtlasSnapshot = snapshot,
+                IsText = true,
+                TextColor = new Vector4(Color.R, Color.G, Color.B, Color.A),
+                OutlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A),
+                OutlineThickness = OutlineThickness,
+                Atlas = atlas,
+                AtlasType = (int)(font?.AtlasType ?? default),
+                DistanceRange = font?.DistanceRange ?? 0.0f,
+                DistanceRangeMiddle = font?.DistanceRangeMiddle ?? 0.5f,
+                MsdfFillBias = MsdfFillBias,
+                DebugMode = (int)BatchedDebugMode,
+                TextLayout = layout,
+            };
+        }
+
+        private void PublicationAtlasChanged()
+        {
+            if (SceneNode?.Transform is UIBoundableTransform transform)
+            {
+                transform.RecordUIChange(UIChangeDomain.Text | UIChangeDomain.Visual);
+                transform.InvalidateMeasure();
+            }
+        }
+
+        private void ReleasePublicationAtlas()
+        {
+            UITextureSnapshot? previous = _publicationAtlasSnapshot;
+            _publicationAtlasSnapshot = null;
+            if (previous is null)
+                return;
+            previous.SourceChanged -= PublicationAtlasChanged;
+            previous.Release();
+        }
+
         /// <summary>
-        /// Text components support batching unless they have clip-to-bounds enabled,
-        /// use animatable (per-glyph rotation) transforms, or have no glyphs to render.
+        /// Text components use the shared batch when their shader and raster state match it.
         /// </summary>
         public override bool SupportsBatchedRendering
-            => !DisableBatching &&
-               (!ClipToBounds || UseWebGpuBatchOnly) &&
-               !AnimatableTransforms &&
-               (!UseWebGpuBatchOnly ||
-                NonVertexShadersOverride is null &&
-                UIBatchCollector.HasWebGpuRasterProfile(RenderParameters));
+            => CanUseSharedTextBatch();
 
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
-            if (string.IsNullOrEmpty(Text))
+            UICanvasComponent? canvas = BoundableTransform.ParentCanvas?.SceneNode?.GetComponent<UICanvasComponent>();
+            if (canvas is null || !canvas.TryGetCollectingRenderRecord(RenderInfo2D.MembershipId, out UIRenderRecord record) ||
+                !record.Visible || !record.SupportsBatch || record.TextLayout is not { } layout)
+                return false;
+            if (layout.Glyphs.Length == 0)
                 return true;
-
-            var font = Font;
-            if (font is null || font.Atlas is not { } atlas)
-                return UseWebGpuBatchOnly &&
-                    string.IsNullOrEmpty(Text);
-
-            using (_glyphLock.EnterScope())
-            {
-                if (_glyphs.Count == 0)
-                    return true;
-
-                var tfm = BoundableTransform;
-                var worldMatrix = GetRenderCanvasMatrix(tfm);
-                var textColor = new Vector4(Color.R, Color.G, Color.B, Color.A);
-                var outlineColor = new Vector4(OutlineColor.R, OutlineColor.G, OutlineColor.B, OutlineColor.A);
-                var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
-                var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
-
-                // The collector immediately copies into its collect/render double buffer,
-                // so no per-frame glyph snapshot array is required here.
-                collector.AddTextQuad(
-                    RenderPass,
-                    RenderCommand2D.ZIndex,
-                    passes,
-                    atlas,
-                    in worldMatrix,
-                    in textColor,
-                    in outlineColor,
-                    OutlineThickness,
-                    in bounds,
-                    (int)font.AtlasType,
-                    font.DistanceRange,
-                    font.DistanceRangeMiddle,
-                    MsdfFillBias,
-                    (int)BatchedDebugMode,
-                    _glyphs,
-                    UIClipRegion.ResolveCrop(tfm, ClipToBounds));
-            }
+            if (record.Atlas is not { } atlas)
+                return false;
+            Matrix4x4 worldMatrix = record.WorldMatrix;
+            Vector4 textColor = record.TextColor;
+            Vector4 outlineColor = record.OutlineColor;
+            Vector4 bounds = record.Bounds;
+            collector.AddTextQuad(record.RenderPass, record.ZIndex, passes, atlas,
+                in worldMatrix, in textColor, in outlineColor, record.OutlineThickness, in bounds,
+                record.AtlasType, record.DistanceRange, record.DistanceRangeMiddle, record.MsdfFillBias,
+                record.DebugMode, layout, record.Crop);
             return true;
         }
 
