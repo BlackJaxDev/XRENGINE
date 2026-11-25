@@ -126,7 +126,7 @@ public sealed class CookedBakeInputLoaderTests
         input.PrefabRoot.ShouldBeNull();
         XRWorld world = input.World.ShouldNotBeNull();
         world.Scenes.Count.ShouldBe(1);
-        SceneNode root = world.Scenes[0].RootNodes.ShouldHaveSingleItem();
+        SceneNode root = world.Scenes[0].SceneRoots.ShouldHaveSingleItem();
         SubMesh subMesh = GaussianBakeTestAssets.FirstSubMesh(root).ShouldNotBeNull();
         XRMesh mesh = subMesh.LODs.Min.ShouldNotBeNull().Mesh.ShouldNotBeNull();
         mesh.VertexCount.ShouldBeGreaterThan(0);

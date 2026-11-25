@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <XREngineRuntimeContractMode>Contracts</XREngineRuntimeContractMode>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../XREngine.Editor/UI/Panels/ENativeProfilerStatSeries.cs" Link="Editor/ENativeProfilerStatSeries.cs" />
@@ -319,6 +320,7 @@
     <Compile Include="../Animation/VrControllerWristPresetTests.cs" Link="Animation/VrControllerWristPresetTests.cs" />
     <!-- The narrow desktop filesystem adapter is OS-neutral BCL code; exercise it without the windowing/native desktop closure. -->
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetFileSystem.cs" Link="Platform/DesktopAssetFileSystem.cs" />
+    <Compile Include="../../XREngine.Runtime.Platform.Desktop/NativeAssetRecoveryCapacityWindows.cs" Link="Platform/NativeAssetRecoveryCapacityWindows.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopBvhDiskCache.cs" Link="Platform/DesktopBvhDiskCache.cs" />
     <Compile Include="../../XREngine.Runtime.Platform.Desktop/DesktopAssetChangeMonitor.cs" Link="Platform/DesktopAssetChangeMonitor.cs" />
     <Compile Include="../Platform/DesktopAssetFileSystemTests.cs" Link="Platform/DesktopAssetFileSystemTests.cs" />

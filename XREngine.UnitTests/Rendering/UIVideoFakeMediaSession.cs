@@ -53,5 +53,11 @@ internal sealed class UIVideoFakeMediaSession : IMediaStreamSession
         if (ThrowOnClose)
             throw new InvalidOperationException("Fake Close failed.");
     }
+    public bool CanSeek => false;
+    public string? LastSeekError => null;
+    public Task SeekAsync(long targetTicks, EVideoSeekMode mode, CancellationToken cancellationToken)
+        => Task.FromException(new NotSupportedException("The fake session cannot seek."));
+    public int RequestSeek(long targetTicks, EVideoSeekMode mode) => -1;
+    public EVideoSeekState GetSeekState(int requestId) => EVideoSeekState.Cancelled;
     public void Dispose() => DisposeCount++;
 }

@@ -275,7 +275,7 @@ public class SceneNodeLifecycleTests
         Assert.Multiple(() =>
         {
             Assert.That(adder.AddedRoot, Is.Not.Null);
-            Assert.That(scene.RootNodes, Has.Count.EqualTo(2));
+            Assert.That(scene.SceneRoots, Has.Count.EqualTo(2));
             Assert.That(world.RootNodes.Any(node => ReferenceEquals(node, first)), Is.True);
             Assert.That(world.RootNodes.Any(node => ReferenceEquals(node, adder.AddedRoot)), Is.True);
         });
@@ -989,7 +989,7 @@ public class SceneNodeLifecycleTests
                 return;
 
             AddedRoot = new SceneNode("AddedDuringActivation");
-            Scene.RootNodes.Add(AddedRoot);
+            Scene.SceneRoots.Add(AddedRoot);
         }
     }
 

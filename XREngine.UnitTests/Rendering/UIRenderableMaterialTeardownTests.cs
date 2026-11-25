@@ -120,7 +120,7 @@ public class UIRenderableMaterialTeardownTests
     }
 
     private static bool HasHandler(XRMaterial material, UIRenderableComponent owner)
-        => (typeof(XRMaterialBase).GetField("SettingUniforms", BindingFlags.Instance | BindingFlags.NonPublic)!
+        => (typeof(XRMaterialBase).GetField("_settingUniforms", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(material) as Delegate)?.GetInvocationList()
             .Any(handler => ReferenceEquals(handler.Target, owner)) == true;
 }

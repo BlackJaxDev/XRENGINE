@@ -83,13 +83,13 @@ public sealed class GaussianBakeFixtureAuthoring
         CookedBakeInput worldInput = CookedBakeInputLoader.Load(worldPak, WorldAssetPath, GaussianBakeKind.World);
         XRWorld world = worldInput.World.ShouldNotBeNull();
         XRScene scene = world.Scenes.ShouldHaveSingleItem();
-        scene.RootNodes.Count.ShouldBe(3);
-        SceneNode[] contentRoots = [.. scene.RootNodes.Where(static root => root.Name != WorldLightsName)];
+        scene.SceneRoots.Count.ShouldBe(3);
+        SceneNode[] contentRoots = [.. scene.SceneRoots.Where(static root => root.Name != WorldLightsName)];
         contentRoots.Length.ShouldBe(2);
         foreach (SceneNode root in contentRoots)
             AssertRenderableMesh(root);
         contentRoots.Sum(static root => GaussianBakeTestAssets.CountClipComponents(root, requireAnimation: true)).ShouldBeGreaterThan(0);
-        scene.RootNodes.Single(static root => root.Name == WorldLightsName)
+        scene.SceneRoots.Single(static root => root.Name == WorldLightsName)
             .FindDescendant(static transform => transform.SceneNode?.GetComponent<DirectionalLightComponent>() is not null)
             .ShouldNotBeNull();
 

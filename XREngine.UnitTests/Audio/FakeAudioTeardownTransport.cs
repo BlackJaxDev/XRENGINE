@@ -37,6 +37,12 @@ internal sealed class FakeAudioTeardownTransport : IAudioTransport
     public void DestroyBuffer(AudioBufferHandle buffer) { }
     public void UploadBufferData(AudioBufferHandle buffer, ReadOnlySpan<byte> pcm,
         int frequency, int channels, SampleFormat format) { }
+    public bool TryGetPlaybackClock(AudioSourceHandle source, out long sampleFrame, out long latencyNanoseconds)
+    {
+        sampleFrame = 0;
+        latencyNanoseconds = 0;
+        return false;
+    }
     public void Play(AudioSourceHandle source) { }
     public void Stop(AudioSourceHandle source) { }
     public void Pause(AudioSourceHandle source) { }
