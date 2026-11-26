@@ -281,6 +281,51 @@ internal static class VulkanUiPublicationReceiptLedger
         }
     }
 
+    /// <summary>
+    /// Writes the state of one receipt for a stall diagnostic: its frame, the draw counts, the claim and artifact
+    /// flags, and the fence status. A receipt that is no longer in the ledger has retired.
+    /// </summary>
+    internal static string Describe(ulong id)
+    {
+        lock (Gate)
+        {
+            if (Find(id) is not { } entry)
+                return "not in ledger (retired)";
+            UIPublicationReceiptState state = entry.State;
+            string fence = entry.Fence is not { } f
+                ? "none"
+                : $"{f.SubmissionStatus}/{(f.SubmissionStatus == EGpuFenceSubmissionStatus.Submitted ? f.Poll().ToString() : "-")}";
+            int live = 0;
+            System.Text.StringBuilder others = new();
+            for (int index = 0; index < Entries.Length; index++)
+                if (Entries[index] is { } other)
+                {
+                    live++;
+                    UIPublicationReceiptState o = other.State;
+                    string otherFence = other.Fence is not { } of
+                        ? "none"
+                        : $"{of.SubmissionStatus}/{(of.SubmissionStatus == EGpuFenceSubmissionStatus.Submitted ? of.Poll().ToString() : "-")}";
+                    others.Append($" [{other.Id}@{other.FrameId} c={(o.Claimed ? 1 : 0)} ref={(o.ArtifactReferenced ? 1 : 0)} ret={(o.ArtifactRetired ? 1 : 0)} rec={o.RecordedDraws} f={otherFence}]");
+                }
+            return $"frame={entry.FrameId} now={RuntimeEngine.Rendering.State.RenderFrameId} expected={state.ExpectedDraws} " +
+                $"queued={state.QueuedDraws} prepared={state.PreparedDraws} recorded={state.RecordedDraws} " +
+                $"sealed={state.Sealed} claimed={state.Claimed} failed={state.Failed} " +
+                $"artifactReferenced={state.ArtifactReferenced} artifactRetired={state.ArtifactRetired} " +
+                $"fence={fence} liveReceipts={live}{others}";
+        }
+    }
+
+    /// <summary>Copies the ids of the live receipts of <paramref name="owner"/> into <paramref name="ids"/>.</summary>
+    internal static int CopyLiveIds(VulkanRenderer owner, Span<ulong> ids)
+    {
+        int count = 0;
+        lock (Gate)
+            for (int index = 0; index < Entries.Length && count < ids.Length; index++)
+                if (Entries[index] is { } entry && ReferenceEquals(entry.Owner, owner))
+                    ids[count++] = entry.Id;
+        return count;
+    }
+
     /// <summary>Release one renderer generation after native artifacts and GPU use end.</summary>
     internal static void RetireKnownIdle(VulkanRenderer owner, long backendGeneration)
     {

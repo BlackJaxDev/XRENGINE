@@ -41,6 +41,44 @@ public sealed partial class VulkanRenderer
     internal bool HasPendingUiPublicationWork(ulong receiptId)
         => _frameLoop.HasPendingUiPublicationWork(receiptId);
 
+    /// <summary>
+    /// Each swapchain image has a primary command buffer that keeps its last UI packet, because a frame can
+    /// submit that buffer again without recording it. Up to <see cref="DesktopFramesInFlight"/> more packets are
+    /// authored or queued for the next frames.
+    /// </summary>
+    public override int UiPublicationRetentionDepth
+        => Math.Max(1, _outputRuntime.Desktop.Images?.Length ?? 0) + DesktopFramesInFlight;
+
+    /// <summary>
+    /// A canvas seals a UI packet every render frame, but only an accepted frame plan releases the packets that
+    /// no plan took. While frames are rejected, for example while new programs compile after the UI changes,
+    /// such packets fill every cohort of the canvas and the UI stops drawing. This releases them without a plan.
+    /// It keeps the packets of the last two frames, because the frame loop can still be planning them, and the
+    /// required world UI attempt, which another path owns.
+    /// </summary>
+    public override int RetireAbandonedUiPublicationReceipts()
+    {
+        ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        if (frameId < 2)
+            return 0;
+        ulong keptWorldReceiptId = 0UL;
+        if (TryGetDesktopWindowHost(out var desktopHost) && desktopHost is XRWindow desktopWindow)
+            _ = desktopWindow.TryGetRequiredVulkanWorldUiAttempt(
+                out _, out _, out _, out keptWorldReceiptId, out _);
+        return VulkanUiPublicationReceiptLedger.RetireUnclaimedBefore(this, frameId - 1, keptWorldReceiptId);
+    }
+
+    public override string DescribeUiPublicationReceipt(ulong receiptId)
+    {
+        // The queues take their own locks, so the pending work is read outside the ledger gate.
+        Span<ulong> live = stackalloc ulong[64];
+        int count = VulkanUiPublicationReceiptLedger.CopyLiveIds(this, live);
+        System.Text.StringBuilder pending = new(" pending:");
+        for (int index = 0; index < count; index++)
+            pending.Append($" {live[index]}={_frameLoop.DescribePendingUiPublicationWork(live[index])}");
+        return VulkanUiPublicationReceiptLedger.Describe(receiptId) + pending;
+    }
+
     public override bool IsUiPublicationReceiptRetired(ulong receiptId)
         => VulkanUiPublicationReceiptLedger.IsRetired(receiptId);
 

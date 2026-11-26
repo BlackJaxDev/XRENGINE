@@ -183,6 +183,30 @@ UI requests, the renderer stops with `FramePlanCapacityExceeded lane=Ui`. To kee
 the run count low, create an icon node before the label node of the same
 control, so the icon quad follows the background quad in one run.
 
+## UI Packet Cohorts On Vulkan
+
+A canvas seals one UI packet (a publication receipt) every render frame. Each
+packet keeps one GPU cohort of every run until the backend releases the packet.
+
+- The Vulkan backend can hold one packet per swapchain image, because a frame
+  can submit that image's primary command buffer again without recording it,
+  plus `DesktopFramesInFlight` packets that are authored or queued.
+  `AbstractRenderer.UiPublicationRetentionDepth` reports this depth, and
+  `UIBatchCollector` allows that many cohorts per run plus one.
+- Only an accepted frame plan used to release packets that no plan took. While
+  frames are rejected, for example while new programs compile after the UI
+  changes, such packets filled every cohort, and the canvas stopped drawing for
+  seconds with `UI.Canvas.BatchCapacityPending`. Now a blocked canvas calls
+  `AbstractRenderer.RetireAbandonedUiPublicationReceipts`, which releases them.
+  It keeps the packets of the last two frames, because the frame loop can still
+  be planning them.
+- The canvas cohort budget is twice the run count times the per-run limit,
+  because after a republish the runs of earlier packets keep their cohorts for a
+  short time.
+- The `BatchCapacityPending` warning names its blocker (`EUIBatchCapacityBlocker`).
+  When it waits for a receipt, a second warning lists the state of every live
+  receipt and where its draws wait.
+
 ## Known Limitations
 
 - The Windows symbol font fails to import as a bitmap atlas at the default draw
@@ -191,7 +215,4 @@ control, so the icon quad follows the background quad in one run.
 - `msdf-atlas-gen` opens files with the C runtime, which fails on paths longer
   than 260 characters. `MsdfAtlasGenFontAtlasGenerator` runs it in a short
   temporary folder and moves the atlas to its cache path.
-- On Vulkan, a screen canvas can stop drawing with `UI.Canvas.BatchCapacityPending`
-  when small hierarchy glyph texts use the same font instance as the row labels.
-  The hierarchy glyph texts use `FontGlyphSet.LoadDefaultUIIconFont()` to avoid
-  this. The root cause is open.
+

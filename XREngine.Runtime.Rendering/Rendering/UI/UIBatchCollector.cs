@@ -662,7 +662,11 @@ public sealed partial class UIBatchCollector : IDisposable
     private List<(XRTexture2D Texture, bool Srgb)> _staleMaterialTextures = [];
     private const int MaxMaterialTextureMeshes = 64;
     private const uint MaterialStyleVec4Count = 7;
-    private const int MaxRunCohorts = 4;
+    // The fewest GPU cohorts that one run may hold. The real limit follows the renderer's packet retention
+    // depth (see RunCohortLimit), because a run needs one cohort for each packet that the backend still holds.
+    private const int MinRunCohorts = 4;
+    // Hard bound for the cohorts of one run, so a backend that reports a very deep pipeline cannot grow memory.
+    private const int MaxRunCohortCeiling = 16;
     private const int MaxCanvasGpuCohorts = 256;
     // Hard bound for one canvas, so a defect that leaks runs cannot grow GPU memory without limit.
     private const int MaxCanvasGpuCohortCeiling = 8192;
@@ -1019,7 +1023,7 @@ public sealed partial class UIBatchCollector : IDisposable
             for (int group = 0; group < passGroups.Value.Count; group++)
             {
                 var key = (renderer, renderer.BackendGeneration, passGroups.Key, passGroups.Value[group].RunId);
-                if (!_materialRunGPU.TryGetValue(key, out var cohorts) || cohorts.Count < MaxRunCohorts)
+                if (!_materialRunGPU.TryGetValue(key, out var cohorts) || cohorts.Count < RunCohortLimit(renderer))
                     continue;
                 bool ready = false;
                 for (int i = 0; i < cohorts.Count; i++)
@@ -1041,7 +1045,7 @@ public sealed partial class UIBatchCollector : IDisposable
                 if (batch.Atlas is null || batch.TotalGlyphs == 0)
                     continue;
                 var key = (renderer, renderer.BackendGeneration, batch.Atlas, passGroups.Key, batch.RunId);
-                if (!_textGPU.TryGetValue(key, out var cohorts) || cohorts.Count < MaxRunCohorts)
+                if (!_textGPU.TryGetValue(key, out var cohorts) || cohorts.Count < RunCohortLimit(renderer))
                     continue;
                 bool ready = false;
                 for (int i = 0; i < cohorts.Count; i++)
@@ -1058,15 +1062,49 @@ public sealed partial class UIBatchCollector : IDisposable
     }
 
     /// <summary>Preflights every published run before the first marker can issue a draw.</summary>
+    /// <summary>Why the last <see cref="CanRenderPublishedBatches"/> call refused, or None when it passed.</summary>
+    public EUIBatchCapacityBlocker LastCapacityBlocker { get; private set; }
+
+    /// <summary>The reason that the last refused cohort reuse check found. See <see cref="CanReuseMaterialGPU"/>.</summary>
+    private EUIBatchCapacityBlocker _lastReuseBlocker;
+    /// <summary>The receipt that the last refused cohort reuse check waited for.</summary>
+    private ReceiptLease? _lastBlockingReceipt;
+
+    /// <summary>
+    /// Writes the state of the receipt that blocked the last refused capacity check, for a stall diagnostic.
+    /// Returns null when no receipt blocked it. This allocates, so call it only when a warning is written.
+    /// </summary>
+    public string? DescribeLastBlockingReceipt()
+        => LastCapacityBlocker == EUIBatchCapacityBlocker.ReceiptNotRetired && _lastBlockingReceipt is { } lease
+            ? $"receipt={lease.Id} claims={lease.Claims} sealed={lease.Sealed} authored={lease.Authored} " +
+              lease.Renderer.DescribeUiPublicationReceipt(lease.Id)
+            : null;
+
     public bool CanRenderPublishedBatches()
     {
+        if (CanRenderPublishedBatchesOnce())
+            return true;
+        // Packets that no frame can record still hold cohorts until a plan releases them. Release them now and
+        // check again, so rejected frames do not stall the canvas.
+        if (LastCapacityBlocker != EUIBatchCapacityBlocker.ReceiptNotRetired ||
+            AbstractRenderer.Current?.RetireAbandonedUiPublicationReceipts() is not > 0)
+            return false;
+        return CanRenderPublishedBatchesOnce();
+    }
+
+    private bool CanRenderPublishedBatchesOnce()
+    {
+        LastCapacityBlocker = EUIBatchCapacityBlocker.None;
         AbstractRenderer? renderer = AbstractRenderer.Current;
         if (renderer is null)
             return !HasBatchData;
         SweepDeferredCohorts(renderer);
         lock (CollectorRegistryGate)
             if (UnclaimedReceiptLeases.Count + s_pendingReceiptReservations >= MaxUnclaimedReceiptLeases)
+            {
+                LastCapacityBlocker = EUIBatchCapacityBlocker.ReceiptLeaseLimit;
                 return false;
+            }
         if (renderer.BackendId != RendererBackendId.OpenGL &&
             renderer.BackendId != RendererBackendId.Vulkan)
             return true;
@@ -1086,7 +1124,11 @@ public sealed partial class UIBatchCollector : IDisposable
                     foreach (MaterialGPUResources gpu in cohorts)
                         if (CanReuseMaterialGPU(gpu)) { ready = true; break; }
                     if (ready) continue;
-                    if (cohorts.Count >= MaxRunCohorts) return false;
+                    if (cohorts.Count >= RunCohortLimit(renderer))
+                    {
+                        LastCapacityBlocker = _lastReuseBlocker;
+                        return false;
+                    }
                 }
                 newCohorts++;
             }
@@ -1105,12 +1147,19 @@ public sealed partial class UIBatchCollector : IDisposable
                     foreach (TextGPUResources gpu in cohorts)
                         if (CanReuseTextGPU(gpu)) { ready = true; break; }
                     if (ready) continue;
-                    if (cohorts.Count >= MaxRunCohorts) return false;
+                    if (cohorts.Count >= RunCohortLimit(renderer))
+                    {
+                        LastCapacityBlocker = _lastReuseBlocker;
+                        return false;
+                    }
                 }
                 newCohorts++;
             }
         }
-        return CountGpuCohorts() + newCohorts <= _canvasGpuCohortLimit;
+        if (CountGpuCohorts() + newCohorts <= _canvasGpuCohortLimit)
+            return true;
+        LastCapacityBlocker = EUIBatchCapacityBlocker.CohortBudget;
+        return false;
     }
 
     #endregion
@@ -1591,20 +1640,39 @@ public sealed partial class UIBatchCollector : IDisposable
         if (gpu.Receipt is not null)
         {
             if (!ReleaseRetiredReceipt(ref gpu.Receipt))
+            {
+                _lastReuseBlocker = EUIBatchCapacityBlocker.ReceiptNotRetired;
+                _lastBlockingReceipt = gpu.Receipt;
                 return false;
+            }
             gpu.Submitted = false;
         }
         if (!gpu.Submitted)
             return true;
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan)
-            return HasCompletedOrAbandonedVulkanFence(gpu.Fence) &&
+        {
+            if (!HasCompletedOrAbandonedVulkanFence(gpu.Fence))
+            {
+                _lastReuseBlocker = EUIBatchCapacityBlocker.FenceNotComplete;
+                return false;
+            }
+            bool buffersReady =
                 CanReuseVulkanBuffer(gpu.Transform) && CanReuseVulkanBuffer(gpu.Color) &&
                 CanReuseVulkanBuffer(gpu.Bounds) &&
                 CanReuseVulkanBuffer(gpu.DrawIndex) && CanReuseVulkanBuffer(gpu.Style) &&
                 (!gpu.UsedUv || CanReuseVulkanBuffer(gpu.Uv)) &&
                 (!gpu.UsedBorderWidth || CanReuseVulkanBuffer(gpu.BorderWidth));
+            if (!buffersReady)
+                _lastReuseBlocker = EUIBatchCapacityBlocker.BufferNotReusable;
+            return buffersReady;
+        }
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.OpenGL)
-            return IsFenceSignaled(gpu.Fence);
+        {
+            if (IsFenceSignaled(gpu.Fence))
+                return true;
+            _lastReuseBlocker = EUIBatchCapacityBlocker.FenceNotComplete;
+            return false;
+        }
         return AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
     }
 
@@ -1613,20 +1681,39 @@ public sealed partial class UIBatchCollector : IDisposable
         if (gpu.Receipt is not null)
         {
             if (!ReleaseRetiredReceipt(ref gpu.Receipt))
+            {
+                _lastReuseBlocker = EUIBatchCapacityBlocker.ReceiptNotRetired;
+                _lastBlockingReceipt = gpu.Receipt;
                 return false;
+            }
             gpu.Submitted = false;
         }
         if (!gpu.Submitted)
             return true;
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.Vulkan)
-            return HasCompletedOrAbandonedVulkanFence(gpu.Fence) &&
+        {
+            if (!HasCompletedOrAbandonedVulkanFence(gpu.Fence))
+            {
+                _lastReuseBlocker = EUIBatchCapacityBlocker.FenceNotComplete;
+                return false;
+            }
+            bool buffersReady =
                 CanReuseVulkanBuffer(gpu.GlyphTransformsBuf) &&
                 CanReuseVulkanBuffer(gpu.GlyphTexCoordsBuf) &&
                 CanReuseVulkanBuffer(gpu.TextInstanceBuf) &&
                 CanReuseVulkanBuffer(gpu.GlyphTextIndexBuf) &&
                 CanReuseVulkanBuffer(gpu.GlyphDrawIndexBuf);
+            if (!buffersReady)
+                _lastReuseBlocker = EUIBatchCapacityBlocker.BufferNotReusable;
+            return buffersReady;
+        }
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.OpenGL)
-            return IsFenceSignaled(gpu.Fence);
+        {
+            if (IsFenceSignaled(gpu.Fence))
+                return true;
+            _lastReuseBlocker = EUIBatchCapacityBlocker.FenceNotComplete;
+            return false;
+        }
         return AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
     }
 
@@ -1755,8 +1842,17 @@ public sealed partial class UIBatchCollector : IDisposable
     private int CountGpuCohorts() => _gpuCohortCount;
 
     /// <summary>
+    /// Gets the most GPU cohorts that one run may hold on <paramref name="renderer"/>: one for each packet that the
+    /// backend can still hold, plus one for the packet that is being authored. With fewer cohorts, the canvas
+    /// cannot author a new packet while the backend holds all earlier ones, and it skips frames with
+    /// <c>UI.Canvas.BatchCapacityPending</c>.
+    /// </summary>
+    private static int RunCohortLimit(AbstractRenderer? renderer)
+        => Math.Clamp((renderer?.UiPublicationRetentionDepth ?? 3) + 1, MinRunCohorts, MaxRunCohortCeiling);
+
+    /// <summary>
     /// Sets the cohort budget for the current packet. Each run of the packet needs its own cohort,
-    /// and the cohorts of up to <see cref="MaxRunCohorts"/> earlier packets stay reserved until the
+    /// and the cohorts of up to <see cref="RunCohortLimit"/> earlier packets stay reserved until the
     /// GPU and the presented swapchain image release them. A fixed budget therefore blocks a canvas
     /// with many runs, such as the editor, forever: the next packet can never get cohorts while the
     /// displayed packet still holds the previous ones. The budget grows with the run count instead.
@@ -1772,7 +1868,9 @@ public sealed partial class UIBatchCollector : IDisposable
             for (int group = 0; group < passGroups.Value.Count; group++)
                 if (passGroups.Value[group] is { Atlas: not null, TotalGlyphs: > 0 })
                     runs++;
-        long scaled = (long)runs * (MaxRunCohorts + 1);
+        // After a republish the runs get new ids, and the runs of the previous packets keep their cohorts until
+        // their receipts retire. So for a short time the canvas holds cohorts for two run sets.
+        long scaled = (long)runs * (RunCohortLimit(AbstractRenderer.Current) + 1) * 2;
         _canvasGpuCohortLimit = (int)Math.Clamp(scaled, MaxCanvasGpuCohorts, MaxCanvasGpuCohortCeiling);
     }
 
@@ -1805,7 +1903,7 @@ public sealed partial class UIBatchCollector : IDisposable
         for (int i = 0; i < cohorts.Count; i++)
             if (CanReuseMaterialGPU(cohorts[i]))
                 return cohorts[i];
-        if (cohorts.Count >= MaxRunCohorts)
+        if (cohorts.Count >= RunCohortLimit(renderer))
             throw new InvalidOperationException($"UI material run ({renderPass}, {runId}) has no retired GPU cohort.");
         if (CountGpuCohorts() >= _canvasGpuCohortLimit)
             RetireInactiveGpuCohorts(renderer);
@@ -2516,7 +2614,7 @@ public sealed partial class UIBatchCollector : IDisposable
         for (int i = 0; i < cohorts.Count; i++)
             if (CanReuseTextGPU(cohorts[i]))
                 return cohorts[i];
-        if (cohorts.Count >= MaxRunCohorts)
+        if (cohorts.Count >= RunCohortLimit(renderer))
             throw new InvalidOperationException($"UI text run ({renderPass}, {runId}) has no retired GPU cohort.");
         if (CountGpuCohorts() >= _canvasGpuCohortLimit)
             RetireInactiveGpuCohorts(renderer);

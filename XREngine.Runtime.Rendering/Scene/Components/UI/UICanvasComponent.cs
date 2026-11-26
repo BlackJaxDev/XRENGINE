@@ -33,6 +33,26 @@ namespace XREngine.Components
         private const float DefaultAutoWorldCanvasDistance = 1500.0f;
         private const string BatchCapacityPendingReason =
             "UI.Canvas.BatchCapacityPending: no isolated GPU cohort is ready for this canvas.";
+
+        /// <summary>
+        /// Gets the warning text for a refused batch capacity check. Each blocker has its own constant text, so a
+        /// stall shows what it waits for and a report does not allocate.
+        /// </summary>
+        private static string BatchCapacityPendingReasonFor(EUIBatchCapacityBlocker blocker)
+            => blocker switch
+            {
+                EUIBatchCapacityBlocker.ReceiptLeaseLimit =>
+                    "UI.Canvas.BatchCapacityPending: too many draw receipts wait for a frame owner to claim them.",
+                EUIBatchCapacityBlocker.ReceiptNotRetired =>
+                    "UI.Canvas.BatchCapacityPending: every GPU cohort of a run holds a draw receipt that is not retired.",
+                EUIBatchCapacityBlocker.FenceNotComplete =>
+                    "UI.Canvas.BatchCapacityPending: every GPU cohort of a run waits for its submission fence.",
+                EUIBatchCapacityBlocker.BufferNotReusable =>
+                    "UI.Canvas.BatchCapacityPending: every GPU cohort of a run has a buffer that is not reusable yet.",
+                EUIBatchCapacityBlocker.CohortBudget =>
+                    "UI.Canvas.BatchCapacityPending: the canvas needs more GPU cohorts than its budget.",
+                _ => BatchCapacityPendingReason,
+            };
         private const string ReceiptRejectedReason =
             "UI.Canvas.ReceiptRejected: the renderer did not reserve a UI publication receipt for this canvas.";
 
@@ -539,9 +559,11 @@ namespace XREngine.Components
             {
                 if (requiresBackdrop)
                     backdropWindow!.FailOpenGlBackdropAttempt();
+                string capacityReason = BatchCapacityPendingReasonFor(BatchCollector.LastCapacityBlocker);
                 if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
-                    throw new RenderResourcePreparationPendingException(BatchCapacityPendingReason);
-                UIFailureDiagnostics.Report(BatchCapacityPendingReason);
+                    throw new RenderResourcePreparationPendingException(capacityReason);
+                if (UIFailureDiagnostics.Report(capacityReason) && BatchCollector.DescribeLastBlockingReceipt() is { } detail)
+                    Debug.UIWarning($"UI.Canvas.BatchCapacityPending detail: {detail}");
                 return;
             }
 
@@ -1018,9 +1040,11 @@ namespace XREngine.Components
             EnsureNonScreenCanvasSize(publication);
             if (!BatchCollector.CanRenderPublishedBatches())
             {
+                string capacityReason = BatchCapacityPendingReasonFor(BatchCollector.LastCapacityBlocker);
                 if (AbstractRenderer.Current?.RequiresAtomicFrameAuthoring == true)
-                    throw new RenderResourcePreparationPendingException(BatchCapacityPendingReason);
-                UIFailureDiagnostics.Report(BatchCapacityPendingReason);
+                    throw new RenderResourcePreparationPendingException(capacityReason);
+                if (UIFailureDiagnostics.Report(capacityReason) && BatchCollector.DescribeLastBlockingReceipt() is { } detail)
+                    Debug.UIWarning($"UI.Canvas.BatchCapacityPending detail: {detail}");
                 return;
             }
 

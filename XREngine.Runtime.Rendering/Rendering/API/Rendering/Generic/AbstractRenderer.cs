@@ -363,6 +363,26 @@ namespace XREngine.Rendering
                         (entry.Publication, completionFence, entry.BackendGeneration);
             return succeeded && completionFence is not null;
         }
+        /// <summary>
+        /// The most UI draw packets of one canvas that the backend can hold at the same time: packets that are
+        /// authored, queued, recorded in a command buffer that can still be submitted again, or in use by the GPU.
+        /// Each held packet keeps one GPU cohort of every run, so a canvas needs one more cohort per run than this.
+        /// </summary>
+        public virtual int UiPublicationRetentionDepth => 3;
+
+        /// <summary>
+        /// Releases UI publication receipts that no frame can record any more, so their GPU cohorts return to the
+        /// canvas. A canvas calls this when every cohort of a run waits for a receipt. Returns the number of
+        /// released receipts. The base renderer holds no such receipts.
+        /// </summary>
+        public virtual int RetireAbandonedUiPublicationReceipts() => 0;
+
+        /// <summary>
+        /// Writes the state of a UI publication receipt for a diagnostic message, such as a canvas stall that waits
+        /// for the receipt to retire. The base renderer has no detail to add.
+        /// </summary>
+        public virtual string DescribeUiPublicationReceipt(ulong receiptId) => "no backend detail";
+
         public virtual bool IsUiPublicationReceiptRetired(ulong receiptId)
         {
             lock (_uiPublicationFallbackGate)
