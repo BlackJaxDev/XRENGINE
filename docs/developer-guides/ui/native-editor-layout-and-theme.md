@@ -56,7 +56,7 @@ controls that set colors directly match the styled controls.
 
 The UI quad shader can draw a vector icon instead of a box. Set
 `UIStyleProperties.Icon` (or `UIQuadStyle.Icon`) to an `EUIQuadIcon` value:
-`ChevronRight`, `ChevronDown`, `Check`, `Minus`, `Cross`, or `Search`. The icon value uses
+`ChevronRight`, `ChevronDown`, `Check`, `Minus`, `Cross`, `Search`, or `Plus`. The icon value uses
 bits 5 to 7 of the style flags (`EUIQuadStyleFlags.IconMask`).
 
 - The quad fill color is the icon color.
@@ -103,6 +103,13 @@ nothing. A vector shows dashes in all its fields when the whole vectors differ.
   the picker opens, not when the row binds. A picked asset file loads through the
   same path as a dropped asset. A drop on the row also assigns a component or an
   asset.
+- An event member (`XREvent` or `XREvent<T>`, property or public field) shows
+  its callback count and a plus button that adds a persistent callback. Each
+  callback gets its own row (`InspectorEventCallbackRow`), like a row of the
+  ImGui callbacks table: a node picker in the name column, a method picker in the
+  value column, and a remove button. The pickers and the undo records use the
+  same helpers as ImGui (`EditorImGuiUI.EventCallbackAccess`). Event fields are
+  wrapped as properties (`InspectorFieldPropertyInfo`) to get rows.
 - Other members show their value as a link row: the object name, the item count
   of a collection, the type name, `None`, or a dash when the selected objects
   have different values. A chevron at the right shows that a click opens the

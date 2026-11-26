@@ -69,6 +69,9 @@ float XRENGINE_UiIconDistance(uint icon, vec2 q)
     if (icon == 6u) // Search: a ring with a handle toward the lower right
         return min(abs(length(q - vec2(-0.14, 0.14)) - 0.46),
                    XRENGINE_UiSegmentDistance(q, vec2(0.2, -0.2), vec2(0.62, -0.62)));
+    if (icon == 7u) // Plus
+        return min(XRENGINE_UiSegmentDistance(q, vec2(-0.55, 0.0), vec2(0.55, 0.0)),
+                   XRENGINE_UiSegmentDistance(q, vec2(0.0, -0.55), vec2(0.0, 0.55)));
     // Cross
     return min(XRENGINE_UiSegmentDistance(q, vec2(-0.5, -0.5), vec2(0.5, 0.5)),
                XRENGINE_UiSegmentDistance(q, vec2(-0.5, 0.5), vec2(0.5, -0.5)));

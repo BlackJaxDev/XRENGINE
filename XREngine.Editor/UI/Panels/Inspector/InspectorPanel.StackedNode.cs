@@ -297,6 +297,24 @@ public partial class InspectorPanel
                 continue;
             members.Add(scope is null ? property : InspectorScopedPropertyInfo.For(scope, property));
         }
+        AddEventFields(members, type, baseType, scope);
         return members;
+    }
+
+    /// <summary>
+    /// Adds the public event fields (<see cref="XREngine.Data.Core.XREvent"/> and its generic form) that
+    /// <paramref name="type"/> declares below <paramref name="baseType"/>. Most engine events are fields, and the
+    /// ImGui inspector edits their persistent callbacks, so the native rows wrap each field as a property.
+    /// </summary>
+    private static void AddEventFields(List<PropertyInfo> members, Type type, Type? baseType, object? scope)
+    {
+        foreach (FieldInfo field in type.GetFields(BindingFlags.Public | BindingFlags.Instance))
+        {
+            if (!EditorImGuiUI.IsEventCallbackType(field.FieldType) || field.DeclaringType is not { } declaring ||
+                baseType is not null && (declaring == baseType || declaring.IsAssignableFrom(baseType)))
+                continue;
+            PropertyInfo wrapped = InspectorFieldPropertyInfo.For(field);
+            members.Add(scope is null ? wrapped : InspectorScopedPropertyInfo.For(scope, wrapped));
+        }
     }
 }

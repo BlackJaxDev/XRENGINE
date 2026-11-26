@@ -15,6 +15,12 @@ public sealed class InspectorStackedNodeLayoutTests
         public float Strength { get; set; } = 2.0f;
     }
 
+    private sealed class EventProbeComponent : XRComponent
+    {
+        public XREngine.Data.Core.XREvent? Fired { get; set; }
+        public XREngine.Data.Core.XREvent<int>? Raised = null;
+    }
+
     private static object? Build(object?[]? objects)
         => typeof(InspectorPanel).GetMethod("BuildStackedNodeLayout", BindingFlags.NonPublic | BindingFlags.Static, [typeof(object[])])!
             .Invoke(null, [objects]);
@@ -122,6 +128,32 @@ public sealed class InspectorStackedNodeLayoutTests
 
             object none = build.Invoke(null, [new object?[] { node }, null, "no such member"])!;
             Assert.That(Member<List<PropertyInfo>>(none, "Properties"), Is.Empty);
+        }
+        finally { node.Destroy(true); }
+    }
+
+    [Test]
+    public void EventMembersListOneRowPerPersistentCallback()
+    {
+        SceneNode node = new("Events");
+        try
+        {
+            EventProbeComponent probe = node.AddComponent<EventProbeComponent>()!;
+            probe.Fired = new XREngine.Data.Core.XREvent();
+            probe.Fired.PersistentCalls = [new(), new()];
+            object layout = Build([node])!;
+            typeof(InspectorPanel).GetMethod("AddEventCallbackRows", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [layout]);
+            var properties = Member<List<PropertyInfo>>(layout, "Properties");
+            var targets = Member<Dictionary<PropertyInfo, object?[]>>(layout, "Targets");
+            int fired = properties.FindIndex(property => property.Name == nameof(EventProbeComponent.Fired));
+            Assert.That(fired, Is.GreaterThanOrEqualTo(0));
+            Assert.That(properties[fired + 1].Name, Is.EqualTo("Fired[0]"));
+            Assert.That(properties[fired + 2].Name, Is.EqualTo("Fired[1]"));
+            Assert.That(targets[properties[fired + 1]], Is.EqualTo(new object?[] { probe }));
+            // Event fields get rows too, so their callbacks can be edited.
+            PropertyInfo raised = properties.Single(property => property.Name == nameof(EventProbeComponent.Raised));
+            Assert.That(raised.GetValue(probe), Is.Null);
         }
         finally { node.Destroy(true); }
     }

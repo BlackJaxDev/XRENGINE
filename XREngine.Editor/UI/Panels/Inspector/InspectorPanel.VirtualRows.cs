@@ -39,6 +39,11 @@ public partial class InspectorPanel
         public bool HeaderToggleShown;
         /// <summary>The object field of a component, scene node, transform, or asset reference row.</summary>
         public InspectorObjectField? ObjectField;
+        /// <summary>The node and method pickers of a persistent event callback row.</summary>
+        public InspectorEventCallbackEditor? CallbackEditor;
+        /// <summary>The icon at the right of the link row: a chevron, or a plus sign on an event row.</summary>
+        public required UIMaterialComponent LinkIcon;
+        public bool LinkIconIsPlus;
         public readonly Dictionary<Type, SceneNode> PrimitiveEditors = [];
         public PropertyInfo? Property;
         public IDisposable? DropTarget;
@@ -381,6 +386,11 @@ public partial class InspectorPanel
         commands.ItemSpacing = 2;
         CreateComponentCommands(toolbar);
         SceneNode propertyPane = root.NewChildWithTransform<UIBoundableTransform>(out _, "PropertyPane");
+        // The virtual list keeps a few rows above and below the visible area. A clear clipping quad keeps them
+        // from drawing over the search field and the command buttons above the pane.
+        UIMaterialComponent paneClip = propertyPane.AddComponent<UIMaterialComponent>()!;
+        paneClip.SetBatchSolidColor(ColorF4.Transparent);
+        paneClip.ClipToBounds = true;
         SceneNode scrollNode = propertyPane.NewChild();
         UIScrollableTransform scroll = scrollNode.SetTransform<UIScrollableTransform>();
         scroll.MinAnchor = Vector2.Zero;
@@ -497,6 +507,19 @@ public partial class InspectorPanel
     private void RefreshVirtualProperties()
     {
         InspectorRowLayout? layout = BuildStackedNodeLayout(InspectedObjects, _collapsedStackSections, _memberSearch);
+        if (layout is null && InspectedObjects is [{ } single])
+        {
+            // One object outside the stacked view, such as a component opened from a link row, gets a layout
+            // too, so its event members can list their callback rows.
+            layout = new InspectorRowLayout();
+            List<PropertyInfo> members = GetMatchingProperties(InspectedObjects);
+            AddEventFields(members, single.GetType(), null, null);
+            foreach (PropertyInfo property in members)
+                if (string.IsNullOrWhiteSpace(_memberSearch) || MatchesMemberSearch(property, _memberSearch))
+                    layout.Add(property, single);
+        }
+        if (layout is not null)
+            AddEventCallbackRows(layout);
         List<PropertyInfo> properties = layout?.Properties ?? GetMatchingProperties(InspectedObjects);
         if (layout is null && !string.IsNullOrWhiteSpace(_memberSearch))
             properties.RemoveAll(property => !MatchesMemberSearch(property, _memberSearch));
@@ -535,6 +558,13 @@ public partial class InspectorPanel
     {
         Icon = EUIQuadIcon.ChevronDown,
         BorderWidth = 1.7f,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    private static readonly UIQuadStyle AddIcon = new UIStyleProperties
+    {
+        Icon = EUIQuadIcon.Plus,
+        BorderWidth = 1.5f,
         DecodeSrgbColors = true,
     }.ToQuadStyle();
 
@@ -602,8 +632,8 @@ public partial class InspectorPanel
         buttonTransform.MaxAnchor = Vector2.One;
         // The chevron node comes before the label, so in painter order it follows the button background and
         // both quads draw in one run before the label text.
-        CreateIconNode(buttonNode, new Vector2(1.0f, 0.5f), new Vector2(-11.0f, 0.0f), 11.0f,
-            LinkChevron, EditorGlassTheme.TextDisabled);
+        (UIMaterialComponent linkIcon, _) = CreateIconNode(buttonNode, new Vector2(1.0f, 0.5f),
+            new Vector2(-11.0f, 0.0f), 11.0f, LinkChevron, EditorGlassTheme.TextDisabled);
         SceneNode labelNode = buttonNode.NewChild<UITextComponent>(out var buttonLabel);
         labelNode.GetTransformAs<UIBoundableTransform>(true)!.Margins = new Vector4(8, 0, 22, 0);
         buttonLabel.Text = string.Empty;
@@ -620,12 +650,22 @@ public partial class InspectorPanel
             DetailLabel = buttonLabel,
             DisclosureIcon = disclosureIcon, DisclosureTransform = disclosureTransform,
             HeaderToggle = headerToggle, HeaderToggleTransform = headerToggleTransform,
+            LinkIcon = linkIcon,
         };
         detailButton.InteractAction += _ =>
         {
             PropertyInfo? clickedProperty = state.Property;
             if (clickedProperty is null)
                 return;
+            // An event row adds a persistent callback, like the ImGui "Add Callback" button.
+            if (EditorImGuiUI.IsEventCallbackType(clickedProperty.PropertyType) &&
+                _virtualPropertyProvider?.TargetsFor(clickedProperty) is [{ } eventOwner])
+            {
+                try { EditorImGuiUI.AddEventCallback(eventOwner, clickedProperty); }
+                catch (Exception exception) { Debug.LogException(exception, $"Could not add a callback to '{clickedProperty.Name}'."); }
+                RefreshAfterEventCallbackChange();
+                return;
+            }
             // A row of the transform or a component section edits another object than the inspected node.
             // Its details open by inspecting that object, which the Properties button returns from.
             if (_virtualPropertyProvider?.TargetsFor(clickedProperty) is { } rowTargets &&
@@ -764,6 +804,25 @@ public partial class InspectorPanel
                 payload => binding?.IsCurrent == true && ReferenceEquals(state.Property, property) &&
                     TryResolveAssetReference(payload, property, out _, out _));
         }
+        // A persistent callback row shows only its node picker, method picker, and remove button.
+        if (property is InspectorEventCallbackRow callbackRow && targets is [{ } callbackOwner])
+        {
+            state.DetailButtonTransform.Visibility = EVisibility.Collapsed;
+            foreach (SceneNode editor in state.PrimitiveEditors.Values)
+                editor.GetTransformAs<UIBoundableTransform>()!.Visibility = EVisibility.Collapsed;
+            state.ObjectField?.Unbind();
+            if (!Current()) return;
+            state.CallbackEditor ??= new InspectorEventCallbackEditor(state.Columns.NameCell.SceneNode!,
+                state.ValueRoot, this, NameGutter);
+            if (!Current()) return;
+            state.CallbackEditor.Bind(callbackRow, callbackOwner);
+            return;
+        }
+        if (state.CallbackEditor is { IsBound: true } unusedCallback)
+        {
+            unusedCallback.Unbind();
+            if (!Current()) return;
+        }
         bool primitive = HasInlineEditor(property.PropertyType);
         // A writable component, scene node, transform, or asset reference gets an object field with a picker.
         bool objectField = !primitive && !header && property.SetMethod?.IsPublic == true && targets is { Length: > 0 } &&
@@ -773,8 +832,15 @@ public partial class InspectorPanel
         if (!Current()) return;
         if (!primitive && !header && !objectField)
         {
-            state.DetailLabel.Text = DescribeValue(property, targets);
+            bool eventRow = EditorImGuiUI.IsEventCallbackType(property.PropertyType) && targets is [not null];
+            state.DetailLabel.Text = eventRow ? DescribeEventCallbacks(property, targets!) : DescribeValue(property, targets);
             if (!Current()) return;
+            if (state.LinkIconIsPlus != eventRow)
+            {
+                state.LinkIconIsPlus = eventRow;
+                state.LinkIcon.QuadStyle = eventRow ? AddIcon : LinkChevron;
+                if (!Current()) return;
+            }
         }
         if (objectField)
         {
@@ -898,6 +964,52 @@ public partial class InspectorPanel
         catch (Exception exception)
         {
             Debug.LogException(exception, $"Failed to set object reference '{property.Name}'.");
+        }
+    }
+
+    /// <summary>Writes the value text of an event row: the number of persistent callbacks.</summary>
+    private static string DescribeEventCallbacks(PropertyInfo property, object?[] targets)
+    {
+        int count;
+        try { count = EditorImGuiUI.GetEventCallbacks(property.GetValue(targets[0]))?.Count ?? 0; }
+        catch (Exception) { return string.Empty; }
+        return count switch { 0 => "No callbacks", 1 => "1 callback", _ => $"{count} callbacks" };
+    }
+
+    /// <summary>Rebuilds the rows after a callback was added, removed, or changed.</summary>
+    internal void RefreshAfterEventCallbackChange()
+    {
+        if (_virtualPropertyProvider is not null && _virtualPropertyList is not null)
+            RefreshVirtualProperties();
+    }
+
+    /// <summary>
+    /// Adds one row after each event member for each of its persistent callbacks. Only an event row that edits
+    /// one object gets callback rows, as in the ImGui inspector.
+    /// </summary>
+    private static void AddEventCallbackRows(InspectorRowLayout layout)
+    {
+        for (int index = 0; index < layout.Properties.Count; index++)
+        {
+            PropertyInfo property = layout.Properties[index];
+            if (property is InspectorEventCallbackRow || !EditorImGuiUI.IsEventCallbackType(property.PropertyType) ||
+                !layout.Targets.TryGetValue(property, out object?[]? targets) || targets is not [{ } owner])
+                continue;
+            List<XRPersistentCall>? calls;
+            try { calls = EditorImGuiUI.GetEventCallbacks(property.GetValue(owner)); }
+            catch (Exception) { continue; }
+            if (calls is null)
+                continue;
+            for (int call = 0; call < calls.Count; call++)
+            {
+                InspectorEventCallbackRow row = InspectorEventCallbackRow.For(owner, property, call);
+                if (layout.Targets.ContainsKey(row))
+                    continue;
+                layout.Properties.Insert(index + 1 + call, row);
+                layout.Targets.Add(row, [owner]);
+                layout.Names[row] = string.Empty;
+            }
+            index += calls.Count;
         }
     }
 
@@ -1058,6 +1170,7 @@ public partial class InspectorPanel
             if (!ReferenceEquals(state.BindingToken, token)) return;
         }
         state.ObjectField?.Unbind();
+        state.CallbackEditor?.Unbind();
         if (state.HeaderToggleShown)
         {
             NativeUIElements.RebindPropertyEditor(state.HeaderToggle, null, null);
