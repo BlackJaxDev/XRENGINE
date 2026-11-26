@@ -40,10 +40,10 @@ Prepare browser Jolt with `Tools/Dependencies/Prepare-JoltBrowserManaged.ps1`
 and `Tools/Dependencies/Build-JoltBrowser.ps1`. Run from the repository root:
 
 ```powershell
-dotnet build Samples/BrowserUiParity/BrowserUiParity.csproj -c Release
-pwsh Samples/BrowserUiParity/Prepare-BrowserShaders.ps1
+dotnet build Tools/BrowserSmoke/Fixtures/BrowserUiParity/BrowserUiParity.csproj -c Release
+pwsh Tools/BrowserSmoke/Fixtures/BrowserUiParity/Prepare-BrowserShaders.ps1
 dotnet build XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU
-dotnet run --no-build --project XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- --build-project Samples/BrowserUiParity/BrowserUiParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder BrowserWebGPU
+dotnet run --no-build --project XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- --build-project Tools/BrowserSmoke/Fixtures/BrowserUiParity/BrowserUiParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder BrowserWebGPU
 ```
 
 The shader preparation uses the existing complete engine recipe catalog,

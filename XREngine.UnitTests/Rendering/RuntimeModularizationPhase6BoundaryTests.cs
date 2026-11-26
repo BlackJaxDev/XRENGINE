@@ -497,7 +497,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
     private static IEnumerable<string> EnumerateRepositoryProjectFiles(string root)
     {
         IEnumerable<string> searchRoots = Directory.EnumerateDirectories(root, "XREngine*", SearchOption.TopDirectoryOnly)
-            .Concat(Directory.Exists(Path.Combine(root, "Samples")) ? [Path.Combine(root, "Samples")] : []);
+            .Concat(new[] { Path.Combine(root, "Samples"), Path.Combine(root, "Tools", "BrowserSmoke", "Fixtures") }.Where(Directory.Exists));
         foreach (string searchRoot in searchRoots)
         foreach (string project in Directory.EnumerateFiles(searchRoot, "*.csproj", SearchOption.AllDirectories))
         {
@@ -512,7 +512,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
 
     private static IEnumerable<string> EnumerateIdentityInputs(string root)
     {
-        string[] relativeRoots = ["Assets", "Samples", "XREngine.UnitTests", "XREngine.Server/Assets", ".vscode/schemas", "XREngine.Editor"];
+        string[] relativeRoots = ["Assets", "Samples", "Tools/BrowserSmoke/Fixtures", "XREngine.UnitTests", "XREngine.Server/Assets", ".vscode/schemas", "XREngine.Editor"];
         HashSet<string> extensions = new(StringComparer.OrdinalIgnoreCase)
         {
             ".asset", ".cs", ".csproj", ".json", ".jsonc", ".props", ".ps1", ".targets", ".xrproj", ".yaml", ".yml",

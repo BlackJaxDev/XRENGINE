@@ -6,7 +6,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$repositoryRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '../../../..')).Path
 $sampleRoot = Join-Path $PSScriptRoot 'Shaders/WebGPU'
 $engineRoot = Join-Path $repositoryRoot 'Build/CommonAssets/Shaders/WebGPU'
 $output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)

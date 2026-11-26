@@ -496,45 +496,23 @@ Tools/BrowserSmoke/playwright-report/
 !XREngine.Runtime.Platform.Browser/Assets/
 !XREngine.Runtime.Platform.Browser/Assets/**
 
-# The rendering sample's saved world and game sources are authored inputs.
-!Samples/RenderingParity/Assets/
-Samples/RenderingParity/Assets/*
-!Samples/RenderingParity/Assets/Scripts/
-!Samples/RenderingParity/Assets/Scripts/**
-!Samples/RenderingParity/Assets/Worlds/
-!Samples/RenderingParity/Assets/Worlds/**
-!Samples/RenderingParity/Assets/startup.asset
-
-# The Advanced rendering sample keeps authored source while excluding cooked shaders.
-Samples/AdvancedRenderingParity/Build/
-!Samples/AdvancedRenderingParity/Assets/
-Samples/AdvancedRenderingParity/Assets/*
-!Samples/AdvancedRenderingParity/Assets/Scripts/
-!Samples/AdvancedRenderingParity/Assets/Scripts/**
-!Samples/AdvancedRenderingParity/Assets/Worlds/
-!Samples/AdvancedRenderingParity/Assets/Worlds/**
-!Samples/AdvancedRenderingParity/Assets/Textures/
-!Samples/AdvancedRenderingParity/Assets/Textures/**
-!Samples/AdvancedRenderingParity/Assets/startup.asset
-
-# Authored browser UI parity sample; retain only its source inputs.
-Samples/BrowserUiParity/Build/
-!Samples/BrowserUiParity/Assets/
-Samples/BrowserUiParity/Assets/*
-!Samples/BrowserUiParity/Assets/Scripts/
-!Samples/BrowserUiParity/Assets/Scripts/**
-!Samples/BrowserUiParity/Assets/Worlds/
-!Samples/BrowserUiParity/Assets/Worlds/**
-!Samples/BrowserUiParity/Assets/startup.asset
+# Browser CI fixture worlds keep their authored sources and drop generated output.
+Tools/BrowserSmoke/Fixtures/*/Build/
+!Tools/BrowserSmoke/Fixtures/*/Assets/
+Tools/BrowserSmoke/Fixtures/*/Assets/*
+!Tools/BrowserSmoke/Fixtures/*/Assets/Scripts/
+!Tools/BrowserSmoke/Fixtures/*/Assets/Scripts/**
+!Tools/BrowserSmoke/Fixtures/*/Assets/Worlds/
+!Tools/BrowserSmoke/Fixtures/*/Assets/Worlds/**
+!Tools/BrowserSmoke/Fixtures/*/Assets/Textures/
+!Tools/BrowserSmoke/Fixtures/*/Assets/Textures/**
+!Tools/BrowserSmoke/Fixtures/*/Assets/startup.asset
 
 # Local dependency checkouts
 /Build/Dependencies/vcpkg/
 /Build/Dependencies/LocalAgentBroker/
 /Build/Submodules/Flyleaf/
 
-# Build output from the former MonkeyBallVR sample.
-/Samples/MonkeyBallVR/Build/
-/Samples/MonkeyBallVR/Intermediate/
 # Gaussian preview bake fixtures and bake output.
 /Build/GaussianBakeFixtures/
 /Build/GaussianBakeOut/

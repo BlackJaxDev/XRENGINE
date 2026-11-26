@@ -21,13 +21,13 @@ pause controls still suspend simulation independently.
 Build the portable game source:
 
 ```powershell
-dotnet build Samples/RenderingParity/RenderingParity.csproj -c Release
+dotnet build Tools/BrowserSmoke/Fixtures/RenderingParity/RenderingParity.csproj -c Release
 ```
 
 Prepare hash-bound shader artifacts from the existing canonical Slang recipes:
 
 ```powershell
-pwsh Samples/RenderingParity/Prepare-BrowserShaders.ps1
+pwsh Tools/BrowserSmoke/Fixtures/RenderingParity/Prepare-BrowserShaders.ps1
 ```
 
 Generated `Assets/Shaders/WebGPU` output is intentionally ignored. The preparation
@@ -38,7 +38,7 @@ cooker's existing pinned Slang setup; it adds no dependency.
 Use the normal Editor Build Project action with `RenderingParity.xrproj`, or:
 
 ```powershell
-dotnet run --no-build --project XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- --build-project Samples/RenderingParity/RenderingParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder BrowserWebGPU
+dotnet run --no-build --project XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- --build-project Tools/BrowserSmoke/Fixtures/RenderingParity/RenderingParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder BrowserWebGPU
 ```
 
 This requires the existing browser SDK/workload and reviewed browser Jolt

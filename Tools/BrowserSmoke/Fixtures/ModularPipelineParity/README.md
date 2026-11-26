@@ -51,18 +51,18 @@ available alongside `indirect::cull-primitive`, `meshlets::select-lod`,
 `authored-indexed::mask-ranked-arguments`:
 
 ```powershell
-pwsh Samples/ModularPipelineParity/Prepare-BrowserShaders.ps1
+pwsh Tools/BrowserSmoke/Fixtures/ModularPipelineParity/Prepare-BrowserShaders.ps1
 ```
 
 Then use the Editor's normal Build Project action on
 `ModularPipelineParity.xrproj`, or the normal Editor CLI:
 
 ```powershell
-dotnet run --project XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- --build-project Samples/ModularPipelineParity/ModularPipelineParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder BrowserWebGPU
+dotnet run --project XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- --build-project Tools/BrowserSmoke/Fixtures/ModularPipelineParity/ModularPipelineParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder BrowserWebGPU
 ```
 
 The expected activated player is
-`Samples/ModularPipelineParity/Build/BrowserWebGPU/index.html`, accompanied
+`Tools/BrowserSmoke/Fixtures/ModularPipelineParity/Build/BrowserWebGPU/index.html`, accompanied
 by `browser-publish.json` and `content/manifest.json`. Serve that build
 directory over localhost HTTP or HTTPS. It is the shipping Editor-published
 player shell. Capture clear A after the first presented frame, press 2 on the

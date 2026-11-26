@@ -19,8 +19,8 @@ Prepare the canonical hash-bound engine shader recipes, then use the Editor's
 normal Build Project action on `AdvancedRenderingParity.xrproj`:
 
 ```powershell
-pwsh Samples/AdvancedRenderingParity/Prepare-BrowserShaders.ps1
-dotnet run --no-build --project XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- --build-project Samples/AdvancedRenderingParity/AdvancedRenderingParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder BrowserWebGPU
+pwsh Tools/BrowserSmoke/Fixtures/AdvancedRenderingParity/Prepare-BrowserShaders.ps1
+dotnet run --no-build --project XREngine.Editor/XREngine.Editor.csproj -c Release -p:Platform=AnyCPU -- --build-project Tools/BrowserSmoke/Fixtures/AdvancedRenderingParity/AdvancedRenderingParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder BrowserWebGPU
 ```
 
 The generated `Assets/Shaders/WebGPU` catalog is ignored. The preparation script

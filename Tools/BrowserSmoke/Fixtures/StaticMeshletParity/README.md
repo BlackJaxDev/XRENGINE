@@ -21,8 +21,8 @@ not permission to generate a browser-side substitute.
 Prepare the shared engine shader catalog and publish from the Editor CLI:
 
 ```powershell
-pwsh Samples/StaticMeshletParity/Prepare-BrowserShaders.ps1
-dotnet run --project XREngine.Editor/XREngine.Editor.csproj -c Release --no-build --no-launch-profile -- --build-project Samples/StaticMeshletParity/StaticMeshletParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder browser-game
+pwsh Tools/BrowserSmoke/Fixtures/StaticMeshletParity/Prepare-BrowserShaders.ps1
+dotnet run --project XREngine.Editor/XREngine.Editor.csproj -c Release --no-build --no-launch-profile -- --build-project Tools/BrowserSmoke/Fixtures/StaticMeshletParity/StaticMeshletParity.xrproj --build-configuration Release --build-platform BrowserWebGPU --output-subfolder browser-game
 ```
 
 The browser smoke lane stages two copies of this exact project. Only the staged

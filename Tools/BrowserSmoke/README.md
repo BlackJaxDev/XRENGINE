@@ -204,6 +204,22 @@ microphone or output-device permission. This establishes scheduling/sample
 correctness only, not audible playback, gesture unlock, spatialization, or codec
 support across the device matrix.
 
+## Fixture worlds
+
+`Fixtures/` contains the authored worlds that the browser CI publishes in
+addition to RollingBall. Each world tests one browser feature. They are CI
+fixtures, not sample games, so they are not in `Samples/`.
+
+| Fixture | What the CI checks |
+|---------|--------------------|
+| `RenderingParity` | Textured PBR materials, bone skinning, and a morph target. |
+| `AdvancedRenderingParity` | The Advanced pipeline with four texture maps, and a shadow ON and OFF comparison. |
+| `BrowserUiParity` | Shared UI controls, bitmap text, clipping, image quads, an offscreen canvas, and player input. |
+| `ModularPipelineParity` | Game-defined render pipelines, sample-owned shaders, and 4x MSAA on the CPU and GPU paths. |
+| `StaticMeshletParity` | The static meshlet path, compared with a CPU reference of the same world. |
+
+Each fixture has its own `README.md` with its build and publish commands.
+
 ## Prerequisites and execution
 
 Use Node 20 or newer, the repository's pinned .NET/browser toolchain, and the
@@ -376,7 +392,7 @@ directory. No completed run is claimed by adding this harness.
 ## Scope and references
 
 The `advanced-rendering-parity` game kind consumes the ordinary Editor-published
-`Samples/AdvancedRenderingParity` player. It requires the saved static textured
+`Tools/BrowserSmoke/Fixtures/AdvancedRenderingParity` player. It requires the saved static textured
 surface to reach the canvas across two startups and resize. Read-only wrappers
 record the actual WebGPU pipeline labels used by compute dispatches and raster
 draws, requiring native visibility, depth, AO, classification, shading and final
@@ -396,7 +412,7 @@ the current source cook is expected to include all twenty. These checks do not
 qualify shadow/decal rendering or dynamic selection by association.
 
 The `ui-parity` kind consumes the Editor-published
-`Samples/BrowserUiParity` world through the shipping player. It checks the
+`Tools/BrowserSmoke/Fixtures/BrowserUiParity` world through the shipping player. It checks the
 shared control callbacks through their readonly status label, authored
 screen/offscreen color and glyph witnesses, clipping and native focus/text
 semantics. Mouse and touch hit the actual canvas; transparent accessibility
