@@ -58,6 +58,20 @@ public struct UIQuadStyle : IEquatable<UIQuadStyle>
     /// </summary>
     public EUIQuadStyleFlags Flags;
 
+    /// <summary>Bit position of the icon value in <see cref="Flags"/>.</summary>
+    public const int IconShift = 5;
+
+    /// <summary>
+    /// The vector icon that the shader draws instead of the box, stored in the <see cref="EUIQuadStyleFlags.IconMask"/>
+    /// bits of <see cref="Flags"/>.
+    /// </summary>
+    public EUIQuadIcon Icon
+    {
+        readonly get => (EUIQuadIcon)(((uint)Flags & (uint)EUIQuadStyleFlags.IconMask) >> IconShift);
+        set => Flags = (Flags & ~EUIQuadStyleFlags.IconMask) |
+            (EUIQuadStyleFlags)(((uint)value << IconShift) & (uint)EUIQuadStyleFlags.IconMask);
+    }
+
     /// <summary>
     /// Gets the default unstyled flat-quad configuration.
     /// </summary>

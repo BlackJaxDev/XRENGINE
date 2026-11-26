@@ -78,7 +78,8 @@ public sealed class InspectorEnumEditorTests
             target.OnRead = () => editor.Bind(second, [target]);
             editor.Bind(first, [target]);
             Assert.That(combo.AccessibilityValue, Is.EqualTo(nameof(EVisibility.Collapsed)));
-            Assert.That(node.FirstChild!.GetComponent<UITextComponent>()!.Text,
+            Assert.That(node.Transform.Children.Select(child => child.SceneNode?.GetComponent<UITextComponent>())
+                    .Single(label => label is not null)!.Text,
                 Is.EqualTo(nameof(EVisibility.Collapsed)));
             target.OnRead = null;
 

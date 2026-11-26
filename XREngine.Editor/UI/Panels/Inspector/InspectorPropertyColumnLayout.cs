@@ -52,7 +52,10 @@ internal sealed class InspectorPropertyColumnLayout
 
     /// <summary>Gets the text of the name cell, which the inspector styles for section header rows.</summary>
     internal XREngine.Rendering.UI.UITextComponent? NameLabel
-        => _nameNode.GetComponent<XREngine.Rendering.UI.UITextComponent>();
+        => UIVirtualTableColumn<object>.FindTextCellLabel(_name);
+
+    /// <summary>The name cell. With a leading inset it holds the label and the section chevron.</summary>
+    internal UIBoundableTransform NameCell => _name;
 
     internal bool TryApply(UIListTransform list, object provider, ulong incarnation,
         Func<bool> ownerCurrent, float viewportWidth)

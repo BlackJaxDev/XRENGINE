@@ -37,4 +37,10 @@ public enum EUIQuadStyleFlags : uint
     /// Samples the shared blurred backdrop texture behind the box with vibrancy saturation.
     /// </summary>
     BackdropBlur = 1u << 4,
+
+    /// <summary>
+    /// Holds an <see cref="EUIQuadIcon"/> value in bits 5 to 7. A value other than zero draws that icon
+    /// instead of the box. Use <see cref="UIQuadStyle.Icon"/> to read and write it.
+    /// </summary>
+    IconMask = 7u << 5,
 }

@@ -12,11 +12,12 @@ public sealed class UIVirtualPropertyGridProvider<T> : IVirtualListProvider, IUI
         Func<SceneNode, UIBoundableTransform> createValueEditor,
         Action<UIBoundableTransform, T, ulong> bindValueEditor,
         Action<UIBoundableTransform> unbindValueEditor,
-        Action<UIBoundableTransform, T, ulong>? refreshValueEditor = null)
+        Action<UIBoundableTransform, T, ulong>? refreshValueEditor = null,
+        float nameLeadingInset = 0.0f)
     {
         ArgumentNullException.ThrowIfNull(getName);
         _table = new(source,
-            UIVirtualTableColumn<T>.Text("name", "Property", nameWidth, getName),
+            UIVirtualTableColumn<T>.Text("name", "Property", nameWidth, getName, nameLeadingInset),
             new UIVirtualTableColumn<T>("value", "Value", valueWidth,
                 createValueEditor, bindValueEditor, unbindValueEditor, refreshValueEditor));
         _table.AccessibleRowName = getName;

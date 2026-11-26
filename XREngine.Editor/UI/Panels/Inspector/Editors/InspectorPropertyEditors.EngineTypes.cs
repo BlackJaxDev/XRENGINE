@@ -1,8 +1,10 @@
+using System.Numerics;
 using System.Reflection;
 using XREngine.Data.Colors;
 using XREngine.Editor.UI;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor;
 
@@ -16,6 +18,7 @@ public static partial class InspectorPropertyEditors
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(QuaternionTransformer.Yaw)), transformer.GetTransformedProperty(nameof(QuaternionTransformer.Yaw)), tfmObj);
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(QuaternionTransformer.Pitch)), transformer.GetTransformedProperty(nameof(QuaternionTransformer.Pitch)), tfmObj);
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(QuaternionTransformer.Roll)), transformer.GetTransformedProperty(nameof(QuaternionTransformer.Roll)), tfmObj);
+            SpreadFields(node);
         }
 
         public static void CreateVector4Editor(SceneNode node, PropertyInfo info, object?[]? objects)
@@ -25,6 +28,7 @@ public static partial class InspectorPropertyEditors
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(Vector4Transformer.Y)), transformer.GetTransformedProperty(nameof(Vector4Transformer.Y)), tfmObj);
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(Vector4Transformer.Z)), transformer.GetTransformedProperty(nameof(Vector4Transformer.Z)), tfmObj);
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(Vector4Transformer.W)), transformer.GetTransformedProperty(nameof(Vector4Transformer.W)), tfmObj);
+            SpreadFields(node);
         }
 
         public static void CreateVector3Editor(SceneNode node, PropertyInfo info, object?[]? objects)
@@ -33,6 +37,7 @@ public static partial class InspectorPropertyEditors
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(Vector3Transformer.X)), transformer.GetTransformedProperty(nameof(Vector3Transformer.X)), tfmObj);
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(Vector3Transformer.Y)), transformer.GetTransformedProperty(nameof(Vector3Transformer.Y)), tfmObj);
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(Vector3Transformer.Z)), transformer.GetTransformedProperty(nameof(Vector3Transformer.Z)), tfmObj);
+            SpreadFields(node);
 
         }
 
@@ -41,22 +46,41 @@ public static partial class InspectorPropertyEditors
             InitListArrangement(node, info, objects, out Vector2Transformer transformer, out object?[] tfmObj);
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(Vector2Transformer.X)), transformer.GetTransformedProperty(nameof(Vector2Transformer.X)), tfmObj);
             PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(Vector2Transformer.Y)), transformer.GetTransformedProperty(nameof(Vector2Transformer.Y)), tfmObj);
+            SpreadFields(node);
         }
 
         public static void CreateLayerMaskEditor(SceneNode node, PropertyInfo info, object?[]? objects)
         {
             InitListArrangement(node, info, objects, out LayerMaskTransformer transformer, out object?[] tfmObj);
             PrimitiveTypes.CreateInt32Editor()(node.NewChild(nameof(LayerMaskTransformer.Value)), transformer.GetTransformedProperty(nameof(LayerMaskTransformer.Value)), tfmObj);
+            SpreadFields(node);
+        }
+
+        /// <summary>
+        /// Gives each field of a field-list editor an equal share of the row width, like the X, Y, and Z boxes
+        /// of a web form. Each field stretches between fraction anchors, and the margins leave a small gap.
+        /// </summary>
+        private static void SpreadFields(SceneNode node)
+        {
+            const float halfGap = 2.0f;
+            TransformBase parent = node.Transform;
+            int count = parent.Children.Count;
+            for (int index = 0; index < count; index++)
+            {
+                if (parent.Children[index] is not UIBoundableTransform field)
+                    continue;
+                field.MinAnchor = new Vector2(index / (float)count, 0.0f);
+                field.MaxAnchor = new Vector2((index + 1) / (float)count, 1.0f);
+                field.NormalizedPivot = Vector2.Zero;
+                field.Margins = new Vector4(index == 0 ? 0.0f : halfGap, 0.0f, index == count - 1 ? 0.0f : halfGap, 0.0f);
+            }
         }
 
         private static void InitListArrangement<T>(SceneNode node, PropertyInfo info, object?[]? objects, out T transformer, out object?[] tfmObj) where T : DataTransformerBase
         {
-            var tfm = node.SetTransform<UIListTransform>();
-            tfm.DisplayHorizontal = true;
+            // The fields share the row width equally (see SpreadFields), so a plain bounded transform holds them.
+            var tfm = node.SetTransform<UIBoundableTransform>();
             tfm.Height = 25.0f;
-            tfm.ItemAlignment = EListAlignment.TopOrLeft;
-            tfm.ItemSpacing = 5.0f;
-            tfm.ItemSize = null;
             transformer = node.AddComponent<T>()!;
             transformer.Property = info;
             transformer.Targets = objects;

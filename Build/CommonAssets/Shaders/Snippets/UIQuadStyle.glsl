@@ -8,6 +8,8 @@ const uint XRENGINE_UiFlagDecodeSrgbColors = 2u;
 const uint XRENGINE_UiFlagVerticalGradient = 4u;
 const uint XRENGINE_UiFlagDropShadow = 8u;
 const uint XRENGINE_UiFlagBackdropBlur = 16u;
+const uint XRENGINE_UiIconShift = 5u;
+const uint XRENGINE_UiIconMask = 7u;
 
 uint XRENGINE_UiStyleFlags()
 {
@@ -40,6 +42,35 @@ float XRENGINE_UiRoundedBoxSdf(vec2 p, vec2 halfSize, float radius, float corner
     return outsideDist + min(max(q.x, q.y), 0.0) - radius;
 }
 
+// Distance from p to the segment from a to b.
+float XRENGINE_UiSegmentDistance(vec2 p, vec2 a, vec2 b)
+{
+    vec2 pa = p - a;
+    vec2 ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+// Distance from q to the center line of an icon. q is in icon units: -1 to 1 across the
+// shorter side of the quad, with +Y up. The icon values match EUIQuadIcon.
+float XRENGINE_UiIconDistance(uint icon, vec2 q)
+{
+    if (icon == 1u) // Chevron right
+        return min(XRENGINE_UiSegmentDistance(q, vec2(-0.28, 0.6), vec2(0.3, 0.0)),
+                   XRENGINE_UiSegmentDistance(q, vec2(0.3, 0.0), vec2(-0.28, -0.6)));
+    if (icon == 2u) // Chevron down
+        return min(XRENGINE_UiSegmentDistance(q, vec2(-0.6, 0.28), vec2(0.0, -0.3)),
+                   XRENGINE_UiSegmentDistance(q, vec2(0.0, -0.3), vec2(0.6, 0.28)));
+    if (icon == 3u) // Check
+        return min(XRENGINE_UiSegmentDistance(q, vec2(-0.6, 0.02), vec2(-0.18, -0.42)),
+                   XRENGINE_UiSegmentDistance(q, vec2(-0.18, -0.42), vec2(0.62, 0.48)));
+    if (icon == 4u) // Minus
+        return XRENGINE_UiSegmentDistance(q, vec2(-0.55, 0.0), vec2(0.55, 0.0));
+    // Cross
+    return min(XRENGINE_UiSegmentDistance(q, vec2(-0.5, -0.5), vec2(0.5, 0.5)),
+               XRENGINE_UiSegmentDistance(q, vec2(-0.5, 0.5), vec2(0.5, -0.5)));
+}
+
 // Shades one fragment of a styled quad. useBackdrop selects the frosted path, and backdrop
 // holds the blurred scene color behind the fragment. Returns straight-alpha color.
 // discardFragment is true when the fragment is fully transparent.
@@ -61,6 +92,25 @@ vec4 XRENGINE_UiShadeStyledQuad(bool useBackdrop, vec3 backdrop, out bool discar
         gradBottom.rgb = XRENGINE_UiSrgbToLinear(gradBottom.rgb);
         borderColor.rgb = XRENGINE_UiSrgbToLinear(borderColor.rgb);
         shadowColor.rgb = XRENGINE_UiSrgbToLinear(shadowColor.rgb);
+    }
+
+    // A vector icon replaces the box: an anti-aliased round-capped stroke in the fill color.
+    uint icon = (flags >> XRENGINE_UiIconShift) & XRENGINE_UiIconMask;
+    if (icon != 0u)
+    {
+        vec2 iconSize = max(InstanceBounds.zw, vec2(1.0));
+        float iconHalf = min(iconSize.x, iconSize.y) * 0.5;
+        vec2 iconPos = (FragLocalPos - iconSize * 0.5) / iconHalf;
+        float stroke = InstanceStyleMeta.y > 0.0 ? InstanceStyleMeta.y : max(iconHalf * 0.24, 1.2);
+        float iconSdf = XRENGINE_UiIconDistance(icon, iconPos) * iconHalf - stroke * 0.5;
+        float iconAa = max(fwidth(iconSdf), 0.75);
+        float iconMask = 1.0 - smoothstep(-iconAa * 0.5, iconAa * 0.5, iconSdf);
+        if (iconMask <= 0.0)
+        {
+            discardFragment = true;
+            return vec4(0.0);
+        }
+        return vec4(topColor.rgb, topColor.a * iconMask);
     }
 
     if ((flags & (XRENGINE_UiFlagStyledBox | XRENGINE_UiFlagDropShadow |

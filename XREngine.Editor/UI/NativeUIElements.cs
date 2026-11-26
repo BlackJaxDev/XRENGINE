@@ -97,6 +97,60 @@ public static class NativeUIElements
         return (buttonNode, button, background, label);
     }
 
+    private static readonly UIQuadStyle FieldQuadStyle = EditorGlassTheme.Field.ToQuadStyle();
+    private static readonly UIQuadStyle FocusedFieldQuadStyle = FocusedField().ToQuadStyle();
+
+    private static UIStyleProperties FocusedField()
+    {
+        UIStyleProperties style = EditorGlassTheme.Field;
+        style.BorderColor = EditorGlassTheme.Accent;
+        style.BorderWidth = 1.25f;
+        return style;
+    }
+
+    /// <summary>
+    /// Creates a vector icon node centered at <paramref name="anchor"/> of <paramref name="parent"/>, moved by
+    /// <paramref name="offset"/>. The UI quad shader draws the icon, so it needs no font glyph.
+    /// </summary>
+    internal static UIMaterialComponent CreateIcon(SceneNode parent, EUIQuadIcon icon, Vector2 anchor, Vector2 offset,
+        float size, ColorF4 color, float strokeWidth = 1.6f)
+    {
+        SceneNode node = parent.NewChild<UIMaterialComponent>(out var quad);
+        node.Name = "Icon";
+        UIBoundableTransform transform = node.GetTransformAs<UIBoundableTransform>(true)!;
+        transform.MinAnchor = anchor;
+        transform.MaxAnchor = anchor;
+        transform.NormalizedPivot = new Vector2(0.5f, 0.5f);
+        transform.Translation = offset;
+        transform.Width = size;
+        transform.Height = size;
+        transform.BlocksInputBehind = false;
+        quad.SetBatchSolidColor(new Vector4(color.R, color.G, color.B, color.A));
+        quad.QuadStyle = new UIStyleProperties { Icon = icon, BorderWidth = strokeWidth, DecodeSrgbColors = true }.ToQuadStyle();
+        return quad;
+    }
+
+    /// <summary>
+    /// Gives a text field background the glass field look: a soft rounded well with a hairline border.
+    /// </summary>
+    internal static void ApplyFieldStyle(UIMaterialComponent background)
+    {
+        ColorF4 fill = EditorGlassTheme.FieldFill;
+        background.SetBatchSolidColor(new Vector4(fill.R, fill.G, fill.B, fill.A));
+        background.QuadStyle = FieldQuadStyle;
+    }
+
+    /// <summary>
+    /// Shows the accent border of a field while it has focus or the pointer is over it. It writes the style only
+    /// when the state changes, because each style write makes the canvas publish again.
+    /// </summary>
+    internal static void SetFieldHighlight(UIMaterialComponent background, bool highlighted)
+    {
+        UIQuadStyle style = highlighted ? FocusedFieldQuadStyle : FieldQuadStyle;
+        if (background.QuadStyle != style)
+            background.QuadStyle = style;
+    }
+
     public static (TInput Input, UITextComponent Text, UIPropertyTextDriverComponent Driver, UIMaterialComponent Background) CreateTextInputField<TInput>(
         SceneNode parent,
         PropertyInfo? property = null,
@@ -108,7 +162,13 @@ public static class NativeUIElements
         where TInput : UITextInputComponent
     {
         var matComp = parent.AddComponent<UIMaterialComponent>()!;
-        matComp.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Transparent, 2.0f);
+        // A caller that gives its own outline colors keeps the plain border look. Other fields use the glass
+        // field style.
+        bool customOutline = focusOutlineColor is not null || unfocusedOutlineColor is not null;
+        if (customOutline)
+            matComp.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Transparent, 2.0f);
+        else
+            ApplyFieldStyle(matComp);
 
         parent.NewChild<UITextComponent, TInput, UIPropertyTextDriverComponent>(out var textComp, out var textInput, out var textDriver);
 
@@ -120,6 +180,11 @@ public static class NativeUIElements
         // handler checks only the other state.
         void SetOutline(bool highlighted)
         {
+            if (!customOutline)
+            {
+                SetFieldHighlight(matComp, highlighted);
+                return;
+            }
             Vector4 color = highlighted ? focusedColor : unfocusedColor;
             if (matComp.BatchBorderColor == color)
                 return;
@@ -184,7 +249,7 @@ public static class NativeUIElements
 
         UIMaterialComponent? material = AddGuardedComponent<UIMaterialComponent>(parent, ParentCurrent, retainFailedReceipt);
         if (!ParentCurrent() || material is null) return false;
-        material.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Transparent, 2.0f);
+        ApplyFieldStyle(material);
         if (!ParentCurrent()) return false;
 
         SceneNode? createdTextNode = CreateGuardedBoundableChild(parent, ParentCurrent,
@@ -223,11 +288,7 @@ public static class NativeUIElements
         void SetOutline(bool highlighted)
         {
             if (!Current()) return;
-            ColorF4 color = highlighted ? ColorF4.White : ColorF4.Transparent;
-            if (material.BatchBorderColor == color) return;
-            material.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            if (!Current()) return;
-            material.BatchBorderColor = color;
+            SetFieldHighlight(material, highlighted);
         }
         void Highlight(UIInteractableComponent _) => SetOutline(true);
         void PointerLeft(UIInteractableComponent _) => SetOutline(input.CanInteract && input.IsFocused);
@@ -556,10 +617,27 @@ public static class NativeUIElements
         Func<bool>? ownerIsCurrent = null)
     {
         if (ownerIsCurrent?.Invoke() == false) return;
+        // A vector or rotation editor binds its fields to a transformer component, and the transformer binds
+        // to the source property. Only the transformer changes target, so its fields are not rebound.
+        if (root.GetComponent<InspectorPropertyEditors.DataTransformerBase>() is { } transformer)
+        {
+            transformer.Targets = null;
+            if (ownerIsCurrent?.Invoke() == false) return;
+            transformer.Property = property;
+            if (ownerIsCurrent?.Invoke() == false) return;
+            transformer.Targets = targets;
+            return;
+        }
         for (int index = 0; index < root.Components.Count; index++)
         {
             switch (root.Components[index])
             {
+                case UIColorSelectorComponent color:
+                    color.Binding = property is not null && targets is not null
+                        ? new EditorColorPropertyBinding(property, targets) : null;
+                    if (ownerIsCurrent?.Invoke() == false) return;
+                    color.IsReadOnly = property is null || !property.CanWrite;
+                    break;
                 case InspectorEnumEditorComponent enumEditor:
                     enumEditor.Bind(property, targets, ownerIsCurrent);
                     break;

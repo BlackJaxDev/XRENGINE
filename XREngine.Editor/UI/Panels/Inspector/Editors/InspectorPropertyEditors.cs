@@ -133,14 +133,18 @@ public static partial class InspectorPropertyEditors
             var combo = n.AddComponent<UIComboBoxComponent>()!;
             var popup = n.AddComponent<NativePropertyPopupHost>()!;
             combo.Popup = popup.CreatePopup();
-            n.AddComponent<UIMaterialComponent>()!.SetBatchBorderStyle(ColorF4.Transparent, ColorF4.Gray, 1);
+            // A select field: the glass field well with a down chevron at the right, like a web select box.
+            NativeUIElements.ApplyFieldStyle(n.AddComponent<UIMaterialComponent>()!);
+            // The chevron node comes before the label, so the two quads draw in one run before the text.
+            NativeUIElements.CreateIcon(n, EUIQuadIcon.ChevronDown, new System.Numerics.Vector2(1.0f, 0.5f),
+                new System.Numerics.Vector2(-12.0f, 0.0f), 10.0f, EditorGlassTheme.TextSecondary);
             n.NewChild<UITextComponent>(out var label);
             label.VerticalAlignment = EVerticalAlignment.Center;
             // Match the other value editors: the property text size, the field text color, and an inset.
             label.FontSize = EditorUI.Styles.PropertyInputFontSize;
             label.Color = EditorUI.Styles.PropertyInputTextColor;
             label.ClipToBounds = true;
-            label.BoundableTransform.Margins = new System.Numerics.Vector4(6.0f, 0.0f, 6.0f, 0.0f);
+            label.BoundableTransform.Margins = new System.Numerics.Vector4(8.0f, 0.0f, 24.0f, 0.0f);
             combo.Opening += _ => combo.PopupPosition = popup.GetPosition();
             n.AddComponent<InspectorEnumEditorComponent>()!.Configure(combo, label, prop, objects);
         }

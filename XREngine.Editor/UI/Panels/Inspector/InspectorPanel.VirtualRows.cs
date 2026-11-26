@@ -6,6 +6,7 @@ using XREngine.Core.Files;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Editor.UI;
+using XREngine.Extensions;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.UI.State;
@@ -24,6 +25,18 @@ public partial class InspectorPanel
         public required UIButtonComponent DetailButton;
         public required UIBoundableTransform DetailButtonTransform;
         public required UITextComponent DetailLabel;
+        /// <summary>The chevron at the left of a section header row. Member rows hide it.</summary>
+        public required UIMaterialComponent DisclosureIcon;
+        public required UIBoundableTransform DisclosureTransform;
+        /// <summary>Last disclosure icon drawn: -1 hidden, 0 collapsed, 1 expanded.</summary>
+        public int DisclosureState = -1;
+        /// <summary>
+        /// The active checkbox of a component section header. It sits after the chevron and before the title,
+        /// like the ImGui component header, so a long title cannot cover it.
+        /// </summary>
+        public required SceneNode HeaderToggle;
+        public required UIBoundableTransform HeaderToggleTransform;
+        public bool HeaderToggleShown;
         public readonly Dictionary<Type, SceneNode> PrimitiveEditors = [];
         public PropertyInfo? Property;
         public IDisposable? DropTarget;
@@ -384,7 +397,8 @@ public partial class InspectorPanel
             160, 400,
             CreatePropertyValueCell,
             (cell, property, _) => BindPropertyRow(cell, property, _virtualPropertyProvider.TargetsFor(property)),
-            UnbindPropertyRow);
+            UnbindPropertyRow,
+            nameLeadingInset: NameGutter);
         _virtualPropertyGrid.Activated += ToggleStackedSection;
         list.VirtualProvider = _virtualPropertyGrid;
         _virtualPropertyList = list;
@@ -436,27 +450,107 @@ public partial class InspectorPanel
         ApplyInspectorView();
     }
 
+    /// <summary>Width of the gutter at the left of the name column, where section rows draw their chevron.</summary>
+    private const float NameGutter = 20.0f;
+    private const float DisclosureIconSize = 12.0f;
+    private const float HeaderToggleSize = 14.0f;
+
+    private static readonly UIQuadStyle CollapsedSectionChevron = new UIStyleProperties
+    {
+        Icon = EUIQuadIcon.ChevronRight,
+        BorderWidth = 1.7f,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    private static readonly UIQuadStyle ExpandedSectionChevron = new UIStyleProperties
+    {
+        Icon = EUIQuadIcon.ChevronDown,
+        BorderWidth = 1.7f,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    private static readonly UIQuadStyle LinkChevron = new UIStyleProperties
+    {
+        Icon = EUIQuadIcon.ChevronRight,
+        BorderWidth = 1.4f,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    /// <summary>
+    /// Creates a small vector icon node centered at <paramref name="anchor"/> of <paramref name="parent"/> and
+    /// moved by <paramref name="offset"/>. The UI quad shader draws the icon, so it needs no font glyph.
+    /// </summary>
+    private static (UIMaterialComponent Icon, UIBoundableTransform Transform) CreateIconNode(SceneNode parent,
+        Vector2 anchor, Vector2 offset, float size, in UIQuadStyle style, ColorF4 color)
+    {
+        SceneNode node = parent.NewChild<UIMaterialComponent>(out var icon);
+        UIBoundableTransform transform = node.GetTransformAs<UIBoundableTransform>(true)!;
+        transform.MinAnchor = anchor;
+        transform.MaxAnchor = anchor;
+        transform.NormalizedPivot = new Vector2(0.5f, 0.5f);
+        transform.Translation = offset;
+        transform.Width = size;
+        transform.Height = size;
+        transform.BlocksInputBehind = false;
+        icon.SetBatchSolidColor(color);
+        icon.QuadStyle = style;
+        return (icon, transform);
+    }
+
     private UIBoundableTransform CreatePropertyValueCell(SceneNode tableRow)
     {
+        // The name cell has a left gutter (the grid's leading inset). Section header rows draw their disclosure
+        // chevron in it, and the member names line up after it. The chevron is a sibling of the clipped label.
+        SceneNode nameNode = tableRow.Transform.Children[0].SceneNode!;
+        (UIMaterialComponent disclosureIcon, UIBoundableTransform disclosureTransform) = CreateIconNode(nameNode,
+            new Vector2(0.0f, 0.5f), new Vector2(NameGutter * 0.5f + 1.0f, 0.0f), DisclosureIconSize,
+            ExpandedSectionChevron, EditorGlassTheme.TextSecondary);
+        disclosureTransform.Visibility = EVisibility.Hidden;
+        SceneNode headerToggle = nameNode.NewChild("HeaderToggle");
+        UIBoundableTransform headerToggleTransform = headerToggle.SetTransform<UIBoundableTransform>();
+        NativeUIElements.CreateCheckboxToggle(headerToggle, size: HeaderToggleSize);
+        headerToggleTransform.MinAnchor = new Vector2(0.0f, 0.5f);
+        headerToggleTransform.MaxAnchor = new Vector2(0.0f, 0.5f);
+        headerToggleTransform.NormalizedPivot = new Vector2(0.0f, 0.5f);
+        headerToggleTransform.Translation = new Vector2(NameGutter, 0.0f);
+        headerToggleTransform.Visibility = EVisibility.Hidden;
+        // The checkbox takes the click, so a click on it does not also collapse the section under it.
+        headerToggleTransform.BlocksInputBehind = true;
+        for (int index = 0; index < headerToggleTransform.Children.Count; index++)
+            if (headerToggleTransform.Children[index] is UIBoundableTransform part)
+                part.BlocksInputBehind = true;
+
         SceneNode valueRoot = new(tableRow) { Name = "InspectorValue" };
         UIBoundableTransform valueTransform = valueRoot.SetTransform<UIBoundableTransform>();
         valueTransform.Margins = new Vector4(2);
 
-        SceneNode buttonNode = valueRoot.NewChild<UIButtonComponent>(out var detailButton);
+        // A member that has no inline editor shows its value as a quiet link row with a chevron at the right.
+        // A click opens the value in the detail view.
+        SceneNode buttonNode = valueRoot.NewChild<UIButtonComponent, UIMaterialComponent>(out var detailButton, out var detailBackground);
+        detailBackground.SetBatchSolidColor(ColorF4.Transparent);
+        detailButton.Style = EditorGlassTheme.Row;
         UIBoundableTransform buttonTransform = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
         buttonTransform.MaxAnchor = Vector2.One;
-        buttonNode.NewChild<UITextComponent>(out var buttonLabel);
-        buttonLabel.Text = "Open details";
+        // The chevron node comes before the label, so in painter order it follows the button background and
+        // both quads draw in one run before the label text.
+        CreateIconNode(buttonNode, new Vector2(1.0f, 0.5f), new Vector2(-11.0f, 0.0f), 11.0f,
+            LinkChevron, EditorGlassTheme.TextDisabled);
+        SceneNode labelNode = buttonNode.NewChild<UITextComponent>(out var buttonLabel);
+        labelNode.GetTransformAs<UIBoundableTransform>(true)!.Margins = new Vector4(8, 0, 22, 0);
+        buttonLabel.Text = string.Empty;
         buttonLabel.FontSize = EditorUI.Styles.PropertyInputFontSize;
+        buttonLabel.Color = EditorGlassTheme.TextSecondary;
         buttonLabel.ClipToBounds = true;
         buttonLabel.VerticalAlignment = EVerticalAlignment.Center;
-        buttonLabel.HorizontalAlignment = EHorizontalAlignment.Center;
+        buttonLabel.HorizontalAlignment = EHorizontalAlignment.Left;
         PropertyRow state = new()
         {
             ValueRoot = valueRoot,
             Columns = CapturePropertyColumns(tableRow, valueTransform),
             DetailButton = detailButton, DetailButtonTransform = buttonTransform,
-            DetailLabel = buttonLabel
+            DetailLabel = buttonLabel,
+            DisclosureIcon = disclosureIcon, DisclosureTransform = disclosureTransform,
+            HeaderToggle = headerToggle, HeaderToggleTransform = headerToggleTransform,
         };
         detailButton.InteractAction += _ =>
         {
@@ -507,14 +601,37 @@ public partial class InspectorPanel
             return;
         }
         if (!Current()) return;
-        // Section header rows (the transform and each component) read brighter and larger than member rows.
+        // Section header rows (the transform and each component) read brighter and larger than member rows,
+        // and show a chevron that tells whether the section is open.
+        bool header = provider!.IsSectionHeader(property);
         if (state.Columns.NameLabel is { } nameLabel)
         {
-            bool header = provider!.IsSectionHeader(property);
             nameLabel.Color = header ? EditorGlassTheme.TextPrimary : EditorGlassTheme.TextSecondary;
             nameLabel.FontSize = header ? EditorGlassTheme.FontSize : EditorGlassTheme.CaptionFontSize;
+            // A section title runs across the value column, because a header row has no value editor.
+            nameLabel.ClipToBounds = !header;
             if (!Current()) return;
+            // A component header shows its active checkbox before the title, so the title moves right.
+            bool showToggle = header && property.PropertyType == typeof(bool);
+            float labelLeft = showToggle ? NameGutter + HeaderToggleSize + 6.0f : NameGutter;
+            Vector4 labelMargins = nameLabel.BoundableTransform.Margins;
+            if (labelMargins.X != labelLeft)
+                nameLabel.BoundableTransform.Margins = labelMargins with { X = labelLeft };
+            if (!Current()) return;
+            if (showToggle || state.HeaderToggleShown)
+            {
+                NativeUIElements.RebindPropertyEditor(state.HeaderToggle, showToggle ? property : null,
+                    showToggle ? targets : null, Current);
+                if (!Current()) return;
+                state.HeaderToggleTransform.Visibility = showToggle ? EVisibility.Visible : EVisibility.Hidden;
+                state.HeaderToggleShown = showToggle;
+                if (!Current()) return;
+            }
         }
+        UpdateDisclosureIcon(state, header && provider.SectionKeyFor(property) is { } sectionKey
+            ? IsStackedSectionCollapsed(sectionKey) ? 0 : 1
+            : -1);
+        if (!Current()) return;
         if (targets is { Length: > 0 } && property.SetMethod?.IsPublic == true &&
             (typeof(XRComponent).IsAssignableFrom(property.PropertyType) ||
              typeof(XRAsset).IsAssignableFrom(property.PropertyType)))
@@ -578,33 +695,22 @@ public partial class InspectorPanel
                 payload => binding?.IsCurrent == true && ReferenceEquals(state.Property, property) &&
                     TryResolveAssetReference(payload, property, out _, out _));
         }
-        TypeCode typeCode = Type.GetTypeCode(property.PropertyType);
-        bool isString = property.PropertyType == typeof(string);
-        bool primitive = !isString && typeCode is not (TypeCode.Object or TypeCode.DateTime or TypeCode.Empty or TypeCode.DBNull);
-        state.DetailButtonTransform.Visibility = primitive ? EVisibility.Collapsed : EVisibility.Visible;
+        bool primitive = HasInlineEditor(property.PropertyType);
+        // A section header row that has no inline editor (the transform) shows only its title.
+        state.DetailButtonTransform.Visibility = primitive || header ? EVisibility.Collapsed : EVisibility.Visible;
         if (!Current()) return;
-        state.DetailLabel.Text = "Open details";
-        if (!Current()) return;
-        if (isString && targets is { Length: > 0 })
+        if (!primitive && !header)
         {
-            InspectorStringPreviewBinding? preview = null;
-            preview = new(property, targets, value =>
-            {
-                if (preview is not null && Current() && ReferenceEquals(state.StringPreview, preview))
-                    state.DetailLabel.Text = value;
-            });
-            if (!Current()) { preview.Dispose(); return; }
-            state.StringPreview = preview;
-            preview.Refresh();
-            if (!Current() || !ReferenceEquals(state.StringPreview, preview))
-                return;
+            state.DetailLabel.Text = DescribeValue(property, targets);
+            if (!Current()) return;
         }
         foreach (SceneNode editor in state.PrimitiveEditors.Values)
         {
             editor.GetTransformAs<UIBoundableTransform>()!.Visibility = EVisibility.Collapsed;
             if (!Current()) return;
         }
-        if (!primitive)
+        // A section header row shows only its chevron, checkbox, and title.
+        if (!primitive || header)
             return;
         if (!state.PrimitiveEditors.TryGetValue(property.PropertyType, out SceneNode? editorNode))
         {
@@ -614,11 +720,87 @@ public partial class InspectorPanel
             if (!Current()) return;
             InspectorPropertyEditors.CreateNew(property.PropertyType)?.Invoke(editorNode, property, targets);
             if (!Current()) return;
+            // A vector or rotation editor replaces the node transform with a field row that has a fixed height.
+            // The row fills the value cell instead, so its anchors stretch and it has no fixed size. Other
+            // editors, such as a checkbox, keep the size that they set.
+            if (editorNode.GetComponent<InspectorPropertyEditors.DataTransformerBase>() is not null &&
+                editorNode.Transform is UIBoundableTransform editorBounds)
+            {
+                editorBounds.MinAnchor = Vector2.Zero;
+                editorBounds.MaxAnchor = Vector2.One;
+                editorBounds.Width = null;
+                editorBounds.Height = null;
+            }
+            if (!Current()) return;
             state.PrimitiveEditors.Add(property.PropertyType, editorNode);
         }
         NativeUIElements.RebindPropertyEditor(editorNode, property, targets);
         if (!Current()) return;
         editorNode.GetTransformAs<UIBoundableTransform>()!.Visibility = EVisibility.Visible;
+    }
+
+    /// <summary>
+    /// Returns true when the inspector edits <paramref name="type"/> inside its row: primitives, enums, strings,
+    /// vectors, rotations, colors, and layer masks. Other types show their value as a link to the detail view.
+    /// </summary>
+    private static bool HasInlineEditor(Type type)
+    {
+        if (type.IsEnum)
+            return true;
+        TypeCode typeCode = Type.GetTypeCode(type);
+        if (typeCode is not (TypeCode.Object or TypeCode.DateTime or TypeCode.Empty or TypeCode.DBNull))
+            return true;
+        return type == typeof(Vector2) || type == typeof(Vector3) || type == typeof(Vector4) ||
+            type == typeof(Quaternion) || type == typeof(System.Drawing.Color) || type == typeof(ColorF3) ||
+            type == typeof(ColorF4) || type == typeof(LayerMask);
+    }
+
+    /// <summary>
+    /// Writes a short text for the value that a link row shows: the object name, the item count of a
+    /// collection, the type name, "None" for null, or a dash when the selected objects have different values.
+    /// </summary>
+    private static string DescribeValue(PropertyInfo property, object?[]? targets)
+    {
+        if (targets is not { Length: > 0 } || !property.CanRead || property.GetIndexParameters().Length > 0)
+            return string.Empty;
+        object? value = null;
+        try
+        {
+            for (int index = 0; index < targets.Length; index++)
+            {
+                object? current = targets[index] is { } target ? property.GetValue(target) : null;
+                if (index == 0)
+                    value = current;
+                else if (!ReferenceEquals(value, current) && !Equals(value, current))
+                    return "\u2014";
+            }
+        }
+        catch (Exception)
+        {
+            return string.Empty;
+        }
+        return value switch
+        {
+            null => "None",
+            string text => text,
+            XRComponent component => string.IsNullOrWhiteSpace(component.Name) || component.Name == component.GetType().Name
+                ? component.GetType().Name.SplitCamelCase()
+                : component.Name,
+            XRObjectBase named when !string.IsNullOrWhiteSpace(named.Name) => named.Name!,
+            System.Collections.ICollection collection => collection.Count == 1 ? "1 item" : $"{collection.Count} items",
+            _ => value.GetType().Name.SplitCamelCase(),
+        };
+    }
+
+    /// <summary>Shows, hides, or turns the section chevron of a row. It writes only when the state changes.</summary>
+    private static void UpdateDisclosureIcon(PropertyRow state, int code)
+    {
+        if (state.DisclosureState == code)
+            return;
+        state.DisclosureState = code;
+        state.DisclosureTransform.Visibility = code < 0 ? EVisibility.Hidden : EVisibility.Visible;
+        if (code >= 0)
+            state.DisclosureIcon.QuadStyle = code == 0 ? CollapsedSectionChevron : ExpandedSectionChevron;
     }
 
     private static bool SameTargets(object?[]? left, object?[]? right)
@@ -762,6 +944,13 @@ public partial class InspectorPanel
             if (!ReferenceEquals(state.BindingToken, token)) return;
             editor.GetTransformAs<UIBoundableTransform>()!.Visibility = EVisibility.Collapsed;
             if (!ReferenceEquals(state.BindingToken, token)) return;
+        }
+        if (state.HeaderToggleShown)
+        {
+            NativeUIElements.RebindPropertyEditor(state.HeaderToggle, null, null);
+            if (!ReferenceEquals(state.BindingToken, token)) return;
+            state.HeaderToggleTransform.Visibility = EVisibility.Hidden;
+            state.HeaderToggleShown = false;
         }
     }
 

@@ -35,8 +35,16 @@ public sealed class UIVirtualTableColumn<T>
     /// <summary>Updates a cell only while its item and row lease remain unchanged.</summary>
     public Action<UIBoundableTransform, T, ulong>? RefreshCell { get; }
 
+    /// <summary>
+    /// Creates a column of single-line text cells.
+    /// </summary>
+    /// <param name="leadingInset">
+    /// Space in pixels at the left of the text. When it is above zero, the cell is a container and the text
+    /// is its child, so the caller can put a small icon in the inset. The text clips to its own bounds, and a
+    /// clip also applies to all children, so the icon must not be a child of the text.
+    /// </param>
     public static UIVirtualTableColumn<T> Text(string key, string header, float width,
-        Func<T, string> getText)
+        Func<T, string> getText, float leadingInset = 0.0f)
     {
         ArgumentNullException.ThrowIfNull(getText);
         return new(key, header, width,
@@ -44,16 +52,40 @@ public sealed class UIVirtualTableColumn<T>
             {
                 SceneNode cell = new(parent) { Name = key };
                 UIBoundableTransform bounds = cell.SetTransform<UIBoundableTransform>();
-                UITextComponent label = cell.AddComponent<UITextComponent>()!;
+                SceneNode labelNode = cell;
+                if (leadingInset > 0.0f)
+                {
+                    labelNode = new SceneNode(cell) { Name = "label" };
+                    UIBoundableTransform labelBounds = labelNode.SetTransform<UIBoundableTransform>();
+                    labelBounds.MaxAnchor = Vector2.One;
+                }
+                UITextComponent label = labelNode.AddComponent<UITextComponent>()!;
                 label.FontSize = 12;
                 label.Color = ColorF4.White;
                 label.VerticalAlignment = EVerticalAlignment.Center;
                 label.ClipToBounds = true;
-                label.BoundableTransform.Margins = new Vector4(6, 0, 6, 0);
+                label.BoundableTransform.Margins = leadingInset > 0.0f
+                    ? new Vector4(leadingInset, 0, 6, 0)
+                    : new Vector4(6, 0, 6, 0);
                 return bounds;
             },
-            (cell, item, _) => cell.SceneNode!.GetComponent<UITextComponent>()!.Text = getText(item),
-            cell => cell.SceneNode!.GetComponent<UITextComponent>()!.Text = string.Empty,
-            (cell, item, _) => cell.SceneNode!.GetComponent<UITextComponent>()!.Text = getText(item));
+            (cell, item, _) => FindTextCellLabel(cell).Text = getText(item),
+            cell => FindTextCellLabel(cell).Text = string.Empty,
+            (cell, item, _) => FindTextCellLabel(cell).Text = getText(item));
+    }
+
+    /// <summary>
+    /// Gets the text of a cell that <see cref="Text"/> created: the cell's own text, or the text of its label
+    /// child when the cell has a leading inset.
+    /// </summary>
+    public static UITextComponent FindTextCellLabel(UIBoundableTransform cell)
+    {
+        SceneNode node = cell.SceneNode!;
+        if (node.GetComponent<UITextComponent>() is { } own)
+            return own;
+        for (int index = 0; index < cell.Children.Count; index++)
+            if (cell.Children[index].SceneNode?.GetComponent<UITextComponent>() is { } child)
+                return child;
+        throw new InvalidOperationException($"The text cell '{node.Name}' has no label.");
     }
 }

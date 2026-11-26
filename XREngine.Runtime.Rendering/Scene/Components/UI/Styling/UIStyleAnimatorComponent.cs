@@ -45,6 +45,7 @@ public sealed class UIStyleAnimatorComponent : UIComponent
         public bool HasOpacity;
         public bool HasVisualTransform;
         public bool DecodeSrgbColors;
+        public EUIQuadIcon Icon;
 
         public readonly UIQuadStyle ToQuadStyle()
         {
@@ -60,7 +61,7 @@ public sealed class UIStyleAnimatorComponent : UIComponent
             if (BackdropBlurRadius > 0.001f && BackdropBlurBlend > 0.001f)
                 flags |= EUIQuadStyleFlags.BackdropBlur | EUIQuadStyleFlags.StyledBox;
 
-            return new UIQuadStyle
+            UIQuadStyle style = new()
             {
                 CornerRadii = CornerRadii,
                 CornerExponent = CornerExponent > 0.0f ? CornerExponent : 2.0f,
@@ -77,6 +78,8 @@ public sealed class UIStyleAnimatorComponent : UIComponent
                     BackdropVibrancyBrightness),
                 Flags = flags,
             };
+            style.Icon = Icon;
+            return style;
         }
     }
 
@@ -159,6 +162,7 @@ public sealed class UIStyleAnimatorComponent : UIComponent
         _current.HasOpacity = _target.HasOpacity;
         _current.HasVisualTransform = _target.HasVisualTransform;
         _current.DecodeSrgbColors = _target.DecodeSrgbColors;
+        _current.Icon = _target.Icon;
         _current.CornerExponent = _target.CornerExponent;
 
         _colorSpec = colorTransition;
@@ -415,6 +419,7 @@ public sealed class UIStyleAnimatorComponent : UIComponent
             HasOpacity = tfm is not null,
             HasVisualTransform = tfm is not null,
             DecodeSrgbColors = (style.Flags & EUIQuadStyleFlags.DecodeSrgbColors) != 0,
+            Icon = style.Icon,
         };
     }
 
@@ -450,6 +455,7 @@ public sealed class UIStyleAnimatorComponent : UIComponent
             HasOpacity = properties.Opacity.HasValue || fallback.HasOpacity,
             HasVisualTransform = properties.VisualScale.HasValue || properties.VisualOffset.HasValue || fallback.HasVisualTransform,
             DecodeSrgbColors = properties.DecodeSrgbColors ?? fallback.DecodeSrgbColors,
+            Icon = properties.Icon ?? fallback.Icon,
         };
     }
 

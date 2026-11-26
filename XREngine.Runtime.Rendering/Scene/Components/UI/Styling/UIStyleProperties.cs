@@ -24,6 +24,8 @@ public struct UIStyleProperties
     public float? BackdropVibrancySaturation;
     public float? BackdropVibrancyBrightness;
     public bool? DecodeSrgbColors;
+    /// <summary>A vector icon to draw instead of the box. The background color is the icon color.</summary>
+    public EUIQuadIcon? Icon;
     public float? Opacity;
     public Vector2? VisualScale;
     public Vector2? VisualOffset;
@@ -49,6 +51,7 @@ public struct UIStyleProperties
             BackdropVibrancySaturation = BackdropVibrancySaturation ?? baseStyle.BackdropVibrancySaturation,
             BackdropVibrancyBrightness = BackdropVibrancyBrightness ?? baseStyle.BackdropVibrancyBrightness,
             DecodeSrgbColors = DecodeSrgbColors ?? baseStyle.DecodeSrgbColors,
+            Icon = Icon ?? baseStyle.Icon,
             Opacity = Opacity ?? baseStyle.Opacity,
             VisualScale = VisualScale ?? baseStyle.VisualScale,
             VisualOffset = VisualOffset ?? baseStyle.VisualOffset,
@@ -84,7 +87,7 @@ public struct UIStyleProperties
         if (blurRadius > 0.001f && blurBlend > 0.001f)
             flags |= EUIQuadStyleFlags.BackdropBlur | EUIQuadStyleFlags.StyledBox;
 
-        return new UIQuadStyle
+        UIQuadStyle style = new()
         {
             CornerRadii = radii,
             CornerExponent = cornerExp,
@@ -97,6 +100,8 @@ public struct UIStyleProperties
             BackdropBlurParams = new Vector4(blurRadius, blurBlend, saturation, brightness),
             Flags = flags,
         };
+        style.Icon = Icon ?? EUIQuadIcon.None;
+        return style;
     }
 
     private static Vector4 ToVector4(ColorF4 color) => new(color.R, color.G, color.B, color.A);

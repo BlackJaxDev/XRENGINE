@@ -25,7 +25,9 @@ public partial class HierarchyPanel
         public required UIBoundableTransform LabelTransform;
         public required UIButtonComponent Arrow;
         public required UIBoundableTransform ArrowTransform;
-        public required UITextComponent ArrowGlyph;
+        public required UIMaterialComponent ArrowIcon;
+        /// <summary>Last disclosure icon drawn by the arrow: -1 unset, 0 collapsed, 1 expanded.</summary>
+        public int ArrowIconState = -1;
         public required UIButtonComponent Toggle;
         public required UIBoundableTransform ToggleTransform;
         public required UIMaterialComponent ToggleIndicator;
@@ -103,10 +105,34 @@ public partial class HierarchyPanel
     private const float LabelInset = 10.0f;
     // Room at the right of the label for the unload and active buttons and the scrollbar.
     private const float LabelRightInset = 54.0f + ScrollbarClearance;
-    // Disclosure marks drawn with plain letters: the bundled UI font has no triangle or down-chevron
-    // glyphs, and the Windows symbol font is too large to import as a bitmap atlas.
-    private const string CollapsedChevron = ">";
-    private const string ExpandedChevron = "v";
+    private const float DisclosureIconSize = 13.0f;
+
+    private static readonly UIQuadStyle CollapsedChevronStyle = new UIStyleProperties
+    {
+        Icon = EUIQuadIcon.ChevronRight,
+        BorderWidth = 1.7f,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    private static readonly UIQuadStyle ExpandedChevronStyle = new UIStyleProperties
+    {
+        Icon = EUIQuadIcon.ChevronDown,
+        BorderWidth = 1.7f,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    /// <summary>
+    /// Draws the disclosure chevron of a row as a shader vector icon: right when collapsed, down when expanded.
+    /// It writes the style only when the state changes, because each style write makes the canvas publish again.
+    /// </summary>
+    private static void UpdateDisclosureIcon(HierarchyRow state, bool collapsed)
+    {
+        int code = collapsed ? 0 : 1;
+        if (state.ArrowIconState == code)
+            return;
+        state.ArrowIconState = code;
+        state.ArrowIcon.QuadStyle = collapsed ? CollapsedChevronStyle : ExpandedChevronStyle;
+    }
 
     private UIVirtualTreeProvider? _virtualTree;
     private IDisposable? _virtualRootDropRegistration;
@@ -559,14 +585,17 @@ public partial class HierarchyPanel
         arrowTransform.MaxAnchor = new Vector2(0, 1);
         arrowTransform.Width = ArrowWidth;
         arrowTransform.BlocksInputBehind = true;
-        arrowNode.NewChild<UITextComponent>(out var arrowGlyph);
-        arrowGlyph.Font = XREngine.Rendering.FontGlyphSet.LoadDefaultUIIconFont();
-        arrowGlyph.Text = CollapsedChevron;
-        // This fallback font draws smaller than its nominal size, so the size is large.
-        arrowGlyph.FontSize = 19;
-        arrowGlyph.Color = EditorUI.Styles.ExpandArrowColor;
-        arrowGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
-        arrowGlyph.VerticalAlignment = EVerticalAlignment.Center;
+        // The chevron is a vector icon that the UI quad shader draws, so it needs no font glyph.
+        var arrowIconNode = arrowNode.NewChild<UIMaterialComponent>(out var arrowIcon);
+        UIBoundableTransform arrowIconTransform = arrowIconNode.GetTransformAs<UIBoundableTransform>(true)!;
+        arrowIconTransform.MinAnchor = new Vector2(0.5f, 0.5f);
+        arrowIconTransform.MaxAnchor = new Vector2(0.5f, 0.5f);
+        arrowIconTransform.NormalizedPivot = new Vector2(0.5f, 0.5f);
+        arrowIconTransform.Width = DisclosureIconSize;
+        arrowIconTransform.Height = DisclosureIconSize;
+        arrowIconTransform.BlocksInputBehind = false;
+        arrowIcon.SetBatchSolidColor(EditorGlassTheme.TextSecondary);
+        arrowIcon.QuadStyle = CollapsedChevronStyle;
 
         var toggleNode = rowNode.NewChild<UIButtonComponent>(out var toggle);
         toggle.IsTabStop = false;
@@ -619,7 +648,7 @@ public partial class HierarchyPanel
         {
             Transform = rowTransform, Button = button, Background = background,
             Label = label, LabelTransform = labelTransform, Arrow = arrow,
-            ArrowTransform = arrowTransform, ArrowGlyph = arrowGlyph,
+            ArrowTransform = arrowTransform, ArrowIcon = arrowIcon, ArrowIconState = 0,
             Toggle = toggle, ToggleTransform = toggleTransform, ToggleIndicator = toggleIndicator, ToggleIndicatorState = 1,
             Unload = unload, UnloadTransform = unloadTransform,
             RenameInput = renameInput, RenameTransform = renameTransform
@@ -723,7 +752,7 @@ public partial class HierarchyPanel
         bool collapsed = scene is not null
             ? _collapsedSections.Contains(scene.ID)
             : isNode && IsCollapsed(node!);
-        state.ArrowGlyph.Text = collapsed ? CollapsedChevron : ExpandedChevron;
+        UpdateDisclosureIcon(state, collapsed);
         bool managedScene = scene is not null && TryGetActiveWorld()?.TargetWorld?.Scenes.Contains(scene) == true;
         state.ToggleTransform.Visibility = isNode || managedScene ? EVisibility.Visible : EVisibility.Hidden;
         state.Toggle.IsEnabled = isNode ? node!.CanDeactivate || !node.IsActiveSelf : managedScene;

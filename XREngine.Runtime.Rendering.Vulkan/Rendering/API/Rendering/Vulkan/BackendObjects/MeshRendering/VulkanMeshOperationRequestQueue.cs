@@ -33,7 +33,10 @@ internal sealed class VulkanMeshOperationRequestQueue
     internal const int Capacity =
         TerminalCompositionCapacity + UiCapacity + MainSceneCapacity + ShadowCapacity;
     internal const int TerminalCompositionCapacity = 256;
-    internal const int UiCapacity = 256;
+    // The UI lane holds one request for each UI run. Text and material quads alternate in painter order,
+    // so a dense editor panel, such as the inspector with its vector fields, needs several hundred runs.
+    // The lane matches the UI capacity of the accepted frame plan, which reserves the same operation count.
+    internal const int UiCapacity = VulkanAcceptedFramePlan.UiCapacity;
     internal const int MainSceneCapacity = 1536;
     internal const int ShadowCapacity = VulkanAcceptedFramePlan.ShadowCapacity;
     private static readonly int BackgroundSchedulingCapacity =

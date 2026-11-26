@@ -95,7 +95,7 @@ public sealed class InspectorStackedNodeLayoutTests
             Assert.That(properties.Any(property => property.ReflectedType == node.Transform.GetType() &&
                 property.Name != nameof(XRComponent.IsActive)), Is.False);
             PropertyInfo header = properties.Single(property => property.Name == nameof(XRComponent.IsActive));
-            Assert.That(names[header], Does.StartWith("> "));
+            Assert.That(names[header], Does.Contain("Probe"));
         }
         finally { node.Destroy(true); }
     }

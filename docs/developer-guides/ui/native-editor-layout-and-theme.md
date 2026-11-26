@@ -52,6 +52,22 @@ controls that set colors directly match the styled controls.
 - Colors are sRGB and the styles decode them to linear. Alpha is linear coverage,
   and blending is linear, so white overlay fills use small alpha values.
 
+## Vector Icons
+
+The UI quad shader can draw a vector icon instead of a box. Set
+`UIStyleProperties.Icon` (or `UIQuadStyle.Icon`) to an `EUIQuadIcon` value:
+`ChevronRight`, `ChevronDown`, `Check`, `Minus`, or `Cross`. The icon value uses
+bits 5 to 7 of the style flags (`EUIQuadStyleFlags.IconMask`).
+
+- The quad fill color is the icon color.
+- A border width above zero sets the stroke width in pixels. Otherwise the stroke
+  width follows the quad size.
+- The shader computes the shape from line segments, so the icon is sharp at every
+  size and needs no font glyph.
+
+The hierarchy rows and the inspector section rows use chevron icons for their
+disclosure marks.
+
 ## Inspector
 
 For one selected scene node, the inspector shows a stacked view like the ImGui
@@ -64,13 +80,31 @@ inspector (`InspectorPanel.BuildStackedNodeLayout`):
   type declares below `XRComponent`.
 
 Each row keeps the object that it edits, so a row can edit the transform or a
-component instead of the inspected node. "Open details" on such a row inspects
-that object; the Properties button returns to the node. Several selected nodes
-use the plain list of their shared members.
+component instead of the inspected node. Several selected nodes use the plain
+list of their shared members.
 
-- Click a section header row to collapse or open the section. The title starts
-  with `v` when open and `>` when collapsed. The inspector keeps the collapse
-  state by section key: `Transform`, or the component type name.
+- Primitives, enums, strings, vectors, rotations, colors, and layer masks have
+  inline editors in their row (`InspectorPanel.HasInlineEditor`). A vector or
+  rotation editor binds its fields to a transformer component. A row rebind
+  changes only the transformer target.
+- Other members show their value as a link row: the object name, the item count
+  of a collection, the type name, `None`, or a dash when the selected objects
+  have different values. A chevron at the right shows that a click opens the
+  value. A link row of the transform or a component inspects that object; the
+  Properties button returns to the node.
+- Click a section header row to collapse or open the section. A chevron in the
+  gutter at the left of the name column shows the state. The inspector keeps the
+  collapse state by section key: `Transform`, or the component type name.
+- A component header row shows the active checkbox after the chevron and before
+  the title, like the ImGui component header. The title can run across the value
+  column, because a header row has no value editor.
+- The name column is a container cell (`UIVirtualTableColumn<T>.Text` with a
+  leading inset). The label clips to its own bounds, and a clip applies to all
+  children of the clipped node, so the chevron and the checkbox are siblings of
+  the label, not its children.
+- Vector and rotation fields share the row width equally. Text fields, enum
+  select fields, and link rows use the glass field style
+  (`NativeUIElements.ApplyFieldStyle`).
 - Rows are keyed by `PropertyInfo`, and two components of the same type share
   their property objects. The later components use `InspectorScopedPropertyInfo`
   copies, which forward to the real property but have their own identity.
@@ -87,11 +121,21 @@ use the plain list of their shared members.
 - A box anchored at the right edge needs `NormalizedPivot.X = 1` to end at the
   anchor instead of starting there.
 
+## Draw Count
+
+Each UI run is one Vulkan mesh request in the UI lane. Text and material quads
+alternate in painter order, so a dense panel needs several hundred runs. The UI
+lane of `VulkanMeshOperationRequestQueue` matches the UI capacity of the
+accepted frame plan (`VulkanAcceptedFramePlan.UiCapacity`). If a frame needs more
+UI requests, the renderer stops with `FramePlanCapacityExceeded lane=Ui`. To keep
+the run count low, create an icon node before the label node of the same
+control, so the icon quad follows the background quad in one run.
+
 ## Known Limitations
 
 - The Windows symbol font fails to import as a bitmap atlas at the default draw
-  size, so icon text uses the bundled UI font. That font has no triangle or check
-  glyphs. The hierarchy uses `>` and `v` marks and quad checkboxes.
+  size, and the bundled UI font has no triangle or check glyphs. Use vector icons
+  for these marks.
 - On Vulkan, a screen canvas can stop drawing with `UI.Canvas.BatchCapacityPending`
   when small hierarchy glyph texts use the same font instance as the row labels.
   The hierarchy glyph texts use `FontGlyphSet.LoadDefaultUIIconFont()` to avoid

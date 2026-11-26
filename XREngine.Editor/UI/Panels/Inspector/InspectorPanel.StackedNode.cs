@@ -75,9 +75,15 @@ public partial class InspectorPanel
         return layout;
     }
 
-    /// <summary>Prefixes a section title with its disclosure mark: "v" when open, ">" when collapsed.</summary>
+    /// <summary>
+    /// Returns the title of a section header row. The row draws its own disclosure chevron, so the title has
+    /// no mark. <paramref name="collapsed"/> and <paramref name="key"/> are kept for callers that name sections.
+    /// </summary>
     private static string SectionTitle(IReadOnlySet<string>? collapsed, string key, string title)
-        => (collapsed?.Contains(key) == true ? "> " : "v ") + title;
+        => title;
+
+    /// <summary>Returns true when the section that <paramref name="key"/> names lists only its header row.</summary>
+    private bool IsStackedSectionCollapsed(string key) => _collapsedStackSections.Contains(key);
 
     /// <summary>
     /// Opens or collapses the section that <paramref name="property"/> starts, when it is a section header row.
