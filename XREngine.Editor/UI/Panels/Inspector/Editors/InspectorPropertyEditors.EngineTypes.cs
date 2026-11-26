@@ -21,6 +21,16 @@ public static partial class InspectorPropertyEditors
             SpreadFields(node);
         }
 
+        /// <summary>Creates pitch, yaw, and roll fields in degrees for a <see cref="XREngine.Data.Transforms.Rotations.Rotator"/>.</summary>
+        public static void CreateRotatorEditor(SceneNode node, PropertyInfo info, object?[]? objects)
+        {
+            InitListArrangement(node, info, objects, out RotatorTransformer transformer, out object?[] tfmObj);
+            PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(RotatorTransformer.Pitch)), transformer.GetTransformedProperty(nameof(RotatorTransformer.Pitch)), tfmObj);
+            PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(RotatorTransformer.Yaw)), transformer.GetTransformedProperty(nameof(RotatorTransformer.Yaw)), tfmObj);
+            PrimitiveTypes.CreateSingleEditor()(node.NewChild(nameof(RotatorTransformer.Roll)), transformer.GetTransformedProperty(nameof(RotatorTransformer.Roll)), tfmObj);
+            SpreadFields(node);
+        }
+
         public static void CreateVector4Editor(SceneNode node, PropertyInfo info, object?[]? objects)
         {
             InitListArrangement(node, info, objects, out Vector4Transformer transformer, out object?[] tfmObj);

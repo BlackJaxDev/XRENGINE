@@ -901,7 +901,8 @@ public partial class InspectorPanel
         if (typeCode is not (TypeCode.Object or TypeCode.DateTime or TypeCode.Empty or TypeCode.DBNull))
             return true;
         return type == typeof(Vector2) || type == typeof(Vector3) || type == typeof(Vector4) ||
-            type == typeof(Quaternion) || type == typeof(System.Drawing.Color) || type == typeof(ColorF3) ||
+            type == typeof(Quaternion) || type == typeof(XREngine.Data.Transforms.Rotations.Rotator) ||
+            type == typeof(System.Drawing.Color) || type == typeof(ColorF3) ||
             type == typeof(ColorF4) || type == typeof(LayerMask);
     }
 

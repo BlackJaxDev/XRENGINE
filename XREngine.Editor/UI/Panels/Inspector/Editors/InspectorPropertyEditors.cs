@@ -60,6 +60,8 @@ public static partial class InspectorPropertyEditors
                 return EngineTypes.CreateVector4Editor;
             case Type t when t == typeof(Quaternion):
                 return EngineTypes.CreateQuaternionEditor;
+            case Type t when t == typeof(XREngine.Data.Transforms.Rotations.Rotator):
+                return EngineTypes.CreateRotatorEditor;
             case Type t1 when t1 == typeof(Color):
             case Type t2 when t2 == typeof(ColorF3):
             case Type t3 when t3 == typeof(ColorF4):

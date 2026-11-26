@@ -231,8 +231,14 @@ public partial class InspectorPanel
         layout.Names[header] = SectionTitle(collapsed, key, title);
         if (memberTargets is null || collapsed?.Contains(key) == true)
             return;
+        Type? memberType = memberTargets.Length > 0 ? memberTargets[0]?.GetType() : null;
         foreach (PropertyInfo member in members)
-            layout.Add(member, memberTargets);
+        {
+            if (!layout.Add(member, memberTargets) || memberType is null)
+                continue;
+            if (InspectorMemberProfiles.LabelFor(memberType, member.Name) is { } label)
+                layout.Names[member] = label;
+        }
     }
 
     /// <summary>
@@ -298,7 +304,8 @@ public partial class InspectorPanel
             members.Add(scope is null ? property : InspectorScopedPropertyInfo.For(scope, property));
         }
         AddEventFields(members, type, baseType, scope);
-        return members;
+        // A type with a custom ImGui editor shows the same members, in the same order.
+        return InspectorMemberProfiles.Apply(type, members);
     }
 
     /// <summary>

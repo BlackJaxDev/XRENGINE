@@ -110,6 +110,14 @@ nothing. A vector shows dashes in all its fields when the whole vectors differ.
   value column, and a remove button. The pickers and the undo records use the
   same helpers as ImGui (`EditorImGuiUI.EventCallbackAccess`). Event fields are
   wrapped as properties (`InspectorFieldPropertyInfo`) to get rows.
+- A type with a custom ImGui editor can have a member profile
+  (`InspectorMemberProfiles`): the members that the ImGui editor draws, in the
+  same order and with the same labels. The standard transform shows
+  Translation, Rotation (the `Rotator` in degrees), Scale, and Order. The rigid
+  body transform shows its interpolation mode, offsets, and physics pose. A type
+  derived from a profiled type also lists the members that it declares. Custom
+  ImGui component editors that draw more than members, such as camera previews,
+  have no native form yet.
 - Other members show their value as a link row: the object name, the item count
   of a collection, the type name, `None`, or a dash when the selected objects
   have different values. A chevron at the right shows that a click opens the

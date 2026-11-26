@@ -133,6 +133,24 @@ public sealed class InspectorStackedNodeLayoutTests
     }
 
     [Test]
+    public void StandardTransformShowsTheSameMembersAsTheImGuiTransformEditor()
+    {
+        SceneNode node = new("Profiled");
+        try
+        {
+            Assert.That(node.Transform, Is.InstanceOf<XREngine.Scene.Transforms.Transform>());
+            object layout = Build([node])!;
+            var properties = Member<List<PropertyInfo>>(layout, "Properties");
+            var names = Member<Dictionary<PropertyInfo, string>>(layout, "Names");
+            int header = properties.FindIndex(property => property.Name == nameof(SceneNode.Transform));
+            string[] members = properties.Skip(header + 1).Select(property => property.Name).ToArray();
+            Assert.That(members, Is.EqualTo(new[] { "Translation", "Rotator", "Scale", "Order" }));
+            Assert.That(names[properties[header + 2]], Is.EqualTo("Rotation"));
+        }
+        finally { node.Destroy(true); }
+    }
+
+    [Test]
     public void EventMembersListOneRowPerPersistentCallback()
     {
         SceneNode node = new("Events");
