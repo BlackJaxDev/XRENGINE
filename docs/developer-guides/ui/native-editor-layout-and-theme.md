@@ -131,9 +131,15 @@ nothing. A vector shows dashes in all its fields when the whole vectors differ.
   same order and with the same labels. The standard transform shows
   Translation, Rotation (the `Rotator` in degrees), Scale, and Order. The rigid
   body transform shows its interpolation mode, offsets, and physics pose. A type
-  derived from a profiled type also lists the members that it declares. Custom
-  ImGui component editors that draw more than members, such as camera previews,
-  have no native form yet.
+  derived from a profiled type also lists the members that it declares.
+- A profile member can start a group (`Member.Group`). The section then shows a
+  small title row (`InspectorGroupRow`) before it, like a separator title in the
+  ImGui editor. The light profiles use the ImGui light sections: Light, Shadow
+  Map, Bias, Shadow Filtering, Short-Range Contact Shadows, and Debug, and the
+  directional light adds its projection and cascade groups.
+- Parts of the custom ImGui component editors that are not members, such as the
+  camera preview, the shadow map preview, global atlas settings, and bake
+  buttons, have no native form yet.
 - Other members show their value as a link row: the object name, the item count
   of a collection, the type name, `None`, or a dash when the selected objects
   have different values. A chevron at the right shows that a click opens the

@@ -804,6 +804,21 @@ public partial class InspectorPanel
                 payload => binding?.IsCurrent == true && ReferenceEquals(state.Property, property) &&
                     TryResolveAssetReference(payload, property, out _, out _));
         }
+        // A group title row shows only its title, in small secondary text.
+        if (property is InspectorGroupRow)
+        {
+            state.DetailButtonTransform.Visibility = EVisibility.Collapsed;
+            foreach (SceneNode editor in state.PrimitiveEditors.Values)
+                editor.GetTransformAs<UIBoundableTransform>()!.Visibility = EVisibility.Collapsed;
+            state.ObjectField?.Unbind();
+            state.CallbackEditor?.Unbind();
+            if (state.Columns.NameLabel is { } groupLabel)
+            {
+                groupLabel.Color = EditorGlassTheme.TextDisabled;
+                groupLabel.ClipToBounds = false;
+            }
+            return;
+        }
         // A persistent callback row shows only its node picker, method picker, and remove button.
         if (property is InspectorEventCallbackRow callbackRow && targets is [{ } callbackOwner])
         {

@@ -234,6 +234,14 @@ public partial class InspectorPanel
         Type? memberType = memberTargets.Length > 0 ? memberTargets[0]?.GetType() : null;
         foreach (PropertyInfo member in members)
         {
+            // A profile group starts with a title row, like a separator title in the ImGui editor.
+            if (memberType is not null && memberTargets[0] is { } groupOwner &&
+                InspectorMemberProfiles.GroupFor(memberType, member.Name) is { } group)
+            {
+                InspectorGroupRow groupRow = InspectorGroupRow.For(groupOwner, group);
+                if (layout.Add(groupRow, memberTargets))
+                    layout.Names[groupRow] = group;
+            }
             if (!layout.Add(member, memberTargets) || memberType is null)
                 continue;
             if (InspectorMemberProfiles.LabelFor(memberType, member.Name) is { } label)

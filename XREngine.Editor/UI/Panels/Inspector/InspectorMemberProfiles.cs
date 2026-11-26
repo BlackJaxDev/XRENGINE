@@ -11,11 +11,77 @@ namespace XREngine.Editor;
 /// </summary>
 internal static class InspectorMemberProfiles
 {
-    /// <summary>One member of a profile: the property name and the label to show, or null for the default label.</summary>
-    public readonly record struct Member(string Name, string? Label = null);
+    /// <summary>
+    /// One member of a profile: the property name, the label to show (null for the default label), and the title
+    /// of a group that starts at this member (null for none), like a separator title in the ImGui editor.
+    /// </summary>
+    public readonly record struct Member(string Name, string? Label = null, string? Group = null);
+
+    /// <summary>
+    /// The members that the ImGui light editor draws for every light, in its sections: Light, Shadow Map, Bias,
+    /// Shadow Filtering, Short-Range Contact Shadows, and Debug. The ImGui editor also draws global atlas settings,
+    /// a shadow map preview, and bake buttons, which have no native form yet.
+    /// </summary>
+    private static readonly Member[] LightMembers =
+    [
+        new("Color", Group: "Light"),
+        new("DiffuseIntensity"),
+        new("PreviewBoundingVolume"),
+        new("Type", "Light Type"),
+        new("CastsShadows", Group: "Shadow Map"),
+        new("EnableCascadedShadows", "Cascaded Shadows"),
+        new("ShadowMapResolutionWidth", "Resolution Width"),
+        new("ShadowMapResolutionHeight", "Resolution Height"),
+        new("ShadowMapStorageFormat", "Storage Format"),
+        new("ShadowDepthBiasTexels", "Depth Bias", "Bias"),
+        new("ShadowSlopeBiasTexels", "Slope Bias"),
+        new("ShadowNormalBiasTexels", "Normal Offset"),
+        new("ShadowMapEncoding", "Encoding", "Shadow Filtering"),
+        new("SoftShadowMode", "Filter Mode"),
+        new("ShadowMomentMinVariance", "Min Variance"),
+        new("ShadowMomentLightBleedReduction", "Bleed Reduction"),
+        new("ShadowMomentPositiveExponent", "Positive Exponent"),
+        new("ShadowMomentNegativeExponent", "Negative Exponent"),
+        new("ShadowMomentBlurRadiusTexels", "Blur Radius"),
+        new("ShadowMomentBlurPasses", "Blur Passes"),
+        new("ShadowMomentUseMipmaps", "Use Mipmaps"),
+        new("ShadowMomentMipBias", "Mip Level"),
+        new("FilterSamples"),
+        new("BlockerSamples"),
+        new("VogelTapCount"),
+        new("FilterRadius"),
+        new("BlockerSearchRadius"),
+        new("MinPenumbra"),
+        new("MaxPenumbra"),
+        new("UseLightRadiusForContactHardening", "Use Light Radius"),
+        new("LightSourceRadius"),
+        new("EnableContactShadows", "Enabled", "Short-Range Contact Shadows"),
+        new("ContactShadowDistance", "Distance"),
+        new("ContactShadowSamples", "Samples"),
+        new("ContactShadowThickness", "Thickness"),
+        new("ContactShadowFadeStart", "Fade Start"),
+        new("ContactShadowFadeEnd", "Fade End"),
+        new("ContactShadowNormalOffset", "Normal Offset"),
+        new("ContactShadowJitterStrength", "Jitter Strength"),
+        new("ShadowDebugMode", "Shadow Debug Mode", "Debug"),
+    ];
+
+    /// <summary>The directional light editor adds its projection and cascade sections after the light members.</summary>
+    private static readonly Member[] DirectionalLightMembers =
+    [
+        .. LightMembers,
+        new("Scale", "Orthographic Volume", "Directional Shadow Projection"),
+        new("CascadeCount"),
+        new("CascadeOverlapPercent", "Cascade Overlap %"),
+        new("CascadedShadowDistance", "Cascade Distance"),
+        new("CascadePercentages"),
+        new("DebugCascadeColors", "Debug Cascade Colors", "Cascade Debug"),
+    ];
 
     private static readonly (Type Type, Member[] Members)[] Profiles =
     [
+        (typeof(XREngine.Components.Lights.DirectionalLightComponent), DirectionalLightMembers),
+        (typeof(XREngine.Components.Capture.Lights.Types.LightComponent), LightMembers),
         // The rigid body transform editor: interpolation, the offsets, and the physics pose it reports.
         (typeof(RigidBodyTransform),
         [
@@ -79,6 +145,17 @@ internal static class InspectorMemberProfiles
                 profileType.IsAssignableFrom(declaring) && !ordered.Contains(property))
                 ordered.Add(property);
         return ordered;
+    }
+
+    /// <summary>Gets the group title that starts at a member of <paramref name="type"/>, or null when none does.</summary>
+    public static string? GroupFor(Type type, string memberName)
+    {
+        if (!TryGet(type, out _, out Member[] profile))
+            return null;
+        foreach (Member member in profile)
+            if (member.Name == memberName)
+                return member.Group;
+        return null;
     }
 
     /// <summary>Gets the profile label of a member of <paramref name="type"/>, or null when it has none.</summary>
