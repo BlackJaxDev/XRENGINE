@@ -181,7 +181,7 @@ if (fs.existsSync(output))
 if (!fs.statSync(path.join(cooked, "manifest.json")).isFile())
     throw new Error("The canonical cooked shader manifest is missing.");
 
-const source = path.join(repo, "Samples", "AdvancedRenderingParity");
+const source = path.join(repo, "Tools", "BrowserSmoke", "Fixtures", "AdvancedRenderingParity");
 const worldPath = path.join(source, "Assets", "Worlds", "AdvancedRenderingParityWorld.asset");
 const original = fs.readFileSync(worldPath, "utf8");
 // Read a Windows checkout without changing the saved source or the fixture hash.

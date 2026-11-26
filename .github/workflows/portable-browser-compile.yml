@@ -599,7 +599,7 @@ jobs:
           if (Test-Path -LiteralPath $project) { throw 'The RenderingParity CLI project must start empty.' }
           New-Item -ItemType Directory -Path $project -Force | Out-Null
           foreach ($name in @('RenderingParity.xrproj', 'Assets')) {
-            Copy-Item -LiteralPath (Join-Path 'Samples/RenderingParity' $name) -Destination $project -Recurse
+            Copy-Item -LiteralPath (Join-Path 'Tools/BrowserSmoke/Fixtures/RenderingParity' $name) -Destination $project -Recurse
           }
           New-Item -ItemType Directory -Path (Join-Path $project 'Config') | Out-Null
           $shaders = Join-Path $project 'Assets/Shaders'
@@ -626,7 +626,7 @@ jobs:
               !($manifest.materialVariants | Where-Object semantic -eq 'StandardLitTexture')) {
             throw 'The Editor did not activate the canonical mapped and animated world.'
           }
-          git diff --exit-code -- Samples/RenderingParity
+          git diff --exit-code -- Tools/BrowserSmoke/Fixtures/RenderingParity
           if ($LASTEXITCODE -ne 0) { throw 'Canonical RenderingParity inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published RenderingParity bundle
@@ -644,7 +644,7 @@ jobs:
           if (Test-Path -LiteralPath $project) { throw 'The Advanced CLI project must start empty.' }
           New-Item -ItemType Directory -Path $project -Force | Out-Null
           foreach ($name in @('AdvancedRenderingParity.xrproj', 'Assets')) {
-            Copy-Item -LiteralPath (Join-Path 'Samples/AdvancedRenderingParity' $name) -Destination $project -Recurse
+            Copy-Item -LiteralPath (Join-Path 'Tools/BrowserSmoke/Fixtures/AdvancedRenderingParity' $name) -Destination $project -Recurse
           }
           New-Item -ItemType Directory -Path (Join-Path $project 'Config') | Out-Null
           $shaders = Join-Path $project 'Assets/Shaders'
@@ -674,7 +674,7 @@ jobs:
               throw "Missing published native Advanced program: $pass"
             }
           }
-          git diff --exit-code -- Samples/AdvancedRenderingParity
+          git diff --exit-code -- Tools/BrowserSmoke/Fixtures/AdvancedRenderingParity
           if ($LASTEXITCODE -ne 0) { throw 'Authored Advanced inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published Advanced rendering bundle
@@ -765,7 +765,7 @@ jobs:
               throw "The staged Advanced shadow $state world changed during Editor publishing."
             }
           }
-          git diff --exit-code -- Samples/AdvancedRenderingParity
+          git diff --exit-code -- Tools/BrowserSmoke/Fixtures/AdvancedRenderingParity
           if ($LASTEXITCODE -ne 0) { throw 'Authored Advanced inputs changed during shadow comparison publishing.' }
 
       - name: Verify Advanced shadow startup settings through the cooked codec
@@ -850,7 +850,7 @@ jobs:
           if (Test-Path -LiteralPath $project) { throw 'The UI CLI project must start empty.' }
           New-Item -ItemType Directory -Path $project -Force | Out-Null
           foreach ($name in @('BrowserUiParity.xrproj', 'Assets', 'Config')) {
-            Copy-Item -LiteralPath (Join-Path 'Samples/BrowserUiParity' $name) -Destination $project -Recurse
+            Copy-Item -LiteralPath (Join-Path 'Tools/BrowserSmoke/Fixtures/BrowserUiParity' $name) -Destination $project -Recurse
           }
           $shaders = Join-Path $project 'Assets/Shaders'
           New-Item -ItemType Directory -Path $shaders -Force | Out-Null
@@ -882,7 +882,7 @@ jobs:
               throw "Missing published shared UI variant: $semantic v$version"
             }
           }
-          git diff --exit-code -- Samples/BrowserUiParity
+          git diff --exit-code -- Tools/BrowserSmoke/Fixtures/BrowserUiParity
           if ($LASTEXITCODE -ne 0) { throw 'Authored shared UI inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published shared UI bundle
@@ -899,12 +899,12 @@ jobs:
           $project = Join-Path $env:VALIDATION_ROOT 'modular-pipeline-parity-cli/project'
           if (Test-Path -LiteralPath $project) { throw 'The modular CLI project must start empty.' }
           New-Item -ItemType Directory -Path (Join-Path $project 'Assets/Scripts'), (Join-Path $project 'Assets/Worlds'), (Join-Path $project 'Assets/Shaders/WebGPU'), (Join-Path $project 'Config') -Force | Out-Null
-          Copy-Item -LiteralPath 'Samples/ModularPipelineParity/ModularPipelineParity.xrproj' -Destination $project
-          Copy-Item -Path 'Samples/ModularPipelineParity/Assets/Scripts/*.cs' -Destination (Join-Path $project 'Assets/Scripts')
-          Copy-Item -LiteralPath 'Samples/ModularPipelineParity/Assets/Worlds/ModularPipelineParityWorld.asset' -Destination (Join-Path $project 'Assets/Worlds')
-          Copy-Item -LiteralPath 'Samples/ModularPipelineParity/Assets/startup.asset' -Destination (Join-Path $project 'Assets')
+          Copy-Item -LiteralPath 'Tools/BrowserSmoke/Fixtures/ModularPipelineParity/ModularPipelineParity.xrproj' -Destination $project
+          Copy-Item -Path 'Tools/BrowserSmoke/Fixtures/ModularPipelineParity/Assets/Scripts/*.cs' -Destination (Join-Path $project 'Assets/Scripts')
+          Copy-Item -LiteralPath 'Tools/BrowserSmoke/Fixtures/ModularPipelineParity/Assets/Worlds/ModularPipelineParityWorld.asset' -Destination (Join-Path $project 'Assets/Worlds')
+          Copy-Item -LiteralPath 'Tools/BrowserSmoke/Fixtures/ModularPipelineParity/Assets/startup.asset' -Destination (Join-Path $project 'Assets')
           $env:XRE_SLANGC = ./Tools/BrowserSmoke/Install-PinnedWindowsSlang.ps1 -Destination (Join-Path $env:VALIDATION_ROOT 'toolchain/slang-windows')
-          & ./Samples/ModularPipelineParity/Prepare-BrowserShaders.ps1 -OutputDirectory (Join-Path $project 'Assets/Shaders/WebGPU')
+          & ./Tools/BrowserSmoke/Fixtures/ModularPipelineParity/Prepare-BrowserShaders.ps1 -OutputDirectory (Join-Path $project 'Assets/Shaders/WebGPU')
 
       - name: Publish modular pipeline through the Editor CLI
         shell: pwsh
@@ -925,7 +925,7 @@ jobs:
               !($manifest.pipelineArtifacts | Where-Object { $_.scope -eq 'custom' -and $_.pass -eq 'custom-pass' })) {
             throw 'The Editor did not activate the authored modular world and scoped program.'
           }
-          git diff --exit-code -- Samples/ModularPipelineParity
+          git diff --exit-code -- Tools/BrowserSmoke/Fixtures/ModularPipelineParity
           if ($LASTEXITCODE -ne 0) { throw 'Authored modular sample inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published modular pipeline bundle
@@ -975,8 +975,8 @@ jobs:
       - name: Stage identical static meshlet GPU and CPU worlds
         shell: pwsh
         run: |
-          $original = Get-Content -LiteralPath 'Samples/RenderingParity/Assets/Worlds/RenderingParityWorld.asset' -Raw
-          $derivative = Get-Content -LiteralPath 'Samples/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Raw
+          $original = Get-Content -LiteralPath 'Tools/BrowserSmoke/Fixtures/RenderingParity/Assets/Worlds/RenderingParityWorld.asset' -Raw
+          $derivative = Get-Content -LiteralPath 'Tools/BrowserSmoke/Fixtures/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Raw
           foreach ($pattern in @('(?s)              Mesh:\r?\n.*?(?=              MinProjectedScreenRadiusPixels:)',
               '(?s)                SurfaceTextureBindings:\r?\n.*?(?=                TransmissionColor:)')) {
             $a = [regex]::Match($original, $pattern)
@@ -990,7 +990,7 @@ jobs:
             if (Test-Path -LiteralPath $project) { throw "The static meshlet $profile CLI project must start empty." }
             New-Item -ItemType Directory -Path $project -Force | Out-Null
             foreach ($name in @('StaticMeshletParity.xrproj', 'Assets')) {
-              Copy-Item -LiteralPath (Join-Path 'Samples/StaticMeshletParity' $name) -Destination $project -Recurse
+              Copy-Item -LiteralPath (Join-Path 'Tools/BrowserSmoke/Fixtures/StaticMeshletParity' $name) -Destination $project -Recurse
             }
             New-Item -ItemType Directory -Path (Join-Path $project 'Config'), (Join-Path $project 'Assets/Shaders') -Force | Out-Null
             Copy-Item -LiteralPath (Join-Path $env:VALIDATION_ROOT 'shader-catalog/WebGPU') `
@@ -1003,7 +1003,7 @@ jobs:
               [IO.File]::WriteAllText($startup, ([regex]::new($pattern)).Replace($source, '${1}false', 1))
             }
           }
-          $sourceWorld = (Get-FileHash -LiteralPath 'Samples/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Algorithm SHA256).Hash
+          $sourceWorld = (Get-FileHash -LiteralPath 'Tools/BrowserSmoke/Fixtures/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Algorithm SHA256).Hash
           foreach ($profile in @('gpu', 'cpu')) {
             $stagedWorld = Join-Path $env:VALIDATION_ROOT "static-meshlet-$profile-cli/project/Assets/Worlds/StaticMeshletParityWorld.asset"
             if ((Get-FileHash -LiteralPath $stagedWorld -Algorithm SHA256).Hash -ne $sourceWorld) {
@@ -1039,11 +1039,11 @@ jobs:
             }
             $stagedWorld = Join-Path $projectRoot 'Assets/Worlds/StaticMeshletParityWorld.asset'
             if ((Get-FileHash -LiteralPath $stagedWorld -Algorithm SHA256).Hash -ne
-                (Get-FileHash -LiteralPath 'Samples/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Algorithm SHA256).Hash) {
+                (Get-FileHash -LiteralPath 'Tools/BrowserSmoke/Fixtures/StaticMeshletParity/Assets/Worlds/StaticMeshletParityWorld.asset' -Algorithm SHA256).Hash) {
               throw "The static meshlet $profile source world changed during Editor publishing."
             }
           }
-          git diff --exit-code -- Samples/StaticMeshletParity
+          git diff --exit-code -- Tools/BrowserSmoke/Fixtures/StaticMeshletParity
           if ($LASTEXITCODE -ne 0) { throw 'Authored static meshlet sample inputs changed during CLI publishing.' }
 
       - name: Preserve exact Editor-published static meshlet GPU bundle
