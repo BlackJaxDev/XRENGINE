@@ -197,6 +197,8 @@ namespace XREngine.Rendering
             string name = Path.GetFileNameWithoutExtension(filePath);
 
             HashSet<uint> characterSet = FontCharacterEnumeratorRegistry.Require().GetSupportedCharacters(filePath);
+            if (options.Codepoints is { Length: > 0 } subset)
+                characterSet.IntersectWith(subset);
             List<string> characters = [];
             foreach (uint codepoint in characterSet)
             {
@@ -889,6 +891,24 @@ namespace XREngine.Rendering
 
         public static FontGlyphSet LoadDefaultUIIconFont()
             => ScopedDefaultUiIconFont ?? TryLoadWindowsUIFont("seguisym.ttf") ?? LoadDefaultUIFontBitmap();
+
+        /// <summary>Size in pixels of one em in the editor icon atlas.</summary>
+        private const float EditorIconMsdfFontSize = 32.0f;
+        /// <summary>Distance range in pixels of the editor icon atlas.</summary>
+        private const float EditorIconMsdfPixelRange = 4.0f;
+
+        /// <summary>
+        /// Loads the Lucide icon font (ISC license, in the common Fonts/Lucide folder) as an MSDF atlas that
+        /// holds only <paramref name="codepoints"/>. The icons stay sharp at every size, and a small subset keeps
+        /// the atlas small and quick to generate.
+        /// </summary>
+        public static FontGlyphSet LoadIconFont(uint[] codepoints)
+        {
+            XRFontImportOptions options = CreateMsdfImportOptions(EditorIconMsdfFontSize, EditorIconMsdfPixelRange);
+            options.AllowBitmapFallback = false;
+            options.Codepoints = codepoints;
+            return LoadEngineFont("Lucide", "lucide.ttf", options);
+        }
 
         public static FontGlyphSet LoadDefaultUIEmojiFont()
             => TryLoadWindowsUIFont("seguiemj.ttf")
@@ -1744,6 +1764,7 @@ namespace XREngine.Rendering
             importOptions.MsdfThreadCount = importOptionsOverride.MsdfThreadCount;
             importOptions.AllowBitmapFallback = importOptionsOverride.AllowBitmapFallback;
             importOptions.BrowserLicenseNoticePath = importOptionsOverride.BrowserLicenseNoticePath;
+            importOptions.Codepoints = importOptionsOverride.Codepoints;
             return importOptions;
         }
 
@@ -1759,6 +1780,7 @@ namespace XREngine.Rendering
                 MsdfThreadCount = source.MsdfThreadCount,
                 AllowBitmapFallback = source.AllowBitmapFallback,
                 BrowserLicenseNoticePath = source.BrowserLicenseNoticePath,
+                Codepoints = source.Codepoints,
             };
 
         private static XRFontImportOptions CreateBitmapImportOptions(float drawSize)
@@ -1812,7 +1834,27 @@ namespace XREngine.Rendering
                 $"inner-{FormatProfileFloat(importOptions.MsdfInnerPixelPadding)}",
                 $"outer-{FormatProfileFloat(importOptions.MsdfOuterPixelPadding)}",
                 $"threads-{importOptions.MsdfThreadCount}",
-                $"fallback-{(importOptions.AllowBitmapFallback ? 1 : 0)}");
+                $"fallback-{(importOptions.AllowBitmapFallback ? 1 : 0)}",
+                $"glyphs-{CodepointSubsetKey(importOptions.Codepoints)}");
+
+        /// <summary>
+        /// Writes a stable key for a code point subset, so a subset atlas and a full atlas of the same font get
+        /// different cache folders. "all" means no subset.
+        /// </summary>
+        private static string CodepointSubsetKey(uint[]? codepoints)
+        {
+            if (codepoints is not { Length: > 0 })
+                return "all";
+            uint[] sorted = (uint[])codepoints.Clone();
+            Array.Sort(sorted);
+            ulong hash = 14695981039346656037UL;
+            foreach (uint codepoint in sorted)
+            {
+                hash ^= codepoint;
+                hash *= 1099511628211UL;
+            }
+            return $"{sorted.Length}-{hash:x16}";
+        }
 
         private static string FormatProfileFloat(float value)
             => value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture).Replace('.', '_');

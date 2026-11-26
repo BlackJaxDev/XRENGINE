@@ -68,6 +68,22 @@ bits 5 to 7 of the style flags (`EUIQuadStyleFlags.IconMask`).
 The hierarchy rows and the inspector section rows use chevron icons for their
 disclosure marks.
 
+## Lucide Icons
+
+The full icon set is the Lucide icon font (ISC license, with MIT for the icons
+from Feather) in `Build/CommonAssets/Fonts/Lucide/`: `lucide.ttf`, its
+`codepoints.json`, and `LICENSE.txt`. `docs/DEPENDENCIES.md` lists it.
+
+- `XREngine.Editor/UI/EditorIcons.cs` holds the icons that the editor uses, as
+  one-character strings, and `EditorIcons.Font` loads the font. Set a
+  `UITextComponent` font to `EditorIcons.Font` and its text to an icon constant.
+- The font loads as an MSDF atlas that holds only `EditorIcons.Codepoints`
+  (`XRFontImportOptions.Codepoints`), so the atlas is small and quick to build.
+  To add an icon, look up its code point in `codepoints.json`, add a constant,
+  and add the code point to `Codepoints`.
+- Use the shader icons for small marks that change often, such as disclosure
+  chevrons. Use Lucide for everything else.
+
 ## Inspector
 
 For one selected scene node, the inspector shows a stacked view like the ImGui
@@ -170,8 +186,11 @@ control, so the icon quad follows the background quad in one run.
 ## Known Limitations
 
 - The Windows symbol font fails to import as a bitmap atlas at the default draw
-  size, and the bundled UI font has no triangle or check glyphs. Use vector icons
-  for these marks.
+  size, and the bundled UI font has no triangle or check glyphs. Use the shader
+  icons or Lucide for these marks.
+- `msdf-atlas-gen` opens files with the C runtime, which fails on paths longer
+  than 260 characters. `MsdfAtlasGenFontAtlasGenerator` runs it in a short
+  temporary folder and moves the atlas to its cache path.
 - On Vulkan, a screen canvas can stop drawing with `UI.Canvas.BatchCapacityPending`
   when small hierarchy glyph texts use the same font instance as the row labels.
   The hierarchy glyph texts use `FontGlyphSet.LoadDefaultUIIconFont()` to avoid

@@ -629,9 +629,9 @@ public partial class HierarchyPanel
         unloadTransform.Margins = new Vector4(2, 2, 2 + ScrollbarClearance, 2);
         unloadTransform.BlocksInputBehind = true;
         unloadNode.NewChild<UITextComponent>(out var unloadGlyph);
-        unloadGlyph.FontSize = 15;
-        unloadGlyph.Font = XREngine.Rendering.FontGlyphSet.LoadDefaultUIIconFont();
-        unloadGlyph.Text = "\u00D7";
+        unloadGlyph.FontSize = 13;
+        unloadGlyph.Font = EditorIcons.Font;
+        unloadGlyph.Text = EditorIcons.X;
         unloadGlyph.Color = EditorGlassTheme.TextSecondary;
         unloadGlyph.HorizontalAlignment = EHorizontalAlignment.Center;
         unloadGlyph.VerticalAlignment = EVerticalAlignment.Center;

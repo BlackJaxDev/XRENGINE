@@ -22,13 +22,23 @@ public sealed class MsdfAtlasGenFontAtlasGenerator : IFontDistanceFieldAtlasGene
         if (!string.IsNullOrWhiteSpace(metadataDirectory))
             Directory.CreateDirectory(metadataDirectory);
 
-        string charsetPath = Path.Combine(
-            atlasDirectory ?? Path.GetTempPath(),
-            $"{Path.GetFileNameWithoutExtension(request.FontPath)}.{Guid.NewGuid():N}.msdf-charset.txt");
+        // The tool opens its files with the C runtime, which fails on paths longer than MAX_PATH (260
+        // characters), and font cache folders can be longer. So the tool works in a short temporary folder, and
+        // the atlas and metadata move to their cache paths after it succeeds.
+        string workDirectory = Path.Combine(Path.GetTempPath(), $"xre-msdf-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDirectory);
+        string charsetPath = Path.Combine(workDirectory, "charset.txt");
+        string workAtlasPath = Path.Combine(workDirectory, "atlas.png");
+        string workMetadataPath = Path.Combine(workDirectory, "atlas.json");
         try
         {
             WriteCharsetFile(charsetPath, request.CharacterSet);
-            ProcessStartInfo startInfo = CreateStartInfo(executablePath, charsetPath, in request);
+            FontDistanceFieldAtlasRequest workRequest = request with
+            {
+                AtlasPath = workAtlasPath,
+                MetadataPath = workMetadataPath,
+            };
+            ProcessStartInfo startInfo = CreateStartInfo(executablePath, charsetPath, in workRequest);
             using Process process = new() { StartInfo = startInfo };
             if (!process.Start())
                 return new(false, -1, string.Empty, string.Empty, "msdf-atlas-gen.exe did not start.");
@@ -38,6 +48,11 @@ public sealed class MsdfAtlasGenFontAtlasGenerator : IFontDistanceFieldAtlasGene
             Task<string> standardError = process.StandardError.ReadToEndAsync();
             process.WaitForExit();
             Task.WhenAll(standardOutput, standardError).GetAwaiter().GetResult();
+            if (process.ExitCode == 0)
+            {
+                File.Move(workAtlasPath, request.AtlasPath, overwrite: true);
+                File.Move(workMetadataPath, request.MetadataPath, overwrite: true);
+            }
             return new(
                 process.ExitCode == 0,
                 process.ExitCode,
@@ -53,7 +68,7 @@ public sealed class MsdfAtlasGenFontAtlasGenerator : IFontDistanceFieldAtlasGene
         {
             try
             {
-                File.Delete(charsetPath);
+                Directory.Delete(workDirectory, recursive: true);
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }

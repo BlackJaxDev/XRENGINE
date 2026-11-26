@@ -18,6 +18,11 @@ public sealed class XRFontImportOptions : IXR3rdPartyImportOptions
     public float MsdfOuterPixelPadding { get; set; } = 2.0f;
     public int MsdfThreadCount { get; set; } = 0;
     public bool AllowBitmapFallback { get; set; } = true;
+    /// <summary>
+    /// The Unicode code points to import. Null or empty imports every glyph that the font has. An icon font
+    /// sets this to the icons that the application uses, so the atlas holds only those glyphs.
+    /// </summary>
+    public uint[]? Codepoints { get; set; }
     /// <summary>Project Assets-relative UTF-8 notice required when publishing this font for browser use.</summary>
     public string? BrowserLicenseNoticePath { get; set; }
 }

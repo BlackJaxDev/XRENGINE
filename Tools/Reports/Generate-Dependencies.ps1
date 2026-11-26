@@ -1287,6 +1287,23 @@ foreach ($previewDependency in @(
         })
     }
 }
+# Bundled asset dependencies: files that ship in the engine common assets with their own license.
+foreach ($assetDependency in @(
+    @{ Name = 'Lucide icon font 1.80.0'; UsedBy = 'XREngine.Editor (native editor icons)'; Owner = 'Lucide Icons and Contributors (Feather icons: Cole Bemis)'; Url = 'https://github.com/lucide-icons/lucide/tree/1.80.0'; License = 'ISC AND MIT'; Notice = 'Build\CommonAssets\Fonts\Lucide\LICENSE.txt' }
+)) {
+    $noticePath = Join-Path $root $assetDependency.Notice
+    if (-not (Test-Path -LiteralPath $noticePath)) {
+        throw "The bundled asset license is missing: $($assetDependency.Notice)."
+    }
+    $nested.Add([pscustomobject]@{
+        Name = $assetDependency.Name
+        UsedBy = $assetDependency.UsedBy
+        Owner = $assetDependency.Owner
+        Url = $assetDependency.Url
+        License = $assetDependency.License
+        LicenseSourcePath = $noticePath
+    })
+}
 try {
     $buildCoacd = Join-Path $root 'Tools\Dependencies\Build-CoACD.ps1'
     if (Test-Path $buildCoacd) {
