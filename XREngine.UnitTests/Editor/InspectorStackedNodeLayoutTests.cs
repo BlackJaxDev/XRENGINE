@@ -127,10 +127,28 @@ public sealed class InspectorStackedNodeLayoutTests
     }
 
     [Test]
-    public void SeveralNodesUseThePlainPropertyList()
+    public void SeveralNodesShareSectionsForComponentTypesThatEveryNodeHasOnce()
     {
         SceneNode first = new("First"), second = new("Second");
-        try { Assert.That(Build([first, second]), Is.Null); }
+        try
+        {
+            StackedLayoutProbeComponent firstProbe = first.AddComponent<StackedLayoutProbeComponent>()!;
+            StackedLayoutProbeComponent secondProbe = second.AddComponent<StackedLayoutProbeComponent>()!;
+            object layout = Build([first, second])!;
+            Assert.That(layout, Is.Not.Null);
+            var properties = Member<List<PropertyInfo>>(layout, "Properties");
+            var targets = Member<Dictionary<PropertyInfo, object?[]>>(layout, "Targets");
+
+            PropertyInfo name = properties.Single(property => property.Name == nameof(SceneNode.Name));
+            Assert.That(targets[name], Is.EqualTo(new object?[] { first, second }));
+            PropertyInfo strength = properties.Single(property => property.Name == nameof(StackedLayoutProbeComponent.Strength));
+            Assert.That(targets[strength], Is.EqualTo(new object?[] { firstProbe, secondProbe }));
+
+            second.AddComponent<StackedLayoutProbeComponent>();
+            object withDuplicate = Build([first, second])!;
+            Assert.That(Member<List<PropertyInfo>>(withDuplicate, "Properties").Any(property =>
+                property.Name == nameof(StackedLayoutProbeComponent.Strength)), Is.False);
+        }
         finally { first.Destroy(true); second.Destroy(true); }
     }
 }

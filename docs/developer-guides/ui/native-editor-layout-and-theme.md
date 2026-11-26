@@ -79,9 +79,16 @@ inspector (`InspectorPanel.BuildStackedNodeLayout`):
   toggle, named after the component, and lists the members that the component
   type declares below `XRComponent`.
 
-Each row keeps the object that it edits, so a row can edit the transform or a
-component instead of the inspected node. Several selected nodes use the plain
-list of their shared members.
+Each row keeps the objects that it edits, so a row can edit the transform or a
+component instead of the inspected node.
+
+Several selected nodes (up to 64) also get the stacked view, like the ImGui
+multi-node inspector (`InspectorPanel.BuildStackedMultiNodeLayout`). Each row
+edits the matching object of every node: the shared node members, the members
+of the common transform type, and one section for each component type that every
+node has exactly once. A field shows a dash (`EditorTextPropertyBinding.MixedValueText`)
+where the objects have different values, and writing the dash back changes
+nothing. A vector shows dashes in all its fields when the whole vectors differ.
 
 - Primitives, enums, strings, vectors, rotations, colors, and layer masks have
   inline editors in their row (`InspectorPanel.HasInlineEditor`). A vector or

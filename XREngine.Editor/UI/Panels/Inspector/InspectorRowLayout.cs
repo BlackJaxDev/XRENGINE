@@ -17,11 +17,18 @@ internal sealed class InspectorRowLayout
 
     /// <summary>Adds a row that edits <paramref name="target"/>. Returns false when the property is already listed.</summary>
     public bool Add(PropertyInfo property, object target)
+        => Add(property, [target]);
+
+    /// <summary>
+    /// Adds a row that edits all <paramref name="targets"/> together, as a multi-selection does. Returns false
+    /// when the property is already listed.
+    /// </summary>
+    public bool Add(PropertyInfo property, object?[] targets)
     {
         if (Targets.ContainsKey(property))
             return false;
         Properties.Add(property);
-        Targets.Add(property, [target]);
+        Targets.Add(property, targets);
         return true;
     }
 }

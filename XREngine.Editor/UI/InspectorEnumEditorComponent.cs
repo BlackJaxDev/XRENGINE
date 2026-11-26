@@ -82,7 +82,8 @@ public sealed class InspectorEnumEditorComponent : XRComponent
                         _pendingLabel = false;
                         if (_label is { } label)
                         {
-                            string? text = _combo?.AccessibilityValue ?? "Mixed or undefined";
+                            // Different values on the edited objects show a dash, like the other inspector fields.
+                            string? text = _combo?.AccessibilityValue ?? EditorTextPropertyBinding.MixedValueText;
                             if (OwnerCurrent())
                                 label.SetTextGuarded(text, (Func<bool>)OwnerCurrent, static current =>
                                 {

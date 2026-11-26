@@ -38,7 +38,7 @@ public partial class InspectorPanel
         string? search)
     {
         if (objects is not [Scene.SceneNode node] || node.IsDestroyed)
-            return null;
+            return BuildStackedMultiNodeLayout(objects, collapsed, search);
         if (string.IsNullOrWhiteSpace(search))
             search = null;
         else
@@ -90,6 +90,119 @@ public partial class InspectorPanel
         return layout;
     }
 
+    /// <summary>The largest selection that gets the stacked view. ImGui uses the same limit.</summary>
+    private const int MaxStackedSelection = 64;
+
+    /// <summary>
+    /// Builds the stacked view of several selected scene nodes, like the ImGui multi-node inspector. Each row
+    /// edits the matching object of every node: the shared node members, the transform members of the common
+    /// transform type, and one section for each component type that every node has exactly once. A field
+    /// shows a dash where the nodes have different values. Returns null when the objects are not all scene
+    /// nodes, or for more than <see cref="MaxStackedSelection"/> nodes.
+    /// </summary>
+    private static InspectorRowLayout? BuildStackedMultiNodeLayout(object?[]? objects, IReadOnlySet<string>? collapsed,
+        string? search)
+    {
+        if (objects is not { Length: > 1 and <= MaxStackedSelection })
+            return null;
+        Scene.SceneNode[] nodes = new Scene.SceneNode[objects.Length];
+        for (int index = 0; index < objects.Length; index++)
+        {
+            if (objects[index] is not Scene.SceneNode { IsDestroyed: false } selected)
+                return null;
+            nodes[index] = selected;
+        }
+        if (string.IsNullOrWhiteSpace(search))
+            search = null;
+        else
+            collapsed = null;
+
+        InspectorRowLayout layout = new();
+        PropertyInfo? transformHeader = null;
+        foreach (PropertyInfo property in GetMatchingProperties(objects))
+        {
+            if (property.Name == nameof(Scene.SceneNode.Transform))
+            {
+                transformHeader = property;
+                continue;
+            }
+            if (search is null || MatchesMemberSearch(property, search))
+                layout.Add(property, objects);
+        }
+
+        if (transformHeader is not null)
+        {
+            object?[] transforms = Array.ConvertAll(nodes, static selected => (object?)selected.Transform);
+            Type? common = CommonType(transforms);
+            string title = common is null || common == typeof(TransformBase)
+                ? "Transform"
+                : $"Transform ({common.Name.SplitCamelCase()})";
+            List<PropertyInfo> members = common is null || transforms[0] is not { } sample
+                ? []
+                : CollectOwnMembers(common, sample, typeof(TransformBase), null);
+            AddSection(layout, transformHeader, objects, transforms, TransformSectionKey, title, members,
+                collapsed, search);
+        }
+
+        // A component type gets a section when every node has exactly one component of that type.
+        Dictionary<Type, object?[]> shared = [];
+        HashSet<Type> excluded = [];
+        for (int index = 0; index < nodes.Length; index++)
+        {
+            HashSet<Type> seen = [];
+            foreach (XRComponent component in nodes[index].Components)
+            {
+                if (component is null || component.IsDestroyed)
+                    continue;
+                Type type = component.GetType();
+                if (!seen.Add(type))
+                {
+                    excluded.Add(type);
+                    continue;
+                }
+                if (index == 0)
+                    shared[type] = new object?[nodes.Length];
+                if (shared.TryGetValue(type, out object?[]? group))
+                    group[index] = component;
+            }
+        }
+        List<Type> types = [];
+        foreach (var entry in shared)
+            if (!excluded.Contains(entry.Key) && Array.TrueForAll(entry.Value, static component => component is not null))
+                types.Add(entry.Key);
+        types.Sort(static (left, right) => string.Compare(left.Name, right.Name, StringComparison.OrdinalIgnoreCase));
+        foreach (Type type in types)
+        {
+            object?[] components = shared[type];
+            if (type.GetProperty(nameof(XRComponent.IsActive), BindingFlags.Public | BindingFlags.Instance) is not { } header)
+                continue;
+            string title = $"{type.Name.SplitCamelCase()} ({components.Length})";
+            AddSection(layout, header, components, components, "multi:" + (type.FullName ?? type.Name), title,
+                CollectOwnMembers(type, components[0]!, typeof(XRComponent), null), collapsed, search);
+        }
+        return layout;
+    }
+
+    /// <summary>Returns the most derived type that all non-null objects share, or null when there are none.</summary>
+    private static Type? CommonType(object?[] objects)
+    {
+        Type? common = null;
+        foreach (object? item in objects)
+        {
+            if (item is null)
+                continue;
+            Type type = item.GetType();
+            if (common is null)
+            {
+                common = type;
+                continue;
+            }
+            while (common is not null && !common.IsAssignableFrom(type))
+                common = common.BaseType;
+        }
+        return common;
+    }
+
     /// <summary>
     /// Adds one section: its header row, which edits <paramref name="headerTarget"/>, then the member rows,
     /// which edit <paramref name="memberTarget"/>. With a search, the section is left out when neither its
@@ -98,21 +211,28 @@ public partial class InspectorPanel
     private static void AddSection(InspectorRowLayout layout, PropertyInfo header, object headerTarget,
         object? memberTarget, string key, string title, List<PropertyInfo> members,
         IReadOnlySet<string>? collapsed, string? search)
+        => AddSection(layout, header, [headerTarget], memberTarget is null ? null : [memberTarget], key, title,
+            members, collapsed, search);
+
+    /// <summary>The multi-selection form: each row edits all the given targets together.</summary>
+    private static void AddSection(InspectorRowLayout layout, PropertyInfo header, object?[] headerTargets,
+        object?[]? memberTargets, string key, string title, List<PropertyInfo> members,
+        IReadOnlySet<string>? collapsed, string? search)
     {
         bool titleMatches = search is not null && title.Contains(search, StringComparison.OrdinalIgnoreCase);
         if (search is not null && !titleMatches)
             members.RemoveAll(member => !MatchesMemberSearch(member, search));
         if (search is not null && !titleMatches && members.Count == 0)
             return;
-        if (!layout.Add(header, headerTarget))
+        if (!layout.Add(header, headerTargets))
             return;
         layout.Headers.Add(header);
         layout.SectionKeys[header] = key;
         layout.Names[header] = SectionTitle(collapsed, key, title);
-        if (memberTarget is null || collapsed?.Contains(key) == true)
+        if (memberTargets is null || collapsed?.Contains(key) == true)
             return;
         foreach (PropertyInfo member in members)
-            layout.Add(member, memberTarget);
+            layout.Add(member, memberTargets);
     }
 
     /// <summary>
@@ -160,9 +280,17 @@ public partial class InspectorPanel
     /// </summary>
     /// <param name="scope">When set, rows use scoped property copies owned by this object.</param>
     private static List<PropertyInfo> CollectOwnMembers(object target, Type baseType, object? scope)
+        => CollectOwnMembers(target.GetType(), target, baseType, scope);
+
+    /// <summary>
+    /// Returns the inspectable members that <paramref name="type"/> declares below <paramref name="baseType"/>.
+    /// <paramref name="sample"/> is one object of that type, which decides whether a member is inspectable.
+    /// </summary>
+    private static List<PropertyInfo> CollectOwnMembers(Type type, object sample, Type baseType, object? scope)
     {
+        object target = sample;
         List<PropertyInfo> members = [];
-        foreach (PropertyInfo property in target.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
+        foreach (PropertyInfo property in type.GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
             if (property.DeclaringType is not { } declaring || declaring == baseType ||
                 declaring.IsAssignableFrom(baseType) || !IsInspectableProperty(target, property))
