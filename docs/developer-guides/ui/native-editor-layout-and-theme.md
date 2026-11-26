@@ -94,6 +94,15 @@ nothing. A vector shows dashes in all its fields when the whole vectors differ.
   inline editors in their row (`InspectorPanel.HasInlineEditor`). A vector or
   rotation editor binds its fields to a transformer component. A row rebind
   changes only the transformer target.
+- A writable component, scene node, transform, or asset reference gets an
+  object field (`InspectorObjectField`): the object name in a field well, a
+  picker, and an arrow button that opens the object in the inspector. The picker
+  lists "None" and the matching objects (`InspectorObjectCandidateSource`):
+  components, nodes, or transforms in the edited objects' world, or the asset
+  files of the type in the game and engine asset folders. The list is built when
+  the picker opens, not when the row binds. A picked asset file loads through the
+  same path as a dropped asset. A drop on the row also assigns a component or an
+  asset.
 - Other members show their value as a link row: the object name, the item count
   of a collection, the type name, `None`, or a dash when the selected objects
   have different values. A chevron at the right shows that a click opens the

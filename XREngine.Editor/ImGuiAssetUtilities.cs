@@ -398,6 +398,46 @@ internal static class ImGuiAssetUtilities
         return state;
     }
 
+    /// <summary>
+    /// Lists the asset files in the game and engine asset folders that hold <paramref name="assetType"/>, sorted
+    /// by display name. A native asset file is listed only when its serialized concrete type matches. The
+    /// native inspector object field uses this list for its picker.
+    /// </summary>
+    internal static List<(string Path, string DisplayName)> FindAssetFiles(Type assetType, int limit)
+    {
+        List<(string Path, string DisplayName)> found = [];
+        var assetManager = Engine.Assets;
+        if (assetManager is null)
+            return found;
+        string[] extensions = AssetFieldOptions.WithExtensions([]).ResolveExtensions(assetType);
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string root in new[] { assetManager.GameAssetsPath, assetManager.EngineAssetsPath })
+        {
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+                continue;
+            foreach (string file in EnumerateAssetFiles(root, extensions))
+            {
+                if (found.Count >= limit)
+                    break;
+                if (!seen.Add(file))
+                    continue;
+                XRAsset? existing = assetManager.TryGetAssetByPath(file, out XRAsset? cached) && assetType.IsInstanceOfType(cached)
+                    ? cached : null;
+                if (string.Equals(Path.GetExtension(file), $".{AssetManager.AssetExtension}", StringComparison.OrdinalIgnoreCase))
+                {
+                    Type? concreteType = TryResolveNativeAssetConcreteType(file, out Type? resolved) ? resolved : existing?.GetType();
+                    if (concreteType is null || !assetType.IsAssignableFrom(concreteType))
+                        continue;
+                }
+                found.Add((file, existing is not null && !string.IsNullOrWhiteSpace(existing.Name)
+                    ? existing.Name!
+                    : Path.GetFileNameWithoutExtension(file)));
+            }
+        }
+        found.Sort(static (left, right) => string.Compare(left.DisplayName, right.DisplayName, StringComparison.OrdinalIgnoreCase));
+        return found;
+    }
+
     private static void RefreshAssetPickerState<TAsset>(AssetPickerState<TAsset> state, bool force = false)
         where TAsset : XRAsset
     {

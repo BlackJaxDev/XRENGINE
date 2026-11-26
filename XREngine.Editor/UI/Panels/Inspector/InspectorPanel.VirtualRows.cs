@@ -37,6 +37,8 @@ public partial class InspectorPanel
         public required SceneNode HeaderToggle;
         public required UIBoundableTransform HeaderToggleTransform;
         public bool HeaderToggleShown;
+        /// <summary>The object field of a component, scene node, transform, or asset reference row.</summary>
+        public InspectorObjectField? ObjectField;
         public readonly Dictionary<Type, SceneNode> PrimitiveEditors = [];
         public PropertyInfo? Property;
         public IDisposable? DropTarget;
@@ -763,12 +765,27 @@ public partial class InspectorPanel
                     TryResolveAssetReference(payload, property, out _, out _));
         }
         bool primitive = HasInlineEditor(property.PropertyType);
+        // A writable component, scene node, transform, or asset reference gets an object field with a picker.
+        bool objectField = !primitive && !header && property.SetMethod?.IsPublic == true && targets is { Length: > 0 } &&
+            InspectorObjectCandidateSource.IsObjectReferenceType(property.PropertyType);
         // A section header row that has no inline editor (the transform) shows only its title.
-        state.DetailButtonTransform.Visibility = primitive || header ? EVisibility.Collapsed : EVisibility.Visible;
+        state.DetailButtonTransform.Visibility = primitive || header || objectField ? EVisibility.Collapsed : EVisibility.Visible;
         if (!Current()) return;
-        if (!primitive && !header)
+        if (!primitive && !header && !objectField)
         {
             state.DetailLabel.Text = DescribeValue(property, targets);
+            if (!Current()) return;
+        }
+        if (objectField)
+        {
+            state.ObjectField ??= new InspectorObjectField(state.ValueRoot, this);
+            if (!Current()) return;
+            state.ObjectField.Bind(property, targets!, DescribeValue(property, targets), Current);
+            if (!Current()) return;
+        }
+        else if (state.ObjectField is { IsBound: true } unusedField)
+        {
+            unusedField.Unbind();
             if (!Current()) return;
         }
         foreach (SceneNode editor in state.PrimitiveEditors.Values)
@@ -858,6 +875,34 @@ public partial class InspectorPanel
             _ => value.GetType().Name.SplitCamelCase(),
         };
     }
+
+    /// <summary>
+    /// Assigns the object that a picker entry names to the property of the edited objects. A live object is
+    /// written directly. An asset file loads first, through the same path as a dropped asset.
+    /// </summary>
+    internal void AssignObjectCandidate(PropertyInfo property, object?[] targets,
+        InspectorObjectCandidateSource.Candidate candidate)
+    {
+        try
+        {
+            if (candidate.AssetPath is { } path)
+            {
+                InspectorPropertyDropBinding binding = new(property, targets, () => !_destroyingOwner);
+                StartAssetReferenceDrop(path, property.PropertyType, binding);
+                return;
+            }
+            if (candidate.Value is not null && !property.PropertyType.IsInstanceOfType(candidate.Value))
+                return;
+            new EditorPropertyAccess(property, targets).SetValue(candidate.Value);
+        }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception, $"Failed to set object reference '{property.Name}'.");
+        }
+    }
+
+    /// <summary>Opens a referenced object in the inspector, like a click on a link.</summary>
+    internal void InspectReferencedObject(object value) => InspectedObjects = [value];
 
     /// <summary>Shows, hides, or turns the section chevron of a row. It writes only when the state changes.</summary>
     private static void UpdateDisclosureIcon(PropertyRow state, int code)
@@ -1012,6 +1057,7 @@ public partial class InspectorPanel
             editor.GetTransformAs<UIBoundableTransform>()!.Visibility = EVisibility.Collapsed;
             if (!ReferenceEquals(state.BindingToken, token)) return;
         }
+        state.ObjectField?.Unbind();
         if (state.HeaderToggleShown)
         {
             NativeUIElements.RebindPropertyEditor(state.HeaderToggle, null, null);
