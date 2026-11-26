@@ -364,9 +364,16 @@ public partial class InspectorPanel
         SceneNode root = SceneNode.NewChildWithTransform(out UIDualSplitTransform split, "InspectorContent");
         split.VerticalSplit = true;
         split.FirstFixedSize = true;
-        split.FixedSize = 30;
+        split.FixedSize = InspectorHeaderHeight;
         split.SplitterSize = 0;
-        SceneNode toolbar = root.NewChildWithTransform(out UIListTransform commands, "InspectorCommands");
+        // The header holds the member search field above the command buttons.
+        SceneNode header = root.NewChildWithTransform<UIBoundableTransform>(out _, "InspectorHeader");
+        CreateMemberSearchField(header);
+        SceneNode toolbar = header.NewChildWithTransform(out UIListTransform commands, "InspectorCommands");
+        commands.MinAnchor = Vector2.Zero;
+        commands.MaxAnchor = new Vector2(1.0f, 0.0f);
+        commands.NormalizedPivot = Vector2.Zero;
+        commands.Height = 30;
         commands.DisplayHorizontal = true;
         commands.ItemAlignment = EListAlignment.TopOrLeft;
         commands.ItemSpacing = 2;
@@ -427,10 +434,70 @@ public partial class InspectorPanel
         RefreshVirtualProperties();
     }
 
+    private const float InspectorHeaderHeight = 64.0f;
+    private const float SearchFieldHeight = 28.0f;
+    private string _memberSearch = string.Empty;
+    private UITextComponent? _memberSearchPlaceholder;
+
+    /// <summary>
+    /// Creates the member search field at the top of the inspector, like the ImGui "Search properties" box.
+    /// The list filters while the user types. The placeholder text shows while the field is empty.
+    /// </summary>
+    private void CreateMemberSearchField(SceneNode header)
+    {
+        SceneNode searchNode = header.NewChild("MemberSearch");
+        UIBoundableTransform searchBounds = searchNode.SetTransform<UIBoundableTransform>();
+        searchBounds.MinAnchor = new Vector2(0.0f, 1.0f);
+        searchBounds.MaxAnchor = new Vector2(1.0f, 1.0f);
+        searchBounds.NormalizedPivot = new Vector2(0.0f, 1.0f);
+        searchBounds.Height = SearchFieldHeight;
+        searchBounds.Margins = new Vector4(4.0f, 2.0f, 4.0f, 0.0f);
+        var (input, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(searchNode,
+            textMargins: new Vector4(26.0f, 2.0f, 8.0f, 2.0f));
+        input.SingleLineMode = true;
+        input.Text = _memberSearch;
+        NativeUIElements.CreateIcon(searchNode, EUIQuadIcon.Search, new Vector2(0.0f, 0.5f),
+            new Vector2(14.0f, 0.0f), 12.0f, EditorGlassTheme.TextSecondary);
+        SceneNode placeholderNode = searchNode.NewChild<UITextComponent>(out var placeholder);
+        placeholderNode.GetTransformAs<UIBoundableTransform>(true)!.Margins = new Vector4(26.0f, 0.0f, 8.0f, 0.0f);
+        placeholder.Text = "Search properties";
+        placeholder.FontSize = EditorUI.Styles.PropertyInputFontSize;
+        placeholder.Color = EditorGlassTheme.TextDisabled;
+        placeholder.VerticalAlignment = EVerticalAlignment.Center;
+        placeholder.ClipToBounds = true;
+        _memberSearchPlaceholder = placeholder;
+        input.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(UITextInputComponent.Text))
+                return;
+            SetMemberSearch(input.Text);
+        };
+        input.Cancelled += field => field.Text = string.Empty;
+    }
+
+    /// <summary>Applies new member search text: it filters the rows and shows or hides the placeholder.</summary>
+    private void SetMemberSearch(string? text)
+    {
+        string search = text?.Trim() ?? string.Empty;
+        if (_memberSearchPlaceholder is { } placeholder)
+        {
+            EVisibility visibility = string.IsNullOrEmpty(text) ? EVisibility.Visible : EVisibility.Hidden;
+            if (placeholder.BoundableTransform.Visibility != visibility)
+                placeholder.BoundableTransform.Visibility = visibility;
+        }
+        if (string.Equals(search, _memberSearch, StringComparison.Ordinal))
+            return;
+        _memberSearch = search;
+        if (_virtualPropertyProvider is not null && _virtualPropertyList is not null)
+            RefreshVirtualProperties();
+    }
+
     private void RefreshVirtualProperties()
     {
-        InspectorRowLayout? layout = BuildStackedNodeLayout(InspectedObjects, _collapsedStackSections);
+        InspectorRowLayout? layout = BuildStackedNodeLayout(InspectedObjects, _collapsedStackSections, _memberSearch);
         List<PropertyInfo> properties = layout?.Properties ?? GetMatchingProperties(InspectedObjects);
+        if (layout is null && !string.IsNullOrWhiteSpace(_memberSearch))
+            properties.RemoveAll(property => !MatchesMemberSearch(property, _memberSearch));
         Properties = properties;
         _virtualPropertyProvider!.Reset(properties, InspectedObjects, layout);
         _virtualPropertyList!.InvalidateMeasure();

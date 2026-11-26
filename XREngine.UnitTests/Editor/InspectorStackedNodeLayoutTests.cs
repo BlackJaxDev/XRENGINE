@@ -101,6 +101,32 @@ public sealed class InspectorStackedNodeLayoutTests
     }
 
     [Test]
+    public void SearchKeepsMatchingMembersAndOpensCollapsedSections()
+    {
+        SceneNode node = new("Searched");
+        try
+        {
+            node.AddComponent<StackedLayoutProbeComponent>();
+            MethodInfo build = typeof(InspectorPanel).GetMethod("BuildStackedNodeLayout",
+                BindingFlags.NonPublic | BindingFlags.Static,
+                [typeof(object[]), typeof(IReadOnlySet<string>), typeof(string)])!;
+            HashSet<string> collapsed = [typeof(StackedLayoutProbeComponent).FullName!];
+            object layout = build.Invoke(null, [new object?[] { node }, collapsed, "streng"])!;
+            var properties = Member<List<PropertyInfo>>(layout, "Properties");
+            Assert.That(properties.Select(property => property.Name),
+                Is.EqualTo(new[] { nameof(XRComponent.IsActive), nameof(StackedLayoutProbeComponent.Strength) }));
+
+            object byTitle = build.Invoke(null, [new object?[] { node }, null, "probe"])!;
+            Assert.That(Member<List<PropertyInfo>>(byTitle, "Properties").Any(property =>
+                property.Name == nameof(StackedLayoutProbeComponent.Strength)), Is.True);
+
+            object none = build.Invoke(null, [new object?[] { node }, null, "no such member"])!;
+            Assert.That(Member<List<PropertyInfo>>(none, "Properties"), Is.Empty);
+        }
+        finally { node.Destroy(true); }
+    }
+
+    [Test]
     public void SeveralNodesUseThePlainPropertyList()
     {
         SceneNode first = new("First"), second = new("Second");

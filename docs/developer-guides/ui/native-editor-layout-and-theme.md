@@ -56,7 +56,7 @@ controls that set colors directly match the styled controls.
 
 The UI quad shader can draw a vector icon instead of a box. Set
 `UIStyleProperties.Icon` (or `UIQuadStyle.Icon`) to an `EUIQuadIcon` value:
-`ChevronRight`, `ChevronDown`, `Check`, `Minus`, or `Cross`. The icon value uses
+`ChevronRight`, `ChevronDown`, `Check`, `Minus`, `Cross`, or `Search`. The icon value uses
 bits 5 to 7 of the style flags (`EUIQuadStyleFlags.IconMask`).
 
 - The quad fill color is the icon color.
@@ -92,6 +92,11 @@ list of their shared members.
   have different values. A chevron at the right shows that a click opens the
   value. A link row of the transform or a component inspects that object; the
   Properties button returns to the node.
+- The search field at the top of the inspector filters the rows while the user
+  types. A member matches when its property name, display name, or category
+  contains the text, as in the ImGui inspector. A section stays when its title
+  or one of its members matches; a title match keeps all its members. A search
+  opens every section. Escape clears the field.
 - Click a section header row to collapse or open the section. A chevron in the
   gutter at the left of the name column shows the state. The inspector keeps the
   collapse state by section key: `Transform`, or the component type name.

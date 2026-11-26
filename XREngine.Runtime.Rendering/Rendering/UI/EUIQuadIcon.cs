@@ -19,4 +19,6 @@ public enum EUIQuadIcon : uint
     Minus = 4u,
     /// <summary>A diagonal cross, for close and remove buttons.</summary>
     Cross = 5u,
+    /// <summary>A magnifier (a ring with a handle), for search fields.</summary>
+    Search = 6u,
 }
