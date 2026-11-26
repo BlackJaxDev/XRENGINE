@@ -52,6 +52,16 @@ controls that set colors directly match the styled controls.
 - Colors are sRGB and the styles decode them to linear. Alpha is linear coverage,
   and blending is linear, so white overlay fills use small alpha values.
 
+## UI Text
+
+- On a desktop host with a distance-field atlas generator, `FontGlyphSet.LoadDefaultUIFont()`
+  returns the MTSDF Roboto atlas, which stays sharp at 12 to 14 px. Browser packages
+  install a cooked bitmap font, and a host without a generator uses the bitmap atlas.
+- The Skia bitmap rasterizer stores the left bearing with the sign that the layout
+  expects (pen + bearing) and rounds glyph bounds out to whole pixels. An older
+  cache stored negated bearings, which moved most letters 1 px left; the font cache
+  schema version changed, so old bitmap atlases rebuild.
+
 ## Vector Icons
 
 The UI quad shader can draw a vector icon instead of a box. Set
