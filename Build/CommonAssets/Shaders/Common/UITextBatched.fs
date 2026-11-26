@@ -95,6 +95,16 @@ float SampleBitmapStroke(vec2 uv, vec2 uvDx, vec2 uvDy, float radius)
     return stroke;
 }
 
+// Blending is linear, so a light glyph edge on a dark background looks thinner than the same edge drawn
+// dark on light. This raises the coverage of light text so its stems read as solid as dark text, like the
+// contrast adjustment of browser text rendering. Dark text keeps its coverage.
+float AdjustCoverageForTextLuminance(float coverage, vec3 textColor)
+{
+    float luminance = clamp(dot(textColor, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0);
+    float exponent = mix(1.0, 0.7, luminance);
+    return pow(clamp(coverage, 0.0, 1.0), exponent);
+}
+
 float StrokeVisibilityMask(float fill)
 {
     return 1.0 - smoothstep(StrokeFillFadeStart, StrokeFillFadeEnd, fill);
@@ -166,7 +176,7 @@ void main()
         return;
     }
 
-    float fill = ResolveCoverage(FragUV0);
+    float fill = AdjustCoverageForTextLuminance(ResolveCoverage(FragUV0), InstanceTextColor.rgb);
     float outlineMask = 0.0;
     float outlineThickness = InstanceOutlineParams.x;
     if (TextAtlasType == TextAtlasBitmap && outlineThickness > 0.0 && InstanceOutlineColor.a > 0.0)

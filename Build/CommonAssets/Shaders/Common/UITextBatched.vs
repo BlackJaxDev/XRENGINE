@@ -99,8 +99,6 @@ void main()
     vec4 tfm = GlyphTransforms[glyphSlot];
     vec4 uv = GlyphTexCoords[glyphSlot];
 
-    mat4 mvpMatrix = ViewProjectionMatrix_VTX * modelMatrix;
-
     // Position the glyph quad: tfm.xy = offset, tfm.zw = size.
     // Expand outlined glyphs so the fragment shader has pixels outside the
     // original glyph rect to shade. Keep GlyphUVBounds at the original rect so
@@ -123,9 +121,20 @@ void main()
     }
 
     vec4 position = vec4(glyphMin + (corner * glyphSize), 0.0, 1.0);
+    vec4 worldPosition = modelMatrix * position;
 
-    FragPos = (mvpMatrix * position).xyz;
-    gl_Position = mvpMatrix * position;
+    // A screen canvas draws with an orthographic projection in pixel units. Moving the text origin to a whole
+    // pixel keeps every label on the same pixel phase, so the same letter looks the same on every row. A
+    // perspective projection (world UI) keeps the exact position.
+    bool orthographic = abs(ViewProjectionMatrix_VTX[2][3]) < 1e-6 && abs(ViewProjectionMatrix_VTX[3][3] - 1.0) < 1e-6;
+    if (orthographic)
+    {
+        vec2 origin = (modelMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xy;
+        worldPosition.xy += floor(origin + 0.5) - origin;
+    }
+
+    gl_Position = ViewProjectionMatrix_VTX * worldPosition;
+    FragPos = gl_Position.xyz;
     FragNorm = Normal;
     // Interpolate UVs within the glyph's atlas region
     FragUV0 = mix(uvMin, uvMax, corner);

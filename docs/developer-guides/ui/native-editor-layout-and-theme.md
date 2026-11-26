@@ -61,6 +61,12 @@ controls that set colors directly match the styled controls.
   expects (pen + bearing) and rounds glyph bounds out to whole pixels. An older
   cache stored negated bearings, which moved most letters 1 px left; the font cache
   schema version changed, so old bitmap atlases rebuild.
+- `UITextBatched.vs` moves the origin of each text to a whole pixel when the
+  projection is orthographic (screen canvases), so a letter has the same pixel
+  phase on every row. World UI keeps the exact position.
+- `UITextBatched.fs` raises the coverage of light text
+  (`AdjustCoverageForTextLuminance`). Blending is linear, so light edges on a dark
+  background otherwise look thinner than dark edges on a light background.
 
 ## Vector Icons
 
