@@ -47,21 +47,27 @@ public sealed class SkiaFontBitmapRasterizer : IFontBitmapRasterizer
                 SKRect[] bounds = new SKRect[glyphIndices.Length];
                 font.GetGlyphWidths(glyphIndices, widths.AsSpan(), bounds.AsSpan(), paint);
                 SKRect glyphBounds = bounds[0];
-                int width = Math.Max(1, (int)Math.Ceiling(glyphBounds.Width));
-                int height = Math.Max(1, (int)Math.Ceiling(glyphBounds.Height));
+                // The bitmap covers the glyph bounds rounded out to whole pixels, so the pen origin falls on a
+                // pixel corner and no antialiased edge is cut off. Skia bounds use +Y down: Left is the distance
+                // from the pen to the left edge (the left bearing), and Top is negative above the baseline.
+                int left = (int)MathF.Floor(glyphBounds.Left);
+                int top = (int)MathF.Floor(glyphBounds.Top);
+                int width = Math.Max(1, (int)MathF.Ceiling(glyphBounds.Right) - left);
+                int height = Math.Max(1, (int)MathF.Ceiling(glyphBounds.Bottom) - top);
                 float advance = widths[0] > 0.0f ? widths[0] : width;
 
                 SKBitmap bitmap = new(width, height);
                 using (SKCanvas canvas = new(bitmap))
                 {
                     canvas.Clear(SKColors.Transparent);
-                    canvas.DrawText(character, -glyphBounds.Left, -glyphBounds.Top, SKTextAlign.Left, font, paint);
+                    canvas.DrawText(character, -left, -top, SKTextAlign.Left, font, paint);
                 }
 
                 glyphBitmaps.Add(bitmap);
+                // The layout places a glyph at pen + Bearing.X, with Bearing.Y above the baseline.
                 glyphInfos.Add((character, glyphIndices[0], new FontGlyphSet.Glyph(
                     new Vector2(width, height),
-                    new Vector2(-glyphBounds.Left, -glyphBounds.Top))
+                    new Vector2(left, -top))
                 {
                     AtlasSize = new Vector2(width, height),
                     AdvanceX = advance,

@@ -40,7 +40,8 @@ namespace XREngine.Rendering
         private const float DefaultWorldMtsdfPixelRange = 10.0f;
         private const float DefaultUiMtsdfFontSize = 96.0f;
         private const float DefaultUiMtsdfPixelRange = 12.0f;
-        private const int FontCacheSchemaVersion = 2;
+        // 3: bitmap glyph bearings from the Skia rasterizer have the correct sign and whole-pixel bounds.
+        private const int FontCacheSchemaVersion = 3;
         private const float DefaultMsdfDistanceRangeMiddle = 0.5f;
         private const string FontDiagnosticsLogName = "font-diagnostics.log";
         private static readonly ConcurrentDictionary<string, byte> ForcedReloadAttemptedPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -886,8 +887,19 @@ namespace XREngine.Rendering
         public static FontGlyphSet LoadDefaultFontBitmap()
             => ResolveDefaultBitmapFont();
 
+        /// <summary>
+        /// Loads the default UI font. A desktop host with a distance-field atlas generator gets the MTSDF atlas,
+        /// which stays sharp at small UI sizes. A bitmap atlas drawn at 128 px and sampled at 12 to 14 px looks
+        /// soft. A scoped font (browser packages) and a host without a generator use the bitmap atlas.
+        /// </summary>
         public static FontGlyphSet LoadDefaultUIFont()
-                => LoadDefaultUIFontBitmap();
+            => ScopedDefaultUiFont is null && UseDistanceFieldUiText
+                ? LoadDefaultUIFontMtsdf()
+                : LoadDefaultUIFontBitmap();
+
+        private static bool UseDistanceFieldUiText
+            => FontDistanceFieldAtlasGeneratorRegistry.Current is not null &&
+               DirectStorageIO.Source is not { SupportsSynchronousReads: false };
 
         public static FontGlyphSet LoadDefaultUIIconFont()
             => ScopedDefaultUiIconFont ?? TryLoadWindowsUIFont("seguisym.ttf") ?? LoadDefaultUIFontBitmap();
