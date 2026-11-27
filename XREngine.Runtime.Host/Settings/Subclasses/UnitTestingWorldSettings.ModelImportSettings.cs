@@ -28,6 +28,11 @@ public partial class UnitTestingWorldSettings
         /// </summary>
         public bool UseSourceMaterialAsOverride { get; set; }
         /// <summary>
+        /// Draws culling bounding boxes on every <c>ModelComponent</c> imported for this model
+        /// without enabling global mesh bounds across the entire scene.
+        /// </summary>
+        public bool RenderBounds { get; set; }
+        /// <summary>
         /// Selects how this model import chooses between native format-specific importers
         /// and Assimp fallback. PreferNativeThenAssimp uses a native importer when the
         /// format has one available and falls back to Assimp otherwise. Today the native

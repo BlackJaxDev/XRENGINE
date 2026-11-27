@@ -11,7 +11,7 @@
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Animation.BlendTree1D), "xre.animation.blend-tree-1d", 2)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Animation.BlendTree2D), "xre.animation.blend-tree-2d", 2)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Animation.BlendTreeDirect), "xre.animation.blend-tree-direct", 2)]
-[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Animation.AnimStateMachine), "xre.animation.state-machine", 2)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Animation.AnimStateMachine), "xre.animation.state-machine", 3)]
 
 // RuntimeCookedAsset generates the functions that turn an asset into bytes and bytes into an asset.
 // PublishedCookedAssetRegistry selects those functions after the file's type has been identified.

@@ -207,7 +207,7 @@ public readonly record struct AdvancedGlobalResourceCapture(
     private static void CaptureDirectionalSource(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows, Span<DirectionalShadowGpuRecord> records, ShadowRequestSource source, bool hmd, bool headsetQuality)
     {
         light.CopyPublishedDirectionalShadowRecords(source, true, records, out int count);
-        light.ApplyPlannedDirectionalCascadeRefreshes(
+        uint plannedRefreshMask = light.ApplyPlannedDirectionalCascadeRefreshes(
             source,
             records,
             count,
@@ -219,7 +219,10 @@ public readonly record struct AdvancedGlobalResourceCapture(
                 continue;
             ref readonly DirectionalShadowGpuRecord published = ref records[cascade];
             bool sampleable = published.AtlasPacked0.X != 0;
-            bool resident = allocation.IsResident && allocation.LastRenderedFrame != 0u && sampleable;
+            // A resized or moved cascade resets LastRenderedFrame to zero until the render thread commits.
+            // Keep Resident set when a same-frame planned refresh draws the new tile before shading.
+            bool plannedThisFrame = (plannedRefreshMask & (1u << cascade)) != 0u;
+            bool resident = allocation.IsResident && sampleable && (allocation.LastRenderedFrame != 0u || plannedThisFrame);
             EAdvancedShadowRecordFlags flags = EAdvancedShadowRecordFlags.DepthZeroToOne |
                 (RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend) == ERenderClipSpaceYDirection.YDown ? EAdvancedShadowRecordFlags.FramebufferTextureYDown : EAdvancedShadowRecordFlags.None) |
                 (resident ? EAdvancedShadowRecordFlags.Resident : EAdvancedShadowRecordFlags.None) |

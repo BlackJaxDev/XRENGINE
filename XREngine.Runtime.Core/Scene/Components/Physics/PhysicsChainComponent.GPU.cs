@@ -190,6 +190,8 @@ public partial class PhysicsChainComponent
             flags |= PhysicsChainGpuSolverSettings.FlagHoldParentOffset;
         if (GravityMode == EPhysicsChainGravityMode.SegmentRatio)
             flags |= PhysicsChainGpuSolverSettings.FlagSegmentGravity;
+        else if (GravityMode == EPhysicsChainGravityMode.RestBias)
+            flags |= PhysicsChainGpuSolverSettings.FlagRestBiasGravity;
         if (PinBranchChildren)
             flags |= PhysicsChainGpuSolverSettings.FlagPinBranchChildren;
         if (InertFollowsRootParent)

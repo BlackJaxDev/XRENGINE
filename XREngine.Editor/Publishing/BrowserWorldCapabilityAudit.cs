@@ -165,7 +165,7 @@ internal static class BrowserWorldCapabilityAudit
                 string? assembly = component.GetType().Assembly.GetName().Name;
                 if (assembly is "XREngine.Runtime.Physics.PhysX" or "XREngine.Runtime.Platform.Desktop"
                     or "XREngine.Runtime.VR" or "XREngine.Runtime.UI.Skia" or "XREngine.Runtime.UI.Rive"
-                    or "XREngine.Audio.SteamAudio" or "XREngine.Audio.Audio2Face")
+                    or "XREngine.Audio.SteamAudio" or "XREngine.Audio.Audio2Face" or "XREngine.Animation.MotionBricks")
                     Collect(() => throw new NotSupportedException($"BrowserCook.ComponentUnsupported: '{path}' component '{componentName}' requires desktop service '{assembly}'."),
                         scenePath, path, componentName);
                 if (component is ModelComponent { Model: { } model })

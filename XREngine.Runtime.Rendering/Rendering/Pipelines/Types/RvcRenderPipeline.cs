@@ -67,7 +67,7 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
     private bool _stereo;
     private bool _rvcShadeletTelemetryEnabled;
     private bool _rvcFoveatedQuadShadingEnabled;
-    private bool _enableEditorHighlightModule = true;
+    private bool _enableEditorHighlightModule = false;
 
     /// <summary>True when this pipeline renders both eyes as one layered stereo target.</summary>
     public bool Stereo => _stereo;
@@ -112,6 +112,10 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
         return family?.Stereo == Stereo ? family : null;
     }
 
+    /// <summary>True when the active RVC resolution schedules the GPU shadelet-cache pipeline.</summary>
+    public bool IsShadeletCacheActive
+        => LastRvcResolution.IsRvcActive && LastRvcResolution.EffectiveMode >= ERvcPipelineMode.MaterialCache;
+
     // The family owns the scene feature values; this pipeline's feature properties
     // forward to it, so camera-source feature copies reach it directly.
     private AdvancedRenderPipeline CreateAdvancedStageFamily()
@@ -120,7 +124,9 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
         // The telemetry counters are small; declaring them for every RVC family
         // lets the setting toggle per frame without a resource rebuild.
         family.DeclaresRvcShadeletTelemetry = true;
+        family.DeclaresRvcShadeletCache = IsShadeletCacheActive;
         family.EnableEditorHighlightModule = _enableEditorHighlightModule;
+        family.HostedPhysicalResourceInvalidator = InvalidateOwnedInstancePhysicalResources;
         return family;
     }
 
@@ -259,6 +265,8 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
 
     protected override void OnDestroying()
     {
+        foreach (XRRenderPipelineInstance instance in Instances)
+            ForwardLightProbeInstanceResources.DestroyCache(instance, this);
         base.OnDestroying();
         _advancedStageFamily?.Destroy();
         _advancedStageFamily = null;
@@ -518,6 +526,12 @@ public sealed class RvcRenderPipeline : RenderPipeline, ISceneRenderPipelineFeat
         LastRvcCapabilityMatrix = capabilities;
         LastRvcResolution = resolution;
         LastRvcPlan = plan;
+        bool cacheActive = IsShadeletCacheActive;
+        if (_advancedStageFamily is { } family && family.DeclaresRvcShadeletCache != cacheActive)
+        {
+            family.DeclaresRvcShadeletCache = cacheActive;
+            InvalidateOwnedInstancePhysicalResources("RvcShadeletCacheModeChanged");
+        }
         ReportFallbackIfNeeded(resolution);
         return resolution;
     }

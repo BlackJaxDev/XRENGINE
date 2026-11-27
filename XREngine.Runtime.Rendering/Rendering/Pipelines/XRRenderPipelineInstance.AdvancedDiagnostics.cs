@@ -13,6 +13,28 @@ public partial class XRRenderPipelineInstance
     private readonly AdvancedProfileEyeDiagnostic[] _advancedProfileEyes = new AdvancedProfileEyeDiagnostic[RenderFrameViewSet.MaxViewCount];
     private int _advancedProfileEyeCount;
     private ulong _advancedProfileViewFrameId;
+    private AdvancedProfilePortalDiagnostic _advancedProfilePortalDiagnostic;
+
+    /// <summary>
+    /// Stores the latest portal sub-view schedule counters without heap allocation.
+    /// </summary>
+    internal void RecordAdvancedProfilePortalDiagnostic(
+        ulong frameId,
+        AdvancedPortalFramePlan plan,
+        uint froxelSlotBudget)
+    {
+        AdvancedProfilePortalDiagnostic observation = new(
+            frameId,
+            plan.PrimaryViewCount,
+            plan.Count,
+            plan.MaxScheduledDepth,
+            plan.RejectedBudgetCount,
+            plan.RejectedCulledCount,
+            plan.RejectedCycleCount,
+            froxelSlotBudget);
+        lock (_advancedProfileDiagnosticLock)
+            _advancedProfilePortalDiagnostic = observation;
+    }
 
     internal void RecordAdvancedProfileStageDiagnostic(
         EAdvancedRenderStage stage,
@@ -94,7 +116,8 @@ public partial class XRRenderPipelineInstance
                 ResourceGeneration,
                 binding.Request.OutputId,
                 [.. _advancedProfileStageDiagnostics],
-                _advancedProfileEyes.AsSpan(0, _advancedProfileEyeCount).ToArray());
+                _advancedProfileEyes.AsSpan(0, _advancedProfileEyeCount).ToArray(),
+                _advancedProfilePortalDiagnostic);
         }
     }
 }

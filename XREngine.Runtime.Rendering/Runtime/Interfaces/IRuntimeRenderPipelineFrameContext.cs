@@ -48,6 +48,16 @@ public interface IRuntimeRenderPipelineFrameContext : IRuntimeRenderPipelineDebu
     EAntiAliasingMode? EffectiveAntiAliasingModeThisFrame { get; }
 
     /// <summary>
+    /// Gets the anti-aliasing reconstruction filter resolved for the current frame, or <see langword="null"/> before resolution.
+    /// </summary>
+    EAntiAliasingFilterMode? EffectiveAntiAliasingFilterModeThisFrame { get; }
+
+    /// <summary>
+    /// Gets the post-resolve RCAS sharpening strength resolved for the current frame, or <see langword="null"/> before resolution.
+    /// </summary>
+    float? EffectiveAntiAliasingSharpnessThisFrame { get; }
+
+    /// <summary>
     /// Gets the MSAA sample count resolved for the current frame, or <see langword="null"/> before resolution.
     /// </summary>
     uint? EffectiveMsaaSampleCountThisFrame { get; }

@@ -39,7 +39,7 @@ public static class AdvancedColoredAlphaTemporalVariantFactory
         return source;
     }
 
-    private static void BindTemporalMatrices(XRMaterialBase material, XRRenderProgram program)
+    internal static void BindTemporalMatrices(XRMaterialBase material, XRRenderProgram program)
     {
         XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         if (pipeline is null)

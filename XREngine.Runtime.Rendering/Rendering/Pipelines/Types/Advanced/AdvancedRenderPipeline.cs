@@ -858,7 +858,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != (EditorHighlightModule is null ? 7 : 8))
+        if (textures.Count != (EditorHighlightModule is null ? 8 : 9))
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(FinalPostProcessOutputTextureName))
@@ -867,11 +867,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName))
             || !ReferenceEquals(textures[5], GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
-            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(TsrHistoryMetadataTextureName)))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(TsrHistoryMetadataTextureName))
+            || !ReferenceEquals(textures[7], GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)))
             return true;
 
         if (EditorHighlightModule is not null &&
-            !ReferenceEquals(textures[7], GetTexture<XRTexture>(EditorHighlightMaskTextureName)))
+            !ReferenceEquals(textures[8], GetTexture<XRTexture>(EditorHighlightMaskTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -1600,6 +1601,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string SmaaEdgeFBOName = SmaaFBOName + "_EdgeFBO";
     public const string SmaaBlendFBOName = SmaaFBOName + "_BlendFBO";
     public const string TsrOutputTextureName = "TsrOutputTexture";
+    public const string TsrOutputViewFBOName = "TsrOutputViewFBO";
     public const string TsrAccumulationTextureName = "TsrAccumulationTexture";
     public const string TsrAccumulationFBOName = "TsrAccumulationFBO";
     public const string TsrHistoryMetadataOutputTextureName = "TsrHistoryMetadataOutput";
@@ -1684,15 +1686,14 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     private ESizedInternalFormat _tsrEdgeStencilFormat = ESizedInternalFormat.Depth24Stencil8;
 
     /// <summary>
-    /// Form of the TSR resolve of this pipeline. Single-pass stereo on Vulkan uses the edge stencil
-    /// split: it records the extra mask and classify passes once for both eyes, and the GPU is the
-    /// limit. Mono views (per-eye eyes and the desktop) use one resolve pass. Per-eye eyes are
-    /// limited by render-thread recording, and two extra passes per eye cost more recording time
-    /// than the split saves on the GPU. Other backends use one resolve pass, because the split is
-    /// validated on Vulkan only.
+    /// Form of the TSR resolve of this pipeline. Defaults to <see cref="EAdvancedTsrResolveForm.Single"/>
+    /// for both mono and stereo views because dense Vulkan profiling showed the four-pass stereo
+    /// edge-stencil split added +1.36 ms over single-pass resolve. Set
+    /// <c>XRE_ADVANCED_TSR_EDGE_STENCIL_SPLIT=1</c> to opt back into the stereo split for A/B testing.
     /// </summary>
     public EAdvancedTsrResolveForm TsrResolveForm
-        => Stereo && ResolveCurrentBackend() == RuntimeGraphicsApiKind.Vulkan
+        => Stereo && ResolveCurrentBackend() == RuntimeGraphicsApiKind.Vulkan &&
+           XREnvironment.IsEnabled("XRE_ADVANCED_TSR_EDGE_STENCIL_SPLIT", defaultValue: false)
             ? EAdvancedTsrResolveForm.EdgeStencilSplit
             : EAdvancedTsrResolveForm.Single;
 
@@ -1794,6 +1795,11 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             RefreshCapabilityResult();
         _offscreenProfile = offscreenProfile;
         _stageFamilyExecutionProfile = stageFamilyProfile;
+        // OpenXR headset eye outputs do not draw desktop editor selection highlights;
+        // disabling the module before command-chain generation avoids 1.75 ms of per-frame
+        // highlight seeding, silhouette, and full-resolution composite passes.
+        if (stageFamilyProfile == EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye)
+            _enableEditorHighlightModule = false;
         _forwardDepthPrePassEnabled = !string.Equals(
             XREnvironment.GetValue(XREngineEnvironmentVariables.ProfileDisableForwardDepthPrePass),
             "1",
@@ -2075,12 +2081,15 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         set => SetField(ref _useProbeGridAcceleration, value);
     }
 
+    private bool OwnsOrHostsPipelineInstance([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] XRRenderPipelineInstance? instance)
+        => instance is not null && ReferenceEquals(instance.Pipeline?.ResolveAdvancedStageFamily(), this);
+
     private ForwardLightProbeInstanceResources? CurrentProbeResources
     {
         get
         {
             XRRenderPipelineInstance? instance = CurrentRenderingPipeline;
-            return instance is not null && ReferenceEquals(instance.Pipeline, this) &&
+            return OwnsOrHostsPipelineInstance(instance) &&
                 ForwardLightProbeInstanceResources.TryGet(instance, out ForwardLightProbeInstanceResources? state)
                     ? state
                     : null;
@@ -2175,7 +2184,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         }
 
         XRRenderPipelineInstance? instance = CurrentRenderingPipeline;
-        if (instance is null || !ReferenceEquals(instance.Pipeline, this))
+        if (!OwnsOrHostsPipelineInstance(instance))
         {
             BindDisabledPbrResources();
             program.Uniform("ForwardPbrResourcesEnabled", false);
@@ -2185,7 +2194,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return false;
         }
 
-        ForwardLightProbeInstanceResources state = ForwardLightProbeInstanceResources.Get(instance);
+        ForwardLightProbeInstanceResources state = ForwardLightProbeInstanceResources.Get(instance!);
         if (state.BindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)
             SyncPbrLightingResourcesForFrame(brdfTexture);
 
@@ -2248,10 +2257,10 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     private void SyncPbrLightingResourcesForFrame(XRTexture? brdfTexture)
     {
         XRRenderPipelineInstance? instance = CurrentRenderingPipeline;
-        if (instance is null || !ReferenceEquals(instance.Pipeline, this))
+        if (!OwnsOrHostsPipelineInstance(instance))
             return;
 
-        ForwardLightProbeInstanceResources state = ForwardLightProbeInstanceResources.Get(instance);
+        ForwardLightProbeInstanceResources state = ForwardLightProbeInstanceResources.Get(instance!);
         if (IsProbeGiSamplingSuppressedForCurrentPass())
             return;
 
@@ -2394,16 +2403,29 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     /// </param>
     internal EAdvancedViewRecordFlags ResolveCanonicalViewPolicyFlags(XRCamera? camera, RenderPipeline settingsPipeline)
     {
-        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(settingsPipeline) is not { } stage ||
-            !stage.TryGetBacking(out AmbientOcclusionSettings? settings) ||
-            settings is not { Enabled: true } ||
-            AmbientOcclusionSettings.NormalizeType(settings.Type) != AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion ||
-            !settings.GroundTruth.UseMaterialNormals)
+        EAdvancedViewRecordFlags flags = EAdvancedViewRecordFlags.None;
+
+        if (camera?.GetPostProcessStageState<AmbientOcclusionSettings>(settingsPipeline) is { } stage &&
+            stage.TryGetBacking(out AmbientOcclusionSettings? settings) &&
+            settings is { Enabled: true } &&
+            AmbientOcclusionSettings.NormalizeType(settings.Type) == AmbientOcclusionSettings.EType.GroundTruthAmbientOcclusion &&
+            settings.GroundTruth.UseMaterialNormals)
         {
-            return EAdvancedViewRecordFlags.None;
+            flags |= EAdvancedViewRecordFlags.GtaoMaterialNormals;
         }
 
-        return EAdvancedViewRecordFlags.GtaoMaterialNormals;
+        EAntiAliasingMode antiAliasingMode = camera?.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
+        if (antiAliasingMode == EAntiAliasingMode.Msaa && EnableDeferredMsaa)
+        {
+            uint msaaSamples = Math.Clamp(
+                camera?.MsaaSampleCountOverride ?? RuntimeRenderingHostServices.FrameTiming.DefaultMsaaSampleCount,
+                1u,
+                15u);
+            if (msaaSamples > 1u)
+                flags |= (EAdvancedViewRecordFlags)((msaaSamples & 0xFu) << 10);
+        }
+
+        return flags;
     }
 
     private AmbientOcclusionSettings? ResolveAmbientOcclusionSettings(
@@ -2808,12 +2830,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     /// <summary>
     /// Stencil reference value for hover highlighting (bit 0).
     /// </summary>
-    public const int StencilRefHover = 1;
+    public const int StencilRefHover = (int)AdvancedStencilBitLayout.HoverBit;
 
     /// <summary>
     /// Stencil reference value for selection highlighting (bit 1).
     /// </summary>
-    public const int StencilRefSelection = 2;
+    public const int StencilRefSelection = (int)AdvancedStencilBitLayout.SelectionBit;
 
     /// <summary>
     /// Publishes highlight flags on the renderable mesh without changing its material stencil state.

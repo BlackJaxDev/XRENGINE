@@ -601,15 +601,9 @@ function Invoke-EditorSmoke {
         [Parameter(Mandatory)][hashtable]$Environment
     )
 
-    $psi = [System.Diagnostics.ProcessStartInfo]::new()
-    $psi.FileName = "dotnet"
-    $psi.WorkingDirectory = $repoRoot
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
-    $psi.Arguments = Join-ProcessArguments -Arguments @(
-        $EditorDll,
+    $editorExe = [System.IO.Path]::ChangeExtension($EditorDll, ".exe")
+    $useApphost = Test-Path -LiteralPath $editorExe -PathType Leaf
+    $smokeArgs = @(
         "--unit-testing",
         "--smoke-frames",
         [string]$SmokeFrames,
@@ -618,6 +612,21 @@ function Invoke-EditorSmoke {
         "--openxr-smoke-summary",
         $Summary
     )
+
+    $psi = [System.Diagnostics.ProcessStartInfo]::new()
+    if ($useApphost) {
+        $psi.FileName = $editorExe
+        $psi.Arguments = Join-ProcessArguments -Arguments $smokeArgs
+    }
+    else {
+        $psi.FileName = "dotnet"
+        $psi.Arguments = Join-ProcessArguments -Arguments (@($EditorDll) + $smokeArgs)
+    }
+    $psi.WorkingDirectory = $repoRoot
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
 
     foreach ($entry in $Environment.GetEnumerator()) {
         if ($null -eq $entry.Value) {

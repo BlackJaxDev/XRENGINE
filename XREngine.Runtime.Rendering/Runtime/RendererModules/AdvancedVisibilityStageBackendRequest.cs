@@ -50,6 +50,9 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// <summary>Render time frozen with the authored stage family.</summary>
     public float RenderTimeSeconds { get; init; }
 
+    /// <summary>Anti-aliasing reconstruction filter applied by multisample opaque shading.</summary>
+    public EAntiAliasingFilterMode AntiAliasingFilterMode { get; init; }
+
     /// <summary>
     /// True when the native opaque shading stage also records the RVC shadelet
     /// telemetry kernel after its last view. It is not part of the family identity.
@@ -67,6 +70,27 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// block of the same primitive and fills the rest. Only RVC eyes without MSAA set it.
     /// </summary>
     public bool RvcFoveatedQuadShading { get; init; }
+
+    /// <summary>
+    /// True when RVC runs its GPU shadelet-cache pipeline (PixelToShadeletMap, binned
+    /// MaterialShadeletShading, optional stereo ReuseValidation, and FoveatedResolve).
+    /// </summary>
+    public bool RvcShadeletCacheEnabled { get; init; }
+
+    /// <summary>
+    /// True when RVC validates and reuses view-0 shadelets into view 1 during stereo rendering.
+    /// </summary>
+    public bool RvcStereoReuseEnabled { get; init; }
+
+    /// <summary>
+    /// True when near-field pixels remain at 1x1 shadelet density.
+    /// </summary>
+    public bool RvcForceFullResNear { get; init; }
+
+    /// <summary>
+    /// Optional RVC diagnostic view mode applied by <c>RvcFoveatedResolve.comp</c>.
+    /// </summary>
+    public ERvcDebugViewMode RvcDebugViewMode { get; init; }
 
     /// <summary>
     /// True when native opaque shading of an Advanced eye output shades one pixel per
@@ -107,6 +131,11 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// operation still runs, with its layout transitions. It is not part of the family identity.
     /// </summary>
     public bool SkipNeutralAmbientOcclusionFill { get; init; }
+
+    /// <summary>
+    /// Scheduled in-place portal and mirror sub-views for this frame, or null when no portal views are active.
+    /// </summary>
+    public AdvancedPortalFramePlan? PortalFramePlan { get; init; }
 
     public bool IsValid => GetInvalidReason() is null;
 
@@ -175,6 +204,7 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
             EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
                 Phase is EAdvancedVisibilityStageBackendPhase.LateCompute or
                     EAdvancedVisibilityStageBackendPhase.LateRaster or
+                    EAdvancedVisibilityStageBackendPhase.PortalVisibility or
                     EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
                     EAdvancedVisibilityStageBackendPhase.DecalBuffer,
             // These stages are compute-only.  Their Vulkan implementation
@@ -185,6 +215,9 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
             EAdvancedRenderStage.AmbientOcclusion or
             EAdvancedRenderStage.NativeOpaqueShading =>
                 Phase == EAdvancedVisibilityStageBackendPhase.Complete,
+            EAdvancedRenderStage.LatePasses =>
+                Phase is EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind or
+                    EAdvancedVisibilityStageBackendPhase.PortalUnwind,
             _ => false,
         };
 }

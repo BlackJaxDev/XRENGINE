@@ -302,6 +302,17 @@ public unsafe partial class OpenXRAPI
         });
     }
 
+    internal bool IsSteamVrRuntimeActive()
+    {
+        string? runtimeJson = XREnvironment.GetValue(XREngineEnvironmentVariables.XrRuntimeJson);
+        string? activeRuntime = !string.IsNullOrWhiteSpace(runtimeJson)
+            ? runtimeJson
+            : OperatingSystem.IsWindows()
+                ? GetActiveOpenXRRuntimePathWindows()
+                : null;
+        return !string.IsNullOrWhiteSpace(activeRuntime) && IsSteamVrRuntimePath(activeRuntime);
+    }
+
     private static bool IsSteamVrRuntimePath(string runtimePath)
         => runtimePath.Contains("steamvr", StringComparison.OrdinalIgnoreCase) ||
            runtimePath.Contains("steamxr", StringComparison.OrdinalIgnoreCase);

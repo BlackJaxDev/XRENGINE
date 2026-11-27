@@ -53,7 +53,11 @@ public sealed class VPRC_RenderAdvancedBackground : ViewportRenderCommand
         using var passScope = RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(resolvedPassIndex);
         bool previous = state.AdvancedMultisampleBackground;
         _admittedMaterial = null;
-        state.AdvancedMultisampleBackground = RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa &&
+        // Transparent-background in-place portals restore real primary hardware depth on
+        // uncovered pixels during portal unwind, so single-sample skybox draws keep normal
+        // far-depth testing and do not bleed through masked foliage or transparent edges.
+        state.AdvancedMultisampleBackground =
+            RenderPipeline.ResolveEffectiveAntiAliasingModeForFrame() == EAntiAliasingMode.Msaa &&
             RenderPipeline.ResolveEffectiveMsaaSampleCountForFrame() > 1u;
         try
         {

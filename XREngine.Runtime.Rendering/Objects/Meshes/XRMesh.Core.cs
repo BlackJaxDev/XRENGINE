@@ -279,6 +279,8 @@ public partial class XRMesh : XRAsset
     }
     [MemoryPackIgnore]
     private readonly Dictionary<string, int> _blendshapeNameToIndex = [];
+    [MemoryPackIgnore]
+    private readonly Dictionary<string, int> _blendshapeNameToIndexIgnoreCase = new(StringComparer.OrdinalIgnoreCase);
     [Browsable(false)]
     public uint BlendshapeCount => (uint)(BlendshapeNames?.Length ?? 0);
     [Browsable(false)]
@@ -508,10 +510,14 @@ public partial class XRMesh : XRAsset
         // Generic graph hydration suppresses notifications across nested meshes.
         string[] names = BlendshapeNames ?? [];
         _blendshapeNameToIndex.Clear();
+        _blendshapeNameToIndexIgnoreCase.Clear();
         for (int i = 0; i < names.Length; i++)
         {
             if (!string.IsNullOrEmpty(names[i]) && !_blendshapeNameToIndex.ContainsKey(names[i]))
+            {
                 _blendshapeNameToIndex.Add(names[i], i);
+                _blendshapeNameToIndexIgnoreCase.TryAdd(names[i], i);
+            }
             else
                 XREngine.Debug.MeshesWarning($"Duplicate or empty blendshape name '{names[i]}' found in mesh {Name}");
         }

@@ -1906,6 +1906,9 @@ namespace XREngine.Rendering.Vulkan
                 case EEngineUniform.FramebufferTextureYDirection:
                     value = new ProgramUniformValue(EShaderVarType._int, (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan), false);
                     return true;
+                case EEngineUniform.UpscaleTextureLodBias:
+                    value = new ProgramUniformValue(EShaderVarType._float, RenderPipeline.ResolveUpscaleTextureLodBiasForFrame(), false);
+                    return true;
                 case EEngineUniform.VRMode:
                     value = new ProgramUniformValue(EShaderVarType._int, stereo ? 1 : 0, false);
                     return true;

@@ -542,6 +542,12 @@ namespace XREngine.Rendering.Pipelines.Commands
                         ex.Message,
                         ex.ToString());
                 }
+
+                if (instance.RenderState.HasPendingResourcePreparation)
+                {
+                    UnwindFrameBufferBindings(i);
+                    return;
+                }
             }
             if (commandFailure is not null)
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(commandFailure).Throw();

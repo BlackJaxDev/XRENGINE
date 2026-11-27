@@ -26,6 +26,11 @@ namespace XREngine.Components.Movement
         //    => SceneNode.GetTransformAs<Transform>(true)!;
 
         public event Action? Teleported;
+        public event Action<CharacterMovementPhysicsStepReport>? PhysicsStepCompleted;
+
+        private Vector3 _previousPhysicsFootPosition;
+        private bool _hasPreviousPhysicsFootPosition;
+        private Vector3 _lastSubmittedPlanarVelocity;
 
         private float _maxJumpHeight = 10.0f;
         private Func<Vector3, Vector3>? _subUpdateTick;
@@ -558,6 +563,26 @@ namespace XREngine.Components.Movement
         public IAbstractDynamicRigidBody? RigidBodyReference
             => (ActiveController as IPhysicsControllerBodySource)?.Actor;
 
+        /// <summary>
+        /// Fires after the active character controller resizes its capsule height and shifts
+        /// <see cref="RigidBodyTransform"/> to keep the foot contact point fixed in world space.
+        /// </summary>
+        public event Action<float>? ControllerResized;
+
+        private void ResizeActiveControllerPreservingFootWorldPosition(float targetHeight)
+        {
+            if (ActiveController is not { } controller)
+                return;
+
+            Vector3 beforePosition = controller.Position;
+            controller.Resize(targetHeight);
+            Vector3 positionDelta = controller.Position - beforePosition;
+            if (IsFinite(positionDelta) && positionDelta.LengthSquared() > 1.0e-10f)
+                RigidBodyTransform.ApplyPositionOffsetPreservingInterpolation(positionDelta);
+
+            ControllerResized?.Invoke(HalfHeight);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -572,18 +597,18 @@ namespace XREngine.Components.Movement
                     break;
                 case nameof(StandingHeight):
                     if (CrouchState == ECrouchState.Standing)
-                        ActiveController?.Resize(StandingHeight);
+                        ResizeActiveControllerPreservingFootWorldPosition(StandingHeight);
                     break;
                 case nameof(CrouchedHeight):
                     if (CrouchState == ECrouchState.Crouched)
-                        ActiveController?.Resize(CrouchedHeight);
+                        ResizeActiveControllerPreservingFootWorldPosition(CrouchedHeight);
                     break;
                 case nameof(ProneHeight):
                     if (CrouchState == ECrouchState.Prone)
-                        ActiveController?.Resize(ProneHeight);
+                        ResizeActiveControllerPreservingFootWorldPosition(ProneHeight);
                     break;
                 case nameof(CrouchState):
-                    ActiveController?.Resize(GetCurrentHeight());
+                    ResizeActiveControllerPreservingFootWorldPosition(GetCurrentHeight());
                     break;
                 case nameof(Radius):
                     ActiveController?.Radius = Radius;
@@ -601,10 +626,9 @@ namespace XREngine.Components.Movement
                     ActiveController?.UpDirection = UpDirection;
                     break;
                 case nameof(CollisionGroup):
+                case nameof(GroupsMask):
                     if (ActiveController is ICharacterControllerCollisionSettings collisionSettings)
-                        collisionSettings.CollisionLayerMask = CollisionGroup == 0
-                            ? new LayerMask(1)
-                            : new LayerMask(1 << CollisionGroup);
+                        collisionSettings.CollisionLayerMask = ResolveControllerCollisionLayerMask();
                     break;
             }
         }
@@ -713,9 +737,12 @@ namespace XREngine.Components.Movement
                 return;
 
             ReportUnsupportedSettings(physicsScene.BackendService.CharacterControllerCapabilities);
+            Vector3 spawnPosition = TryConsumePendingTeleport(out Vector3 pendingTeleportPosition, out _)
+                ? pendingTeleportPosition
+                : position;
             IAbstractCharacterController? controller = physicsScene.BackendService.CreateCharacterController(
                 new PhysicsCharacterControllerCreateInfo(
-                    position,
+                    spawnPosition,
                     UpDirection,
                     Radius,
                     GetCurrentHeight(),
@@ -726,9 +753,7 @@ namespace XREngine.Components.Movement
                     _materialDefinition)
                 {
                     MotionInputModel = MotionInputModel,
-                    CollisionLayerMask = CollisionGroup == 0
-                        ? new LayerMask(1)
-                        : new LayerMask(1 << CollisionGroup),
+                    CollisionLayerMask = ResolveControllerCollisionLayerMask(),
                     PredictiveContactDistance = PredictiveContactDistance,
                     CollisionTolerance = CollisionTolerance,
                     StickToFloorDistance = StickToFloorDistance,
@@ -820,9 +845,7 @@ namespace XREngine.Components.Movement
             controller.MotionInputModel = MotionInputModel;
             if (controller is ICharacterControllerCollisionSettings collisionSettings)
             {
-                collisionSettings.CollisionLayerMask = CollisionGroup == 0
-                    ? new LayerMask(1)
-                    : new LayerMask(1 << CollisionGroup);
+                collisionSettings.CollisionLayerMask = ResolveControllerCollisionLayerMask();
                 collisionSettings.SlideOnSteepSlopes = SlideOnSteepSlopes;
             }
             if (controller is not IAdvancedCharacterControllerSettings advanced)
@@ -833,6 +856,18 @@ namespace XREngine.Components.Movement
             advanced.StickToFloorDistance = StickToFloorDistance;
             advanced.StepDownExtra = StepDownExtra;
             advanced.MaxStrength = MaxStrength;
+        }
+
+        private LayerMask ResolveControllerCollisionLayerMask()
+        {
+            // Match Jolt rigid body filtering: an empty GroupsMask collides with all groups by default
+            // when CollisionGroup is 0, while an explicit GroupsMask or nonzero group isolates collisions.
+            if (GroupsMask.Word0 != 0)
+                return new LayerMask(unchecked((int)GroupsMask.Word0));
+
+            return CollisionGroup == 0
+                ? LayerMask.Everything
+                : new LayerMask(1 << CollisionGroup);
         }
 
         protected override void OnComponentDeactivated()
@@ -869,11 +904,162 @@ namespace XREngine.Components.Movement
             if (_controllerActorProxy is null || ActiveController is not { } controller)
                 return;
 
+            ApplyPendingTeleportIfAny(controller);
             ResetControllerIfBelowPhysicsPlane(controller);
             controller.Synchronize();
 
             // Drive the transform update via the engine's standard rigid-body sync path.
             RigidBodyTransform.OnPhysicsStepped();
+
+            float stepDt = RuntimePhysicsServices.Current.FixedDeltaSeconds;
+            PublishPhysicsStepFeedback(controller, stepDt > 0.0f ? stepDt : (1.0f / 60.0f));
+        }
+
+        /// <summary>
+        /// Evaluates actual vs requested horizontal displacement for the current physics step
+        /// and notifies root-motion subscribers (such as MotionBricks reconciliation).
+        /// </summary>
+        public CharacterMovementPhysicsStepReport PublishPhysicsStepFeedback(
+            IAbstractCharacterController controller,
+            float deltaTime)
+        {
+            Vector3 up = NormalizedUpDirection;
+            Vector3 footPosition = controller.FootPosition;
+            Vector3 actualDisplacement = _hasPreviousPhysicsFootPosition
+                ? footPosition - _previousPhysicsFootPosition
+                : Vector3.Zero;
+            _previousPhysicsFootPosition = footPosition;
+            _hasPreviousPhysicsFootPosition = true;
+
+            // Drain the render-side root-motion accumulator, then compare Jolt/PhysX actual planar
+            // travel against the exact displacement this controller consumed during this fixed step.
+            if (_movementModule is RootMotionMovementModule rootMotionModule)
+                rootMotionModule.ConsumeRequestedHorizontalDisplacementSincePhysicsStep();
+
+            Vector3 actualPlanar = ProjectOntoPlane(actualDisplacement, up);
+            Vector3 requestedVelocity = IsFinite(controller.RequestedVelocity)
+                ? controller.RequestedVelocity
+                : _lastSubmittedPlanarVelocity;
+            Vector3 requestedPlanar = ProjectOntoPlane(requestedVelocity * deltaTime, up);
+
+            float requestedDist = requestedPlanar.Length();
+            float blockedRatio = 0.0f;
+            Vector3 wallNormal = Vector3.Zero;
+            const float SideContactMinRequestedMeters = 0.005f;
+            const float FreeSpaceMinRequestedMeters = 0.015f;
+            if (requestedDist > SideContactMinRequestedMeters)
+            {
+                Vector3 requestedDir = requestedPlanar / requestedDist;
+                float progressed = Vector3.Dot(actualPlanar, requestedDir);
+                blockedRatio = 1.0f - Math.Clamp(progressed / requestedDist, 0.0f, 1.0f);
+                if ((controller.CollidingSides && blockedRatio > 0.15f)
+                    || (requestedDist > FreeSpaceMinRequestedMeters && blockedRatio > 0.50f))
+                {
+                    Vector3 lost = requestedPlanar - actualPlanar;
+                    if (lost.LengthSquared() > 1.0e-8f)
+                        wallNormal = -Vector3.Normalize(lost);
+                }
+            }
+
+            bool isBlocked = (controller.CollidingSides && requestedDist > SideContactMinRequestedMeters && blockedRatio > 0.15f)
+                || (requestedDist > FreeSpaceMinRequestedMeters && blockedRatio > 0.50f);
+            Vector3 actualPlanarVelocity = deltaTime > 1.0e-6f ? actualPlanar / deltaTime : Vector3.Zero;
+            var report = new CharacterMovementPhysicsStepReport(
+                footPosition,
+                actualDisplacement,
+                requestedPlanar,
+                actualPlanarVelocity,
+                wallNormal,
+                blockedRatio,
+                isBlocked,
+                controller.IsGrounded,
+                deltaTime);
+
+            PhysicsStepCompleted?.Invoke(report);
+            return report;
+        }
+
+        private readonly object _pendingTeleportLock = new();
+        private bool _hasPendingTeleport;
+        private Vector3 _pendingTeleportPosition;
+        private bool _pendingTeleportClearMotion = true;
+
+        /// <summary>
+        /// Moves this character controller and its scene transform to <paramref name="worldPosition"/>.
+        /// If the physics controller is already active, queues the teleport on the physics thread;
+        /// otherwise records the target position so controller creation uses it.
+        /// </summary>
+        /// <param name="worldPosition">Target world-space capsule center position.</param>
+        /// <param name="clearMotion">True to clear queued velocity and contact history.</param>
+        public void Teleport(Vector3 worldPosition, bool clearMotion = true)
+        {
+            if (!IsFinite(worldPosition))
+                return;
+
+            lock (_pendingTeleportLock)
+            {
+                _pendingTeleportPosition = worldPosition;
+                _pendingTeleportClearMotion = clearMotion;
+                _hasPendingTeleport = true;
+            }
+
+            if (SceneNode?.GetTransformAs<RigidBodyTransform>(false) is { } rigidBodyTransform)
+                rigidBodyTransform.SetPositionAndRotation(worldPosition, rigidBodyTransform.Rotation);
+            else if (Transform is Transform localTransform)
+            {
+                localTransform.Translation = localTransform.Parent is { } parent
+                    && Matrix4x4.Invert(parent.WorldMatrix, out Matrix4x4 inverseParent)
+                    ? Vector3.Transform(worldPosition, inverseParent)
+                    : worldPosition;
+            }
+
+            if (clearMotion)
+                ResetManagedMovementAfterTeleport();
+
+            if (ActiveController is not null)
+                RuntimeThreadServices.Current.EnqueuePhysicsThread(ApplyPendingTeleportOnPhysicsThread);
+        }
+
+        private bool TryConsumePendingTeleport(out Vector3 worldPosition, out bool clearMotion)
+        {
+            lock (_pendingTeleportLock)
+            {
+                if (!_hasPendingTeleport)
+                {
+                    worldPosition = Vector3.Zero;
+                    clearMotion = true;
+                    return false;
+                }
+
+                worldPosition = _pendingTeleportPosition;
+                clearMotion = _pendingTeleportClearMotion;
+                _hasPendingTeleport = false;
+                return true;
+            }
+        }
+
+        private void ApplyPendingTeleportOnPhysicsThread()
+        {
+            if (ActiveController is not { } controller)
+                return;
+
+            if (ApplyPendingTeleportIfAny(controller))
+            {
+                controller.Synchronize();
+                RigidBodyTransform.OnPhysicsStepped();
+            }
+        }
+
+        private bool ApplyPendingTeleportIfAny(IAbstractCharacterController controller)
+        {
+            if (!TryConsumePendingTeleport(out Vector3 worldPosition, out bool clearMotion))
+                return false;
+
+            controller.Teleport(worldPosition, clearMotion);
+            if (clearMotion)
+                ResetManagedMovementAfterTeleport();
+            Teleported?.Invoke();
+            return true;
         }
 
         private void ResetControllerIfBelowPhysicsPlane(IAbstractCharacterController controller)
@@ -905,6 +1091,10 @@ namespace XREngine.Components.Movement
             Velocity = Vector3.Zero;
             LastVelocity = Vector3.Zero;
             Acceleration = Vector3.Zero;
+            _hasPreviousPhysicsFootPosition = false;
+            _lastSubmittedPlanarVelocity = Vector3.Zero;
+            if (_movementModule is RootMotionMovementModule rootMotionModule)
+                rootMotionModule.ClearPendingRootMotion();
             MovementMode = EMovementMode.Falling;
             _jumpElapsed = 0.0f;
             _coyoteTimer = 0.0f;
@@ -917,9 +1107,13 @@ namespace XREngine.Components.Movement
         {
             if (ActiveController is null)
                 return;
+            if (WorldAs<IRuntimePhysicsWorldContext>() is not { PhysicsEnabled: true })
+                return;
             float dt = DeltaTime;
             if (!float.IsFinite(dt) || dt <= 0.0f)
                 return;
+            if (!TickInputWithPhysics && dt > 0.05f)
+                dt = 0.05f;
 
             Acceleration = (Velocity - LastVelocity) / dt;
 
@@ -937,6 +1131,7 @@ namespace XREngine.Components.Movement
             Vector3 commandValue = MotionInputModel == CharacterMotionInputModel.Velocity
                 ? requestedVelocity
                 : requestedVelocity * dt;
+            _lastSubmittedPlanarVelocity = ProjectOntoPlane(requestedVelocity, NormalizedUpDirection);
             ActiveController.SubmitMotion(new CharacterMotionCommand(
                 commandValue,
                 MotionInputModel,
@@ -1255,15 +1450,22 @@ namespace XREngine.Components.Movement
             // Update stored velocity
             Velocity = newVelocity;
 
-            // Apply landing friction when hitting ground
+            // Apply landing friction when hitting ground, unless a root-motion character lands
+            // with directional movement input held and must preserve horizontal momentum.
             if (ActiveController.IsGrounded)
             {
-                Vector3 up = NormalizedUpDirection;
-                float frictionFactor = 1.0f - MovementModule.GroundFriction;
-                float verticalSpeed = Vector3.Dot(newVelocity, up);
-                Vector3 tangentialVelocity = newVelocity - up * verticalSpeed;
-                newVelocity = tangentialVelocity * frictionFactor + up * verticalSpeed;
-                Velocity = newVelocity;
+                bool preserveMovingRootMotionLanding = MovementModule is RootMotionMovementModule
+                    && inputDirection.LengthSquared() > 1.0e-4f;
+                if (!preserveMovingRootMotionLanding)
+                {
+                    Vector3 up = NormalizedUpDirection;
+                    float frictionFactor = 1.0f - MovementModule.GroundFriction;
+                    float verticalSpeed = Vector3.Dot(newVelocity, up);
+                    Vector3 tangentialVelocity = newVelocity - up * verticalSpeed;
+                    newVelocity = tangentialVelocity * frictionFactor + up * verticalSpeed;
+                    Velocity = newVelocity;
+                }
+
                 ReconcileGroundSupport(true);
             }
 

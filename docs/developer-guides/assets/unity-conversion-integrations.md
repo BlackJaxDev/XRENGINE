@@ -431,7 +431,7 @@ These settings are independent. Each default keeps the Dynamic Bone behavior. Th
 | --- | --- | --- | --- |
 | `RestFollowsParent` | Off | On | The rest direction of each segment follows the simulated turn of its parent segment, so a chain curls along its length. |
 | `StiffnessMode` | `DistanceLimit` | `HoldParentOffset` | Stiffness holds the offset from the parent as it was before the step. It does not change where a segment settles under gravity. |
-| `GravityMode` | `Force` | `SegmentRatio` | Gravity scales with the segment length, so the settled angle depends on the gravity and pull ratio. Falloff weakens as a segment turns away from rest. A gravity at or below 0.0015 has no effect. |
+| `GravityMode` | `Force` | `SegmentRatio` (v1.0) / `RestBias` (v1.1) | In v1.0, gravity scales with segment length so the settled angle depends on the gravity and pull ratio. In v1.1 (`version >= 1`), gravity biases the rest direction toward gravity by its magnitude and pull moves the segment toward that biased target, so zero pull produces no gravity motion. Falloff weakens as a segment turns away from rest. A gravity at or below 0.0015 has no effect. |
 | `CarryParticlesBetweenSteps` | On | Off | Frames without a simulation step do not change the particles, so root motion gives the same lag at every frame rate. The chain moves rigidly with its root until the next step. |
 | `PinBranchChildren` | Off | On for Ignore | Each child of a bone with several children keeps its rest offset. |
 | `CollisionMode` | `Particle` | `Segment` | Each segment collides along its full length, and a contact turns it around the parent. A collider with Bones As Spheres imports with `ParticleContactOnly` and tests only the child end of a segment. |

@@ -95,5 +95,6 @@ projected-root calculation.
 ## Deeper Docs
 
 - [Animation API](../developer-guides/animation/animation-api.md)
+- [MotionBricks Procedural Locomotion Setup](motionbricks-animation.md)
 - [VR Development](vr-development.md)
 - [Component System](components.md)

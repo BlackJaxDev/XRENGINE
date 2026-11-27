@@ -4,11 +4,27 @@
 #include "AdvancedDiagnostics.glslinc"
 
 const uint XR_ADV_VIEW_DEPTH_ZERO_TO_ONE = 1u << 0u;
+const uint XR_ADV_VIEW_MIRROR = 1u << 5u;
 const uint XR_ADV_VIEW_FRAMEBUFFER_TEXTURE_Y_DOWN = 1u << 6u;
 const uint XR_ADV_VIEW_TEMPORAL_HISTORY_VALID = 1u << 7u;
 const uint XR_ADV_VIEW_EXCLUDE_PROJECTIVE_MIRRORS = 1u << 8u;
 // EAdvancedViewRecordFlags.GtaoMaterialNormals: GTAO normal-map micro-occlusion is on.
 const uint XR_ADV_VIEW_GTAO_MATERIAL_NORMALS = 1u << 9u;
+// EAdvancedViewRecordFlags bits 10..13: visibility raster MSAA sample count (0 or 1 = single-sample).
+const uint XR_ADV_VIEW_MSAA_SAMPLE_COUNT_SHIFT = 10u;
+const uint XR_ADV_VIEW_MSAA_SAMPLE_COUNT_MASK = 0xFu << XR_ADV_VIEW_MSAA_SAMPLE_COUNT_SHIFT;
+// EAdvancedViewRecordFlags bits 14..18: in-place stencil portal and mirror sub-view flags.
+const uint XR_ADV_VIEW_PORTAL_SUBVIEW = 1u << 14u;
+const uint XR_ADV_VIEW_INVERTED_WINDING = 1u << 15u;
+const uint XR_ADV_VIEW_CLIP_PLANE_ENABLED = 1u << 16u;
+const uint XR_ADV_VIEW_SKIP_HIZ_AND_HISTORY = 1u << 17u;
+const uint XR_ADV_VIEW_SINGLE_SAMPLE_MSAA_SHADING = 1u << 18u;
+
+uint XR_ADV_ViewMsaaSampleCount(XRAdvancedViewRecord viewRecord)
+{
+    uint encoded = (viewRecord.flags & XR_ADV_VIEW_MSAA_SAMPLE_COUNT_MASK) >> XR_ADV_VIEW_MSAA_SAMPLE_COUNT_SHIFT;
+    return max(encoded, 1u);
+}
 
 // Analytic reconstruction keeps full-rate visibility. Peripheral sampling only
 // widens the texture footprint; it never removes geometry or borrows another eye.
@@ -22,6 +38,15 @@ float XR_ADV_FoveationDerivativeScale(XRAdvancedViewRecord viewRecord, vec2 targ
     float outerRadius = viewRecord.foveationRadii.w;
     float peripheral = smoothstep(guardRadius, outerRadius, eccentricity);
     return exp2(peripheral * viewRecord.foveationCenterAndBias.z);
+}
+
+// Scales screen-space UV gradients by internal/output resolution ratio so
+// textureGrad selects output-resolution mip levels when rendering below native
+// resolution (for example TSR, DLSS, or XeSS). Returns (1, 1) at native size.
+vec2 XR_ADV_UpscaleDerivativeScale(XRAdvancedViewRecord viewRecord)
+{
+    vec2 ratio = viewRecord.renderSizeAndInverse.xy * viewRecord.outputSizeAndInverse.zw;
+    return clamp(ratio, vec2(0.25), vec2(1.0));
 }
 
 XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_VIEWS) readonly buffer XRAdvancedViewTable
@@ -75,7 +100,46 @@ XRAdvancedViewRecord XR_ADV_LoadView(uint denseIndex)
     result.sourceCameraIdentityHi = XR_ADV_Views.records[denseIndex].sourceCameraIdentityHi;
     result.cullingLayerMask = XR_ADV_Views.records[denseIndex].cullingLayerMask;
     result.renderTimeBits = XR_ADV_Views.records[denseIndex].renderTimeBits;
+    result.clipPlaneWorld = XR_ADV_Views.records[denseIndex].clipPlaneWorld;
+    result.primaryViewIndex = XR_ADV_Views.records[denseIndex].primaryViewIndex;
+    result.parentViewIndex = XR_ADV_Views.records[denseIndex].parentViewIndex;
+    result.stencilNodeId = XR_ADV_Views.records[denseIndex].stencilNodeId;
+    result.depthAndExcludeDraw = XR_ADV_Views.records[denseIndex].depthAndExcludeDraw;
     return result;
+}
+
+// Returns true when pixelView is primaryView itself or an active portal sub-view
+// owned by primaryView. Classification and native shading use this check to accept
+// reflected pixels in the primary eye layer without relaxing cross-eye isolation.
+bool XR_ADV_ViewBelongsToPrimary(uint pixelView, uint primaryView)
+{
+    if (pixelView == primaryView)
+        return true;
+    if (pixelView >= uint(XR_ADV_Views.records.length()))
+        return false;
+    uint viewFlags = XR_ADV_Views.records[pixelView].flags;
+    return (viewFlags & XR_ADV_VIEW_PORTAL_SUBVIEW) != 0u &&
+        XR_ADV_Views.records[pixelView].primaryViewIndex == primaryView;
+}
+
+// Returns the primary view index for view-mask bit tests on lights, decals,
+// shadows, environments, and probes. Portal sub-views inherit the mask bits of
+// their owning primary view.
+uint XR_ADV_ViewMaskIndex(XRAdvancedViewRecord viewRecord, uint viewIndex)
+{
+    return (viewRecord.flags & XR_ADV_VIEW_PORTAL_SUBVIEW) != 0u
+        ? viewRecord.primaryViewIndex
+        : viewIndex;
+}
+
+uint XR_ADV_ViewMaskIndex(uint viewIndex)
+{
+    if (viewIndex >= uint(XR_ADV_Views.records.length()))
+        return viewIndex;
+    uint viewFlags = XR_ADV_Views.records[viewIndex].flags;
+    return (viewFlags & XR_ADV_VIEW_PORTAL_SUBVIEW) != 0u
+        ? XR_ADV_Views.records[viewIndex].primaryViewIndex
+        : viewIndex;
 }
 
 // Fragment locations and storage images use physical framebuffer coordinates.

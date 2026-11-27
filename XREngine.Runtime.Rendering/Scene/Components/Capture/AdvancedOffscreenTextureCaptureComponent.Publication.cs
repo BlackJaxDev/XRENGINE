@@ -30,6 +30,37 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent
     }
 
     /// <summary>
+    /// Publishes an already-submitted graphics-queue capture immediately for a same-frame
+    /// consumer that submits on the same queue after the capture's sampling barrier.
+    /// Keeps the writer fence active so the slot cannot be overwritten or retired until
+    /// GPU execution finishes.
+    /// </summary>
+    public bool TryPublishSubmittedSameQueueOutput([NotNullWhen(true)] out XRTexture2D? texture)
+    {
+        if (!RuntimeEngine.IsRenderThread)
+            throw new InvalidOperationException("Same-queue capture publication requires the render thread.");
+        texture = null;
+        lock (_publicationSync)
+        {
+            if (_retirementRequested || _writeInProgress || _resourcesDirty || _quarantined ||
+                !_writerAuthored || _publishedBeforeWriterCompletion ||
+                _writerFence is not { SubmissionStatus: EGpuFenceSubmissionStatus.Submitted } ||
+                _outputTexture is null || _canonicalLifetime is null)
+                return false;
+
+            _hasCompletedCapture = true;
+            _publishedBeforeWriterCompletion = true;
+            CaptureVersion++;
+            _canonicalLifetime.EndWrite(_outputTexture.AdvanceCanonicalGpuContentGeneration());
+            if (!_canonicalLifetime.TryPublish())
+                return false;
+
+            texture = _outputTexture;
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Stops admitting new canonical readers. Previously prepared/recorded publications
     /// continue to block refresh and retirement until their exact ownership is released.
     /// </summary>

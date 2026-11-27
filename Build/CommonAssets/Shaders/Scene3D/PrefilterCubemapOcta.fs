@@ -84,7 +84,8 @@ void main()
     vec3 R = N;
     vec3 V = R;
 
-    const uint SAMPLE_COUNT = 1024u;
+    // Filtered importance sampling with textureLod converges cleanly at 128 samples (~8x faster than 1024).
+    const uint SAMPLE_COUNT = 128u;
     vec3 prefilteredColor = vec3(0.0f);
     float totalWeight = 0.0f;
 

@@ -124,7 +124,10 @@ internal static class VulkanFrameOperationSemantics
             AdvancedVisibilityOp visibility
                 when visibility.Request.Stage is EAdvancedRenderStage.VisibilityRaster or
                     EAdvancedRenderStage.DirectionalShadowRaster ||
-                    visibility.Request.Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer
+                    visibility.Request.Phase is
+                        EAdvancedVisibilityStageBackendPhase.DecalBuffer or
+                        EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind or
+                        EAdvancedVisibilityStageBackendPhase.PortalUnwind
                 => visibility.Target,
             _ => null,
         };
@@ -209,6 +212,14 @@ internal static class VulkanFrameOperationSemantics
                         EFrameOpResourceAccess.Write);
                     break;
                 }
+                if (visibility.Request.Phase is
+                        EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind or
+                        EAdvancedVisibilityStageBackendPhase.PortalUnwind)
+                {
+                    AddFrameBufferUses(ref uses, output, version, EFrameOpResourceAccess.Write,
+                        includeColor: true, includeDepth: true, includeStencil: true);
+                    break;
+                }
                 if (visibility.Request.Phase == EAdvancedVisibilityStageBackendPhase.DecalBuffer)
                 {
                     // The decal buffer writes its two color targets and only tests
@@ -220,8 +231,9 @@ internal static class VulkanFrameOperationSemantics
                     break;
                 }
                 if (visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster ||
-                    visibility.Request.Phase ==
-                        EAdvancedVisibilityStageBackendPhase.LateRaster)
+                    visibility.Request.Phase is
+                        EAdvancedVisibilityStageBackendPhase.LateRaster or
+                        EAdvancedVisibilityStageBackendPhase.PortalVisibility)
                 {
                     // Preserve both the graph names and the exact realized target.
                     // The former drives graph ordering while the latter freezes

@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using XREngine.Components.Animation;
 
 namespace XREngine.Animation
 {
@@ -54,6 +55,7 @@ namespace XREngine.Animation
         private bool[] _bools = [];
         private object?[] _discrete = [];
         private AnimationQuaternionFloatSlotGroup[] _quaternionFloatGroups = [];
+        private EHumanoidBodyMask[] _floatSlotMasks = [];
 
         public int FloatCount => _floats.Length;
         public int Vector2Count => _vectors2.Length;
@@ -78,6 +80,7 @@ namespace XREngine.Animation
             _bools = layout.BoolCount > 0 ? new bool[layout.BoolCount] : [];
             _discrete = layout.DiscreteCount > 0 ? new object?[layout.DiscreteCount] : [];
             _quaternionFloatGroups = layout.QuaternionFloatGroups;
+            _floatSlotMasks = layout.FloatSlotMasks;
             ResizeCoverage(layout);
             InitializeQuaternionsToIdentity();
             InitializeQuaternionFloatGroupsToIdentity();
@@ -716,6 +719,12 @@ namespace XREngine.Animation
         /// Scalar slot quartets that blend as complete shortest-arc quaternions.
         /// </summary>
         public AnimationQuaternionFloatSlotGroup[] QuaternionFloatGroups { get; internal set; } = [];
+
+        /// <summary>
+        /// Per-float-slot <see cref="EHumanoidBodyMask"/> classification built once during layout
+        /// initialization so masked layer combines filter channels in O(1) without allocations.
+        /// </summary>
+        public EHumanoidBodyMask[] FloatSlotMasks { get; internal set; } = [];
 
         /// <summary>
         /// The members that apply the values of a layout from clip sampling. There is one member for

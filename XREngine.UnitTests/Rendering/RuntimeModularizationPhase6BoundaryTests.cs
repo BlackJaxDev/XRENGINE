@@ -66,6 +66,7 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
             ["XREngine.Runtime.Bootstrap"] =
             [
                 "XREngine.Animation",
+                "XREngine.Animation.MotionBricks",
                 "XREngine.Audio",
                 "XREngine.Audio.Audio2Face",
                 "XREngine.Audio.NAudio",

@@ -64,8 +64,11 @@ namespace XREngine.Components.Scene.Mesh
             Guid prefabAssetId = node.Prefab?.PrefabAssetId ?? Guid.Empty;
             while (node.Parent is SceneNode parent)
             {
-                if (prefabAssetId != Guid.Empty && (parent.Prefab?.PrefabAssetId ?? Guid.Empty) != prefabAssetId)
+                Guid parentPrefabId = parent.Prefab?.PrefabAssetId ?? Guid.Empty;
+                if (prefabAssetId != Guid.Empty && parentPrefabId != prefabAssetId)
                     break;
+                if (prefabAssetId == Guid.Empty && parentPrefabId != Guid.Empty)
+                    prefabAssetId = parentPrefabId;
 
                 node = parent;
             }
@@ -144,6 +147,97 @@ namespace XREngine.Components.Scene.Mesh
                 catch (Exception cleanupFailure) { bindingFailure.Data["RuntimeMeshRebindCleanupFailure"] = cleanupFailure; }
                 throw;
             }
+        }
+
+        /// <summary>
+        /// Copies the live skeleton bone bindings, root bone, and material override from
+        /// <paramref name="source"/> onto this renderable mesh so runtime proxy clones deform
+        /// with the exact same active skeleton transforms and clean up owned runtime meshes on disposal.
+        /// </summary>
+        public void SyncSkinningBindingsFrom(RenderableMesh source)
+        {
+            ArgumentNullException.ThrowIfNull(source);
+            if (_retiring || source._retiring)
+                return;
+
+            if (source.RootBone is not null && !ReferenceEquals(RootBone, source.RootBone))
+                RootBone = source.RootBone;
+            if (!ReferenceEquals(MaterialOverride, source.MaterialOverride))
+                MaterialOverride = source.MaterialOverride;
+
+            RenderableLOD[] sourceLods = source.GetLodSnapshot();
+            RenderableLOD[] targetLods = GetLodSnapshot();
+            int count = Math.Min(sourceLods.Length, targetLods.Length);
+            bool reboundAnyLod = false;
+            for (int index = 0; index < count; ++index)
+            {
+                XRMesh? sourceMesh = sourceLods[index].Renderer.Mesh;
+                XRMesh? targetMesh = targetLods[index].Renderer.Mesh;
+                if (sourceMesh is not { HasSkinning: true } || targetMesh is not { HasSkinning: true })
+                    continue;
+
+                var sourceBones = sourceMesh.UtilizedBones;
+                var targetBones = targetMesh.UtilizedBones;
+                if (sourceBones.Length != targetBones.Length || HasSameBoneTransforms(sourceBones, targetBones))
+                    continue;
+
+                XRMesh rebound = targetMesh.CloneForRuntimeTransformRebind();
+                _ownedRuntimeMeshes.Add(rebound);
+                try
+                {
+                    rebound.ReplaceSkinningBoneBindings(sourceBones);
+                    rebound.TryAttachSharedGeometryMeshletPayload(sourceMesh);
+                    XRMeshRenderer renderer = targetLods[index].Renderer;
+                    renderer.Mesh = rebound;
+                    if (!ReferenceEquals(renderer.Mesh, rebound))
+                    {
+                        ReleaseOwnedRuntimeMesh(rebound);
+                        continue;
+                    }
+                    if (_boneTrackingByRenderer.TryGetValue(renderer, out bool wasTracked) && wasTracked)
+                        TrackBones(targetMesh, false);
+                    AdvanceLodRegistrationVersion();
+                    TrackBones(rebound, true);
+                    _boneTrackingByRenderer[renderer] = true;
+                    ReleaseOwnedRuntimeMesh(targetMesh);
+                    reboundAnyLod = true;
+                }
+                catch
+                {
+                    ReleaseOwnedRuntimeMesh(rebound);
+                    throw;
+                }
+            }
+
+            if (reboundAnyLod)
+            {
+                // Rebuild cached per-bone culling boxes, GPU-scene registration, and world bounds
+                // from the rebound skeleton so first-person proxies stay synchronized and visible.
+                Volatile.Write(ref _committedBoundsStateDirty, 1);
+                MarkSkinnedDataDirty();
+                MarkSkinnedBoneCullingVolumesDirty();
+                RefreshSkinnedCullingIntersectionOverride();
+                if (!_retiring)
+                    _rc?.MarkDirty();
+                _ = RefreshSkinnedCullingBoundsForSceneCulling();
+                QueueCurrentRenderMatrixUpdate();
+            }
+        }
+
+        private static bool HasSameBoneTransforms(
+            (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] first,
+            (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] second)
+        {
+            if (first.Length != second.Length)
+                return false;
+
+            for (int i = 0; i < first.Length; ++i)
+            {
+                if (!ReferenceEquals(first[i].tfm, second[i].tfm))
+                    return false;
+            }
+
+            return true;
         }
 
         private static bool IsSelfOrDescendantOf(TransformBase root, TransformBase candidate)
@@ -329,7 +423,10 @@ namespace XREngine.Components.Scene.Mesh
                     // Basis is for the GPU skinned BVH; TryApplySkinnedBoneCullingBounds publishes the
                     // world-space aggregate with an identity offset (the single skinned convention).
                     SetSkinnedRootRenderMatrix(basis);
+                    AABB? priorBounds = RenderInfo?.LocalCullingVolume;
                     _ = TryApplySkinnedBoneCullingBounds();
+                    if (!Nullable.Equals(RenderInfo?.LocalCullingVolume, priorBounds))
+                        _rc.SwapBuffers();
 
                     return;
                 }

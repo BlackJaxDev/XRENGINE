@@ -215,12 +215,7 @@ public static partial class EditorUnitTests
             dirLightComp.DiffuseIntensity = 1.0f;
             dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
             UnitTestingWorldSettings runtimeSettings = RuntimeBootstrapState.Settings;
-            dirLightComp.CastsShadows = runtimeSettings.DirLightCastsShadows;
-            ERenderLibrary renderBackend = runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
-                ? runtimeSettings.Rendering.RenderBackend
-                : runtimeSettings.RenderAPI;
-            uint shadowResolution = renderBackend == ERenderLibrary.Vulkan ? 1024u : 4096u;
-            dirLightComp.SetShadowMapResolution(shadowResolution, shadowResolution);
+            ApplyDirectionalShadowSettings(dirLightComp, runtimeSettings, castsShadows: runtimeSettings.DirLightCastsShadows);
             return dirLightComp;
         }
 
@@ -236,9 +231,33 @@ public static partial class EditorUnitTests
             dirLightComp2!.Name = "TestDirectionalLight2";
             dirLightComp2.Color = new Vector3(1.0f, 0.8f, 0.8f);
             dirLightComp2.DiffuseIntensity = 1.0f;
-            dirLightComp2.Scale = new Vector3(1000.0f, 1000.0f, 1000.0f);
-            dirLightComp2.CastsShadows = false;
+            UnitTestingWorldSettings runtimeSettings = RuntimeBootstrapState.Settings;
+            dirLightComp2.Scale = runtimeSettings.ProceduralSky
+                ? new Vector3(100.0f, 100.0f, 900.0f)
+                : new Vector3(1000.0f, 1000.0f, 1000.0f);
+            ApplyDirectionalShadowSettings(
+                dirLightComp2,
+                runtimeSettings,
+                castsShadows: runtimeSettings.ProceduralSky && runtimeSettings.DirLightCastsShadows);
             return dirLightComp2;
+        }
+
+        private static void ApplyDirectionalShadowSettings(
+            DirectionalLightComponent light,
+            UnitTestingWorldSettings settings,
+            bool castsShadows)
+        {
+            light.CastsShadows = castsShadows;
+            ERenderLibrary renderBackend = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
+                ? settings.Rendering.RenderBackend
+                : settings.RenderAPI;
+            // Four 2048x2048 directional cascades pack cleanly onto one 4096x4096 atlas page on Vulkan.
+            uint shadowResolution = renderBackend == ERenderLibrary.Vulkan ? 2048u : 4096u;
+            light.SetShadowMapResolution(shadowResolution, shadowResolution);
+            light.BlockerSamples = Math.Clamp(settings.DirLightShadowBlockerSamples, 1, LightComponent.MaxVogelTapCount);
+            light.FilterSamples = Math.Clamp(settings.DirLightShadowFilterSamples, 1, LightComponent.MaxVogelTapCount);
+            light.VogelTapCount = Math.Clamp(settings.DirLightShadowVogelTapCount, 1, LightComponent.MaxVogelTapCount);
+            light.ContactShadowSamples = Math.Clamp(settings.DirLightContactShadowSamples, 1, 32);
         }
 
         public static void AddSpotLight(SceneNode rootNode)

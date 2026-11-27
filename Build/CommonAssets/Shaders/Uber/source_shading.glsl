@@ -326,17 +326,30 @@ vec3 xrSourceWrappedDiffuse(vec3 baseColor, vec3 normal, vec3 light,
         vec3(0.0), vec3(1.0));
 }
 
+vec3 xrSourceNormalizeOr(vec3 value, vec3 fallback)
+{
+    float lengthSquared = dot(value, value);
+    return lengthSquared > 1.0e-12 && !isinf(lengthSquared)
+        ? value * inversesqrt(lengthSquared)
+        : fallback;
+}
+
 float xrSourcePerceptualRoughness(float smoothness, vec3 normalDx, vec3 normalDy,
     vec4 settings)
 {
-    float perceptual = 1.0 - smoothness;
+    float perceptual = 1.0 - clamp(smoothness, 0.0, 1.0);
+    // Widen roughness across curved geometry so smooth metallic surfaces do not
+    // collapse into single-pixel GGX fireflies under subpixel jitter.
+    float normalVariance = dot(normalDx, normalDx) + dot(normalDy, normalDy);
+    float baselineVariance = min(0.5 * normalVariance, 0.18);
+    float baselinePerceptual = sqrt(clamp(perceptual * perceptual + baselineVariance, 0.04 * 0.04, 1.0));
     if (settings.x > 0.5)
     {
-        float variance = settings.y * (dot(normalDx, normalDx) + dot(normalDy, normalDy));
+        float variance = settings.y * normalVariance;
         perceptual = pow(clamp(pow(perceptual, 4.0) + min(2.0 * variance, settings.z),
             0.0, 1.0), 0.25);
     }
-    return perceptual;
+    return max(perceptual, baselinePerceptual);
 }
 
 float xrSourceBrdfRoughness(float smoothness, vec3 normalDx, vec3 normalDy,
@@ -354,9 +367,12 @@ vec3 xrSourceGgxLobe(vec3 normal, vec3 view, vec3 light, vec3 f0,
 {
     float nl = dot(normal, light);
     if (nl <= 0.0 || mask <= 0.0) return vec3(0.0);
-    vec3 halfVector = normalize(light + view);
+    vec3 halfSum = light + view;
+    float halfLengthSquared = dot(halfSum, halfSum);
+    if (halfLengthSquared <= 1.0e-10) return vec3(0.0);
+    vec3 halfVector = halfSum * inversesqrt(halfLengthSquared);
     float nv = abs(dot(normal, view));
-    float nh = dot(normal, halfVector);
+    float nh = clamp(dot(normal, halfVector), 0.0, 1.0);
     float lh = max(dot(light, halfVector), 0.00001);
     float alpha = xrSourceBrdfRoughness(smoothness, normalDx, normalDy, settings);
     float visibility = 0.5 / (nl * (nv * (1.0 - alpha) + alpha) +
@@ -364,7 +380,9 @@ vec3 xrSourceGgxLobe(vec3 normal, vec3 view, vec3 light, vec3 f0,
     float nhAlpha = nh * alpha;
     float k = alpha / (1.0 - nh * nh + nhAlpha * nhAlpha + 0.00001);
     float distribution = k * k * 0.3183098861837907;
-    float term = max(0.0, visibility * distribution * max(0.00001, nl));
+    // Cap peak subpixel GGX spikes so smooth metallic facets do not trigger
+    // single-frame bloom flashes across subpixel jitter offsets.
+    float term = clamp(visibility * distribution * max(0.00001, nl), 0.0, 32.0);
     vec3 fresnel = f0 + (vec3(1.0) - f0) * pow(1.0 - lh, 5.0);
     float castVisibility = mix(shadowVisibility, 1.0, clamp(ignoreShadows, 0.0, 1.0));
     if (directional) castVisibility = min(clamp(nl, 0.0, 1.0), castVisibility);
@@ -479,8 +497,8 @@ float xrSourceAnisoLayerResponse(vec3 tangent, vec3 binormal, vec3 normal,
     float offsetMapStrength)
 {
     float offset = layer.z + offsetMapStrength * mapAlpha;
-    vec3 strand = normalize(mix(binormal, tangent, layer.w) + offset * normal);
-    vec3 halfVector = normalize(light + view);
+    vec3 strand = xrSourceNormalizeOr(mix(binormal, tangent, layer.w) + offset * normal, normal);
+    vec3 halfVector = xrSourceNormalizeOr(light + view, normal);
     float tangentHalf = clamp(dot(strand, halfVector), -1.0, 1.0);
     float sine = sqrt(max(0.0, 1.0 - tangentHalf * tangentHalf));
     float response = clamp(smoothstep(-1.0, 0.0, tangentHalf) *
@@ -691,8 +709,8 @@ float xrSourceStylizedSpecularTerms(vec3 vertexNormal, vec3 mappedNormal,
     vec3 highColorMap, vec4 tint, vec4 settings, vec4 layers,
     vec4 maskSettings, vec4 occlusionSettings, out vec3 highlight)
 {
-    vec3 normal = normalize(mix(vertexNormal, mappedNormal, settings.z));
-    vec3 halfDirection = normalize(lightDirection + viewDirection);
+    vec3 normal = xrSourceNormalizeOr(mix(vertexNormal, mappedNormal, settings.z), mappedNormal);
+    vec3 halfDirection = xrSourceNormalizeOr(lightDirection + viewDirection, normal);
     float specArea = 0.5 * dot(normal, halfDirection) + 0.5;
     float first, second;
     if (settings.y > 0.5)

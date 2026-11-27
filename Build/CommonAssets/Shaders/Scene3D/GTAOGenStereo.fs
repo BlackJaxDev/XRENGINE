@@ -75,16 +75,22 @@ bool GtaoIsFarInput(float depthInput)
     return DepthViewIsLinear ? !(depthInput > 0.0f) : AOIsFarDepth(depthInput);
 }
 
-// View position of one DepthView sample.
-vec3 GtaoViewPosition(float depthInput, vec2 uv, GtaoReconstruction r, mat4 inverseProjMatrix)
+// View position of one DepthView sample. Reads the eye inverse projection from
+// uniforms only on the fallback path so the linear perspective inner loop avoids
+// holding a 16-float mat4 in live registers across all horizon samples.
+vec3 GtaoViewPosition(float depthInput, vec2 uv, GtaoReconstruction r, bool leftEye)
 {
+    if (DepthViewIsLinear && r.perspective)
+    {
+        vec2 clipXY = AOClipXYFromTextureUV(uv);
+        return vec3(clipXY * r.scale + r.bias, -1.0f) * depthInput;
+    }
+
+    mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
     if (!DepthViewIsLinear)
         return AOViewPosFromDepth(depthInput, uv, inverseProjMatrix);
 
     vec2 clipXY = AOClipXYFromTextureUV(uv);
-    if (r.perspective)
-        return vec3(clipXY * r.scale + r.bias, -1.0f) * depthInput;
-
     // Any other projection: solve the clip depth that gives this view depth, then use the matrix.
     vec4 fixedTerms = inverseProjMatrix[0] * clipXY.x + inverseProjMatrix[1] * clipXY.y + inverseProjMatrix[3];
     vec4 depthTerms = inverseProjMatrix[2];
@@ -102,32 +108,32 @@ float FastAcos(float x)
     return x < 0.0f ? PI - r : r;
 }
 
-vec3 GetViewNormal(vec2 uv, vec3 centerPos, mat4 viewMatrix, mat4 inverseProjMatrix, GtaoReconstruction reconstruction)
+vec3 GetViewNormal(vec2 uv, vec3 centerPos, vec2 texelSize, float viewLayer, bool leftEye, GtaoReconstruction reconstruction)
 {
     if (UseInputNormals)
     {
-        vec3 worldNormal = XRENGINE_ReadNormal(Normal, vec3(uv, gl_ViewID_OVR));
+        vec3 worldNormal = XRENGINE_ReadNormal(Normal, vec3(uv, viewLayer));
+        mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
         return normalize((viewMatrix * vec4(worldNormal, 0.0f)).rgb);
     }
 
-    vec2 texelSize = 1.0f / textureSize(DepthView, 0).xy;
     vec2 uvX = clamp(uv + vec2(texelSize.x, 0.0f), vec2(0.0f), vec2(1.0f));
     vec2 uvY = clamp(uv + vec2(0.0f, texelSize.y), vec2(0.0f), vec2(1.0f));
-    float depthX = texture(DepthView, vec3(uvX, gl_ViewID_OVR)).r;
-    float depthY = texture(DepthView, vec3(uvY, gl_ViewID_OVR)).r;
+    float depthX = texture(DepthView, vec3(uvX, viewLayer)).r;
+    float depthY = texture(DepthView, vec3(uvY, viewLayer)).r;
     if (GtaoIsFarInput(depthX) || GtaoIsFarInput(depthY))
         return vec3(0.0f, 0.0f, 1.0f);
-    vec3 posX = GtaoViewPosition(depthX, uvX, reconstruction, inverseProjMatrix);
-    vec3 posY = GtaoViewPosition(depthY, uvY, reconstruction, inverseProjMatrix);
+    vec3 posX = GtaoViewPosition(depthX, uvX, reconstruction, leftEye);
+    vec3 posY = GtaoViewPosition(depthY, uvY, reconstruction, leftEye);
     vec3 deltaY = posY - centerPos;
     if (FramebufferTextureYDirection == 1)
         deltaY = -deltaY;
     return normalize(cross(posX - centerPos, deltaY));
 }
 
-float ComputeRadiusPixels(float radiusVS, float viewDepth, mat4 projMatrix)
+float ComputeRadiusPixels(float radiusVS, float viewDepth, float projY, float depthHeight)
 {
-    float projScale = abs(projMatrix[1][1]) * 0.5f * float(textureSize(DepthView, 0).y);
+    float projScale = abs(projY) * 0.5f * depthHeight;
     return clamp(radiusVS * projScale / max(abs(viewDepth), 1e-3f), 1.0f, MaxRadiusPixels);
 }
 
@@ -136,9 +142,8 @@ float InterleavedGradientNoise(vec2 pixel)
     return fract(52.9829189f * fract(dot(pixel, vec2(0.06711056f, 0.00583715f))));
 }
 
-float ComputeScreenEdgeFade(vec2 uv, float radiusPixels)
+float ComputeScreenEdgeFade(vec2 uv, float radiusPixels, vec2 screenSize)
 {
-    vec2 screenSize = vec2(textureSize(DepthView, 0).xy);
     vec2 edgePixels = min(uv, 1.0f - uv) * screenSize;
     float nearestEdgePixels = min(edgePixels.x, edgePixels.y);
     float fadePixels = clamp(radiusPixels * 0.08f, 2.0f, 8.0f);
@@ -173,21 +178,22 @@ uint UpdateSectors(float minHorizon, float maxHorizon, uint globalOccludedBitfie
     return globalOccludedBitfield | (occludedRange << int(startSector));
 }
 
-uint AccumulateVisibilitySectors(vec3 deltaPos, vec3 viewDir, float normalAngle, float samplingDirection, float thickness, uint occludedSectors)
+uint AccumulateVisibilitySectors(vec3 deltaPos, float dist, vec3 viewDir, float normalAngle, float samplingDirection, float thickness, uint occludedSectors)
 {
-    float deltaLenSq = dot(deltaPos, deltaPos);
-    if (deltaLenSq <= 1e-8f)
+    if (dist <= 1e-4f)
         return occludedSectors;
 
     // Scale backface thickness with distance so coarse raymarch steps form continuous
     // occlusion across walls and pillars instead of thin pinholes.
-    float effectiveThickness = thickness + sqrt(deltaLenSq) * 0.45f;
+    float effectiveThickness = thickness + dist * 0.45f;
     vec3 deltaPosBackface = deltaPos - viewDir * effectiveThickness;
     float deltaBackLenSq = dot(deltaPosBackface, deltaPosBackface);
     if (deltaBackLenSq <= 1e-8f)
         return occludedSectors;
 
-    vec2 frontBackHorizon = vec2(dot(normalize(deltaPos), viewDir), dot(normalize(deltaPosBackface), viewDir));
+    vec2 frontBackHorizon = vec2(
+        dot(deltaPos, viewDir) / dist,
+        dot(deltaPosBackface, viewDir) * inversesqrt(deltaBackLenSq));
     frontBackHorizon = vec2(
         FastAcos(clamp(frontBackHorizon.x, -1.0f, 1.0f)),
         FastAcos(clamp(frontBackHorizon.y, -1.0f, 1.0f)));
@@ -219,34 +225,35 @@ void main()
     vec2 uv = AOTextureUVFromFragPos(FragPos);
 
     bool leftEye = gl_ViewID_OVR == 0;
-    mat4 viewMatrix = leftEye ? LeftEyeViewMatrix : RightEyeViewMatrix;
-    mat4 inverseProjMatrix = leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix;
-    mat4 projMatrix = leftEye ? LeftEyeProjMatrix : RightEyeProjMatrix;
+    float viewLayer = float(gl_ViewID_OVR);
+    float projX = leftEye ? LeftEyeProjMatrix[0][0] : RightEyeProjMatrix[0][0];
+    float projY = leftEye ? LeftEyeProjMatrix[1][1] : RightEyeProjMatrix[1][1];
+    float invProjX = 1.0f / projX;
+    float invProjY = 1.0f / projY;
 
-    float invProjX = 1.0f / projMatrix[0][0];
-    float invProjY = 1.0f / projMatrix[1][1];
-
-    GtaoReconstruction reconstruction = GtaoBuildReconstruction(inverseProjMatrix);
-    float depth = texture(DepthView, vec3(uv, gl_ViewID_OVR)).r;
+    GtaoReconstruction reconstruction = GtaoBuildReconstruction(
+        leftEye ? LeftEyeInverseProjMatrix : RightEyeInverseProjMatrix);
+    float depth = texture(DepthView, vec3(uv, viewLayer)).r;
     if (GtaoIsFarInput(depth))
     {
         OutIntensity = 1.0f;
         return;
     }
-    vec3 centerPos = GtaoViewPosition(depth, uv, reconstruction, inverseProjMatrix);
-    vec3 centerNormal = GetViewNormal(uv, centerPos, viewMatrix, inverseProjMatrix, reconstruction);
+    vec2 screenSize = vec2(textureSize(DepthView, 0).xy);
+    vec2 texelSize = 1.0f / screenSize;
+    vec3 centerPos = GtaoViewPosition(depth, uv, reconstruction, leftEye);
+    vec3 centerNormal = GetViewNormal(uv, centerPos, texelSize, viewLayer, leftEye, reconstruction);
     vec3 viewDir = normalize(-centerPos);
 
     float radiusVS = max(Radius, 0.001f);
-    float radiusPixels = ComputeRadiusPixels(radiusVS, centerPos.z, projMatrix);
+    float radiusPixels = ComputeRadiusPixels(radiusVS, centerPos.z, projY, screenSize.y);
     float falloffStart = clamp(FalloffStartRatio, 0.0f, 1.0f) * radiusVS;
-    vec2 texelSize = 1.0f / textureSize(DepthView, 0).xy;
     float thicknessLimit = radiusVS * clamp(ThicknessHeuristic, 0.0f, 1.0f);
     float bitmaskThickness = max(VisibilityBitmaskThickness, 1e-4f);
 
     int sliceCount = clamp(SliceCount, 1, 8);
     int stepCount = clamp(StepsPerSlice, 1, 16);
-    vec2 noiseCoord = XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, vec2(0.0), vec2(textureSize(DepthView, 0).xy));
+    vec2 noiseCoord = XRENGINE_ScreenNoiseCoord(gl_FragCoord.xy, vec2(0.0), screenSize);
     // Use the Jimenez et al. 2016 4x4 spatial direction and step-jitter pattern so
     // the bilateral blur removes rotation noise without low-frequency diagonal stripes.
     ivec2 noisePixel = ivec2(noiseCoord) + ivec2(int(gl_ViewID_OVR) * 2, 0);
@@ -297,10 +304,10 @@ void main()
             vec2 fUV = uv + offset;
             if (fUV.x > 0.0f && fUV.x < 1.0f && fUV.y > 0.0f && fUV.y < 1.0f)
             {
-                float fDepth = texture(DepthView, vec3(fUV, gl_ViewID_OVR)).r;
+                float fDepth = texture(DepthView, vec3(fUV, viewLayer)).r;
                 if (!GtaoIsFarInput(fDepth))
                 {
-                    vec3 fPos = GtaoViewPosition(fDepth, fUV, reconstruction, inverseProjMatrix);
+                    vec3 fPos = GtaoViewPosition(fDepth, fUV, reconstruction, leftEye);
                     vec3 delta = fPos - centerPos;
                     float dist = length(delta);
 
@@ -312,7 +319,7 @@ void main()
                             if (falloff > 0.01f)
                             {
                                 uint previousSectors = occludedSectors;
-                                uint updatedSectors = AccumulateVisibilitySectors(delta, viewDir, visibilityBitmaskNormalAngle, 1.0f, bitmaskThickness * falloff, occludedSectors);
+                                uint updatedSectors = AccumulateVisibilitySectors(delta, dist, viewDir, visibilityBitmaskNormalAngle, 1.0f, bitmaskThickness * falloff, occludedSectors);
                                 occludedSectorWeight += float(bitCount(updatedSectors & ~previousSectors)) * falloff;
                                 occludedSectors = updatedSectors;
                             }
@@ -341,10 +348,10 @@ void main()
             vec2 bUV = uv - offset;
             if (bUV.x > 0.0f && bUV.x < 1.0f && bUV.y > 0.0f && bUV.y < 1.0f)
             {
-                float bDepth = texture(DepthView, vec3(bUV, gl_ViewID_OVR)).r;
+                float bDepth = texture(DepthView, vec3(bUV, viewLayer)).r;
                 if (!GtaoIsFarInput(bDepth))
                 {
-                    vec3 bPos = GtaoViewPosition(bDepth, bUV, reconstruction, inverseProjMatrix);
+                    vec3 bPos = GtaoViewPosition(bDepth, bUV, reconstruction, leftEye);
                     vec3 delta = bPos - centerPos;
                     float dist = length(delta);
 
@@ -356,7 +363,7 @@ void main()
                             if (falloff > 0.01f)
                             {
                                 uint previousSectors = occludedSectors;
-                                uint updatedSectors = AccumulateVisibilitySectors(delta, viewDir, visibilityBitmaskNormalAngle, -1.0f, bitmaskThickness * falloff, occludedSectors);
+                                uint updatedSectors = AccumulateVisibilitySectors(delta, dist, viewDir, visibilityBitmaskNormalAngle, -1.0f, bitmaskThickness * falloff, occludedSectors);
                                 occludedSectorWeight += float(bitCount(updatedSectors & ~previousSectors)) * falloff;
                                 occludedSectors = updatedSectors;
                             }
@@ -393,6 +400,6 @@ void main()
     }
 
     visibility = clamp(visibility / max(weightSum, 1e-5f), 0.0f, 1.0f);
-    visibility = mix(1.0f, visibility, ComputeScreenEdgeFade(uv, radiusPixels));
+    visibility = mix(1.0f, visibility, ComputeScreenEdgeFade(uv, radiusPixels, screenSize));
     OutIntensity = visibility;
 }

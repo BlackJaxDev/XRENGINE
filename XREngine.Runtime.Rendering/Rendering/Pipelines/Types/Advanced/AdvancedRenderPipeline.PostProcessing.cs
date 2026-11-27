@@ -342,20 +342,23 @@ public partial class AdvancedRenderPipeline
             get
             {
                 XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+                PipelinePostProcessState? state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
                 return _generation.Advance(new FinalPostProcessBindingKey(
                     GetTexture<XRTexture>(PostProcessOutputTextureName),
                     instance?.ResourceGeneration ?? 0,
-                    ResolveLensDistortionInputs(ResolveCurrentSettingsCamera()?.GetActivePostProcessState())));
+                    ResolveLensDistortionInputs(state),
+                    ResolveFinalPostProcessRcasSharpness(state)));
             }
         }
 
         public ulong ResourceGeneration => Generation;
 
         public void PublishUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
-            => ApplyLensDistortionUniforms(
-                ResolveCurrentSettingsCamera()?.GetActivePostProcessState(),
-                materialProgram,
-                enabled: true);
+        {
+            PipelinePostProcessState? state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
+            ApplyLensDistortionUniforms(state, materialProgram, enabled: true);
+            materialProgram.Uniform("RcasSharpness", ResolveFinalPostProcessRcasSharpness(state));
+        }
 
         public void PublishResources(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
         {
@@ -368,7 +371,31 @@ public partial class AdvancedRenderPipeline
     private readonly record struct FinalPostProcessBindingKey(
         XRTexture? Source,
         int PipelineResourceGeneration,
-        LensDistortionInputs Lens);
+        LensDistortionInputs Lens,
+        float RcasSharpness);
+
+    private static bool ShouldRunAdvancedTsrSharpen()
+    {
+        if (ResolveEffectiveAntiAliasingSharpnessForFrame() <= 1e-5f)
+            return false;
+
+        PipelinePostProcessState? state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
+        return ResolveTemporalSettings(state).DebugMode == TemporalDebugViewMode.Disabled;
+    }
+
+    private static float ResolveFinalPostProcessRcasSharpness(PipelinePostProcessState? state)
+    {
+        if (ResolveEffectiveAntiAliasingModeForFrame() != EAntiAliasingMode.Taa)
+            return 0.0f;
+
+        float sharpness = ResolveEffectiveAntiAliasingSharpnessForFrame();
+        if (sharpness <= 1e-5f)
+            return 0.0f;
+
+        return ResolveTemporalSettings(state).DebugMode == TemporalDebugViewMode.Disabled
+            ? sharpness
+            : 0.0f;
+    }
 
     private void ApplyFinalPostProcessProgramBindings(XRRenderProgram materialProgram)
     {
@@ -378,6 +405,7 @@ public partial class AdvancedRenderPipeline
 
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyLensDistortionUniforms(state, materialProgram, enabled: true);
+        materialProgram.Uniform("RcasSharpness", ResolveFinalPostProcessRcasSharpness(state));
     }
 
     private void ApplyFxaaProgramBindings(XRRenderProgram materialProgram)
@@ -411,13 +439,27 @@ public partial class AdvancedRenderPipeline
         };
     }
 
+    private static readonly string[] TsrPortalCurrentToPreviousClipUniformNames =
+    [
+        "TsrPortalCurrentToPreviousClip0",
+        "TsrPortalCurrentToPreviousClip1",
+        "TsrPortalCurrentToPreviousClip2",
+        "TsrPortalCurrentToPreviousClip3",
+        "TsrPortalCurrentToPreviousClip4",
+        "TsrPortalCurrentToPreviousClip5",
+        "TsrPortalCurrentToPreviousClip6",
+        "TsrPortalCurrentToPreviousClip7",
+    ];
+
     private void ApplyTsrUpscaleProgramBindings(XRRenderProgram program)
     {
         program.Sampler("AdvancedReactiveMask",
             RequirePostProcessTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName), 5);
+        program.Sampler("TsrVisibilityMetadata",
+            RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata), 7);
         if (EditorHighlightModule is not null)
             program.Sampler(EditorHighlightMaskTextureName,
-                RequirePostProcessTexture(EditorHighlightMaskTextureName), 7);
+                RequirePostProcessTexture(EditorHighlightMaskTextureName), 8);
         XRTexture? source = GetTexture<XRTexture>(FinalPostProcessOutputTextureName);
         if (source is not null)
             program.Sampler(PostProcessOutputTextureName, source, 0);
@@ -519,6 +561,51 @@ public partial class AdvancedRenderPipeline
         program.Uniform("TsrClipDepthZeroToOneRight", depthZeroToOneRight);
         program.Uniform("TsrReversedDepth", reversedDepth);
         program.Uniform("TsrReversedDepthRight", reversedDepthRight);
+
+        int portalViewBase = 0;
+        int portalReprojectionCount = 0;
+        uint portalReprojectionValidMask = 0u;
+        if (depthReprojectionReady && _portalFramePlan.Count > 0)
+        {
+            portalViewBase = _portalFramePlan.PrimaryViewCount;
+            ReadOnlySpan<AdvancedScheduledPortalView> portalNodes = _portalFramePlan.ScheduledNodes;
+            ReadOnlySpan<AdvancedViewRecord> portalViews = _portalFramePlan.PortalViewRecords;
+            portalReprojectionCount = Math.Min(
+                Math.Min(portalNodes.Length, portalViews.Length),
+                TsrPortalCurrentToPreviousClipUniformNames.Length);
+            for (int slot = 0; slot < portalReprojectionCount; ++slot)
+            {
+                ref readonly AdvancedScheduledPortalView node = ref portalNodes[slot];
+                // Only transparent-background portals keep reflected scene depth in DepthView.
+                // Opaque portals overwrite DepthView with mirror plane depth in primary view space.
+                if (!node.Surface.TransparentBackground)
+                    continue;
+                ref readonly AdvancedViewRecord portalView = ref portalViews[slot];
+                if ((portalView.Flags & EAdvancedViewRecordFlags.TemporalHistoryValid) == 0)
+                    continue;
+                Vector2 eyeCurrentJitterUv = node.PrimaryViewIndex == 0u ? currentJitterUv : currentJitterUvRight;
+                Vector2 eyePreviousJitterUv = node.PrimaryViewIndex == 0u ? previousJitterUv : previousJitterUvRight;
+                if (!TemporalMatrixMath.TryComputeCurrentToPreviousClip(
+                        portalView.ViewProjectionJittered,
+                        portalView.PreviousViewProjectionJittered,
+                        portalView.ViewProjectionUnjittered,
+                        portalView.PreviousViewProjectionUnjittered,
+                        eyeCurrentJitterUv,
+                        eyePreviousJitterUv,
+                        out Matrix4x4 portalCurrentToPreviousClip))
+                {
+                    continue;
+                }
+
+                portalReprojectionValidMask |= 1u << slot;
+                program.Uniform(TsrPortalCurrentToPreviousClipUniformNames[slot], portalCurrentToPreviousClip);
+            }
+            if (portalReprojectionValidMask == 0u)
+                portalReprojectionCount = 0;
+        }
+        program.Uniform("TsrPortalViewBase", portalViewBase);
+        program.Uniform("TsrPortalReprojectionCount", portalReprojectionCount);
+        program.Uniform("TsrPortalReprojectionValidMask", portalReprojectionValidMask);
         program.Uniform("FeedbackMin", temporalSettings.FeedbackMin);
         program.Uniform("FeedbackMax", temporalSettings.FeedbackMax);
         program.Uniform("VarianceGamma", temporalSettings.VarianceGamma);
@@ -530,6 +617,7 @@ public partial class AdvancedRenderPipeline
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
+        program.Uniform("AntiAliasingFilterMode", (int)ResolveEffectiveAntiAliasingFilterModeForFrame());
     }
 
     private void ApplyBrightPassProgramBindings(XRRenderProgram program)
@@ -631,6 +719,7 @@ public partial class AdvancedRenderPipeline
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
+        program.Uniform("AntiAliasingFilterMode", (int)ResolveEffectiveAntiAliasingFilterModeForFrame());
     }
 
     private static bool _loggedVolumetricFogScatterLightsOnce;

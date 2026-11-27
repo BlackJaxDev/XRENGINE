@@ -74,7 +74,7 @@ uint XR_ADV_FoveatedQuadBlockSize(uvec2 pixel, XRAdvancedViewRecord view)
 }
 
 // True when pixel is a follower: its block's top-left pixel (the
-// representative) shows the same draw and primitive and shades for it.
+// representative) shows the same draw, primitive, and view and shades for it.
 bool XR_ADV_TryGetFoveatedRepresentative(
     uvec2 pixel,
     uint viewIndex,
@@ -92,7 +92,12 @@ bool XR_ADV_TryGetFoveatedRepresentative(
         return false;
     uvec2 representativeIdentity =
         texelFetch(VisibilityIdentity, XR_ADV_PIXEL(representative, viewIndex), 0).rg;
-    return all(equal(representativeIdentity, identity));
+    if (!all(equal(representativeIdentity, identity)))
+        return false;
+    uint pixelMeta = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
+    uint repMeta = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(representative, viewIndex), 0).r;
+    return ((pixelMeta >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu) ==
+        ((repMeta >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu);
 }
 
 // Diagnostic tint test for edge half-rate mode. True when pixel is the
@@ -108,12 +113,14 @@ bool XR_ADV_IsTintedEdgeHalfRateRepresentative(uvec2 pixel, uint viewIndex, uvec
         return false;
     if (XR_ADV_EdgeHalfRateBlockSize(pixel, XR_ADV_LoadView(viewIndex)) != 2u)
         return false;
+    uint repView = (texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu;
     for (uint i = 1u; i < 4u; ++i)
     {
         uvec2 follower = pixel + uvec2(i & 1u, i >> 1u);
         if (any(greaterThanEqual(follower, u_Push.screenExtent)))
             continue;
-        if (all(equal(texelFetch(VisibilityIdentity, XR_ADV_PIXEL(follower, viewIndex), 0).rg, identity)))
+        if (all(equal(texelFetch(VisibilityIdentity, XR_ADV_PIXEL(follower, viewIndex), 0).rg, identity)) &&
+            ((texelFetch(VisibilityMetadata, XR_ADV_PIXEL(follower, viewIndex), 0).r >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu) == repView)
             return true;
     }
     return false;

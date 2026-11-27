@@ -27,7 +27,11 @@ namespace XREngine.Components.Scene.Mesh
             float projectedPixelSpan = 0.0f;
             float screenCoverage = 0.0f;
             if (camera is not null && TryGetCurrentStreamingBounds(out AABB worldBounds))
+            {
                 CalculateTextureStreamingScreenMetrics(camera, worldBounds, distanceFromCamera, out projectedPixelSpan, out screenCoverage);
+                if (projectedPixelSpan > 0.0f && metrics.AtlasSpanScale > 1.0f)
+                    projectedPixelSpan = MathF.Min(projectedPixelSpan * metrics.AtlasSpanScale, 4096.0f);
+            }
 
             return new ImportedTextureStreamingUsage(
                 distanceFromCamera,
@@ -38,16 +42,7 @@ namespace XREngine.Components.Scene.Mesh
         }
 
         private bool TryGetCurrentStreamingBounds(out AABB worldBounds)
-        {
-            worldBounds = default;
-            RenderInfo3D renderInfo = RenderInfo;
-            AABB localBounds = renderInfo.LocalCullingVolume ?? _bindPoseBounds;
-            if (!localBounds.IsValid)
-                return TryGetWorldBounds(out worldBounds);
-
-            worldBounds = TransformBounds(localBounds, renderInfo.CullingOffsetMatrix);
-            return worldBounds.IsValid;
-        }
+            => TryGetWorldBounds(out worldBounds);
 
         private static void CalculateTextureStreamingScreenMetrics(XRCamera camera, AABB worldBounds, float distanceFromCamera, out float projectedPixelSpan, out float screenCoverage)
         {
@@ -63,8 +58,11 @@ namespace XREngine.Components.Scene.Mesh
             for (int viewportIndex = 0; viewportIndex < camera.Viewports.Count; viewportIndex++)
             {
                 XRViewport viewport = camera.Viewports[viewportIndex];
-                int viewportWidth = Math.Max(1, viewport.InternalWidth > 0 ? viewport.InternalWidth : viewport.Width);
-                int viewportHeight = Math.Max(1, viewport.InternalHeight > 0 ? viewport.InternalHeight : viewport.Height);
+                // Use the larger of output and internal viewport dimensions so
+                // upscaled render modes (such as 0.67x TSR) stream textures for
+                // the final output pixel density instead of the reduced internal size.
+                int viewportWidth = Math.Max(1, Math.Max(viewport.Width, viewport.InternalWidth));
+                int viewportHeight = Math.Max(1, Math.Max(viewport.Height, viewport.InternalHeight));
 
                 float projectedWidth = Math.Clamp(diameter / frustumSize.X * viewportWidth, 0.0f, viewportWidth);
                 float projectedHeight = Math.Clamp(diameter / frustumSize.Y * viewportHeight, 0.0f, viewportHeight);
@@ -73,11 +71,12 @@ namespace XREngine.Components.Scene.Mesh
             }
         }
 
-        private sealed class MeshTextureStreamingMetrics(float uvDensityHint, SparseTextureStreamingPageSelection pageSelection)
+        private sealed class MeshTextureStreamingMetrics(float uvDensityHint, float atlasSpanScale, SparseTextureStreamingPageSelection pageSelection)
         {
-            public static MeshTextureStreamingMetrics Default { get; } = new(1.0f, SparseTextureStreamingPageSelection.Full);
+            public static MeshTextureStreamingMetrics Default { get; } = new(1.0f, 1.0f, SparseTextureStreamingPageSelection.Full);
 
             public float UvDensityHint { get; } = uvDensityHint;
+            public float AtlasSpanScale { get; } = atlasSpanScale;
             public SparseTextureStreamingPageSelection PageSelection { get; } = pageSelection.Normalize();
         }
 
@@ -126,6 +125,10 @@ namespace XREngine.Components.Scene.Mesh
 
                 float surfaceArea = 0.0f;
                 float uvArea = 0.0f;
+                float areaWeightedDensitySum = 0.0f;
+                Vector3 halfExtents = mesh.Bounds.HalfExtents;
+                float maxExtent = MathF.Max(1.0e-3f, MathF.Max(halfExtents.X, MathF.Max(halfExtents.Y, halfExtents.Z)) * 2.0f);
+                float maxTriangleDensity = maxExtent * 8.0f;
                 if (mesh.Triangles is { Count: > 0 } triangles)
                 {
                     for (int triangleIndex = 0; triangleIndex < triangles.Count; triangleIndex++)
@@ -154,18 +157,28 @@ namespace XREngine.Components.Scene.Mesh
 
                         surfaceArea += triangleSurfaceArea;
                         uvArea += triangleUvArea;
+                        float triangleDensity = MathF.Min(MathF.Sqrt(triangleSurfaceArea / triangleUvArea), maxTriangleDensity);
+                        areaWeightedDensitySum += triangleSurfaceArea * triangleDensity;
                     }
                 }
 
                 float uvDensityHint = 1.0f;
+                float atlasSpanScale = 1.0f;
                 if (surfaceArea > 1.0e-6f && uvArea > 1.0e-6f)
                 {
-                    Vector3 halfExtents = mesh.Bounds.HalfExtents;
-                    float maxExtent = MathF.Max(1.0e-3f, MathF.Max(halfExtents.X, MathF.Max(halfExtents.Y, halfExtents.Z)) * 2.0f);
-                    uvDensityHint = Math.Clamp(MathF.Sqrt(uvArea / surfaceArea) * maxExtent, 0.5f, 2.0f);
+                    // One output pixel spans roughly maxExtent / projectedPixelSpan world units.
+                    // Compare whole-mesh density with area-weighted per-triangle density so high-detail
+                    // islands (such as avatar faces and eyes) are not diluted by low-density areas, and
+                    // keep 2x mip headroom so anisotropic filtering and TSR supersampling stay sharp.
+                    float meanDensity = MathF.Sqrt(surfaceArea / uvArea) / maxExtent;
+                    float localDensity = (areaWeightedDensitySum / surfaceArea) / maxExtent;
+                    float rawDensity = MathF.Max(meanDensity, localDensity);
+                    const float mipFilteringHeadroom = 2.0f;
+                    uvDensityHint = Math.Clamp(rawDensity, 0.5f, 2.0f);
+                    atlasSpanScale = Math.Clamp((rawDensity * mipFilteringHeadroom) / uvDensityHint, 1.0f, 4.0f);
                 }
 
-                return new MeshTextureStreamingMetrics(uvDensityHint, pageSelection);
+                return new MeshTextureStreamingMetrics(uvDensityHint, atlasSpanScale, pageSelection);
             }
 
             private static bool TryGetPrimaryTexCoord(XRMesh mesh, int vertexIndex, out Vector2 uv)

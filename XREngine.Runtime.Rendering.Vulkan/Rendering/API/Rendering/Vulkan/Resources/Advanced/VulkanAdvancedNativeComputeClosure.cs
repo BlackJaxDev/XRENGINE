@@ -119,6 +119,36 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
            DecalBufferAlbedoDescriptor.Sampler.Handle != 0 &&
            DecalBufferSurfaceDescriptor.Sampler.Handle != 0;
 
+    /// <summary>RVC pixel-to-shadelet R32UI image array group. Null when shadelet caching is off.</summary>
+    internal VulkanPhysicalImageGroup? RvcPixelToShadelet { get; init; }
+
+    /// <summary>Whole-array storage view for <see cref="RvcPixelToShadelet"/>.</summary>
+    internal VulkanAdvancedNativeImageClosure RvcPixelToShadeletResource { get; init; }
+
+    internal DescriptorImageInfo RvcPixelToShadeletDescriptor { get; init; }
+
+    /// <summary>RVC shadelet record buffer for the active frame slot.</summary>
+    internal VulkanFrozenBufferBarrier RvcShadeletRecords { get; init; }
+
+    /// <summary>RVC Standard/Uber shadelet bin index buffer for the active frame slot.</summary>
+    internal VulkanFrozenBufferBarrier RvcShadeletBinIndices { get; init; }
+
+    /// <summary>RVC packed shaded-output buffer for the active frame slot.</summary>
+    internal VulkanFrozenBufferBarrier RvcShadeletShadedOutputs { get; init; }
+
+    /// <summary>RVC indirect dispatch and counter buffer for the active frame slot.</summary>
+    internal VulkanFrozenBufferBarrier RvcShadeletDispatchCounters { get; init; }
+
+    /// <summary>True when the closure carries the complete RVC shadelet-cache image and buffers.</summary>
+    internal bool HasRvcShadeletCache
+        => RvcPixelToShadelet is { IsAllocated: true } &&
+           RvcPixelToShadeletResource.IsValid &&
+           RvcPixelToShadeletDescriptor.ImageView.Handle != 0 &&
+           HasFrozenRange(RvcShadeletRecords) &&
+           HasFrozenRange(RvcShadeletBinIndices) &&
+           HasFrozenRange(RvcShadeletShadedOutputs) &&
+           HasFrozenRange(RvcShadeletDispatchCounters);
+
     /// <summary>True when the closure carries the complete RVC telemetry inputs and counters.</summary>
     internal bool HasRvcTelemetry
         => HasFrozenRange(RvcTelemetryCounters) &&

@@ -3,12 +3,50 @@ using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering.Vulkan;
 
-/// <summary>Creates the fullscreen graphics pipeline that resolves raw visibility samples.</summary>
+/// <summary>Creates the fullscreen graphics pipelines that resolve raw visibility samples.</summary>
 internal static class VulkanAdvancedMsaaResolvePipelineFactory
 {
+    /// <summary>
+    /// Stencil-only replacement state used after MSAA visibility resolve to repopulate single-sample
+    /// portal node bits (<c>0x7C</c>) via Vulkan 1.0 dynamic <see cref="DynamicState.StencilReference"/>.
+    /// </summary>
+    internal static StencilOpState PortalStencilRepopulateState => new()
+    {
+        FailOp = StencilOp.Keep,
+        PassOp = StencilOp.Replace,
+        DepthFailOp = StencilOp.Keep,
+        CompareOp = CompareOp.Always,
+        CompareMask = 0xFFu,
+        WriteMask = AdvancedStencilBitLayout.PortalNodeMask,
+        Reference = 0u,
+    };
+
+    /// <summary>Dynamic states required by the portal MSAA stencil repopulation pipeline.</summary>
+    internal static ReadOnlySpan<DynamicState> PortalStencilRepopulateDynamicStates
+        => [DynamicState.Viewport, DynamicState.Scissor, DynamicState.StencilReference];
+
     internal static bool TryPrepare(
         VkRenderProgram program,
         in VulkanAdvancedVisibilityTargetClosure target,
+        out VulkanAdvancedMsaaResolvePipeline prepared,
+        out string reason)
+        => TryPrepareCore(program, in target, portalStencilRepopulate: false, out prepared, out reason);
+
+    /// <summary>
+    /// Prepares the stencil-only fullscreen pipeline that repopulates single-sample canonical
+    /// portal stencil node bits inside the <c>MultisampleResolve</c> render pass.
+    /// </summary>
+    internal static bool TryPreparePortalStencilRepopulate(
+        VkRenderProgram program,
+        in VulkanAdvancedVisibilityTargetClosure target,
+        out VulkanAdvancedMsaaResolvePipeline prepared,
+        out string reason)
+        => TryPrepareCore(program, in target, portalStencilRepopulate: true, out prepared, out reason);
+
+    private static bool TryPrepareCore(
+        VkRenderProgram program,
+        in VulkanAdvancedVisibilityTargetClosure target,
+        bool portalStencilRepopulate,
         out VulkanAdvancedMsaaResolvePipeline prepared,
         out string reason)
     {
@@ -34,6 +72,15 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
             return false;
         }
 
+        string label = portalStencilRepopulate
+            ? "AdvancedMsaaPortalStencilRepopulate"
+            : "AdvancedMsaaVisibilityResolve";
+        StencilOpState stencilState = portalStencilRepopulate ? PortalStencilRepopulateState : default;
+        ColorComponentFlags colorWriteMask = portalStencilRepopulate
+            ? 0
+            : ColorComponentFlags.RBit | ColorComponentFlags.GBit |
+                ColorComponentFlags.BBit | ColorComponentFlags.ABit;
+
         VulkanGraphicsPipelineKey key = new(
             PrimitiveTopology.TriangleList,
             target.UsesDynamicRendering,
@@ -45,15 +92,15 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
             program.DescriptorSchemaFingerprint,
             program.PipelineLayout.Handle,
             program.MeshTaskBackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
-            ComputePassMetadataHash(in target),
+            ComputePassMetadataHash(in target, label),
             ComputeFeatureProfileHash(program),
             SampleCountFlags.Count1Bit,
-            DepthTestEnabled: true,
-            DepthWriteEnabled: true,
+            DepthTestEnabled: !portalStencilRepopulate,
+            DepthWriteEnabled: !portalStencilRepopulate,
             CompareOp.Always,
-            StencilTestEnabled: false,
-            default,
-            default,
+            StencilTestEnabled: portalStencilRepopulate,
+            stencilState,
+            stencilState,
             0u,
             CullModeFlags.None,
             FrontFace.CounterClockwise,
@@ -65,8 +112,7 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
             BlendFactor.Zero,
             BlendFactor.One,
             BlendFactor.Zero,
-            ColorComponentFlags.RBit | ColorComponentFlags.GBit |
-                ColorComponentFlags.BBit | ColorComponentFlags.ABit,
+            colorWriteMask,
             1u,
             RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl);
 
@@ -94,15 +140,16 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
             PipelineDepthStencilStateCreateInfo depth = new()
             {
                 SType = StructureType.PipelineDepthStencilStateCreateInfo,
-                DepthTestEnable = Vk.True,
-                DepthWriteEnable = Vk.True,
+                DepthTestEnable = portalStencilRepopulate ? Vk.False : Vk.True,
+                DepthWriteEnable = portalStencilRepopulate ? Vk.False : Vk.True,
                 DepthCompareOp = CompareOp.Always,
+                StencilTestEnable = portalStencilRepopulate ? Vk.True : Vk.False,
+                Front = stencilState,
+                Back = stencilState,
             };
             PipelineColorBlendAttachmentState blend = new()
             {
-                ColorWriteMask = ColorComponentFlags.RBit |
-                    ColorComponentFlags.GBit | ColorComponentFlags.BBit |
-                    ColorComponentFlags.ABit,
+                ColorWriteMask = colorWriteMask,
                 BlendEnable = Vk.False,
                 ColorBlendOp = BlendOp.Add,
                 AlphaBlendOp = BlendOp.Add,
@@ -113,6 +160,9 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
             };
             PipelineColorBlendAttachmentState[] blends = new PipelineColorBlendAttachmentState[3];
             blends.AsSpan().Fill(blend);
+            DynamicState[] dynamicStates = portalStencilRepopulate
+                ? [DynamicState.Viewport, DynamicState.Scissor, DynamicState.StencilReference]
+                : [DynamicState.Viewport, DynamicState.Scissor];
             using VulkanPipelineCompilationDependencyLease lease =
                 manager.AcquireCompilationDependencyLease();
             PipelineShaderStageCreateInfo[] graphicsStages =
@@ -130,7 +180,7 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
                     program.MeshTaskBackendContext.Supports(EVulkanDeviceCapability.GraphicsPipelineLibrary),
                 lease.Generation,
                 key,
-                "AdvancedMsaaVisibilityResolve",
+                label,
                 colorAttachmentCount,
                 program.PipelineLayout,
                 program.MeshTaskBackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
@@ -146,7 +196,7 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
                 samples,
                 depth,
                 blends,
-                [DynamicState.Viewport, DynamicState.Scissor],
+                dynamicStates,
                 target.UsesDynamicRendering ? default : target.RenderPass,
                 target.UsesDynamicRendering ? target.DynamicRenderingFormats : default,
                 graphicsStages,
@@ -171,7 +221,7 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
 
         if (pipeline.Handle == 0UL)
         {
-            reason = "Vulkan returned a null MSAA visibility resolve pipeline";
+            reason = $"Vulkan returned a null {label} pipeline";
             return false;
         }
 
@@ -181,10 +231,11 @@ internal static class VulkanAdvancedMsaaResolvePipelineFactory
     }
 
     private static ulong ComputePassMetadataHash(
-        in VulkanAdvancedVisibilityTargetClosure target)
+        in VulkanAdvancedVisibilityTargetClosure target,
+        string label)
     {
         VulkanStableHash64 hash = new(schemaVersion: 1);
-        hash.Add("AdvancedMsaaVisibilityResolve");
+        hash.Add(label);
         hash.Add(target.DepthStencilReadOnly ? 1UL : 0UL);
         return hash.Value;
     }

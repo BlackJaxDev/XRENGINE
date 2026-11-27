@@ -84,6 +84,7 @@ public readonly record struct PhysicsChainGpuSolverSettings(float GravityFalloff
     public const int FlagInertRootParent = 16;
     public const int FlagSegmentCollision = 32;
     public const int FlagHoldBetweenSteps = 64;
+    public const int FlagRestBiasGravity = 128;
 
     /// <summary>Gets the settings that keep the default solver behavior.</summary>
     public static PhysicsChainGpuSolverSettings Default { get; } = new(1.0f, 0, 0, 0.0f, 0.0f, 0.0f, Quaternion.Identity);

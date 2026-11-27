@@ -327,6 +327,19 @@ public sealed partial class AdvancedGpuScenePublisher
             scratch.RowMovedPreviousWorld = previousWorld;
             scratch.RowMovedCullBounds = cullBounds;
         }
+        else if (plan.GpuBoundsSource is null &&
+            cullBounds.BoundsVersion != plan.Bounds.BoundsVersion &&
+            !preparing &&
+            scratch.AcceptMovedRows &&
+            CanPatchMovedRow(in plan, in identity))
+        {
+            // Skinned meshes keep an identity world matrix while their CPU-owned world culling
+            // bounds move with the skeleton; patch the instance record on the fast moved-row path.
+            scratch.RowMoved = true;
+            scratch.RowMovedWorld = world;
+            scratch.RowMovedPreviousWorld = previousWorld;
+            scratch.RowMovedCullBounds = cullBounds;
+        }
         if (!IsUnchangedSupportedRow(
                 commandIndex,
                 frameId,

@@ -86,6 +86,8 @@ public static partial class EditorImGuiUI
         private static bool _showAssetExplorer;
         private static bool _showNetworking;
         private static bool _showAnimationClipEditor;
+        private static bool _showAnimStateMachineGraph;
+        private static bool _showDependenciesAndBuildsPanel;
         private static bool _showCutsceneSequencer;
         private static UserSettings? _editorSceneHierarchySettingsSource;
         private static string? _ownedImGuiIniFilename;
@@ -262,6 +264,8 @@ public static partial class EditorImGuiUI
             bool MissingAssets,
             bool Networking,
             bool AnimationClipEditor,
+            bool AnimStateMachineGraph,
+            bool DependenciesAndBuilds,
             bool ShaderGraph,
             bool ArchiveInspector,
             bool TextureStreaming,
@@ -770,6 +774,16 @@ public static partial class EditorImGuiUI
                 using (Engine.Profiler.Start("UI.DrawAnimationClipEditorPanel"))
                     DrawAnimationClipEditorPanel();
             }
+            if (_showAnimStateMachineGraph)
+            {
+                using (Engine.Profiler.Start("UI.DrawAnimStateMachineGraphPanel"))
+                    DrawAnimStateMachineGraphPanel();
+            }
+            if (_showDependenciesAndBuildsPanel)
+            {
+                using (Engine.Profiler.Start("UI.DrawDependenciesAndBuildsPanel"))
+                    DrawDependenciesAndBuildsPanel();
+            }
             // This call also runs when the panel is hidden, because it ends the preview that the panel started.
             using (Engine.Profiler.Start("UI.DrawCutsceneSequencerPanel"))
                 DrawCutsceneSequencerPanel();
@@ -912,15 +926,22 @@ public static partial class EditorImGuiUI
                 io.MouseHoveredViewport == viewport.ID &&
                 !io.WantCaptureMouse;
 
+            bool pauseMenuOpen = EditorPlayModePauseMenu.IsOpen;
             SetScenePointerInputAllowed(
+                !pauseMenuOpen &&
                 editorAcceptsInput &&
                 (allowEngineInputThroughScenePanel || allowEngineInputThroughFullViewport));
 
             // In FullViewportBehindImGuiUI mode, the dock space uses PassthruCentralNode so
             // WantCaptureMouse is already false over the scene area. No extra bypass needed
             // beyond the existing condition — but ensure we don't block engine input when
-            // we're NOT in play mode and the mouse is NOT over an ImGui panel.
-            Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && editorAcceptsInput);
+            // we're NOT in play mode and the mouse is NOT over an ImGui panel, or when the
+            // injected direct-to-play pause menu owns pointer and Escape input.
+            Engine.Input.SetUIInputCaptured(
+                !pauseMenuOpen &&
+                uiWantsCapture &&
+                !allowEngineInputThroughScenePanel &&
+                editorAcceptsInput);
         }
 
         /// <summary>
@@ -1492,6 +1513,8 @@ public static partial class EditorImGuiUI
                 ImGui.MenuItem("Missing Assets", null, ref _showMissingAssets);
                 ImGui.MenuItem("Networking", null, ref _showNetworking);
                 ImGui.MenuItem("Animation Clip Editor", null, ref _showAnimationClipEditor);
+                ImGui.MenuItem("Animation State Machine", null, ref _showAnimStateMachineGraph);
+                ImGui.MenuItem("Dependencies & Builds", null, ref _showDependenciesAndBuildsPanel);
                 ImGui.MenuItem("Cutscene Sequencer", null, ref _showCutsceneSequencer);
                 ImGui.MenuItem("External Texture Browser", null, ref _showExternalTextureBrowser);
                 ImGui.MenuItem("Texture Streaming", null, ref _showTextureStreaming);
@@ -1505,6 +1528,13 @@ public static partial class EditorImGuiUI
 
             if (ImGui.BeginMenu("Tools"))
             {
+                if (ImGui.MenuItem("Dependencies & Builds..."))
+                    OpenDependenciesAndBuildsPanel();
+
+                if (ImGui.MenuItem("Animation State Machine..."))
+                    _showAnimStateMachineGraph = true;
+
+                ImGui.Separator();
                 if (ImGui.MenuItem("Import External Files..."))
                     OpenExternalFilesImportDialog();
 
@@ -1581,6 +1611,18 @@ public static partial class EditorImGuiUI
 
             if (ImGui.MenuItem("Runtime Environment", null, _showRuntimeEnvironment))
                 _showRuntimeEnvironment = !_showRuntimeEnvironment;
+
+            if (ImGui.BeginMenu("UI Backdrop Blur Format"))
+            {
+                EUiBackdropBlurFormat currentFormat = RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat;
+                if (ImGui.MenuItem("Rgba8 (Lowest Bandwidth)", null, currentFormat == EUiBackdropBlurFormat.Rgba8))
+                    RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat = EUiBackdropBlurFormat.Rgba8;
+                if (ImGui.MenuItem("R11fG11fB10f (Packed HDR)", null, currentFormat == EUiBackdropBlurFormat.R11fG11fB10f))
+                    RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat = EUiBackdropBlurFormat.R11fG11fB10f;
+                if (ImGui.MenuItem("Rgba16f (Highest Precision)", null, currentFormat == EUiBackdropBlurFormat.Rgba16f))
+                    RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat = EUiBackdropBlurFormat.Rgba16f;
+                ImGui.EndMenu();
+            }
 
             ImGui.Separator();
 
@@ -2443,6 +2485,8 @@ public static partial class EditorImGuiUI
                 MissingAssets: _showMissingAssets,
                 Networking: _showNetworking,
                 AnimationClipEditor: _showAnimationClipEditor,
+                AnimStateMachineGraph: _showAnimStateMachineGraph,
+                DependenciesAndBuilds: _showDependenciesAndBuildsPanel,
                 ShaderGraph: _showShaderGraphPanel,
                 ArchiveInspector: _showArchiveInspector,
                 TextureStreaming: _showTextureStreaming,
@@ -2521,6 +2565,12 @@ public static partial class EditorImGuiUI
                 case "AnimationClipEditor":
                     _showAnimationClipEditor = value;
                     break;
+                case "AnimStateMachineGraph":
+                    _showAnimStateMachineGraph = value;
+                    break;
+                case "DependenciesAndBuilds":
+                    _showDependenciesAndBuildsPanel = value;
+                    break;
                 case "ShaderGraph":
                     _showShaderGraphPanel = value;
                     break;
@@ -2559,6 +2609,8 @@ public static partial class EditorImGuiUI
             builder.AppendLine($"MissingAssets={FormatIniBoolean(state.MissingAssets)}");
             builder.AppendLine($"Networking={FormatIniBoolean(state.Networking)}");
             builder.AppendLine($"AnimationClipEditor={FormatIniBoolean(state.AnimationClipEditor)}");
+            builder.AppendLine($"AnimStateMachineGraph={FormatIniBoolean(state.AnimStateMachineGraph)}");
+            builder.AppendLine($"DependenciesAndBuilds={FormatIniBoolean(state.DependenciesAndBuilds)}");
             builder.AppendLine($"ShaderGraph={FormatIniBoolean(state.ShaderGraph)}");
             builder.AppendLine($"ArchiveInspector={FormatIniBoolean(state.ArchiveInspector)}");
             builder.AppendLine($"TextureStreaming={FormatIniBoolean(state.TextureStreaming)}");

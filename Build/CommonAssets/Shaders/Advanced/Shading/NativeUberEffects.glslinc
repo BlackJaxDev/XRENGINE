@@ -283,38 +283,91 @@ void XR_UBER_ApplyDecals(
     if (!XR_UBER_HasFeature(XR_UBER_FEATURE_LAYERED_DECALS))
         return;
 
-    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture),
-        UBER_V(_DecalColor), UBER_V(_DecalPosition).xy,
-        UBER_V(_DecalScale).xy, UBER_V(_DecalSideOffset),
-        UBER_V(_DecalTexturePan).xy,
-        UBER_F(_DecalRotation), UBER_F(_DecalRotationSpeed),
-        UBER_I(_DecalUvMode0), 0, UBER_V(_DecalSlotModifiers0),
-        UBER_V(_DecalSlotFx0), UBER_V(_DecalBlendParams0),
-        UBER_V(_DecalAlphaParams0), baseColor, emission);
-    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture1),
-        UBER_V(_DecalColor1), UBER_V(_DecalPosition1).xy,
-        UBER_V(_DecalScale1).xy, UBER_V(_DecalSideOffset1),
-        UBER_V(_DecalTexturePan1).xy,
-        UBER_F(_DecalRotation1), UBER_F(_DecalRotationSpeed1),
-        UBER_I(_DecalUvMode1), 1, UBER_V(_DecalSlotModifiers1),
-        UBER_V(_DecalSlotFx1), UBER_V(_DecalBlendParams1),
-        UBER_V(_DecalAlphaParams1), baseColor, emission);
-    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture2),
-        UBER_V(_DecalColor2), UBER_V(_DecalPosition2).xy,
-        UBER_V(_DecalScale2).xy, UBER_V(_DecalSideOffset2),
-        UBER_V(_DecalTexturePan2).xy,
-        UBER_F(_DecalRotation2), UBER_F(_DecalRotationSpeed2),
-        UBER_I(_DecalUvMode2), 2, UBER_V(_DecalSlotModifiers2),
-        UBER_V(_DecalSlotFx2), UBER_V(_DecalBlendParams2),
-        UBER_V(_DecalAlphaParams2), baseColor, emission);
-    XR_UBER_ApplyDecalSlot(coordinates, UBER_T(_DecalTexture3),
-        UBER_V(_DecalColor3), UBER_V(_DecalPosition3).xy,
-        UBER_V(_DecalScale3).xy, UBER_V(_DecalSideOffset3),
-        UBER_V(_DecalTexturePan3).xy,
-        UBER_F(_DecalRotation3), UBER_F(_DecalRotationSpeed3),
-        UBER_I(_DecalUvMode3), 3, UBER_V(_DecalSlotModifiers3),
-        UBER_V(_DecalSlotFx3), UBER_V(_DecalBlendParams3),
-        UBER_V(_DecalAlphaParams3), baseColor, emission);
+    // Loop over the four decal slots through one XR_UBER_ApplyDecalSlot call site
+    // so shader compilers do not inline four copies of decal sampling and masking.
+    for (int slot = 0; slot < 4; ++slot)
+    {
+        uint textureSlot;
+        vec4 color;
+        vec2 position;
+        vec2 scale;
+        vec4 sideOffset;
+        vec2 pan;
+        float angle;
+        float angleSpeed;
+        int uvSelector;
+        vec4 modifiers;
+        vec4 effects;
+        vec4 blendParameters;
+        vec4 alphaParams;
+        if (slot == 0)
+        {
+            textureSlot = UBER_T(_DecalTexture);
+            color = UBER_V(_DecalColor);
+            position = UBER_V(_DecalPosition).xy;
+            scale = UBER_V(_DecalScale).xy;
+            sideOffset = UBER_V(_DecalSideOffset);
+            pan = UBER_V(_DecalTexturePan).xy;
+            angle = UBER_F(_DecalRotation);
+            angleSpeed = UBER_F(_DecalRotationSpeed);
+            uvSelector = UBER_I(_DecalUvMode0);
+            modifiers = UBER_V(_DecalSlotModifiers0);
+            effects = UBER_V(_DecalSlotFx0);
+            blendParameters = UBER_V(_DecalBlendParams0);
+            alphaParams = UBER_V(_DecalAlphaParams0);
+        }
+        else if (slot == 1)
+        {
+            textureSlot = UBER_T(_DecalTexture1);
+            color = UBER_V(_DecalColor1);
+            position = UBER_V(_DecalPosition1).xy;
+            scale = UBER_V(_DecalScale1).xy;
+            sideOffset = UBER_V(_DecalSideOffset1);
+            pan = UBER_V(_DecalTexturePan1).xy;
+            angle = UBER_F(_DecalRotation1);
+            angleSpeed = UBER_F(_DecalRotationSpeed1);
+            uvSelector = UBER_I(_DecalUvMode1);
+            modifiers = UBER_V(_DecalSlotModifiers1);
+            effects = UBER_V(_DecalSlotFx1);
+            blendParameters = UBER_V(_DecalBlendParams1);
+            alphaParams = UBER_V(_DecalAlphaParams1);
+        }
+        else if (slot == 2)
+        {
+            textureSlot = UBER_T(_DecalTexture2);
+            color = UBER_V(_DecalColor2);
+            position = UBER_V(_DecalPosition2).xy;
+            scale = UBER_V(_DecalScale2).xy;
+            sideOffset = UBER_V(_DecalSideOffset2);
+            pan = UBER_V(_DecalTexturePan2).xy;
+            angle = UBER_F(_DecalRotation2);
+            angleSpeed = UBER_F(_DecalRotationSpeed2);
+            uvSelector = UBER_I(_DecalUvMode2);
+            modifiers = UBER_V(_DecalSlotModifiers2);
+            effects = UBER_V(_DecalSlotFx2);
+            blendParameters = UBER_V(_DecalBlendParams2);
+            alphaParams = UBER_V(_DecalAlphaParams2);
+        }
+        else
+        {
+            textureSlot = UBER_T(_DecalTexture3);
+            color = UBER_V(_DecalColor3);
+            position = UBER_V(_DecalPosition3).xy;
+            scale = UBER_V(_DecalScale3).xy;
+            sideOffset = UBER_V(_DecalSideOffset3);
+            pan = UBER_V(_DecalTexturePan3).xy;
+            angle = UBER_F(_DecalRotation3);
+            angleSpeed = UBER_F(_DecalRotationSpeed3);
+            uvSelector = UBER_I(_DecalUvMode3);
+            modifiers = UBER_V(_DecalSlotModifiers3);
+            effects = UBER_V(_DecalSlotFx3);
+            blendParameters = UBER_V(_DecalBlendParams3);
+            alphaParams = UBER_V(_DecalAlphaParams3);
+        }
+        XR_UBER_ApplyDecalSlot(coordinates, textureSlot, color, position, scale, sideOffset, pan,
+            angle, angleSpeed, uvSelector, slot, modifiers, effects, blendParameters,
+            alphaParams, baseColor, emission);
+    }
 }
 
 #endif

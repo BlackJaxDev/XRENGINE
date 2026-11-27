@@ -127,12 +127,14 @@ namespace XREngine.Data.Components.Scene
         {
             base.OnSceneNodeActivated();
             RuntimeVrStateServices.RecalcMatrixOnDraw += VRState_RecalcMatrixOnDraw;
+            RuntimeVrStateServices.LateXrPoseUpdated += OnLateXrPoseUpdated;
             RuntimeVrStateServices.FrameAdvanced += MarkLocalModified;
         }
         protected override void OnSceneNodeDeactivated()
         {
             base.OnSceneNodeDeactivated();
             RuntimeVrStateServices.RecalcMatrixOnDraw -= VRState_RecalcMatrixOnDraw;
+            RuntimeVrStateServices.LateXrPoseUpdated -= OnLateXrPoseUpdated;
             RuntimeVrStateServices.FrameAdvanced -= MarkLocalModified;
         }
 
@@ -195,6 +197,16 @@ namespace XREngine.Data.Components.Scene
         {
             RuntimeVrStateServices.TryCopyTrackingSnapshot(Span<RuntimeVrTrackerPose>.Empty, out RuntimeVrTrackingSnapshot snapshot, out _);
             return snapshot;
+        }
+
+        private void OnLateXrPoseUpdated()
+        {
+            // Refresh controllers and trackers (and their child render models and pose spheres)
+            // from the OpenXR late pose without mutating the HMD render matrix used by desktop views.
+            if (this is XREngine.Scene.Transforms.VRHeadsetTransform)
+                return;
+
+            VRState_RecalcMatrixOnDraw(RuntimeVrPoseTiming.Late);
         }
 
         private void VRState_RecalcMatrixOnDraw(RuntimeVrPoseTiming timing)

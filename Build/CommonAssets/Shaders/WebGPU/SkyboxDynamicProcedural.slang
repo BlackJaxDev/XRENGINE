@@ -39,6 +39,21 @@ float Hash(float2 p)
     return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453123);
 }
 
+// Integer-lattice PCG3D hash so adjacent noise cells evaluate identical bit-exact
+// corner values regardless of floating-point contraction or driver optimization.
+float Hash3Lattice(int3 cell)
+{
+    uint3 v = uint3(cell) * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return float(v.x ^ v.y ^ v.z) * (1.0 / 4294967296.0);
+}
+
 float Hash3(float3 p)
 {
     p = frac(p * float3(443.8975, 397.2973, 491.1871));
@@ -65,27 +80,37 @@ float Noise(float2 p)
 {
     float2 i = floor(p);
     float2 f = frac(p);
-    float2 u = f * f * (3.0 - 2.0 * f);
+    float2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
     return lerp(lerp(Hash(i + float2(0.0, 0.0)), Hash(i + float2(1.0, 0.0)), u.x),
                lerp(Hash(i + float2(0.0, 1.0)), Hash(i + float2(1.0, 1.0)), u.x), u.y);
 }
 
-// 3D value noise on a direction - seamless on the sphere, no pole distortion.
+// 3D value noise with an integer lattice hash and C2 quintic interpolation so
+// cell boundaries stay seamless and free of axis-aligned creases.
 float Noise3(float3 p)
 {
-    float3 i = floor(p);
-    float3 f = frac(p);
-    float3 u = f * f * (3.0 - 2.0 * f);
-    float n000 = Hash3(i);
-    float n100 = Hash3(i + float3(1.0, 0.0, 0.0));
-    float n010 = Hash3(i + float3(0.0, 1.0, 0.0));
-    float n110 = Hash3(i + float3(1.0, 1.0, 0.0));
-    float n001 = Hash3(i + float3(0.0, 0.0, 1.0));
-    float n101 = Hash3(i + float3(1.0, 0.0, 1.0));
-    float n011 = Hash3(i + float3(0.0, 1.0, 1.0));
-    float n111 = Hash3(i + float3(1.0, 1.0, 1.0));
+    float3 fl = floor(p);
+    int3 i = int3(fl);
+    float3 f = p - fl;
+    float3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float n000 = Hash3Lattice(i);
+    float n100 = Hash3Lattice(i + int3(1, 0, 0));
+    float n010 = Hash3Lattice(i + int3(0, 1, 0));
+    float n110 = Hash3Lattice(i + int3(1, 1, 0));
+    float n001 = Hash3Lattice(i + int3(0, 0, 1));
+    float n101 = Hash3Lattice(i + int3(1, 0, 1));
+    float n011 = Hash3Lattice(i + int3(0, 1, 1));
+    float n111 = Hash3Lattice(i + int3(1, 1, 1));
     return lerp(lerp(lerp(n000, n100, u.x), lerp(n010, n110, u.x), u.y),
                lerp(lerp(n001, n101, u.x), lerp(n011, n111, u.x), u.y), u.z);
+}
+
+float3 RotateFbm3Octave(float3 p)
+{
+    return float3(
+        0.00 * p.x - 0.80 * p.y - 0.60 * p.z,
+        0.80 * p.x + 0.36 * p.y - 0.48 * p.z,
+        0.60 * p.x - 0.48 * p.y + 0.64 * p.z);
 }
 
 float Fbm(float2 p)
@@ -121,7 +146,7 @@ float Fbm3(float3 p)
     for (int i = 0; i < 5; ++i)
     {
         v += a * Noise3(p);
-        p = p * 2.03 + float3(17.0, 11.0, 5.3);
+        p = RotateFbm3Octave(p) * 2.03 + float3(17.0, 11.0, 5.3);
         a *= 0.5;
     }
     return v;
@@ -131,13 +156,23 @@ float Fbm3_6(float3 p)
 {
     float v = 0.0;
     float a = 0.5;
+    float norm = 0.0;
     for (int i = 0; i < 6; ++i)
     {
         v += a * Noise3(p);
-        p = p * 2.17 + float3(4.3, 9.1, 2.7);
-        a *= 0.55;
+        norm += a;
+        p = RotateFbm3Octave(p) * 2.08 + float3(4.3, 9.1, 2.7);
+        a *= 0.52;
     }
-    return v;
+    return v / max(norm, 1e-5);
+}
+
+float ProjectCloudDomeDistance(float3 dir)
+{
+    const float earthRadius = 16.0;
+    const float cloudAltitude = 1.0;
+    float dy = max(dir.y, 0.0);
+    return -earthRadius * dy + sqrt(earthRadius * earthRadius * dy * dy + 2.0 * earthRadius * cloudAltitude + cloudAltitude * cloudAltitude);
 }
 
 // --- Analytic single-scattering atmosphere (Rayleigh + Mie, ground observer) ---
@@ -266,16 +301,30 @@ float4 skyFragment(SkyVertexOutput input) : SV_Target0
         float starDensity = 256.0;
         float3 starP = dir * starDensity;
         float3 starCell = floor(starP);
+        int3 starCellInt = int3(starCell);
         float starHash = Hash3(starCell);
+        float3 starCenter = float3(
+            0.22 + 0.56 * Hash3Lattice(starCellInt + int3(19, 37, 53)),
+            0.22 + 0.56 * Hash3Lattice(starCellInt + int3(71, 13, 89)),
+            0.22 + 0.56 * Hash3Lattice(starCellInt + int3(41, 97, 29)));
+        float3 starDelta = (starP - starCell) - starCenter;
+        starDelta -= dir * dot(starDelta, dir);
+        float smallStarDisc = exp(-dot(starDelta, starDelta) * 58.0);
         float twinkle = MotionStarTwinkle(starCell, starHash, 0.16, 1.0);
-        float smallStar = step(0.9975, starHash) * (0.55 + 0.45 * frac(starHash * 17.3)) * twinkle;
+        float smallStar = step(0.9965, starHash) * smallStarDisc * (0.65 + 0.55 * frac(starHash * 17.3)) * twinkle;
 
         float bigDensity = 64.0;
         float3 bigP = dir * bigDensity;
         float3 bigCell = floor(bigP);
+        int3 bigCellInt = int3(bigCell);
         float bigHash = Hash3(bigCell);
-        float3 bigOffset = frac(bigP) - 0.5;
-        float bigStar = step(0.997, bigHash) * exp(-dot(bigOffset, bigOffset) * 60.0);
+        float3 bigCenter = float3(
+            0.25 + 0.50 * Hash3Lattice(bigCellInt + int3(17, 59, 83)),
+            0.25 + 0.50 * Hash3Lattice(bigCellInt + int3(43, 23, 67)),
+            0.25 + 0.50 * Hash3Lattice(bigCellInt + int3(91, 11, 31)));
+        float3 bigOffset = (bigP - bigCell) - bigCenter;
+        bigOffset -= dir * dot(bigOffset, dir);
+        float bigStar = step(0.997, bigHash) * exp(-dot(bigOffset, bigOffset) * 72.0);
         bigStar *= MotionStarTwinkle(bigCell, bigHash, 0.10, 0.73);
         float hueSeed = Hash3(starCell + float3(11.0, 23.0, 7.0));
         float3 starColor = lerp(float3(0.85, 0.90, 1.10), float3(1.10, 0.95, 0.78), hueSeed);
@@ -300,28 +349,38 @@ float4 skyFragment(SkyVertexOutput input) : SV_Target0
     float3 night = nightBase + starField * nightFactor;
     color = lerp(night, color + night * 0.15, clamp(dayFactor + duskFactor * 0.35, 0.0, 1.0));
 
-    // --- Seamless directional clouds ---
+    // --- Seamless directional clouds projected onto a curved planetary cloud dome ---
     float timeAdvect = sky.cloudSpeed * sky.timeOfDay * 240.0;
-    float flowAngle = sky.timeOfDay * 0.35;
-    float3 windDir = SafeNormalize3(float3(cos(flowAngle), 0.12, sin(flowAngle)));
-    float3 cloudP = dir * sky.cloudScale * 3.0;
-    float3 warped = cloudP + windDir * timeAdvect * 0.25;
+    float3 windDir = SafeNormalize3(float3(0.86, 0.0, 0.51));
+    float cloudDomeDist = ProjectCloudDomeDistance(dir);
+    float3 cloudP = dir * sky.cloudScale * (cloudDomeDist * 0.72);
+    cloudP.y *= 0.25;
+    float3 advected = cloudP + windDir * (timeAdvect * 0.45);
+    float3 cloudWarp = float3(
+        Fbm3(advected * 0.55 + float3(3.1, 1.7, 7.4)) - 0.5,
+        0.0,
+        Fbm3(advected * 0.55 + float3(11.7, 2.9, 2.3)) - 0.5);
+    float3 warped = advected + cloudWarp * 0.55;
     float cloudBase = Fbm3_6(warped);
-    float cloudDetail = Noise3(warped * 6.5 - windDir * timeAdvect * 0.35);
-    float cloudShape = cloudBase * 0.82 + cloudDetail * 0.18;
+    float cloudDetail = Noise3(warped * 4.5 - windDir * (timeAdvect * 0.25));
+    float cloudShape = smoothstep(0.26, 0.78, cloudBase * 0.80 + cloudDetail * 0.20);
     float cloudMask = smoothstep(-0.08, 0.12, dir.y);
-    float cloud = smoothstep(1.0 - sky.cloudCoverage, 1.0, pow(cloudShape, sky.cloudSharpness)) * cloudMask;
+    float horizonCloudFade = smoothstep(0.0, 0.10, dir.y);
+    float cloud = smoothstep(1.0 - sky.cloudCoverage, 1.0, pow(cloudShape, sky.cloudSharpness)) * cloudMask * horizonCloudFade;
 
-    // Cloud shading: Beer-Lambert powder effect + forward-scatter silver lining
+    // Cloud shading: directional sun self-shadowing + Beer-Lambert powder + silver lining
+    float sunOffsetDensity = Fbm3(warped + float3(sunDir.x, 0.0, sunDir.z) * 0.22);
+    float sunLitTerm = clamp((cloudBase - sunOffsetDensity) * 2.4 + 0.55, 0.0, 1.0);
     float muSun = dot(dir, sunDir);
     float silver = pow(max(muSun, 0.0), 8.0);
     float powder = 1.0 - exp(-cloud * 2.5);
-    float3 cloudLit = lerp(float3(0.45, 0.48, 0.55), float3(1.00, 0.98, 0.93), dayFactor);
-    float3 cloudShadow = lerp(float3(0.04, 0.05, 0.09), float3(0.58, 0.63, 0.75), dayFactor);
-    float3 cloudColor = lerp(cloudShadow, cloudLit, powder);
+    float litWeight = clamp(lerp(powder, sunLitTerm, 0.55), 0.0, 1.0);
+    float3 cloudLit = lerp(float3(0.11, 0.14, 0.22), float3(1.00, 0.98, 0.93), dayFactor);
+    float3 cloudShadow = lerp(float3(0.02, 0.03, 0.06), float3(0.55, 0.61, 0.74), dayFactor);
+    float3 cloudColor = lerp(cloudShadow, cloudLit, litWeight);
     cloudColor += float3(1.30, 0.55, 0.22) * silver * duskFactor * 1.2;
-    // Distant cloud atmospheric blend near the horizon
-    cloudColor = lerp(cloudColor, color, smoothstep(0.5, 0.03, dir.y) * 0.55);
+    // Distant cloud atmospheric perspective blend near the horizon
+    cloudColor = lerp(cloudColor, color, smoothstep(0.42, 0.02, dir.y) * 0.72);
 
     color = lerp(color, cloudColor, cloud);
 

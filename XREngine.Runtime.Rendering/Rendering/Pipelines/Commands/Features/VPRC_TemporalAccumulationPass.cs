@@ -1636,7 +1636,7 @@ public sealed partial class VPRC_TemporalAccumulationPass : ViewportRenderComman
         }
     }
 
-    private const string TsrHistoryColorCopyPassName = "Temporal_TsrHistoryColorCopy";
+    internal const string TsrHistoryColorCopyPassName = "Temporal_TsrHistoryColorCopy";
     private const string TsrHistoryMetadataCopyPassName = "Temporal_TsrHistoryMetadataCopy";
 
     private void CaptureTsrHistoryColor()

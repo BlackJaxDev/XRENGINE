@@ -75,6 +75,7 @@ public unsafe partial class OpenXRAPI
     private uint _openXrRvcProfiledViewMask;
 
     private Space _appSpace;
+    private ReferenceSpaceType _appReferenceSpaceType = ReferenceSpaceType.Local;
     private View[] _views = new View[RenderFrameViewSet.MaxViewCount];
     private readonly View[] _openXrPredictedViews = new View[RenderFrameViewSet.MaxViewCount];
     private readonly View[] _openXrLateViews = new View[RenderFrameViewSet.MaxViewCount];

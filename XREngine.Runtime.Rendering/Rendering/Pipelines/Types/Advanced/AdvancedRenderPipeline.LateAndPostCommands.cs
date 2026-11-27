@@ -322,6 +322,19 @@ public partial class AdvancedRenderPipeline
                 TsrAccumulationFBOName, TsrHistoryColorFBOName, TsrUpscaleFBOName,
                 TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataFBOName,
                 leftHistoryReaderQuadFboName: split ? TsrUpscaleEdgeFBOName : null);
+
+            // Run RCAS after history capture so sharpening reads the fresh unsharpened resolve
+            // and writes to the single-attachment output view without polluting temporal history.
+            var tsrSharpen = tsrCommands.Add<VPRC_IfElse>();
+            tsrSharpen.Label = "AdvancedTsrSharpenActive";
+            tsrSharpen.ConditionEvaluator = ShouldRunAdvancedTsrSharpen;
+            var tsrSharpenCommands = new ViewportRenderCommandContainer(this);
+            var rcasPass = tsrSharpenCommands.Add<VPRC_RCAS>();
+            rcasPass.SourceFBOName = TsrHistoryColorFBOName;
+            rcasPass.DestinationFBOName = TsrOutputViewFBOName;
+            rcasPass.WaitForPassName = VPRC_TemporalAccumulationPass.TsrHistoryColorCopyPassName;
+            rcasPass.Stereo = Stereo;
+            tsrSharpen.TrueCommands = tsrSharpenCommands;
         }
         tsr.TrueCommands = tsrCommands;
         var postAaCommands = new ViewportRenderCommandContainer(this);
@@ -718,7 +731,8 @@ public partial class AdvancedRenderPipeline
             .SampleTexture(HistoryDepthViewTextureName)
             .SampleTexture(TsrHistoryColorTextureName)
             .SampleTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
-            .SampleTexture(TsrHistoryMetadataTextureName);
+            .SampleTexture(TsrHistoryMetadataTextureName)
+            .SampleTexture(AdvancedVisibilityResourceNames.Metadata);
         if (EditorHighlightModule is not null)
             resources.SampleTexture(EditorHighlightMaskTextureName);
         return resources;

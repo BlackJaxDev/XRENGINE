@@ -388,6 +388,11 @@ public interface IRuntimeRenderSettingsServices
     int MaxShadowAtlasPages { get; }
 
     /// <summary>
+    /// Gets the maximum number of pages that the directional shadow atlas may allocate.
+    /// </summary>
+    int MaxDirectionalShadowAtlasPages => RuntimeRenderingHostServiceDefaults.MaxDirectionalShadowAtlasPages;
+
+    /// <summary>
     /// Gets the maximum shadow atlas memory budget in bytes.
     /// </summary>
     long MaxShadowAtlasMemoryBytes { get; }

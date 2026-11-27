@@ -71,6 +71,20 @@ namespace XREngine.Rendering.Models.Materials
             RgbEquation = EBlendEquationMode.FuncAdd,
             AlphaEquation = EBlendEquationMode.FuncAdd
         };
+        /// <summary>
+        /// Creates a premultiplied alpha blend state for textures whose RGB channels are already
+        /// weighted by coverage alpha, such as transparent-background offscreen captures.
+        /// </summary>
+        public static BlendMode EnabledPremultipliedTransparent() => new()
+        {
+            Enabled = ERenderParamUsage.Enabled,
+            RgbSrcFactor = EBlendingFactor.One,
+            AlphaSrcFactor = EBlendingFactor.One,
+            RgbDstFactor = EBlendingFactor.OneMinusSrcAlpha,
+            AlphaDstFactor = EBlendingFactor.OneMinusSrcAlpha,
+            RgbEquation = EBlendEquationMode.FuncAdd,
+            AlphaEquation = EBlendEquationMode.FuncAdd
+        };
         public static BlendMode EnabledOpaque() => new()
         {
             Enabled = ERenderParamUsage.Enabled,

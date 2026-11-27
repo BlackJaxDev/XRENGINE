@@ -17,6 +17,10 @@ public static class AdvancedViewRecordFactory
             inverseViewProjectionJittered = Matrix4x4.Identity;
         if (!Matrix4x4.Invert(viewProjectionUnjittered, out Matrix4x4 inverseViewProjectionUnjittered))
             inverseViewProjectionUnjittered = Matrix4x4.Identity;
+        Matrix4x4 previousView = source.View;
+        if (previousViewProjectionUnjittered != viewProjectionUnjittered &&
+            Matrix4x4.Invert(projectionUnjittered, out Matrix4x4 inverseProjectionUnjittered))
+            previousView = previousViewProjectionUnjittered * inverseProjectionUnjittered;
         // Native stages read the render size to map pixels of their internal targets to clip
         // space. It differs from the output size when the view renders below its output size.
         float width = Math.Max(source.ViewportWidth, 1);
@@ -30,7 +34,7 @@ public static class AdvancedViewRecordFactory
         {
             View = source.View, ProjectionJittered = source.Projection, ProjectionUnjittered = projectionUnjittered,
             ViewProjectionJittered = viewProjectionJittered, ViewProjectionUnjittered = viewProjectionUnjittered,
-            PreviousView = source.View, PreviousProjectionJittered = source.Projection,
+            PreviousView = previousView, PreviousProjectionJittered = source.Projection,
             PreviousProjectionUnjittered = projectionUnjittered,
             PreviousViewProjectionJittered = previousViewProjectionJittered,
             PreviousViewProjectionUnjittered = previousViewProjectionUnjittered,
@@ -48,6 +52,11 @@ public static class AdvancedViewRecordFactory
             SourceCameraIdentityHi = unchecked((uint)(source.SourceCameraIdentity >> 32)),
             CullingLayerMask = source.CullingLayerMask,
             RenderTimeBits = BitConverter.SingleToUInt32Bits(source.RenderTimeSeconds),
+            ClipPlaneWorld = Vector4.Zero,
+            PrimaryViewIndex = 0u,
+            ParentViewIndex = 0u,
+            StencilNodeId = 0u,
+            DepthAndExcludeDraw = 0u,
         };
     }
 

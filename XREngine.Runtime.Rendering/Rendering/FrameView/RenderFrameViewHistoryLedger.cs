@@ -2,7 +2,10 @@ using System.Numerics;
 
 namespace XREngine.Rendering;
 
-/// <summary>Freezes desktop current view state during collection and resolves history only at authoring.</summary>
+/// <summary>
+/// Tracks provisional desktop view sequence entries created during collection and
+/// freezes the post-swap camera view and temporal history when render authoring starts.
+/// </summary>
 internal sealed class RenderFrameViewHistoryLedger
 {
     private readonly object _sync = new();
@@ -50,6 +53,11 @@ internal sealed class RenderFrameViewHistoryLedger
                 }
                 if (!pending.AuthoringResolved)
                 {
+                    // CollectVisible runs before WorldSwapBuffers publishes the new render matrices.
+                    // Adopt the post-swap authoring view here so the rendered camera matches the
+                    // swapped scene transforms and skinned bone palettes of the same render frame.
+                    pending.Descriptor = current;
+                    pending.CameraEpoch = camera.TemporalHistoryEpoch;
                     pending.Descriptor = Resolve(pending);
                     pending.AuthoringResolved = true;
                 }

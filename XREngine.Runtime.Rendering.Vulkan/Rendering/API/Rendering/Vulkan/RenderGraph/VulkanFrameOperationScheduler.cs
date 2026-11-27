@@ -79,16 +79,25 @@ internal sealed class VulkanFrameOperationScheduler
             if (queryBlockCompare != 0)
                 return queryBlockCompare;
 
+            // Keep the primary sort strictly transitive. Canonical mesh draw
+            // sorting runs afterward on each contiguous run of eligible draws so
+            // draws never reorder across compute, barrier, or marker boundaries.
+            return x.OriginalIndex.CompareTo(y.OriginalIndex);
+        }
+    }
+
+    private sealed class CanonicalMeshDrawSortKeyComparer : IComparer<FrameOpSortKey>
+    {
+        public static readonly CanonicalMeshDrawSortKeyComparer Instance = new();
+
+        public int Compare(FrameOpSortKey x, FrameOpSortKey y)
+        {
             VulkanMeshDrawSortKey xKey = x.MeshDrawKey;
             VulkanMeshDrawSortKey yKey = y.MeshDrawKey;
-            if (xKey.CanCanonicalize && yKey.CanCanonicalize)
-            {
-                int drawCompare = CompareCanonicalMeshDrawOrder(in xKey, in yKey);
-                if (drawCompare != 0)
-                    return drawCompare;
-            }
-
-            return x.OriginalIndex.CompareTo(y.OriginalIndex);
+            int drawCompare = CompareCanonicalMeshDrawOrder(in xKey, in yKey);
+            return drawCompare != 0
+                ? drawCompare
+                : x.OriginalIndex.CompareTo(y.OriginalIndex);
         }
 
         private static int CompareCanonicalMeshDrawOrder(
@@ -166,6 +175,8 @@ internal sealed class VulkanFrameOperationScheduler
     }
     private static readonly Comparison<FrameOpSortKey> FrameOpSortComparison =
         FrameOpSortKeyComparer.Instance.Compare;
+    private static readonly Comparison<FrameOpSortKey> CanonicalMeshDrawSortComparison =
+        CanonicalMeshDrawSortKeyComparer.Instance.Compare;
 
     private sealed class PassOrderCacheEntry
     {
@@ -297,8 +308,9 @@ internal sealed class VulkanFrameOperationScheduler
             if (!alreadySorted)
                 SortFrameOpKeysInPlace(sortKeys, opCount);
 
+            bool canonicalizedMeshDraws = CanonicalizeContiguousMeshDrawRuns(sortKeys, opCount);
             bool movedTargetClear = MoveTargetClearsBeforeFirstSameTargetUse(sortKeys, opCount);
-            if (alreadySorted && !movedTargetClear)
+            if (alreadySorted && !canonicalizedMeshDraws && !movedTargetClear)
                 return;
 
             for (int i = 0; i < opCount; i++)
@@ -337,6 +349,61 @@ internal sealed class VulkanFrameOperationScheduler
     /// </summary>
     private static void SortFrameOpKeysInPlace(FrameOpSortKey[] sortKeys, int opCount)
         => sortKeys.AsSpan(0, opCount).Sort(FrameOpSortComparison);
+
+    /// <summary>
+    /// Sorts each maximal contiguous run of canonicalizable opaque mesh draws that share
+    /// the same context block, pass rank, and query block. Keeping this pass separate from
+    /// the global sort guarantees strict weak ordering and prevents draws from reordering
+    /// across compute dispatches, barriers, or required-producer submission markers.
+    /// </summary>
+    private static bool CanonicalizeContiguousMeshDrawRuns(FrameOpSortKey[] sortKeys, int opCount)
+    {
+        bool reordered = false;
+        int index = 0;
+        while (index < opCount)
+        {
+            if (!sortKeys[index].MeshDrawKey.CanCanonicalize)
+            {
+                index++;
+                continue;
+            }
+
+            int runStart = index;
+            int blockOrder = sortKeys[runStart].ContextBlockOrder;
+            int passOrder = sortKeys[runStart].PassOrder;
+            int queryBlock = sortKeys[runStart].QueryOrderBlock;
+            index++;
+            while (index < opCount &&
+                   sortKeys[index].MeshDrawKey.CanCanonicalize &&
+                   sortKeys[index].ContextBlockOrder == blockOrder &&
+                   sortKeys[index].PassOrder == passOrder &&
+                   sortKeys[index].QueryOrderBlock == queryBlock)
+            {
+                index++;
+            }
+
+            int runLength = index - runStart;
+            if (runLength <= 1)
+                continue;
+
+            bool runSorted = true;
+            for (int i = runStart + 1; i < index; i++)
+            {
+                if (CanonicalMeshDrawSortKeyComparer.Instance.Compare(sortKeys[i - 1], sortKeys[i]) <= 0)
+                    continue;
+                runSorted = false;
+                break;
+            }
+
+            if (!runSorted)
+            {
+                sortKeys.AsSpan(runStart, runLength).Sort(CanonicalMeshDrawSortComparison);
+                reordered = true;
+            }
+        }
+
+        return reordered;
+    }
 
     private static bool HasSubmissionOrderBlock(FrameOperationStream operations)
     {

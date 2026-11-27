@@ -1,6 +1,8 @@
 // Material-surface emission is published by XRMaterial from semantic bindings.
 // Mode zero preserves the legacy RMSE scalar contract for shaders that do not
 // author an explicit surface-emission value.
+#pragma snippet "UpscaleTextureLodBias"
+
 uniform int SurfaceEmissionMode = 0;
 uniform vec3 SurfaceEmissionColor = vec3(1.0);
 uniform float SurfaceEmissionStrength = 0.0;
@@ -36,7 +38,7 @@ vec4 XRENGINE_ResolveSurfaceEmission(vec2 uv0, vec2 uv1, vec3 legacyBaseColor, f
     vec3 emission = SurfaceEmissionColor * SurfaceEmissionStrength;
     if (SurfaceEmissionHasTexture != 0)
     {
-        vec3 sampled = texture(SurfaceEmissionTexture, XRENGINE_ResolveSurfaceEmissionUv(uv0, uv1)).rgb;
+        vec3 sampled = XRENGINE_SampleBiasedTexture(SurfaceEmissionTexture, XRENGINE_ResolveSurfaceEmissionUv(uv0, uv1)).rgb;
         if (SurfaceEmissionTextureIsSrgb != 0)
             sampled = XRENGINE_SrgbToLinear(sampled);
         emission *= sampled;

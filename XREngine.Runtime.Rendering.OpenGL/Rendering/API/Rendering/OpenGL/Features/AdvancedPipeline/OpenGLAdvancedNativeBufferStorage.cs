@@ -20,6 +20,7 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
     internal bool PreparedMaterialSurfaceExports { get; set; }
     internal bool PreparedSuppressBaselineDiffuse { get; set; }
     internal bool PreparedShadingDiagnosticsDisabled { get; set; }
+    internal EAntiAliasingFilterMode PreparedAntiAliasingFilterMode { get; set; }
     private nuint _pushStride;
     private nuint _pushBytes;
     private ulong _capacityTiles;
@@ -62,7 +63,7 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
     internal void UploadPushConstants(uint width, uint height, uint viewCount, uint depthSlices, uint lightCount,
         bool requireNativeOutput, bool enableAmbientOcclusion, bool enableIbl, bool requireMaterialSurfaceExports,
         bool suppressBaselineDiffuse, bool shadingDiagnosticsDisabled,
-        EAdvancedShadingDebugView debugView, bool transparentBackground)
+        EAdvancedShadingDebugView debugView, bool transparentBackground, bool msaaTent2x2Resolve)
     {
         uint alignment = checked((uint)Math.Max(64, _renderer.RawGL.GetInteger((GLEnum)UniformBufferOffsetAlignment)));
         _pushStride = AlignUp(64u, alignment);
@@ -79,6 +80,8 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
             (enableIbl ? 8u : 0u) | (requireMaterialSurfaceExports ? 16u : 0u) |
             (suppressBaselineDiffuse ? 32u : 0u) |
             (((uint)debugView & 0xFFu) << 8) |
+            // Matches XR_ADV_SHADING_MSAA_TENT_2X2 in ShadeNativeOpaqueMsaa.comp.
+            (msaaTent2x2Resolve ? 1u << 29 : 0u) |
             // Matches XR_ADV_SHADING_DIAGNOSTICS_DISABLED in the shading shaders.
             (shadingDiagnosticsDisabled ? 1u << 31 : 0u);
         Span<uint> words = stackalloc uint[16];

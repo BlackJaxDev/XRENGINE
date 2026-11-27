@@ -48,6 +48,8 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal long _vulkanPipelineCompileActivityGeneration;
     internal PipelineCache _pipelineCache;
     internal PipelineCache _backgroundPipelineCache;
+    internal PipelineCache _backgroundComputePipelineCache;
+    internal PipelineCache _foregroundWorkerPipelineCache;
     internal string? _pipelineCacheFilePath;
     internal int _pipelineCacheCreatesSinceSave;
     internal int _pipelineCacheInitialDataBytes;
@@ -58,6 +60,8 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal readonly object _pipelineCacheFileWriteLock = new();
     internal readonly Lock _pipelineCacheHostAccessLock = new();
     internal readonly Lock _backgroundPipelineCacheHostAccessLock = new();
+    internal readonly Lock _backgroundComputePipelineCacheHostAccessLock = new();
+    internal readonly Lock _foregroundWorkerPipelineCacheHostAccessLock = new();
     internal readonly Dictionary<VulkanPipelineManifestCacheKey, VulkanPipelineVariantManifest> _pipelineVariantManifestCache = new();
     internal readonly Queue<VulkanPipelineManifestCacheKey> _pipelineVariantManifestInsertionOrder = new();
     internal readonly Lock _pipelineVariantManifestCacheLock = new();

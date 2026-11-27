@@ -195,6 +195,10 @@ namespace XREngine.Animation
                 weightedDuration += duration * childWeight;
                 totalWeight += childWeight;
             }
+            // Unnormalized direct trees keep raw child weights so high-weight zero-duration
+            // parameter-math children do not shrink the playback duration of timed children.
+            if (!NormalizeBlendValues)
+                return weightedDuration;
             return totalWeight > double.Epsilon ? weightedDuration / totalWeight : 0.0;
         }
     }

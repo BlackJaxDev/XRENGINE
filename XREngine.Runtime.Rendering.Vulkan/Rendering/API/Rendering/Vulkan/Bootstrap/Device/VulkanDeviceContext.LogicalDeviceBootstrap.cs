@@ -319,6 +319,16 @@ internal sealed unsafe partial class VulkanDeviceContext
             _deviceContext.SampleRateShadingEnabled = true;
         }
 
+        if (supportedFeatures.ShaderClipDistance)
+        {
+            deviceFeatures.ShaderClipDistance = Vk.True;
+            _deviceContext.ShaderClipDistanceEnabled = true;
+        }
+        else
+        {
+            _deviceContext.ShaderClipDistanceEnabled = false;
+        }
+
         _deviceContext.IndependentBlendEnabled = supportedFeatures.IndependentBlend;
         if (supportedFeatures.IndependentBlend)
             deviceFeatures.IndependentBlend = Vk.True;

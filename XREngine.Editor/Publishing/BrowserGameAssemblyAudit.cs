@@ -19,7 +19,7 @@ internal static class BrowserGameAssemblyAudit
         "XREngine.Runtime.Net.Osc", "XREngine.Runtime.Text.FreeType", "XREngine.Runtime.UI.Skia",
         "XREngine.Runtime.UI.Ultralight", "XREngine.Runtime.UI.Rive", "XREngine.Runtime.Automation",
         "XREngine.Audio.OpenAL", "XREngine.Audio.NAudio", "XREngine.Audio.SteamAudio",
-        "XREngine.Audio.OVRLipSync", "XREngine.Audio.Audio2Face", "XREngine.Input.Silk", "XREngine.Input.XInput",
+        "XREngine.Audio.OVRLipSync", "XREngine.Audio.Audio2Face", "XREngine.Animation.MotionBricks", "XREngine.Input.Silk", "XREngine.Input.XInput",
         "XREngine.Editor", "XREngine.Fbx", "XREngine.Gltf", "OpenVR.NET", "NAudio",
         "System.Drawing.Common", "PresentationCore", "PresentationFramework", "WindowsBase"
     ];

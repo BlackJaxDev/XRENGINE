@@ -19,6 +19,7 @@ internal static class DesktopRuntimeBackendBootstrap
             global::XREngine.Audio.SteamAudioBackend.Register();
             Components.OVRLipSyncBackend.Register();
             Components.Audio2Face3DNativeBackend.Register();
+            global::XREngine.Animation.MotionBricks.MotionBricksRuntimeBackend.Register();
             OpenVrRuntimeBackend.Register();
             OpenXrRuntimeBackend.Register();
             Rendering.Meshlets.MeshOptimizerBackend.Register();

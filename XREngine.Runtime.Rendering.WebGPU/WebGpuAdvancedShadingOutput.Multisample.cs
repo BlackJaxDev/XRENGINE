@@ -48,6 +48,7 @@ internal sealed partial class WebGpuAdvancedShadingOutput
         {
             Span<uint> resolveParameters = stackalloc uint[8];
             resolveParameters.Clear(); resolveParameters[0] = frame.Width; resolveParameters[1] = frame.Height;
+            resolveParameters[2] = (uint)request.AntiAliasingFilterMode;
             MemoryMarshal.Cast<uint, Vector4>(resolveParameters[4..])[0] = request.HasAuthoredBackground
                 ? Vector4.Zero : RuntimeEngine.StartupPresentationClearColor;
             if (clearExports is not null)

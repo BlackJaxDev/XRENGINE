@@ -1,6 +1,7 @@
 #version 450
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 
 layout (location = 0) out vec4 AlbedoOpacity;
 layout (location = 1) out vec2 Normal;
@@ -29,13 +30,13 @@ uniform float Emission = 0.0f;
 
 void main()
 {
-    vec4 albedoSample = texture(Texture0, FragUV0);
+    vec4 albedoSample = XRENGINE_SampleBiasedTexture(Texture0, FragUV0);
 
     TransformId = FragRenderIdentityId;
     Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
     AlbedoOpacity = vec4(albedoSample.rgb * BaseColor, Opacity);
 
-    float metallicTex = texture(Texture2, FragUV0).r;
+    float metallicTex = XRENGINE_SampleBiasedTexture(Texture2, FragUV0).r;
     RMSI = vec4(Roughness, Metallic * metallicTex, Specular, Emission);
     EmissionColor = XRENGINE_ResolveSurfaceEmission(FragUV0, FragUV1, BaseColor, Emission);
 }

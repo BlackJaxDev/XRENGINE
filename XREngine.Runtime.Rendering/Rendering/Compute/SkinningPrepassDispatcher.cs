@@ -86,6 +86,35 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     private static readonly Lazy<SkinningPrepassDispatcher> _instance = new(() => new SkinningPrepassDispatcher());
     public static SkinningPrepassDispatcher Instance => _instance.Value;
 
+    /// <summary>
+    /// Releases Vulkan deformation receipts and backend-owner caches for <paramref name="renderer"/>
+    /// after its GPU has drained during teardown or renderer replacement.
+    /// </summary>
+    public static void NotifyRendererKnownIdleIfCreated(AbstractRenderer renderer)
+    {
+        if (_instance.IsValueCreated)
+            _instance.Value.NotifyRendererKnownIdle(renderer);
+    }
+
+    /// <summary>
+    /// Clears cached output receipts and slot ownership that belong to a retiring renderer so a
+    /// replacement renderer does not query stale native allocations for content reuse.
+    /// </summary>
+    public void NotifyRendererKnownIdle(AbstractRenderer renderer)
+    {
+        if (!RuntimeEngine.IsRenderThread || renderer is null)
+            return;
+
+        lock (_syncRoot)
+        {
+            foreach (KeyValuePair<XRMeshRenderer, RendererResources> entry in _resources)
+                entry.Value.ResetForRetiredRenderer(renderer);
+
+            foreach (VulkanOutputReceipt receipt in _vulkanReceiptPool)
+                receipt.NotifyOwnerKnownIdle(renderer);
+        }
+    }
+
     internal readonly record struct OutputAllocationIdentity(
         GpuBufferAllocationIdentity? Positions,
         GpuBufferAllocationIdentity? Normals,
@@ -1349,6 +1378,10 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return true;
         if (shadowPass)
             return false;
+        // In-world VR mirrors render layer-isolated meshes (such as LocalVrAvatarIndex) that the VR
+        // eyes do not collect, so mirrors must dispatch compute deformation for their own visible draws.
+        if (RuntimeEngine.Rendering.State.IsMirrorPass)
+            return true;
 
         bool vrOwnsDeformation = presentation.VrRenderPriority != EVrRenderPriority.Desktop;
         return vrEyeRender == vrOwnsDeformation;
@@ -1450,23 +1483,68 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
     }
 
-    public void RunVisible(RenderCommandCollection commands)
+    /// <summary>
+    /// Validates <paramref name="witness"/> for <paramref name="renderer"/>, or refreshes it to
+    /// the active healthy output slot when a clean slot rotation superseded the queued witness
+    /// before materialization. The returned witness does not retain an authoring use; the caller
+    /// retains the receipt when staging the materialized draw.
+    /// </summary>
+    internal static bool TryValidateOrRefreshVulkanOutputWitness(
+        XRMeshRenderer renderer,
+        in DeformationOutputWitness witness,
+        out DeformationOutputWitness effectiveWitness)
     {
-        if (commands is null)
-            return;
+        if (!witness.IsValid)
+        {
+            effectiveWitness = witness;
+            return !RequiresComputeDeformationOutput(renderer);
+        }
 
-        lock (_syncRoot)
-            RunVisibleCore(commands);
+        if (!ReferenceEquals(AbstractRenderer.Current, witness.BackendOwner))
+        {
+            effectiveWitness = default;
+            return false;
+        }
+
+        lock (Instance._syncRoot)
+        {
+            if (Instance._resources.TryGetValue(renderer, out RendererResources? resources) &&
+                resources.TryValidateOrRefreshConsumerWitness(in witness, out effectiveWitness))
+            {
+                return true;
+            }
+
+            effectiveWitness = default;
+            return false;
+        }
     }
 
-    private void RunVisibleCore(RenderCommandCollection commands)
+    public void RunVisible(RenderCommandCollection commands)
     {
+        if (!TryRunVisible(commands, out string? pendingReason))
+            throw new RenderResourcePreparationPendingException(
+                pendingReason ?? "Vulkan deformation prepass is pending.");
+    }
+
+    public bool TryRunVisible(RenderCommandCollection commands, out string? pendingReason)
+    {
+        pendingReason = null;
+        if (commands is null)
+            return true;
+
+        lock (_syncRoot)
+            return TryRunVisibleCore(commands, out pendingReason);
+    }
+
+    private bool TryRunVisibleCore(RenderCommandCollection commands, out string? pendingReason)
+    {
+        pendingReason = null;
 
         // The backend owns its output layout and records the producer at the first
         // raster consumer, inside its atomic frame. This is a responsibility handoff,
         // not publication of completed canonical desktop pre-pass buffers.
         if (AbstractRenderer.Current is IMeshDeformationBackendCapability)
-            return;
+            return true;
 
         bool computeSkinningEnabledForBackend =
             RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader &&
@@ -1482,7 +1560,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             && !computeBlendshapesEnabledForBackend
             && !precombineEnabledForBackend)
         {
-            return;
+            return true;
         }
 
         // RunVisible runs on the render thread, one view at a time, so the scratch containers
@@ -1520,7 +1598,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
 
         if (renderers.Count == 0)
-            return;
+            return true;
 
         // Optionally pre-pack all visible renderers into global buffers for this frame.
         bool globalSkinPalette = RuntimeEngine.Rendering.Settings.UseGlobalSkinPaletteBufferForComputeSkinning;
@@ -1569,17 +1647,21 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         {
             foreach (var renderer in _visibleRenderers)
                 Run(renderer);
-            return;
+            return true;
         }
 
-        RunVisibleVulkan();
+        return TryRunVisibleVulkan(out pendingReason);
     }
 
-    private void RunVisibleVulkan()
+    private bool TryRunVisibleVulkan(out string? pendingReason)
     {
-        AbstractRenderer renderer = AbstractRenderer.Current
-            ?? throw new RenderResourcePreparationPendingException(
-                "Vulkan deformation requires an active renderer.");
+        pendingReason = null;
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
+        {
+            pendingReason = "Vulkan deformation requires an active renderer.";
+            return false;
+        }
 
         lock (_syncRoot)
         {
@@ -1587,19 +1669,23 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             {
                 foreach (XRMeshRenderer visibleRenderer in _visibleRenderers)
                     Run(visibleRenderer);
-                return;
+                return true;
             }
 
             _visibleOutputResources.Clear();
             _visibleProducerFailed = false;
             _visibleProducerFailureReason = null;
             if (_activeProducerAttemptId == 0UL)
-                throw new RenderResourcePreparationPendingException(
-                    "Vulkan deformation has no active pipeline invocation receipt scope.");
+            {
+                pendingReason = "Vulkan deformation has no active pipeline invocation receipt scope.";
+                return false;
+            }
             VulkanOutputReceipt? receipt = ReserveVulkanReceipt();
             if (receipt is null)
-                throw new RenderResourcePreparationPendingException(
-                    "Vulkan deformation has no free producer receipt slot.");
+            {
+                pendingReason = "Vulkan deformation has no free producer receipt slot.";
+                return false;
+            }
 
             bool accepted;
             XRGpuFence? fence;
@@ -1633,9 +1719,13 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             }
 
             if (!accepted || _visibleProducerFailed || fence is null)
-                throw new RenderResourcePreparationPendingException(
-                    failure?.Message ?? _visibleProducerFailureReason ??
-                    "Vulkan deformation output was not accepted as a complete producer batch.");
+            {
+                pendingReason = failure?.Message ?? _visibleProducerFailureReason ??
+                    "Vulkan deformation output was not accepted as a complete producer batch.";
+                return false;
+            }
+
+            return true;
         }
     }
 

@@ -14,7 +14,10 @@ namespace XREngine.Runtime.Bootstrap.Builders;
 
 public static partial class BootstrapLightingBuilder
 {
-    public static Action? AddConfiguredLightProbes(SceneNode rootNode, bool deferStartupCapture = false)
+    public static Action? AddConfiguredLightProbes(
+        SceneNode rootNode,
+        bool deferStartupCapture = false,
+        Action? onStartupCaptureCompleted = null)
     {
         var settings = RuntimeBootstrapState.Settings;
         bool shouldDeferStartupCapture = deferStartupCapture && settings.LightProbeCapture == LightProbeCaptureMode.Startup;
@@ -29,7 +32,14 @@ public static partial class BootstrapLightingBuilder
             case LightProbeMode.Single:
                 Vector3 singlePosition = ToVector3(settings.LightProbeSinglePosition);
                 IReadOnlyList<LightProbeComponent> probes = AddLightProbes(rootNode, 1, 1, 1, 1.0f, 1.0f, 1.0f, singlePosition, captureMode);
-                return shouldDeferStartupCapture ? () => QueueProbeCaptures(probes) : null;
+                if (!shouldDeferStartupCapture)
+                    return null;
+
+                return () =>
+                {
+                    QueueProbeCaptures(probes);
+                    onStartupCaptureCompleted?.Invoke();
+                };
             case LightProbeMode.Grid:
             case LightProbeMode.ModelGrid:
                 var counts = ClampProbeCounts(settings.LightProbeGridCounts);
@@ -42,7 +52,21 @@ public static partial class BootstrapLightingBuilder
                     ToVector3(settings.LightProbeGridCenter),
                     settings.LightProbe == LightProbeMode.ModelGrid,
                     captureMode);
-                return shouldDeferStartupCapture ? spawner.BeginSequentialCapture : null;
+                if (!shouldDeferStartupCapture)
+                    return null;
+
+                if (onStartupCaptureCompleted is not null)
+                {
+                    void HandleCompleted()
+                    {
+                        spawner.SequentialCaptureCompleted -= HandleCompleted;
+                        onStartupCaptureCompleted();
+                    }
+
+                    spawner.SequentialCaptureCompleted += HandleCompleted;
+                }
+
+                return spawner.BeginSequentialCapture;
             default:
                 throw new ArgumentOutOfRangeException();
         }
@@ -264,13 +288,29 @@ public static partial class BootstrapLightingBuilder
         dirLightComp.DiffuseIntensity = 1.0f;
         dirLightComp.Scale = new Vector3(100.0f, 100.0f, 900.0f);
         UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
-        dirLightComp.CastsShadows = settings.DirLightCastsShadows;
+        ApplyDirectionalShadowSettings(dirLightComp, settings, castsShadows: settings.DirLightCastsShadows);
+        return dirLightComp;
+    }
+
+    /// <summary>
+    /// Configures resolution and shadow filter sample counts on a unit-test directional light.
+    /// </summary>
+    internal static void ApplyDirectionalShadowSettings(
+        DirectionalLightComponent light,
+        UnitTestingWorldSettings settings,
+        bool castsShadows)
+    {
+        light.CastsShadows = castsShadows;
         ERenderLibrary renderBackend = settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.Rendering))
             ? settings.Rendering.RenderBackend
             : settings.RenderAPI;
-        uint shadowResolution = renderBackend == ERenderLibrary.Vulkan ? 1024u : 4096u;
-        dirLightComp.SetShadowMapResolution(shadowResolution, shadowResolution);
-        return dirLightComp;
+        // Four 2048x2048 directional cascades pack cleanly onto one 4096x4096 atlas page on Vulkan.
+        uint shadowResolution = renderBackend == ERenderLibrary.Vulkan ? 2048u : 4096u;
+        light.SetShadowMapResolution(shadowResolution, shadowResolution);
+        light.BlockerSamples = Math.Clamp(settings.DirLightShadowBlockerSamples, 1, LightComponent.MaxVogelTapCount);
+        light.FilterSamples = Math.Clamp(settings.DirLightShadowFilterSamples, 1, LightComponent.MaxVogelTapCount);
+        light.VogelTapCount = Math.Clamp(settings.DirLightShadowVogelTapCount, 1, LightComponent.MaxVogelTapCount);
+        light.ContactShadowSamples = Math.Clamp(settings.DirLightContactShadowSamples, 1, 32);
     }
 
     public static void AddDynamicDebugLights(

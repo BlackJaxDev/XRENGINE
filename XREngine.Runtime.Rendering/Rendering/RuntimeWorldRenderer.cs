@@ -219,6 +219,7 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         ECollectVisibleSection previousSection = CollectVisibleStageTimings.EnterWorldSwap();
         long matrixStart = Stopwatch.GetTimestamp();
         ApplyRenderMatrixChanges(ETransformHierarchyPassGateSite.PublishSwap);
+        Compute.GPUPhysicsChainDispatcher.Instance.LatchSwapInputs(WorldContext);
         long meshStart = Stopwatch.GetTimestamp();
         RenderableMesh.ProcessPendingRenderMatrixUpdates();
         long sceneStart = Stopwatch.GetTimestamp();
@@ -339,6 +340,13 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     /// </summary>
     private void ApplyRenderMatrixChanges(ETransformHierarchyPassGateSite site)
     {
+        // Do not overwrite live render matrices or dispatch RenderMatrixChanged while the render
+        // thread is consuming the active frame snapshot. The serial PublishSwap pass publishes all
+        // queued updates once the render thread releases collect.
+        if (site == ETransformHierarchyPassGateSite.PublishPreCollect
+            && RuntimeRenderingHostServices.Scheduling.IsRenderFrameConsumingRenderSnapshot)
+            return;
+
         bool swapSite = site == ETransformHierarchyPassGateSite.PublishSwap;
         long publishStart = CollectVisibleStageTimings.StartIn(
             swapSite ? ECollectVisibleSection.WorldSwap : ECollectVisibleSection.Collect);

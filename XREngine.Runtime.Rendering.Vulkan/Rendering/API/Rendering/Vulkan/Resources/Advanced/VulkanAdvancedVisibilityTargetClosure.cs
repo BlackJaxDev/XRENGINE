@@ -25,11 +25,15 @@ internal readonly record struct VulkanAdvancedVisibilityTargetClosure(
                ? UsesDynamicRendering &&
                  DynamicRenderingFormats.ColorAttachmentCount == 0u &&
                  DynamicRenderingFormats.DepthAttachmentFormat != Format.Undefined
-               : Kind == EVulkanAdvancedVisibilityTargetKind.DecalBuffer
-               ? UsesDynamicRendering && DepthStencilReadOnly &&
-                 DynamicRenderingFormats.ColorAttachmentCount == 2u &&
-                 DynamicRenderingFormats.DepthAttachmentFormat != Format.Undefined
-               // Single-sample visibility targets may omit the selection image (OpenXR eyes).
+                : Kind == EVulkanAdvancedVisibilityTargetKind.DecalBuffer
+                ? UsesDynamicRendering && DepthStencilReadOnly &&
+                  DynamicRenderingFormats.ColorAttachmentCount == 2u &&
+                  DynamicRenderingFormats.DepthAttachmentFormat != Format.Undefined
+                : Kind == EVulkanAdvancedVisibilityTargetKind.PortalUnwind
+                ? UsesDynamicRendering && !DepthStencilReadOnly &&
+                  DynamicRenderingFormats.ColorAttachmentCount >= 1u &&
+                  DynamicRenderingFormats.DepthAttachmentFormat != Format.Undefined
+                // Single-sample visibility targets may omit the selection image (OpenXR eyes).
                : UsesDynamicRendering
                    ? DynamicRenderingFormats.ColorAttachmentCount is 3u or 4u ||
                      DynamicRenderingFormats.ColorAttachmentCount == 2u &&

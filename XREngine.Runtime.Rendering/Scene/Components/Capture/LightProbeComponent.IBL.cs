@@ -30,6 +30,7 @@ namespace XREngine.Components.Capture.Lights
         private bool _staticIblInitializationQueued;
         private int _iblRetryCoroutineGeneration;
         private int _iblRetryQueuedCoroutineGeneration = -1;
+        private bool _finalizeBaseCompleted;
         protected override bool HasPendingCaptureConsumer => _pendingIblOutput is not null || _iblDestroyQueued;
 
         protected override XRTextureCube CreateEnvironmentColorCubemap(uint resolution)
@@ -1024,6 +1025,8 @@ namespace XREngine.Components.Capture.Lights
         {
             if (IsIblProducerQuarantined)
                 return ECaptureStepResult.Cancelled;
+            if (faceIndex == 0)
+                _finalizeBaseCompleted = false;
             RuntimeEngine.Rendering.State.IsLightProbePass = true;
             try
             {
@@ -1038,16 +1041,28 @@ namespace XREngine.Components.Capture.Lights
         public override ECaptureStepResult FinalizeCubemapCapture()
         {
             if (IsIblProducerQuarantined)
+            {
+                _finalizeBaseCompleted = false;
                 return ECaptureStepResult.Cancelled;
+            }
             if (CaptureRenderPolicy.RenderShadows)
                 _registeredWorld?.Lights.EnsureShadowMapsCurrentForCapture(false);
             RuntimeEngine.Rendering.State.IsLightProbePass = true;
 
             try
             {
-                ECaptureStepResult result = base.FinalizeCubemapCapture();
-                if (result != ECaptureStepResult.Completed)
-                    return result;
+                // Split cubemap mipmap/octahedral finalization and IBL convolution across two
+                // frames so one probe completion does not spike desktop frame time.
+                if (!_finalizeBaseCompleted)
+                {
+                    ECaptureStepResult result = base.FinalizeCubemapCapture();
+                    if (result != ECaptureStepResult.Completed)
+                        return result;
+                    _finalizeBaseCompleted = true;
+                    return ECaptureStepResult.Pending;
+                }
+
+                _finalizeBaseCompleted = false;
                 SynchronizeCaptureTextureWrites();
                 CompleteIblGenerationAttempt(releaseTransientEnvironmentTexturesOnSuccess: true);
                 return ECaptureStepResult.Completed;

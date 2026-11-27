@@ -27,6 +27,7 @@
     <ProjectReference Include="..\XREngine.Audio.OpenAL\XREngine.Audio.OpenAL.csproj" />
     <ProjectReference Include="..\XREngine.Audio.OVRLipSync\XREngine.Audio.OVRLipSync.csproj" />
     <ProjectReference Include="..\XREngine.Audio.Audio2Face\XREngine.Audio.Audio2Face.csproj" />
+    <ProjectReference Include="..\XREngine.Animation.MotionBricks\XREngine.Animation.MotionBricks.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.UI.Ultralight\XREngine.Runtime.UI.Ultralight.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.UI.Rive\XREngine.Runtime.UI.Rive.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Imaging.Bc7Enc\XREngine.Runtime.Imaging.Bc7Enc.csproj" />

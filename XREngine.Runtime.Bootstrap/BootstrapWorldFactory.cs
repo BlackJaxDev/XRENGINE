@@ -94,22 +94,100 @@ public static class BootstrapWorldFactory
         if (settings.IKTest)
             BootstrapAnimationWorldBuilder.AddIKTest(rootNode, targetNode => BootstrapEditorBridge.Current?.EnableTransformToolForNode(targetNode));
 
-        if (settings.LightProbe != LightProbeMode.Off || settings.Skybox)
+        bool addLightProbe = settings.LightProbe != LightProbeMode.Off;
+        bool addSkybox = settings.Skybox;
+        bool hasStartupModelImports = settings.CreateUnitBox || settings.HasAnyModelsToImport;
+        bool deferStartupProbeCapture = addLightProbe
+            && settings.LightProbeCapture == LightProbeCaptureMode.Startup
+            && (addSkybox || hasStartupModelImports);
+        Action? deferredStartupProbeCapture = null;
+        object startupProbeCaptureGate = new();
+        bool startupSkyReady = !addSkybox;
+        bool startupModelsReady = !hasStartupModelImports;
+        bool startupProbeCaptureDispatched = false;
+
+        void TryDispatchDeferredStartupProbeCapture()
         {
-            bool addLightProbe = settings.LightProbe != LightProbeMode.Off;
-            bool addSkybox = settings.Skybox;
+            Action? captureAction = null;
+            lock (startupProbeCaptureGate)
+            {
+                if (startupProbeCaptureDispatched || !startupSkyReady || !startupModelsReady || deferredStartupProbeCapture is null)
+                    return;
+
+                startupProbeCaptureDispatched = true;
+                captureAction = deferredStartupProbeCapture;
+            }
+
+            _ = Engine.InvokeOnAppThread(
+                captureAction,
+                "BootstrapWorldFactory: start deferred startup light probe capture",
+                executeNowIfAlreadyAppThread: true);
+        }
+
+        void MarkStartupSkyReady()
+        {
+            lock (startupProbeCaptureGate)
+                startupSkyReady = true;
+
+            TryDispatchDeferredStartupProbeCapture();
+        }
+
+        void MarkStartupModelsReady()
+        {
+            lock (startupProbeCaptureGate)
+                startupModelsReady = true;
+
+            TryDispatchDeferredStartupProbeCapture();
+        }
+
+        if (addLightProbe || addSkybox)
+        {
             string[] names = ["klippad_sunrise_2_4k", "warm_restaurant_4k", "overcast_soil_puresky_4k", "satara_night_4k", "studio_small_09_4k"];
             Random random = new();
             string skyTextureName = $"{names[random.Next(0, names.Length)]}.exr";
-            Action? deferredStartupProbeCapture = null;
+            bool holdProceduralSkyCycleUntilStartupProbesComplete = addSkybox
+                && settings.ProceduralSky
+                && settings.ProceduralSkyAutoCycle
+                && deferStartupProbeCapture;
+            SkyboxComponent? startupSkybox = null;
+            bool startupProbesFinishedBeforeSkyboxInit = false;
+
+            void ResumeProceduralSkyCycleAfterStartupProbes()
+            {
+                if (!holdProceduralSkyCycleUntilStartupProbesComplete)
+                    return;
+
+                if (startupSkybox is null)
+                {
+                    startupProbesFinishedBeforeSkyboxInit = true;
+                    return;
+                }
+
+                _ = Engine.InvokeOnAppThread(
+                    () => startupSkybox.AutoCycle = true,
+                    "BootstrapWorldFactory: resume procedural sky cycle after startup light probe capture",
+                    executeNowIfAlreadyAppThread: true);
+            }
 
             if (addLightProbe)
                 deferredStartupProbeCapture = BootstrapLightingBuilder.AddConfiguredLightProbes(
                     rootNode,
-                    deferStartupCapture: addSkybox && settings.LightProbeCapture == LightProbeCaptureMode.Startup);
+                    deferStartupCapture: deferStartupProbeCapture,
+                    onStartupCaptureCompleted: ResumeProceduralSkyCycleAfterStartupProbes);
 
             if (addSkybox)
-                AddSkyboxEnvironment(rootNode, skyTextureName, deferredStartupProbeCapture, settings, sunDirectionalLight, moonDirectionalLight);
+            {
+                startupSkybox = AddSkyboxEnvironment(
+                    rootNode,
+                    skyTextureName,
+                    MarkStartupSkyReady,
+                    settings,
+                    sunDirectionalLight,
+                    moonDirectionalLight,
+                    deferAutoCycleStart: holdProceduralSkyCycleUntilStartupProbesComplete);
+                if (startupProbesFinishedBeforeSkyboxInit && startupSkybox is not null)
+                    startupSkybox.AutoCycle = true;
+            }
         }
 
         if (settings.Mirror)
@@ -168,7 +246,7 @@ public static class BootstrapWorldFactory
             desktopDir,
             rootNode,
             characterPawnModelParentNode ?? rootNode,
-            () =>
+            onAllImportsComplete: () =>
             {
                 if (restoreRuntimeShadowSettings is not null)
                     restoreRuntimeShadowSettings();
@@ -176,7 +254,9 @@ public static class BootstrapWorldFactory
                     BootstrapRenderSettings.ReapplyEditorRenderStateAfterBootstrap("startup model import phase completed");
 
                 QueueStartupShadowAtlasReset(world);
-            });
+                MarkStartupModelsReady();
+            },
+            onStaticImportsComplete: MarkStartupModelsReady);
 
         return world;
     }
@@ -283,29 +363,30 @@ public static class BootstrapWorldFactory
         return CreateUnitTestWorld(setUI, isServer);
     }
 
-    private static void AddSkyboxEnvironment(
+    private static SkyboxComponent? AddSkyboxEnvironment(
         SceneNode rootNode,
         string skyTextureName,
         Action? onSkyReady,
         UnitTestingWorldSettings settings,
         DirectionalLightComponent? sunDirectionalLight = null,
-        DirectionalLightComponent? moonDirectionalLight = null)
+        DirectionalLightComponent? moonDirectionalLight = null,
+        bool deferAutoCycleStart = false)
     {
         SkyboxComponent? skyboxComp = BootstrapModelBuilder.AddSkybox(rootNode, null);
         if (skyboxComp is null)
-            return;
+            return null;
 
         if (settings.ProceduralSky)
         {
             skyboxComp.Mode = ESkyboxMode.DynamicProcedural;
-            skyboxComp.AutoCycle = settings.ProceduralSkyAutoCycle;
+            skyboxComp.AutoCycle = settings.ProceduralSkyAutoCycle && !deferAutoCycleStart;
             skyboxComp.TimeOfDay = settings.ProceduralSkyTimeOfDay;
             skyboxComp.SunDirectionalLight = sunDirectionalLight;
             skyboxComp.SyncDirectionalLightWithSun = sunDirectionalLight is not null;
             skyboxComp.MoonDirectionalLight = moonDirectionalLight;
             skyboxComp.SyncDirectionalLightWithMoon = moonDirectionalLight is not null;
             onSkyReady?.Invoke();
-            return;
+            return skyboxComp;
         }
 
         string skyTexturePath = Engine.Assets.ResolveEngineAssetPath("Textures", skyTextureName);
@@ -338,7 +419,7 @@ public static class BootstrapWorldFactory
         if (RuntimeEngine.Windows.Count > 0 || !Engine.StartingUp)
         {
             QueueSkyTextureLoad();
-            return;
+            return skyboxComp;
         }
 
         void AfterWindowsCreated(GameStartupSettings _, GameState __)
@@ -348,6 +429,7 @@ public static class BootstrapWorldFactory
         }
 
         Engine.AfterCreateWindows += AfterWindowsCreated;
+        return skyboxComp;
     }
 
     private static void AddMirror(SceneNode rootNode, UnitTestingWorldSettings settings)
@@ -470,8 +552,14 @@ public static class BootstrapWorldFactory
         dirLightComp!.Name = "TestDirectionalLight2";
         dirLightComp.Color = new Vector3(1.0f, 0.8f, 0.8f);
         dirLightComp.DiffuseIntensity = 1.0f;
-        dirLightComp.Scale = new Vector3(1000.0f, 1000.0f, 1000.0f);
-        dirLightComp.CastsShadows = false;
+        UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
+        dirLightComp.Scale = settings.ProceduralSky
+            ? new Vector3(100.0f, 100.0f, 900.0f)
+            : new Vector3(1000.0f, 1000.0f, 1000.0f);
+        BootstrapLightingBuilder.ApplyDirectionalShadowSettings(
+            dirLightComp,
+            settings,
+            castsShadows: settings.ProceduralSky && settings.DirLightCastsShadows);
         return dirLightComp;
     }
 

@@ -163,7 +163,7 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     /// </summary>
     bool EnableVrFoveatedViewSet { get; }
 
-    ERvcPipelineMode RvcPipelineMode => ERvcPipelineMode.Off;
+    ERvcPipelineMode RvcPipelineMode => RuntimeRenderingHostServiceDefaults.RvcPipelineMode;
     bool RvcQuadViewEnabled => false;
 
     /// <summary>

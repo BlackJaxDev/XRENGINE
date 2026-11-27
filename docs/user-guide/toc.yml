@@ -14,6 +14,8 @@
   href: transforms.md
 - name: Animation
   href: animation.md
+- name: MotionBricks Procedural Locomotion Setup
+  href: motionbricks-animation.md
 - name: Physics
   href: physics.md
 - name: Rendering

@@ -148,13 +148,15 @@ vec4 XR_ADV_SampleTexture2DGrad(
       defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
     uint textureIndex = textureReference.payload0;
     uint samplerIndex = textureReference.payload1;
+    // Upper 16 bits carry exp2(streamingLodBias) as half-float during mip promotion fades.
+    float fadeScale = max(unpackHalf2x16(textureReference.payload2).y, 1.0);
     return textureGrad(
         sampler2D(
             XR_ADV_TextureDescriptors[nonuniformEXT(textureIndex)],
             XR_ADV_SamplerDescriptors[nonuniformEXT(samplerIndex)]),
         uv,
-        uvDx,
-        uvDy);
+        uvDx * fadeScale,
+        uvDy * fadeScale);
 #elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
     return textureGrad(
         XR_ADV_TextureArray,

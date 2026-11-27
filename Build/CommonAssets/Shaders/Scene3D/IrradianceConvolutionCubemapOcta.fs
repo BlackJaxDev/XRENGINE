@@ -29,7 +29,8 @@ void main()
     vec3 right = normalize(cross(up, N));
     up         = normalize(cross(N, right));
 
-    float sampleDelta = 0.025f;
+    // 0.075 rad step integrates the smooth cosine hemisphere in ~1,760 samples (~9x faster than 0.025).
+    float sampleDelta = 0.075f;
     int numSamples = 0;
     for (float phi = 0.0f; phi < 2.0f * PI; phi += sampleDelta)
     {

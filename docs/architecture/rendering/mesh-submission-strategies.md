@@ -13,7 +13,7 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 | `GpuMeshletInstrumented` | Meshlet/task-mesh path for bring-up, validation, and inspection. | Allowed only when diagnostics are explicitly enabled, and counted. | No implicit CPU fallback; unsupported renderers fall back visibly to the non-meshlet resolver path. | Allowed. |
 | `GpuMeshletZeroReadback` | Production meshlet/task-mesh submission from GPU-written counts. | Forbidden by contract. | No implicit CPU fallback; unsupported renderers fall back visibly to `GpuIndirectZeroReadback` when possible. | Forbidden; use counters and warnings outside the hot path. |
 
-`GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
+`GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver. On zero-readback profiles, the resolver selects `GpuMeshletZeroReadback` when the active non-WebGPU backend supports meshlet dispatch, and otherwise selects `GpuIndirectZeroReadback` when indirect-count draws are available. Older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
 WebGPU preserves the requested authored strategy, including instrumented modes
 when diagnostics are disabled. Generic traditional indirect and compute-meshlet

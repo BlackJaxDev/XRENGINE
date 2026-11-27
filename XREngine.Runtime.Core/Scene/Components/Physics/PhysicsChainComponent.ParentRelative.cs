@@ -11,7 +11,7 @@ public partial class PhysicsChainComponent
     /// Gets if a setting reads the turn of each segment from its rest direction.
     /// </summary>
     private bool TracksSegmentTurn
-        => RestFollowsParent || GravityMode == EPhysicsChainGravityMode.SegmentRatio;
+        => RestFollowsParent || GravityMode is EPhysicsChainGravityMode.SegmentRatio or EPhysicsChainGravityMode.RestBias;
 
     /// <summary>
     /// Gets the rest offset of a child from its parent, without the simulated turn of the parents.
@@ -38,11 +38,27 @@ public partial class PhysicsChainComponent
     /// </summary>
     private void ApplyKeepShape(ParticleTree tree, Particle child, Particle parent, float stiffness, float restLength, float timeVar)
     {
-        Vector3 restPosition = parent.Position + ComputeShapeRestOffset(child, parent);
-        child.Position += (restPosition - child.Position) * (child.Elasticity * timeVar);
+        Vector3 restOffset = ComputeShapeRestOffset(child, parent);
+        Vector3 restPosition = parent.Position + restOffset;
+        if (GravityMode == EPhysicsChainGravityMode.RestBias)
+        {
+            Vector3 segmentGravity = ComputeSegmentGravity(tree, child);
+            float gravityLength = segmentGravity.Length();
+            if (gravityLength > 0.0f)
+            {
+                Vector3 gravityOffset = (segmentGravity / gravityLength) * restLength;
+                float bias = Math.Clamp(gravityLength, 0.0f, 1.0f);
+                restPosition = parent.Position + Vector3.Lerp(restOffset, gravityOffset, bias);
+            }
 
-        if (GravityMode == EPhysicsChainGravityMode.SegmentRatio)
-            child.Position += ComputeSegmentGravity(tree, child) * (child.SegmentLength * timeVar);
+            child.Position += (restPosition - child.Position) * (child.Elasticity * timeVar);
+        }
+        else
+        {
+            child.Position += (restPosition - child.Position) * (child.Elasticity * timeVar);
+            if (GravityMode == EPhysicsChainGravityMode.SegmentRatio)
+                child.Position += ComputeSegmentGravity(tree, child) * (restLength * timeVar);
+        }
 
         if (stiffness <= 0.0f)
             return;

@@ -38,6 +38,14 @@ perprimitiveEXT out gl_MeshPerPrimitiveEXT
     int gl_PrimitiveID;
 } gl_MeshPrimitivesEXT[];
 
+#if defined(XR_ADV_VISIBILITY_CLIP_PLANE)
+out gl_MeshPerVertexEXT
+{
+    vec4 gl_Position;
+    float gl_ClipDistance[1];
+} gl_MeshVerticesEXT[];
+#endif
+
 // Opaque visibility programs define XR_ADV_VISIBILITY_IDENTITY_ONLY. Their
 // fragment stage reads only the flat identity values, so this stage does not
 // write the interpolated coverage attributes. This also makes the per-meshlet
@@ -101,7 +109,10 @@ bool XR_ADV_HasVertexRanges(
 void main()
 {
 #if defined(XR_ADV_MULTIVIEW_RASTER)
-    if (uint(gl_ViewIndex) != XR_ADV_VisibilityRasterPush.viewIndex)
+    // Multiview broadcasts each eye or portal draw; match hardware layer gl_ViewIndex
+    // against the owning primary view index rather than per-swapchain outputLayer.
+    uint expectedLayer = XR_ADV_ViewMaskIndex(XR_ADV_VisibilityRasterPush.viewIndex);
+    if (uint(gl_ViewIndex) != expectedLayer)
     {
         SetMeshOutputsEXT(0u, 0u);
         return;
@@ -285,6 +296,9 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
         {
             atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
             gl_MeshVerticesEXT[vertex].gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+#if defined(XR_ADV_VISIBILITY_CLIP_PLANE)
+            gl_MeshVerticesEXT[vertex].gl_ClipDistance[0] = -1.0;
+#endif
             continue;
         }
 
@@ -309,6 +323,11 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
             !any(isnan(previousClip)) && !any(isinf(previousClip));
 
         gl_MeshVerticesEXT[vertex].gl_Position = worldPosition * view.viewProjectionJittered;
+#if defined(XR_ADV_VISIBILITY_CLIP_PLANE)
+        gl_MeshVerticesEXT[vertex].gl_ClipDistance[0] = (view.flags & XR_ADV_VIEW_CLIP_PLANE_ENABLED) != 0u
+            ? dot(worldPosition, view.clipPlaneWorld)
+            : 1.0;
+#endif
         VisibilityDrawIndex[vertex] = payload.draw.index;
         VisibilitySelectionId[vertex] = editorSelectionId;
         VisibilityEditorFlags[vertex] = editorFlags;

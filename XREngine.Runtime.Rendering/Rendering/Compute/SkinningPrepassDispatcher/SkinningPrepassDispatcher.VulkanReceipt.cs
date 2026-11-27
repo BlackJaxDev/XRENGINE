@@ -10,6 +10,7 @@ internal sealed partial class SkinningPrepassDispatcher
         private int _consumerUseCount;
         private bool _initialized;
         private bool _reserved;
+        private bool _ownerKnownIdle;
 
         public AbstractRenderer BackendOwner { get; private set; } = null!;
         public ulong AttemptId { get; private set; }
@@ -25,11 +26,15 @@ internal sealed partial class SkinningPrepassDispatcher
                 return false;
             if (_initialized)
             {
-                if (Volatile.Read(ref _referenceCount) != 0 || !CanReleaseFence())
+                if (Volatile.Read(ref _referenceCount) != 0 || (!_ownerKnownIdle && !CanReleaseFence()))
                     return false;
                 Fence?.Dispose();
                 Fence = null;
+                BackendOwner = null!;
+                AttemptId = 0UL;
+                ProducerAccepted = false;
                 _initialized = false;
+                _ownerKnownIdle = false;
             }
 
             _reserved = true;
@@ -49,8 +54,31 @@ internal sealed partial class SkinningPrepassDispatcher
             Fence = fence;
             ProducerAccepted = producerAccepted;
             Volatile.Write(ref _referenceCount, 0);
+            _ownerKnownIdle = false;
             _initialized = true;
             _reserved = false;
+        }
+
+        /// <summary>
+        /// Releases a receipt owned by <paramref name="renderer"/> once that renderer's GPU is idle.
+        /// Receipts still held by teardown code recycle as soon as their reference count reaches zero.
+        /// </summary>
+        public void NotifyOwnerKnownIdle(AbstractRenderer renderer)
+        {
+            if (!_initialized || !ReferenceEquals(BackendOwner, renderer))
+                return;
+
+            _ownerKnownIdle = true;
+            if (Volatile.Read(ref _referenceCount) != 0)
+                return;
+
+            Fence?.Dispose();
+            Fence = null;
+            BackendOwner = null!;
+            AttemptId = 0UL;
+            ProducerAccepted = false;
+            _initialized = false;
+            _ownerKnownIdle = false;
         }
 
         public void CancelReservation()

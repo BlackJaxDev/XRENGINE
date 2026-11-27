@@ -75,6 +75,7 @@ layout (location = 4) in vec2 FragUV0;
 #pragma snippet "AmbientOcclusionSampling"
 #pragma snippet "SurfaceDetailNormalMapping"
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 
 vec3 getNormalFromMap()
 {
@@ -91,10 +92,10 @@ void main()
 #ifdef XRENGINE_DEPTH_NORMAL_PREPASS
     Normal = XRENGINE_EncodeNormal(normal);
 #else
-    vec4 texColor = texture(Texture0, FragUV0);
+    vec4 texColor = XRENGINE_SampleBiasedTexture(Texture0, FragUV0);
     float AmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
 
-    float specularMask = texture(Texture2, FragUV0).r;
+    float specularMask = XRENGINE_SampleBiasedTexture(Texture2, FragUV0).r;
     float specIntensity = MatSpecularIntensity * specularMask;
 
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, specIntensity, AmbientOcclusion);

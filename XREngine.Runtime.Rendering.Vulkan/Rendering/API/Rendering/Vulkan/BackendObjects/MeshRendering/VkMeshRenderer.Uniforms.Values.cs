@@ -969,6 +969,10 @@ internal unsafe partial class VkMeshRenderer
 				value = (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.Vulkan);
 				type = EShaderVarType._int;
 				return true;
+			case EEngineUniform.UpscaleTextureLodBias:
+				value = draw.AutoUniformPublication.UpscaleTextureLodBias;
+				type = EShaderVarType._float;
+				return true;
 			case EEngineUniform.ScreenWidth:
 			case EEngineUniform.ScreenHeight:
 				// Resolve from the render-area snapshotted at enqueue time. Reading the live

@@ -243,9 +243,21 @@ namespace XREngine.Animation.Importers
         }
 
         public static AnimationClip Import(string filePath)
-            => ImportCore(filePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            => ImportCore(filePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), nodePathRewrites: null);
 
-        private static AnimationClip ImportCore(string filePath, HashSet<string> activeAdditiveReferences)
+        /// <summary>
+        /// Imports a Unity <c>.anim</c> clip while remapping authored hierarchy node paths
+        /// (for example, <c>Body</c> to an avatar's face mesh path) without changing the source file.
+        /// </summary>
+        public static AnimationClip Import(
+            string filePath,
+            IReadOnlyDictionary<string, string>? nodePathRewrites)
+            => ImportCore(filePath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), nodePathRewrites);
+
+        private static AnimationClip ImportCore(
+            string filePath,
+            HashSet<string> activeAdditiveReferences,
+            IReadOnlyDictionary<string, string>? nodePathRewrites = null)
         {
             ArgumentNullException.ThrowIfNull(filePath);
 
@@ -409,7 +421,7 @@ namespace XREngine.Animation.Importers
                 ScalarCurve>();
             foreach (var c in curves)
             {
-                string nodePath = NormalizePath(c.Path);
+                string nodePath = RewriteNodePath(NormalizePath(c.Path), nodePathRewrites);
                 ImportedAnimationBindingDescriptor? packedBinding = c.BindingDescriptor;
                 var key = (
                     nodePath,
@@ -662,7 +674,7 @@ namespace XREngine.Animation.Importers
                     && TryMapRootMotionComponent(c.Attribute, out _, out _))
                     continue;
 
-                string nodePath = NormalizePath(c.Path);
+                string nodePath = RewriteNodePath(NormalizePath(c.Path), nodePathRewrites);
 
                 if (TryParseMaterialBinding(
                     nodePath,
@@ -755,6 +767,20 @@ namespace XREngine.Animation.Importers
                     continue;
                 }
 
+                // Empty-path classID 95 scalar curves that are not humanoid muscles or root/IK tracks
+                // animate Animator float parameters (Animated Animator Parameters).
+                if (IsAnimatedAnimatorParameterCurve(c, nodePath))
+                {
+                    RecordAppliedBinding(
+                        manifestBuilder,
+                        EImportedAnimationDataDomain.GenericProperty,
+                        c,
+                        $"AnimStateMachine.Parameter.{c.Attribute}");
+                    PropAnimFloat anim = BuildFloatAnim(c, length, looped, sampleRate, valueScale: 1.0f, startTime);
+                    builder.AddAnimatedFloatParameter(c.Attribute, anim);
+                    continue;
+                }
+
                 ImportedAnimationBindingDescriptor descriptor = c.BindingDescriptor
                     ?? CreateGenericBindingDescriptor(
                         c.SourceField,
@@ -777,7 +803,7 @@ namespace XREngine.Animation.Importers
             // 2) Handle explicit vector curves (if any were present in the YAML)
             foreach (var vc in vecCurves)
             {
-                string nodePath = NormalizePath(vc.Path);
+                string nodePath = RewriteNodePath(NormalizePath(vc.Path), nodePathRewrites);
                 if (TryMapVectorAttribute(vc.Attribute, out string kind, out int componentCount))
                 {
                     if (kind is "translation" or "scale")
@@ -876,7 +902,7 @@ namespace XREngine.Animation.Importers
 
             foreach (ObjectCurve objectCurve in objectCurves)
             {
-                string nodePath = NormalizePath(objectCurve.Path);
+                string nodePath = RewriteNodePath(NormalizePath(objectCurve.Path), nodePathRewrites);
                 ImportedAnimationBindingDescriptor descriptor = objectCurve.BindingDescriptor
                     ?? CreateGenericBindingDescriptor(
                         objectCurve.SourceField,
@@ -1032,13 +1058,24 @@ namespace XREngine.Animation.Importers
                 method.Animation = anim;
             }
 
+            public void AddAnimatedFloatParameter(string parameterName, PropAnimFloat anim)
+            {
+                AnimationMember method = GetOrAddMethod(
+                    _root,
+                    "SetAnimatedFloatParameter",
+                    [parameterName, 0.0f],
+                    animatedArgIndex: 1,
+                    cacheReturnValue: false);
+                method.Animation = anim;
+            }
+
             public void AddGenericFloatAnimation(
                 ImportedAnimationBindingDescriptor binding,
                 PropAnimFloat animation)
             {
                 AnimationMember method = GetOrAddMethod(
                     _root,
-                    "SetUnityAnimationFloat",
+                    "SetImportedAnimationFloat",
                     [binding, 0.0f],
                     animatedArgIndex: 1,
                     cacheReturnValue: false);
@@ -1051,7 +1088,7 @@ namespace XREngine.Animation.Importers
             {
                 AnimationMember method = GetOrAddMethod(
                     _root,
-                    "SetUnityAnimationObjectReference",
+                    "SetImportedAnimationObjectReference",
                     [binding, default(SourceAssetReference)],
                     animatedArgIndex: 1,
                     cacheReturnValue: false);
@@ -1273,6 +1310,26 @@ namespace XREngine.Animation.Importers
             // Use explicit mapping instead of a name heuristic so dot-only muscle names (e.g. LeftHand.Index.Spread)
             // are recognized correctly.
             return TryMapImportedHumanoidAttributeToValue(c.Attribute, out _);
+        }
+
+        private static bool IsAnimatedAnimatorParameterCurve(ScalarCurve curve, string normalizedNodePath)
+        {
+            if (!string.IsNullOrEmpty(normalizedNodePath))
+                return false;
+            if (curve.ClassId is not 95 || !curve.Script.IsNull)
+                return false;
+            if (string.IsNullOrWhiteSpace(curve.Attribute))
+                return false;
+            if (curve.Attribute.StartsWith("blendShape.", StringComparison.Ordinal)
+                || curve.Attribute.StartsWith("RootT.", StringComparison.Ordinal)
+                || curve.Attribute.StartsWith("RootQ.", StringComparison.Ordinal))
+                return false;
+            if (TryMapIKGoalComponent(curve.Attribute, out _, out _, out _)
+                || TryMapHumanoidTranslationDofComponent(curve.Attribute, out _, out _)
+                || TryMapImportedHumanoidAttributeToValue(curve.Attribute, out _))
+                return false;
+
+            return true;
         }
 
         private static bool TryMapHumanoidTranslationDofComponent(
@@ -2978,6 +3035,36 @@ namespace XREngine.Animation.Importers
 
         private static string NormalizePath(string? path)
             => string.IsNullOrWhiteSpace(path) ? string.Empty : path.Replace('\\', '/');
+
+        private static string RewriteNodePath(
+            string normalizedPath,
+            IReadOnlyDictionary<string, string>? nodePathRewrites)
+        {
+            if (nodePathRewrites is null || nodePathRewrites.Count == 0 || normalizedPath.Length == 0)
+                return normalizedPath;
+
+            if (nodePathRewrites.TryGetValue(normalizedPath, out string? exactTarget))
+                return NormalizePath(exactTarget).Trim('/');
+
+            foreach ((string rawSource, string rawTarget) in nodePathRewrites)
+            {
+                string source = NormalizePath(rawSource).Trim('/');
+                if (source.Length == 0)
+                    continue;
+                if (string.Equals(normalizedPath, source, StringComparison.OrdinalIgnoreCase))
+                    return NormalizePath(rawTarget).Trim('/');
+                if (normalizedPath.Length > source.Length
+                    && normalizedPath[source.Length] == '/'
+                    && normalizedPath.StartsWith(source, StringComparison.OrdinalIgnoreCase))
+                {
+                    string target = NormalizePath(rawTarget).Trim('/');
+                    string suffix = normalizedPath[(source.Length + 1)..];
+                    return target.Length == 0 ? suffix : $"{target}/{suffix}";
+                }
+            }
+
+            return normalizedPath;
+        }
 
         private static YamlMappingNode GetAnimationClipMapping(YamlStream yaml)
         {

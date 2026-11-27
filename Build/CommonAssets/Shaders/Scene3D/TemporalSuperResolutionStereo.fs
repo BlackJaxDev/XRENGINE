@@ -52,6 +52,7 @@ uniform float ReactiveLumaThreshold;
 uniform float DepthDiscontinuityScale;
 uniform float ConfidencePower;
 uniform int DebugMode;
+uniform int AntiAliasingFilterMode;
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
@@ -131,6 +132,43 @@ vec3 SampleCurrentReconstruction(sampler2DArray tex, vec2 uv, vec2 texelSize)
         texture(tex, EyeUv(ClampUvToTexels(uv + vec2(-1.0,  1.0) * texelSize, texelSize))).rgb +
         texture(tex, EyeUv(ClampUvToTexels(uv + vec2( 1.0,  1.0) * texelSize, texelSize))).rgb;
     return (center + axial * 2.0 + diagonal) * (1.0 / 16.0);
+}
+
+// Integrates a 2x2 output-pixel bilinear tent kernel W(x / r) = 1 - |x / r| across
+// the overlapping 3x3 source texels of the active multiview layer.
+vec3 SampleTent2x2(sampler2DArray tex, vec2 uv, vec2 radiusInSourceTexels)
+{
+    ivec2 extent = max(textureSize(tex, 0).xy, ivec2(1));
+    int layer = int(gl_ViewID_OVR);
+    vec2 radius = clamp(radiusInSourceTexels, vec2(0.25), vec2(1.0));
+    vec2 invRadius = 1.0 / radius;
+    vec2 position = clamp(uv, vec2(0.0), vec2(1.0)) * vec2(extent);
+    ivec2 centerPixel = ivec2(floor(position));
+    float wx[3];
+    float wy[3];
+    for (int i = -1; i <= 1; ++i)
+    {
+        wx[i + 1] = TsrTent1DIntegral((float(centerPixel.x + i) - position.x) * invRadius.x,
+            (float(centerPixel.x + i + 1) - position.x) * invRadius.x);
+        wy[i + 1] = TsrTent1DIntegral((float(centerPixel.y + i) - position.y) * invRadius.y,
+            (float(centerPixel.y + i + 1) - position.y) * invRadius.y);
+    }
+
+    vec3 colorSum = vec3(0.0);
+    float weightSum = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            float weight = wx[x + 1] * wy[y + 1];
+            if (weight <= 1e-6)
+                continue;
+            ivec2 samplePixel = clamp(centerPixel + ivec2(x, y), ivec2(0), extent - ivec2(1));
+            colorSum += texelFetch(tex, ivec3(samplePixel, layer), 0).rgb * weight;
+            weightSum += weight;
+        }
+    }
+    return colorSum / max(weightSum, 1e-6);
 }
 
 float SamplePostTemporalForwardMask(vec2 uv)
@@ -221,6 +259,7 @@ vec3 EncodeVelocityDebug(vec2 velocity)
 }
 
 #ifdef XR_TSR_STABLE_OUTPUT
+uniform usampler2DArray TsrVisibilityMetadata;
 float TsrLoadCurrentDepth(ivec2 pixel) { return texelFetch(DepthView, ivec3(pixel, int(gl_ViewID_OVR)), 0).r; }
 vec2 TsrLoadVelocity(ivec2 pixel) { return texelFetch(Velocity, ivec3(pixel, int(gl_ViewID_OVR)), 0).xy; }
 float TsrLoadHistoryDepth(ivec2 pixel) { return texelFetch(HistoryDepth, ivec3(pixel, int(gl_ViewID_OVR)), 0).r; }
@@ -228,6 +267,7 @@ vec4 TsrLoadHistoryColor(ivec2 pixel) { return texelFetch(TsrHistoryColor, ivec3
 vec4 TsrLoadHistoryMetadata(ivec2 pixel) { return texelFetch(TsrHistoryMetadata, ivec3(pixel, int(gl_ViewID_OVR)), 0); }
 vec3 TsrLoadCurrentColor(ivec2 pixel) { return texelFetch(PostProcessOutputTexture, ivec3(pixel, int(gl_ViewID_OVR)), 0).rgb; }
 float TsrLoadCurrentReactivity(ivec2 pixel) { return texelFetch(AdvancedReactiveMask, ivec3(pixel, int(gl_ViewID_OVR)), 0).r; }
+uint TsrLoadVisibilityViewIndex(ivec2 pixel) { return (texelFetch(TsrVisibilityMetadata, ivec3(pixel, int(gl_ViewID_OVR)), 0).r >> 8u) & 0xFFu; }
 #endif
 #ifdef XR_TSR_EDGE_MASK
 // Edge mask of this frame, written at internal resolution by the edge-mask pass.
@@ -334,21 +374,31 @@ void main()
 #endif
     vec2 sourceTexelSize = TextureTexelSize(PostProcessOutputTexture);
     vec2 historyTexelSize = TextureTexelSize(TsrHistoryColor);
-    bool nativeResolution = all(equal(
-        textureSize(PostProcessOutputTexture, 0).xy,
-        textureSize(TsrHistoryColor, 0).xy));
+    ivec2 sourceExtent = max(textureSize(PostProcessOutputTexture, 0).xy, ivec2(1));
+    ivec2 historyExtent = max(textureSize(TsrHistoryColor, 0).xy, ivec2(1));
+    bool nativeResolution = all(equal(sourceExtent, historyExtent));
+    vec2 tentRadius = clamp(vec2(sourceExtent) / vec2(historyExtent), vec2(0.25), vec2(1.0));
 
     vec4 currentSample = texture(PostProcessOutputTexture, EyeUv(uv));
     vec3 currentColorRaw = currentSample.rgb;
 #ifdef XR_TSR_STABLE_OUTPUT
-    // Surface ownership and current color use the same positive bilinear taps.
-    vec3 currentColor = currentColorRaw;
+    // Surface ownership and current color use positive taps; Tent2x2 reconstructs
+    // across a 2x2 output-pixel tent footprint scaled into source texel space.
+    vec3 currentColor = (AntiAliasingFilterMode == 2 && !isPostTemporalForward)
+        ? SampleTent2x2(PostProcessOutputTexture, uv, tentRadius)
+        : currentColorRaw;
 #else
     // The selected source grid also applies at native resolution. Stencil-tagged
     // overlays bypass spatial reconstruction and temporal blending.
-    vec3 currentColor = nativeResolution || isPostTemporalForward
-        ? currentColorRaw
-        : mix(currentColorRaw, SampleCurrentReconstruction(PostProcessOutputTexture, uv, sourceTexelSize), 0.25);
+    vec3 currentColor;
+    if (isPostTemporalForward || AntiAliasingFilterMode == 1)
+        currentColor = currentColorRaw;
+    else if (AntiAliasingFilterMode == 2)
+        currentColor = SampleTent2x2(PostProcessOutputTexture, uv, tentRadius);
+    else
+        currentColor = nativeResolution
+            ? currentColorRaw
+            : mix(currentColorRaw, SampleCurrentReconstruction(PostProcessOutputTexture, uv, sourceTexelSize), 0.25);
 #endif
     vec3 currentYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(currentColor));
     float currentLuma = TsrRgbToYCoCg(max(currentColor, vec3(0.0))).x;
@@ -360,7 +410,6 @@ void main()
     ComputeNeighborhoodBounds(uv, minBound, maxBound, meanYCoCg, sampleMin, sampleMax);
     float historyAge = 0.0;
 
-    float currentDepth = texture(DepthView, EyeUv(uv)).r;
     vec3 historyYCoCg = currentYCoCg;
     bool canUseHistory = TsrCanSampleHistory(HistoryReady, historyUV);
     canUseHistory = canUseHistory && !isPostTemporalForward
@@ -369,6 +418,8 @@ void main()
     bool historyAllowed = canUseHistory;
     float surfaceSupport = 0.0;
     float rejectionReason = 1.0;
+#else
+    float currentDepth = texture(DepthView, EyeUv(uv)).r;
 #endif
 
     if (canUseHistory)
@@ -384,18 +435,28 @@ void main()
         float historyDepth = texture(HistoryDepth,
             EyeUv(ClampUvToTexels(historyDepthUv, TextureTexelSize(HistoryDepth)))).r;
         if (TsrDepthMatches(currentDepth, historyDepth, DepthRejectThreshold))
-            historyYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(SampleCatmullRom(TsrHistoryColor, historySampleUv, historyTexelSize)));
+        {
+            vec3 historyRgb;
+            if (AntiAliasingFilterMode == 1)
+                historyRgb = texture(TsrHistoryColor, EyeUv(historySampleUv)).rgb;
+            else
+                // Keep history sharp with bicubic Catmull-Rom under Default and Tent2x2
+                // so temporal feedback does not compound tent blur across frames.
+                historyRgb = SampleCatmullRom(TsrHistoryColor, historySampleUv, historyTexelSize);
+            historyYCoCg = TsrRgbToYCoCg(TsrCompressHdrColor(historyRgb));
+        }
         else
             canUseHistory = false;
 #endif
     }
 
+    float motionMask = TsrComputeMotionMask(velocity, ReactiveVelocityScale);
     // Preserve mature, surface-validated rare detail within the observed range.
 #ifdef XR_TSR_STABLE_OUTPUT
     float canonicalReactive = clamp(texture(AdvancedReactiveMask, EyeUv(uv)).r, 0.0, 1.0);
     TsrCoverageResult coverage = TsrResolveCoverage(uv, historyUV, currentJitter, previousJitter,
         historyAllowed, isPostTemporalForward ? 1.0 : canonicalReactive,
-        TsrComputeMotionMask(velocity, ReactiveVelocityScale), currentLuma, depthDiscontinuity);
+        motionMask, currentLuma, depthDiscontinuity);
     bool writeCoverageState = false;
     if (coverage.historyValid)
     {
@@ -413,7 +474,7 @@ void main()
         writeCoverageState = true;
     }
     float detailProtection = TsrComputeDetailProtection(canUseHistory, historyAge,
-        TsrComputeMotionMask(velocity, ReactiveVelocityScale), canonicalReactive);
+        motionMask, canonicalReactive);
     minBound = mix(minBound, min(minBound, sampleMin), detailProtection);
     maxBound = mix(maxBound, max(maxBound, sampleMax), detailProtection);
     minBound = mix(minBound, min(minBound, coverage.colorMin), coverage.retention);
@@ -421,7 +482,6 @@ void main()
 #endif
     vec3 clippedHistory = TsrClipHistoryToNeighborhood(historyYCoCg, minBound, maxBound);
     float historyLuma = TsrRgbToYCoCg(TsrExpandHdrColor(TsrYCoCgToRgb(clippedHistory))).x;
-    float motionMask = TsrComputeMotionMask(velocity, ReactiveVelocityScale);
     float geometryInstability = TsrComputeGeometryInstability(depthDiscontinuity, motionMask);
     float reactiveMask = TsrComputeReactiveMask(
         currentSample.a,
@@ -430,7 +490,9 @@ void main()
         motionMask,
         ReactiveTransparencyRange,
         ReactiveLumaThreshold);
-#ifdef XR_ADVANCED_REACTIVE_MASK
+#ifdef XR_TSR_STABLE_OUTPUT
+    reactiveMask = max(reactiveMask, canonicalReactive);
+#elif defined(XR_ADVANCED_REACTIVE_MASK)
     reactiveMask = max(reactiveMask, clamp(texture(AdvancedReactiveMask, EyeUv(uv)).r, 0.0, 1.0));
 #endif
     float confidence = TsrComputeConfidence(
@@ -486,7 +548,7 @@ void main()
     }
 
 #ifndef XR_TSR_STABLE_OUTPUT
-    if (postTemporalCoverage <= 0.0)
+    if (AntiAliasingFilterMode == 0 && postTemporalCoverage <= 0.0)
     {
         vec3 neighbors =
             texture(PostProcessOutputTexture, EyeUv(ClampSourceUv(uv + vec2(-1.0, 0.0) * sourceTexelSize))).rgb +

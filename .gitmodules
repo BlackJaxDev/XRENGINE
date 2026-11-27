@@ -1,6 +1,6 @@
 [submodule "OscCore-NET9"]
 	path = Build/Submodules/OscCore-NET9
-	url = https://github.com/BlackJaxDev/OscCore-NET9.git
+	url = https://github.com/BlackJaxDev/OscCore-NET10.git
 
 [submodule "rive-sharp"]
 	path = Build/Submodules/rive-sharp

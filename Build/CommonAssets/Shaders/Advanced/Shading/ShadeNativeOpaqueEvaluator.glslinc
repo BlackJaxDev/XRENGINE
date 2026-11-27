@@ -51,8 +51,25 @@ float shadowVisibility = 1.0;
 vec3 directDiffuse = vec3(0.0);
 vec3 directSpecular = vec3(0.0);
 
-// EAdvancedShadingDebugView.MeshletId.
+// EAdvancedShadingDebugView.MeshletId and PortalStencilNode.
 #define XR_ADV_SHADING_DEBUG_MESHLET_ID 11u
+#define XR_ADV_SHADING_DEBUG_PORTAL_STENCIL_NODE 12u
+
+// Returns a deterministic palette color for a portal stencil node ID (1..31)
+// with brightness modulated by recursion depth. Primary pixels (node 0) are dark grey.
+vec3 XR_ADV_PortalStencilNodeDebugColor(uint viewIndex)
+{
+    if (viewIndex >= uint(XR_ADV_Views.records.length()))
+        return vec3(0.16);
+    uint nodeId = XR_ADV_Views.records[viewIndex].stencilNodeId;
+    if (nodeId == 0u)
+        return vec3(0.16);
+    uint depth = XR_ADV_Views.records[viewIndex].depthAndExcludeDraw & 0xFu;
+    float hue = fract(float(nodeId) * 0.61803398875);
+    vec3 rgb = clamp(abs(fract(hue + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    float value = clamp(1.0 - 0.16 * float(max(depth, 1u) - 1u), 0.38, 1.0);
+    return rgb * value;
+}
 
 // Returns a stable color for the meshlet of a visibility sample. Meshlet
 // producers store (global meshlet index << 8) | local triangle in identity.y, so
@@ -117,6 +134,14 @@ void XR_ADV_StoreNeutralMaterialSurfaceInputs(uvec2 pixel, uint viewIndex)
     imageStore(RMSE, XR_ADV_PIXEL(pixel, viewIndex), vec4(1.0, 0.0, 0.0, 0.0));
 }
 
+vec3 XR_ADV_SanitizeRadiance(vec3 value)
+{
+    return vec3(
+        isnan(value.x) || isinf(value.x) ? 0.0 : max(value.x, 0.0),
+        isnan(value.y) || isinf(value.y) ? 0.0 : max(value.y, 0.0),
+        isnan(value.z) || isinf(value.z) ? 0.0 : max(value.z, 0.0));
+}
+
 void XR_ADV_StoreMaterialSurfaceInputs(
     uvec2 pixel,
     uint viewIndex,
@@ -124,10 +149,10 @@ void XR_ADV_StoreMaterialSurfaceInputs(
 {
     if (!XR_ADV_ExportsMaterialSurfaceInputs()) return;
     imageStore(EmissionColor, XR_ADV_PIXEL(pixel, viewIndex),
-        vec4(max(result.emittedRadiance, vec3(0.0)), float(result.hasMaterialSurface)));
+        vec4(XR_ADV_SanitizeRadiance(result.emittedRadiance), float(result.hasMaterialSurface)));
     imageStore(AlbedoOpacity, XR_ADV_PIXEL(pixel, viewIndex), result.albedoOpacity);
     imageStore(Normal, XR_ADV_PIXEL(pixel, viewIndex),
-        vec4(XRENGINE_EncodeNormal(normalize(result.normal)), 0.0, 1.0));
+        vec4(XRENGINE_EncodeNormal(XR_ADV_NormalizeOr(result.normal, vec3(0.0, 0.0, 1.0))), 0.0, 1.0));
     imageStore(RMSE, XR_ADV_PIXEL(pixel, viewIndex),
         vec4(result.roughness, result.metallic, result.rmse.zw));
 }
@@ -138,7 +163,7 @@ void XR_ADV_StoreOpaqueSampleResult(
     XRAdvancedOpaqueSampleResult result)
 {
     imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex),
-        vec4(max(result.radiance, vec3(0.0)), result.opacity));
+        vec4(XR_ADV_SanitizeRadiance(result.radiance), result.opacity));
     imageStore(Velocity, XR_ADV_PIXEL(pixel, viewIndex), vec4(result.velocity, 0.0, 0.0));
     imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(result.reactive));
     if (XR_ADV_StoresShadingDiagnostics())
@@ -215,51 +240,241 @@ void XR_ADV_EvaluateProbeIblWithSelection(
     out vec4 weights,
     out uvec4 indices)
 {
-    // The four strongest probes, strongest first. Vectors with a fixed insertion order
-    // replace float[4] and uint[4]: a dynamically indexed local array goes to per-invocation
-    // local memory (a register spill), while vector components stay in registers.
+    // Keep the eight strongest probes in registers (two vec4/uvec4 pairs) so every corner of a
+    // 3D probe-grid cell can blend simultaneously without local-memory register spills.
+    // Subtracting the ninth-strongest weight fades leaving/entering probes continuously through
+    // zero across rank-swap boundaries instead of popping.
     diffuseIndirect = vec3(0.0);
     specularIndirect = vec3(0.0);
-    weights = vec4(0.0);
-    indices = uvec4(0u);
-    for (uint index = 0u; index < uint(XR_ADV_Probes.records.length()); ++index)
-    {
-        XRAdvancedProbeRecord probe = XR_ADV_LoadProbe(index);
-        if ((probe.flags & (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL)) !=
-            (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL)) continue;
-        if ((probe.viewMaskLo != 0u || probe.viewMaskHi != 0u) &&
-            (viewIndex < 32u ? (probe.viewMaskLo & (1u << viewIndex)) == 0u :
-                (viewIndex >= 64u || (probe.viewMaskHi & (1u << (viewIndex - 32u))) == 0u))) continue;
-        float weight = XR_ADV_ProbeWeight(probe, worldPosition);
-        if (weight <= 0.0) continue;
-        if (weight > weights.x)
-        {
-            weights = vec4(weight, weights.xyz);
-            indices = uvec4(index, indices.xyz);
-        }
-        else if (weight > weights.y)
-        {
-            weights.yzw = vec3(weight, weights.yz);
-            indices.yzw = uvec3(index, indices.yz);
-        }
-        else if (weight > weights.z)
-        {
-            weights.zw = vec2(weight, weights.z);
-            indices.zw = uvec2(index, indices.z);
-        }
-        else if (weight > weights.w)
-        {
-            weights.w = weight;
-            indices.w = index;
-        }
-    }
+    vec4 weights0 = vec4(0.0);
+    vec4 weights1 = vec4(0.0);
+    uvec4 indices0 = uvec4(0u);
+    uvec4 indices1 = uvec4(0u);
+    float ninthWeight = 0.0;
     float sum = 0.0;
     vec3 irradiance = vec3(0.0);
     vec3 prefiltered = vec3(0.0);
-    XR_ADV_AccumulateProbeSlot(weights.x, indices.x, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
-    XR_ADV_AccumulateProbeSlot(weights.y, indices.y, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
-    XR_ADV_AccumulateProbeSlot(weights.z, indices.z, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
-    XR_ADV_AccumulateProbeSlot(weights.w, indices.w, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+#if defined(XR_ADV_PROBE_GROUP_CACHE)
+    if (s_probeCacheCount != XR_ADV_PROBE_CACHE_UNCACHED && s_probeCacheView == viewIndex)
+    {
+        weights0 = vec4(0.0);
+        weights1 = vec4(0.0);
+        indices0 = uvec4(0u);
+        indices1 = uvec4(0u);
+        ninthWeight = 0.0;
+        uint cacheCount = min(s_probeCacheCount, XR_ADV_PROBE_CACHE_MAX);
+        for (uint slot = 0u; slot < cacheCount; ++slot)
+        {
+            float weight = XR_ADV_ProbeWeightCompact(
+                s_probeCacheCenterAndShape[slot],
+                s_probeCacheInner[slot],
+                s_probeCacheOuter[slot],
+                worldPosition);
+            if (weight <= 0.0) continue;
+            if (weight > weights0.x)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weights0.w, weights1.xyz);
+                indices1 = uvec4(indices0.w, indices1.xyz);
+                weights0 = vec4(weight, weights0.xyz);
+                indices0 = uvec4(slot, indices0.xyz);
+            }
+            else if (weight > weights0.y)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weights0.w, weights1.xyz);
+                indices1 = uvec4(indices0.w, indices1.xyz);
+                weights0.yzw = vec3(weight, weights0.yz);
+                indices0.yzw = uvec3(slot, indices0.yz);
+            }
+            else if (weight > weights0.z)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weights0.w, weights1.xyz);
+                indices1 = uvec4(indices0.w, indices1.xyz);
+                weights0.zw = vec2(weight, weights0.z);
+                indices0.zw = uvec2(slot, indices0.z);
+            }
+            else if (weight > weights0.w)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weights0.w, weights1.xyz);
+                indices1 = uvec4(indices0.w, indices1.xyz);
+                weights0.w = weight;
+                indices0.w = slot;
+            }
+            else if (weight > weights1.x)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weight, weights1.xyz);
+                indices1 = uvec4(slot, indices1.xyz);
+            }
+            else if (weight > weights1.y)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1.yzw = vec3(weight, weights1.yz);
+                indices1.yzw = uvec3(slot, indices1.yz);
+            }
+            else if (weight > weights1.z)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1.zw = vec2(weight, weights1.z);
+                indices1.zw = uvec2(slot, indices1.z);
+            }
+            else if (weight > weights1.w)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1.w = weight;
+                indices1.w = slot;
+            }
+            else
+            {
+                ninthWeight = max(ninthWeight, weight);
+            }
+        }
+        weights = weights0;
+        indices = uvec4(
+            weights0.x > 0.0 ? s_probeCacheIndices[indices0.x] : 0u,
+            weights0.y > 0.0 ? s_probeCacheIndices[indices0.y] : 0u,
+            weights0.z > 0.0 ? s_probeCacheIndices[indices0.z] : 0u,
+            weights0.w > 0.0 ? s_probeCacheIndices[indices0.w] : 0u);
+        if (weights1.x > 0.0)
+        {
+            vec4 top4Adjusted = max(weights0 - vec4(weights1.x), vec4(0.0));
+            if (top4Adjusted.x > 1.0e-5)
+                weights = top4Adjusted;
+        }
+        if (ninthWeight > 0.0)
+        {
+            vec4 adjusted0 = max(weights0 - vec4(ninthWeight), vec4(0.0));
+            if (adjusted0.x > 1.0e-5)
+            {
+                weights0 = adjusted0;
+                weights1 = max(weights1 - vec4(ninthWeight), vec4(0.0));
+            }
+        }
+        vec3 probeDiffuse, probeSpecular;
+        if (weights0.x > 0.0 && XR_ADV_TrySampleCachedProbe(indices0.x, worldPosition, N, V, roughness, false, probeDiffuse, probeSpecular))
+            { irradiance += probeDiffuse * weights0.x; prefiltered += probeSpecular * weights0.x; sum += weights0.x; }
+        if (weights0.y > 0.0 && XR_ADV_TrySampleCachedProbe(indices0.y, worldPosition, N, V, roughness, false, probeDiffuse, probeSpecular))
+            { irradiance += probeDiffuse * weights0.y; prefiltered += probeSpecular * weights0.y; sum += weights0.y; }
+        if (weights0.z > 0.0 && XR_ADV_TrySampleCachedProbe(indices0.z, worldPosition, N, V, roughness, false, probeDiffuse, probeSpecular))
+            { irradiance += probeDiffuse * weights0.z; prefiltered += probeSpecular * weights0.z; sum += weights0.z; }
+        if (weights0.w > 0.0 && XR_ADV_TrySampleCachedProbe(indices0.w, worldPosition, N, V, roughness, false, probeDiffuse, probeSpecular))
+            { irradiance += probeDiffuse * weights0.w; prefiltered += probeSpecular * weights0.w; sum += weights0.w; }
+        if (weights1.x > weights0.x * 0.02)
+        {
+            if (XR_ADV_TrySampleCachedProbe(indices1.x, worldPosition, N, V, roughness, false, probeDiffuse, probeSpecular))
+                { irradiance += probeDiffuse * weights1.x; prefiltered += probeSpecular * weights1.x; sum += weights1.x; }
+            if (weights1.y > weights0.x * 0.02 && XR_ADV_TrySampleCachedProbe(indices1.y, worldPosition, N, V, roughness, false, probeDiffuse, probeSpecular))
+                { irradiance += probeDiffuse * weights1.y; prefiltered += probeSpecular * weights1.y; sum += weights1.y; }
+            if (weights1.z > weights0.x * 0.02 && XR_ADV_TrySampleCachedProbe(indices1.z, worldPosition, N, V, roughness, false, probeDiffuse, probeSpecular))
+                { irradiance += probeDiffuse * weights1.z; prefiltered += probeSpecular * weights1.z; sum += weights1.z; }
+            if (weights1.w > weights0.x * 0.02 && XR_ADV_TrySampleCachedProbe(indices1.w, worldPosition, N, V, roughness, false, probeDiffuse, probeSpecular))
+                { irradiance += probeDiffuse * weights1.w; prefiltered += probeSpecular * weights1.w; sum += weights1.w; }
+        }
+    }
+    else
+#endif
+    {
+        for (uint index = 0u; index < uint(XR_ADV_Probes.records.length()); ++index)
+        {
+            XRAdvancedProbeRecord probe = XR_ADV_LoadProbe(index);
+            if ((probe.flags & (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL)) !=
+                (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL)) continue;
+            if ((probe.viewMaskLo != 0u || probe.viewMaskHi != 0u) &&
+                (viewIndex < 32u ? (probe.viewMaskLo & (1u << viewIndex)) == 0u :
+                    (viewIndex >= 64u || (probe.viewMaskHi & (1u << (viewIndex - 32u))) == 0u))) continue;
+            float weight = XR_ADV_ProbeWeight(probe, worldPosition);
+            if (weight <= 0.0) continue;
+            if (weight > weights0.x)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weights0.w, weights1.xyz);
+                indices1 = uvec4(indices0.w, indices1.xyz);
+                weights0 = vec4(weight, weights0.xyz);
+                indices0 = uvec4(index, indices0.xyz);
+            }
+            else if (weight > weights0.y)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weights0.w, weights1.xyz);
+                indices1 = uvec4(indices0.w, indices1.xyz);
+                weights0.yzw = vec3(weight, weights0.yz);
+                indices0.yzw = uvec3(index, indices0.yz);
+            }
+            else if (weight > weights0.z)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weights0.w, weights1.xyz);
+                indices1 = uvec4(indices0.w, indices1.xyz);
+                weights0.zw = vec2(weight, weights0.z);
+                indices0.zw = uvec2(index, indices0.z);
+            }
+            else if (weight > weights0.w)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weights0.w, weights1.xyz);
+                indices1 = uvec4(indices0.w, indices1.xyz);
+                weights0.w = weight;
+                indices0.w = index;
+            }
+            else if (weight > weights1.x)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1 = vec4(weight, weights1.xyz);
+                indices1 = uvec4(index, indices1.xyz);
+            }
+            else if (weight > weights1.y)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1.yzw = vec3(weight, weights1.yz);
+                indices1.yzw = uvec3(index, indices1.yz);
+            }
+            else if (weight > weights1.z)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1.zw = vec2(weight, weights1.z);
+                indices1.zw = uvec2(index, indices1.z);
+            }
+            else if (weight > weights1.w)
+            {
+                ninthWeight = max(ninthWeight, weights1.w);
+                weights1.w = weight;
+                indices1.w = index;
+            }
+            else
+            {
+                ninthWeight = max(ninthWeight, weight);
+            }
+        }
+        // Preserve top-4 selection (faded against the 5th weight) for secondary raw-prefilter callers.
+        weights = weights0;
+        indices = indices0;
+        if (weights1.x > 0.0)
+        {
+            vec4 top4Adjusted = max(weights0 - vec4(weights1.x), vec4(0.0));
+            if (top4Adjusted.x > 1.0e-5)
+                weights = top4Adjusted;
+        }
+        if (ninthWeight > 0.0)
+        {
+            vec4 adjusted0 = max(weights0 - vec4(ninthWeight), vec4(0.0));
+            if (adjusted0.x > 1.0e-5)
+            {
+                weights0 = adjusted0;
+                weights1 = max(weights1 - vec4(ninthWeight), vec4(0.0));
+            }
+        }
+        XR_ADV_AccumulateProbeSlot(weights0.x, indices0.x, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+        XR_ADV_AccumulateProbeSlot(weights0.y, indices0.y, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+        XR_ADV_AccumulateProbeSlot(weights0.z, indices0.z, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+        XR_ADV_AccumulateProbeSlot(weights0.w, indices0.w, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+        XR_ADV_AccumulateProbeSlot(weights1.x, indices1.x, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+        XR_ADV_AccumulateProbeSlot(weights1.y, indices1.y, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+        XR_ADV_AccumulateProbeSlot(weights1.z, indices1.z, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+        XR_ADV_AccumulateProbeSlot(weights1.w, indices1.w, worldPosition, N, V, roughness, irradiance, prefiltered, sum);
+    }
     if (sum <= 0.0) return;
     irradiance /= sum;
     prefiltered /= sum;
@@ -328,8 +543,22 @@ vec3 XR_ADV_SampleSelectedRawPrefilterNormal(vec3 normal,
     return sum > 0.0 ? radiance / sum : vec3(0.0);
 }
 
+// XR_ADV_SHADE_LEAN builds the standard kernel without the paths that a frame with no shading
+// debug view never runs: the debug views and the per-light debug globals (direct diffuse and
+// specular, shadow reason and visibility).
+// The unused code still costs registers in the generic kernel. The lean kernel writes no
+// shadow bits into the shading diagnostics image; the generic kernel does.
+// XR_ADV_NATIVE_SHADING_FAMILY selects one material family per kernel:
+// XR_ADV_NATIVE_SHADING_FAMILY_STANDARD (standard and projective-mirror materials) or
+// XR_ADV_NATIVE_SHADING_FAMILY_UBER (native Uber materials). Without it, the kernel shades
+// every family. The standard kernel does not include the Uber code, which keeps it small.
+#define XR_ADV_NATIVE_SHADING_FAMILY_STANDARD 1
+#define XR_ADV_NATIVE_SHADING_FAMILY_UBER 2
+
+#if !defined(XR_ADV_NATIVE_SHADING_FAMILY) || XR_ADV_NATIVE_SHADING_FAMILY != XR_ADV_NATIVE_SHADING_FAMILY_UBER
 vec3 XR_ADV_EvaluateLight(
     uint index,
+    uvec2 pixel,
     XRAdvancedSurface surface,
     vec3 N,
     vec3 V,
@@ -358,8 +587,18 @@ vec3 XR_ADV_EvaluateLight(
         }
     }
     else return vec3(0.0);
+    // Back-facing pixels receive zero direct PBR light; skip expensive shadow and
+    // contact-shadow evaluation when no shading debug view inspects shadow outputs.
+    float NdotL = dot(N, L);
+#if defined(XR_ADV_SHADE_LEAN)
+    if (NdotL <= 0.0)
+        return vec3(0.0);
+#else
+    if (NdotL <= 0.0 && ((u_Push.flags >> 8u) & 255u) == 0u)
+        return vec3(0.0);
+#endif
     uint reason;
-    float visibility = XR_ADV_EvaluateShadow(light, surface, N, L, reason);
+    float visibility = XR_ADV_EvaluateShadow(light, surface, N, L, vec2(pixel), reason);
 #if !defined(XR_ADV_SHADE_LEAN)
     shadowReason = max(shadowReason, reason);
     shadowVisibility = min(shadowVisibility, visibility);
@@ -375,26 +614,8 @@ vec3 XR_ADV_EvaluateLight(
     return result;
 }
 
-// XR_ADV_SHADE_LEAN builds the standard kernel without the paths that a frame with no shading
-// debug view never runs: the debug views and the per-light debug globals (direct diffuse and
-// specular, shadow reason and visibility).
-// The unused code still costs registers in the generic kernel. The lean kernel writes no
-// shadow bits into the shading diagnostics image; the generic kernel does.
-// XR_ADV_NATIVE_SHADING_FAMILY selects one material family per kernel:
-// XR_ADV_NATIVE_SHADING_FAMILY_STANDARD (standard and projective-mirror materials) or
-// XR_ADV_NATIVE_SHADING_FAMILY_UBER (native Uber materials). Without it, the kernel shades
-// every family. The standard kernel does not include the Uber code, which keeps it small.
-#define XR_ADV_NATIVE_SHADING_FAMILY_STANDARD 1
-#define XR_ADV_NATIVE_SHADING_FAMILY_UBER 2
-
-#if !defined(XR_ADV_NATIVE_SHADING_FAMILY) || XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_UBER
-#include "Advanced/Shading/ShadeNativeUber.glslinc"
-#endif
-
-/// Returns true for a native Uber material row. Same test as XR_UBER_IsMaterial, without
-/// the Uber shading code.
 // Evaluates the lights of one froxel light-index range in list order.
-vec3 XR_ADV_EvaluateFroxelLightRange(uint offset, uint count, uint lightCount,
+vec3 XR_ADV_EvaluateFroxelLightRange(uint offset, uint count, uint lightCount, uvec2 pixel,
     XRAdvancedSurface surface, vec3 N, vec3 V, vec3 albedo, float roughness, float metallic)
 {
     vec3 color = vec3(0.0);
@@ -405,10 +626,18 @@ vec3 XR_ADV_EvaluateFroxelLightRange(uint offset, uint count, uint lightCount,
     {
         uint i = XR_ADV_LightIndexList.indices[offset + j];
         if (i < lightCount)
-            color += XR_ADV_EvaluateLight(i, surface, N, V, albedo, roughness, metallic);
+            color += XR_ADV_EvaluateLight(i, pixel, surface, N, V, albedo, roughness, metallic);
     }
     return color;
 }
+#endif
+
+#if !defined(XR_ADV_NATIVE_SHADING_FAMILY) || XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_UBER
+#include "Advanced/Shading/ShadeNativeUber.glslinc"
+#endif
+
+/// Returns true for a native Uber material row. Same test as XR_UBER_IsMaterial, without
+/// the Uber shading code.
 
 bool XR_ADV_IsNativeUberLayout(XRAdvancedMaterialRecord material)
 {
@@ -457,7 +686,8 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     directSpecular = vec3(0.0);
 
     uint materialDense, kernelDense;
-    bool metadataMatchesView = ((metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu) == viewIndex;
+    bool metadataMatchesView = XR_ADV_ViewBelongsToPrimary(
+        (metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu, viewIndex);
     bool resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
     if (enforceKernel && !repair && resolved && kernelDense != u_Push.kernelIndex)
         return;
@@ -479,7 +709,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         identity, XR_ADV_RECONSTRUCTION_MATERIAL_NOT_RESIDENT);
     bool valid = resolved && metadataMatchesView &&
         XR_ADV_TryReconstructSurface(identity, metadata, depth, samplePixelPosition, surface);
-    if (!valid || surface.viewIndex != viewIndex ||
+    if (!valid || !XR_ADV_ViewBelongsToPrimary(surface.viewIndex, viewIndex) ||
         (repair && (u_Push.flags & XR_ADV_SHADING_REQUIRED) != 0u))
     {
         result.radiance = vec3(1.0, 0.0, 1.0);
@@ -502,18 +732,26 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         return;
     }
 
-    // Meshlet debug view: replaces the material result for every material
-    // family, so the meshlet layout shows on all opaque surfaces.
-    if (((u_Push.flags >> 8u) & 255u) == XR_ADV_SHADING_DEBUG_MESHLET_ID)
+    // Meshlet and portal stencil-node debug views: replace the material result
+    // for every material family across all opaque surfaces.
+    uint earlyDebugView = (u_Push.flags >> 8u) & 255u;
+    if (earlyDebugView == XR_ADV_SHADING_DEBUG_MESHLET_ID)
     {
         result.radiance = XR_ADV_MeshletDebugColor(identity, metadata);
         result.opacity = 1.0;
         result.velocity = surface.motionNdc;
         return;
     }
+    if (earlyDebugView == XR_ADV_SHADING_DEBUG_PORTAL_STENCIL_NODE)
+    {
+        result.radiance = XR_ADV_PortalStencilNodeDebugColor(surface.viewIndex);
+        result.opacity = 1.0;
+        result.velocity = surface.motionNdc;
+        return;
+    }
 
     XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
-    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+    XRAdvancedViewRecord view = XR_ADV_LoadView(surface.viewIndex);
     if (XR_ADV_IsNativeUberLayout(material))
     {
 #if !defined(XR_ADV_NATIVE_SHADING_FAMILY) || XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_UBER
@@ -547,26 +785,33 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     if ((materialFlags & (XR_ADV_STANDARD_HEIGHT_MAP_FLAG | XR_ADV_STANDARD_PARALLAX_FLAG)) ==
         (XR_ADV_STANDARD_HEIGHT_MAP_FLAG | XR_ADV_STANDARD_PARALLAX_FLAG))
         surface.texCoord0 = XR_ADV_ResolveShadingParallaxUv(material, surface, view, depth, samplePixelPosition);
+    // Scale texture-sampling derivatives to output pixel spacing after parallax frame
+    // reconstruction so upscaled frames select full-resolution mip levels.
+    vec2 upscaleDerivativeScale = XR_ADV_UpscaleDerivativeScale(view);
+    vec2 texCoord0Dx = surface.texCoord0Dx * upscaleDerivativeScale.x;
+    vec2 texCoord0Dy = surface.texCoord0Dy * upscaleDerivativeScale.y;
+    vec2 texCoord1Dx = surface.texCoord1Dx * upscaleDerivativeScale.x;
+    vec2 texCoord1Dy = surface.texCoord1Dy * upscaleDerivativeScale.y;
     vec4 base = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD) * surface.color0;
     vec4 rmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
     if ((materialFlags & 1u) != 0u)
         base *= XR_ADV_StandardTexture(material, 0u, surface.texCoord0,
-            surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0));
+            texCoord0Dx, texCoord0Dy, vec4(1.0));
     vec3 emittedRadiance = XR_ADV_ResolveStandardEmission(material,
-        surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy,
-        surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy,
+        surface.texCoord0, texCoord0Dx, texCoord0Dy,
+        surface.texCoord1, texCoord1Dx, texCoord1Dy,
         base.rgb, rmse.w);
     if ((materialFlags & 4u) != 0u)
         rmse.xy *= XR_ADV_StandardRoughnessMetallic(materialFlags,
             XR_ADV_StandardTexture(material, 2u, surface.texCoord0,
-                surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0)));
+                texCoord0Dx, texCoord0Dy, vec4(1.0)));
     // The material occlusion texture multiplies the screen-space AO (product, as the glTF
     // and engine forward paths do). ambientOcclusion reaches only indirect light: ambient and
     // probe diffuse, and probe specular through the specular occlusion function.
     if ((materialFlags & XR_ADV_STANDARD_OCCLUSION_TEXTURE_FLAG) != 0u)
         ambientOcclusion *= XR_ADV_StandardOcclusion(material,
-            surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy,
-            surface.texCoord1, surface.texCoord1Dx, surface.texCoord1Dy);
+            surface.texCoord0, texCoord0Dx, texCoord0Dy,
+            surface.texCoord1, texCoord1Dx, texCoord1Dy);
     vec3 N = normalize(surface.shadingNormal);
     float normalMapLength = 1.0;
     if ((materialFlags & 2u) != 0u &&
@@ -579,7 +824,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             // material data keeps the height-tap loop rolled in this kernel.
             uint heightTaps = 3u + ((materialFlags >> 28u) & 1u);
             normalTex = XR_ADV_StandardHeightTangentNormal(material, surface.texCoord0,
-                surface.texCoord0Dx, surface.texCoord0Dy,
+                texCoord0Dx, texCoord0Dy,
                 uintBitsToFloat(XR_ADV_LoadMaterialConstant(material,
                     XR_ADV_STANDARD_SURFACE_DETAIL_HEIGHT_SCALE_WORD)),
                 heightTaps);
@@ -587,7 +832,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         else
         {
             normalTex = XR_ADV_DecodeTangentNormal(XR_ADV_StandardTexture(material, 1u, surface.texCoord0,
-                surface.texCoord0Dx, surface.texCoord0Dy,
+                texCoord0Dx, texCoord0Dy,
                 vec4(0.5, 0.5, 1.0, 1.0)));
             normalMapLength = length(normalTex);
         }
@@ -606,15 +851,18 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         surface.shadingNormalDy,
         normalMapLength);
     float metallic = clamp(rmse.y, 0.0, 1.0);
-    // Mesh surface decals belong to the surface. Projected decals apply over them below.
-    XR_ADV_ApplyDecalBuffer(pixel, base.rgb, roughness, metallic);
+    // Mesh surface decals belong to primary-view surfaces. Portal sub-views skip
+    // the primary decal buffer and still apply projected clustered decals below.
+    if ((view.flags & XR_ADV_VIEW_PORTAL_SUBVIEW) == 0u)
+        XR_ADV_ApplyDecalBuffer(pixel, base.rgb, roughness, metallic);
     float linearDepth = -XR_ADV_TransformRowVector(vec4(surface.worldPosition, 1.0), view.view).z;
     uint slice = XR_ADV_CalculateDepthSlice(linearDepth,
         max(view.cameraPositionAndNear.w, 0.0001),
         max(view.cameraForwardAndFar.w, view.cameraPositionAndNear.w + 0.0001),
         u_Push.depthSlices);
-    uint froxelIndex = XR_ADV_GetFroxelIndex(pixel / 16u, slice, viewIndex,
+    uint froxelIndex = XR_ADV_GetFroxelIndex(pixel / 16u, slice, surface.viewIndex,
         u_Push.tilesCount, u_Push.depthSlices);
+    uint maskViewIndex = XR_ADV_ViewMaskIndex(view, surface.viewIndex);
     if (froxelIndex < uint(XR_ADV_FroxelDecalGrid.records.length()))
     {
         XRAdvancedFroxelDecalRecord decals = XR_ADV_LoadFroxelDecals(froxelIndex);
@@ -645,13 +893,13 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         {
             vec3 F0 = mix(vec3(0.04), base.rgb, metallic);
             vec3 F = XR_ADV_FresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
-            color += XR_ADV_WorldAmbient(viewIndex) * base.rgb *
+            color += XR_ADV_WorldAmbient(maskViewIndex) * base.rgb *
                 (vec3(1.0) - F) * (1.0 - metallic) * XR_ADV_DiffuseOcclusion(u_Push.flags, ambientOcclusion, base.rgb);
         }
         uint lightCount = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
         for (uint i = 0u; i < lightCount; ++i)
             if (XR_ADV_Lights.records[i].type == 0u)
-                color += XR_ADV_EvaluateLight(i, surface, N, V, base.rgb, roughness, metallic);
+                color += XR_ADV_EvaluateLight(i, pixel, surface, N, V, base.rgb, roughness, metallic);
         bool allLights = froxelIndex >= uint(XR_ADV_FroxelGrid.records.length());
         XRAdvancedFroxelRecord froxel;
         if (!allLights)
@@ -663,21 +911,21 @@ void XR_ADV_EvaluateNativeOpaqueSample(
         {
             for (uint i = 0u; i < lightCount; ++i)
                 if (XR_ADV_Lights.records[i].type != 0u)
-                    color += XR_ADV_EvaluateLight(i, surface, N, V, base.rgb, roughness, metallic);
+                    color += XR_ADV_EvaluateLight(i, pixel, surface, N, V, base.rgb, roughness, metallic);
         }
         else
         {
             // Point lights, then spot lights. Two calls instead of a two-entry offset and
             // count array keep the arrays out of per-invocation local memory.
             color += XR_ADV_EvaluateFroxelLightRange(froxel.pointLightOffset, froxel.pointLightCount,
-                lightCount, surface, N, V, base.rgb, roughness, metallic);
+                lightCount, pixel, surface, N, V, base.rgb, roughness, metallic);
             color += XR_ADV_EvaluateFroxelLightRange(froxel.spotLightOffset, froxel.spotLightCount,
-                lightCount, surface, N, V, base.rgb, roughness, metallic);
+                lightCount, pixel, surface, N, V, base.rgb, roughness, metallic);
         }
         if ((u_Push.flags & 8u) != 0u)
         {
             vec3 diffuseIndirect, specularIndirect;
-            XR_ADV_EvaluateProbeIbl(viewIndex, surface.worldPosition, N, V,
+            XR_ADV_EvaluateProbeIbl(maskViewIndex, surface.worldPosition, N, V,
                 base.rgb, roughness, metallic, diffuseIndirect, specularIndirect);
             color += ((u_Push.flags & 32u) != 0u
                     ? vec3(0.0)
@@ -698,7 +946,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
             max(view.cameraPositionAndNear.w, 0.0001),
             max(view.cameraForwardAndFar.w, view.cameraPositionAndNear.w + 0.0001),
             u_Push.depthSlices);
-        uint index = XR_ADV_GetFroxelIndex(pixel / 16u, debugSlice, viewIndex,
+        uint index = XR_ADV_GetFroxelIndex(pixel / 16u, debugSlice, surface.viewIndex,
             u_Push.tilesCount, u_Push.depthSlices);
         color = vec3(1.0, 0.0, 1.0);
         if (index < uint(XR_ADV_FroxelGrid.records.length()))
@@ -724,8 +972,7 @@ void XR_ADV_EvaluateNativeOpaqueSample(
     result.radiance = max(color, vec3(0.0));
     result.opacity = base.a;
     result.velocity = surface.motionNdc;
-    result.reactive = (surface.flags &
-        (XR_ADV_SURFACE_REACTIVE | XR_ADV_SURFACE_MASKED_EDGE)) != 0u ? 1.0 : 0.0;
+    result.reactive = (surface.flags & XR_ADV_SURFACE_REACTIVE) != 0u ? 1.0 : 0.0;
     result.diagnostics = shadowReason |
         (uint(round(clamp(shadowVisibility, 0.0, 1.0) * 255.0)) << 8u);
     result.emittedRadiance = emittedRadiance;

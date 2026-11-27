@@ -60,7 +60,7 @@ internal sealed partial class VulkanPreparedStableBinStream
     // duration of a single TryPrepareVisibilityRasterPipelines call: those are
     // the only header inputs the visibility pipeline depends on besides the
     // call's one target closure.
-    private const int RasterPipelineScratchCapacity = 12;
+    private const int RasterPipelineScratchCapacity = 24;
     private readonly VulkanVisibilityRasterPipeline[] _rasterPipelineScratch =
         new VulkanVisibilityRasterPipeline[RasterPipelineScratchCapacity];
     private readonly bool[] _rasterPipelineScratchValid =
@@ -630,9 +630,13 @@ internal sealed partial class VulkanPreparedStableBinStream
                     DepthTestEnabled = true,
                     DepthWriteEnabled = true,
                     DepthCompareOp = CompareOp.LessOrEqual,
-                    CullMode = payload.CullMode == 0u
-                        ? CullModeFlags.None
-                        : CullModeFlags.BackBit,
+                    CullMode = (ECullMode)payload.CullMode switch
+                    {
+                        ECullMode.None => CullModeFlags.None,
+                        ECullMode.Front => CullModeFlags.FrontBit,
+                        ECullMode.Both => CullModeFlags.FrontAndBack,
+                        _ => CullModeFlags.BackBit,
+                    },
                     FrontFace = FrontFace.CounterClockwise,
                     ColorWriteMask = ColorComponentFlags.RBit |
                         ColorComponentFlags.GBit |
@@ -2341,7 +2345,8 @@ internal sealed partial class VulkanPreparedStableBinStream
         };
         if (coverageIndex < 0)
             return -1;
-        return coverageIndex * 4 + (meshlet ? 2 : 0) + (cullMode == 0u ? 0 : 1);
+        int cullIndex = cullMode <= 3u ? (int)cullMode : 1;
+        return coverageIndex * 8 + (meshlet ? 4 : 0) + cullIndex;
     }
 
     private bool TryResolveExactRange(

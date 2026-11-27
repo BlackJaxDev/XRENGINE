@@ -110,12 +110,46 @@ public unsafe partial class OpenXRAPI
         return result;
     }
 
+    private ReferenceSpaceType SelectPreferredReferenceSpaceType()
+    {
+        uint count = 0;
+        if (Api.EnumerateReferenceSpaces(_session, 0, ref count, null) != Result.Success || count == 0)
+            return ReferenceSpaceType.Local;
+
+        ReferenceSpaceType[] supported = new ReferenceSpaceType[count];
+        fixed (ReferenceSpaceType* ptr = supported)
+        {
+            if (Api.EnumerateReferenceSpaces(_session, count, ref count, ptr) != Result.Success)
+                return ReferenceSpaceType.Local;
+        }
+
+        const ReferenceSpaceType localFloorExt = (ReferenceSpaceType)1000426000;
+        bool hasStage = false;
+        bool hasLocalFloor = false;
+        for (int i = 0; i < (int)count; ++i)
+        {
+            if (supported[i] == ReferenceSpaceType.Stage)
+                hasStage = true;
+            else if (supported[i] == localFloorExt)
+                hasLocalFloor = true;
+        }
+
+        // Prefer floor-referenced spaces (Stage, then LocalFloor) so Y=0 matches the
+        // SteamVR calibrated floor and the engine floor instead of startup eye height.
+        if (hasStage)
+            return ReferenceSpaceType.Stage;
+        if (hasLocalFloor)
+            return localFloorExt;
+        return ReferenceSpaceType.Local;
+    }
+
     private void CreateReferenceSpace()
     {
+        ReferenceSpaceType preferredType = SelectPreferredReferenceSpaceType();
         var spaceCreateInfo = new ReferenceSpaceCreateInfo
         {
             Type = StructureType.ReferenceSpaceCreateInfo,
-            ReferenceSpaceType = ReferenceSpaceType.Local,
+            ReferenceSpaceType = preferredType,
             PoseInReferenceSpace = new Posef
             {
                 Orientation = new Quaternionf { X = 0, Y = 0, Z = 0, W = 1 },
@@ -124,11 +158,22 @@ public unsafe partial class OpenXRAPI
         };
 
         Space space = default;
-        if (CheckResult(Api.CreateReferenceSpace(_session, in spaceCreateInfo, ref space), "xrCreateReferenceSpace") != Result.Success)
+        Result createResult = Api.CreateReferenceSpace(_session, in spaceCreateInfo, ref space);
+        if (createResult != Result.Success && preferredType != ReferenceSpaceType.Local)
+        {
+            Debug.Out($"OpenXR: xrCreateReferenceSpace({preferredType}) returned {createResult}; falling back to Local.");
+            spaceCreateInfo.ReferenceSpaceType = ReferenceSpaceType.Local;
+            createResult = Api.CreateReferenceSpace(_session, in spaceCreateInfo, ref space);
+        }
+
+        if (CheckResult(createResult, "xrCreateReferenceSpace") != Result.Success)
             throw new Exception("Failed to create reference space");
 
         _appSpace = space;
-        RecordSmokeReferenceSpaceCreated(spaceCreateInfo.ReferenceSpaceType);
+        _appReferenceSpaceType = spaceCreateInfo.ReferenceSpaceType;
+        RecordSmokeReferenceSpaceCreated(_appReferenceSpaceType);
+        Debug.Out($"OpenXR: created app reference space {_appReferenceSpaceType}.");
+        Debug.WriteAuxiliaryLog("openxr-trackers.log", $"OpenXrReferenceSpace type={_appReferenceSpaceType}");
     }
 
     /// <summary>
@@ -804,7 +849,7 @@ public unsafe partial class OpenXRAPI
                 case StructureType.EventDataReferenceSpaceChangePending:
                     {
                         var change = (EventDataReferenceSpaceChangePending*)eventDataPtr;
-                        if (change->Session.Handle == _session.Handle && change->ReferenceSpaceType == ReferenceSpaceType.Local)
+                        if (change->Session.Handle == _session.Handle && change->ReferenceSpaceType == _appReferenceSpaceType)
                         {
                             _openXrPendingReferenceSpaceChangeTime = change->ChangeTime;
                             RuntimeEngine.VRState.NotifyTrackingBasisChanged();

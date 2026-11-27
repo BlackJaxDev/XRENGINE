@@ -41,6 +41,7 @@ internal static class EditorOpenXrPawnSwitcher
 
     public static bool IsRequested => _requested;
     public static EVrDesktopView DesktopView => _desktopView;
+    public static VRPlayerCharacterComponent? ActiveVrPlayer => _vrPawn?.SceneNode?.GetComponent<VRPlayerCharacterComponent>();
     public static Guid? OwnedVrRigNodeId => _ownedVrRoot?.ID;
     public static bool OwnedVrRigIsInEditorScene => _ownedVrRoot is { } root &&
         _vrEditorIntegration?.IsInEditorScene(root) == true;
@@ -496,7 +497,9 @@ internal static class EditorOpenXrPawnSwitcher
                 return;
             }
 
-            PawnComponent desktopPawn = ResolveDesktopPawn(world) ?? CreateDesktopEditorPawn(world, runtimeWorld);
+            PawnComponent? desktopPawn = TryTransitionStartupVrAvatarToDesktop(world, runtimeWorld)
+                ?? ResolveDesktopPawn(world)
+                ?? CreateDesktopEditorPawn(world, runtimeWorld);
             desktopPawn.PossessByLocalPlayer(ELocalPlayerIndex.One);
             DestroyOwnedVrPawn();
         }
@@ -527,6 +530,65 @@ internal static class EditorOpenXrPawnSwitcher
         _vrPawn = null;
         _vrPawnWorld = null;
         _vrEditorIntegration = null;
+    }
+
+    private static PawnComponent? TryTransitionStartupVrAvatarToDesktop(
+        IRuntimeRenderWorld world,
+        RuntimeWorld runtimeWorld)
+    {
+        // Only runs when the editor launched directly in OpenXR (so no temporary _ownedVrRoot
+        // or _avatarLease exists) and the user untoggles VR while desktop locomotion is enabled.
+        if (_ownedVrRoot is not null || _avatarLease is not null || !EditorUnitTests.Toggles.Locomotion)
+            return null;
+
+        SceneNode? vrCharacterNode = _vrPawn?.SceneNode;
+        VRPlayerCharacterComponent? player = vrCharacterNode?.GetComponent<VRPlayerCharacterComponent>();
+        HumanoidComponent? humanoid = player?.HumanoidComponent as HumanoidComponent;
+        SceneNode? avatarRoot = humanoid?.SceneNode;
+        if (vrCharacterNode is null || player is null || humanoid is null || avatarRoot is null || avatarRoot.IsDestroyed)
+            return null;
+
+        SceneNode? worldRoot = vrCharacterNode.Parent ?? runtimeWorld.RootNodes.FirstOrDefault();
+        if (worldRoot is null || worldRoot.IsDestroyed)
+            return null;
+
+        System.Numerics.Vector3 vrPosition = avatarRoot.Transform.WorldTranslation;
+        if (vrCharacterNode.GetComponent<CharacterMovement3DComponent>() is { } vrMovement)
+        {
+            System.Numerics.Vector3 capsuleCenter = vrCharacterNode.Transform.WorldTranslation;
+            if (float.IsFinite(capsuleCenter.Y))
+                vrPosition.Y = capsuleCenter.Y - vrMovement.HalfHeight;
+        }
+        System.Numerics.Quaternion vrRotation = avatarRoot.Transform.WorldRotation;
+
+        player.IsActive = false;
+        if (vrCharacterNode.GetComponent<VrLocalAvatarVisibilityComponent>() is { } visibility)
+            visibility.IsActive = false;
+        if (vrCharacterNode.GetComponent<VrCalibrationFeedbackComponent>() is { } feedback)
+            feedback.IsActive = false;
+        if (vrCharacterNode.FindDescendantByName("VR Calibration Feedback")?.GetComponent<VrCalibrationFeedbackComponent>() is { } childFeedback)
+            childFeedback.IsActive = false;
+
+        if (avatarRoot.GetComponent<VRIKSolverComponent>() is not null)
+            avatarRoot.RemoveComponent<VRIKSolverComponent>();
+        if (avatarRoot.GetComponent<VRHeightScaleComponent>() is not null)
+            avatarRoot.RemoveComponent<VRHeightScaleComponent>();
+
+        PawnComponent? desktopCharacterPawn = EditorUnitTests.Pawns.TransitionAvatarFromVrToDesktopMotionBricks(
+            worldRoot,
+            avatarRoot,
+            humanoid,
+            vrPosition,
+            vrRotation);
+        if (desktopCharacterPawn is null)
+            return null;
+
+        vrCharacterNode.Destroy(true);
+        _vrPawn = null;
+        _vrPawnWorld = null;
+        _desktopPawn = desktopCharacterPawn;
+        _desktopPawnWorld = world;
+        return desktopCharacterPawn;
     }
 
     private static void TryAttachDesktopAvatar(IRuntimeRenderWorld world)

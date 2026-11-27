@@ -114,8 +114,8 @@ public static partial class EditorUnitTests
     {
         public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop; //Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.
         public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.ParallelCommandBufferRecording; //Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo strictly requires true layered multiview rendering and never falls back to per-eye rendering; unavailable capabilities are logged and the XR output is not rendered.
-        public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Default; //Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (every view mode), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.
-        public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.Off; //Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.
+        public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Rvc; //Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (every view mode), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.
+        public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.ForwardPlusOracle; //Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.
         public bool AdvancedEdgeHalfRateShading { get; set; } = false; //Advanced eyes shade one pixel for each 2x2 block of the same triangle outside AdvancedEdgeHalfRateRadius and copy it to the rest of the block. Vulkan eyes without MSAA only; the desktop view is never affected.
         public float AdvancedEdgeHalfRateRadius { get; set; } = 0.6f; //Full-rate radius around the lens center of each eye, as a fraction of the half extent of the eye image, in steps of 0.05.
         public bool AdvancedEdgeHalfRateDebugTint { get; set; } = false; //Diagnostic: tints the 2x2 blocks that Advanced edge half-rate shading shades at half rate.
@@ -190,7 +190,7 @@ public static partial class EditorUnitTests
 
         //Misc
         public bool Skybox = true; //Adds a skybox to the scene.
-        public bool ProceduralSky = false; //Uses the dynamic procedural sky instead of loading the unit-test skybox texture. When enabled, the skybox syncs to the unit-test directional lights when present.
+        public bool ProceduralSky = true; //Uses the dynamic procedural sky instead of loading the unit-test skybox texture. When enabled, the skybox syncs to the unit-test directional lights when present.
         public bool ProceduralSkyAutoCycle = true; //When ProceduralSky is enabled, controls whether the procedural sky advances its day/night cycle over time.
         public float ProceduralSkyTimeOfDay = 0.25f; //When ProceduralSky is enabled, sets the normalized time of day. 0.25 is noon, 0.75 is midnight.
         public bool Spline = false; //Adds a 3D spline to the scene.
@@ -205,8 +205,12 @@ public static partial class EditorUnitTests
         //Light
         public bool DirLight = true;
         public bool DirLightCastsShadows { get; set; } = true; //Controls whether the primary directional light casts shadows.
+        public int DirLightShadowBlockerSamples { get; set; } = 16; //PCSS blocker-search sample count used on unit-test directional light shadow maps (1-32).
+        public int DirLightShadowFilterSamples { get; set; } = 24; //PCF/PCSS filter sample count used on unit-test directional light shadow maps (1-32).
+        public int DirLightShadowVogelTapCount { get; set; } = 16; //Vogel disk tap count used on unit-test directional light shadow maps (1-32).
+        public int DirLightContactShadowSamples { get; set; } = 24; //Screen-space contact shadow sample count used on unit-test directional lights (1-32).
         public bool SpotLight = false;
-        public bool DirLight2 = false;
+        public bool DirLight2 = true; //Adds a second directional light controlled as the moon light when ProceduralSky is active.
         public bool PointLight = false;
         public int DynamicPointLightCount { get; set; } = 0; //Adds this many animated dynamic point lights with deterministic random colors and smooth pseudo-random motion.
         public int DynamicSpotLightCount { get; set; } = 0; //Adds this many animated dynamic spot lights with deterministic random colors and smooth pseudo-random motion.
@@ -214,7 +218,7 @@ public static partial class EditorUnitTests
         public bool DynamicLightsForceShadowAtlas { get; set; } = true; //When generated dynamic lights cast shadows, enables the matching point and spot shadow atlas paths before the lights are added.
         public int DynamicLightSeed { get; set; } = 1337; //Seed used for generated dynamic debug light colors and animation curves.
         public LightProbeMode LightProbe { get; set; } = LightProbeMode.ModelGrid; //Selects which light-probe layout gets added to the scene.
-        public LightProbeCaptureMode LightProbeCapture { get; set; } = LightProbeCaptureMode.None; //Controls whether light probes capture never, once on startup, or continuously.
+        public LightProbeCaptureMode LightProbeCapture { get; set; } = LightProbeCaptureMode.Startup; //Controls whether light probes capture never, once on startup, or continuously.
         public float LightProbeCaptureMs = 100; //Interval between realtime captures, in milliseconds.
         public float? StopRealtimeCaptureSec = 5; //Optional realtime capture timeout, in seconds. Use null to keep realtime capture running.
         public uint LightProbeResolution { get; set; } = 128; //Capture cubemap resolution used for individually spawned light probes.
@@ -232,6 +236,9 @@ public static partial class EditorUnitTests
         public bool SceneOnlyVRPawn = false; //Legacy flat compatibility flag derived from VR.Mode.
         public bool Locomotion = true; //Enables the player to physically locomote in the world. Requires a physical floor.
         public bool ThirdPersonPawn = false; //If on desktop and character pawn is enabled, this will add a third person camera instead of first person.
+        public bool MotionBricksLocomotion = false; //Drives the desktop third-person avatar with NVIDIA MotionBricks SOMA procedural locomotion and Jolt root motion.
+        public bool MotionBricksDebugVisualization = false; //Draws MotionBricks future ground trajectory dots, collision clamps, and current/future SOMA skeletons in 3D.
+        public bool ShowAvatarCullingBoxes = false; //Enables per-mesh culling bounding-box debug rendering only on the avatar's ModelComponents.
 
         /// <summary>
         /// World-space Y translation to apply to the character controller capsule/root on spawn.
@@ -298,6 +305,12 @@ public static partial class EditorUnitTests
             /// the local-override submission contract.
             /// </summary>
             public bool UseSourceMaterialAsOverride { get; set; }
+
+            /// <summary>
+            /// Draws culling bounding boxes on every <c>ModelComponent</c> imported for this model
+            /// without enabling global mesh bounds across the entire scene.
+            /// </summary>
+            public bool RenderBounds { get; set; }
 
             /// <summary>
             /// Selects how this model import chooses between native format-specific importers
@@ -475,6 +488,7 @@ public static partial class EditorUnitTests
         public bool LipSync = true; //Adds a lip sync component to the avatar for testing.
         public bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
         public bool FaceTracking = false; //Adds a face tracking component to the avatar for testing.
+        public UnitTestingFaceTrackingSettings FaceTrackingSettings { get; set; } = new(); //Configures VRCFT VPM template conversion, dynamic OSC parameter binding, and OSCQuery discovery when FaceTracking is enabled.
 
         //Animation
         public bool AnimationClipVMD = false; //Imports a VMD animation clip for testing.
@@ -532,6 +546,7 @@ public static partial class EditorUnitTests
         }
 
         public EAntiAliasingMode? CameraAntiAliasingModeOverride = null; //When set, forces this anti-aliasing mode on the constructed unit-testing main camera via the per-camera AntiAliasingModeOverride, bypassing the global/game-settings AA. Null leaves the camera on the global setting.
+        public float? CameraBloomThresholdOverride = 2.2f; //When set, overrides the unit-testing camera bloom threshold so bright lit avatar skin stays below bloom while HDR highlights and emissives still glow. Null keeps the default BloomSettings threshold.
         public EPhysicsLibrary PhysicsAPI = EPhysicsLibrary.PhysX;
         public ELoopType RecalcChildMatricesType = ELoopType.Asynchronous;
         public bool TickGroupedItemsInParallel = true;
@@ -579,7 +594,7 @@ public static partial class EditorUnitTests
         public EVSyncMode? VSyncOverride = EVSyncMode.Off; //When set, overrides loaded user VSync for unit-test runs. Null preserves saved user settings.
         public float RenderFPS = 0.0f;
         public float UpdateFPS = 60.0f;
-        public float FixedFPS = 30.0f;
+        public float FixedFPS = 60.0f;
 
         public class VolumetricFogVolumeInitSettings
         {

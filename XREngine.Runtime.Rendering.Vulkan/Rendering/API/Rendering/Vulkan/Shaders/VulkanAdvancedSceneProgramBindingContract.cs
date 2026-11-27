@@ -148,6 +148,13 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     // Mesh surface decal buffer: premultiplied albedo/transmittance and roughness/metallic/transmittance.
     internal const uint NativeDecalBufferAlbedoBinding = 69u;
     internal const uint NativeDecalBufferSurfaceBinding = 70u;
+    // RVC shadelet cache: pixel-to-shadelet R32UI array and per-frame-slot shadelet SSBOs.
+    // Append-only; 71..76 are occupied by meshlet history, skin palettes, and geometry pages.
+    internal const uint NativeRvcPixelToShadeletImageBinding = 77u;
+    internal const uint NativeRvcShadeletRecordsBinding = 78u;
+    internal const uint NativeRvcShadeletBinIndicesBinding = 79u;
+    internal const uint NativeRvcShadeletShadedOutputsBinding = 80u;
+    internal const uint NativeRvcShadeletDispatchCountersBinding = 81u;
     internal const uint ExternallyOwnedSetMask =
         (1u << (int)GlobalSetIndex) |
         (1u << (int)VisibilitySetIndex) |
@@ -381,7 +388,9 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
             NativeKernelCountsBinding or NativeFroxelGridBinding or
             NativeLightIndicesBinding or NativeLightingCountersBinding or
             NativeFroxelDecalGridBinding or NativeDecalIndicesBinding or
-            NativeRvcTelemetryCountersBinding;
+            NativeRvcTelemetryCountersBinding or
+            NativeRvcShadeletRecordsBinding or NativeRvcShadeletBinIndicesBinding or
+            NativeRvcShadeletShadedOutputsBinding or NativeRvcShadeletDispatchCountersBinding;
 
     private static bool ContainsNativeSampledBinding(uint binding)
         => binding is NativeIdentityBinding or NativeMetadataBinding or NativeDepthBinding or
@@ -396,5 +405,6 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
         => binding is NativeHdrBinding or NativeVelocityBinding or NativeReactiveBinding or
             NativeShadingDiagnosticsBinding or NativeAmbientOcclusionStorageBinding or
             NativeDdgiEmissionBinding or NativeDdgiAlbedoBinding or
-            NativeDdgiNormalBinding or NativeDdgiRmseBinding;
+            NativeDdgiNormalBinding or NativeDdgiRmseBinding or
+            NativeRvcPixelToShadeletImageBinding;
 }

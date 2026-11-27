@@ -11,6 +11,11 @@ namespace XREngine.Animation
     [MemoryPackUnion(1, typeof(BlendTree1D))]
     [MemoryPackUnion(2, typeof(BlendTree2D))]
     [MemoryPackUnion(3, typeof(BlendTreeDirect))]
+    [MemoryPackUnion(4, typeof(MotionBricksLocomotionMotion))]
+    [MemoryPackUnion(5, typeof(HumanoidLookAtAimMotion))]
+    [MemoryPackUnion(6, typeof(ProceduralSecondaryMotion))]
+    [MemoryPackUnion(7, typeof(ProceduralStrideMotion))]
+    [MemoryPackUnion(8, typeof(MotionWarpingMotion))]
     public abstract partial class MotionBase : XRAsset
     {
         // Track logged messages to avoid spamming the same warnings
@@ -73,6 +78,10 @@ namespace XREngine.Animation
             //Unregister all animated curves in the motion
             if (this is AnimationClip clip)
                 clip.ResetImportedHumanoidEvaluationState();
+            else if (this is MotionBricksLocomotionMotion motionBricks)
+                motionBricks.ReleaseRuntimeDriver();
+            else if (IsProceduralMotion)
+                ReleaseProceduralResources();
             _animatedCurves.Clear();
             AnimatedMembersArray = [];
         }
@@ -87,9 +96,11 @@ namespace XREngine.Animation
             {
                 AnimationClip clip when clip.HasRootMotion
                     && clip.ImportedHumanoidRootMotionSettings is not null => 1,
+                MotionBricksLocomotionMotion => 1,
                 BlendTree1D tree => SumChildContributionCapacity(tree.Children),
                 BlendTree2D tree => SumChildContributionCapacity(tree.Children),
                 BlendTreeDirect tree => SumChildContributionCapacity(tree.Children),
+                _ when IsProceduralMotion => PrepareProceduralHumanoidContributionCapacity(),
                 _ => 0,
             };
             HumanoidContributionCapacity = capacity;
@@ -161,6 +172,18 @@ namespace XREngine.Animation
                 case AnimationClip animationClip:
                     if (animationClip is not null)
                         InitializeClip(animationClip, layer, owner, rootObject, parentMotions);
+                    break;
+                case MotionBricksLocomotionMotion motionBricks:
+                    InitializeMember(motionBricks.EnsureBindingRootMember(), string.Empty, layer, owner, rootObject, parentMotions);
+                    motionBricks.BindRuntimeDriver();
+                    break;
+                default:
+                    if (motion.IsProceduralMotion)
+                    {
+                        AnimationMember? bindingRoot = motion.EnsureProceduralBindingRootMember();
+                        if (bindingRoot is not null)
+                            InitializeMember(bindingRoot, string.Empty, layer, owner, rootObject, parentMotions);
+                    }
                     break;
             }
             parentMotions.Pop();
@@ -603,6 +626,16 @@ namespace XREngine.Animation
         /// </summary>
         internal void RestartPlayback(float startSeconds)
         {
+            if (this is MotionBricksLocomotionMotion motionBricks)
+            {
+                motionBricks.RestartMotionBricksPlayback();
+                return;
+            }
+            if (IsProceduralMotion)
+            {
+                RestartProceduralPlayback(startSeconds);
+                return;
+            }
             VisitAnimationClips(this, clip => clip.ResetImportedHumanoidStateClock(startSeconds));
             var visited = new HashSet<BasePropAnim>();
             VisitPropertyAnimations(this, visited, animation =>
@@ -679,6 +712,16 @@ namespace XREngine.Animation
         /// </summary>
         internal void StopPlayback()
         {
+            if (this is MotionBricksLocomotionMotion motionBricks)
+            {
+                motionBricks.StopMotionBricksPlayback();
+                return;
+            }
+            if (IsProceduralMotion)
+            {
+                StopProceduralPlayback();
+                return;
+            }
             VisitAnimationClips(this, static clip => clip.ResetImportedHumanoidStateClock(0.0f));
             var visited = new HashSet<BasePropAnim>();
             VisitPropertyAnimations(this, visited, static animation => animation.Stop());

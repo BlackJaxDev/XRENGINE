@@ -131,35 +131,27 @@ public sealed class SourceProjectImportContext
     private Dictionary<string, string?> BuildModelTexturePathIndex()
     {
         Dictionary<string, string?> paths = new(StringComparer.OrdinalIgnoreCase);
-        foreach (string sourceRootName in new[] { "Assets", "Packages" })
+        string assetsRoot = Path.GetFullPath(Path.Combine(ProjectRoot, "Assets"));
+        string packagesRoot = Path.GetFullPath(Path.Combine(ProjectRoot, "Packages"));
+
+        // Reuse the already-indexed Unity GUID paths instead of walking Assets/ and Packages/ again.
+        foreach (string candidate in GuidIndex.SnapshotIndexedAssetPaths())
         {
-            string sourceRoot = Path.Combine(ProjectRoot, sourceRootName);
-            if (!Directory.Exists(sourceRoot))
+            if (!candidate.StartsWith(assetsRoot, StringComparison.OrdinalIgnoreCase) &&
+                !candidate.StartsWith(packagesRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string fileName = Path.GetFileName(candidate);
+            if (string.IsNullOrEmpty(fileName))
                 continue;
 
-            try
+            if (!paths.TryAdd(fileName, candidate) &&
+                paths[fileName] is { } existing &&
+                !string.Equals(existing, candidate, StringComparison.OrdinalIgnoreCase))
             {
-                foreach (string candidate in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
-                {
-                    if (candidate.EndsWith(".meta", StringComparison.OrdinalIgnoreCase) ||
-                        !File.Exists(candidate + ".meta"))
-                        continue;
-
-                    string fileName = Path.GetFileName(candidate);
-                    if (!paths.TryAdd(fileName, candidate) &&
-                        paths[fileName] is { } existing &&
-                        !string.Equals(existing, candidate, StringComparison.OrdinalIgnoreCase))
-                        paths[fileName] = null;
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                AddDiagnostic(
-                    "UNITYMODEL0013",
-                    SourceImportDiagnosticSeverity.Warning,
-                    SourceImportDiagnosticCategory.TextureImport,
-                    $"Could not inspect composed Unity texture assets under '{sourceRootName}': {ex.Message}",
-                    sourceRoot);
+                paths[fileName] = null;
             }
         }
 

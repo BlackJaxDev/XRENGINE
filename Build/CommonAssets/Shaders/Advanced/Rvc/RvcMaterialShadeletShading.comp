@@ -1,0 +1,152 @@
+#version 450
+// Evaluates material shading for deduplicated RVC shadelets (normal indirect
+// dispatch: 64x1x1) or direct overflow fallback pixels (XR_ADV_SHADING_REPAIR).
+// Compiled in Standard Lean (XR_ADV_NATIVE_SHADING_FAMILY == 1) and Uber
+// (XR_ADV_NATIVE_SHADING_FAMILY == 2) variants, collapsing per-kernel dispatches
+// into one Standard and one Uber indirect dispatch per view.
+#include "Advanced/Classification/ClassificationInterface.glslinc"
+#include "Advanced/Lighting/ClusteredLightingInterface.glslinc"
+#include "Advanced/Reconstruction/ReconstructSurface.glslinc"
+#include "Advanced/Shading/StandardMaterial.glslinc"
+#include "Advanced/Shading/StandardPBR.glslinc"
+#include "Advanced/Shading/StandardIbl.glslinc"
+#include "Advanced/Shading/AdvancedDecalModifier.glslinc"
+#pragma snippet "NormalEncoding"
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2D VisibilityMetadata;
+XR_ADV_SHADING_LAYOUT(2) uniform sampler2D VisibilityDepth;
+XR_ADV_SHADING_LAYOUT(50) uniform sampler2D AmbientOcclusion;
+XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2D HDRSceneColor;
+XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2D Velocity;
+XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2D ReactiveMask;
+XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2D ShadingDiagnostics;
+XR_ADV_SHADING_IMAGE(rgba16f, 51) writeonly uniform image2D EmissionColor;
+XR_ADV_SHADING_IMAGE(rgba16f, 52) writeonly uniform image2D AlbedoOpacity;
+XR_ADV_SHADING_IMAGE(rgba16f, 53) writeonly uniform image2D Normal;
+XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
+#define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
+
+#define XR_ADV_SHADOW_GROUP_CACHE 1
+#include "Advanced/Shading/StandardShadow.glslinc"
+#include "Advanced/Shading/NativeDecalBuffer.glslinc"
+#include "Advanced/Shading/ShadeNativeOpaqueEvaluator.glslinc"
+#include "Advanced/Rvc/RvcShadeletCacheInterface.glslinc"
+
+RvcShadeletShadedOutputGpu RvcPackShadedOutput(XRAdvancedOpaqueSampleResult result)
+{
+    vec3 rad = XR_ADV_SanitizeRadiance(result.radiance);
+    vec3 emit = XR_ADV_SanitizeRadiance(result.emittedRadiance);
+    vec2 octNormal = XRENGINE_EncodeNormal(XR_ADV_NormalizeOr(result.normal, vec3(0.0, 0.0, 1.0)));
+    uint reactiveByte = uint(clamp(result.reactive, 0.0, 1.0) * 255.0 + 0.5) & 0xFFu;
+
+    RvcShadeletShadedOutputGpu packed;
+    packed.primaryPacked = uvec4(
+        packHalf2x16(rad.rg),
+        packHalf2x16(vec2(rad.b, clamp(result.opacity, 0.0, 1.0))),
+        packHalf2x16(result.velocity),
+        (result.diagnostics & 0x00FFFFFFu) | (reactiveByte << 24u));
+    packed.surfacePacked = uvec4(
+        packHalf2x16(emit.rg),
+        packHalf2x16(vec2(emit.b, float(result.hasMaterialSurface))),
+        packUnorm4x8(clamp(result.albedoOpacity, vec4(0.0), vec4(1.0))),
+        packUnorm4x8(vec4(
+            clamp(octNormal * 0.5 + 0.5, vec2(0.0), vec2(1.0)),
+            clamp(result.roughness, 0.0, 1.0),
+            clamp(result.metallic, 0.0, 1.0))));
+    return packed;
+}
+
+void main()
+{
+#if defined(XR_ADV_SHADING_ADDRESS_ROOT_VERSION)
+    u_Push = XR_ADV_LoadShadingParameters();
+#endif
+    uint viewIndex = u_Push.viewIndex;
+    if (viewIndex >= u_Push.viewCount)
+        return;
+
+    // Uniform workgroup shadow cache fill before any divergent exit.
+    XR_ADV_FillShadowGroupCache(viewIndex, min(u_Push.lightCount, uint(XR_ADV_Lights.records.length())));
+
+    bool overflowRepair = (u_Push.kernelIndex & RVC_DISPATCH_FLAG_OVERFLOW_REPAIR) != 0u;
+    uint localIdx = gl_GlobalInvocationID.x;
+    uint shadeletIdx = 0u;
+    uvec2 pixel;
+    uvec2 identity;
+    uint metadata;
+
+    if (overflowRepair)
+    {
+        uint width = u_Push.screenExtent.x;
+        uint totalPixels = width * u_Push.screenExtent.y;
+        if (width == 0u || localIdx >= totalPixels)
+            return;
+        pixel = uvec2(localIdx % width, localIdx / width);
+        uint mapEntry = imageLoad(RvcPixelToShadelet, ivec3(pixel, int(viewIndex))).r;
+        if ((mapEntry & RVC_SHADELET_DIRECT_PIXEL_BIT) == 0u || mapEntry == RVC_SHADELET_INVALID)
+            return;
+        identity = texelFetch(VisibilityIdentity, ivec2(pixel), 0).rg;
+        if (!RvcIsValidVisibilityIdentity(identity))
+            return;
+        metadata = texelFetch(VisibilityMetadata, ivec2(pixel), 0).r;
+        uint materialDense, kernelDense;
+        if (!XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense))
+            return;
+        if (!XR_ADV_KernelShadesMaterialFamily(materialDense))
+            return;
+    }
+    else
+    {
+        uint maxShadelets = RvcResolveShadeletCapacity();
+#if defined(XR_ADV_NATIVE_SHADING_FAMILY) && XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_UBER
+        if (localIdx >= RvcShadeletState.uberSliceCount)
+            return;
+        uint binOffset = RvcShadeletState.uberDispatch.w + localIdx;
+        if (binOffset >= maxShadelets)
+            return;
+        shadeletIdx = RvcShadeletBinIndices.indices[maxShadelets - 1u - binOffset];
+#else
+        if (localIdx >= RvcShadeletState.standardSliceCount)
+            return;
+        uint binOffset = RvcShadeletState.standardDispatch.w + localIdx;
+        if (binOffset >= maxShadelets)
+            return;
+        shadeletIdx = RvcShadeletBinIndices.indices[binOffset];
+#endif
+        if (shadeletIdx >= maxShadelets)
+            return;
+        RvcShadeletRecordGpu rec = RvcShadeletRecords.records[shadeletIdx];
+        pixel = uvec2(
+            rec.representativePixelAndView.x & 0xFFFFu,
+            rec.representativePixelAndView.x >> 16u);
+        uint recView = rec.representativePixelAndView.y & 0xFFu;
+        if (recView != viewIndex || any(greaterThanEqual(pixel, u_Push.screenExtent)))
+            return;
+        identity = rec.identity;
+        metadata = rec.metadata;
+    }
+
+    float depth = texelFetch(VisibilityDepth, ivec2(pixel), 0).r;
+    float ambientOcclusion = texelFetch(AmbientOcclusion, ivec2(pixel), 0).r;
+    XRAdvancedOpaqueSampleResult result;
+    XR_ADV_EvaluateNativeOpaqueSample(
+        pixel,
+        viewIndex,
+        identity,
+        metadata,
+        depth,
+        vec2(pixel) + 0.5,
+        ambientOcclusion,
+        false,
+        0u,
+        false,
+        result);
+
+    if (overflowRepair)
+        XR_ADV_StoreOpaqueSampleResult(pixel, viewIndex, result);
+    else
+        RvcShadeletShadedOutputs.outputs[shadeletIdx] = RvcPackShadedOutput(result);
+}

@@ -1713,6 +1713,23 @@ public static partial class SerializedMaterialImporter
                 return;
             }
 
+            // Unstreamed textures (such as inactive avatar outfit meshes) never generate a
+            // streaming cache, so reuse a previously validated revision when file size and
+            // timestamp are unchanged.
+            if (SerializedTextureValidationCache.TryGetValidated(
+                source.FullName,
+                length,
+                lastWriteTicks,
+                out uint cachedWidth,
+                out uint cachedHeight))
+            {
+                context.RecordValidatedTexture(source.FullName, length, lastWriteTicks);
+                context.Progress?.Invoke(
+                    0.12f,
+                    $"Validated required texture {Path.GetFileName(texturePath)} ({cachedWidth}x{cachedHeight}, cached)");
+                return;
+            }
+
             context.Progress?.Invoke(
                 0.12f,
                 $"Validating required texture {Path.GetFileName(texturePath)}");
@@ -1720,7 +1737,10 @@ public static partial class SerializedMaterialImporter
             (uint width, uint height) = RuntimeImageCodecs.Require().Validate(encodedImage, texturePath);
             source.Refresh();
             if (source.Exists && source.Length == length && source.LastWriteTimeUtc.Ticks == lastWriteTicks)
+            {
                 context.RecordValidatedTexture(source.FullName, length, lastWriteTicks);
+                SerializedTextureValidationCache.RecordValidated(source.FullName, length, lastWriteTicks, width, height);
+            }
             context.Progress?.Invoke(
                 0.12f,
                 $"Validated required texture {Path.GetFileName(texturePath)} ({width}x{height})");

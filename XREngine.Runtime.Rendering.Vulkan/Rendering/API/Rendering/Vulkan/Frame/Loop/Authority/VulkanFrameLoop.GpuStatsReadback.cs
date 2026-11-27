@@ -416,8 +416,8 @@ internal sealed partial class VulkanFrameLoop
         EMeshSubmissionStrategy strategy = request.BackendPackage.Package.SubmissionResolution.Resolved;
         if (_deviceLost || commandBuffer.Handle == 0 || source.NativeBuffer.Handle == 0 ||
             source.NativeSize == 0u ||
-            // RVC telemetry is an explicit setting, so it reads back under every strategy.
-            (decoder != EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry &&
+            // RVC telemetry and shadelet cache counters read back under every strategy when enabled.
+            (decoder is not (EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry or EGpuDiagnosticReadbackDecoder.RvcShadeletCache) &&
              !GpuDiagnosticReadbackPlan.IsInstrumented(strategy)))
             return false;
 
@@ -426,6 +426,7 @@ internal sealed partial class VulkanFrameLoop
             EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters => 32u,
             EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters => 16u,
             EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry => RvcShadeletTelemetryCounters.GpuByteCount,
+            EGpuDiagnosticReadbackDecoder.RvcShadeletCache => RvcShadeletCacheCounters.GpuByteCount,
             _ => 0u,
         };
         if (byteCount == 0u || source.NativeSize < byteCount)
@@ -530,7 +531,8 @@ internal sealed partial class VulkanFrameLoop
                 if (node.Decoder is EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters or
                     EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters or
                     EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters or
-                    EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry)
+                    EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry or
+                    EGpuDiagnosticReadbackDecoder.RvcShadeletCache)
                 {
                     PublishCompletedAdvancedCounterReadback(
                         node.DecoderKey,
@@ -594,6 +596,10 @@ internal sealed partial class VulkanFrameLoop
             case EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry:
                 if (RvcShadeletTelemetryCounters.TryDecode(words, payload.SourceFrameId, out RvcShadeletTelemetryCounters telemetry))
                     RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetry(in telemetry);
+                break;
+            case EGpuDiagnosticReadbackDecoder.RvcShadeletCache:
+                if (RvcShadeletCacheCounters.TryDecode(words, payload.SourceFrameId, out RvcShadeletCacheCounters shadeletCache))
+                    RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletCache(in shadeletCache);
                 break;
             case EGpuDiagnosticReadbackDecoder.SubmissionValidation:
             case EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters:

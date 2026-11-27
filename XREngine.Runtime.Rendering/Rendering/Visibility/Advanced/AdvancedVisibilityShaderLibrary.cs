@@ -17,6 +17,22 @@ public static class AdvancedVisibilityShaderLibrary
     public const string Task = Root + "/VisibilityRaster.task";
     /// <summary>Mesh surface decal fragment shader of the decal buffer pass.</summary>
     public const string DecalBufferFragment = Root + "/DecalBuffer.frag";
+    /// <summary>Portal and mirror quad vertex shader for stencil carve and depth reset.</summary>
+    public const string PortalQuadVertex = Root + "/PortalQuad.vert";
+    /// <summary>Stencil-only fragment shader for carving a portal or mirror quad.</summary>
+    public const string PortalStencilCarveFragment = Root + "/PortalStencilCarve.frag";
+    /// <summary>Visibility and depth reset fragment shader for carved portal pixels.</summary>
+    public const string PortalDepthResetFragment = Root + "/PortalDepthReset.frag";
+    /// <summary>Depth-only fragment shader that restores primary depth on uncovered transparent-mirror pixels.</summary>
+    public const string PortalTransparentDepthRestoreFragment = Root + "/PortalTransparentDepthRestore.frag";
+    /// <summary>Fullscreen fragment shader that repopulates single-sample portal stencil bits after MSAA resolve.</summary>
+    public const string PortalMsaaStencilRepopulateFragment = Root + "/PortalMsaaStencilRepopulate.frag";
+    /// <summary>Fullscreen fragment shader that draws reflected sky/environment onto uncovered portal pixels during unwind.</summary>
+    public const string PortalSkyUnwindFragment = Root + "/PortalSkyUnwind.frag";
+    /// <summary>Vertex shader that draws the mirror glass composite quad during deepest-out portal unwind.</summary>
+    public const string PortalGlassQuadVertex = Root + "/PortalGlassQuad.vert";
+    /// <summary>Fragment shader that composites mirror glass tint, Fresnel, and specular during deepest-out portal unwind.</summary>
+    public const string PortalGlassCompositeFragment = Root + "/PortalGlassComposite.frag";
     public const string DirectionalShadowVertex = Root + "/DirectionalShadowRaster.vert";
     public const string DirectionalShadowOpaqueFragment = Root + "/DirectionalShadowRaster.frag";
     public const string DirectionalShadowMaskedFragment = Root + "/DirectionalShadowRasterMasked.frag";

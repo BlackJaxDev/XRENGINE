@@ -18,7 +18,8 @@ namespace XREngine.Rendering;
 public partial class XRTexture2D
 {
     private const int StreamableMipSectionMagic = 0x58525453; // XRTS
-    private const int StreamableMipSectionVersion = 1;
+    // Version 2 stores linear-light box mipmaps for color textures instead of gamma-space Lanczos mips.
+    private const int StreamableMipSectionVersion = 2;
     private const int TextureStreamingGpuCacheCookTimeoutMilliseconds = 120_000;
     private const int StreamableMipDescriptorSize =
         sizeof(uint) + sizeof(uint) + sizeof(int) + sizeof(int) + sizeof(int) + sizeof(long) + sizeof(int);

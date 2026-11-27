@@ -23,7 +23,7 @@ public sealed class NativeSubsystemDependencyBoundaryTests
         "XREngine.Runtime.ModelAssetPipeline",
         "XREngine.Audio.OpenAL", "XREngine.Audio.SteamAudio", "XREngine.Audio.NAudio",
         "XREngine.Audio.OVRLipSync",
-        "XREngine.Audio.Audio2Face", "XREngine.Runtime.MeshProcessing.Meshoptimizer",
+        "XREngine.Audio.Audio2Face", "XREngine.Animation.MotionBricks", "XREngine.Runtime.MeshProcessing.Meshoptimizer",
         "XREngine.Runtime.Media.FFmpeg", "XREngine.Runtime.Imaging.Magick",
         "XREngine.Runtime.Platform.Desktop", "XREngine.Input.Silk", "XREngine.Input.XInput",
         "XREngine.Runtime.XR.OpenVR", "XREngine.Runtime.XR.OpenXR",
@@ -91,7 +91,7 @@ public sealed class NativeSubsystemDependencyBoundaryTests
         {
             "XREngine.Runtime.Physics.Jolt", "XREngine.Runtime.Physics.PhysX",
             "XREngine.Audio.OpenAL", "XREngine.Audio.SteamAudio", "XREngine.Audio.NAudio",
-            "XREngine.Audio.OVRLipSync", "XREngine.Audio.Audio2Face",
+            "XREngine.Audio.OVRLipSync", "XREngine.Audio.Audio2Face", "XREngine.Animation.MotionBricks",
             "XREngine.Input.XInput", "XREngine.Runtime.Platform.Desktop",
             "XREngine.Runtime.XR.OpenVR", "XREngine.Runtime.XR.OpenXR",
             "XREngine.Runtime.Imaging.Magick", "XREngine.Runtime.Media.FFmpeg",

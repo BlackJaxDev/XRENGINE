@@ -135,6 +135,13 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 		if (!request.UseGraphicsPipelineLibraries)
 			return CreateMonolithicGraphicsPipeline(manager, request, ref pipelineInfo, pipelineCache, backgroundCompile);
 
+		if (HasUnclassifiedDynamicState(request.DynamicStates) ||
+			(request.FragmentStages.Length == 0 &&
+				HasSubsetDynamicStates(VulkanGraphicsPipelineLibrarySubset.FragmentShader, request.DynamicStates)))
+		{
+			return CreateMonolithicGraphicsPipeline(manager, request, ref pipelineInfo, pipelineCache, backgroundCompile);
+		}
+
 		try
 		{
 			return CreateGraphicsPipelineFromLibraries(manager, request, ref pipelineInfo, pipelineCache, backgroundCompile);
@@ -558,6 +565,11 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 		PipelineCache pipelineCache,
 		bool backgroundCompile)
 	{
+		key = key with
+		{
+			DynamicStateHash = ComputeSubsetDynamicStateHash(key.Subset, request.DynamicStates),
+		};
+
 		if (manager.TryGetOrReserveSharedGraphicsPipelineLibrary(
 				key,
 				out Pipeline cachedLibrary,
@@ -614,7 +626,25 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 				libraryPipelineInfo.PStages = stages.Length > 0 ? stagesPtr : null;
 				libraryPipelineInfo.Layout = request.UsesDescriptorHeap ? default : request.PipelineLayout;
 
+				// Vulkan graphics pipeline libraries keep only the dynamic states that belong
+				// to each subset's pipeline state structures (for example, viewport/scissor in
+				// PreRasterizationShaders and stencil reference/masks in FragmentShader).
+				// Omitting stencil dynamic states from FragmentShader freezes them to static
+				// pipeline values and overwrites dynamic stencil state on bind.
+				DynamicState* subsetDynamicStates = stackalloc DynamicState[Math.Max(request.DynamicStates.Length, 1)];
+				uint subsetDynamicStateCount = FilterSubsetDynamicStates(
+					key.Subset,
+					request.DynamicStates,
+					subsetDynamicStates);
+				PipelineDynamicStateCreateInfo subsetDynamicStateInfo = new()
+				{
+					SType = StructureType.PipelineDynamicStateCreateInfo,
+					DynamicStateCount = subsetDynamicStateCount,
+					PDynamicStates = subsetDynamicStateCount > 0u ? subsetDynamicStates : null,
+				};
+
 				ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset);
+				libraryPipelineInfo.PDynamicState = subsetDynamicStateCount > 0u ? &subsetDynamicStateInfo : null;
 
 				long createStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
 				Pipeline library;
@@ -723,6 +753,106 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 				pipelineInfo.PDynamicState = null;
 				break;
 		}
+	}
+
+	private static bool TryGetDynamicStateSubset(
+		DynamicState state,
+		out VulkanGraphicsPipelineLibrarySubset subset)
+	{
+		switch (state)
+		{
+			case DynamicState.VertexInputBindingStride:
+			case DynamicState.PrimitiveTopology:
+			case DynamicState.PrimitiveRestartEnable:
+			case DynamicState.VertexInputExt:
+				subset = VulkanGraphicsPipelineLibrarySubset.VertexInputInterface;
+				return true;
+			case DynamicState.Viewport:
+			case DynamicState.Scissor:
+			case DynamicState.LineWidth:
+			case DynamicState.DepthBias:
+			case DynamicState.CullMode:
+			case DynamicState.FrontFace:
+			case DynamicState.ViewportWithCount:
+			case DynamicState.ScissorWithCount:
+			case DynamicState.RasterizerDiscardEnable:
+			case DynamicState.DepthBiasEnable:
+				subset = VulkanGraphicsPipelineLibrarySubset.PreRasterizationShaders;
+				return true;
+			case DynamicState.DepthBounds:
+			case DynamicState.StencilCompareMask:
+			case DynamicState.StencilWriteMask:
+			case DynamicState.StencilReference:
+			case DynamicState.DepthTestEnable:
+			case DynamicState.DepthWriteEnable:
+			case DynamicState.DepthCompareOp:
+			case DynamicState.DepthBoundsTestEnable:
+			case DynamicState.StencilTestEnable:
+			case DynamicState.StencilOp:
+				subset = VulkanGraphicsPipelineLibrarySubset.FragmentShader;
+				return true;
+			case DynamicState.BlendConstants:
+			case DynamicState.LogicOpExt:
+			case DynamicState.ColorWriteEnableExt:
+				subset = VulkanGraphicsPipelineLibrarySubset.FragmentOutputInterface;
+				return true;
+			default:
+				subset = default;
+				return false;
+		}
+	}
+
+	private static bool HasUnclassifiedDynamicState(ReadOnlySpan<DynamicState> dynamicStates)
+	{
+		for (int index = 0; index < dynamicStates.Length; ++index)
+			if (!TryGetDynamicStateSubset(dynamicStates[index], out _))
+				return true;
+		return false;
+	}
+
+	private static bool HasSubsetDynamicStates(
+		VulkanGraphicsPipelineLibrarySubset subset,
+		ReadOnlySpan<DynamicState> dynamicStates)
+	{
+		for (int index = 0; index < dynamicStates.Length; ++index)
+			if (TryGetDynamicStateSubset(dynamicStates[index], out VulkanGraphicsPipelineLibrarySubset owner) &&
+				owner == subset)
+				return true;
+		return false;
+	}
+
+	private static uint FilterSubsetDynamicStates(
+		VulkanGraphicsPipelineLibrarySubset subset,
+		ReadOnlySpan<DynamicState> source,
+		DynamicState* destination)
+	{
+		uint count = 0u;
+		for (int index = 0; index < source.Length; ++index)
+		{
+			DynamicState state = source[index];
+			if (TryGetDynamicStateSubset(state, out VulkanGraphicsPipelineLibrarySubset owner) &&
+				owner == subset)
+				destination[count++] = state;
+		}
+		return count;
+	}
+
+	private static ulong ComputeSubsetDynamicStateHash(
+		VulkanGraphicsPipelineLibrarySubset subset,
+		ReadOnlySpan<DynamicState> dynamicStates)
+	{
+		uint count = 0u;
+		VulkanStableHash64 hash = new(schemaVersion: 1);
+		for (int index = 0; index < dynamicStates.Length; ++index)
+		{
+			DynamicState state = dynamicStates[index];
+			if (!TryGetDynamicStateSubset(state, out VulkanGraphicsPipelineLibrarySubset owner) ||
+				owner != subset)
+				continue;
+			hash.Add((int)state);
+			++count;
+		}
+		return count == 0u ? 0UL : hash.Value;
 	}
 
 }

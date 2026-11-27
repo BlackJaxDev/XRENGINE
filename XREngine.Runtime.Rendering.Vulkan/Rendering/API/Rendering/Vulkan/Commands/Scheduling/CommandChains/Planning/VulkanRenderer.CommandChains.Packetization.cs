@@ -1162,9 +1162,7 @@ internal sealed partial class VulkanCommandRuntime
     {
         XRMeshRenderer renderer = draw.Renderer.MeshRenderer;
         XRMaterial? material = draw.MaterialOverride ?? renderer.Material;
-        return string.Equals(material?.Name, "UIBatchTextMaterial", StringComparison.Ordinal) ||
-            string.Equals(renderer.Name, "UIBatchTextRenderer", StringComparison.Ordinal) ||
-            string.Equals(renderer.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal);
+        return VulkanFrameLoop.IsNamedDynamicUiOverlayOperation(renderer, material);
     }
 
     private static ERenderPassSecondaryCachePolicy ResolveSecondaryCachePolicy(

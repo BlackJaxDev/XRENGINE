@@ -23,12 +23,13 @@ uniform float Emission = 0.0f;
 uniform float AlphaCutoff = -1.0f;
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 #pragma snippet "DitheredTransparency"
 #pragma snippet "SurfaceEmission"
 
 void main()
 {
-    vec4 texColor = texture(Texture0, FragUV0);
+    vec4 texColor = XRENGINE_SampleBiasedTexture(Texture0, FragUV0);
 
     // Alpha cutoff (masked mode) and dithered transparency.
     XRENGINE_AlphaCutoffAndDither(AlphaCutoff, texColor.a, Opacity, gl_FragCoord.xy);

@@ -29,6 +29,13 @@ public interface IRuntimeRenderSchedulingServices
     bool IsFrameSwapThread => true;
 
     /// <summary>
+    /// Gets whether the render thread is actively consuming a published threaded frame snapshot.
+    /// Pre-collect transform publication skips live render-matrix mutation while this is true so the
+    /// active frame keeps one coherent transform generation across camera, skinning, and GPU scene reads.
+    /// </summary>
+    bool IsRenderFrameConsumingRenderSnapshot => false;
+
+    /// <summary>
     /// Subscribes a callback to the host pre-update frame event.
     /// </summary>
     void SubscribePreUpdateFrame(Action callback) { }

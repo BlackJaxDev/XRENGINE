@@ -81,7 +81,7 @@ vec3 XR_UBER_Normal(XRUberCoordinates c, vec3 geometric, vec3 tangent, vec3 bita
         // Combine both tangent normals before the single world-space transform.
         mapped = vec3(mapped.xy + detail.xy, mapped.z * detail.z);
     }
-    return normalize(tangent * mapped.x + bitangent * mapped.y + geometric * mapped.z);
+    return XR_ADV_NormalizeOr(tangent * mapped.x + bitangent * mapped.y + geometric * mapped.z, geometric);
 }
 
 vec3 XR_UBER_DetailColor(XRUberCoordinates c, vec3 color)
@@ -171,7 +171,8 @@ vec2 XR_UBER_MatcapUv(vec3 normal, vec3 viewDir, mat3 viewMatrix, vec4 projectio
     {
         vec3 detail = (viewMatrix * normal) * vec3(-1.0, -1.0, 1.0);
         vec3 base = (viewMatrix * viewDir) * vec3(-1.0, -1.0, 1.0) + vec3(0.0, 0.0, 1.0);
-        vec3 corrected = base * (dot(base, detail) / base.z) - detail;
+        float safeBaseZ = abs(base.z) > 1.0e-5 ? base.z : (base.z >= 0.0 ? 1.0e-5 : -1.0e-5);
+        vec3 corrected = base * (dot(base, detail) / safeBaseZ) - detail;
         return corrected.xy * border + 0.5;
     }
     return normalize(normal * viewMatrix).xy * border + 0.5;
@@ -233,8 +234,10 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
     float normalStrength = clamp(parameters.w, 0.0, 1.0);
     bool sourceMatcap = UBER_F(_MatcapToonModel) > 0.5;
     vec3 projectedNormal = mix(geometric, normal, normalStrength);
-    vec3 projectedNormalX = mix(normalize(geometric + geometricDx), normalize(normal + normalDx), normalStrength);
-    vec3 projectedNormalY = mix(normalize(geometric + geometricDy), normalize(normal + normalDy), normalStrength);
+    vec3 projectedNormalX = mix(XR_ADV_NormalizeOr(geometric + geometricDx, geometric),
+        XR_ADV_NormalizeOr(normal + normalDx, normal), normalStrength);
+    vec3 projectedNormalY = mix(XR_ADV_NormalizeOr(geometric + geometricDy, geometric),
+        XR_ADV_NormalizeOr(normal + normalDy, normal), normalStrength);
     if (uvBlend.z > 0.5)
     {
         vec2 normalUv = c.uv0 * normalSt.xy + normalSt.zw + normalPan * (c.time * 0.05);
@@ -246,19 +249,19 @@ void XR_UBER_Matcap(XRUberCoordinates c, vec3 geometric, vec3 geometricDx, vec3 
         vec3 mapped = XR_UBER_UnpackNormal(normalSample, uvBlend.w);
         vec3 mappedX = XR_UBER_UnpackNormal(normalSampleX, uvBlend.w);
         vec3 mappedY = XR_UBER_UnpackNormal(normalSampleY, uvBlend.w);
-        projectedNormal = normalize(tangent * mapped.x + bitangent * mapped.y + normal * mapped.z);
-        projectedNormalX = normalize(tangent * mappedX.x + bitangent * mappedX.y + normalize(normal + normalDx) * mappedX.z);
-        projectedNormalY = normalize(tangent * mappedY.x + bitangent * mappedY.y + normalize(normal + normalDy) * mappedY.z);
+        projectedNormal = XR_ADV_NormalizeOr(tangent * mapped.x + bitangent * mapped.y + normal * mapped.z, normal);
+        projectedNormalX = XR_ADV_NormalizeOr(tangent * mappedX.x + bitangent * mappedX.y + XR_ADV_NormalizeOr(normal + normalDx, normal) * mappedX.z, projectedNormal);
+        projectedNormalY = XR_ADV_NormalizeOr(tangent * mappedY.x + bitangent * mappedY.y + XR_ADV_NormalizeOr(normal + normalDy, normal) * mappedY.z, projectedNormal);
     }
     if (!sourceMatcap)
     {
-        projectedNormal = normalize(projectedNormal);
-        projectedNormalX = normalize(projectedNormalX);
-        projectedNormalY = normalize(projectedNormalY);
+        projectedNormal = XR_ADV_NormalizeOr(projectedNormal, normal);
+        projectedNormalX = XR_ADV_NormalizeOr(projectedNormalX, projectedNormal);
+        projectedNormalY = XR_ADV_NormalizeOr(projectedNormalY, projectedNormal);
     }
     vec2 uv = XR_UBER_MatcapUv(projectedNormal, viewDir, viewMatrix, projection);
-    vec2 dx = XR_UBER_MatcapUv(projectedNormalX, normalize(viewDir + viewDx), viewMatrix, projection) - uv;
-    vec2 dy = XR_UBER_MatcapUv(projectedNormalY, normalize(viewDir + viewDy), viewMatrix, projection) - uv;
+    vec2 dx = XR_UBER_MatcapUv(projectedNormalX, XR_ADV_NormalizeOr(viewDir + viewDx, viewDir), viewMatrix, projection) - uv;
+    vec2 dy = XR_UBER_MatcapUv(projectedNormalY, XR_ADV_NormalizeOr(viewDir + viewDy, viewDir), viewMatrix, projection) - uv;
     if (sourceMatcap)
     {
         if (uvBlend.x != 0.0 || uvBlend.y != 0.0)

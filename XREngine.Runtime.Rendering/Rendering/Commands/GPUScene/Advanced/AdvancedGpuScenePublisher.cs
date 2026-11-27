@@ -133,6 +133,10 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     /// </summary>
     internal long PublisherEpoch => System.Threading.Interlocked.Read(ref _publisherEpoch);
 
+    /// <summary>True while a canonical publication is committing or delivering source draw identities.</summary>
+    internal bool IsPublishInProgress
+        => System.Threading.Volatile.Read(ref _publishInProgress) != 0 || _identityDeliveryIncomplete;
+
     public AdvancedGpuScenePublicationReference CurrentPublication
         => _identityDeliveryIncomplete ? default : _currentPublication;
 
@@ -469,6 +473,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     registration.LastSeenFrameId = frameId;
                     registration.LegacyCommandIndex = commandIndex;
                     _commandDrawHandles[commandIndex] = registration.Draw;
+                    TryTrackPortalSurfaceCommand(plan.Source, registration.Draw);
                     int submissionIndex = _legacyMappingCount;
                     AppendLegacyMapping(
                         commandIndex,
@@ -486,7 +491,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                         PrimitiveIndex = checked((uint)Math.Max(0, plan.PrimitiveIndex)),
                         PassIndex = plan.Command.RenderPass,
                         InstanceCount = Math.Max(1u, plan.Command.InstanceCount),
-                        Flags = ResolveSubmissionDrawFlags(in plan.Command, plan.MaterialSource),
+                        Flags = ResolveSubmissionDrawFlags(in plan.Command, plan.MaterialSource, plan.Source),
                         StateClass = plan.Command.StateClassID,
                         CompatibilityReason = plan.CompatibilityReason,
                         TemporalEventReason = plan.TemporalEventReason,
@@ -1661,9 +1666,17 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     /// use the masked visibility raster. The opaque raster does not run the coverage step, and the
     /// discarded geometry would stay visible.
     /// </remarks>
-    private static uint ResolveSubmissionDrawFlags(in DrawMetadata command, XRMaterial? material)
+    internal static uint ResolveSubmissionDrawFlags(
+        in DrawMetadata command,
+        XRMaterial? material,
+        IRenderCommandMesh? source = null)
     {
         uint flags = command.Flags;
+        if (source is RenderCommand renderCommand &&
+            renderCommand.OwnerRenderInfo?.Owner is IAdvancedPortalSurfaceProvider { IsPortalSurfaceActive: true })
+        {
+            flags |= (uint)GPUIndirectRenderFlags.PortalSurface;
+        }
         if (AdvancedSurfaceDecalLane.UsesDecalLane(material))
             return flags | (uint)GPUIndirectRenderFlags.SurfaceDecal;
         if (RequiresFragmentDepth(material))

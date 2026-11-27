@@ -48,6 +48,8 @@ public static class NativeUberMaterialSourceEncoder
                 if (material.Parameter<ShaderFloat>(name) is { Value: > 0.001f })
                     return true;
         }
+        if (material.RenderOptions?.AlphaToCoverage == ERenderParamUsage.Enabled)
+            return true;
         if (material.IsUberFeatureEnabled("dissolve", false))
             return true;
         if (UsesAlphaToCoverage(material))
@@ -65,15 +67,11 @@ public static class NativeUberMaterialSourceEncoder
     private static bool UsesAlphaToCoverage(XRMaterial material)
         => material.RenderOptions?.AlphaToCoverage == ERenderParamUsage.Enabled;
 
-    /// <summary>
-    /// Identifies an active alpha cutoff test in the native coverage function
-    /// (<c>NativeUberCoverage.glslinc</c>). The function keeps a fragment with alpha at or
-    /// above <c>_Cutoff</c> when the blend mode is cutout (<c>_Mode</c> 1) or the source
-    /// alpha clip is on (<c>_AlphaClipAllModes</c>). Otherwise it keeps every fragment.
-    /// </summary>
-    private static bool HasAlphaCutoffTest(XRMaterial material)
-        => material.Parameter<ShaderInt>("_Mode") is { Value: 1 } ||
-            material.Parameter<ShaderFloat>("_AlphaClipAllModes") is { Value: > 0.5f };
+    /// <summary>Packs fixed-function coverage flags into the second word of the native Uber feature header.</summary>
+    internal static uint EncodeStateFlags(XRMaterial material)
+        => UsesAlphaToCoverage(material)
+            ? NativeUberMaterialSchema.AlphaToCoverageStateFlag
+            : 0u;
 
     public static bool TryEncode(
         XRMaterial material,
@@ -99,18 +97,6 @@ public static class NativeUberMaterialSourceEncoder
         {
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
             reason = "Native Uber requires a recognized authored Uber source.";
-            return false;
-        }
-        // The native visibility raster has no alpha-to-coverage output. An alpha-to-coverage
-        // material publishes a masked row, so the coverage function keeps fragments with
-        // alpha at or above the material cutoff. On a single-sample target this matches the
-        // forward path, which also tests the cutoff. On a multisample target the edge is hard
-        // instead of a partial sample mask. Without a cutoff test the masked row would keep
-        // every fragment, so that material stays unsupported.
-        if (UsesAlphaToCoverage(material) && !HasAlphaCutoffTest(material))
-        {
-            compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
-            reason = "Native Uber alpha-to-coverage requires an alpha cutoff test (_Mode 1 or _AlphaClipAllModes).";
             return false;
         }
         uint features = 0u;
@@ -149,6 +135,7 @@ public static class NativeUberMaterialSourceEncoder
             return false;
         }
         words[NativeUberMaterialSchema.FeatureWordOffset] = features;
+        words[NativeUberMaterialSchema.StateFlagsWordOffset] = EncodeStateFlags(material);
         // A material without this parameter receives world AO in full.
         words[NativeUberMaterialSchema.ParameterWordOffset(
             NativeUberMaterialSchema.ParameterIndex("_WorldAmbientOcclusionStrength"))] = BitConverter.SingleToUInt32Bits(1.0f);

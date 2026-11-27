@@ -78,7 +78,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
         _consumerAcknowledgements = new ulong[checked((int)consumerCapacity + 1)];
         _consumerGenerations = new uint[_consumerAcknowledgements.Length];
         _consumerActive = new byte[_consumerAcknowledgements.Length];
-        int leaseCapacity = checked(Math.Max(16, (int)publicationCapacity * 8));
+        int leaseCapacity = checked(Math.Max(64, (int)publicationCapacity * 32));
         _leaseReferences = new AdvancedGpuScenePublicationReference[leaseCapacity + 1];
         _leaseKinds = new EAdvancedGpuScenePublicationPinKind[leaseCapacity + 1];
         _leaseGenerations = new uint[leaseCapacity + 1];

@@ -270,6 +270,10 @@ public partial class DefaultRenderPipeline
                 RuntimeRenderingHostServices.DebugDrawing
                     .SelectionOutlineEnabled);
         }
+        else
+        {
+            AddHash(ref hash, ResolveFinalPostProcessRcasSharpness(state));
+        }
 
         return hash == 0UL ? 1UL : hash;
     }
@@ -464,10 +468,34 @@ public partial class DefaultRenderPipeline
             LogPostProcessUniformDiagnostics(state, ResolveOutputHDR(), hoverOutlineColor, selectionOutlineColor, enableEditorOutline);
     }
 
+    private static bool ShouldRunDefaultTsrSharpen()
+    {
+        if (ResolveEffectiveAntiAliasingSharpnessForFrame() <= 1e-5f)
+            return false;
+
+        PipelinePostProcessState? state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
+        return ResolveTemporalSettings(state).DebugMode == TemporalDebugViewMode.Disabled;
+    }
+
+    private static float ResolveFinalPostProcessRcasSharpness(PipelinePostProcessState? state)
+    {
+        if (ResolveEffectiveAntiAliasingModeForFrame() != EAntiAliasingMode.Taa)
+            return 0.0f;
+
+        float sharpness = ResolveEffectiveAntiAliasingSharpnessForFrame();
+        if (sharpness <= 1e-5f)
+            return 0.0f;
+
+        return ResolveTemporalSettings(state).DebugMode == TemporalDebugViewMode.Disabled
+            ? sharpness
+            : 0.0f;
+    }
+
     private void FinalPostProcessFBO_SettingUniforms(XRRenderProgram materialProgram)
     {
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyLensDistortionUniforms(state, materialProgram, enabled: true);
+        materialProgram.Uniform("RcasSharpness", ResolveFinalPostProcessRcasSharpness(state));
     }
 
     private void LogPostProcessUniformDiagnostics(
@@ -839,6 +867,7 @@ public partial class DefaultRenderPipeline
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
+        program.Uniform("AntiAliasingFilterMode", (int)ResolveEffectiveAntiAliasingFilterModeForFrame());
     }
 
     private void BrightPassFBO_SettingUniforms(XRRenderProgram program)
@@ -936,5 +965,6 @@ public partial class DefaultRenderPipeline
         program.Uniform("DepthDiscontinuityScale", temporalSettings.DepthDiscontinuityScale);
         program.Uniform("ConfidencePower", temporalSettings.ConfidencePower);
         program.Uniform("DebugMode", (int)temporalSettings.DebugMode);
+        program.Uniform("AntiAliasingFilterMode", (int)ResolveEffectiveAntiAliasingFilterModeForFrame());
     }
 }

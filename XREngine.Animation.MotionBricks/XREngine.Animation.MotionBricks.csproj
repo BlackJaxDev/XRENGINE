@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows7.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Platforms>AnyCPU;x64</Platforms>
+    <MotionBricksBridgeNativeOutputDir Condition="'$(MotionBricksBridgeNativeOutputDir)' == ''">$(MSBuildProjectDirectory)\..\Build\_AgentValidation\00000000-000000-shared\tools\$(Configuration)\MotionBricksBridge\</MotionBricksBridgeNativeOutputDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="$(MotionBricksBridgeNativeOutputDir)*.dll" Condition="Exists('$(MotionBricksBridgeNativeOutputDir)MotionBricksBridge.Native.dll')">
+      <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+</Project>

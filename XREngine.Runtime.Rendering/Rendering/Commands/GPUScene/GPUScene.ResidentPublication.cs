@@ -20,8 +20,17 @@ public partial class GPUScene
     public AdvancedSharedGpuSceneDatabase AdvancedSharedDatabase
         => _advancedScenePublisher.Database;
 
+    internal AdvancedGpuScenePublisher AdvancedScenePublisher
+        => _advancedScenePublisher;
+
     public AdvancedGpuScenePublicationReference AdvancedScenePublication
         => _advancedScenePublisher.CurrentPublication;
+
+    internal bool IsAdvancedPublicationInProgress
+        => _advancedScenePublisher.IsPublishInProgress;
+
+    internal long AdvancedPublisherEpoch
+        => _advancedScenePublisher.PublisherEpoch;
 
     public int AdvancedTopologyDeltaCount
         => _advancedScenePublisher.TopologyDeltaCount;

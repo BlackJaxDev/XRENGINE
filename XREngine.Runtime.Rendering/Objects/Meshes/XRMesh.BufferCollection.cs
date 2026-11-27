@@ -1157,5 +1157,30 @@ namespace XREngine.Rendering
             index = (uint)i;
             return true;
         }
+
+        /// <summary>
+        /// Resolves a blendshape index with O(1) dictionary lookup honoring case-insensitive
+        /// comparisons without allocating.
+        /// </summary>
+        public bool GetBlendshapeIndex(string name, StringComparison comparison, out uint index)
+        {
+            if (_blendshapeNameToIndex.TryGetValue(name, out int exactIndex) && exactIndex >= 0)
+            {
+                index = (uint)exactIndex;
+                return true;
+            }
+
+            bool ignoreCase = comparison is StringComparison.OrdinalIgnoreCase
+                or StringComparison.InvariantCultureIgnoreCase
+                or StringComparison.CurrentCultureIgnoreCase;
+            if (ignoreCase && _blendshapeNameToIndexIgnoreCase.TryGetValue(name, out int ciIndex) && ciIndex >= 0)
+            {
+                index = (uint)ciIndex;
+                return true;
+            }
+
+            index = 0;
+            return false;
+        }
     }
 }

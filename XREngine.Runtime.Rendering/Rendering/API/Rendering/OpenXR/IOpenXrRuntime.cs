@@ -10,6 +10,8 @@ public interface IOpenXrRuntime : IOpenXrApplicationLifecycle
     XRWindow? Window { get; set; }
     RuntimeOpenXrState RuntimeState { get; }
     bool IsSessionRunning { get; }
+    /// <summary>True when the active OpenXR runtime is SteamVR.</summary>
+    bool IsSteamVrRuntime => false;
     bool IsRvcOpenXrVisibilityMaskExtensionEnabled { get; }
     bool CanUseTrueSinglePassStereo { get; }
     double CurrentRenderDeadlineMs { get; }
@@ -58,6 +60,8 @@ public interface IOpenXrRuntime : IOpenXrApplicationLifecycle
     bool TryGetHeadLocalPose(out Matrix4x4 localPose);
     bool TryGetHeadLocalPose(RuntimeOpenXrPoseTiming timing, out Matrix4x4 localPose);
     bool TryGetEyeLocalPose(bool leftEye, out Matrix4x4 localPose);
+    bool TryGetEyeLocalPose(RuntimeOpenXrPoseTiming timing, bool leftEye, out Matrix4x4 localPose)
+        => TryGetEyeLocalPose(leftEye, out localPose);
     string? GetControllerInteractionProfile(bool leftHand) => null;
     bool TryGetControllerLocalPose(bool leftHand, RuntimeOpenXrPoseTiming timing, out Matrix4x4 localPose);
     bool TryGetTrackerLocalPose(string trackerUserPath, RuntimeOpenXrPoseTiming timing, out Matrix4x4 localPose);

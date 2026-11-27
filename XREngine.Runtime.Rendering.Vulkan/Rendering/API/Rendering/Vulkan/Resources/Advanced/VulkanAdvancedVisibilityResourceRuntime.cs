@@ -929,7 +929,11 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeLightingCountersBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeFroxelDecalGridBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDecalIndicesBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeRvcTelemetryCountersBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcTelemetryCountersBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcShadeletRecordsBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcShadeletBinIndicesBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcShadeletShadedOutputsBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcShadeletDispatchCountersBinding];
         uint requiredStorageBuffers = checked((uint)(
             storageBindingNumbers.Length + nativeStorageBindingNumbers.Length));
         if (device.PhysicalDeviceCapabilities is not { } capabilities ||
@@ -961,7 +965,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDdgiEmissionBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDdgiAlbedoBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDdgiNormalBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeDdgiRmseBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiRmseBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeRvcPixelToShadeletImageBinding];
         const int imageBindingCount = 2;
         DescriptorSetLayoutBinding* bindings = stackalloc DescriptorSetLayoutBinding[
             storageBindingNumbers.Length + imageBindingCount +
@@ -1014,7 +1019,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 Binding = nativeSampledBindingNumbers[index],
                 DescriptorType = DescriptorType.CombinedImageSampler,
                 DescriptorCount = 1u,
-                StageFlags = ShaderStageFlags.ComputeBit,
+                // Fragment stages sample visibility identity and metadata during MSAA resolve,
+                // portal stencil repopulation, and transparent-portal primary depth restoration.
+                StageFlags = ShaderStageFlags.ComputeBit | ShaderStageFlags.FragmentBit,
             };
         nativeBindingOffset += nativeSampledBindingNumbers.Length;
         for (int index = 0; index < nativeStorageImageBindingNumbers.Length; ++index)
@@ -1171,6 +1178,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
 
         _lateDescriptorSets = new DescriptorSet[lateSetCount];
         _directionalShadowStates = new VulkanAdvancedDirectionalShadowResourceState[lateSetCount];
+        _portalVisibilityStates = new VulkanAdvancedPortalVisibilityState[lateSetCount];
         _lateDescriptorGenerations = new ulong[lateSetCount];
         _lateDescriptorSignatures = new VulkanLateDepthPyramidDescriptorSignature[lateSetCount];
         int lateOperationCount = checked((int)((uint)_states.Length *
@@ -1840,6 +1848,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         }
         if (closure.HasRvcTelemetry && !TryUpdateRvcTelemetryDescriptors(descriptorSet, in closure, out reason))
             return false;
+        if (closure.HasRvcShadeletCache && !TryUpdateRvcShadeletCacheDescriptors(descriptorSet, in closure, out reason))
+            return false;
         if (!TryUpdateDecalBufferDescriptors(descriptorSet, in closure, out reason))
             return false;
         _resources.RecordDescriptorTableGeneration();
@@ -1893,6 +1903,64 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             },
         };
         return _resources.DescriptorLifetime.TryUpdateDescriptorSets(3u, writes, out reason);
+    }
+
+    /// <summary>
+    /// Writes the RVC shadelet-cache bindings (71..75): whole-array pixel-to-shadelet
+    /// storage image and the four per-frame-slot shadelet storage buffers.
+    /// </summary>
+    private unsafe bool TryUpdateRvcShadeletCacheDescriptors(
+        DescriptorSet descriptorSet,
+        in VulkanAdvancedNativeComputeClosure closure,
+        out string reason)
+    {
+        DescriptorImageInfo pixelToShadelet = closure.RvcPixelToShadeletDescriptor;
+        DescriptorBufferInfo* buffers = stackalloc DescriptorBufferInfo[4]
+        {
+            new() { Buffer = closure.RvcShadeletRecords.NativeBuffer, Offset = closure.RvcShadeletRecords.NativeOffset, Range = closure.RvcShadeletRecords.NativeSize },
+            new() { Buffer = closure.RvcShadeletBinIndices.NativeBuffer, Offset = closure.RvcShadeletBinIndices.NativeOffset, Range = closure.RvcShadeletBinIndices.NativeSize },
+            new() { Buffer = closure.RvcShadeletShadedOutputs.NativeBuffer, Offset = closure.RvcShadeletShadedOutputs.NativeOffset, Range = closure.RvcShadeletShadedOutputs.NativeSize },
+            new() { Buffer = closure.RvcShadeletDispatchCounters.NativeBuffer, Offset = closure.RvcShadeletDispatchCounters.NativeOffset, Range = closure.RvcShadeletDispatchCounters.NativeSize },
+        };
+        WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[5]
+        {
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcPixelToShadeletImageBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.StorageImage,
+                PImageInfo = &pixelToShadelet,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcShadeletRecordsBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.StorageBuffer,
+                PBufferInfo = buffers,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcShadeletBinIndicesBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.StorageBuffer,
+                PBufferInfo = buffers + 1,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcShadeletShadedOutputsBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.StorageBuffer,
+                PBufferInfo = buffers + 2,
+            },
+            new WriteDescriptorSet
+            {
+                SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
+                DstBinding = VulkanAdvancedSceneProgramBindingContract.NativeRvcShadeletDispatchCountersBinding,
+                DescriptorCount = 1u, DescriptorType = DescriptorType.StorageBuffer,
+                PBufferInfo = buffers + 3,
+            },
+        };
+        return _resources.DescriptorLifetime.TryUpdateDescriptorSets(5u, writes, out reason);
     }
 
     /// <summary>
@@ -2307,6 +2375,53 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 }
             }
 
+            // RVC shadelet-cache families declare the pixel-to-shadelet image array
+            // and four per-frame-slot shadelet storage/indirect buffers.
+            VulkanPhysicalImageGroup? rvcPixelToShadelet = null;
+            VulkanAdvancedNativeImageClosure rvcPixelToShadeletResource = default;
+            ImageView rvcPixelToShadeletView = default;
+            VulkanFrozenBufferBarrier rvcShadeletRecords = default;
+            VulkanFrozenBufferBarrier rvcShadeletBinIndices = default;
+            VulkanFrozenBufferBarrier rvcShadeletShadedOutputs = default;
+            VulkanFrozenBufferBarrier rvcShadeletDispatchCounters = default;
+            string rvcShadeletDispatchName = RvcShadeletCacheResourceNames.DispatchAndCounters(frameSlot);
+            if (TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, rvcShadeletDispatchName, out rvcShadeletDispatchCounters))
+            {
+                string rvcRecordsName = RvcShadeletCacheResourceNames.Records(frameSlot);
+                string rvcBinsName = RvcShadeletCacheResourceNames.BinIndices(frameSlot);
+                string rvcOutputsName = RvcShadeletCacheResourceNames.ShadedOutputs(frameSlot);
+                ulong expectedRecordsBytes = checked((ulong)RvcShadeletCacheResourceNames.DefaultMaxShadelets * RvcShadeletCacheResourceNames.RecordByteStride);
+                ulong expectedBinIndicesBytes = checked((ulong)RvcShadeletCacheResourceNames.DefaultMaxShadelets * RvcShadeletCacheResourceNames.BinIndexByteStride);
+                ulong expectedShadedOutputsBytes = checked((ulong)RvcShadeletCacheResourceNames.DefaultMaxShadelets * RvcShadeletCacheResourceNames.ShadedOutputByteStride);
+                if (!TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, rvcRecordsName, out rvcShadeletRecords) ||
+                    !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, rvcBinsName, out rvcShadeletBinIndices) ||
+                    !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, rvcOutputsName, out rvcShadeletShadedOutputs) ||
+                    !Check(in generation.State, rvcRecordsName, ref rvcShadeletRecords,
+                        expectedRecordsBytes, XREngine.Data.Rendering.EBufferTarget.ShaderStorageBuffer,
+                        indirect: false, transferDst: false, out reason) ||
+                    !Check(in generation.State, rvcBinsName, ref rvcShadeletBinIndices,
+                        expectedBinIndicesBytes, XREngine.Data.Rendering.EBufferTarget.ShaderStorageBuffer,
+                        indirect: false, transferDst: false, out reason) ||
+                    !Check(in generation.State, rvcOutputsName, ref rvcShadeletShadedOutputs,
+                        expectedShadedOutputsBytes, XREngine.Data.Rendering.EBufferTarget.ShaderStorageBuffer,
+                        indirect: false, transferDst: false, out reason) ||
+                    !Check(in generation.State, rvcShadeletDispatchName, ref rvcShadeletDispatchCounters,
+                        RvcShadeletCacheCounters.GpuByteCount, XREngine.Data.Rendering.EBufferTarget.DispatchIndirectBuffer,
+                        indirect: true, transferDst: true, out reason))
+                {
+                    return false;
+                }
+                if (!generation.State.ResourceAllocator.TryGetPhysicalGroupForResource(
+                        RvcShadeletCacheResourceNames.PixelToShadelet, out rvcPixelToShadelet) ||
+                    rvcPixelToShadelet is not { IsAllocated: true } ||
+                    !TryAcquireNativeComputeArrayView(context, storage, rvcPixelToShadelet, ImageAspectFlags.ColorBit, out rvcPixelToShadeletView) ||
+                    !TryCaptureNativeComputeImageClosure(rvcPixelToShadelet, rvcPixelToShadeletView, out rvcPixelToShadeletResource))
+                {
+                    reason = "The RVC pixel-to-shadelet image array view could not be acquired.";
+                    return false;
+                }
+            }
+
             // The mesh surface decal buffer is read per view layer before lighting.
             VulkanAdvancedNativeImageClosure decalAlbedoResource = default;
             VulkanAdvancedNativeImageClosure decalSurfaceResource = default;
@@ -2374,6 +2489,15 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 RvcDepthArrayDescriptor = rvcDepthArrayView.Handle == 0
                     ? default
                     : new DescriptorImageInfo { Sampler = sampler, ImageView = rvcDepthArrayView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
+                RvcPixelToShadelet = rvcPixelToShadelet,
+                RvcPixelToShadeletResource = rvcPixelToShadeletResource,
+                RvcPixelToShadeletDescriptor = rvcPixelToShadeletView.Handle == 0
+                    ? default
+                    : new DescriptorImageInfo { ImageView = rvcPixelToShadeletView, ImageLayout = ImageLayout.General },
+                RvcShadeletRecords = rvcShadeletRecords,
+                RvcShadeletBinIndices = rvcShadeletBinIndices,
+                RvcShadeletShadedOutputs = rvcShadeletShadedOutputs,
+                RvcShadeletDispatchCounters = rvcShadeletDispatchCounters,
                 DecalBufferAlbedo = decalAlbedo,
                 DecalBufferSurface = decalSurface,
                 DecalBufferAlbedoResource = decalAlbedoResource,
@@ -2387,6 +2511,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             };
             captured = closure.IsValid &&
                 (rvcTelemetry.NativeBuffer.Handle == 0 || closure.HasRvcTelemetry) &&
+                (rvcShadeletDispatchCounters.NativeBuffer.Handle == 0 || closure.HasRvcShadeletCache) &&
                 (!requireDecalBuffer || closure.HasDecalBuffer);
             reason = captured ? "Ready" : "The advanced native compute closure is incomplete.";
             return captured;
@@ -2672,6 +2797,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         _familySeals.AsSpan().Clear();
         _lateDescriptorGenerations.AsSpan().Clear();
         _directionalShadowStates.AsSpan().Clear();
+        _portalVisibilityStates.AsSpan().Clear();
         _lateDescriptorSignatures.AsSpan().Clear();
         _lateOperationKeys.AsSpan().Clear();
         _lateOperationGenerations.AsSpan().Clear();
@@ -2701,6 +2827,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         }
         _lateDescriptorSets = [];
         _directionalShadowStates = [];
+        _portalVisibilityStates = [];
         _lateDescriptorGenerations = [];
         _lateDescriptorSignatures = [];
         _lateOperationKeys = [];

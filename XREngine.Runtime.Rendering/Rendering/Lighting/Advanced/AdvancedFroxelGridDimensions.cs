@@ -36,6 +36,37 @@ public static class AdvancedFroxelGridDimensions
         => CalculateTilesX(width) * CalculateTilesY(height) * Math.Max(1u, depthSlices) * Math.Max(1u, viewCount);
 
     /// <summary>
+    /// Computes the total view-slot capacity for clustered light and decal froxel grids,
+    /// combining primary eye views with any active portal sub-view budget clamped to the
+    /// engine's hard ceiling.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static uint CalculateTotalViewCapacity(uint primaryViewCount, uint portalViewBudget)
+    {
+        uint clampedPrimary = Math.Max(1u, primaryViewCount);
+        uint clampedPortal = Math.Min(portalViewBudget, (uint)AdvancedPortalSchedulerOptions.HardMaxTotalPortalViewsPerFrame);
+        return checked(clampedPrimary + clampedPortal);
+    }
+
+    /// <summary>
+    /// Derives how many complete froxel view slices fit inside a physical froxel storage
+    /// buffer of <paramref name="bufferByteSize"/> bytes for the given tile and depth-slice layout.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static uint CalculateAvailableViewCapacity(
+        ulong bufferByteSize,
+        uint tilesX,
+        uint tilesY,
+        uint depthSlices = DefaultDepthSlices,
+        uint recordByteStride = 16u)
+    {
+        if (tilesX == 0u || tilesY == 0u || depthSlices == 0u || recordByteStride == 0u)
+            return 0u;
+        ulong bytesPerView = checked((ulong)tilesX * tilesY * depthSlices * recordByteStride);
+        return checked((uint)(bufferByteSize / bytesPerView));
+    }
+
+    /// <summary>
     /// Calculates the exponential depth slice index for a view-space depth value z (positive, in camera space).
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

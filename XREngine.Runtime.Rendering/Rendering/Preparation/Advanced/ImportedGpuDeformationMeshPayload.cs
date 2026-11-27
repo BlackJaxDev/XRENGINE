@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Numerics;
 
 namespace XREngine.Rendering;
@@ -16,6 +17,12 @@ internal sealed class ImportedGpuDeformationMeshPayload
     /// <summary>Blendshape buffers the payload was packed from; null when the mesh has none.</summary>
     internal required XRDataBuffer? BlendshapeIndices { get; init; }
     internal required ulong BlendshapeIndicesRevision { get; init; }
+    internal XRMeshBlendshapeBufferState? CanonicalMorphs { get; init; }
+    internal ulong MorphRangesRevision { get; init; }
+    internal ulong MorphRecordsRevision { get; init; }
+    internal ulong MorphDeltasRevision { get; init; }
+    internal ulong MorphMetadataRevision { get; init; }
+    internal ImmutableArray<uint> DeformationOrder { get; init; }
     internal required AdvancedDeformedVertex[] Vertices { get; init; }
     internal required AdvancedBlendshapeRange[] Ranges { get; init; }
     internal required AdvancedBlendshapeSparseRecord[] Records { get; init; }

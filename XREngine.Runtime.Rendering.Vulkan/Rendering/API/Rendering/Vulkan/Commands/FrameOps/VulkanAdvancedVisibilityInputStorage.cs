@@ -34,6 +34,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
     private AdvancedGpuBoundsPatchRoute[] _boundsRoutes;
     private PhysicsChainGpuOutputPageLease _boundsPage;
     private VulkanAdvancedDirectionalShadowLaneStorage? _directionalShadowLane;
+    private AdvancedPortalFramePlan? _portalFramePlan;
     private EAdvancedGeometryProducer[] _producers;
     private AdvancedIndirectRange[] _indirectRanges;
     private AdvancedIndexedInstanceGroup[] _indexedInstanceGroups;
@@ -106,6 +107,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         => _boundsRoutes.AsSpan(0, _candidateCount);
     internal PhysicsChainGpuOutputPageLease BoundsPage => _boundsPage;
     internal VulkanAdvancedDirectionalShadowLaneStorage? DirectionalShadowLane => _directionalShadowLane;
+    internal AdvancedPortalFramePlan? PortalFramePlan => _portalFramePlan is { Count: > 0 } ? _portalFramePlan : null;
 
     internal ReadOnlySpan<EAdvancedGeometryProducer> Producers
         => _producers.AsSpan(0, _producerCount);
@@ -129,6 +131,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             GPUPhysicsChainDispatcher.Instance.ReleaseOutputPage(_boundsPage.Token);
         _boundsPage = default;
         _directionalShadowLane?.Clear();
+        _portalFramePlan?.Reset();
         _familyRequest = default;
         Publication = default;
         Indirect = default;
@@ -242,6 +245,12 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             return false;
         }
 
+        if (request.PortalFramePlan is { Count: > 0 } sourcePortalPlan)
+        {
+            _portalFramePlan ??= new AdvancedPortalFramePlan();
+            _portalFramePlan.CopyFrom(sourcePortalPlan);
+        }
+
         _familyRequest = request;
         Publication = publication;
         Indirect = indirect;
@@ -337,6 +346,15 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             indirectPayloadIndices.CopyTo(_indirectPayloadIndices);
             deformationSlices.CopyTo(_deformationSlices);
             authoringInput.BoundsRoutes.CopyTo(_boundsRoutes);
+            if (authoringInput.PortalFramePlan is { Count: > 0 } sourcePortalPlan)
+            {
+                _portalFramePlan ??= new AdvancedPortalFramePlan();
+                _portalFramePlan.CopyFrom(sourcePortalPlan);
+            }
+            else
+            {
+                _portalFramePlan?.Reset();
+            }
             if (authoringInput._boundsPage.Token.IsValid &&
                 !GPUPhysicsChainDispatcher.Instance.TryRetainOutputPage(authoringInput._boundsPage.Token, out _boundsPage))
                 throw new VulkanPlanPreconditionException("The physics bounds output page changed before frame-plan capture.");

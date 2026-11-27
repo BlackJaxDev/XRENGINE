@@ -1,0 +1,120 @@
+#version 450
+// Resolves RVC shadelet shading outputs into per-view HDRSceneColor, Velocity,
+// ReactiveMask, ShadingDiagnostics, and optional DDGI material surface exports.
+// Recomputes exact per-view motion vectors for stereo-reused pixels so TSR stays
+// geometrically accurate in both eyes.
+#include "Advanced/Rvc/RvcShadeletCacheInterface.glslinc"
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+XR_ADV_SHADING_LAYOUT(2) uniform sampler2D VisibilityDepth;
+XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2D HDRSceneColor;
+XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2D Velocity;
+XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2D ReactiveMask;
+XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2D ShadingDiagnostics;
+XR_ADV_SHADING_IMAGE(rgba16f, 51) writeonly uniform image2D EmissionColor;
+XR_ADV_SHADING_IMAGE(rgba16f, 52) writeonly uniform image2D AlbedoOpacity;
+XR_ADV_SHADING_IMAGE(rgba16f, 53) writeonly uniform image2D Normal;
+XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
+
+// Matches ShadeNativeOpaqueEvaluator.glslinc push flags.
+const uint RVC_RESOLVE_MATERIAL_SURFACE_EXPORTS = 16u;
+const uint RVC_RESOLVE_DIAGNOSTICS_DISABLED = 1u << 31u;
+
+vec2 RvcComputeStaticViewVelocity(uvec2 pixel, uint viewIndex)
+{
+    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+    float depth = texelFetch(VisibilityDepth, ivec2(pixel), 0).r;
+    if (RvcIsFarDepthValue(depth, view))
+        return vec2(0.0);
+    vec3 worldPos = RvcReconstructWorldPosition(vec2(pixel) + 0.5, depth, view);
+    vec4 curClip = XR_ADV_TransformRowVector(vec4(worldPos, 1.0), view.viewProjectionUnjittered);
+    vec4 prevClip = XR_ADV_TransformRowVector(vec4(worldPos, 1.0), view.previousViewProjectionUnjittered);
+    if (abs(curClip.w) <= 1.0e-6 || abs(prevClip.w) <= 1.0e-6)
+        return vec2(0.0);
+    vec2 curNdc = curClip.xy / curClip.w;
+    vec2 prevNdc = prevClip.xy / prevClip.w;
+    return curNdc - prevNdc;
+}
+
+vec3 RvcApplyDebugOverlay(vec3 radiance, uint debugMode, uint blockSize, bool stereoReused, bool intraFollower)
+{
+    if (debugMode == RVC_DEBUG_VIEW_SHADELET_DENSITY)
+    {
+        vec3 tint = blockSize >= 4u ? vec3(0.15, 0.85, 0.95)
+            : blockSize == 2u ? vec3(0.95, 0.85, 0.15)
+            : vec3(0.20, 0.90, 0.30);
+        return mix(radiance, tint, 0.45);
+    }
+    if (debugMode == RVC_DEBUG_VIEW_REUSE_HEATMAP)
+    {
+        vec3 tint = stereoReused ? vec3(0.95, 0.20, 0.90)
+            : intraFollower ? vec3(0.20, 0.70, 1.00)
+            : vec3(0.25, 0.90, 0.30);
+        return mix(radiance, tint, 0.45);
+    }
+    return radiance;
+}
+
+void main()
+{
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    uint viewIndex = u_Push.viewIndex;
+    if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount)
+        return;
+
+    uint entry = imageLoad(RvcPixelToShadelet, ivec3(pixel, int(viewIndex))).r;
+    if (entry == RVC_SHADELET_INVALID || (entry & RVC_SHADELET_DIRECT_PIXEL_BIT) != 0u)
+        return;
+
+    uint shadeletIdx = entry & RVC_SHADELET_INDEX_MASK;
+    uint maxShadelets = RvcResolveShadeletCapacity();
+    if (shadeletIdx >= maxShadelets)
+        return;
+
+    RvcShadeletShadedOutputGpu packed = RvcShadeletShadedOutputs.outputs[shadeletIdx];
+    vec2 radRG = unpackHalf2x16(packed.primaryPacked.x);
+    vec2 radBA = unpackHalf2x16(packed.primaryPacked.y);
+    vec3 radiance = vec3(radRG, radBA.x);
+    float opacity = radBA.y;
+    vec2 velocity = unpackHalf2x16(packed.primaryPacked.z);
+    uint diagnostics = packed.primaryPacked.w & 0x00FFFFFFu;
+    float reactive = float(packed.primaryPacked.w >> 24u) / 255.0;
+
+    bool stereoReused = (entry & RVC_SHADELET_STEREO_REUSE_BIT) != 0u;
+    if (stereoReused)
+        velocity = RvcComputeStaticViewVelocity(pixel, viewIndex);
+
+    uint debugMode = (u_Push.kernelIndex >> RVC_DISPATCH_DEBUG_MODE_SHIFT) & RVC_DISPATCH_DEBUG_MODE_MASK;
+    if (debugMode == RVC_DEBUG_VIEW_SHADELET_DENSITY || debugMode == RVC_DEBUG_VIEW_REUSE_HEATMAP)
+    {
+        RvcShadeletRecordGpu rec = RvcShadeletRecords.records[shadeletIdx];
+        uint blockSize = (rec.representativePixelAndView.y >> 8u) & 0xFFu;
+        uvec2 repPixel = uvec2(
+            rec.representativePixelAndView.x & 0xFFFFu,
+            rec.representativePixelAndView.x >> 16u);
+        bool intraFollower = !stereoReused && any(notEqual(repPixel, pixel));
+        radiance = RvcApplyDebugOverlay(radiance, debugMode, blockSize, stereoReused, intraFollower);
+    }
+
+    ivec2 target = ivec2(pixel);
+    imageStore(HDRSceneColor, target, vec4(radiance, opacity));
+    imageStore(Velocity, target, vec4(velocity, 0.0, 0.0));
+    imageStore(ReactiveMask, target, vec4(reactive));
+    if ((u_Push.flags & RVC_RESOLVE_DIAGNOSTICS_DISABLED) == 0u)
+        imageStore(ShadingDiagnostics, target, uvec4(diagnostics));
+
+    if ((u_Push.flags & RVC_RESOLVE_MATERIAL_SURFACE_EXPORTS) != 0u)
+    {
+        vec2 emitRG = unpackHalf2x16(packed.surfacePacked.x);
+        vec2 emitBA = unpackHalf2x16(packed.surfacePacked.y);
+        vec4 albedoOpacity = unpackUnorm4x8(packed.surfacePacked.z);
+        vec4 normRoughMetal = unpackUnorm4x8(packed.surfacePacked.w);
+        vec2 octNormal = normRoughMetal.xy * 2.0 - 1.0;
+
+        imageStore(EmissionColor, target, vec4(emitRG, emitBA.x, emitBA.y));
+        imageStore(AlbedoOpacity, target, albedoOpacity);
+        imageStore(Normal, target, vec4(octNormal, 0.0, 1.0));
+        imageStore(RMSE, target, vec4(normRoughMetal.z, normRoughMetal.w, 0.0, 0.0));
+    }
+}

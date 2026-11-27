@@ -36,4 +36,5 @@ internal readonly record struct VulkanGraphicsPipelineLibraryKey(
         ColorComponentFlags ColorWriteMask,
         uint ViewportScissorCount,
         bool NativeNegativeOneToOneDepth,
-        EditorHighlightRasterOutput EditorHighlightOutput = default);
+        EditorHighlightRasterOutput EditorHighlightOutput = default,
+        ulong DynamicStateHash = 0UL);

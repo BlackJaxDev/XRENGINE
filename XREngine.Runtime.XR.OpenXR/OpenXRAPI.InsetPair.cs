@@ -244,7 +244,7 @@ public unsafe partial class OpenXRAPI
         viewport.SwapBuffers(commands, allowScreenSpaceUISwap: false);
     }
 
-    /// <summary>Releases the inset pair's frame packages with the other eye packages.</summary>
+    /// <summary>Releases the inset pair's frame packages and picking leases with the other eye packages.</summary>
     private void CancelOpenXrInsetFramePackages()
-        => _openXrInsetStereoViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
+        => _openXrInsetStereoViewport?.RenderPipelineInstance.ReleaseCanonicalPublicationRetention();
 }

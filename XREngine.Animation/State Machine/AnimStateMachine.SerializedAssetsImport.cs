@@ -115,9 +115,99 @@ public partial class AnimStateMachine
                         return false;
                 }
                 break;
+
+            case MotionBricksLocomotionMotion:
+                requiresHumanoidAvatar = true;
+                break;
+            default:
+                if (motion.RequiresHumanoidAvatar)
+                    requiresHumanoidAvatar = true;
+                break;
         }
 
         diagnostic = string.Empty;
         return true;
+    }
+
+    /// <summary>
+    /// Returns true when any reachable state or blend-tree motion writes humanoid body muscles,
+    /// root motion, or IK goals. Returns false for overlay graphs that write only blendshapes,
+    /// animated parameters, generic properties, or eye/jaw facial muscles.
+    /// </summary>
+    public bool DrivesHumanoidBodyPose()
+    {
+        var visited = new HashSet<MotionBase>(ReferenceEqualityComparer.Instance);
+        for (int layerIndex = 0; layerIndex < Layers.Count; layerIndex++)
+        {
+            AnimLayer? layer = Layers[layerIndex];
+            if (layer is null)
+                continue;
+
+            for (int stateIndex = 0; stateIndex < layer.States.Count; stateIndex++)
+            {
+                MotionBase? motion = layer.States[stateIndex]?.Motion;
+                if (motion is not null && MotionDrivesHumanoidBodyPose(motion, visited))
+                    return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool MotionDrivesHumanoidBodyPose(MotionBase motion, HashSet<MotionBase> visited)
+    {
+        if (!visited.Add(motion))
+            return false;
+
+        switch (motion)
+        {
+            case AnimationClip clip:
+                if (clip.HasRootMotion || clip.HasIKGoals || clip.HasNonFacialHumanoidMuscleChannels())
+                    return true;
+                if (clip.SourceImportManifest is { Domains: { Length: > 0 } domains })
+                {
+                    for (int i = 0; i < domains.Length; i++)
+                    {
+                        if (domains[i].SourceItemCount > 0
+                            && domains[i].Domain is Importers.EImportedAnimationDataDomain.HumanoidBody
+                                or Importers.EImportedAnimationDataDomain.HumanoidIK)
+                            return true;
+                    }
+                }
+                return false;
+
+            case BlendTree1D tree1D:
+                for (int i = 0; i < tree1D.Children.Count; i++)
+                {
+                    MotionBase? child = tree1D.Children[i].Motion;
+                    if (child is not null && MotionDrivesHumanoidBodyPose(child, visited))
+                        return true;
+                }
+                return false;
+
+            case BlendTree2D tree2D:
+                for (int i = 0; i < tree2D.Children.Count; i++)
+                {
+                    MotionBase? child = tree2D.Children[i].Motion;
+                    if (child is not null && MotionDrivesHumanoidBodyPose(child, visited))
+                        return true;
+                }
+                return false;
+
+            case BlendTreeDirect directTree:
+                for (int i = 0; i < directTree.Children.Count; i++)
+                {
+                    MotionBase? child = directTree.Children[i].Motion;
+                    if (child is not null && MotionDrivesHumanoidBodyPose(child, visited))
+                        return true;
+                }
+                return false;
+
+            case MotionBricksLocomotionMotion:
+                return true;
+
+            default:
+                return motion.RequiresHumanoidAvatar;
+        }
     }
 }

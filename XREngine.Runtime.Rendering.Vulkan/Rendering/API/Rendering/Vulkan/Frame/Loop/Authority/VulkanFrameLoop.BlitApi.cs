@@ -91,7 +91,21 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        switch (ResourceRuntime.BackendObjects.Get(resource))
+        // Standalone offscreen captures can execute while desktop presents are held in VR, so a
+        // newly allocated output texture or renderbuffer may not have been realized yet by the
+        // desktop loop. Materialize its backend wrapper synchronously before checking usage.
+        AbstractRenderAPIObject? backendObject = ResourceRuntime.BackendObjects.Get(resource);
+        if (backendObject is null ||
+            (backendObject is IVkImageDescriptorSource existingSource && (!existingSource.IsDescriptorReady || existingSource.DescriptorImage.Handle == 0)) ||
+            (backendObject is VkRenderBuffer existingRenderBuffer && existingRenderBuffer.Image.Handle == 0))
+        {
+            backendObject = ResourceRuntime.WrapperLookup.GetOrCreate(resource, generateNow: true);
+        }
+
+        if (backendObject is VkTextureView textureView)
+            textureView.RefreshDescriptorFromViewedTextureIfStale();
+
+        switch (backendObject)
         {
             case IVkImageDescriptorSource source when source.IsDescriptorReady && source.DescriptorImage.Handle != 0:
                 usage = source.DescriptorUsage;

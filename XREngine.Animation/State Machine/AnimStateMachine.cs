@@ -3,7 +3,9 @@ using System.Numerics;
 using MemoryPack;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
+using XREngine.Animation.IK;
 using XREngine.Animation.Importers;
+using XREngine.Components.Animation;
 using static XREngine.Animation.AnimLayer;
 
 namespace XREngine.Animation
@@ -11,6 +13,13 @@ namespace XREngine.Animation
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class AnimStateMachine : XRAsset
     {
+        /// <summary>
+        /// Prefix for controller-scoped internal animated parameters created when multiple Unity
+        /// controllers are merged into one <see cref="AnimStateMachine"/>. External bindings such
+        /// as OSC receivers skip variables that start with this prefix.
+        /// </summary>
+        public const string ScopedInternalParameterPrefix = "__xre_scope/";
+
         private static readonly string[] QuaternionComponentMethodStems =
         [
             "SetRootRotation",
@@ -49,6 +58,25 @@ namespace XREngine.Animation
             set => SetField(ref _animatePhysics, value);
         }
 
+        private bool _allowMissingImportedBindings = false;
+        /// <summary>
+        /// Allows imported clips with missing optional nodes or blendshapes to bind as
+        /// logged no-ops instead of rejecting the entire state machine.
+        /// </summary>
+        public bool AllowMissingImportedBindings
+        {
+            get => _allowMissingImportedBindings;
+            set => SetField(ref _allowMissingImportedBindings, value);
+        }
+
+        /// <summary>
+        /// True while <see cref="ApplyAnimationValues"/> writes animated float parameter curves
+        /// into <see cref="Variables"/>. External listeners such as OSC senders can check this
+        /// flag to avoid echoing internal parameter updates.
+        /// </summary>
+        [MemoryPackIgnore]
+        public bool IsApplyingAnimatedParameters { get; private set; }
+
         private bool _applyRootMotion;
         private Vector3 _pivotPosition;
         private Vector3 _deltaPosition;
@@ -77,6 +105,16 @@ namespace XREngine.Animation
 
         [MemoryPackIgnore]
         private readonly HumanoidMotionContributionBuffer _importedHumanoidContributions = new();
+
+        [MemoryPackIgnore]
+        private HumanoidPoseHistoryBuffer? _liveHumanoidPoseHistory;
+
+        /// <summary>
+        /// Returns the shared 30 Hz humanoid pose history buffer when this state machine
+        /// contains any <see cref="MotionBricksLocomotionMotion"/>, or null otherwise.
+        /// </summary>
+        public HumanoidPoseHistoryBuffer? GetLiveHumanoidPoseHistory()
+            => _liveHumanoidPoseHistory;
 
         [MemoryPackIgnore]
         private ulong _humanoidMotionContinuityVersion;
@@ -113,10 +151,33 @@ namespace XREngine.Animation
 
         /// <summary>
         /// Dense array of all unique animated members, built during slot assignment.
-        /// Used for O(1) iteration in <see cref="ApplyAnimationValues"/>.
+        /// Used for defaults and reset.
         /// </summary>
         [MemoryPackIgnore]
         private AnimationMember[] _animatedMembersArray = [];
+
+        /// <summary>
+        /// Dense array of non-parameter animated members applied through their target bindings.
+        /// </summary>
+        [MemoryPackIgnore]
+        private AnimationMember[] _nonParameterAnimatedMembersArray = [];
+
+        /// <summary>
+        /// Pre-bound float slots that write directly to state machine parameters without
+        /// reflection or dictionary lookups during steady-state evaluation.
+        /// </summary>
+        private struct AnimatedParameterSlotBinding
+        {
+            public int FloatSlotIndex;
+            public string ParameterName;
+            public AnimVar? TargetVariable;
+        }
+
+        [MemoryPackIgnore]
+        private AnimatedParameterSlotBinding[] _animatedParameterBindings = [];
+
+        [MemoryPackIgnore]
+        private int _animatedParameterBindingSchemaVersion = -1;
 
         public void Initialize(object? rootObject)
         {
@@ -138,8 +199,9 @@ namespace XREngine.Animation
             AnimationSlotLayout layout = BuildSlotLayout(_animatedCurves, out Dictionary<string, AnimSlot> slotsByPath);
             SlotLayout = layout;
 
-            // Build dense member array for ApplyAnimationValues
+            // Build dense member arrays and direct parameter-curve bindings for O(1) apply.
             _animatedMembersArray = [.. _animatedCurves.Values.Distinct()];
+            BuildAnimatedParameterBindings();
 
             // Size our own store
             ValueStore.Resize(layout);
@@ -179,6 +241,7 @@ namespace XREngine.Animation
             var layout = new AnimationSlotLayout();
             slotsByPath = AppendSlots(layout, membersByPath);
             layout.QuaternionFloatGroups = BuildQuaternionFloatSlotGroups(slotsByPath, membersByPath);
+            layout.FloatSlotMasks = BuildFloatSlotMasks(slotsByPath, membersByPath, layout.FloatCount);
             return layout;
         }
 
@@ -206,7 +269,7 @@ namespace XREngine.Animation
             return slotsByPath;
         }
 
-        private static void PropagateLayoutToMotion(
+        private void PropagateLayoutToMotion(
             MotionBase? motion,
             AnimationSlotLayout layout,
             IReadOnlyDictionary<string, AnimSlot> slotsByPath)
@@ -245,12 +308,92 @@ namespace XREngine.Animation
                         PropagateLayoutToMotion(child.Motion, layout, slotsByPath);
                     btd.PrepareRuntimeEvaluation(layout);
                     break;
+                case MotionBricksLocomotionMotion motionBricks:
+                    motionBricks.CacheResolvedMuscleSlots();
+                    _liveHumanoidPoseHistory ??= new HumanoidPoseHistoryBuffer();
+                    motionBricks.AttachPoseHistoryBuffer(_liveHumanoidPoseHistory);
+                    break;
+                default:
+                    if (motion.IsProceduralMotion)
+                        motion.OnProceduralSlotLayoutBound(layout, slotsByPath);
+                    break;
             }
         }
 
         internal static AnimationQuaternionFloatSlotGroup[] BuildQuaternionFloatSlotGroups(
             IReadOnlyDictionary<string, AnimSlot> slotsByPath)
             => BuildQuaternionFloatSlotGroups(slotsByPath, membersByPath: null);
+
+        private static EHumanoidBodyMask[] BuildFloatSlotMasks(
+            IReadOnlyDictionary<string, AnimSlot> slotsByPath,
+            IReadOnlyDictionary<string, AnimationMember> membersByPath,
+            int floatCount)
+        {
+            if (floatCount <= 0)
+                return [];
+
+            var masks = new EHumanoidBodyMask[floatCount];
+            Array.Fill(masks, EHumanoidBodyMask.NonHumanoid);
+
+            foreach ((string path, AnimSlot slot) in slotsByPath)
+            {
+                if (slot.Type != EAnimValueType.Float || (uint)slot.TypeIndex >= (uint)floatCount)
+                    continue;
+
+                if (membersByPath.TryGetValue(path, out AnimationMember? member))
+                    masks[slot.TypeIndex] = ClassifyMemberBodyMask(member);
+            }
+
+            return masks;
+        }
+
+        private static EHumanoidBodyMask ClassifyMemberBodyMask(AnimationMember member)
+        {
+            if (member.MemberType != EAnimationMemberType.Method)
+                return EHumanoidBodyMask.NonHumanoid;
+
+            string name = member.MemberName;
+            if (name is "SetValue" or "SetImportedRawValue" && member.MethodArguments.Length > 0)
+            {
+                if (member.MethodArguments[0] is EHumanoidValue muscle)
+                    return HumanoidBodyMaskUtility.GetBodyPart(muscle);
+                if (member.MethodArguments[0] is int muscleIndex && Enum.IsDefined(typeof(EHumanoidValue), muscleIndex))
+                    return HumanoidBodyMaskUtility.GetBodyPart((EHumanoidValue)muscleIndex);
+            }
+
+            if (name == "SetImportedTranslationDof" && member.MethodArguments.Length > 0)
+            {
+                if (member.MethodArguments[0] is EHumanoidTranslationDofBone bone)
+                    return HumanoidBodyMaskUtility.GetBodyPart(bone);
+                if (member.MethodArguments[0] is int boneIndex && Enum.IsDefined(typeof(EHumanoidTranslationDofBone), boneIndex))
+                    return HumanoidBodyMaskUtility.GetBodyPart((EHumanoidTranslationDofBone)boneIndex);
+            }
+
+            if ((name.StartsWith("SetAnimatedIKPosition", StringComparison.Ordinal)
+                    || name.StartsWith("SetAnimatedIKRotation", StringComparison.Ordinal))
+                && member.MethodArguments.Length > 0)
+            {
+                if (member.MethodArguments[0] is ELimbEndEffector goal)
+                {
+                    return goal switch
+                    {
+                        ELimbEndEffector.LeftFoot => EHumanoidBodyMask.LeftLeg,
+                        ELimbEndEffector.RightFoot => EHumanoidBodyMask.RightLeg,
+                        ELimbEndEffector.LeftHand => EHumanoidBodyMask.LeftArm,
+                        ELimbEndEffector.RightHand => EHumanoidBodyMask.RightArm,
+                        _ => EHumanoidBodyMask.NonHumanoid,
+                    };
+                }
+            }
+
+            if (name.StartsWith("SetRootPosition", StringComparison.Ordinal)
+                || name.StartsWith("SetRootRotation", StringComparison.Ordinal))
+            {
+                return EHumanoidBodyMask.Root;
+            }
+
+            return EHumanoidBodyMask.NonHumanoid;
+        }
 
         internal static AnimationQuaternionFloatSlotGroup[] BuildQuaternionFloatSlotGroups(
             IReadOnlyDictionary<string, AnimSlot> slotsByPath,
@@ -292,7 +435,7 @@ namespace XREngine.Animation
                 if (!slotsByPath.TryGetValue(path, out AnimSlot slot)
                     || slot.Type != EAnimValueType.Float
                     || member.MemberType != EAnimationMemberType.Method
-                    || member.MemberName != "SetUnityAnimationFloat"
+                    || member.MemberName is not ("SetImportedAnimationFloat" or "SetUnityAnimationFloat")
                     || member.MethodArguments.Length == 0
                     || member.MethodArguments[0] is not ImportedAnimationBindingDescriptor binding
                     || !ImportedAnimationQuaternionBindingKey.TryCreate(binding, out ImportedAnimationQuaternionBindingKey key))
@@ -385,8 +528,13 @@ namespace XREngine.Animation
 
             SlotLayout = null;
             _animatedMembersArray = [];
+            _nonParameterAnimatedMembersArray = [];
+            _animatedParameterBindings = [];
+            _animatedParameterBindingSchemaVersion = -1;
             _animatedCurves.Clear();
             _importedHumanoidContributions.Clear();
+            _liveHumanoidPoseHistory?.Clear();
+            _liveHumanoidPoseHistory = null;
         }
 
         internal void NotifyHumanoidMotionContinuityChanged(EAnimMotionContinuityChange change)
@@ -504,6 +652,13 @@ namespace XREngine.Animation
             if (layerWeight <= 0.0f)
                 return;
 
+            // Upper-body or partial override layers without Body/root tracks (or with Root masked out)
+            // must not attenuate root motion authored by lower layers.
+            if ((layer.AvatarMask & EHumanoidBodyMask.Root) == 0)
+                return;
+            if (layer.HumanoidContributions.Count == 0 && !layer.HumanoidContributions.Overflowed)
+                return;
+
             if (layer.ApplyType == EApplyType.Additive)
             {
                 _importedHumanoidContributions.AppendScaled(
@@ -555,9 +710,9 @@ namespace XREngine.Animation
             {
                 bool additive = layer.ApplyType == EApplyType.Additive;
                 if (additive)
-                    ValueStore.AddFrom(layer.ValueStore, layerWeight);
+                    ValueStore.AddFrom(layer.ValueStore, layerWeight, layer.AvatarMask);
                 else
-                    ValueStore.OverrideFrom(layer.ValueStore, layerWeight);
+                    ValueStore.OverrideFrom(layer.ValueStore, layerWeight, layer.AvatarMask);
                 return;
             }
 
@@ -617,10 +772,13 @@ namespace XREngine.Animation
 
         public void ApplyAnimationValues()
         {
-            // Typed store path: iterate dense member array, apply from store (no boxing, no string lookup)
+            // Typed store path: iterate dense member arrays, apply from store (no boxing, no string lookup)
             if (SlotLayout is not null)
             {
-                foreach (var member in _animatedMembersArray)
+                if (_animatedParameterBindings.Length > 0)
+                    ApplyAnimatedParameterBindings();
+
+                foreach (var member in _nonParameterAnimatedMembersArray)
                     member.ApplyFromStore(ValueStore);
                 return;
             }
@@ -635,6 +793,123 @@ namespace XREngine.Animation
             foreach (var kvp in snapshot)
                 if (_animatedCurves.TryGetValue(kvp.Key, out var member))
                     member.ApplyAnimationValue(kvp.Value);
+        }
+
+        private void BuildAnimatedParameterBindings()
+        {
+            var nonParameterMembers = new List<AnimationMember>(_animatedMembersArray.Length);
+            var parameterBindings = new List<AnimatedParameterSlotBinding>();
+
+            for (int i = 0; i < _animatedMembersArray.Length; i++)
+            {
+                AnimationMember member = _animatedMembersArray[i];
+                if (TryGetAnimatedFloatParameterName(member, out string parameterName)
+                    && member.Slot.IsValid
+                    && member.Slot.Type == EAnimValueType.Float)
+                {
+                    Variables.TryGetValue(parameterName, out AnimVar? targetVariable);
+                    if (targetVariable is not null)
+                        member.DefaultValue = targetVariable.FloatValue;
+
+                    parameterBindings.Add(new AnimatedParameterSlotBinding
+                    {
+                        FloatSlotIndex = member.Slot.TypeIndex,
+                        ParameterName = parameterName,
+                        TargetVariable = targetVariable,
+                    });
+                    continue;
+                }
+
+                nonParameterMembers.Add(member);
+            }
+
+            _nonParameterAnimatedMembersArray = [.. nonParameterMembers];
+            _animatedParameterBindings = [.. parameterBindings];
+            _animatedParameterBindingSchemaVersion = _parameterSchemaVersion;
+        }
+
+        private void RefreshAnimatedParameterBindingsIfNeeded()
+        {
+            if (_animatedParameterBindingSchemaVersion == _parameterSchemaVersion)
+                return;
+
+            for (int i = 0; i < _animatedParameterBindings.Length; i++)
+            {
+                ref AnimatedParameterSlotBinding binding = ref _animatedParameterBindings[i];
+                Variables.TryGetValue(binding.ParameterName, out binding.TargetVariable);
+            }
+            _animatedParameterBindingSchemaVersion = _parameterSchemaVersion;
+        }
+
+        private void ApplyAnimatedParameterBindings()
+        {
+            RefreshAnimatedParameterBindingsIfNeeded();
+
+            bool previous = IsApplyingAnimatedParameters;
+            IsApplyingAnimatedParameters = true;
+            try
+            {
+                for (int i = 0; i < _animatedParameterBindings.Length; i++)
+                {
+                    ref readonly AnimatedParameterSlotBinding binding = ref _animatedParameterBindings[i];
+                    if (binding.TargetVariable is null)
+                        continue;
+
+                    binding.TargetVariable.FloatValue = ValueStore.GetFloat(binding.FloatSlotIndex);
+                }
+            }
+            finally
+            {
+                IsApplyingAnimatedParameters = previous;
+            }
+        }
+
+        private static bool TryGetAnimatedFloatParameterName(AnimationMember member, out string parameterName)
+        {
+            if (member.MemberType == EAnimationMemberType.Method
+                && string.Equals(member.MemberName, "SetAnimatedFloatParameter", StringComparison.Ordinal)
+                && member.MethodArguments.Length >= 2
+                && member.MethodArguments[0] is string name
+                && !string.IsNullOrEmpty(name))
+            {
+                parameterName = name;
+                return true;
+            }
+
+            parameterName = string.Empty;
+            return false;
+        }
+
+        /// <summary>
+        /// Writes a float parameter value inside the internal animated-parameter scope so
+        /// external observers can distinguish curve-driven updates from user or OSC input.
+        /// </summary>
+        public void ApplyAnimatedFloatParameter(string parameterName, float value)
+        {
+            if (!Variables.TryGetValue(parameterName, out AnimVar? variable))
+                return;
+
+            ApplyAnimatedFloatParameter(variable, value);
+        }
+
+        /// <summary>
+        /// Writes a float value directly to a resolved state-machine variable inside the
+        /// internal animated-parameter scope.
+        /// </summary>
+        public void ApplyAnimatedFloatParameter(AnimVar variable, float value)
+        {
+            ArgumentNullException.ThrowIfNull(variable);
+
+            bool previous = IsApplyingAnimatedParameters;
+            IsApplyingAnimatedParameters = true;
+            try
+            {
+                variable.FloatValue = value;
+            }
+            finally
+            {
+                IsApplyingAnimatedParameters = previous;
+            }
         }
 
         [MemoryPackIgnore]

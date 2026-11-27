@@ -166,6 +166,7 @@ namespace XREngine.Components.Scene.Mesh
         private bool _autoCycle = true;
         private float _timeOfDay = 0.25f;
         private float _dayLengthSeconds = 240.0f;
+        private bool _pauseAutoCycleDuringLightProbeCapture = true;
         private float _cloudCoverage = 0.45f;
         private float _cloudScale = 1.4f;
         private float _cloudSpeed = 0.02f;
@@ -354,6 +355,19 @@ namespace XREngine.Components.Scene.Mesh
         {
             get => _dayLengthSeconds;
             set => SetField(ref _dayLengthSeconds, Math.Max(1.0f, value));
+        }
+
+        /// <summary>
+        /// Pauses automatic day/night time progression while light probes are capturing so all probes
+        /// bake under consistent sky and directional lighting.
+        /// </summary>
+        [Category("Skybox Dynamic")]
+        [DisplayName("Pause Cycle During Probe Capture")]
+        [Description("Holds the procedural day/night cycle while light probes are capturing so probes bake under consistent lighting.")]
+        public bool PauseAutoCycleDuringLightProbeCapture
+        {
+            get => _pauseAutoCycleDuringLightProbeCapture;
+            set => SetField(ref _pauseAutoCycleDuringLightProbeCapture, value);
         }
 
         [Category("Skybox Dynamic")]
@@ -830,7 +844,10 @@ namespace XREngine.Components.Scene.Mesh
             if (_mode != ESkyboxMode.DynamicProcedural)
                 return;
 
-            if (_autoCycle)
+            bool pauseForLightProbeCapture = _pauseAutoCycleDuringLightProbeCapture
+                && WorldAs<IRuntimeRenderWorld>()?.Lights is { } lights
+                && (lights.LightProbeBatchCaptureActive || lights.PendingCaptureComponentCount > 0);
+            if (_autoCycle && !pauseForLightProbeCapture)
             {
                 float dt = Math.Max(0.0f, RuntimeEngine.Time.Timer.Update.Delta);
                 float dayLength = Math.Max(1.0f, _dayLengthSeconds);
@@ -1953,6 +1970,19 @@ float Hash(vec2 p)
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
 
+float Hash3Lattice(ivec3 cell)
+{
+    uvec3 v = uvec3(cell) * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return float(v.x ^ v.y ^ v.z) * (1.0 / 4294967296.0);
+}
+
 float Hash3(vec3 p)
 {
     p = fract(p * vec3(443.8975, 397.2973, 491.1871));
@@ -1979,27 +2009,33 @@ float Noise(vec2 p)
 {
     vec2 i = floor(p);
     vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
+    vec2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
     return mix(mix(Hash(i + vec2(0.0, 0.0)), Hash(i + vec2(1.0, 0.0)), u.x),
                mix(Hash(i + vec2(0.0, 1.0)), Hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
 float Noise3(vec3 p)
 {
-    vec3 i = floor(p);
-    vec3 f = fract(p);
-    vec3 u = f * f * (3.0 - 2.0 * f);
-    float n000 = Hash3(i);
-    float n100 = Hash3(i + vec3(1.0, 0.0, 0.0));
-    float n010 = Hash3(i + vec3(0.0, 1.0, 0.0));
-    float n110 = Hash3(i + vec3(1.0, 1.0, 0.0));
-    float n001 = Hash3(i + vec3(0.0, 0.0, 1.0));
-    float n101 = Hash3(i + vec3(1.0, 0.0, 1.0));
-    float n011 = Hash3(i + vec3(0.0, 1.0, 1.0));
-    float n111 = Hash3(i + vec3(1.0, 1.0, 1.0));
+    vec3 fl = floor(p);
+    ivec3 i = ivec3(fl);
+    vec3 f = p - fl;
+    vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float n000 = Hash3Lattice(i);
+    float n100 = Hash3Lattice(i + ivec3(1, 0, 0));
+    float n010 = Hash3Lattice(i + ivec3(0, 1, 0));
+    float n110 = Hash3Lattice(i + ivec3(1, 1, 0));
+    float n001 = Hash3Lattice(i + ivec3(0, 0, 1));
+    float n101 = Hash3Lattice(i + ivec3(1, 0, 1));
+    float n011 = Hash3Lattice(i + ivec3(0, 1, 1));
+    float n111 = Hash3Lattice(i + ivec3(1, 1, 1));
     return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
                mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
 }
+
+const mat3 FBM3_OCTAVE_ROT = mat3(
+     0.00,  0.80,  0.60,
+    -0.80,  0.36, -0.48,
+    -0.60, -0.48,  0.64);
 
 float Fbm(vec2 p)
 {
@@ -2034,7 +2070,7 @@ float Fbm3(vec3 p)
     for (int i = 0; i < 5; ++i)
     {
         v += a * Noise3(p);
-        p = p * 2.03 + vec3(17.0, 11.0, 5.3);
+        p = (FBM3_OCTAVE_ROT * p) * 2.03 + vec3(17.0, 11.0, 5.3);
         a *= 0.5;
     }
     return v;
@@ -2044,13 +2080,23 @@ float Fbm3_6(vec3 p)
 {
     float v = 0.0;
     float a = 0.5;
+    float norm = 0.0;
     for (int i = 0; i < 6; ++i)
     {
         v += a * Noise3(p);
-        p = p * 2.17 + vec3(4.3, 9.1, 2.7);
-        a *= 0.55;
+        norm += a;
+        p = (FBM3_OCTAVE_ROT * p) * 2.08 + vec3(4.3, 9.1, 2.7);
+        a *= 0.52;
     }
-    return v;
+    return v / max(norm, 1e-5);
+}
+
+float ProjectCloudDomeDistance(vec3 dir)
+{
+    const float earthRadius = 16.0;
+    const float cloudAltitude = 1.0;
+    float dy = max(dir.y, 0.0);
+    return -earthRadius * dy + sqrt(earthRadius * earthRadius * dy * dy + 2.0 * earthRadius * cloudAltitude + cloudAltitude * cloudAltitude);
 }
 
 vec3 Atmosphere(vec3 viewDir, vec3 sunDir)
@@ -2157,16 +2203,30 @@ void main()
         float starDensity = 256.0;
         vec3 starP = dir * starDensity;
         vec3 starCell = floor(starP);
+        ivec3 starCellInt = ivec3(starCell);
         float starHash = Hash3(starCell);
+        vec3 starCenter = vec3(
+            0.22 + 0.56 * Hash3Lattice(starCellInt + ivec3(19, 37, 53)),
+            0.22 + 0.56 * Hash3Lattice(starCellInt + ivec3(71, 13, 89)),
+            0.22 + 0.56 * Hash3Lattice(starCellInt + ivec3(41, 97, 29)));
+        vec3 starDelta = (starP - starCell) - starCenter;
+        starDelta -= dir * dot(starDelta, dir);
+        float smallStarDisc = exp(-dot(starDelta, starDelta) * 58.0);
         float twinkle = MotionStarTwinkle(starCell, starHash, 0.16, 1.0);
-        float smallStar = step(0.9975, starHash) * (0.55 + 0.45 * fract(starHash * 17.3)) * twinkle;
+        float smallStar = step(0.9965, starHash) * smallStarDisc * (0.65 + 0.55 * fract(starHash * 17.3)) * twinkle;
 
         float bigDensity = 64.0;
         vec3 bigP = dir * bigDensity;
         vec3 bigCell = floor(bigP);
+        ivec3 bigCellInt = ivec3(bigCell);
         float bigHash = Hash3(bigCell);
-        vec3 bigOffset = fract(bigP) - 0.5;
-        float bigStar = step(0.997, bigHash) * exp(-dot(bigOffset, bigOffset) * 60.0);
+        vec3 bigCenter = vec3(
+            0.25 + 0.50 * Hash3Lattice(bigCellInt + ivec3(17, 59, 83)),
+            0.25 + 0.50 * Hash3Lattice(bigCellInt + ivec3(43, 23, 67)),
+            0.25 + 0.50 * Hash3Lattice(bigCellInt + ivec3(91, 11, 31)));
+        vec3 bigOffset = (bigP - bigCell) - bigCenter;
+        bigOffset -= dir * dot(bigOffset, dir);
+        float bigStar = step(0.997, bigHash) * exp(-dot(bigOffset, bigOffset) * 72.0);
         bigStar *= MotionStarTwinkle(bigCell, bigHash, 0.10, 0.73);
         float hueSeed = Hash3(starCell + vec3(11.0, 23.0, 7.0));
         vec3 starColor = mix(vec3(0.85, 0.90, 1.10), vec3(1.10, 0.95, 0.78), hueSeed);
@@ -2190,24 +2250,34 @@ void main()
     color = mix(night, color + night * 0.15, clamp(dayFactor + duskFactor * 0.35, 0.0, 1.0));
 
     float timeAdvect = SkyCloudSpeed * SkyTimeOfDay * 240.0;
-    float flowAngle = SkyTimeOfDay * 0.35;
-    vec3 windDir = SafeNormalize3(vec3(cos(flowAngle), 0.12, sin(flowAngle)));
-    vec3 cloudP = dir * SkyCloudScale * 3.0;
-    vec3 warped = cloudP + windDir * timeAdvect * 0.25;
+    vec3 windDir = SafeNormalize3(vec3(0.86, 0.0, 0.51));
+    float cloudDomeDist = ProjectCloudDomeDistance(dir);
+    vec3 cloudP = dir * SkyCloudScale * (cloudDomeDist * 0.72);
+    cloudP.y *= 0.25;
+    vec3 advected = cloudP + windDir * (timeAdvect * 0.45);
+    vec3 cloudWarp = vec3(
+        Fbm3(advected * 0.55 + vec3(3.1, 1.7, 7.4)) - 0.5,
+        0.0,
+        Fbm3(advected * 0.55 + vec3(11.7, 2.9, 2.3)) - 0.5);
+    vec3 warped = advected + cloudWarp * 0.55;
     float cloudBase = Fbm3_6(warped);
-    float cloudDetail = Noise3(warped * 6.5 - windDir * timeAdvect * 0.35);
-    float cloudShape = cloudBase * 0.82 + cloudDetail * 0.18;
+    float cloudDetail = Noise3(warped * 4.5 - windDir * (timeAdvect * 0.25));
+    float cloudShape = smoothstep(0.26, 0.78, cloudBase * 0.80 + cloudDetail * 0.20);
     float cloudMask = smoothstep(-0.08, 0.12, dir.y);
-    float cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloudShape, SkyCloudSharpness)) * cloudMask;
+    float horizonCloudFade = smoothstep(0.0, 0.10, dir.y);
+    float cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloudShape, SkyCloudSharpness)) * cloudMask * horizonCloudFade;
 
+    float sunOffsetDensity = Fbm3(warped + vec3(sunDir.x, 0.0, sunDir.z) * 0.22);
+    float sunLitTerm = clamp((cloudBase - sunOffsetDensity) * 2.4 + 0.55, 0.0, 1.0);
     float muSun = dot(dir, sunDir);
     float silver = pow(max(muSun, 0.0), 8.0);
     float powder = 1.0 - exp(-cloud * 2.5);
-    vec3 cloudLit = mix(vec3(0.45, 0.48, 0.55), vec3(1.00, 0.98, 0.93), dayFactor);
-    vec3 cloudShadow = mix(vec3(0.04, 0.05, 0.09), vec3(0.58, 0.63, 0.75), dayFactor);
-    vec3 cloudColor = mix(cloudShadow, cloudLit, powder);
+    float litWeight = clamp(mix(powder, sunLitTerm, 0.55), 0.0, 1.0);
+    vec3 cloudLit = mix(vec3(0.11, 0.14, 0.22), vec3(1.00, 0.98, 0.93), dayFactor);
+    vec3 cloudShadow = mix(vec3(0.02, 0.03, 0.06), vec3(0.55, 0.61, 0.74), dayFactor);
+    vec3 cloudColor = mix(cloudShadow, cloudLit, litWeight);
     cloudColor += vec3(1.30, 0.55, 0.22) * silver * duskFactor * 1.2;
-    cloudColor = mix(cloudColor, color, smoothstep(0.5, 0.03, dir.y) * 0.55);
+    cloudColor = mix(cloudColor, color, smoothstep(0.42, 0.02, dir.y) * 0.72);
 
     color = mix(color, cloudColor, cloud);
 

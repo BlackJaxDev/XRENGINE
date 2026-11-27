@@ -81,14 +81,14 @@ public unsafe partial class OpenXRAPI
         };
 
     /// <summary>
-    /// Releases scene publication pins held by inactive eye frame packages after
-    /// the session's GPU work and swapchains have completed retirement.
+    /// Releases canonical scene publication pins held by inactive eye frame packages
+    /// and picking sources after OpenXR publication admission closes and GPU work is idle.
     /// </summary>
     private void CancelOpenXrEyeFramePackages()
     {
-        _openXrLeftViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
-        _openXrRightViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
-        _openXrStereoViewport?.RenderPipelineInstance.MeshRenderCommands.CancelBackendReadyFramePackages();
+        _openXrLeftViewport?.RenderPipelineInstance.ReleaseCanonicalPublicationRetention();
+        _openXrRightViewport?.RenderPipelineInstance.ReleaseCanonicalPublicationRetention();
+        _openXrStereoViewport?.RenderPipelineInstance.ReleaseCanonicalPublicationRetention();
         CancelOpenXrInsetFramePackages();
     }
 
@@ -189,7 +189,12 @@ public unsafe partial class OpenXRAPI
 
     private static void CopyCameraCommon(XRCamera source, XRCamera destination)
     {
-        destination.CullingMask = source.CullingMask;
+        // Preserve the first-person VR layer split when copying from a desktop or base camera:
+        // hide the full-head local avatar layer and show the headless first-person proxy layer.
+        int mask = source.CullingMask.Value;
+        mask &= ~(1 << XREngine.Components.Scene.Transforms.DefaultLayers.LocalVrAvatarIndex);
+        mask |= 1 << XREngine.Components.Scene.Transforms.DefaultLayers.LocalVrFirstPersonIndex;
+        destination.CullingMask = mask;
         destination.ShadowCollectMaxDistance = source.ShadowCollectMaxDistance;
 
         float nearZ = source.Parameters.NearZ;

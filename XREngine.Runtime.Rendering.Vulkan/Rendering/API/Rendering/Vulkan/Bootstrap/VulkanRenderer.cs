@@ -966,6 +966,19 @@ public sealed partial class VulkanRenderer :
         out GpuBufferAllocationIdentity identity)
         => _resourceRuntime.TryCaptureBufferAllocationIdentity(buffer, out identity);
     public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
+    internal override bool SupportsStandaloneOffscreenCapture => true;
+    internal override bool TryExecuteStandaloneOffscreenCapture(
+        XRFrameBuffer targetFrameBuffer,
+        uint width,
+        uint height,
+        Func<bool> emitOperations,
+        out XRGpuFence? completionFence)
+        => _frameLoop.TryExecuteStandaloneOffscreenCapture(
+            targetFrameBuffer,
+            width,
+            height,
+            emitOperations,
+            out completionFence);
     public bool TryEnsureComputeBufferReady(XRDataBuffer buffer)
     {
         // The retained command lookup cannot create a cold buffer wrapper.

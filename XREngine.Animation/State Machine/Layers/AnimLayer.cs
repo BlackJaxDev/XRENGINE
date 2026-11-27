@@ -3,6 +3,7 @@ using MemoryPack;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
+using XREngine.Components.Animation;
 using XREngine.Data;
 using XREngine.Data.Core;
 
@@ -71,6 +72,17 @@ namespace XREngine.Animation
         {
             get => _weight;
             set => SetField(ref _weight, value);
+        }
+
+        private EHumanoidBodyMask _avatarMask = EHumanoidBodyMask.All;
+        /// <summary>
+        /// Restricts which humanoid body parts, root-motion tracks, and non-humanoid slots
+        /// this layer writes when combining into the owning <see cref="AnimStateMachine"/>.
+        /// </summary>
+        public EHumanoidBodyMask AvatarMask
+        {
+            get => _avatarMask;
+            set => SetField(ref _avatarMask, value);
         }
 
         private int _initialStateIndex = -1;

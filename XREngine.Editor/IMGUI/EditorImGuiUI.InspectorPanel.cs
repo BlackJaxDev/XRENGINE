@@ -2314,8 +2314,7 @@ public static partial class EditorImGuiUI
             if (editor is null)
             {
                 DrawDefaultComponentInspector(component, visited);
-                if (component is PhysicsChainComponent chain)
-                    DrawPhysicsChainRuntimeDiagnostics(chain);
+                DrawComponentRuntimeDiagnostics(component);
                 return;
             }
 
@@ -2329,8 +2328,17 @@ public static partial class EditorImGuiUI
                 Debug.LogException(ex, $"Custom component editor '{editor.GetType().FullName}' failed for '{component.GetType().FullName}'");
                 DrawDefaultComponentInspector(component, visited);
             }
+            DrawComponentRuntimeDiagnostics(component);
+        }
+
+        private static void DrawComponentRuntimeDiagnostics(XRComponent component)
+        {
             if (component is PhysicsChainComponent physicsChain)
                 DrawPhysicsChainRuntimeDiagnostics(physicsChain);
+            else if (component is AnimStateMachineComponent stateMachineComponent)
+                DrawVrcftTemplateInspector(stateMachineComponent);
+            else if (component is XREngine.Data.Components.AnimStateMachineOscReceiverComponent oscReceiver)
+                DrawOscReceiverDiagnostics(oscReceiver);
         }
 
         private static void DrawPawnPossessButton(PawnComponent pawn)

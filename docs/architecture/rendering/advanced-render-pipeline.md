@@ -235,11 +235,16 @@ cascade order, blend band, filter and shadow reason codes as the uncached path. 
 lights, a light with more than 8 cascades, and the MSAA kernel keep the uncached path.
 At 2688x2688 for each eye this saves about 0.5 to 0.8 ms of native opaque shading.
 
-The same fill computes the Vogel tap offsets of the cached light once per work group: one
-table for the blocker search and one for the filter, 16 entries each. A Vogel tap depends
-only on its index, the tap count and the fixed rotation, so the pixels read the table
-instead of computing sqrt, cos and sin for every tap. A tap count above 16, or a count that
-differs from the table, uses the computed offsets. The values are the same in both cases.
+The same fill computes the unrotated Vogel tap offsets of the cached light once per work
+group: one table for the blocker search and one for the filter, 32 entries each. Each
+pixel rotates the cached taps with screen-space Interleaved Gradient Noise using one
+`cos`/`sin` pair per pixel, which removes stamped texel blocks while keeping stationary
+shadows temporally stable. Directional cascades also project each blocker and filter tap
+onto the receiver triangle plane (`XR_ADV_DirectionalReceiverPlaneGradient`) and scale
+geometric normal offset by `sin(theta)` so corners do not detach on sloped walls.
+Directional contact shadows (`XR_ADV_DirectionalContactShadow`) raymarch screen-space
+`VisibilityDepth` once per lit directional receiver instead of sampling one raw cascade
+shadow texel, keeping fine contact edges at screen resolution.
 
 The Uber kernel (`ShadeNativeUber.glslinc`) evaluates the shadow of the primary directional
 light once, before its light loop, because the source-lighting modes need that value. The
@@ -1285,8 +1290,131 @@ Static meshlets also use two-phase occlusion culling. Two task variants share
 Initial native visibility raster clears both depth and stencil. Late raster
 loads both attachments to preserve values written in the current frame. MSAA
 resolve clears the canonical stencil target because the depth resolve does not
-write stencil. Gizmo bit `0x80` must not survive into the next frame: postprocess
-uses it to bypass tone mapping for current debug shapes.
+write stencil. `AdvancedStencilBitLayout` owns the 8-bit allocation of the scene
+`DepthStencil` attachment: bits `0..1` (`0x03`) hold forward editor hover and
+selection highlights (`StencilRefHover` and `StencilRefSelection`), bits `2..6`
+(`0x7C`, shifted left by `2`) hold active portal and mirror node identifiers
+(`0` for the primary view, `1..31` for active portal nodes), and bit `7` (`0x80`)
+marks gizmos so post-processing bypasses tone mapping and TSR marks them
+reactive. Gizmo bit `0x80` must not survive into the next frame.
+
+`AdvancedViewRecord` (`XRAdvancedViewRecord`, 976 bytes) ends with 32 bytes of
+portal metadata (`ClipPlaneWorld`, `PrimaryViewIndex`, `ParentViewIndex`,
+`StencilNodeId`, and `DepthAndExcludeDraw`), paired with `EAdvancedViewRecordFlags`
+bits `14..18` (`PortalSubView`, `InvertedWinding`, `ClipPlaneEnabled`,
+`SkipHiZAndHistory`, and `SingleSampleMsaaShading`) and
+`XR_ADV_ViewBelongsToPrimary` in `AdvancedViewAccess.glslinc`. On Vulkan,
+`VulkanDeviceContext.ShaderClipDistanceEnabled` enables
+`PhysicalDeviceFeatures.ShaderClipDistance` when the physical device supports it
+and `TryValidateShaderClipDistanceForPortalMirrors` logs one diagnostic warning
+when unsupported. On WebGPU, `WebGpuAdvancedShadingOutput` uploads the 944-byte
+canonical view prefix (`WebGpuAdvancedShadingProgramContract.FrozenViewByteSize`)
+to cooked `FrozenView` uniform blocks.
+
+`MirrorCaptureComponent` selects offscreen render-to-texture or in-place stencil
+rendering through `EMirrorCaptureMode` (`OffscreenCapture` or `InPlaceStencil`)
+and controls MSAA mirror shading rate through `EMirrorMsaaShadingMode`
+(`SingleSample` or `PerSample`). Active `IAdvancedPortalSurfaceProvider`
+surfaces register with `AdvancedGpuScenePublisher`, tag their display draw with
+`GPUIndirectRenderFlags.PortalSurface`, and set
+`EAdvancedVisibilityPreparationFlags.PortalSurface` (`FLAG_PORTAL_SURFACE` in
+`EarlyVisibility.comp`) so opaque visibility skips them.
+`AdvancedPortalViewScheduler` writes bounded breadth-first mono and stereo
+portal view trees (`MaxPortalViewsPerEye <= 31`,
+`MaxTotalPortalViewsPerFrame <= 32`) into a preallocated
+`AdvancedPortalFramePlan` during `VisibilityPreparation`, and
+`VulkanPreparedFrameRecording` plus `VulkanAdvancedSceneResourceRuntime` append
+those portal sub-views after the primary views in `XR_ADV_Views` without
+widening `RenderFrameViewSet.MaxViewCount`. In `SinglePassStereo` (layer 0 and
+layer 1), `AdvancedPortalViewScheduler` pairs left-eye and right-eye candidates
+by provider and parent stencil node, assigns matching `StencilNodeId` values to
+both eyes, and drops unpaired single-eye candidates or budget-exceeded recursion
+depths symmetrically so binocular rivalry cannot occur. Moving mirrors populate
+`PreviousView` and `PreviousViewProjectionJittered` from previous-frame mirror
+plane transforms and keep stationary frames bit-identical for zero TSR velocity.
+
+When `AdvancedPortalFramePlan.Count > 0`, `VPRC_AdvancedRenderStage` enqueues
+`EAdvancedVisibilityStageBackendPhase.PortalVisibility` (`Advanced.PortalVisibility`)
+after `LateRaster` and before `MultisampleResolve` and `DecalBuffer`.
+`VulkanAdvancedVisibilityResourceRuntime` allocates one single-phase set-1 portal
+segment pool (`VulkanAdvancedPortalVisibilityState`) per active portal frame
+without allocating Hi-Z pyramids or widening `MeshletHistoryMaxViews`.
+`EarlyVisibility.comp`, `BuildVisibilityIndirect.comp`, and `VisibilityRaster.task`
+run single-phase frustum and normal-cone culling for views with
+`XR_ADV_VIEW_SKIP_HIZ_AND_HISTORY`, skipping persistent history, late dispatch
+argument writes, and the portal's own excluded draw index (`depthAndExcludeDraw >> 4`).
+`VulkanCanonicalVisibilityPipelineFactory` lazily prepares `NormalWinding` and
+`InvertedWinding` portal raster variants with `XR_ADV_VISIBILITY_CLIP_PLANE`,
+stencil equality on mask `0x7C`, and Vulkan 1.0 `DynamicState.StencilReference`.
+`VulkanPortalQuadPipelineFactory` prepares the stencil-carve pipeline (using
+`StencilOp.Invert` with `AdvancedStencilBitLayout.ComputePortalTransitionWriteMask`
+and `DynamicState.StencilWriteMask`) and the far-depth and visibility reset
+pipeline (`PortalQuad.vert`, `PortalStencilCarve.frag`, `PortalDepthReset.frag`).
+`VulkanCommandRuntime` records single-phase portal culling once across all
+scheduled portal views, then executes outside-in stencil carve, far-depth and
+visibility reset, and scissor-clamped reflected visibility raster for each depth
+from `1` to `MaxScheduledDepth`. `VulkanDecalBufferPipelineFactory` tests
+`(stencil & 0x7C) == 0` so primary surface decals do not write onto portal pixels.
+
+When the scene registers portal surfaces, `AdvancedRenderPipeline` encodes the
+portal froxel view-slot budget in profile feature bits `20..25` so `FroxelGrid`
+and `FroxelDecalGrid` expand only for portal-enabled scenes. Vulkan native
+shading dispatches `BuildFroxels.comp` for the primary eye and for each active
+portal sub-view owned by that eye. `XR_ADV_ViewMaskIndex` maps portal sub-views
+to their `primaryViewIndex` for light, decal, shadow, environment, and probe
+bitmask tests, while `ClassifyTiles.comp`, `ShadeNativeOpaqueEvaluator.glslinc`,
+`ShadeNativeUber.glslinc`, and `FoveatedQuadShading.glslinc` accept owned portal
+sub-views via `XR_ADV_ViewBelongsToPrimary`, load `XR_ADV_LoadView(surface.viewIndex)`,
+index froxels by `surface.viewIndex`, skip the primary decal buffer and screen-space
+directional contact shadows on portal pixels, and share the workgroup directional
+shadow cache across owned portal pixels. On frames with active portals and active
+camera ambient occlusion, `VPRC_AdvancedRenderStage` runs native compute
+`Gtao.comp` with `VisibilityMetadata` bound; `Gtao.comp` reconstructs each pixel
+using its owning view record and discards neighbor taps whose pixel view index
+differs from the center pixel. On MSAA frames with active portals,
+`ResolveAdvancedMsaaVisibility.frag` preserves sample-0 portal metadata on
+uncovered sky pixels, `VulkanAdvancedMsaaResolvePipelineFactory.TryPreparePortalStencilRepopulate`
+and `PortalMsaaStencilRepopulate.frag` repopulate single-sample portal stencil
+bits (`0x7C`) inside the `MultisampleResolve` render pass using Vulkan 1.0
+dynamic `StencilReference`, and `ShadeNativeOpaqueMsaa.comp` caches radiance per
+portal sub-view when `XR_ADV_VIEW_SINGLE_SAMPLE_MSAA_SHADING` is set while
+keeping `PerSample` portal views and mirror borders at full sample rate.
+
+At the start of `LatePasses`, when `AdvancedPortalFramePlan.Count > 0`,
+`VPRC_AdvancedRenderStage` executes deepest-out portal unwind (`depth =
+MaxScheduledDepth` down to `1`) on `ForwardPassFBO` (`HDRSceneTexture` color
+attachment 0 plus writable `DepthStencil`, leaving auxiliary editor highlight
+attachments masked off):
+
+1. If any scheduled node sets `RenderTransparents` and the frame has
+   `TransparentForward` commands, `VPRC_AdvancedRenderStage` enqueues
+   `EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind`
+   (`Advanced.PortalSkyUnwind`, `PortalQuad.vert` + `PortalSkyUnwind.frag` at
+   far depth with `CompareOp.Equal` and `Stencil == nodeId << 2`), then runs
+   `AdvancedPortalTransparentPass` (`Advanced.PortalTransparents`) with flipped
+   culling (`ReverseCulling = node.InvertedWinding`), oblique mirror-plane
+   clipping, and `Stencil == nodeId << 2`.
+2. `VPRC_AdvancedRenderStage` then enqueues
+   `EAdvancedVisibilityStageBackendPhase.PortalUnwind` (`Advanced.PortalUnwind`),
+   which renders reflected sky (when not already drawn in `PortalSkyUnwind`) and
+   draws each node's mirror glass composite quad (`PortalGlassQuad.vert` +
+   `PortalGlassComposite.frag`, `VulkanPortalQuadPipelineFactory.TryPrepareGlassComposite`)
+   using `parentViewIndex` matrices to alpha-blend glass tint, Schlick Fresnel,
+   and directional specular, restore real mirror-plane depth
+   (`DepthCompare = Always`, `DepthWrite = true`), and unwind stencil bits `2..6`
+   to `parentNodeId << 2` via `StencilOp.Invert`. After depth `1` finishes,
+   stencil bits `2..6` are `0` everywhere and real mirror plane depth is in
+   `DepthStencil` before depth-0 transparents, physics debug, and debug shapes run.
+
+Vulkan command recording emits dedicated GPU profiler timer scopes for portal
+work: `["Advanced", "Visibility", "PortalCull"]`,
+`["Advanced", "Visibility", "PortalCarve"]`,
+`["Advanced", "Visibility", "PortalRaster"]`, and
+`["Advanced", "LatePasses", "PortalUnwind"]`. `XRRenderPipelineInstance` stores
+per-frame scheduled and rejected portal counters (`AdvancedProfilePortalDiagnostic`)
+without heap allocations and `get_advanced_profile_diagnostics` exposes them
+under `portals`. `EAdvancedShadingDebugView.PortalStencilNode` (`12`) visualizes
+per-pixel portal node ownership and recursion depth in native opaque shading.
 
 `AppendAdvancedDebugShapeCommands` draws queued shapes after late scene work
 and physics debug work. It binds the forward color and depth target at internal

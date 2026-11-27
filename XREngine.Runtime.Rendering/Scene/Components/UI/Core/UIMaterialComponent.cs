@@ -365,6 +365,17 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _disableBatching, value);
         }
 
+        private UIQuadStyle _quadStyle;
+        /// <summary>
+        /// Per-instance CSS-inspired box style (rounded corners, hairline border, gradient, drop shadow,
+        /// backdrop blur, and sRGB color decoding) applied when this component renders through the UI batch path.
+        /// </summary>
+        public UIQuadStyle QuadStyle
+        {
+            get => _quadStyle;
+            set => SetField(ref _quadStyle, value);
+        }
+
         private void RemakeMesh()
         {
             if (Material is null)
@@ -465,11 +476,16 @@ namespace XREngine.Rendering.UI
         protected override bool RegisterWithBatchCollector(UIBatchCollector collector, RenderCommandCollection passes)
         {
             var tfm = BoundableTransform;
+            float effectiveOpacity = tfm.EffectiveOpacity;
+            if (effectiveOpacity <= 0.0001f)
+                return true;
+
             var worldMatrix = GetRenderCanvasMatrix(tfm);
 
             // Read the per-instance color from the material's MatColor parameter
             var colorParam = Material?.Parameter<ShaderVector4>("MatColor");
             var color = colorParam?.Value ?? new Vector4(1.0f, 0.0f, 1.0f, 1.0f);
+            color.W *= effectiveOpacity;
 
             var bottomLeft = tfm.ActualLocalBottomLeftTranslation;
             var bounds = new Vector4(bottomLeft.X, bottomLeft.Y, tfm.ActualWidth, tfm.ActualHeight);
@@ -478,9 +494,11 @@ namespace XREngine.Rendering.UI
                 ? Material.Textures[0] as XRTexture2D : null;
             Vector4 uv = new(0.0f, FlipVerticalUVCoord ? 1.0f : 0.0f,
                 1.0f, FlipVerticalUVCoord ? 0.0f : 1.0f);
+            UIQuadStyle effectiveStyle = _quadStyle.WithOpacity(effectiveOpacity);
             collector.AddMaterialQuad(RenderPass, RenderCommand2D.ZIndex, passes, in worldMatrix, in color, in bounds,
                 UIClipRegion.ResolveCrop(tfm, ClipToBounds),
-                texture, uv, imageSrgb: texture is not null && Material is not null && UsesSrgbImage(Material, texture));
+                texture, uv, imageSrgb: texture is not null && Material is not null && UsesSrgbImage(Material, texture),
+                in effectiveStyle);
             return true;
         }
 

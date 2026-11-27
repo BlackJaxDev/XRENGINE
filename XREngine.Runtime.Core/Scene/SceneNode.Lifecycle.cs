@@ -174,6 +174,9 @@ namespace XREngine.Scene
         /// </remarks>
         protected override void OnDestroying()
         {
+            // Hold a node destruction lease so synchronous child destruction inside a parent's
+            // activation or deactivation pass can clear Parent and World on admitted descendants.
+            using var mutation = PhysicsChainWorld.BeginNodeDestructionMutation(this);
             OnDeactivated();
             OnEndPlay();
 

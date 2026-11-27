@@ -18,4 +18,9 @@ public enum EAdvancedVisibilityPreparationFlags : uint
     Occluded = 1u << 8,
     GpuOwnedBounds = 1u << 9,
     BoundsRejected = 1u << 10,
+    /// <summary>
+    /// Marks an in-place stencil portal or mirror surface draw so visibility preparation skips
+    /// it during opaque scene rasterization.
+    /// </summary>
+    PortalSurface = 1u << 11,
 }

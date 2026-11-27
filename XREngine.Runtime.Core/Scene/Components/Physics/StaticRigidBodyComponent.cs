@@ -64,7 +64,11 @@ public class StaticRigidBodyComponent : PhysicsActorComponent, IPhysicsReplicati
     public bool AutoGenerateConvexCollidersFromSiblingModel
     {
         get => _autoGenerateConvexCollidersFromSiblingModel;
-        set => SetField(ref _autoGenerateConvexCollidersFromSiblingModel, value);
+        set
+        {
+            if (SetField(ref _autoGenerateConvexCollidersFromSiblingModel, value) && value && IsActive)
+                RuntimeStaticColliderAuthoringServices.Current.OnActivated(this);
+        }
     }
 
     [Browsable(false)]

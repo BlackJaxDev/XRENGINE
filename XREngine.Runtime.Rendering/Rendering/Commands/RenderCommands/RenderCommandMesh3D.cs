@@ -92,10 +92,26 @@ namespace XREngine.Rendering.Commands
         private int _swapCaptureInProgress;
         private int _identityNotificationInProgress;
         private ulong _temporalSettlementFrameId;
-        private readonly ConditionalWeakTable<XRViewport, OutputModelHistory> _outputModelHistories = new();
+        private ConditionalWeakTable<XRViewport, OutputModelHistory> _outputModelHistories = new();
         private ulong _lastPhase524bVelocityDiagnosticFrame = ulong.MaxValue;
 
-        private sealed class OutputModelHistory
+        /// <summary>
+        /// Shares per-viewport previous-model-matrix history across multiple render commands that
+        /// represent the same logical surface across rotating capture slots (such as stereo mirror
+        /// display commands).
+        /// </summary>
+        internal sealed class SharedModelHistory
+        {
+            internal readonly ConditionalWeakTable<XRViewport, OutputModelHistory> Table = new();
+        }
+
+        internal void AttachSharedModelHistory(SharedModelHistory history)
+        {
+            ArgumentNullException.ThrowIfNull(history);
+            _outputModelHistories = history.Table;
+        }
+
+        internal sealed class OutputModelHistory
         {
             public ulong SequenceId;
             public Matrix4x4 LastRenderedModelMatrix = Matrix4x4.Identity;
@@ -1150,6 +1166,19 @@ namespace XREngine.Rendering.Commands
                 $"late-world-write={sample} epoch={LateRenderWorldWriteEpoch} command={GetType().Name} " +
                 $"sourceKey={StableQueryKey} owner={OwnerRenderInfo?.Owner?.GetType().Name} " +
                 $"mesh={Mesh?.Mesh?.Name} callers={callers}");
+        }
+
+        /// <summary>
+        /// Updates the swapped render world matrix on the render thread after a late XR pose
+        /// refresh so CPU-rendered XR late draws align with the current eye poses and preserve
+        /// per-viewport previous-model-matrix history.
+        /// </summary>
+        internal void ApplyLateRenderWorldMatrix(Matrix4x4 renderWorldMatrix)
+        {
+            _renderWorldMatrix = renderWorldMatrix;
+            _renderWorldMatrixIsModelMatrix = WorldMatrixIsModelMatrix;
+            if (_renderWorldMatrixIsModelMatrix)
+                _renderHasPrevWorldMatrix = true;
         }
 
         private Matrix4x4 GetModelMatrix()

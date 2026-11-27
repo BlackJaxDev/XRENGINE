@@ -15,12 +15,12 @@ public class UnitTestingVrSettings
     /// unsupported pair with <see cref="ViewRenderMode"/> renders no XR output
     /// and logs a diagnostic; no other pipeline is used.
     /// </summary>
-    public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Default;
+    public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Rvc;
     /// <summary>
     /// Requested RVC mode for <see cref="EVrRenderPipeline.Rvc"/>. Off, or a
     /// mode that the RVC resolver cannot run, renders no XR output.
     /// </summary>
-    public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.Off;
+    public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.ForwardPlusOracle;
     /// <summary>
     /// Requests the OpenXR quad-view configuration (wide and inset view per eye) for
     /// <see cref="EVrRenderPipeline.Rvc"/>. The runtime must expose XR_VARJO_quad_views.

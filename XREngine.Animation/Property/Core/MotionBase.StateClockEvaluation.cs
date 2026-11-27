@@ -38,6 +38,13 @@ public abstract partial class MotionBase
                     normalizedTime,
                     additive);
                 break;
+            case MotionBricksLocomotionMotion motionBricks:
+                motionBricks.EvaluateMotionBricksValues(variables, additive);
+                break;
+            default:
+                if (IsProceduralMotion)
+                    EvaluateProceduralMotionValues(variables, normalizedTime, additive);
+                break;
         }
     }
 
@@ -53,6 +60,8 @@ public abstract partial class MotionBase
             BlendTree1D tree1D => tree1D.GetEffectiveDurationSecondsCore(variables),
             BlendTree2D tree2D => tree2D.GetEffectiveDurationSecondsCore(variables),
             BlendTreeDirect directTree => directTree.GetEffectiveDurationSecondsCore(variables),
+            MotionBricksLocomotionMotion => 1.0,
+            _ when IsProceduralMotion => GetProceduralDurationSeconds(variables),
             _ => 0.0,
         };
 }

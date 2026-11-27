@@ -45,10 +45,21 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
             => Execute(this);
     }
 
+    [ThreadStatic]
+    private static bool s_isForegroundWorkerThread;
+
+    internal static bool IsCurrentThreadForegroundWorker
+        => s_isForegroundWorkerThread;
+
     private readonly ConcurrentQueue<WorkItem> _foregroundQueue = new();
     private readonly ConcurrentQueue<WorkItem> _backgroundQueue = new();
+    private readonly ConcurrentQueue<WorkItem> _backgroundComputeQueue = new();
     private readonly SemaphoreSlim _queuedWork = new(0);
+    private readonly SemaphoreSlim _queuedComputeWork = new(0);
+    private readonly SemaphoreSlim _queuedForegroundWork = new(0);
     private readonly Thread _worker;
+    private readonly Thread _computeWorker;
+    private readonly Thread _foregroundWorker;
     private int _shutdownStarted;
 
     internal VulkanPipelineCompileTask()
@@ -59,29 +70,67 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
             Name = "XRE Vulkan Pipeline Compile",
             Priority = ThreadPriority.BelowNormal,
         };
+        _computeWorker = new Thread(ComputeWorkerMain)
+        {
+            IsBackground = true,
+            Name = "XRE Vulkan Compute Pipeline Compile",
+            Priority = ThreadPriority.BelowNormal,
+        };
+        _foregroundWorker = new Thread(ForegroundWorkerMain)
+        {
+            IsBackground = true,
+            Name = "XRE Vulkan Foreground Pipeline Compile",
+            Priority = ThreadPriority.Normal,
+        };
         _worker.Start();
+        _computeWorker.Start();
+        _foregroundWorker.Start();
     }
 
     internal Task<T> Enqueue<T>(
         Func<T> compile,
         bool foregroundRequired,
         out Action promoteToForeground)
+        => EnqueueCore(compile, foregroundRequired, computeLane: false, out promoteToForeground);
+
+    internal Task<T> EnqueueCompute<T>(
+        Func<T> compile,
+        bool foregroundRequired,
+        out Action promoteToForeground)
+        => EnqueueCore(compile, foregroundRequired, computeLane: true, out promoteToForeground);
+
+    private Task<T> EnqueueCore<T>(
+        Func<T> compile,
+        bool foregroundRequired,
+        bool computeLane,
+        out Action promoteToForeground)
     {
         ObjectDisposedException.ThrowIf(
             Volatile.Read(ref _shutdownStarted) != 0,
             this);
         var item = new WorkItem<T>(compile, foregroundRequired);
-        Enqueue(item);
+        Enqueue(item, computeLane);
         promoteToForeground = () => PromoteToForeground(item);
         return item.Completion.Task;
     }
 
-    private void Enqueue(WorkItem item)
+    private void Enqueue(WorkItem item, bool computeLane)
     {
         if (item.IsForegroundRequired)
+        {
             _foregroundQueue.Enqueue(item);
-        else
-            _backgroundQueue.Enqueue(item);
+            _queuedForegroundWork.Release();
+            return;
+        }
+
+        if (computeLane)
+        {
+            _backgroundComputeQueue.Enqueue(item);
+            _queuedComputeWork.Release();
+            return;
+        }
+
+        _backgroundQueue.Enqueue(item);
         _queuedWork.Release();
     }
 
@@ -90,7 +139,7 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
         if (!item.TryPromoteToForeground())
             return;
         _foregroundQueue.Enqueue(item);
-        _queuedWork.Release();
+        _queuedForegroundWork.Release();
     }
 
     private static void Execute<T>(WorkItem<T> item)
@@ -102,6 +151,27 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
         catch (Exception exception)
         {
             item.Completion.TrySetException(exception);
+        }
+    }
+
+    private void ForegroundWorkerMain()
+    {
+        s_isForegroundWorkerThread = true;
+        // A dedicated foreground worker prevents admission-critical PresentNow
+        // graphics pipelines from blocking behind long background compute compiles
+        // (such as Uber shading pipelines) on the below-normal background worker.
+        while (true)
+        {
+            _queuedForegroundWork.Wait();
+            if (!_foregroundQueue.TryDequeue(out WorkItem? work) || work is null)
+            {
+                if (Volatile.Read(ref _shutdownStarted) != 0)
+                    return;
+                continue;
+            }
+
+            if (work.TryClaimExecution())
+                work.ExecuteClaimed();
         }
     }
 
@@ -168,12 +238,64 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
         return false;
     }
 
+    private void ComputeWorkerMain()
+    {
+        // A dedicated background compute worker isolates long native compute
+        // pipeline compiles (such as Uber shading) from background graphics
+        // pipelines while keeping the same foreground-frame yield policy.
+        while (true)
+        {
+            _queuedComputeWork.Wait();
+            if (!_backgroundComputeQueue.TryDequeue(out WorkItem? work) || work is null)
+            {
+                if (Volatile.Read(ref _shutdownStarted) != 0)
+                    return;
+                continue;
+            }
+
+            if (work.IsForegroundRequired)
+            {
+                if (work.TryClaimExecution())
+                    work.ExecuteClaimed();
+                continue;
+            }
+
+            if (!RenderForegroundWorkCoordinator.TryEnterBackgroundSlice(
+                    out RenderForegroundWorkCoordinator.BackgroundSlice backgroundSlice))
+            {
+                _backgroundComputeQueue.Enqueue(work);
+                _queuedComputeWork.Release();
+                RenderForegroundWorkCoordinator.WaitForBackgroundPermission();
+                continue;
+            }
+
+            bool executionClaimed;
+            try
+            {
+                executionClaimed = work.TryClaimExecution();
+            }
+            finally
+            {
+                backgroundSlice.Dispose();
+            }
+
+            if (executionClaimed)
+                work.ExecuteClaimed();
+        }
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
             return;
         _queuedWork.Release();
+        _queuedComputeWork.Release();
+        _queuedForegroundWork.Release();
         _worker.Join();
+        _computeWorker.Join();
+        _foregroundWorker.Join();
         _queuedWork.Dispose();
+        _queuedComputeWork.Dispose();
+        _queuedForegroundWork.Dispose();
     }
 }

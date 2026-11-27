@@ -1,6 +1,7 @@
 #version 450
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 
 layout (location = 0) out vec4 AlbedoOpacity;
 layout (location = 1) out vec2 Normal;
@@ -172,7 +173,7 @@ void main()
     if (ParallaxSilhouette <= 0.5 && !pomValid)
         uv = FragUV0;
 
-    vec4 albedoSample = texture(Texture0, uv);
+    vec4 albedoSample = XRENGINE_SampleBiasedTexture(Texture0, uv);
     vec3 albedo = albedoSample.rgb * BaseColor;
 
     Normal = XRENGINE_EncodeNormal(n);

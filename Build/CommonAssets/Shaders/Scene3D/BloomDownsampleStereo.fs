@@ -20,6 +20,22 @@ uniform float ScreenWidth;
 uniform float ScreenHeight;
 uniform vec2 ScreenOrigin;
 
+vec3 SanitizeBloomSample(vec3 color)
+{
+    vec3 safe = vec3(
+        isnan(color.x) || isinf(color.x) ? 0.0 : max(color.x, 0.0),
+        isnan(color.y) || isinf(color.y) ? 0.0 : max(color.y, 0.0),
+        isnan(color.z) || isinf(color.z) ? 0.0 : max(color.z, 0.0));
+    if (!UseThreshold)
+        return safe;
+    // Cap isolated specular firefly energy before filtering so small metallic
+    // glints do not flash wide bloom halos across subpixel jitter frames.
+    float luma = dot(safe, Luminance);
+    if (luma > 16.0)
+        safe *= 16.0 / luma;
+    return safe;
+}
+
 float KarisWeight(vec3 c)
 {
     return 1.0 / (1.0 + dot(c, Luminance));
@@ -54,19 +70,19 @@ void main()
     float layer = float(gl_ViewID_OVR);
     vec2 texelSize = 1.0 / vec2(textureSize(SourceTexture, SourceLOD).xy);
 
-    vec3 a = textureLod(SourceTexture, vec3(uv + texelSize * vec2(-1.0, -1.0), layer), lod).rgb;
-    vec3 b = textureLod(SourceTexture, vec3(uv + texelSize * vec2( 0.0, -1.0), layer), lod).rgb;
-    vec3 c = textureLod(SourceTexture, vec3(uv + texelSize * vec2( 1.0, -1.0), layer), lod).rgb;
-    vec3 d = textureLod(SourceTexture, vec3(uv + texelSize * vec2(-0.5, -0.5), layer), lod).rgb;
-    vec3 e = textureLod(SourceTexture, vec3(uv + texelSize * vec2( 0.5, -0.5), layer), lod).rgb;
-    vec3 f = textureLod(SourceTexture, vec3(uv + texelSize * vec2(-1.0,  0.0), layer), lod).rgb;
-    vec3 g = textureLod(SourceTexture, vec3(uv,                                layer), lod).rgb;
-    vec3 h = textureLod(SourceTexture, vec3(uv + texelSize * vec2( 1.0,  0.0), layer), lod).rgb;
-    vec3 i = textureLod(SourceTexture, vec3(uv + texelSize * vec2(-0.5,  0.5), layer), lod).rgb;
-    vec3 j = textureLod(SourceTexture, vec3(uv + texelSize * vec2( 0.5,  0.5), layer), lod).rgb;
-    vec3 k = textureLod(SourceTexture, vec3(uv + texelSize * vec2(-1.0,  1.0), layer), lod).rgb;
-    vec3 l = textureLod(SourceTexture, vec3(uv + texelSize * vec2( 0.0,  1.0), layer), lod).rgb;
-    vec3 m = textureLod(SourceTexture, vec3(uv + texelSize * vec2( 1.0,  1.0), layer), lod).rgb;
+    vec3 a = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2(-1.0, -1.0), layer), lod).rgb);
+    vec3 b = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2( 0.0, -1.0), layer), lod).rgb);
+    vec3 c = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2( 1.0, -1.0), layer), lod).rgb);
+    vec3 d = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2(-0.5, -0.5), layer), lod).rgb);
+    vec3 e = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2( 0.5, -0.5), layer), lod).rgb);
+    vec3 f = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2(-1.0,  0.0), layer), lod).rgb);
+    vec3 g = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv,                                layer), lod).rgb);
+    vec3 h = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2( 1.0,  0.0), layer), lod).rgb);
+    vec3 i = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2(-0.5,  0.5), layer), lod).rgb);
+    vec3 j = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2( 0.5,  0.5), layer), lod).rgb);
+    vec3 k = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2(-1.0,  1.0), layer), lod).rgb);
+    vec3 l = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2( 0.0,  1.0), layer), lod).rgb);
+    vec3 m = SanitizeBloomSample(textureLod(SourceTexture, vec3(uv + texelSize * vec2( 1.0,  1.0), layer), lod).rgb);
 
     vec3 result;
 

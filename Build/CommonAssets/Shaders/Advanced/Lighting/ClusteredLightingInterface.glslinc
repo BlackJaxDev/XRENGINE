@@ -75,8 +75,9 @@ bool XR_ADV_LightAffectsView(XRAdvancedLightRecord light, uint viewIndex)
 {
     if ((light.flags & 1u) == 0u) return false;
     if ((light.viewMaskLo | light.viewMaskHi) == 0u) return true;
-    return viewIndex < 32u ? (light.viewMaskLo & (1u << viewIndex)) != 0u :
-        viewIndex < 64u && (light.viewMaskHi & (1u << (viewIndex - 32u))) != 0u;
+    uint maskViewIndex = XR_ADV_ViewMaskIndex(viewIndex);
+    return maskViewIndex < 32u ? (light.viewMaskLo & (1u << maskViewIndex)) != 0u :
+        maskViewIndex < 64u && (light.viewMaskHi & (1u << (maskViewIndex - 32u))) != 0u;
 }
 
 uint XR_ADV_CalculateDepthSlice(float linearDepth, float nearPlane, float farPlane, uint depthSlices)

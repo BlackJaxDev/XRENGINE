@@ -36,16 +36,22 @@ public static class NativeUberMaterialSchema
     public static bool IsLayout(MaterialBindingLayout layout)
         => ReferenceEquals(layout, Opaque) || ReferenceEquals(layout, Masked);
 
+    public const uint AlphaToCoverageStateFlag = 1u << 0;
+
     public static int ParameterIndex(string name) => ParameterIndices.TryGetValue(name, out int index) ? index : -1;
     public static int TextureIndex(string name) => TextureIndices.TryGetValue(name, out int index) ? index : -1;
     public static int FeatureIndex(string name) => FeatureIndices.TryGetValue(name, out int index) ? index : -1;
     public static int ParameterWordOffset(int index) => checked(FeatureWordOffset + 4 * (index + 1));
     public static int FeatureWordOffset => (TextureRoleCount + 3) & ~3;
+    /// <summary>Second word of the four-word feature header; stores fixed-function state flags such as alpha-to-coverage.</summary>
+    public static int StateFlagsWordOffset => FeatureWordOffset + 1;
 
     /// <summary>Appends offsets for the fixed native Uber material ABI.</summary>
     public static void AppendShaderDefines(StringBuilder source)
     {
         source.Append("#define XR_UBER_FEATURES_WORD ").Append(FeatureWordOffset).AppendLine("u");
+        source.Append("#define XR_UBER_STATE_FLAGS_WORD ").Append(StateFlagsWordOffset).AppendLine("u");
+        source.Append("#define XR_UBER_STATE_ALPHA_TO_COVERAGE ").Append(AlphaToCoverageStateFlag).AppendLine("u");
         source.Append("#define XR_UBER_WORD_COUNT ").Append(Opaque.RowWordCount).AppendLine("u");
         AppendLayoutHash(source, "XR_UBER_OPAQUE_LAYOUT", Opaque.LayoutHash);
         AppendLayoutHash(source, "XR_UBER_MASKED_LAYOUT", Masked.LayoutHash);

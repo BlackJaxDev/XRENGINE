@@ -1,5 +1,6 @@
 using Silk.NET.Vulkan;
 using XREngine.Data.Geometry;
+using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -8,6 +9,7 @@ internal sealed partial class VulkanFrameLoop
 {
     private Queue<(BoundingRectangle Region, Action<ScreenshotReadbackResult> Callback)>? _compositedScreenshots;
     private Fence _pendingCompositedScreenshotFence;
+    private Semaphore[]? _compositedPresentSemaphores;
 
     internal bool TryQueueCompositedScreenshotReadback(
         BoundingRectangle region,
@@ -26,10 +28,10 @@ internal sealed partial class VulkanFrameLoop
         return true;
     }
 
-    private void CaptureCompositedScreenshotsBeforePresent(in VulkanFrameAttempt attempt)
+    private void CaptureCompositedScreenshotsBeforePresent(ref VulkanFrameAttempt attempt)
     {
-        // Recovery may retry presentation after a host-side wait error. The copy
-        // still owns the acquired image even though its request was dequeued.
+        // Recovery may retry presentation after a host-side wait error. Any legacy synchronous
+        // copy still owns the acquired image even though its request was dequeued.
         CompletePendingCompositedScreenshotCopy();
         if (_compositedScreenshots is not { Count: > 0 })
             return;
@@ -42,9 +44,6 @@ internal sealed partial class VulkanFrameLoop
             return;
         }
 
-        // The final timeline signal joins scene and UI submissions, including secondary queues.
-        // Do not consume the binary semaphore reserved for the subsequent WSI present.
-        WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, attempt.GraphicsSignalValue);
         BlitImageInfo source = new(
             images[attempt.ImageIndex],
             OutputRuntime.Desktop.ImageFormat,
@@ -55,12 +54,88 @@ internal sealed partial class VulkanFrameLoop
             AccessFlags.MemoryWriteBit | AccessFlags.MemoryReadBit,
             usage: ImageUsageFlags.ColorAttachmentBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.TransferDstBit);
 
+        // Fast asynchronous GPU-chained path: chain the swapchain-to-staging copy between the
+        // frame's submission signal semaphore and WSI present using one per-swapchain-image binary
+        // semaphore. Neither WaitForTimelineValue nor vkWaitForFences runs on the CPU, and
+        // vkQueuePresentKHR waits on the chained semaphore so swapchain ownership remains valid.
+        if (attempt.PresentSemaphore.Handle != 0 &&
+            TryEnsureCompositedPresentSemaphore(attempt.ImageIndex, images.Length, out Semaphore chainedSemaphore))
+        {
+            if (!_compositedScreenshots.TryDequeue(out var request))
+                return;
+
+            if (TryQueueScreenshotReadbackCore(
+                    request.Region,
+                    false,
+                    request.Callback,
+                    out string? failure,
+                    source,
+                    waitSemaphore: attempt.PresentSemaphore,
+                    signalSemaphore: chainedSemaphore))
+            {
+                attempt.CompositedScreenshotChainedPresentSemaphore = chainedSemaphore;
+                attempt.PresentSemaphore = chainedSemaphore;
+                attempt.ExpectedPresentWaitSemaphore = chainedSemaphore;
+            }
+            else
+            {
+                CompleteCompositedScreenshotFailure(request.Callback, failure ?? "Composited capture failed.");
+            }
+
+            if (_deviceLost)
+                throw new InvalidOperationException("The Vulkan device was lost during composited screenshot readback.");
+            return;
+        }
+
+        // Synchronous fallback when no binary present semaphore is available for GPU chaining.
+        WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, attempt.GraphicsSignalValue);
         while (_compositedScreenshots.TryDequeue(out var request))
         {
             if (!TryQueueScreenshotReadbackCore(request.Region, false, request.Callback, out string? failure, source))
                 CompleteCompositedScreenshotFailure(request.Callback, failure ?? "Composited capture failed.");
             if (_deviceLost)
                 throw new InvalidOperationException("The Vulkan device was lost during composited screenshot readback.");
+        }
+    }
+
+    private unsafe bool TryEnsureCompositedPresentSemaphore(uint imageIndex, int imageCount, out Semaphore semaphore)
+    {
+        semaphore = default;
+        if (Api is null || _deviceContext.Device.Handle == 0 || imageCount <= 0 || imageIndex >= (uint)imageCount)
+            return false;
+
+        if (_compositedPresentSemaphores is null || _compositedPresentSemaphores.Length < imageCount)
+        {
+            Semaphore[] resized = new Semaphore[imageCount];
+            if (_compositedPresentSemaphores is not null)
+                Array.Copy(_compositedPresentSemaphores, resized, _compositedPresentSemaphores.Length);
+            _compositedPresentSemaphores = resized;
+        }
+
+        if (_compositedPresentSemaphores[imageIndex].Handle == 0)
+        {
+            SemaphoreCreateInfo createInfo = new() { SType = StructureType.SemaphoreCreateInfo };
+            Result result = Api.CreateSemaphore(_deviceContext.Device, in createInfo, null, out Semaphore created);
+            if (result != Result.Success || created.Handle == 0)
+                return false;
+            _compositedPresentSemaphores[imageIndex] = created;
+        }
+
+        semaphore = _compositedPresentSemaphores[imageIndex];
+        return semaphore.Handle != 0;
+    }
+
+    private unsafe void DestroyCompositedPresentSemaphores()
+    {
+        Semaphore[]? semaphores = _compositedPresentSemaphores;
+        _compositedPresentSemaphores = null;
+        if (semaphores is null || Api is null || _deviceContext.Device.Handle == 0)
+            return;
+
+        for (int i = 0; i < semaphores.Length; i++)
+        {
+            if (semaphores[i].Handle != 0)
+                Api.DestroySemaphore(_deviceContext.Device, semaphores[i], null);
         }
     }
 

@@ -214,9 +214,12 @@ void main()
                     view.cameraPositionAndNear.xyz);
 #endif
 
-            // History applies to static meshlets only; skinned meshlets are never
-            // culled, so their history is not read or written.
+            // History applies to static meshlets only; skinned meshlets and portal sub-views
+            // with SkipHiZAndHistory are never culled by history and never write to it.
+            bool skipHiZAndHistory = (view.flags & XR_ADV_VIEW_SKIP_HIZ_AND_HISTORY) != 0u;
+            hiZAllowed = hiZAllowed && !skipHiZAndHistory;
             historyUsable =
+                !skipHiZAndHistory &&
                 producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
                 XR_ADV_MeshletHistoryAvailable(viewIndex) &&
                 meshletIndex < XR_ADV_MESHLET_HISTORY_MESHLET_CAPACITY;

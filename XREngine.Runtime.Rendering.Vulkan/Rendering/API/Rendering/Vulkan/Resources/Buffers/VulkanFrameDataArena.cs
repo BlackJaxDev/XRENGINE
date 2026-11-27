@@ -602,7 +602,8 @@ internal sealed partial class VulkanFrameDataArena
                     _usages[laneIndex],
                     _labels[laneIndex],
                     preferDeviceLocal: laneIndex == (int)EVulkanFrameDataLane.AdvancedVisibilityStorage ||
-                        (_preferDeviceLocalSceneStorage && laneIndex == (int)EVulkanFrameDataLane.AdvancedSceneStorage));
+                        (_preferDeviceLocalSceneStorage && laneIndex == (int)EVulkanFrameDataLane.AdvancedSceneStorage),
+                    preferHostCached: laneIndex == (int)EVulkanFrameDataLane.Readback);
                 if (chunk.AllocationLength > MaximumMappedBytes ||
                     actualMappedBytes > MaximumMappedBytes - chunk.AllocationLength ||
                     currentMappedBytes > MaximumMappedBytes - actualMappedBytes - chunk.AllocationLength)
@@ -641,9 +642,9 @@ internal sealed partial class VulkanFrameDataArena
         return true;
     }
 
-    private unsafe VulkanFrameDataChunk CreateChunk(ulong capacity, BufferUsageFlags usage, string label, bool preferDeviceLocal)
+    private unsafe VulkanFrameDataChunk CreateChunk(ulong capacity, BufferUsageFlags usage, string label, bool preferDeviceLocal, bool preferHostCached)
     {
-        if (!_backend.TryCreateChunk(capacity, usage, label, out Buffer buffer, out DeviceMemory memory, out void* pointer, out bool coherent, out ulong allocationLength, preferDeviceLocal) || allocationLength < capacity)
+        if (!_backend.TryCreateChunk(capacity, usage, label, out Buffer buffer, out DeviceMemory memory, out void* pointer, out bool coherent, out ulong allocationLength, preferDeviceLocal, preferHostCached) || allocationLength < capacity)
             throw new InvalidOperationException($"Failed to create mapped frame-data chunk '{label}'.");
         return new VulkanFrameDataChunk(buffer, memory, pointer, capacity, allocationLength, coherent);
     }

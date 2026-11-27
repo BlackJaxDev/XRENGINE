@@ -125,10 +125,46 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _isMouseDirectlyOver, value);
         }
 
-        public UIInteractableComponent? GamepadUpComponent { get; set; }
-        public UIInteractableComponent? GamepadDownComponent { get; set; }
-        public UIInteractableComponent? GamepadLeftComponent { get; set; }
-        public UIInteractableComponent? GamepadRightComponent { get; set; }
+        private bool _isGamepadSelected = false;
+        /// <summary>
+        /// Set when gamepad or directional navigation currently selects this component.
+        /// </summary>
+        public bool IsGamepadSelected
+        {
+            get => _isGamepadSelected;
+            set => SetField(ref _isGamepadSelected, value);
+        }
+
+        private UINavigationNodeFlow _navigationFlow = new();
+        /// <summary>
+        /// Editable per-element directional navigation rules and explicit links used by <see cref="UINavigationFlowMap"/>.
+        /// </summary>
+        public UINavigationNodeFlow NavigationFlow
+        {
+            get => _navigationFlow;
+            set => SetField(ref _navigationFlow, value ?? new UINavigationNodeFlow());
+        }
+
+        public UIInteractableComponent? GamepadUpComponent
+        {
+            get => NavigationFlow.Up.Target;
+            set => NavigationFlow.SetExplicitTarget(EUINavigationDirection.Up, value);
+        }
+        public UIInteractableComponent? GamepadDownComponent
+        {
+            get => NavigationFlow.Down.Target;
+            set => NavigationFlow.SetExplicitTarget(EUINavigationDirection.Down, value);
+        }
+        public UIInteractableComponent? GamepadLeftComponent
+        {
+            get => NavigationFlow.Left.Target;
+            set => NavigationFlow.SetExplicitTarget(EUINavigationDirection.Left, value);
+        }
+        public UIInteractableComponent? GamepadRightComponent
+        {
+            get => NavigationFlow.Right.Target;
+            set => NavigationFlow.SetExplicitTarget(EUINavigationDirection.Right, value);
+        }
         public RenderInfo[] RenderedObjects { get; }
 
         private bool _needsMouseMove = false;
@@ -235,6 +271,10 @@ namespace XREngine.Rendering.UI
                     if (IsMouseDirectlyOver)
                         OnMouseDirectOverlapEnter();
                     break;
+                case nameof(IsGamepadSelected):
+                    if (IsGamepadSelected)
+                        OnGamepadNavigateEnter();
+                    break;
                 case nameof(IsFocused):
                     if (IsFocused)
                         OnGotFocus();
@@ -256,6 +296,10 @@ namespace XREngine.Rendering.UI
                     case nameof(IsMouseDirectlyOver):
                         if (IsMouseDirectlyOver)
                             OnMouseDirectOverlapLeave();
+                        break;
+                    case nameof(IsGamepadSelected):
+                        if (IsGamepadSelected)
+                            OnGamepadNavigateLeave();
                         break;
                     case nameof(IsFocused):
                         if (IsFocused)

@@ -73,10 +73,13 @@ internal sealed class VulkanPreparedFrameRecording
         new byte[VulkanMeshOperationRequestQueue.Capacity];
     private BackendReadyCanonicalViewRecord[] _globalViews =
         new BackendReadyCanonicalViewRecord[RenderFrameViewSet.MaxViewCount];
+    private readonly AdvancedViewRecord[] _globalPortalViews =
+        new AdvancedViewRecord[AdvancedPortalSchedulerOptions.HardMaxTotalPortalViewsPerFrame];
     private BackendReadyCanonicalPassRecord[] _globalPasses = [];
     private AdvancedGlobalPassPublicationCoverage[] _globalPassCoverage = [];
     private BackendReadyDiagnosticReadbackRequest[] _globalDiagnostics = [];
     private int _globalViewCount;
+    private int _globalPortalViewCount;
     private int _globalPassCount;
     private int _globalPassCoverageCount;
     private int _globalDiagnosticCount;
@@ -138,10 +141,28 @@ internal sealed class VulkanPreparedFrameRecording
     internal FramePlan? FramePlan { get; private set; }
     internal VulkanPreparedFrameGlobalResourceSnapshot GlobalResources { get; private set; }
     internal ReadOnlySpan<BackendReadyCanonicalViewRecord> GlobalViews => _globalViews.AsSpan(0, _globalViewCount);
+    internal ReadOnlySpan<AdvancedViewRecord> GlobalPortalViews => _globalPortalViews.AsSpan(0, _globalPortalViewCount);
     internal ReadOnlySpan<BackendReadyCanonicalPassRecord> GlobalPasses => _globalPasses.AsSpan(0, _globalPassCount);
     internal ReadOnlySpan<AdvancedGlobalPassPublicationCoverage> GlobalPassCoverage
         => _globalPassCoverage.AsSpan(0, _globalPassCoverageCount);
     internal ReadOnlySpan<BackendReadyDiagnosticReadbackRequest> GlobalDiagnostics => _globalDiagnostics.AsSpan(0, _globalDiagnosticCount);
+
+    /// <summary>
+    /// Captures scheduled portal sub-views appended after <see cref="GlobalViews"/> in
+    /// <c>XR_ADV_Views</c> without heap allocation or widening <see cref="RenderFrameViewSet.MaxViewCount"/>.
+    /// </summary>
+    internal void CapturePortalViews(ReadOnlySpan<AdvancedViewRecord> portalViews)
+    {
+        if (IsFrozen)
+            throw new InvalidOperationException("Portal views must be captured before prepared-frame freeze.");
+        if (portalViews.Length > _globalPortalViews.Length)
+            throw new VulkanPlanPreconditionException(
+                $"Portal sub-view count {portalViews.Length} exceeds the maximum capacity {_globalPortalViews.Length}.");
+
+        if (!portalViews.IsEmpty)
+            portalViews.CopyTo(_globalPortalViews);
+        _globalPortalViewCount = portalViews.Length;
+    }
 
     internal void CaptureGlobalResources(BackendReadyFramePackage package, ulong packageGeneration)
         => CaptureGlobalResourcesCore(
@@ -747,7 +768,8 @@ internal sealed class VulkanPreparedFrameRecording
                     GlobalResources.DiagnosticCount,
                     out VulkanAdvancedScenePublicationUse use,
                     out failure,
-                    out reason))
+                    out reason,
+                    GlobalPortalViews))
             {
                 _canonicalPublicationNativeFailures[index] = failure;
                 _canonicalPublicationNativeFailureReasons[index] = reason;
@@ -858,7 +880,7 @@ internal sealed class VulkanPreparedFrameRecording
         }
         _canonicalPublicationLeaseCount = 0;
         _canonicalPublicationNativeUseCount = 0;
-        _globalViewCount = _globalPassCount = _globalPassCoverageCount =
+        _globalViewCount = _globalPortalViewCount = _globalPassCount = _globalPassCoverageCount =
             _globalDiagnosticCount = 0;
         GlobalResources = default;
 
@@ -922,7 +944,7 @@ internal sealed class VulkanPreparedFrameRecording
         }
         _canonicalPublicationLeaseCount = 0;
         _canonicalPublicationNativeUseCount = 0;
-        _globalViewCount = _globalPassCount = _globalPassCoverageCount =
+        _globalViewCount = _globalPortalViewCount = _globalPassCount = _globalPassCoverageCount =
             _globalDiagnosticCount = 0;
         GlobalResources = default;
 

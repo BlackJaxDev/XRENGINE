@@ -40,6 +40,10 @@ void main()
         discard;
     }
 
+    // Vulkan sets FrontFace.Clockwise for inverted-winding portal pipelines, so
+    // hardware gl_FrontFacing already reflects the true front face of the triangle.
+    bool frontFacing = gl_FrontFacing;
+
     bool selectionValid =
         VisibilitySelectionId != XR_ADV_VIS_INVALID;
     OutVisibilityIdentity =
@@ -48,7 +52,7 @@ void main()
         VisibilityProducer,
         VisibilityOrigin,
         false,
-        gl_FrontFacing,
+        frontFacing,
         VisibilityVelocityValid != 0u,
         VisibilityViewIndex,
         selectionValid,

@@ -992,8 +992,12 @@ public sealed partial class GPUPhysicsChainDispatcher
                 && input.FeatureMask == featureMask)
                 return true;
 
-            if (input.Sequence <= request.AcceptedInput.Sequence && request.AcceptedInput.HasData)
-                input.CopyDataFrom(request.AcceptedInput);
+            PhysicsChainRenderInputPacket latestCommitted =
+                request.SwappedInput.HasData && request.SwappedInput.Sequence >= request.AcceptedInput.Sequence
+                    ? request.SwappedInput
+                    : request.AcceptedInput;
+            if (input.Sequence <= latestCommitted.Sequence && latestCommitted.HasData)
+                input.CopyDataFrom(latestCommitted);
 
             input.Enabled = resolvedEnabled;
             input.Relevant = resolvedRelevant;
@@ -1025,6 +1029,28 @@ public sealed partial class GPUPhysicsChainDispatcher
         particleOffset = request.ParticleOffset;
         particleCount = request.Particles.Count > 0 ? request.Particles.Count : request.LastKnownParticleCount;
         return particleCount > 0;
+    }
+
+    /// <summary>
+    /// Latches the latest pending GPU physics-chain input packet for each registered chain in
+    /// <paramref name="world"/> during the serial buffer swap. The render thread then consumes
+    /// inputs from the same swap boundary as published render matrices and bone palettes.
+    /// </summary>
+    public void LatchSwapInputs(IRuntimeWorldContext? world)
+    {
+        if (!_enabled)
+            return;
+
+        lock (_registeredComponentsSync)
+        {
+            for (int i = 0; i < _registeredComponentSnapshot.Count; ++i)
+            {
+                GPUPhysicsChainRequest request = _registeredComponentSnapshot[i];
+                if (world is not null && !ReferenceEquals(request.Component.World, world))
+                    continue;
+                request.LatchPendingInputForSwap();
+            }
+        }
     }
 
     /// <summary>
@@ -3463,6 +3489,7 @@ public sealed partial class GPUPhysicsChainDispatcher
             {
                 GPUPhysicsChainRequest request = _registeredComponentSnapshot[i];
                 request.Component.ClearBatchedGpuDrivenBonePaletteSources();
+                request.ResetSwapLatch();
                 request.NeedsUpdate = false;
             }
         }
@@ -3570,15 +3597,44 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
     public int RequestId { get; } = Interlocked.Increment(ref s_nextRequestId);
     internal readonly object InputGate = new();
     internal PhysicsChainRenderInputPacket PendingInput = new();
+    internal PhysicsChainRenderInputPacket SwappedInput = new();
     internal PhysicsChainRenderInputPacket AcceptedInput = new();
     internal ulong NextInputSequence;
     internal ulong AcknowledgedInputSequence;
     private ulong _simulationInputSequence;
+    private bool _hasSwapLatchedInput;
     private bool _retryAcceptedInput;
     private int _residentInputsRetryPending;
     private ulong _reportedInvalidAffineInputSequence;
 
-    /// <summary>Accepts one complete pending input without exposing producer writes.</summary>
+    /// <summary>
+    /// Promotes the latest producer packet into the swap-latched bank at the serial buffer swap
+    /// boundary without allocating. Later simulation writes stay in <see cref="PendingInput"/>
+    /// until the next frame swap.
+    /// </summary>
+    internal void LatchPendingInputForSwap()
+    {
+        lock (InputGate)
+        {
+            _hasSwapLatchedInput = true;
+            ulong latestCommittedSequence = Math.Max(SwappedInput.Sequence, AcceptedInput.Sequence);
+            if (PendingInput.HasData && PendingInput.Sequence > latestCommittedSequence)
+            {
+                (PendingInput, SwappedInput) = (SwappedInput, PendingInput);
+                PendingInput.CopySchedulingFrom(SwappedInput);
+                NeedsUpdate = true;
+            }
+        }
+    }
+
+    /// <summary>Clears swap-latched consumption state when the dispatcher resets.</summary>
+    internal void ResetSwapLatch()
+    {
+        lock (InputGate)
+            _hasSwapLatchedInput = false;
+    }
+
+    /// <summary>Accepts one complete pending or swap-latched input without exposing producer writes.</summary>
     internal bool TryAcceptInput(out ulong rejectedSequence,
         out int invalidTransformIndex, out bool transformCountMismatch)
     {
@@ -3587,15 +3643,16 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
         transformCountMismatch = false;
         lock (InputGate)
         {
-            if (PendingInput.HasData && PendingInput.Sequence > AcceptedInput.Sequence &&
-                !PendingInput.AffineInputValid)
+            PhysicsChainRenderInputPacket sourceInput = _hasSwapLatchedInput ? SwappedInput : PendingInput;
+            if (sourceInput.HasData && sourceInput.Sequence > AcceptedInput.Sequence &&
+                !sourceInput.AffineInputValid)
             {
-                if (_reportedInvalidAffineInputSequence != PendingInput.Sequence)
+                if (_reportedInvalidAffineInputSequence != sourceInput.Sequence)
                 {
-                    _reportedInvalidAffineInputSequence = PendingInput.Sequence;
-                    rejectedSequence = PendingInput.Sequence;
-                    invalidTransformIndex = PendingInput.FirstInvalidAffineInputIndex;
-                    transformCountMismatch = PendingInput.Transforms.Length != PendingInput.Particles.Length;
+                    _reportedInvalidAffineInputSequence = sourceInput.Sequence;
+                    rejectedSequence = sourceInput.Sequence;
+                    invalidTransformIndex = sourceInput.FirstInvalidAffineInputIndex;
+                    transformCountMismatch = sourceInput.Transforms.Length != sourceInput.Particles.Length;
                 }
                 return false;
             }
@@ -3608,10 +3665,15 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
             if (!NeedsUpdate)
                 return false;
 
-            if (PendingInput.HasData && PendingInput.Sequence > AcceptedInput.Sequence)
+            if (sourceInput.HasData && sourceInput.Sequence > AcceptedInput.Sequence)
             {
-                (PendingInput, AcceptedInput) = (AcceptedInput, PendingInput);
-                PendingInput.CopySchedulingFrom(AcceptedInput);
+                if (_hasSwapLatchedInput)
+                    (SwappedInput, AcceptedInput) = (AcceptedInput, SwappedInput);
+                else
+                {
+                    (PendingInput, AcceptedInput) = (AcceptedInput, PendingInput);
+                    PendingInput.CopySchedulingFrom(AcceptedInput);
+                }
                 ApplyAcceptedInput();
             }
 
@@ -3626,7 +3688,8 @@ public partial class GPUPhysicsChainRequest(IPhysicsChainComputeSource component
         lock (InputGate)
         {
             AcknowledgedInputSequence = AcceptedInput.Sequence;
-            NeedsUpdate = PendingInput.Sequence > AcknowledgedInputSequence;
+            ulong nextAvailableSequence = _hasSwapLatchedInput ? SwappedInput.Sequence : PendingInput.Sequence;
+            NeedsUpdate = nextAvailableSequence > AcknowledgedInputSequence;
         }
     }
 

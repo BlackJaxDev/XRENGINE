@@ -436,7 +436,11 @@ namespace XREngine.Scene
             if (ShouldDeferAuxiliaryCaptures())
                 return;
 
-            int maximumCaptureWorkItems = Math.Max(1, MaximumCaptureWorkItemsPerFrame);
+            // During sequential probe-grid batch capture, run at most one face or IBL
+            // finalization per frame so GPU probe work does not spike interactive frame time.
+            int maximumCaptureWorkItems = LightProbeBatchCaptureActive
+                ? 1
+                : Math.Max(1, MaximumCaptureWorkItemsPerFrame);
             while (_captureWorkItemsExecutedThisFrame < maximumCaptureWorkItems && _captureWorkQueue.TryPeek(out _))
             {
                 if (_captureWorkItemsExecutedThisFrame > 0 &&
@@ -501,7 +505,9 @@ namespace XREngine.Scene
                                 }
                             }
                             CompletePendingCapture(item.Component);
-                            break;
+                            // Finalize submits irradiance and prefilter GPU convolution; stop here so it
+                            // never stacks on top of face renders in the same frame.
+                            return;
 
                         case ECaptureWorkType.FullCapture:
                             item.Component.CollectVisible();
@@ -809,12 +815,15 @@ namespace XREngine.Scene
         }
 
         /// <summary>
-        /// Gets whether scene capture work is pending. A capture camera does not use cascades, so the atlas planning
-        /// counts this work as a consumer of the primary directional shadow map. The test counts all pending capture
-        /// work, because it cannot read the shadow policy of a queued capture without an allocation.
+        /// Gets whether scene capture work is active or pending. A capture camera does not use
+        /// cascades, so directional atlas planning reserves the primary directional shadow map for
+        /// the entire capture or probe-grid batch instead of oscillating as individual face work
+        /// items are dequeued and re-queued between frames.
         /// </summary>
         private bool HasPendingShadowCaptureWork
-            => PendingCaptureWorkItemCount > 0;
+            => PendingCaptureWorkItemCount > 0 ||
+               PendingCaptureComponentCount > 0 ||
+               LightProbeBatchCaptureActive;
 
         /// <summary>
         /// Returns whether this collect pass collects the shadow views of <paramref name="light"/>. The same camera frusta

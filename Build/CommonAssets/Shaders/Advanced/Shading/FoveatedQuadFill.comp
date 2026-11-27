@@ -11,6 +11,7 @@
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2D VisibilityMetadata;
 XR_ADV_SHADING_IMAGE(rgba16f, 15) uniform image2D HDRSceneColor;
 XR_ADV_SHADING_IMAGE(rg16f, 16) uniform image2D Velocity;
 XR_ADV_SHADING_IMAGE(r8, 17) uniform image2D ReactiveMask;

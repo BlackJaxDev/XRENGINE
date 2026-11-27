@@ -142,10 +142,10 @@ internal sealed partial class ImportedTextureStreamingManager
             out hasPendingTransition);
 
     /// <summary>
-    /// Reads the base LOD bias and the current promotion-fade bias of a streamed texture. The
-    /// fade runs only on backends where <see cref="ShouldApplySamplerLodBiasPromotionFade"/> is
-    /// true, and it changes <see cref="XRTexture2D.LodBias"/> every frame without a new content
-    /// generation.
+    /// Reads the base LOD bias and the current promotion-fade bias of a streamed texture.
+    /// OpenGL applies the fade through <see cref="XRTexture2D.LodBias"/>; Vulkan reads this
+    /// bias into the per-frame Advanced encoded texture table so newly resident mips fade in
+    /// without recreating sampler objects.
     /// </summary>
     internal bool TryGetStreamingLodBias(
         XRTexture2D texture,
@@ -1194,8 +1194,7 @@ internal sealed partial class ImportedTextureStreamingManager
 
     private void UpdatePromotionFades(long frameId)
     {
-        if (!ShouldApplySamplerLodBiasPromotionFade())
-            return;
+        bool applySamplerLodBias = ShouldApplySamplerLodBiasPromotionFade();
 
         WeakReference<ImportedTextureStreamingRecord>[] refs = _registry.GetRecordReferencesSnapshot();
         for (int i = 0; i < refs.Length; i++)
@@ -1240,7 +1239,7 @@ internal sealed partial class ImportedTextureStreamingManager
                 Monitor.Exit(record.Sync);
             }
 
-            if (shouldApply && !NearlyEquals(texture.LodBias, targetLodBias))
+            if (applySamplerLodBias && shouldApply && !NearlyEquals(texture.LodBias, targetLodBias))
                 texture.LodBias = targetLodBias;
         }
     }
@@ -2457,10 +2456,13 @@ internal sealed partial class ImportedTextureStreamingManager
                         record.LastPressureDemotionFrameId = frameId;
                 }
 
-                if (texture is not null && ShouldApplySamplerLodBiasPromotionFade())
+                if (texture is not null)
                 {
+                    bool applySamplerLodBias = ShouldApplySamplerLodBiasPromotionFade();
                     float currentStreamingLodBias = Math.Max(0.0f, record.CurrentStreamingLodBias);
-                    record.BaseLodBias = textureLodBias - currentStreamingLodBias;
+                    record.BaseLodBias = applySamplerLodBias
+                        ? textureLodBias - currentStreamingLodBias
+                        : textureLodBias;
 
                     // The fade hides the change of mips on screen. A promotion that only an explicit
                     // request raised was not visible, so it shows the new mips at once. A caller that
@@ -2481,20 +2483,20 @@ internal sealed partial class ImportedTextureStreamingManager
                             record.PromotionFadeStartFrameId = frameId;
                             Volatile.Write(ref record.PromotionFadeEndFrameId, frameId + Volatile.Read(ref _activePromotionFadeFrames));
                             targetLodBias = record.BaseLodBias + startBias;
-                            shouldApplyLodBias = true;
+                            shouldApplyLodBias = applySamplerLodBias;
                         }
                         else
                         {
                             ClearPromotionFadeState(record);
                             targetLodBias = record.BaseLodBias;
-                            shouldApplyLodBias = true;
+                            shouldApplyLodBias = applySamplerLodBias;
                         }
                     }
                     else
                     {
                         ClearPromotionFadeState(record);
                         targetLodBias = record.BaseLodBias;
-                        shouldApplyLodBias = true;
+                        shouldApplyLodBias = applySamplerLodBias;
                     }
                 }
                 else

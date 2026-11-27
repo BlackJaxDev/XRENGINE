@@ -351,7 +351,7 @@ vec3 applyChainAngleLimit(
 // Gets the movement per step that applies during integration, before the pull.
 vec3 computeChainIntegrationForce(PerTreeParams tree)
 {
-    vec3 force = (tree.SolverFlags & CHAIN_SEGMENT_GRAVITY) != 0 ? vec3(0.0) : tree.Gravity;
+    vec3 force = (tree.SolverFlags & (CHAIN_SEGMENT_GRAVITY | CHAIN_REST_BIAS_GRAVITY)) != 0 ? vec3(0.0) : tree.Gravity;
     float gravityLengthSquared = dot(force, force);
     if (gravityLengthSquared > 1e-8)
     {
@@ -428,7 +428,7 @@ void stepChainParticle(
     ParticleState parent = Particles[parentIndex];
     vec4 parentTurn = readSegmentTurn(parent);
     bool followsParent = (flags & CHAIN_REST_FOLLOWS_PARENT) != 0;
-    bool tracksTurn = followsParent || (flags & CHAIN_SEGMENT_GRAVITY) != 0;
+    bool tracksTurn = followsParent || (flags & (CHAIN_SEGMENT_GRAVITY | CHAIN_REST_BIAS_GRAVITY)) != 0;
     mat3 parentBasis = mat3(decodePhysicsChainAffineInput(TransformMatrices[parentIndex]));
     vec3 unturnedRestOffset = parentBasis * particleStatic.TransformLocalPosition;
     vec3 turnedRestOffset = rotateByQuaternion(parentTurn, unturnedRestOffset);
@@ -458,9 +458,23 @@ void stepChainParticle(
 
     // Keep shape.
     vec3 restPosition = parent.Position + shapeRestOffset;
-    particle.Position += (restPosition - particle.Position) * (particleStatic.Elasticity * tree.DeltaTime);
-    if ((flags & CHAIN_SEGMENT_GRAVITY) != 0)
-        particle.Position += computeSegmentGravity(tree, readSegmentTurn(particle)) * (particleStatic.BoneLength * tree.DeltaTime);
+    if ((flags & CHAIN_REST_BIAS_GRAVITY) != 0)
+    {
+        vec3 segmentGravity = computeSegmentGravity(tree, readSegmentTurn(particle));
+        float gravityLength = length(segmentGravity);
+        if (gravityLength > 0.0)
+        {
+            vec3 gravityOffset = (segmentGravity / gravityLength) * particleStatic.BoneLength;
+            restPosition = parent.Position + mix(shapeRestOffset, gravityOffset, clamp(gravityLength, 0.0, 1.0));
+        }
+        particle.Position += (restPosition - particle.Position) * (particleStatic.Elasticity * tree.DeltaTime);
+    }
+    else
+    {
+        particle.Position += (restPosition - particle.Position) * (particleStatic.Elasticity * tree.DeltaTime);
+        if ((flags & CHAIN_SEGMENT_GRAVITY) != 0)
+            particle.Position += computeSegmentGravity(tree, readSegmentTurn(particle)) * (particleStatic.BoneLength * tree.DeltaTime);
+    }
 
     float stiffness = mix(1.0, particleStatic.Stiffness, tree.Weight);
     if (stiffness > 0.0)

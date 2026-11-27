@@ -11,8 +11,18 @@ public static class RuntimeVRIKCalibrator
     private const string VRIKCalibratorTypeName = "XREngine.Components.Animation.VRIKCalibrator";
     private const string VRIKSolverComponentTypeName = "XREngine.Components.Animation.VRIKSolverComponent";
 
+    private static IRuntimeVrikCalibrator? _registered;
     private static MethodInfo? _calibrateMethod;
 
+    /// <summary>
+    /// Registers the concrete VR IK calibrator implementation supplied by the
+    /// animation integration assembly so calibration avoids reflective lookup.
+    /// </summary>
+    public static void Register(IRuntimeVrikCalibrator calibrator)
+    {
+        ArgumentNullException.ThrowIfNull(calibrator);
+        Volatile.Write(ref _registered, calibrator);
+    }
 
     public static VrCalibrationResult Calibrate(
         object solver,
@@ -26,6 +36,18 @@ public static class RuntimeVRIKCalibrator
     {
         if (settings is null)
             return VrCalibrationResult.Failure("Calibration settings are unavailable.");
+        if (Volatile.Read(ref _registered) is { } registered)
+        {
+            return registered.Calibrate(
+                solver,
+                settings,
+                headTracker,
+                bodyTracker,
+                leftHandTracker,
+                rightHandTracker,
+                leftFootTracker,
+                rightFootTracker);
+        }
         MethodInfo? method = ResolveCalibrateMethod();
         if (method is null)
             return VrCalibrationResult.Failure("Unable to resolve the runtime VRIK calibrator.");
@@ -48,6 +70,8 @@ public static class RuntimeVRIKCalibrator
     {
         if (settings is null)
             return VrCalibrationResult.Failure("Calibration settings are unavailable.");
+        if (Volatile.Read(ref _registered) is { } registered)
+            return registered.CalibrateSnapshot(solver, settings, poses, headTiltToleranceDegrees);
         Type? type = ResolveRuntimeType(VRIKCalibratorTypeName);
         MethodInfo? method = type?.GetMethod("TryCalibrateSnapshot", BindingFlags.Public | BindingFlags.Static);
         if (method is null)

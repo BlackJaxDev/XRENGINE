@@ -27,9 +27,24 @@ public partial class AdvancedRenderPipeline
     private const ulong ShadingDiagnosticsOmittedFeatureBit = 1UL << 38;
     // The visibility selection image is not declared: a single-sample OpenXR eye output on
     // Vulkan without visibility debug output. It only feeds editor picking and the selection
-    // debug view, which eyes do not use. Bits 0-31 hold no other feature.
+    // debug view, which eyes do not use.
     private const ulong VisibilitySelectionOmittedFeatureBit = 1UL << 30;
+    // Bits 20..25 hold the active portal froxel view-slot budget (0..32) so froxel storage
+    // grows only when the scene registers portal or mirror surfaces.
+    private const int PortalFroxelSlotsFeatureShift = 20;
+    private const ulong PortalFroxelSlotsFeatureMask = 0x3FUL << PortalFroxelSlotsFeatureShift;
     public const string ExternalOutputResourceName = "$ExternalOutput";
+
+    /// <summary>Encodes the reserved portal froxel view-slot count into the profile feature mask.</summary>
+    internal static ulong EncodePortalFroxelSlotCount(uint portalSlotCount)
+        => (ulong)Math.Min(portalSlotCount, (uint)AdvancedPortalSchedulerOptions.HardMaxTotalPortalViewsPerFrame)
+            << PortalFroxelSlotsFeatureShift;
+
+    /// <summary>Decodes the reserved portal froxel view-slot count from <paramref name="profile"/>.</summary>
+    internal static uint DecodePortalFroxelSlotCount(RenderPipelineResourceProfile profile)
+        => Math.Min(
+            (uint)((profile.FeatureMask & PortalFroxelSlotsFeatureMask) >> PortalFroxelSlotsFeatureShift),
+            (uint)AdvancedPortalSchedulerOptions.HardMaxTotalPortalViewsPerFrame);
 
     /// <summary>
     /// True when the profile omits the visibility selection image. The visibility framebuffer
@@ -180,6 +195,10 @@ public partial class AdvancedRenderPipeline
             (EditorHighlightModule is not null && !UsesMinimalVisibilityOutput
                 ? EditorHighlightResourcesFeatureBit
                 : 0UL) |
+            (!UsesMinimalVisibilityOutput
+                ? EncodePortalFroxelSlotCount(_portalFroxelSlotBudget)
+                : 0UL) |
+            UiBackdropBlurResources.GetFormatFeatureBits(58) |
             BuildAmbientOcclusionFeatureMask(instance, viewport);
         return (ulong)visibilityFeatures |
             (ulong)reconstructionFeatures |
@@ -461,7 +480,8 @@ public partial class AdvancedRenderPipeline
                 EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8,
                 nearest: true);
         }
-        if (builder.Profile.Stereo)
+        bool tsrEdgeStencilSplit = TsrResolveForm == EAdvancedTsrResolveForm.EdgeStencilSplit;
+        if (tsrEdgeStencilSplit)
         {
             // Edge stencil split of the stereo TSR resolve (see TsrResolveForm).
             DeclareLatePostColor(builder, TsrEdgeMaskTextureName, internalSize, layers, EPixelInternalFormat.R8, EPixelFormat.Red, EPixelType.UnsignedByte, ESizedInternalFormat.R8);
@@ -509,6 +529,8 @@ public partial class AdvancedRenderPipeline
             .DependsOn(PostProcessOutputTextureName).Factory(CreateFinalPostProcessFBO).Add();
         DeclareAdvancedBloomFrameBuffers(builder, internalSize);
         DeclareAdvancedPostEffects(builder, internalSize);
+        if (AllowsScreenSpaceUi)
+            UiBackdropBlurResources.DeclareResources(builder, this);
         builder.FrameBuffer(HistoryCaptureFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
             .Color(0, HistoryColorTextureName).DepthStencil(HistoryDepthStencilTextureName).Factory(CreateHistoryCaptureFBO).Add();
@@ -530,6 +552,7 @@ public partial class AdvancedRenderPipeline
             DeclareLatePostDestination(builder, SmaaFBOName, SmaaOutputTextureName, windowSize, CreateSmaaFBO);
         }
         DeclareLatePostDestination(builder, TsrHistoryColorFBOName, TsrHistoryColorTextureName, windowSize, CreateTsrHistoryColorFBO);
+        DeclareLatePostDestination(builder, TsrOutputViewFBOName, TsrOutputTextureName, windowSize, CreateTsrOutputViewFBO);
         DeclareLatePostDestination(builder, TsrAccumulationFBOName, TsrAccumulationTextureName, windowSize, CreateTsrAccumulationFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataOutputFBOName, TsrHistoryMetadataOutputTextureName, windowSize, CreateTsrHistoryMetadataOutputFBO);
         DeclareLatePostDestination(builder, TsrHistoryMetadataFBOName, TsrHistoryMetadataTextureName, windowSize, CreateTsrHistoryMetadataFBO);
@@ -542,10 +565,13 @@ public partial class AdvancedRenderPipeline
             // run on stereo views, so stereo profiles skip the output-size target.
             DeclareLatePostColor(builder, VendorOutputTextureName, windowSize, 1u, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
             DeclareLatePostDestination(builder, VendorOutputFBOName, VendorOutputTextureName, windowSize, CreateVendorOutputFBO);
+        }
 
+        if (!tsrEdgeStencilSplit)
+        {
             var tsrFrameBuffer = builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
                 .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName)
-                .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName);
+                .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, AdvancedVisibilityResourceNames.Metadata);
             if (EditorHighlightModule is not null)
                 tsrFrameBuffer.DependsOn(EditorHighlightMaskTextureName);
             tsrFrameBuffer.IncrementalFactory(CreateTsrUpscaleFBOIncrementally).Add();
@@ -555,15 +581,15 @@ public partial class AdvancedRenderPipeline
         // Edge stencil split: the lean and the full resolve FBOs share the color targets and the
         // edge stencil. The mask and classify quads write the mask and the stencil.
         var edgeMaskQuad = builder.QuadMaterial(TsrEdgeMaskQuadFBOName).Lifetime(RenderResourceLifetime.Persistent)
-            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName);
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, AdvancedVisibilityResourceNames.Metadata);
         var splitFrameBuffer = builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName).Attachment(TsrEdgeStencilTextureName, TsrEdgeStencilAttachment)
-            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, TsrEdgeStencilTextureName);
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, AdvancedVisibilityResourceNames.Metadata, TsrEdgeStencilTextureName);
         var splitEdgeFrameBuffer = builder.FrameBuffer(TsrUpscaleEdgeFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment).Color(0, TsrOutputTextureName).Color(1, TsrHistoryMetadataOutputTextureName).Color(2, TsrAccumulationTextureName).Attachment(TsrEdgeStencilTextureName, TsrEdgeStencilAttachment)
-            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, TsrEdgeStencilTextureName);
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, AdvancedVisibilityResourceNames.Metadata, TsrEdgeStencilTextureName);
         var edgeClassifyQuad = builder.QuadMaterial(TsrEdgeClassifyQuadFBOName).Lifetime(RenderResourceLifetime.Persistent)
-            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, TsrEdgeMaskTextureName);
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, TsrHistoryMetadataTextureName, AdvancedVisibilityResourceNames.Metadata, TsrEdgeMaskTextureName);
         if (EditorHighlightModule is not null)
         {
             // Every pass built from the TSR shader samples the editor highlight mask.

@@ -52,6 +52,15 @@ public static class XREngineEnvironmentVariables
     public const string EditorSessionName = "XRE_EDITOR_SESSION_NAME";
     public const string EditorSessionRoot = "XRE_EDITOR_SESSION_ROOT";
     public const string FfmpegPath = "XRE_FFMPEG_PATH";
+    public const string RecordVideoOnStartup = "XRE_RECORD_VIDEO_ON_STARTUP";
+    public const string RecordVideoBackend = "XRE_RECORD_VIDEO_BACKEND";
+    public const string RecordVideoSeconds = "XRE_RECORD_VIDEO_SECONDS";
+    public const string RecordVideoFps = "XRE_RECORD_VIDEO_FPS";
+    public const string RecordVideoMaxWidth = "XRE_RECORD_VIDEO_MAX_WIDTH";
+    public const string RecordVideoMaxHeight = "XRE_RECORD_VIDEO_MAX_HEIGHT";
+    public const string RecordVideoCrf = "XRE_RECORD_VIDEO_CRF";
+    public const string RecordVideoMaxBitrate = "XRE_RECORD_VIDEO_MAX_BITRATE";
+    public const string RecordVideoEncoder = "XRE_RECORD_VIDEO_ENCODER";
     public const string ProfileDisableForwardDepthPrePass = "XRE_PROFILE_DISABLE_FORWARD_DEPTH_PREPASS";
     public const string VrClientGameName = "XRE_VRCLIENT_GAMENAME";
     public const string NetworkingPoseRole = "XRE_NETWORKING_POSE_ROLE";
@@ -95,6 +104,8 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestVrRvcPipelineMode = "XRE_UNIT_TEST_VR_RVC_PIPELINE_MODE";
     /// <summary>Overrides the unit-test VR RvcQuadView setting (true or false).</summary>
     public const string UnitTestVrRvcQuadView = "XRE_UNIT_TEST_VR_RVC_QUAD_VIEW";
+    /// <summary>Enables RVC cross-eye stereo shadelet reuse when set to 1/true.</summary>
+    public const string RvcStereoReuse = "XRE_RVC_STEREO_REUSE";
     public const string UnitTestVrFoveationMode = "XRE_UNIT_TEST_VR_FOVEATION_MODE";
     public const string UnitTestVrFoveationQualityPreset = "XRE_UNIT_TEST_VR_FOVEATION_QUALITY_PRESET";
     public const string UnitTestVrFoveationRequireRequested = "XRE_UNIT_TEST_VR_FOVEATION_REQUIRE_REQUESTED";
@@ -350,6 +361,8 @@ public static class XREngineEnvironmentVariables
     public const string DebugCameraInput = "XRE_DEBUG_CAMERA_INPUT";
     public const string CameraInputDiag = "XRE_CAMERA_INPUT_DIAG";
     public const string FpsTextBatchedDebugMode = "XRE_FPS_TEXT_BATCHED_DEBUG_MODE";
+    /// <summary>Overrides the GPU texture format for the on-demand UI backdrop blur pyramid (Rgba8, Rgba16f, R11fG11fB10f).</summary>
+    public const string UiBackdropBlurFormat = "XRE_UI_BACKDROP_BLUR_FORMAT";
     public const string GlslDceIncludes = "XRE_GLSL_DCE_INCLUDES";
     public const string BloomDebugSolid = "XRE_BLOOM_DEBUG_SOLID";
     public const string BloomDiag = "XRE_BLOOM_DIAG";

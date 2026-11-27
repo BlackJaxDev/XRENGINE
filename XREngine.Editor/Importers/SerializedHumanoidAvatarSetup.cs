@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using System.Security.Cryptography;
 using XREngine.Components.Animation;
 using XREngine.Components.Scene.Mesh;
@@ -103,9 +104,10 @@ public static class SerializedHumanoidAvatarSetup
         string? sourceModelSha256,
         out int mappedRoleCount)
     {
-        Dictionary<EHumanoidAvatarBoneRole, SceneNode?> explicitMappings = !string.IsNullOrWhiteSpace(sourceModelPath)
-            ? ReadMetaBoneMappings(avatarRoot, sourceModelPath + ".meta")
-            : [];
+        (Dictionary<EHumanoidAvatarBoneRole, SceneNode?> explicitMappings,
+            Dictionary<EHumanoidAvatarBoneRole, MetaHumanLimit> customLimits) = !string.IsNullOrWhiteSpace(sourceModelPath)
+            ? ReadMetaHumanDescription(avatarRoot, sourceModelPath + ".meta")
+            : ([], []);
         mappedRoleCount = explicitMappings.Count;
 
         // The humanoid captures each bone bind pose into its avatar definition, and a cooked pak load writes those
@@ -135,6 +137,8 @@ public static class SerializedHumanoidAvatarSetup
         humanoid.InitializeSceneNodeBindings();
         if (explicitMappings.Count > 0)
             humanoid.SetAvatarBoneMappings(explicitMappings, lockEditorCorrections: true);
+        if (customLimits.Count > 0)
+            ApplyMetaMuscleLimits(humanoid, customLimits);
 
         if (!humanoid.ConfirmAvatarDefinition(out string confirmDiagnostic))
             throw new InvalidOperationException(
@@ -191,28 +195,71 @@ public static class SerializedHumanoidAvatarSetup
         return string.Join("; ", parts);
     }
 
+    private readonly record struct MetaHumanLimit(Vector3 MinDegrees, Vector3 MaxDegrees);
+
     /// <summary>
-    /// Reads the Unity humanoid bone list (<c>ModelImporter.humanDescription.human</c>) of a model import settings file
-    /// and returns the node of each role whose bone name exists under <paramref name="avatarRoot"/>.
+    /// Reads modified Unity humanoid bone rotation limits from the avatar's <c>.fbx.meta</c> file and applies them
+    /// to <see cref="HumanoidSettings.MuscleRotationDegRanges"/>. Call before confirming or initializing the avatar
+    /// definition so the compiled definition captures the imported ranges. Returns the number of bones whose modified
+    /// limits were applied.
     /// </summary>
-    private static Dictionary<EHumanoidAvatarBoneRole, SceneNode?> ReadMetaBoneMappings(SceneNode avatarRoot, string metaPath)
+    public static int ApplyMetaMuscleLimits(HumanoidComponent humanoid, string? sourceModelPath = null)
+    {
+        ArgumentNullException.ThrowIfNull(humanoid);
+
+        string? resolvedPath = !string.IsNullOrWhiteSpace(sourceModelPath)
+            ? sourceModelPath
+            : humanoid.SceneNode is SceneNode root
+                ? FindSourceModelPath(root)
+                : null;
+        if (string.IsNullOrWhiteSpace(resolvedPath))
+            return 0;
+
+        Dictionary<EHumanoidAvatarBoneRole, MetaHumanLimit> customLimits = ReadMetaCustomLimits(resolvedPath + ".meta");
+        if (customLimits.Count == 0)
+            return 0;
+
+        ApplyMetaMuscleLimits(humanoid, customLimits);
+        return customLimits.Count;
+    }
+
+    private static Dictionary<EHumanoidAvatarBoneRole, MetaHumanLimit> ReadMetaCustomLimits(string metaPath)
+    {
+        Dictionary<EHumanoidAvatarBoneRole, MetaHumanLimit> customLimits = [];
+        if (TryLoadHumanSequence(metaPath) is not YamlSequenceNode humanSequence)
+            return customLimits;
+
+        foreach (YamlNode item in humanSequence.Children)
+        {
+            if (item is not YamlMappingNode entry)
+                continue;
+
+            string? humanName = (TryGetYamlChild(entry, "humanName") as YamlScalarNode)?.Value;
+            if (string.IsNullOrWhiteSpace(humanName))
+                continue;
+
+            string normalizedRoleName = humanName.Replace(" ", string.Empty, StringComparison.Ordinal);
+            if (!Enum.TryParse(normalizedRoleName, ignoreCase: true, out EHumanoidAvatarBoneRole role))
+                continue;
+
+            if (TryReadModifiedLimit(entry, out MetaHumanLimit limit))
+                customLimits[role] = limit;
+        }
+
+        return customLimits;
+    }
+
+    /// <summary>
+    /// Reads the Unity humanoid bone list (<c>ModelImporter.humanDescription.human</c>) from a model import settings
+    /// file and returns the node mappings and any modified per-bone rotation limits in degrees.
+    /// </summary>
+    private static (Dictionary<EHumanoidAvatarBoneRole, SceneNode?> Mappings, Dictionary<EHumanoidAvatarBoneRole, MetaHumanLimit> CustomLimits)
+        ReadMetaHumanDescription(SceneNode avatarRoot, string metaPath)
     {
         Dictionary<EHumanoidAvatarBoneRole, SceneNode?> mappings = [];
-        if (!File.Exists(metaPath))
-            return mappings;
-
-        YamlStream yaml = new();
-        using (StreamReader reader = new(metaPath))
-            yaml.Load(reader);
-
-        if (yaml.Documents.Count == 0
-            || yaml.Documents[0].RootNode is not YamlMappingNode root
-            || TryGetYamlChild(root, "ModelImporter") is not YamlMappingNode importer
-            || TryGetYamlChild(importer, "humanDescription") is not YamlMappingNode humanDescription
-            || TryGetYamlChild(humanDescription, "human") is not YamlSequenceNode humanSequence)
-        {
-            return mappings;
-        }
+        Dictionary<EHumanoidAvatarBoneRole, MetaHumanLimit> customLimits = [];
+        if (TryLoadHumanSequence(metaPath) is not YamlSequenceNode humanSequence)
+            return (mappings, customLimits);
 
         Dictionary<string, SceneNode> nodesByName = new(StringComparer.Ordinal);
         avatarRoot.IterateHierarchy(node =>
@@ -237,9 +284,202 @@ public static class SerializedHumanoidAvatarSetup
 
             if (nodesByName.TryGetValue(boneName, out SceneNode? targetNode))
                 mappings[role] = targetNode;
+
+            if (TryReadModifiedLimit(entry, out MetaHumanLimit limit))
+                customLimits[role] = limit;
         }
 
-        return mappings;
+        return (mappings, customLimits);
+    }
+
+    private static YamlSequenceNode? TryLoadHumanSequence(string metaPath)
+    {
+        if (!File.Exists(metaPath))
+            return null;
+
+        YamlStream yaml = new();
+        // Unity .meta files can contain unquoted '#' characters inside names such as material labels.
+        string sanitizedYaml = SerializedYamlPlainScalars.QuoteValuesWithHash(File.ReadAllText(metaPath));
+        using (StringReader reader = new(sanitizedYaml))
+            yaml.Load(reader);
+
+        if (yaml.Documents.Count == 0
+            || yaml.Documents[0].RootNode is not YamlMappingNode root
+            || TryGetYamlChild(root, "ModelImporter") is not YamlMappingNode importer
+            || TryGetYamlChild(importer, "humanDescription") is not YamlMappingNode humanDescription
+            || TryGetYamlChild(humanDescription, "human") is not YamlSequenceNode humanSequence)
+        {
+            return null;
+        }
+
+        return humanSequence;
+    }
+
+    /// <summary>
+    /// Applies modified Unity <c>HumanLimit</c> degree bounds onto <see cref="HumanoidSettings.MuscleRotationDegRanges"/>
+    /// before avatar confirmation compiles and persists those limits into the avatar definition.
+    /// </summary>
+    private static void ApplyMetaMuscleLimits(
+        HumanoidComponent humanoid,
+        Dictionary<EHumanoidAvatarBoneRole, MetaHumanLimit> customLimits)
+    {
+        foreach ((EHumanoidAvatarBoneRole role, MetaHumanLimit limit) in customLimits)
+        {
+            (EHumanoidValue? twist, EHumanoidValue? swing1, EHumanoidValue? swing2) = GetUnityHumanLimitMuscles(role);
+            ApplyAxisMuscleLimit(humanoid.Settings, twist, limit.MinDegrees.X, limit.MaxDegrees.X);
+            ApplyAxisMuscleLimit(humanoid.Settings, swing1, limit.MinDegrees.Y, limit.MaxDegrees.Y);
+            ApplyAxisMuscleLimit(humanoid.Settings, swing2, limit.MinDegrees.Z, limit.MaxDegrees.Z);
+        }
+    }
+
+    private static void ApplyAxisMuscleLimit(
+        HumanoidSettings settings,
+        EHumanoidValue? muscle,
+        float minDegrees,
+        float maxDegrees)
+    {
+        if (!muscle.HasValue || !float.IsFinite(minDegrees) || !float.IsFinite(maxDegrees) || minDegrees > maxDegrees)
+            return;
+
+        // Preserve each channel's existing sign orientation in HumanoidSettings. Some limb channels store an inverted
+        // (positive, negative) range so normalized muscle inputs rotate in the engine's canonical direction.
+        Vector2 defaultRange = settings.GetResolvedMuscleRotationDegRange(muscle.Value);
+        bool invertedSign = defaultRange.X > 0.0f && defaultRange.Y < 0.0f;
+        Vector2 resolvedRange = invertedSign
+            ? new Vector2(-minDegrees, -maxDegrees)
+            : new Vector2(minDegrees, maxDegrees);
+        settings.SetMuscleRotationDegRange(muscle.Value, resolvedRange);
+
+        // Keep the explicit eye-range inspector properties aligned with the muscle override map.
+        switch (muscle.Value)
+        {
+            case EHumanoidValue.LeftEyeDownUp:
+                settings.LeftEyeDownUpRange = resolvedRange;
+                break;
+            case EHumanoidValue.LeftEyeInOut:
+                settings.LeftEyeInOutRange = resolvedRange;
+                break;
+            case EHumanoidValue.RightEyeDownUp:
+                settings.RightEyeDownUpRange = resolvedRange;
+                break;
+            case EHumanoidValue.RightEyeInOut:
+                settings.RightEyeInOutRange = resolvedRange;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Maps a Unity humanoid bone role's <c>HumanLimit</c> axes (<c>x</c> twist, <c>y</c> swing1, <c>z</c> swing2) to
+    /// the corresponding <see cref="EHumanoidValue"/> muscle channels.
+    /// </summary>
+    private static (EHumanoidValue? Twist, EHumanoidValue? Swing1, EHumanoidValue? Swing2) GetUnityHumanLimitMuscles(
+        EHumanoidAvatarBoneRole role)
+        => role switch
+        {
+            EHumanoidAvatarBoneRole.LeftEye => (null, EHumanoidValue.LeftEyeDownUp, EHumanoidValue.LeftEyeInOut),
+            EHumanoidAvatarBoneRole.RightEye => (null, EHumanoidValue.RightEyeDownUp, EHumanoidValue.RightEyeInOut),
+            EHumanoidAvatarBoneRole.Jaw => (null, EHumanoidValue.JawClose, EHumanoidValue.JawLeftRight),
+            EHumanoidAvatarBoneRole.Spine => (EHumanoidValue.SpineTwistLeftRight, EHumanoidValue.SpineLeftRight, EHumanoidValue.SpineFrontBack),
+            EHumanoidAvatarBoneRole.Chest => (EHumanoidValue.ChestTwistLeftRight, EHumanoidValue.ChestLeftRight, EHumanoidValue.ChestFrontBack),
+            EHumanoidAvatarBoneRole.UpperChest => (EHumanoidValue.UpperChestTwistLeftRight, EHumanoidValue.UpperChestLeftRight, EHumanoidValue.UpperChestFrontBack),
+            EHumanoidAvatarBoneRole.Neck => (EHumanoidValue.NeckTurnLeftRight, EHumanoidValue.NeckTiltLeftRight, EHumanoidValue.NeckNodDownUp),
+            EHumanoidAvatarBoneRole.Head => (EHumanoidValue.HeadTurnLeftRight, EHumanoidValue.HeadTiltLeftRight, EHumanoidValue.HeadNodDownUp),
+            EHumanoidAvatarBoneRole.LeftShoulder => (null, EHumanoidValue.LeftShoulderFrontBack, EHumanoidValue.LeftShoulderDownUp),
+            EHumanoidAvatarBoneRole.RightShoulder => (null, EHumanoidValue.RightShoulderFrontBack, EHumanoidValue.RightShoulderDownUp),
+            EHumanoidAvatarBoneRole.LeftUpperArm => (EHumanoidValue.LeftArmTwistInOut, EHumanoidValue.LeftArmFrontBack, EHumanoidValue.LeftArmDownUp),
+            EHumanoidAvatarBoneRole.RightUpperArm => (EHumanoidValue.RightArmTwistInOut, EHumanoidValue.RightArmFrontBack, EHumanoidValue.RightArmDownUp),
+            EHumanoidAvatarBoneRole.LeftLowerArm => (EHumanoidValue.LeftForearmTwistInOut, null, EHumanoidValue.LeftForearmStretch),
+            EHumanoidAvatarBoneRole.RightLowerArm => (EHumanoidValue.RightForearmTwistInOut, null, EHumanoidValue.RightForearmStretch),
+            EHumanoidAvatarBoneRole.LeftHand => (null, EHumanoidValue.LeftHandInOut, EHumanoidValue.LeftHandDownUp),
+            EHumanoidAvatarBoneRole.RightHand => (null, EHumanoidValue.RightHandInOut, EHumanoidValue.RightHandDownUp),
+            EHumanoidAvatarBoneRole.LeftUpperLeg => (EHumanoidValue.LeftUpperLegTwistInOut, EHumanoidValue.LeftUpperLegInOut, EHumanoidValue.LeftUpperLegFrontBack),
+            EHumanoidAvatarBoneRole.RightUpperLeg => (EHumanoidValue.RightUpperLegTwistInOut, EHumanoidValue.RightUpperLegInOut, EHumanoidValue.RightUpperLegFrontBack),
+            EHumanoidAvatarBoneRole.LeftLowerLeg => (EHumanoidValue.LeftLowerLegTwistInOut, null, EHumanoidValue.LeftLowerLegStretch),
+            EHumanoidAvatarBoneRole.RightLowerLeg => (EHumanoidValue.RightLowerLegTwistInOut, null, EHumanoidValue.RightLowerLegStretch),
+            EHumanoidAvatarBoneRole.LeftFoot => (EHumanoidValue.LeftFootTwistInOut, null, EHumanoidValue.LeftFootUpDown),
+            EHumanoidAvatarBoneRole.RightFoot => (EHumanoidValue.RightFootTwistInOut, null, EHumanoidValue.RightFootUpDown),
+            EHumanoidAvatarBoneRole.LeftToes => (null, null, EHumanoidValue.LeftToesUpDown),
+            EHumanoidAvatarBoneRole.RightToes => (null, null, EHumanoidValue.RightToesUpDown),
+            EHumanoidAvatarBoneRole.LeftThumbProximal => (null, EHumanoidValue.LeftHandThumbSpread, EHumanoidValue.LeftHandThumb1Stretched),
+            EHumanoidAvatarBoneRole.LeftThumbIntermediate => (null, null, EHumanoidValue.LeftHandThumb2Stretched),
+            EHumanoidAvatarBoneRole.LeftThumbDistal => (null, null, EHumanoidValue.LeftHandThumb3Stretched),
+            EHumanoidAvatarBoneRole.LeftIndexProximal => (null, EHumanoidValue.LeftHandIndexSpread, EHumanoidValue.LeftHandIndex1Stretched),
+            EHumanoidAvatarBoneRole.LeftIndexIntermediate => (null, null, EHumanoidValue.LeftHandIndex2Stretched),
+            EHumanoidAvatarBoneRole.LeftIndexDistal => (null, null, EHumanoidValue.LeftHandIndex3Stretched),
+            EHumanoidAvatarBoneRole.LeftMiddleProximal => (null, EHumanoidValue.LeftHandMiddleSpread, EHumanoidValue.LeftHandMiddle1Stretched),
+            EHumanoidAvatarBoneRole.LeftMiddleIntermediate => (null, null, EHumanoidValue.LeftHandMiddle2Stretched),
+            EHumanoidAvatarBoneRole.LeftMiddleDistal => (null, null, EHumanoidValue.LeftHandMiddle3Stretched),
+            EHumanoidAvatarBoneRole.LeftRingProximal => (null, EHumanoidValue.LeftHandRingSpread, EHumanoidValue.LeftHandRing1Stretched),
+            EHumanoidAvatarBoneRole.LeftRingIntermediate => (null, null, EHumanoidValue.LeftHandRing2Stretched),
+            EHumanoidAvatarBoneRole.LeftRingDistal => (null, null, EHumanoidValue.LeftHandRing3Stretched),
+            EHumanoidAvatarBoneRole.LeftLittleProximal => (null, EHumanoidValue.LeftHandLittleSpread, EHumanoidValue.LeftHandLittle1Stretched),
+            EHumanoidAvatarBoneRole.LeftLittleIntermediate => (null, null, EHumanoidValue.LeftHandLittle2Stretched),
+            EHumanoidAvatarBoneRole.LeftLittleDistal => (null, null, EHumanoidValue.LeftHandLittle3Stretched),
+            EHumanoidAvatarBoneRole.RightThumbProximal => (null, EHumanoidValue.RightHandThumbSpread, EHumanoidValue.RightHandThumb1Stretched),
+            EHumanoidAvatarBoneRole.RightThumbIntermediate => (null, null, EHumanoidValue.RightHandThumb2Stretched),
+            EHumanoidAvatarBoneRole.RightThumbDistal => (null, null, EHumanoidValue.RightHandThumb3Stretched),
+            EHumanoidAvatarBoneRole.RightIndexProximal => (null, EHumanoidValue.RightHandIndexSpread, EHumanoidValue.RightHandIndex1Stretched),
+            EHumanoidAvatarBoneRole.RightIndexIntermediate => (null, null, EHumanoidValue.RightHandIndex2Stretched),
+            EHumanoidAvatarBoneRole.RightIndexDistal => (null, null, EHumanoidValue.RightHandIndex3Stretched),
+            EHumanoidAvatarBoneRole.RightMiddleProximal => (null, EHumanoidValue.RightHandMiddleSpread, EHumanoidValue.RightHandMiddle1Stretched),
+            EHumanoidAvatarBoneRole.RightMiddleIntermediate => (null, null, EHumanoidValue.RightHandMiddle2Stretched),
+            EHumanoidAvatarBoneRole.RightMiddleDistal => (null, null, EHumanoidValue.RightHandMiddle3Stretched),
+            EHumanoidAvatarBoneRole.RightRingProximal => (null, EHumanoidValue.RightHandRingSpread, EHumanoidValue.RightHandRing1Stretched),
+            EHumanoidAvatarBoneRole.RightRingIntermediate => (null, null, EHumanoidValue.RightHandRing2Stretched),
+            EHumanoidAvatarBoneRole.RightRingDistal => (null, null, EHumanoidValue.RightHandRing3Stretched),
+            EHumanoidAvatarBoneRole.RightLittleProximal => (null, EHumanoidValue.RightHandLittleSpread, EHumanoidValue.RightHandLittle1Stretched),
+            EHumanoidAvatarBoneRole.RightLittleIntermediate => (null, null, EHumanoidValue.RightHandLittle2Stretched),
+            EHumanoidAvatarBoneRole.RightLittleDistal => (null, null, EHumanoidValue.RightHandLittle3Stretched),
+            _ => (null, null, null),
+        };
+
+    private static bool TryReadModifiedLimit(YamlMappingNode boneEntry, out MetaHumanLimit limit)
+    {
+        limit = default;
+        if (TryGetYamlChild(boneEntry, "limit") is not YamlMappingNode limitMap)
+            return false;
+
+        string? modifiedText = (TryGetYamlChild(limitMap, "modified") as YamlScalarNode)?.Value;
+        if (!int.TryParse(modifiedText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int modified)
+            || modified == 0)
+            return false;
+
+        if (!TryReadYamlVector3(limitMap, "min", out Vector3 minDegrees)
+            || !TryReadYamlVector3(limitMap, "max", out Vector3 maxDegrees))
+            return false;
+
+        if (!float.IsFinite(minDegrees.X) || !float.IsFinite(minDegrees.Y) || !float.IsFinite(minDegrees.Z)
+            || !float.IsFinite(maxDegrees.X) || !float.IsFinite(maxDegrees.Y) || !float.IsFinite(maxDegrees.Z)
+            || minDegrees.X > maxDegrees.X
+            || minDegrees.Y > maxDegrees.Y
+            || minDegrees.Z > maxDegrees.Z)
+            return false;
+
+        limit = new MetaHumanLimit(minDegrees, maxDegrees);
+        return true;
+    }
+
+    private static bool TryReadYamlVector3(YamlMappingNode parent, string key, out Vector3 value)
+    {
+        value = Vector3.Zero;
+        if (TryGetYamlChild(parent, key) is not YamlMappingNode vectorMap)
+            return false;
+
+        if (!TryReadYamlFloat(vectorMap, "x", out float x)
+            || !TryReadYamlFloat(vectorMap, "y", out float y)
+            || !TryReadYamlFloat(vectorMap, "z", out float z))
+            return false;
+
+        value = new Vector3(x, y, z);
+        return true;
+    }
+
+    private static bool TryReadYamlFloat(YamlMappingNode mapping, string key, out float value)
+    {
+        value = 0.0f;
+        string? text = (TryGetYamlChild(mapping, key) as YamlScalarNode)?.Value;
+        return !string.IsNullOrWhiteSpace(text)
+            && float.TryParse(text, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out value);
     }
 
     private static YamlNode? TryGetYamlChild(YamlMappingNode mapping, string key)

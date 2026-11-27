@@ -649,6 +649,8 @@ public sealed partial class XRRenderPipelineInstance
         FinalOutput = null;
         EffectiveOutputHDRThisFrame = null;
         EffectiveAntiAliasingModeThisFrame = null;
+        EffectiveAntiAliasingFilterModeThisFrame = null;
+        EffectiveAntiAliasingSharpnessThisFrame = null;
         EffectiveMsaaSampleCountThisFrame = null;
         EffectiveTsrRenderScaleThisFrame = null;
         ForwardContactPrePassAvailableThisFrame = false;

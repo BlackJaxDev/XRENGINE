@@ -37,6 +37,14 @@ layout(std430, binding = 77) readonly buffer XRAdvancedStereoViewMasks { uint ma
 layout(location = 0) in vec3 Position;
 layout(location = 1) in vec2 TexCoord0;
 
+#if defined(XR_ADV_VISIBILITY_CLIP_PLANE)
+out gl_PerVertex
+{
+    vec4 gl_Position;
+    float gl_ClipDistance[1];
+};
+#endif
+
 // Opaque visibility programs define XR_ADV_VISIBILITY_IDENTITY_ONLY. Their
 // fragment stage reads only the flat identity values, so this stage does not
 // write the interpolated coverage attributes. Masked, fragment-depth and decal
@@ -94,6 +102,9 @@ uint XR_ADV_VisibilityPayloadIndex()
 void XR_ADV_RejectVisibilityVertex()
 {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+#if defined(XR_ADV_VISIBILITY_CLIP_PLANE)
+    gl_ClipDistance[0] = -1.0;
+#endif
     VisibilityDrawIndex = XR_ADV_VIS_INVALID;
     VisibilitySelectionId = XR_ADV_VIS_INVALID;
     VisibilityProducer = XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED;
@@ -116,9 +127,11 @@ void XR_ADV_RejectVisibilityVertex()
 void main()
 {
 #if defined(XR_ADV_MULTIVIEW_RASTER)
-    // Each indirect stream belongs to one eye. Multiview broadcasts a draw;
-    // suppress other hardware views before fetching payloads or writing counters.
-    if (uint(gl_ViewIndex) != XR_ADV_VisibilityRasterPush.viewIndex)
+    // Each indirect stream belongs to one eye (or a portal sub-view owned by that eye).
+    // Multiview broadcasts a draw into hardware layer gl_ViewIndex, which equals the owning
+    // primary view index (never view.outputLayer, which is 0 for per-eye OpenXR swapchains).
+    uint expectedLayer = XR_ADV_ViewMaskIndex(XR_ADV_VisibilityRasterPush.viewIndex);
+    if (uint(gl_ViewIndex) != expectedLayer)
     {
         XR_ADV_RejectVisibilityVertex();
         return;
@@ -331,6 +344,11 @@ void main()
         previousTransformRecord.world;
     gl_Position =
         worldPosition * viewRecord.viewProjectionJittered;
+#if defined(XR_ADV_VISIBILITY_CLIP_PLANE)
+    gl_ClipDistance[0] = (viewRecord.flags & XR_ADV_VIEW_CLIP_PLANE_ENABLED) != 0u
+        ? dot(worldPosition, viewRecord.clipPlaneWorld)
+        : 1.0;
+#endif
 
     vec4 currentUnjitteredClip =
         worldPosition * viewRecord.viewProjectionUnjittered;

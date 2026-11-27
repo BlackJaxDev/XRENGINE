@@ -253,7 +253,11 @@ float XR_UBER_BayerDither(vec2 pixel)
     return bayer[cell.y * 8 + cell.x];
 }
 
-bool XR_UBER_ApplyCoverage(
+// Evaluates face discard, UDIM tile discard, base alpha/masks, decals, flipbook,
+// and dissolve without running the final alpha-cutoff clip test. Visibility raster
+// alpha-to-coverage and native shading call this so multisample edge samples below
+// the hard cutoff remain available for coverage conversion and shading.
+bool XR_UBER_EvaluateCoverage(
     XRUberCoordinates coordinates,
     out vec4 baseColor,
     out vec3 edgeEmission,
@@ -347,7 +351,6 @@ bool XR_UBER_ApplyCoverage(
     {
         base.a = xrProceduralEyeCoverageAlpha(coordinates.uv0, UBER_V(_MainTex_ST), UBER_V(_ProceduralEyeParams3));
     }
-    int blendMode = UBER_I(_Mode);
     baseColor = base;
     vec3 dissolveEmission;
     bool keep = XR_UBER_ApplyDissolve(coordinates, baseColor, dissolveEmission);
@@ -362,6 +365,17 @@ bool XR_UBER_ApplyCoverage(
     // Source ForceOpaque runs after decals and dissolve but before the clip test.
     if (UBER_F(_AlphaClipAllModes) > 0.5 && UBER_F(_AlphaForceOpaque) > 0.5)
         baseColor.a = 1.0;
+    return keep;
+}
+
+bool XR_UBER_ApplyCoverage(
+    XRUberCoordinates coordinates,
+    out vec4 baseColor,
+    out vec3 edgeEmission,
+    bool shadowPass)
+{
+    bool keep = XR_UBER_EvaluateCoverage(coordinates, baseColor, edgeEmission, shadowPass);
+    int blendMode = UBER_I(_Mode);
     // Modes 1 (cutout), 2 (fade), and 5 (transparent cutout) clip at the cutoff, as in the forward Uber shader.
     // Imported source materials always clip at the cutoff.
     bool alphaClipMode = blendMode == 1 || blendMode == 2 || blendMode == 5 ||

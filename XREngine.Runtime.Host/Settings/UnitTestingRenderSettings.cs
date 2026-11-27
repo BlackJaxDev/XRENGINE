@@ -20,7 +20,7 @@ public class UnitTestingRenderSettings
     /// Sets the <c>AdvancedVirtualGeometry</c> engine setting: Vulkan Advanced visibility draws a
     /// cluster cut of models cooked with a cluster hierarchy (<c>GenerateClusterHierarchy</c>).
     /// </summary>
-    public bool VirtualGeometry { get; set; }
+    public bool VirtualGeometry { get; set; } = true;
 
     /// <summary>
     /// Sets the <c>AdvancedSkinnedVirtualGeometry</c> engine setting: with <see cref="VirtualGeometry"/>

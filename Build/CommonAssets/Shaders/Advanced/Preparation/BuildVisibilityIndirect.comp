@@ -75,7 +75,9 @@ void main()
 {
     uint visibleIndex = gl_GlobalInvocationID.x;
 #if defined(XR_ADV_BACKEND_VULKAN)
-    if (visibleIndex == 0u)
+    if (visibleIndex == 0u &&
+        (XR_ADV_PREP_VIEW_INDEX >= uint(XR_ADV_Views.records.length()) ||
+         (XR_ADV_Views.records[XR_ADV_PREP_VIEW_INDEX].flags & XR_ADV_VIEW_SKIP_HIZ_AND_HISTORY) == 0u))
         writeLateDispatchArguments();
 #endif
     uint visibleCapacity = XR_ADV_VisibilityPush.payloadCapacity;

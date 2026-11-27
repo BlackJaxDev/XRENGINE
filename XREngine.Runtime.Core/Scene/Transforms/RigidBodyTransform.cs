@@ -101,6 +101,26 @@ namespace XREngine.Scene.Transforms
         }
 
         /// <summary>
+        /// Shifts the presented position and cached physics interpolation endpoints by
+        /// <paramref name="delta"/> so a controller capsule resize keeps child foot transforms
+        /// fixed in world space without a single-frame vertical jump.
+        /// </summary>
+        public void ApplyPositionOffsetPreservingInterpolation(Vector3 delta)
+        {
+            if (!float.IsFinite(delta.X) || !float.IsFinite(delta.Y) || !float.IsFinite(delta.Z))
+                return;
+            if (delta.LengthSquared() <= 1.0e-12f)
+                return;
+
+            lock (_interpolationSync)
+            {
+                _lastPosition += delta;
+                _lastPhysicsTransform = (_lastPhysicsTransform.position + delta, _lastPhysicsTransform.rotation);
+                Position += delta;
+            }
+        }
+
+        /// <summary>
         /// Sets the world translation of this transform.
         /// In edit mode, this also updates the rigid body component's initial position.
         /// </summary>

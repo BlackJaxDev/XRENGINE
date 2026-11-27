@@ -45,7 +45,7 @@ internal sealed partial class VulkanResourceRuntime
     internal bool TryCaptureNativeBufferRange(XRDataBuffer owner, ulong offset, ulong length, BufferUsageFlags requiredUsage, out VulkanNativeBufferRange range, out string reason)
     {
         range = default;
-        if (owner is null || length == 0u || WrapperLookup.GetOrCreate(owner, generateNow: false) is not VkDataBuffer buffer ||
+        if (owner is null || owner.IsDestroyed || length == 0u || WrapperLookup.GetOrCreate(owner, generateNow: false) is not VkDataBuffer buffer ||
             !buffer.TryCaptureComputeBufferSnapshot(allowSynchronousUpload: false, out VulkanComputeBufferBinding snapshot) ||
             offset > snapshot.Range || length > snapshot.Range - offset ||
             (snapshot.UsageFlags & requiredUsage) != requiredUsage)

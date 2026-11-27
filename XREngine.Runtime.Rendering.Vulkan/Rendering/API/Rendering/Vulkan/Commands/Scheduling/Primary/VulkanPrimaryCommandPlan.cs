@@ -259,8 +259,11 @@ internal sealed class VulkanPrimaryCommandPlan
         => request.Stage is EAdvancedRenderStage.VisibilityRaster or
                EAdvancedRenderStage.DirectionalShadowRaster ||
            request.Phase is EAdvancedVisibilityStageBackendPhase.LateRaster or
+               EAdvancedVisibilityStageBackendPhase.PortalVisibility or
                EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
-               EAdvancedVisibilityStageBackendPhase.DecalBuffer;
+               EAdvancedVisibilityStageBackendPhase.DecalBuffer or
+               EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind or
+               EAdvancedVisibilityStageBackendPhase.PortalUnwind;
 
     private static bool EndsRenderScope(FrameOperationStream operations, int operationIndex)
     {

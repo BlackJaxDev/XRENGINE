@@ -17,6 +17,8 @@ namespace XREngine.Components.Scene.Transforms
 
         private float _currentLength = 0.0f;
         private float _maxLength = 3.0f;
+        private Vector3 _shoulderOffset = Vector3.Zero;
+        private Vector3 _currentLocalDirection = Globals.Backward;
         private float _zoomOutSpeed = 10.0f;
         private IPhysicsGeometry.Sphere _traceSphere = new(0.2f);
         private bool _zoomOutAffectedByTimeDilation = true;
@@ -43,6 +45,16 @@ namespace XREngine.Components.Scene.Transforms
         {
             get => _maxLength;
             set => SetField(ref _maxLength, value);
+        }
+
+        /// <summary>
+        /// Optional parent-local lateral (X) and vertical (Y) camera offset applied to the boom
+        /// endpoint so over-the-shoulder views stay protected by the same static wall sweep.
+        /// </summary>
+        public Vector3 ShoulderOffset
+        {
+            get => _shoulderOffset;
+            set => SetField(ref _shoulderOffset, value);
         }
 
         /// <summary>
@@ -86,7 +98,7 @@ namespace XREngine.Components.Scene.Transforms
         //}
 
         protected override Matrix4x4 CreateLocalMatrix()
-            => Matrix4x4.CreateTranslation(0.0f, 0.0f, _currentLength);
+            => Matrix4x4.CreateTranslation(_currentLocalDirection * _currentLength);
 
         private PhysicsQueryFilter _queryFilter = new(PhysicsQueryActorTypes.Static);
         public PhysicsQueryFilter QueryFilter
@@ -95,7 +107,7 @@ namespace XREngine.Components.Scene.Transforms
             set => SetField(ref _queryFilter, value);
         }
 
-        private LayerMask _layerMask = LayerMask.GetMask(DefaultLayers.Dynamic);
+        private LayerMask _layerMask = LayerMask.Everything;
         public LayerMask LayerMask
         {
             get => _layerMask;
@@ -136,20 +148,30 @@ namespace XREngine.Components.Scene.Transforms
         /// <summary>Runs the existing sphere sweep, snapping inward and exponentially recovering outward.</summary>
         public void Evaluate(float deltaSeconds, bool reset = false)
         {
+            Vector3 targetLocal = new(_shoulderOffset.X, _shoulderOffset.Y, MathF.Max(0.0f, MaxLength));
+            float targetDistance = targetLocal.Length();
+            Vector3 localDir = targetDistance > 1.0e-5f
+                ? targetLocal / targetDistance
+                : Globals.Backward;
+            _currentLocalDirection = localDir;
+
             float newLength;
             lock (_traceOutput)
             {
                 _traceOutput.Clear();
-                (World as IRuntimePhysicsWorldContext)?.PhysicsScene.SweepSingle(
-                    _traceSphere,
-                    (ParentWorldMatrix.Translation, Quaternion.Identity),
-                    Vector3.Transform(Globals.Backward, Parent?.WorldRotation ?? Quaternion.Identity),
-                    MaxLength,
-                    _layerMask,
-                    _queryFilter,
-                    _traceOutput);
-                
-                newLength = MaxLength;
+                if (targetDistance > 1.0e-5f)
+                {
+                    (World as IRuntimePhysicsWorldContext)?.PhysicsScene.SweepSingle(
+                        _traceSphere,
+                        (ParentWorldMatrix.Translation, Quaternion.Identity),
+                        Vector3.Transform(localDir, Parent?.WorldRotation ?? Quaternion.Identity),
+                        targetDistance,
+                        _layerMask,
+                        _queryFilter,
+                        _traceOutput);
+                }
+
+                newLength = targetDistance;
                 bool foundHit = false;
                 foreach ((float distance, List<(XRComponent? item, object? data)> hits) in _traceOutput)
                 {
@@ -172,7 +194,7 @@ namespace XREngine.Components.Scene.Transforms
             if (!float.IsFinite(newLength))
                 return;
 
-            newLength = Math.Clamp(newLength, 0f, Math.Max(0f, MaxLength));
+            newLength = Math.Clamp(newLength, 0f, targetDistance);
 
             if (reset || newLength < _currentLength)
                 _currentLength = newLength; //Moving closer to the character, meaning something is obscuring the view. Need to jump to the right position.

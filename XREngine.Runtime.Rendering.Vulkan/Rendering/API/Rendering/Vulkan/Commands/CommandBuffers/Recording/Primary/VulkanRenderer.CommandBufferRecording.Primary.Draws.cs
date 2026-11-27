@@ -483,7 +483,7 @@ namespace XREngine.Rendering.Vulkan
         {
             XRMeshRenderer mesh = payload.Draw.Renderer.MeshRenderer;
             XRMaterial? material = payload.Draw.MaterialOverride ?? mesh.Material;
-            return string.Equals(material?.Name, "UIBatchTextMaterial", StringComparison.Ordinal) || string.Equals(mesh.Name, "UIBatchTextRenderer", StringComparison.Ordinal) || string.Equals(mesh.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal);
+            return VulkanFrameLoop.IsNamedDynamicUiOverlayOperation(mesh, material);
         }
     }
 }

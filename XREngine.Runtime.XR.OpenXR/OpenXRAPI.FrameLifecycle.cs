@@ -202,6 +202,7 @@ public unsafe partial class OpenXRAPI
                 Layers = null
             };
             var endResult = EndFrameWithTiming(in frameEndInfoNoLayers, ref endFrameAttempted);
+            RecordOpenXrNoLayerDiagnostic(frameNo, "eye-render-failed", endResult);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; eye failure) => {endResult}");
 
@@ -625,6 +626,20 @@ public unsafe partial class OpenXRAPI
 
             if (!_sessionBegun || IsOpenXrRuntimeLossPending())
                 return;
+
+            // Refresh eye, tracker, controller, calibration rig, and mirror state from the late
+            // pose before mirror captures and eye submission run on the render thread.
+            if (Volatile.Read(ref _pendingXrFrame) != 0 &&
+                Volatile.Read(ref _framePrepared) != 0)
+            {
+                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.RenderCallback.LateRigAndMirrors"))
+                {
+                    ApplyOpenXrEyePoseForRenderThread(0);
+                    ApplyOpenXrEyePoseForRenderThread(1);
+                    RuntimeEngine.VRState.InvokeLateXrPoseUpdated();
+                    RuntimeEngine.VRState.InvokeBeforeXrEyeRender();
+                }
+            }
 
             // Lazily start the dedicated pacing thread when the session is ready and the mode is enabled.
             // The render thread then only signals it after xrEndFrame instead of running prep inline.
@@ -1878,6 +1893,25 @@ public unsafe partial class OpenXRAPI
         {
             Volatile.Write(ref _openXrFramePrepActive, 0);
         }
+    }
+
+    private long _lastNoLayerDiagTimestamp;
+    private int _noLayerDiagCount;
+
+    private void RecordOpenXrNoLayerDiagnostic(int frameNo, string reason, Result endResult)
+    {
+        if (_noLayerDiagCount >= 64)
+            return;
+
+        long now = Stopwatch.GetTimestamp();
+        if (_lastNoLayerDiagTimestamp != 0 && now - _lastNoLayerDiagTimestamp < Stopwatch.Frequency)
+            return;
+
+        _lastNoLayerDiagTimestamp = now;
+        _noLayerDiagCount++;
+        Debug.WriteAuxiliaryLog(
+            "openxr-render-failures.log",
+            $"Stage=end-frame-no-layers Reason={reason} XrFrame={frameNo} EngineFrame={RuntimeEngine.Rendering.State.RenderFrameId} EndResult={endResult}");
     }
 
     private void EndBegunFrameWithoutLayers(int frameNo, string reason)

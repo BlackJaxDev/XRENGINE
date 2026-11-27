@@ -14,6 +14,8 @@ internal static class ForwardLightProbeTopologyBuilder
             : BuildDelaunay(snapshot.Positions);
         if (tetrahedra.Length == 0)
             tetrahedra = BuildCartesianLatticeFallback(snapshot.Positions);
+        if (tetrahedra.Length == 0 && snapshot.ProbeCount >= 5)
+            tetrahedra = BuildJitteredDelaunayFallback(snapshot.Positions);
         return new ProbeTopologyResult(
             snapshot.PipelineInstanceId,
             snapshot.ResourceGeneration,
@@ -60,6 +62,76 @@ internal static class ForwardLightProbeTopologyBuilder
         catch (ArgumentException)
         {
             return [];
+        }
+    }
+
+    /// <summary>
+    /// Breaks co-spherical degeneracies on partially pushed-out probe grids by applying
+    /// a deterministic sub-millimeter perturbation solely during Delaunay triangulation,
+    /// then validating each emitted tetrahedron against the untouched probe positions.
+    /// </summary>
+    private static ProbeTetraData[] BuildJitteredDelaunayFallback(IReadOnlyList<Vector3> positions)
+    {
+        List<ProbeTopologyVertex> sourceVertices = FilterDistinctFinitePositions(positions);
+        if (sourceVertices.Count < 5)
+            return [];
+
+        const float jitterAmplitude = 1.0e-3f;
+        var jitteredVertices = new List<ProbeTopologyVertex>(sourceVertices.Count);
+        for (int i = 0; i < sourceVertices.Count; i++)
+        {
+            ProbeTopologyVertex source = sourceVertices[i];
+            int idx = source.PublishedIndex;
+            Vector3 jitter = new(
+                HashDeterministicUnit(idx, 1) * jitterAmplitude,
+                HashDeterministicUnit(idx, 2) * jitterAmplitude,
+                HashDeterministicUnit(idx, 3) * jitterAmplitude);
+            jitteredVertices.Add(new ProbeTopologyVertex(idx, positions[idx] + jitter));
+        }
+
+        try
+        {
+            ITriangulation<ProbeTopologyVertex, ProbeTopologyCell> triangulation =
+                Triangulation.CreateDelaunay<ProbeTopologyVertex, ProbeTopologyCell>(jitteredVertices);
+            var tetrahedra = new List<ProbeTetraData>();
+            foreach (ProbeTopologyCell cell in triangulation.Cells)
+            {
+                ProbeTopologyVertex[] cellVertices = cell.Vertices;
+                if (cellVertices.Length < 4)
+                    continue;
+
+                TryAddTetrahedron(
+                    tetrahedra,
+                    positions,
+                    cellVertices[0].PublishedIndex,
+                    cellVertices[1].PublishedIndex,
+                    cellVertices[2].PublishedIndex,
+                    cellVertices[3].PublishedIndex);
+            }
+
+            return [.. tetrahedra];
+        }
+        catch (ConvexHullGenerationException)
+        {
+            return [];
+        }
+        catch (ArgumentException)
+        {
+            return [];
+        }
+    }
+
+    private static float HashDeterministicUnit(int index, int axis)
+    {
+        unchecked
+        {
+            uint h = (uint)(index * 73856093 ^ axis * 19349663) + 0x9E3779B9u;
+            h ^= h >> 16;
+            h *= 0x85EBCA6Bu;
+            h ^= h >> 13;
+            h *= 0xC2B2AE35u;
+            h ^= h >> 16;
+            return (h & 0x00FFFFFFu) / 8388607.5f - 1.0f;
         }
     }
 

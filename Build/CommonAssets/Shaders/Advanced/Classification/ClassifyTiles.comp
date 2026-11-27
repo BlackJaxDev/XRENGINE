@@ -51,8 +51,9 @@ void main()
         else
         {
             uint materialDense, kernelDense;
+            uint pixelView = (metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu;
             if (!XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense) ||
-                ((metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu) != u_Push.viewIndex)
+                !XR_ADV_ViewBelongsToPrimary(pixelView, u_Push.viewIndex))
             {
                 atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_INVALID_IDENTITY);
                 atomicAdd(XR_ADV_ClassificationCounters.counters.droppedPixelCount, 1u);

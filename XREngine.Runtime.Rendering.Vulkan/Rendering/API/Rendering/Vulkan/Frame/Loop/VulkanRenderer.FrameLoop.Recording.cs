@@ -93,6 +93,10 @@ namespace XREngine.Rendering.Vulkan
                             recordingResult.DynamicUiSecondaryCommandBuffer;
                         dynamicTextOverlayOpCount =
                             recordingResult.DynamicUiOverlayOperationCount;
+                        attempt.DynamicTextSecondaryCommandBuffer =
+                            dynamicTextSecondaryCommandBuffer;
+                        attempt.DynamicTextOverlayOperationCount =
+                            dynamicTextOverlayOpCount;
                         attempt.TextureUploadCommandBuffer =
                             recordingResult.TextureUploadCommandBuffer;
                         attempt.TextureUploadCommandPool =
@@ -762,7 +766,11 @@ namespace XREngine.Rendering.Vulkan
                 return HandleDesktopRecordingDeferred(
                     ref attempt,
                     presentationSourceFailure,
-                    recoveryOverlaySnapshot: null);
+                    recoveryOverlaySnapshot: null,
+                    recoveryDynamicTextSecondaryCommandBuffer:
+                        attempt.DynamicTextSecondaryCommandBuffer,
+                    recoveryDynamicTextOperationCount:
+                        attempt.DynamicTextOverlayOperationCount);
             }
 
             FrameOpContext? phase524bContext =

@@ -67,9 +67,13 @@ namespace XREngine.Rendering.Materials
                 if (packedMetallicRoughness)
                     flags |= GPUMaterialEntry.PackedMetallicRoughnessFlag;
             }
-            if (material.GetEffectiveTransparencyMode() is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
+            ETransparencyMode effectiveTransparency = material.GetEffectiveTransparencyMode();
+            if (effectiveTransparency is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
             {
                 flags |= GPUMaterialEntry.MaskedCoverageFlag;
+                if (effectiveTransparency == ETransparencyMode.AlphaToCoverage ||
+                    material.RenderOptions?.AlphaToCoverage == ERenderParamUsage.Enabled)
+                    flags |= GPUMaterialEntry.AlphaToCoverageFlag;
                 if (opacity is not null)
                     flags |= GPUMaterialEntry.OpacityTextureFlag;
             }

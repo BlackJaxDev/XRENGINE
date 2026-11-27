@@ -5,7 +5,7 @@
 // CookedAssetTypeReference writes these into the file header. PublishedCookedAssetReader looks
 // them up to choose the C# type before reading the saved settings values.
 // Engine.LoadProjectUserSettings loads user preferences; ProjectBuilder packages them for the game.
-[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.UserSettings), "xre.settings.user", 5)]
+[assembly: XREngine.RuntimeTypeContract(typeof(XREngine.UserSettings), "xre.settings.user", 7)]
 // Engine.LoadProjectBuildSettings loads the project's build settings asset.
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.BuildSettings), "xre.settings.build", 2)]
 [assembly: XREngine.RuntimeTypeContract(typeof(XREngine.Data.AudioProxyAsset), "xre.audio.proxy", 1)]

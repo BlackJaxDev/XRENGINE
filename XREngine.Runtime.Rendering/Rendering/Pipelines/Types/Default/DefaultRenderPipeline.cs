@@ -766,15 +766,8 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         if (fbo.Targets is not { Length: 2 } targets)
             return false;
 
-        var (colorTarget, colorAttachment, mipLevel, layerIndex) = targets[0];
-        if (colorAttachment != EFrameBufferAttachment.ColorAttachment0
-            || mipLevel != 0
-            || layerIndex != -1
-            || colorTarget is not XRRenderBuffer renderBuffer
-            || renderBuffer.Type != GetForwardMsaaColorFormat())
-            return false;
-
-        return HasTextureAttachment(targets[1], ForwardPassMsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
+        return HasTextureAttachment(targets[0], ForwardPassMsaaColorTextureName, EFrameBufferAttachment.ColorAttachment0)
+            && HasTextureAttachment(targets[1], ForwardPassMsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
     }
 
     private bool NeedsRecreatePostProcessOutputFbo(XRFrameBuffer fbo)
@@ -1438,6 +1431,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     public const string ForwardPassFBOName = "ForwardPassFBO";
     public const string ForwardPassMsaaFBOName = "ForwardPassMSAAFBO";
     public const string ForwardPassMsaaColorRenderBufferName = "ForwardPassMSAAColor";
+    public const string ForwardPassMsaaColorTextureName = "ForwardPassMSAAColor";
     public const string SceneCopyFBOName = "SceneCopyFBO";
     public const string TransparentSceneCopyFBOName = "TransparentSceneCopyFBO";
     public const string DeferredTransparencyBlurFBOName = "DeferredTransparencyBlurFBO";
@@ -1934,6 +1928,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         string smaaBlendPass = $"SmaaBlend_{SmaaEdgeTextureName}_to_{SmaaBlendFBOName}";
         string smaaNeighborhoodPass = $"SmaaNeighborhood_{FinalPostProcessOutputFBOName}_to_{SmaaOutputTextureName}";
         string tsrPass = VPRC_RenderQuadToFBO.BuildQuadBlitPassName(TsrUpscaleFBOName, TsrUpscaleFBOName);
+        string tsrSharpenPass = VPRC_RCAS.BuildPassName(TsrHistoryColorFBOName, TsrUpscaleFBOName);
 
         AddDependencyByIndex(LateOnTopForwardPassName, (int)EDefaultRenderPass.TransparentForward);
         AddDependencyByIndex(nameof(VPRC_ExposureUpdate), (int)EDefaultRenderPass.TransparentForward);
@@ -1946,11 +1941,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         AddDependency(smaaBlendPass, smaaEdgePass);
         AddDependency(smaaNeighborhoodPass, smaaBlendPass);
         AddDependency(tsrPass, finalPostProcessPass);
+        AddDependency(tsrSharpenPass, VPRC_TemporalAccumulationPass.TsrHistoryColorCopyPassName);
 
         AddDependency("RenderToWindow_FinalPostProcessOutputTexture", finalPostProcessPass);
         AddDependency("RenderToWindow_FxaaOutputTexture", fxaaPass);
         AddDependency("RenderToWindow_SmaaOutputTexture", smaaNeighborhoodPass);
-        AddDependency("RenderToWindow_TsrOutputTexture", tsrPass);
+        AddDependency("RenderToWindow_TsrOutputTexture", tsrPass, tsrSharpenPass);
 
         void AddDependencyByIndex(string passName, params int[] dependencies)
         {

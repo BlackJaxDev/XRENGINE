@@ -15,12 +15,15 @@ namespace XREngine
                     private static RvcFrameProfileSnapshot _frameProfile;
                     private static RvcFrameProfileSnapshot _lastFrameProfile;
                     private static RvcShadeletTelemetryCounters _shadeletTelemetry;
+                    private static RvcShadeletCacheCounters _shadeletCache;
                     private static long _shadeletTelemetryRequests;
                     private static long _shadeletTelemetryDispatches;
                     private static long _shadeletTelemetryReadbacks;
                     private static long _shadeletTelemetryDecoded;
                     private static long _shadeletTelemetrySkips;
                     private static string? _shadeletTelemetrySkipReason;
+                    private static long _shadeletCacheDispatches;
+                    private static long _shadeletCacheDecoded;
 
                     public static RvcFrameCounters FrameCounters
                     {
@@ -123,6 +126,37 @@ namespace XREngine
                     {
                         Interlocked.Increment(ref _shadeletTelemetrySkips);
                         Volatile.Write(ref _shadeletTelemetrySkipReason, reason);
+                    }
+
+                    /// <summary>Latest completed GPU shadelet-cache counters from delayed diagnostic readback.</summary>
+                    public static RvcShadeletCacheCounters ShadeletCache
+                    {
+                        get
+                        {
+                            lock (Sync)
+                                return _shadeletCache;
+                        }
+                    }
+
+                    /// <summary>Number of frames on which the RVC shadelet-cache GPU passes dispatched.</summary>
+                    public static long ShadeletCacheDispatches => Interlocked.Read(ref _shadeletCacheDispatches);
+
+                    /// <summary>Number of completed GPU shadelet-cache counter readbacks.</summary>
+                    public static long ShadeletCacheDecoded => Interlocked.Read(ref _shadeletCacheDecoded);
+
+                    /// <summary>Records one RVC shadelet-cache GPU frame dispatch.</summary>
+                    public static void RecordShadeletCacheDispatch()
+                        => Interlocked.Increment(ref _shadeletCacheDispatches);
+
+                    /// <summary>Stores decoded GPU shadelet-cache counters when newer than the retained frame.</summary>
+                    public static void RecordShadeletCache(in RvcShadeletCacheCounters counters)
+                    {
+                        Interlocked.Increment(ref _shadeletCacheDecoded);
+                        lock (Sync)
+                        {
+                            if (counters.FrameId >= _shadeletCache.FrameId)
+                                _shadeletCache = counters;
+                        }
                     }
 
                     public static void RecordFrameProfile(RvcFrameProfileSnapshot profile)

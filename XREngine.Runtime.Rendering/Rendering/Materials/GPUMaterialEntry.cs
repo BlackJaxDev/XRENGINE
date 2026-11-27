@@ -29,6 +29,12 @@ namespace XREngine.Rendering.Materials
         public const uint OpacityTextureFlag = 1u << 7;
 
         /// <summary>
+        /// The material converts masked coverage alpha into multisample sample coverage in the
+        /// Advanced visibility raster. Single-sample targets fall back to the alpha cutoff test.
+        /// </summary>
+        public const uint AlphaToCoverageFlag = 1u << 28;
+
+        /// <summary>
         /// The material has an ambient occlusion texture. Native shading samples it only when this
         /// flag is set, and multiplies the result into the screen-space ambient occlusion of indirect light.
         /// </summary>

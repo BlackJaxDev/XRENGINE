@@ -23,7 +23,8 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
         uint cullMode,
         in VulkanAdvancedVisibilityTargetClosure target,
         out VulkanVisibilityRasterPipeline prepared,
-        out string reason)
+        out string reason,
+        EVulkanVisibilityPortalRasterMode portalMode = EVulkanVisibilityPortalRasterMode.None)
     {
         prepared = default;
         reason = "Ready";
@@ -67,9 +68,29 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
         CompareOp depthCompare = target.ClearPolicy.ReversedDepth
             ? CompareOp.GreaterOrEqual
             : CompareOp.LessOrEqual;
-        CullModeFlags cull = cullMode == 0u
-            ? CullModeFlags.None
-            : CullModeFlags.BackBit;
+        CullModeFlags cull = (ECullMode)cullMode switch
+        {
+            ECullMode.None => CullModeFlags.None,
+            ECullMode.Front => CullModeFlags.FrontBit,
+            ECullMode.Both => CullModeFlags.FrontAndBack,
+            _ => CullModeFlags.BackBit,
+        };
+        bool isPortal = portalMode != EVulkanVisibilityPortalRasterMode.None;
+        FrontFace frontFace = portalMode == EVulkanVisibilityPortalRasterMode.InvertedWinding
+            ? FrontFace.Clockwise
+            : FrontFace.CounterClockwise;
+        StencilOpState portalStencil = isPortal
+            ? new StencilOpState
+            {
+                FailOp = StencilOp.Keep,
+                PassOp = StencilOp.Keep,
+                DepthFailOp = StencilOp.Keep,
+                CompareOp = CompareOp.Equal,
+                CompareMask = AdvancedStencilBitLayout.PortalNodeMask,
+                WriteMask = 0u,
+                Reference = 0u,
+            }
+            : default;
         VulkanGraphicsPipelineKey key = new(
             PrimitiveTopology.TriangleList,
             target.UsesDynamicRendering,
@@ -81,18 +102,18 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
             program.DescriptorSchemaFingerprint,
             program.PipelineLayout.Handle,
             program.MeshTaskBackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
-            ComputePassMetadataHash(target),
+            ComputePassMetadataHash(target, portalMode),
             ComputeFeatureProfileHash(program),
             target.RasterizationSamples,
             DepthTestEnabled: true,
             DepthWriteEnabled: depthWrite,
             depthCompare,
-            StencilTestEnabled: false,
-            default,
-            default,
+            StencilTestEnabled: isPortal,
+            portalStencil,
+            portalStencil,
             0u,
             cull,
-            FrontFace.CounterClockwise,
+            frontFace,
             BlendEnabled: false,
             AlphaToCoverageEnabled: false,
             BlendOp.Add,
@@ -118,7 +139,7 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
                 SType = StructureType.PipelineRasterizationStateCreateInfo,
                 PolygonMode = PolygonMode.Fill,
                 CullMode = cull,
-                FrontFace = FrontFace.CounterClockwise,
+                FrontFace = frontFace,
                 LineWidth = 1.0f,
             };
             PipelineMultisampleStateCreateInfo samples = new()
@@ -134,6 +155,9 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
                 DepthTestEnable = Vk.True,
                 DepthWriteEnable = depthWrite ? Vk.True : Vk.False,
                 DepthCompareOp = depthCompare,
+                StencilTestEnable = isPortal ? Vk.True : Vk.False,
+                Front = portalStencil,
+                Back = portalStencil,
             };
             PipelineColorBlendAttachmentState blend = new()
             {
@@ -187,7 +211,9 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
                 samples,
                 depth,
                 blends,
-                [DynamicState.Viewport, DynamicState.Scissor],
+                isPortal
+                    ? [DynamicState.Viewport, DynamicState.Scissor, DynamicState.StencilReference]
+                    : [DynamicState.Viewport, DynamicState.Scissor],
                 target.UsesDynamicRendering ? default : target.RenderPass,
                 target.UsesDynamicRendering
                     ? target.DynamicRenderingFormats
@@ -270,11 +296,14 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
     }
 
     private static ulong ComputePassMetadataHash(
-        in VulkanAdvancedVisibilityTargetClosure target)
+        in VulkanAdvancedVisibilityTargetClosure target,
+        EVulkanVisibilityPortalRasterMode portalMode)
     {
         VulkanStableHash64 hash = new(schemaVersion: 1);
         hash.Add("AdvancedVisibilityRaster");
         hash.Add(target.DepthStencilReadOnly ? 1UL : 0UL);
+        if (portalMode != EVulkanVisibilityPortalRasterMode.None)
+            hash.Add((ulong)portalMode);
         return hash.Value;
     }
 

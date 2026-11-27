@@ -20,6 +20,7 @@ namespace XREngine.Scene.Physics.Jolt
 
         private float _radius = 0.25f;
         private float _totalHeight = 1.8f;
+        private float _activeShapeTotalHeight = 1.8f;
         private float _slopeLimit = MathF.Cos(MathF.PI / 4.0f);
         private float _stepOffset = 0.3f;
         private float _contactOffset = 0.02f;
@@ -665,6 +666,7 @@ namespace XREngine.Scene.Physics.Jolt
                     MaxStrength = MaxStrength,
                 };
                 _shape = replacementShape;
+                _activeShapeTotalHeight = _totalHeight;
                 _poseDirty = false;
                 _contactsDirty = true;
             }
@@ -673,6 +675,18 @@ namespace XREngine.Scene.Physics.Jolt
                 ObjectLayer layer = _objectLayer;
                 BodyFilter? bodyFilter = null;
                 ShapeFilter? shapeFilter = null;
+
+                // Apply any pending pose shift (for example raising capsule center on uncrouch)
+                // before SetShape checks clearance, so growing upward does not collide with the floor.
+                Vector3 previousPosition = _character.Position;
+                Quaternion previousRotation = _character.Rotation;
+                Vector3 previousUp = _character.Up;
+                if (_poseDirty)
+                {
+                    _character.Up = UpDirection;
+                    _character.Rotation = capsuleRotation;
+                    _character.Position = _position;
+                }
 
                 if (_character.SetShape(
                     _lastFixedDelta,
@@ -685,11 +699,22 @@ namespace XREngine.Scene.Physics.Jolt
                 {
                     CapsuleShape? previousShape = _shape;
                     _shape = replacementShape;
+                    _activeShapeTotalHeight = _totalHeight;
                     previousShape?.Dispose();
+                    _poseDirty = false;
                     _contactsDirty = true;
                 }
                 else
                 {
+                    // Standing up was genuinely blocked (for example by a low ceiling): restore
+                    // both native character pose and managed height so FootPosition stays truthful.
+                    _character.Up = previousUp;
+                    _character.Rotation = previousRotation;
+                    _character.Position = previousPosition;
+                    _position = previousPosition;
+                    _totalHeight = _activeShapeTotalHeight;
+                    _poseDirty = false;
+                    _shapeDirty = false;
                     replacementShape.Dispose();
                     return;
                 }

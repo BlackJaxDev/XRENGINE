@@ -1119,7 +1119,9 @@ public partial class PhysicsChainComponent : XRComponent
 
             bool isRoot = particle.ParentIndex < 0 || particle.ParentIndex >= particleCount;
             TransformState state = transform.FrameState;
-            Vector3 localTranslation = isRoot ? state.Translation : particle.InitLocalPosition;
+            Vector3 localTranslation = (isRoot || transform.HasActivePositionConstraintOwner)
+                ? state.Translation
+                : particle.InitLocalPosition;
             // Particles are in parent-first order, so the parent rest matrix is ready.
             Matrix4x4 parentWorld = !isRoot && particles[particle.ParentIndex].Transform is not null
                 ? particles[particle.ParentIndex].TransformLocalToWorldMatrix
@@ -1292,6 +1294,7 @@ public partial class PhysicsChainComponent : XRComponent
             AppendParticleTree(roots[i]);
 
         _objectScale = MathF.Abs(componentTransform.LossyWorldScale.X);
+        _initialObjectScale = _objectScale > 1.0e-6f ? _objectScale : 1.0f;
         _objectPrevPosition = componentTransform.WorldTranslation;
         _objectMove = Vector3.Zero;
 
@@ -1781,7 +1784,8 @@ public partial class PhysicsChainComponent : XRComponent
         for (int i = 0; i < particleCount; ++i)
         {
             Particle p = particles[i];
-            if (p.ParentIndex >= 0)
+            bool positionOwnedByConstraint = p.Transform is not null && p.Transform.HasActivePositionConstraintOwner;
+            if (p.ParentIndex >= 0 && !positionOwnedByConstraint)
             {
                 // verlet integration
                 Vector3 v = p.Position - p.PrevPosition;
@@ -1830,6 +1834,9 @@ public partial class PhysicsChainComponent : XRComponent
         List<Particle> particles = pt.Particles;
         int particleCount = particles.Count;
         bool collisionEnabled = EffectiveQualityPolicy.CollisionEnabled;
+        float segmentLengthScale = _initialObjectScale > 1.0e-6f && _objectScale > 1.0e-6f
+            ? _objectScale / _initialObjectScale
+            : 1.0f;
         for (int i = 1; i < particleCount; ++i)
         {
             Particle childPtcl = particles[i];
@@ -1840,12 +1847,19 @@ public partial class PhysicsChainComponent : XRComponent
                 continue;
             }
 
+            if (childPtcl.Transform is not null && childPtcl.Transform.HasActivePositionConstraintOwner)
+            {
+                childPtcl.Position = childPtcl.TransformPosition;
+                childPtcl.SegmentTurn = Quaternion.Identity;
+                continue;
+            }
+
             Particle parentPtcl = particles[childPtcl.ParentIndex];
 
             if (TryPinBranchChild(particles, childPtcl, parentPtcl))
                 continue;
 
-            float restLen = childPtcl.SegmentLength;
+            float restLen = childPtcl.SegmentLength * segmentLengthScale;
 
             // keep shape
             float stiffness = Interp.Lerp(1.0f, childPtcl.Stiffness, _weight);
@@ -1929,10 +1943,14 @@ public partial class PhysicsChainComponent : XRComponent
             return;
         }
 
+        float segmentLengthScale = _initialObjectScale > 1.0e-6f && _objectScale > 1.0e-6f
+            ? _objectScale / _initialObjectScale
+            : 1.0f;
         for (int i = 0; i < particleCount; ++i)
         {
             Particle childPtcl = particles[i];
-            if (childPtcl.ParentIndex >= 0)
+            bool positionOwnedByConstraint = childPtcl.Transform is not null && childPtcl.Transform.HasActivePositionConstraintOwner;
+            if (childPtcl.ParentIndex >= 0 && !positionOwnedByConstraint)
             {
                 childPtcl.PrevPosition += _objectMove;
                 childPtcl.Position += _objectMove;
@@ -1949,7 +1967,7 @@ public partial class PhysicsChainComponent : XRComponent
                 if (TryPinBranchChild(particles, childPtcl, parentPtcl))
                     continue;
 
-                float restLen = childPtcl.SegmentLength;
+                float restLen = childPtcl.SegmentLength * segmentLengthScale;
 
                 //Keep shape
                 float stiffness = Interp.Lerp(1.0f, childPtcl.Stiffness, _weight);
@@ -2004,9 +2022,38 @@ public partial class PhysicsChainComponent : XRComponent
         var particles = pt.Particles;
         using TransformHierarchyMutationBatch hierarchyBatch = pt.Root.BeginHierarchyMutationBatch();
         int particleCount = particles.Count;
+        // Skip transform channels driven by an active full-override constraint so concurrent
+        // render snapshots never observe two poses between the physics-chain tick and the
+        // constraint tick. Full constraints skip the bone and its descendants; position-only
+        // constraints skip translation writes while still allowing the chain to aim rotations
+        // and simulate unconstrained children from the constrained bone position.
+        Span<bool> skippedByFullConstraint = particleCount <= 256
+            ? stackalloc bool[particleCount]
+            : new bool[particleCount];
+        Span<bool> positionConstrained = particleCount <= 256
+            ? stackalloc bool[particleCount]
+            : new bool[particleCount];
+        Span<bool> rotationConstrained = particleCount <= 256
+            ? stackalloc bool[particleCount]
+            : new bool[particleCount];
+        for (int i = 0; i < particleCount; ++i)
+        {
+            Particle particle = particles[i];
+            bool parentFullSkipped = particle.ParentIndex >= 0
+                && particle.ParentIndex < particleCount
+                && skippedByFullConstraint[particle.ParentIndex];
+            bool full = parentFullSkipped
+                || (particle.Transform is not null && particle.Transform.HasActiveFullConstraintOwner);
+            skippedByFullConstraint[i] = full;
+            positionConstrained[i] = full
+                || (particle.Transform is not null && particle.Transform.HasActivePositionConstraintOwner);
+            rotationConstrained[i] = full
+                || (particle.Transform is not null && particle.Transform.HasActiveRotationConstraintOwner);
+        }
+
         // The loop below does not aim a bone without children, so it keeps its rest rotation.
         for (int i = 0; i < particleCount; ++i)
-            if (particles[i] is { ChildCount: 0, Transform: { } leafTfm } leaf)
+            if (!rotationConstrained[i] && particles[i] is { ChildCount: 0, Transform: { } leafTfm } leaf)
                 hierarchyBatch.SetLocalRotation(leafTfm, leaf.InitLocalRotation);
 
         for (int i = 1; i < particleCount; ++i)
@@ -2020,13 +2067,15 @@ public partial class PhysicsChainComponent : XRComponent
             }
 
             Particle parent = particles[child.ParentIndex];
+            bool parentRotationSkipped = rotationConstrained[child.ParentIndex];
+            bool childPositionSkipped = positionConstrained[i];
 
             Transform? pTfm = parent.Transform;
             Transform? cTfm = child.Transform;
             Vector3 parentPosition = ResolveFixedUpdateRenderPosition(parent.PreviousPhysicsPosition, parent.Position, mode, alpha) + pt.PresentationOffset;
             Vector3 childPosition = ResolveFixedUpdateRenderPosition(child.PreviousPhysicsPosition, child.Position, mode, alpha) + pt.PresentationOffset;
 
-            if (pTfm is not null)
+            if (pTfm is not null && !parentRotationSkipped)
             {
                 // A bone with more than one child keeps its rest rotation.
                 Quaternion localRotation = parent.ChildCount <= 1
@@ -2042,7 +2091,7 @@ public partial class PhysicsChainComponent : XRComponent
                 hierarchyBatch.RecalculateMatrices(pTfm, forceWorldRecalc: true);
             }
 
-            if (cTfm is null)
+            if (cTfm is null || childPositionSkipped)
                 continue;
             if (pinBranchChildren && parent.ChildCount > 1)
                 hierarchyBatch.SetLocalTranslation(cTfm, child.InitLocalPosition);

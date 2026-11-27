@@ -25,13 +25,14 @@ uniform float Emission = 0.0f;
 uniform float AlphaCutoff = -1.0f;
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 #pragma snippet "DitheredTransparency"
 #pragma snippet "SurfaceEmission"
 
 void main()
 {
-    vec4 albedoSample = texture(Texture0, FragUV0);
-    float alphaMask = albedoSample.a * texture(Texture2, FragUV0).r;
+    vec4 albedoSample = XRENGINE_SampleBiasedTexture(Texture0, FragUV0);
+    float alphaMask = albedoSample.a * XRENGINE_SampleBiasedTexture(Texture2, FragUV0).r;
 
     XRENGINE_AlphaCutoffAndDither(AlphaCutoff, alphaMask, Opacity, gl_FragCoord.xy);
 
@@ -39,7 +40,7 @@ void main()
     Normal = XRENGINE_EncodeNormal(normalize(FragNorm));
     AlbedoOpacity = vec4(albedoSample.rgb * BaseColor, Opacity * alphaMask);
 
-    float specularTex = texture(Texture1, FragUV0).r;
+    float specularTex = XRENGINE_SampleBiasedTexture(Texture1, FragUV0).r;
     RMSI = vec4(Roughness, Metallic, Specular * specularTex, Emission);
     EmissionColor = XRENGINE_ResolveSurfaceEmission(FragUV0, FragUV1, BaseColor, Emission);
 }

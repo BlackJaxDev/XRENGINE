@@ -19,6 +19,7 @@ using XREngine.Editor.UI;
 using XREngine.Editor.UI.Tools;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
+using XREngine.Animation;
 using XREngine.Components;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
@@ -245,6 +246,15 @@ public static partial class EditorImGuiUI
                     OpenRenderPipelineWorkbench(instance.Pipeline, instance);
                 ImGui.SameLine();
                 ImGui.TextDisabled(instance.DebugDescriptor);
+            }
+            else if (primary is AnimStateMachineComponent animStateMachine)
+            {
+                if (ImGui.SmallButton($"Open State Machine Graph##{label}"))
+                    OpenAnimStateMachineGraph(animStateMachine);
+                ImGui.SameLine();
+                int layerCount = animStateMachine.StateMachine?.Layers.Count ?? 0;
+                int paramCount = animStateMachine.StateMachine?.Variables.Count ?? 0;
+                ImGui.TextDisabled($"{layerCount} layer(s), {paramCount} parameter(s)");
             }
 
             string id = idOverride ?? label;
@@ -2930,7 +2940,10 @@ public static partial class EditorImGuiUI
         {
             try
             {
-                object? instance = Activator.CreateInstance(instanceType);
+                object? instance = typeof(MotionBase).IsAssignableFrom(instanceType)
+                    && MotionFactoryRegistry.TryCreate(instanceType, out MotionBase? motion)
+                    ? motion
+                    : Activator.CreateInstance(instanceType);
                 if (instance is null)
                 {
                     Debug.LogWarning($"Failed to create instance of '{instanceType.FullName}' for property '{property.Name}'.");
@@ -3107,6 +3120,12 @@ public static partial class EditorImGuiUI
         {
             try
             {
+                if (typeof(MotionBase).IsAssignableFrom(type)
+                    && MotionFactoryRegistry.TryCreate(type, out MotionBase? motion))
+                {
+                    return motion;
+                }
+
                 return Activator.CreateInstance(type);
             }
             catch (Exception ex)
@@ -4856,20 +4875,22 @@ public static partial class EditorImGuiUI
                 if (canWrite)
                 {
                     ImGui.SameLine();
-                    if (ImGui.SmallButton("Create"))
+                    if (ImGui.SmallButton("Add Callback"))
                     {
                         try
                         {
                             object? instance = Activator.CreateInstance(declaredType);
                             if (instance is not null)
                             {
-                                using var _ = Undo.TrackChange($"Create {row.MemberName}", owner);
+                                using var _ = Undo.TrackChange($"Add Callback {row.MemberName}", owner);
 
                                 if (property is not null)
                                     property.SetValue(owner, instance);
                                 else
                                     field!.SetValue(owner, instance);
 
+                                List<XRPersistentCall> createdCalls = GetOrCreatePersistentCalls(instance, owner);
+                                createdCalls.Add(new XRPersistentCall());
                                 NotifyInspectorValueEdited(owner);
                                 value = instance;
                             }
@@ -4881,8 +4902,11 @@ public static partial class EditorImGuiUI
                     }
                 }
 
-                ImGui.PopID();
-                return true;
+                if (value is null)
+                {
+                    ImGui.PopID();
+                    return true;
+                }
             }
 
             string typeLabel = declaredType == typeof(XREvent)
@@ -5144,7 +5168,8 @@ public static partial class EditorImGuiUI
                 Type payloadType = declaredEventType.GetGenericArguments()[0];
                 var optionList = new List<EventSignatureOption>
                 {
-                    new EventSignatureOption([payloadType], tupleExpanded: false)
+                    new EventSignatureOption([payloadType], tupleExpanded: false),
+                    new EventSignatureOption(Array.Empty<Type>(), tupleExpanded: false),
                 };
 
                 if (TryGetValueTupleElementTypes(payloadType, out var tupleTypes) && tupleTypes.Length > 0)
@@ -5629,6 +5654,10 @@ public static partial class EditorImGuiUI
             {
                 nameof(UserSettings.AntiAliasingModeOverride) when owner is UserSettings or GameStartupSettings
                     => Engine.EffectiveSettings.AntiAliasingMode,
+                nameof(UserSettings.AntiAliasingFilterModeOverride) when owner is UserSettings or GameStartupSettings
+                    => Engine.EffectiveSettings.AntiAliasingFilterMode,
+                nameof(UserSettings.AntiAliasingSharpnessOverride) when owner is UserSettings or GameStartupSettings
+                    => Engine.EffectiveSettings.AntiAliasingSharpness,
                 nameof(UserSettings.MsaaSampleCountOverride) when owner is UserSettings or GameStartupSettings
                     => Engine.EffectiveSettings.MsaaSampleCount,
                 _ => setting.BoxedValue,

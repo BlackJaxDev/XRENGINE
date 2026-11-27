@@ -737,8 +737,9 @@ void XR_ADV_EvaluateProbeIbl(
 {
     diffuseIndirect = float3(0.0);
     specularIndirect = float3(0.0);
-    float weights[4] = {0.0, 0.0, 0.0, 0.0};
-    uint indices[4] = {0u, 0u, 0u, 0u};
+    float weights[8] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    uint indices[8] = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+    float ninthWeight = 0.0;
     for (uint index = 0u; index < SceneCount(13u); ++index)
     {
         XRAdvancedProbeRecord probe = XR_ADV_LoadProbe(index);
@@ -749,23 +750,33 @@ void XR_ADV_EvaluateProbeIbl(
                 (viewIndex >= 64u || (probe.viewMaskHi & (1u << (viewIndex - 32u))) == 0u))) continue;
         float weight = XR_ADV_ProbeWeight(probe, worldPosition);
         if (weight <= 0.0) continue;
-        for (uint slot = 0u; slot < 4u; ++slot)
+        bool inserted = false;
+        for (uint slot = 0u; slot < 8u; ++slot)
         {
             if (weight <= weights[slot]) continue;
-            for (uint shift = 3u; shift > slot; --shift)
+            ninthWeight = max(ninthWeight, weights[7u]);
+            for (uint shift = 7u; shift > slot; --shift)
             {
                 weights[shift] = weights[shift - 1u];
                 indices[shift] = indices[shift - 1u];
             }
             weights[slot] = weight;
             indices[slot] = index;
+            inserted = true;
             break;
         }
+        if (!inserted)
+            ninthWeight = max(ninthWeight, weight);
+    }
+    if (ninthWeight > 0.0 && (weights[0u] - ninthWeight) > 1.0e-5)
+    {
+        for (uint slot = 0u; slot < 8u; ++slot)
+            weights[slot] = max(weights[slot] - ninthWeight, 0.0);
     }
     float sum = 0.0;
     float3 irradiance = float3(0.0);
     float3 prefiltered = float3(0.0);
-    for (uint slot = 0u; slot < 4u; ++slot)
+    for (uint slot = 0u; slot < 8u; ++slot)
     {
         if (weights[slot] <= 0.0) continue;
         float3 probeDiffuse, probeSpecular;

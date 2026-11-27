@@ -270,10 +270,16 @@ namespace XREngine.Components.Scene.Mesh
             boundsColor = ResolveBoundsDebugColor(boundsColor, occlusionCulled);
 
             var box = (RenderInfo as IOctreeItem)?.WorldCullingVolume;
-            if (renderMeshBounds && ShouldUseLiveGpuSkinnedBounds())
+            bool isAdvancedPipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is AdvancedRenderPipeline;
+            if (renderMeshBounds && ShouldUseLiveGpuSkinnedBounds() && !isAdvancedPipeline)
             {
                 if (!TryRenderGpuSkinnedBounds(boundsColor, camera: null))
-                    ReportGpuSkinnedBoundsDebugFailure();
+                {
+                    if (box is not null)
+                        RenderDebugBox(box.Value, boundsColor);
+                    else
+                        ReportGpuSkinnedBoundsDebugFailure();
+                }
             }
             else if (box is not null)
             {

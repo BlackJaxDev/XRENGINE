@@ -24,15 +24,16 @@ uniform float Emission = 0.0f;
 uniform float AlphaCutoff = -1.0f;
 
 #pragma snippet "NormalEncoding"
+#pragma snippet "UpscaleTextureLodBias"
 #pragma snippet "DitheredTransparency"
 #pragma snippet "SurfaceEmission"
 
 void main()
 {
-    vec4 albedoSample = texture(Texture0, FragUV0);
+    vec4 albedoSample = XRENGINE_SampleBiasedTexture(Texture0, FragUV0);
     // glTF base-color alpha remains coverage even when the legacy positional
     // opacity slot aliases the same texture. A distinct opacity map multiplies it.
-    float alphaMask = albedoSample.a * texture(Texture1, FragUV0).r;
+    float alphaMask = albedoSample.a * XRENGINE_SampleBiasedTexture(Texture1, FragUV0).r;
 
     XRENGINE_AlphaCutoffAndDither(AlphaCutoff, alphaMask, Opacity, gl_FragCoord.xy);
 

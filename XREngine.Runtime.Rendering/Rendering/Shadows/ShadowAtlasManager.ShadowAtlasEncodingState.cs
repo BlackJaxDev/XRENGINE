@@ -70,6 +70,10 @@ public sealed partial class ShadowAtlasManager
                 checked((int)allocation.Resolution));
         }
 
+        public bool TryFree(int pageIndex, int x, int y, int size)
+            => (uint)pageIndex < (uint)_allocators.Count && size > 0 &&
+               _allocators[pageIndex].TryFree(x, y, size);
+
         public bool TryAllocate(
             int size,
             ShadowAtlasManagerSettings settings,
@@ -234,8 +238,10 @@ public sealed partial class ShadowAtlasManager
             return true;
         }
 
-        private static int GetPageLimit(ShadowAtlasManagerSettings settings)
-            => Math.Max(1, settings.MaxPages);
+        private int GetPageLimit(ShadowAtlasManagerSettings settings)
+            => AtlasKind == EShadowAtlasKind.Directional && settings.MaxDirectionalPages > 0
+                ? Math.Max(1, settings.MaxDirectionalPages)
+                : Math.Max(1, settings.MaxPages);
 
         private void CreatePage(ShadowAtlasManagerSettings settings)
         {
@@ -349,7 +355,7 @@ public sealed partial class ShadowAtlasManager
             return checked(colorBytes + rasterDepthBytes);
         }
 
-        private static int CalculateLayerCapacity(ShadowAtlasManagerSettings settings, int requiredLayers)
+        private int CalculateLayerCapacity(ShadowAtlasManagerSettings settings, int requiredLayers)
         {
             _ = requiredLayers;
             // Allocate the configured backing array once. Growing a live array

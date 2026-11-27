@@ -35,6 +35,7 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
     private bool _quarantined;
     private bool _resourcesDirty = true;
     private bool _hasCompletedCapture;
+    private bool _publishedBeforeWriterCompletion;
     private XRCamera? _sourceCamera;
     private readonly object _publicationSync = new();
     private int _publicationReferences;
@@ -43,6 +44,22 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
     private bool _releaseQueued;
     private uint _allocatedWidth;
     private uint _allocatedHeight;
+    private Func<bool>? _standaloneOffscreenEmitCallback;
+    private RenderOutputRequest _standaloneOutputRequest;
+    private SharedOffscreenCapturePipeline? _sharedPipeline;
+
+    /// <summary>
+    /// Optional shared viewport and pipeline owned by a parent capture bank (such as
+    /// <see cref="MirrorCaptureComponent"/>). When set, this slot owns only its output texture,
+    /// framebuffer, and completion fences while sharing the internal render pipeline targets.
+    /// </summary>
+    internal SharedOffscreenCapturePipeline? SharedPipeline
+    {
+        get => _sharedPipeline;
+        set => _sharedPipeline = value;
+    }
+
+    private ulong EffectiveOutputIdentity => _sharedPipeline?.OutputIdentity ?? _outputIdentity;
 
     protected abstract RenderPipelineOffscreenIntent OffscreenIntent { get; }
     protected abstract EFrameOutputKind CaptureOutputKind { get; }
@@ -177,18 +194,39 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
             // An attempted writer invalidates the previous generation even if
             // initialization throws or authoring is cleanly rejected without a fence.
             _hasCompletedCapture = false;
+            _publishedBeforeWriterCompletion = false;
 
             UpdateCaptureCamera();
             RenderOutputRequest output = CreateOutputRequest();
             FrameOutputPacingDecision pacing = FrameOutputPacingDecision.Due(
                 output.ViewKind, output.OutputKind, output.FrameId) with { Request = output };
-            _viewport.CollectVisible(collectMirrors: false, frameOutputPacing: pacing);
+            CollectVisibleWithStableCanonicalPublication(pacing);
             _viewport.SwapBuffers(allowScreenSpaceUISwap: false);
-            bool authored = _viewport.TryRenderWithCompletion(
-                _frameBuffer,
-                in output,
-                out _writerFence,
-                out ERenderOutputCompletionAuthoringDisposition disposition);
+            bool authored;
+            ERenderOutputCompletionAuthoringDisposition disposition = default;
+            if (mirror &&
+                RuntimeRenderingHostServices.Presentation.IsInVR &&
+                AbstractRenderer.Current is { SupportsStandaloneOffscreenCapture: true } standaloneRenderer)
+            {
+                // Submit VR mirror captures on the standalone graphics queue path so held desktop
+                // frames never delay or throttle in-world mirror updates.
+                _standaloneOutputRequest = output;
+                _standaloneOffscreenEmitCallback ??= EmitStandaloneOffscreenMirrorRender;
+                authored = standaloneRenderer.TryExecuteStandaloneOffscreenCapture(
+                    _frameBuffer,
+                    _allocatedWidth,
+                    _allocatedHeight,
+                    _standaloneOffscreenEmitCallback,
+                    out _writerFence);
+            }
+            else
+            {
+                authored = _viewport.TryRenderWithCompletion(
+                    _frameBuffer,
+                    in output,
+                    out _writerFence,
+                    out disposition);
+            }
             _writerAuthored = authored;
             _writerPipeline = _viewport.RenderPipelineInstance;
             _writerCommands = _writerPipeline.ActiveMeshRenderCommands;
@@ -205,6 +243,7 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         }
         finally
         {
+            _standaloneOutputRequest = default;
             if (publicationWriteStarted && _writerFence is null && !_quarantined)
                 _canonicalLifetime!.EndWrite(0);
             if (mirror)
@@ -213,6 +252,77 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
             lock (_publicationSync)
                 _writeInProgress = false;
         }
+    }
+
+    private void CollectVisibleWithStableCanonicalPublication(in FrameOutputPacingDecision pacing)
+    {
+        if (_viewport is null)
+            return;
+
+        GPUScene? gpuScene = UsesAdvancedPipeline ? _viewport.World?.VisualScene?.GPUCommands : null;
+        if (gpuScene is null)
+        {
+            _viewport.CollectVisible(collectMirrors: false, frameOutputPacing: pacing);
+            return;
+        }
+
+        // Offscreen mirrors collect on the render thread while the update thread can publish a
+        // new canonical GPU scene snapshot. Wait briefly for an active publish to finish and
+        // recollect once if a publish crossed the collection window so the package never drops
+        // with canonicalFrame=0 or mismatched draw identities.
+        WaitBrieflyForCanonicalPublication(gpuScene);
+        long epochBefore = gpuScene.AdvancedPublisherEpoch;
+        _viewport.CollectVisible(collectMirrors: false, frameOutputPacing: pacing);
+        RenderCommandCollection commands = _viewport.RenderPipelineInstance.ActiveMeshRenderCommands;
+        bool canonicalMissing = commands.UpdatingBackendReadyPackage.CanonicalFrame.FrameId == 0UL;
+        bool epochChanged = gpuScene.IsAdvancedPublicationInProgress ||
+            gpuScene.AdvancedPublisherEpoch != epochBefore;
+        if (!canonicalMissing && !epochChanged)
+            return;
+
+        WaitBrieflyForCanonicalPublication(gpuScene);
+        if (!epochChanged && _viewport.TryFinalizePreparedCanonicalFramePackageAfterWorldSwap())
+            return;
+
+        commands.ResetUnsubmittedCapture();
+        _viewport.CollectVisible(collectMirrors: false, frameOutputPacing: pacing);
+    }
+
+    private static void WaitBrieflyForCanonicalPublication(GPUScene gpuScene)
+    {
+        if (!gpuScene.IsAdvancedPublicationInProgress)
+            return;
+
+        long deadline = System.Diagnostics.Stopwatch.GetTimestamp() +
+            System.Diagnostics.Stopwatch.Frequency / 500;
+        SpinWait spin = default;
+        while (gpuScene.IsAdvancedPublicationInProgress &&
+               System.Diagnostics.Stopwatch.GetTimestamp() < deadline)
+            spin.SpinOnce();
+    }
+
+    private bool EmitStandaloneOffscreenMirrorRender()
+    {
+        if (_viewport is null || _frameBuffer is null)
+            return false;
+
+        XRFrameBuffer renderTarget = _sharedPipeline?.ScratchFrameBuffer ?? _frameBuffer;
+        if (!_viewport.TryRenderStandaloneExactOutput(renderTarget, in _standaloneOutputRequest))
+            return false;
+
+        if (!ReferenceEquals(renderTarget, _frameBuffer))
+        {
+            AbstractRenderer.Current?.BlitFBOToFBO(
+                renderTarget,
+                _frameBuffer,
+                EReadBufferMode.ColorAttachment0,
+                colorBit: true,
+                depthBit: false,
+                stencilBit: false,
+                linearFilter: false);
+        }
+
+        return true;
     }
 
     /// <summary>Polls the exact GPU writer before consumers read or resize the output.</summary>
@@ -244,22 +354,31 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
             return false;
         }
 
+        bool alreadyPublished = _publishedBeforeWriterCompletion;
+        _publishedBeforeWriterCompletion = false;
         fence.Dispose();
         ReleaseCompletedWriterPackage();
         _writerFence = null;
         _writerRenderer = null;
         // A rejected command stream has no GPU writer and can be retried. It is
         // distinct from a submitted writer whose completion became unknowable.
-        _hasCompletedCapture = _writerAuthored && status == EGpuFenceStatus.Signaled;
+        bool succeeded = _writerAuthored && status == EGpuFenceStatus.Signaled;
+        _hasCompletedCapture = succeeded;
         _writerAuthored = false;
-        if (_hasCompletedCapture)
+        if (alreadyPublished)
+        {
+            if (!succeeded)
+                _canonicalLifetime?.Withdraw();
+            return succeeded;
+        }
+        if (succeeded)
         {
             CaptureVersion++;
             _canonicalLifetime?.EndWrite(_outputTexture!.AdvanceCanonicalGpuContentGeneration());
         }
         else
             _canonicalLifetime?.EndWrite(0);
-        return _hasCompletedCapture;
+        return succeeded;
     }
 
     private void ReleaseCompletedWriterPackage()
@@ -357,41 +476,55 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         _frameBuffer?.Destroy();
         CreateOutputTarget(width, height);
 
-        _captureCamera ??= new XRCamera(_captureTransform,
-            new XRPerspectiveCameraParameters(90.0f, 1.0f, 0.1f, 10000.0f));
-        if (UsesAdvancedPipeline)
-            RuntimeEngine.RegisterAdvancedOffscreenOwner(_outputIdentity, OffscreenIntent);
-        RenderPipelineRequest request = UsesAdvancedPipeline
-            ? RenderPipelineRequest.AdvancedOffscreenCapture(OffscreenIntent, outputId: _outputIdentity)
-            : RenderPipelineRequest.OffscreenCapture();
-        _viewport ??= new XRViewport(null, width, height);
-        // The output request below declares an internal extent equal to the
-        // allocated texture size. Turn off the automatic internal-resolution
-        // policy before the pipeline and camera are assigned: assigning a
-        // pipeline applies its anti-aliasing scale (for example the TSR render
-        // scale) to the viewport, and a scaled internal extent makes Vulkan
-        // reject every writer receipt of this capture.
-        _viewport.AllowAutomaticInternalResolution = false;
-        // Capture resolution controls sampling density, not the source camera's
-        // projection. Its shared lens must remain read-only on this viewport.
-        _viewport.AllowCameraAspectRatioUpdates = false;
-        // Assigning a camera normally adopts its main-view pipeline. This owner
-        // must keep its explicit offscreen family before any camera assignment.
-        _viewport.SetRenderPipelineFromCamera = false;
-        if (_viewport.Width != width || _viewport.Height != height ||
-            _viewport.InternalWidth != (int)width || _viewport.InternalHeight != (int)height)
-            _viewport.Resize(width, height, setInternalResolution: true,
-                internalResolutionWidth: checked((int)width),
-                internalResolutionHeight: checked((int)height));
-        _viewport.PipelineRequest = request;
-        _viewport.RenderPipeline = RuntimeEngine.Rendering.NewRenderPipeline(request);
-        _viewport.WorldInstanceOverride = World.GetRenderWorld();
-        _viewport.Camera = _captureCamera;
-        _viewport.AutomaticallyCollectVisible = false;
-        _viewport.AutomaticallySwapBuffers = false;
-        _viewport.AllowUIRender = false;
-        _viewport.CullWithFrustum = true;
-        ConfigureCaptureViewport(_viewport);
+        if (_sharedPipeline is { } shared)
+        {
+            _viewport = shared.EnsureResources(
+                World,
+                width,
+                height,
+                UsesAdvancedPipeline,
+                OffscreenIntent,
+                ConfigureCaptureViewport);
+            _captureCamera = shared.CaptureCamera;
+        }
+        else
+        {
+            _captureCamera ??= new XRCamera(_captureTransform,
+                new XRPerspectiveCameraParameters(90.0f, 1.0f, 0.1f, 10000.0f));
+            if (UsesAdvancedPipeline)
+                RuntimeEngine.RegisterAdvancedOffscreenOwner(_outputIdentity, OffscreenIntent);
+            RenderPipelineRequest request = UsesAdvancedPipeline
+                ? RenderPipelineRequest.AdvancedOffscreenCapture(OffscreenIntent, outputId: _outputIdentity)
+                : RenderPipelineRequest.OffscreenCapture();
+            _viewport ??= new XRViewport(null, width, height);
+            // The output request below declares an internal extent equal to the
+            // allocated texture size. Turn off the automatic internal-resolution
+            // policy before the pipeline and camera are assigned: assigning a
+            // pipeline applies its anti-aliasing scale (for example the TSR render
+            // scale) to the viewport, and a scaled internal extent makes Vulkan
+            // reject every writer receipt of this capture.
+            _viewport.AllowAutomaticInternalResolution = false;
+            // Capture resolution controls sampling density, not the source camera's
+            // projection. Its shared lens must remain read-only on this viewport.
+            _viewport.AllowCameraAspectRatioUpdates = false;
+            // Assigning a camera normally adopts its main-view pipeline. This owner
+            // must keep its explicit offscreen family before any camera assignment.
+            _viewport.SetRenderPipelineFromCamera = false;
+            if (_viewport.Width != width || _viewport.Height != height ||
+                _viewport.InternalWidth != (int)width || _viewport.InternalHeight != (int)height)
+                _viewport.Resize(width, height, setInternalResolution: true,
+                    internalResolutionWidth: checked((int)width),
+                    internalResolutionHeight: checked((int)height));
+            _viewport.PipelineRequest = request;
+            _viewport.RenderPipeline = RuntimeEngine.Rendering.NewRenderPipeline(request);
+            _viewport.WorldInstanceOverride = World.GetRenderWorld();
+            _viewport.Camera = _captureCamera;
+            _viewport.AutomaticallyCollectVisible = false;
+            _viewport.AutomaticallySwapBuffers = false;
+            _viewport.AllowUIRender = false;
+            _viewport.CullWithFrustum = true;
+            ConfigureCaptureViewport(_viewport);
+        }
         _allocatedWidth = width;
         _allocatedHeight = height;
         _resourcesDirty = Width != width || Height != height;
@@ -401,7 +534,7 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
     private void UpdateCaptureCamera()
     {
         if (_captureCamera is not null)
-            ConfigureCaptureCamera(SourceCamera, _captureCamera, _captureTransform);
+            ConfigureCaptureCamera(SourceCamera, _captureCamera, _sharedPipeline?.CaptureTransform ?? _captureTransform);
     }
 
     /// <summary>Configures the private camera immediately before authoring an exact capture.</summary>
@@ -424,10 +557,11 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         RenderOutputRequest request = RenderOutputRequest.CreateDefault(
             EVrOutputViewKind.Secondary, CaptureOutputKind,
             RuntimeEngine.Rendering.State.RenderFrameId);
+        ulong outputId = EffectiveOutputIdentity;
         return ConfigureOutputRequest(request with
         {
-            OutputId = _outputIdentity,
-            ViewFamilyId = _outputIdentity,
+            OutputId = outputId,
+            ViewFamilyId = outputId,
             // Consumers require this exact texture's writer receipt. Background
             // captures are deferrable scheduling hints and cannot reserve it.
             OutputClass = ERenderOutputClass.RequiredDependency,
@@ -440,7 +574,7 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
                 : ERenderOutputWriteAspect.Color,
             Target = request.Target with
             {
-                StableTargetId = _outputIdentity,
+                StableTargetId = outputId,
                 TargetGeneration = unchecked((ulong)(_viewport?.RenderPipelineInstance.ResourceGeneration ?? 0)),
                 DisplayWidth = _allocatedWidth,
                 DisplayHeight = _allocatedHeight,
@@ -528,8 +662,14 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
             return;
         if (_canonicalLifetime is not null && !_canonicalLifetime.TryRetire())
             throw new InvalidOperationException("Capture publication ownership changed during resource retirement.");
-        _viewport?.Destroy();
+        if (_sharedPipeline is null)
+        {
+            _viewport?.Destroy();
+            RuntimeEngine.UnregisterAdvancedOffscreenOwner(_outputIdentity, OffscreenIntent);
+        }
         _viewport = null;
+        if (_sharedPipeline is not null)
+            _captureCamera = null;
         _frameBuffer?.Destroy();
         _frameBuffer = null;
         _depthBuffer?.Destroy();
@@ -539,10 +679,9 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         _canonicalLifetime = null;
         _resourcesDirty = true;
         _hasCompletedCapture = false;
-        RuntimeEngine.UnregisterAdvancedOffscreenOwner(_outputIdentity, OffscreenIntent);
     }
 
-    private static ulong AllocateOutputIdentity()
+    internal static ulong AllocateOutputIdentity()
     {
         long identity = Interlocked.Increment(ref s_nextOutputIdentity);
         if (identity <= 0 || identity >= (1L << 44))

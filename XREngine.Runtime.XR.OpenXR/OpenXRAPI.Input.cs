@@ -149,8 +149,15 @@ public unsafe partial class OpenXRAPI
         {
             foreach (RuntimeVrTrackerInfo info in _openXrKnownTrackers.Values)
             {
-                if (info.Connected && (info.RequiresInputRebuild ||
-                    (_trackerSubactionPaths.ContainsKey(info.UserPath) && !_trackerSpaces.ContainsKey(info.UserPath))))
+                if (!info.Connected)
+                    continue;
+
+                bool hasSpace = TryResolveTrackerTransportSpaceLocked(info, out _, out _, out bool duplicateRoleConflict);
+                bool roleSpaceExists = !string.IsNullOrWhiteSpace(info.RolePath) && _trackerSpaces.ContainsKey(info.RolePath);
+                if (duplicateRoleConflict || roleSpaceExists)
+                    continue;
+
+                if (info.RequiresInputRebuild || !hasSpace)
                     return true;
             }
             return false;
@@ -166,6 +173,13 @@ public unsafe partial class OpenXRAPI
             EnumerateViveTrackerPaths();
     }
     private uint _viveTrackerExtensionRevision;
+    private bool _trackerPersistentSubactionsAccepted;
+    private int _loggedEmptyTrackerEnumerationAfterAttach;
+    private int _loggedActiveTransportRoleWithoutEnumeration;
+    private int _loggedPoseActionStateError;
+    private int _loggedTrackerRoleProbeSummary;
+    private long _trackerRoleProbeStartTick;
+    private readonly HashSet<string> _loggedDuplicateTrackerRoleConflicts = new(StringComparer.Ordinal);
 
     private static readonly string[] DefaultViveTrackerRoleUserPaths =
     [
@@ -182,12 +196,19 @@ public unsafe partial class OpenXRAPI
         "/user/vive_tracker_htcx/role/right_knee",
         "/user/vive_tracker_htcx/role/camera",
         "/user/vive_tracker_htcx/role/keyboard",
-        "/user/vive_tracker_htcx/role/handheld_object",
         "/user/vive_tracker_htcx/role/left_wrist",
         "/user/vive_tracker_htcx/role/right_wrist",
         "/user/vive_tracker_htcx/role/left_ankle",
         "/user/vive_tracker_htcx/role/right_ankle",
     ];
+
+    private bool IsViveTrackerRoleSupported(string rolePath)
+        => _viveTrackerExtensionRevision >= 3
+            || (!rolePath.EndsWith("_wrist", StringComparison.Ordinal)
+                && !rolePath.EndsWith("_ankle", StringComparison.Ordinal));
+
+    private static bool IsViveTrackerRolePath(string userPath)
+        => userPath.StartsWith("/user/vive_tracker_htcx/role/", StringComparison.Ordinal);
 
     private void EnsureInputCreated()
     {
@@ -205,6 +226,8 @@ public unsafe partial class OpenXRAPI
             SuggestDefaultBindings();
             AttachActionSets();
             _inputCreated = _inputAttached;
+            if (_inputAttached && _viveTrackerInteraction is not null)
+                EnumerateViveTrackerPaths();
         }
         catch (Exception ex)
         {
@@ -220,9 +243,32 @@ public unsafe partial class OpenXRAPI
         _rightHandPath = StringToPathOrThrow("/user/hand/right");
 
         _trackerSubactionPaths.Clear();
+        _trackerPersistentSubactionsAccepted = false;
+        _loggedEmptyTrackerEnumerationAfterAttach = 0;
+        _loggedActiveTransportRoleWithoutEnumeration = 0;
+        _loggedPoseActionStateError = 0;
+        _loggedTrackerRoleProbeSummary = 0;
+        _trackerRoleProbeStartTick = Environment.TickCount64;
+        _loggedDuplicateTrackerRoleConflicts.Clear();
         _openXrTrackingSessionGeneration = Interlocked.Increment(ref _nextTrackingSessionGeneration);
         _openXrLastTrackerDiagnostics = [];
         InitializeViveTrackerExtension();
+        AddSupportedViveTrackerTransportSubactionPaths();
+    }
+
+    private void AddSupportedViveTrackerTransportSubactionPaths()
+    {
+        if (_viveTrackerInteraction is null)
+            return;
+
+        // Always register HTCX transport role subaction paths before binding suggestion so
+        // runtimes that expose trackers only after /interaction_profiles/htc/vive_tracker_htcx
+        // is suggested can activate tracker poses on the first session.
+        foreach (string rolePath in DefaultViveTrackerRoleUserPaths)
+        {
+            if (IsViveTrackerRoleSupported(rolePath))
+                AddTrackerSubactionPath(rolePath);
+        }
     }
 
     private static void WriteUtf8Z(byte* dest, int maxBytes, string text)
@@ -281,41 +327,83 @@ public unsafe partial class OpenXRAPI
             throw new Exception($"xrCreateAction(hand_grip_pose) failed: {actionResult}");
 
         if (_trackerSubactionPaths.Count > 0)
+            CreateTrackerPoseAction();
+
+        CreateRuntimeNeutralInputActions();
+        CreateEyeGazeAction();
+    }
+
+    private void CreateTrackerPoseAction()
+    {
+        bool hadPersistentPaths = false;
+        foreach (string userPath in _trackerSubactionPaths.Keys)
         {
-            var trackerPaths = new XrPath[_trackerSubactionPaths.Count];
-            int idx = 0;
-            foreach (var p in _trackerSubactionPaths.Values)
-                trackerPaths[idx++] = p;
-
-            fixed (XrPath* trackerSubactions = trackerPaths)
+            if (!IsViveTrackerRolePath(userPath))
             {
-                var trackerPoseInfo = new ActionCreateInfo
-                {
-                    Type = StructureType.ActionCreateInfo,
-                    ActionType = ActionType.PoseInput,
-                    CountSubactionPaths = (uint)trackerPaths.Length,
-                    SubactionPaths = trackerSubactions,
-                };
+                hadPersistentPaths = true;
+                break;
+            }
+        }
 
-                WriteUtf8Z(trackerPoseInfo.ActionName, 64, "tracker_pose");
-                WriteUtf8Z(trackerPoseInfo.LocalizedActionName, 128, "Vive Tracker Pose");
+        Result trackerResult = TryCreateTrackerPoseAction(_trackerSubactionPaths);
+        if (trackerResult == Result.Success)
+        {
+            _trackerPersistentSubactionsAccepted = hadPersistentPaths;
+            return;
+        }
 
-                var trackerResult = Api.CreateAction(_inputActionSet, in trackerPoseInfo, ref _trackerPoseAction);
-                if (trackerResult == Result.ErrorPathUnsupported)
+        if (trackerResult != Result.Success && hadPersistentPaths)
+        {
+            Debug.Out($"OpenXR: runtime rejected persistent tracker subaction paths ({trackerResult}); retrying tracker_pose with HTCX transport paths while keeping persistent hardware identity.");
+            var toRemove = new List<string>();
+            foreach (string userPath in _trackerSubactionPaths.Keys)
+            {
+                if (!IsViveTrackerRolePath(userPath))
+                    toRemove.Add(userPath);
+            }
+
+            foreach (string userPath in toRemove)
+                _trackerSubactionPaths.Remove(userPath);
+
+            if (_trackerSubactionPaths.Count > 0)
+            {
+                trackerResult = TryCreateTrackerPoseAction(_trackerSubactionPaths);
+                if (trackerResult == Result.Success)
                 {
-                    Debug.Out("OpenXR: persistent tracker subaction paths are unsupported; tracker pose input is unavailable for this session. No alternate provider has been enabled.");
-                    _trackerPoseAction = default;
-                }
-                else if (trackerResult != Result.Success)
-                {
-                    Debug.LogWarning($"xrCreateAction(tracker_pose) failed: {trackerResult}");
-                    _trackerPoseAction = default;
+                    _trackerPersistentSubactionsAccepted = false;
+                    return;
                 }
             }
         }
 
-        CreateRuntimeNeutralInputActions();
-        CreateEyeGazeAction();
+        Debug.LogWarning($"xrCreateAction(tracker_pose) failed: {trackerResult}");
+        _trackerPoseAction = default;
+        _trackerPersistentSubactionsAccepted = false;
+    }
+
+    private Result TryCreateTrackerPoseAction(Dictionary<string, XrPath> subactionMap)
+    {
+        var trackerPaths = new XrPath[subactionMap.Count];
+        int idx = 0;
+        foreach (XrPath p in subactionMap.Values)
+            trackerPaths[idx++] = p;
+
+        fixed (XrPath* trackerSubactions = trackerPaths)
+        {
+            var trackerPoseInfo = new ActionCreateInfo
+            {
+                Type = StructureType.ActionCreateInfo,
+                ActionType = ActionType.PoseInput,
+                CountSubactionPaths = (uint)trackerPaths.Length,
+                SubactionPaths = trackerSubactions,
+            };
+
+            WriteUtf8Z(trackerPoseInfo.ActionName, 64, "tracker_pose");
+            WriteUtf8Z(trackerPoseInfo.LocalizedActionName, 128, "Vive Tracker Pose");
+
+            _trackerPoseAction = default;
+            return Api.CreateAction(_inputActionSet, in trackerPoseInfo, ref _trackerPoseAction);
+        }
     }
 
     private void CreateActionSpaces()
@@ -407,14 +495,14 @@ public unsafe partial class OpenXRAPI
             SuggestRuntimeNeutralBindings();
             SuggestEyeGazeBinding();
 
-            if (_trackerPoseAction.Handle != 0 && _trackerSubactionPaths.Count > 0)
+            if (_trackerPoseAction.Handle != 0 && _viveTrackerInteraction is not null)
             {
-                // The interaction profile only accepts role component paths. Persistent
-                // physical paths are subaction selectors, never suggested component bindings.
+                // The interaction profile only accepts role component paths. Proximity calibration
+                // assigns avatar body slots independently of the HTCX transport path.
                 var trackerBindings = new List<ActionSuggestedBinding>(DefaultViveTrackerRoleUserPaths.Length);
                 foreach (var role in DefaultViveTrackerRoleUserPaths)
                 {
-                    if (_viveTrackerExtensionRevision < 3 && (role.EndsWith("_wrist", StringComparison.Ordinal) || role.EndsWith("_ankle", StringComparison.Ordinal)))
+                    if (!IsViveTrackerRoleSupported(role))
                         continue;
                     try
                     {
@@ -457,7 +545,7 @@ public unsafe partial class OpenXRAPI
 
             var res = Api.SuggestInteractionProfileBinding(_instance, in suggested);
             if (profilePath == "/interaction_profiles/htc/vive_tracker_htcx")
-                Debug.Out($"OpenXR tracker bindings: revision={_viveTrackerExtensionRevision}, roleBindingCount={bindings.Length}, persistentSubactionCount={_trackerSubactionPaths.Count}, result={res}");
+                Debug.Out($"OpenXR tracker bindings: revision={_viveTrackerExtensionRevision}, roleBindingCount={bindings.Length}, subactionCount={_trackerSubactionPaths.Count}, result={res}");
             if (res != Result.Success)
                 Debug.Out($"OpenXR: SuggestBindings for '{profilePath}' => {res}");
         }
@@ -515,7 +603,11 @@ public unsafe partial class OpenXRAPI
 
         var res = Api.GetActionStatePose(_session, in getInfo, ref state);
         if (res != Result.Success)
+        {
+            if (Interlocked.Exchange(ref _loggedPoseActionStateError, 1) == 0)
+                Debug.LogWarning($"OpenXR: xrGetActionStatePose failed: {res}");
             return false;
+        }
 
         isActive = state.IsActive != 0;
         return true;
@@ -652,9 +744,15 @@ public unsafe partial class OpenXRAPI
             foreach (var entry in _openXrKnownTrackers)
             {
                 RuntimeVrTrackerInfo previous = entry.Value;
-                bool hasSpace = _trackerSpaces.TryGetValue(entry.Key, out Space space) && _trackerSubactionPaths.TryGetValue(entry.Key, out _);
-                bool active = synchronized && hasSpace && TryGetActivePoseState(_trackerPoseAction, _trackerSubactionPaths[entry.Key], out bool actionActive) && actionActive;
-                bool bound = hasSpace && (active || IsTrackerInteractionProfileBound(_trackerSubactionPaths[entry.Key]));
+                bool hasSpace = TryResolveTrackerTransportSpaceLocked(
+                    previous,
+                    out XrPath subactionPath,
+                    out Space space,
+                    out bool duplicateRoleConflict);
+                if (duplicateRoleConflict && !string.IsNullOrEmpty(previous.RolePath) && _loggedDuplicateTrackerRoleConflicts.Add(previous.RolePath))
+                    Debug.LogWarning($"OpenXR tracker transport conflict: multiple enumerated trackers share HTCX transport role '{previous.RolePath}'. Persistent-path subactions are unavailable, so only the primary tracker on this role reads the role space; secondary paired trackers on the same role are withheld to avoid duplicating one pose onto two identities.");
+                bool active = synchronized && hasSpace && TryGetActivePoseState(_trackerPoseAction, subactionPath, out bool actionActive) && actionActive;
+                bool bound = hasSpace && (active || IsTrackerInteractionProfileBound(subactionPath));
                 bool positionValid = false;
                 bool orientationValid = false;
                 Matrix4x4 pose = previous.LastValidPose;
@@ -681,8 +779,26 @@ public unsafe partial class OpenXRAPI
                     };
                     _openXrKnownTrackers[entry.Key] = current;
                     if (current.PoseCurrentlyUsable != previous.PoseCurrentlyUsable || current.ActionActive != previous.ActionActive)
+                    {
                         Debug.Out($"OpenXR tracker sample: identity={entry.Key}, snapshot={snapshotId}, time={displayTime}, state={current.DiagnosticState}, positionValid={positionValid}, orientationValid={orientationValid}");
+                        Vector3 trackerPos = pose.Translation;
+                        Vector3 headPos = _openXrPredHeadLocalPose.Translation;
+                        Vector3 leftPos = _openXrPredLeftControllerLocalPose.Translation;
+                        Vector3 rightPos = _openXrPredRightControllerLocalPose.Translation;
+                        Debug.WriteAuxiliaryLog(
+                            "openxr-trackers.log",
+                            $"TrackerSample id={entry.Key} role={current.RolePath ?? "<none>"} dupConflict={duplicateRoleConflict} active={active} valid={valid} state={current.DiagnosticState} " +
+                            $"pos=({trackerPos.X:F3},{trackerPos.Y:F3},{trackerPos.Z:F3}) head=({headPos.X:F3},{headPos.Y:F3},{headPos.Z:F3}) " +
+                            $"leftHand=({leftPos.X:F3},{leftPos.Y:F3},{leftPos.Z:F3}) rightHand=({rightPos.X:F3},{rightPos.Y:F3},{rightPos.Z:F3})");
+                    }
                 }
+            }
+            if (timing == OpenXrPoseTiming.Predicted && _trackerPoseAction.Handle != 0 && synchronized)
+            {
+                if (_openXrKnownTrackers.Count == 0)
+                    ProbeUnenumeratedTrackerTransportRolesLocked(displayTime);
+                PromoteActiveUnclaimedTrackerRolesLocked(displayTime, snapshotId, poses);
+                LogTrackerRoleProbeOnceLocked(displayTime);
             }
             if (timing == OpenXrPoseTiming.Predicted)
                 PublishTrackingSnapshotLocked(displayTime);
@@ -703,6 +819,177 @@ public unsafe partial class OpenXRAPI
         }
         UpdateRuntimeNeutralInputStateCaches(displayTime, timing);
         RecordSmokeActionPoseCache(timing);
+    }
+
+    private bool TryResolveTrackerTransportSpaceLocked(
+        in RuntimeVrTrackerInfo tracker,
+        out XrPath subactionPath,
+        out Space space,
+        out bool duplicateRoleConflict)
+    {
+        duplicateRoleConflict = false;
+        string? persistentPath = tracker.PersistentPath;
+        if (!string.IsNullOrWhiteSpace(persistentPath)
+            && _trackerSpaces.TryGetValue(persistentPath, out space)
+            && _trackerSubactionPaths.TryGetValue(persistentPath, out subactionPath))
+        {
+            return true;
+        }
+
+        string? rolePath = tracker.RolePath;
+        if (!string.IsNullOrWhiteSpace(rolePath)
+            && _trackerSpaces.TryGetValue(rolePath, out space)
+            && _trackerSubactionPaths.TryGetValue(rolePath, out subactionPath))
+        {
+            // SteamVR enumerates all paired trackers (including powered-off spares) that share
+            // an HTCX transport role while rejecting persistent-path subactions. Assign each
+            // role space to exactly one deterministic primary tracker identity (preferring an
+            // already-tracked identity, then the first enumerated identity) and withhold only
+            // secondary duplicate identities so active trackers still stream without duplicating
+            // one pose onto two identities.
+            string? primaryPersistentPath = null;
+            bool primaryEverTracked = false;
+            int connectedSharingRole = 0;
+            foreach (RuntimeVrTrackerInfo candidate in _openXrKnownTrackers.Values)
+            {
+                if (!candidate.Connected
+                    || !string.Equals(candidate.RolePath, rolePath, StringComparison.Ordinal))
+                    continue;
+
+                connectedSharingRole++;
+                if (primaryPersistentPath is null
+                    || (candidate.EverTracked && !primaryEverTracked))
+                {
+                    primaryPersistentPath = candidate.PersistentPath;
+                    primaryEverTracked = candidate.EverTracked;
+                }
+            }
+
+            if (connectedSharingRole > 1)
+            {
+                duplicateRoleConflict = true;
+                if (!string.Equals(primaryPersistentPath, persistentPath, StringComparison.Ordinal))
+                {
+                    subactionPath = default;
+                    space = default;
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        subactionPath = default;
+        space = default;
+        return false;
+    }
+
+    private void PromoteActiveUnclaimedTrackerRolesLocked(
+        long displayTime,
+        long snapshotId,
+        Dictionary<string, Matrix4x4> poses)
+    {
+        // Some runtimes activate an HTCX role pose space for a connected tracker whose
+        // persistent entry was omitted or reported without a role path. Register any live,
+        // unclaimed HTCX role so its pose streams without duplicating claimed roles.
+        foreach (KeyValuePair<string, Space> entry in _trackerSpaces)
+        {
+            string rolePath = entry.Key;
+            if (!IsViveTrackerRolePath(rolePath) || _openXrKnownTrackers.ContainsKey(rolePath))
+                continue;
+            if (!_trackerSubactionPaths.TryGetValue(rolePath, out XrPath subactionPath))
+                continue;
+
+            bool claimed = false;
+            foreach (RuntimeVrTrackerInfo known in _openXrKnownTrackers.Values)
+            {
+                if (known.Connected && string.Equals(known.RolePath, rolePath, StringComparison.Ordinal))
+                {
+                    claimed = true;
+                    break;
+                }
+            }
+            if (claimed)
+                continue;
+
+            if (!TryGetActivePoseState(_trackerPoseAction, subactionPath, out bool active) || !active)
+                continue;
+            if (!TryLocateSpace(entry.Value, displayTime, out Matrix4x4 pose, out bool posValid, out bool oriValid))
+                continue;
+
+            _openXrKnownTrackerPaths.Add(rolePath);
+            _openXrKnownTrackers[rolePath] = new RuntimeVrTrackerInfo
+            {
+                UserPath = rolePath,
+                PersistentPath = rolePath,
+                RolePath = rolePath,
+                RoleName = GetViveTrackerRoleName(rolePath),
+                RuntimeReported = true,
+                Connected = true,
+                Bound = true,
+                ActionActive = true,
+                PoseAvailable = true,
+                PositionValid = posValid,
+                OrientationValid = oriValid,
+                SessionGeneration = _openXrTrackingSessionGeneration,
+                SnapshotId = snapshotId,
+                SampleTime = displayTime,
+                EverTracked = true,
+                HasLastValidPose = true,
+                LastValidSnapshotId = snapshotId,
+                LastValidSampleTime = displayTime,
+                LastValidPose = pose,
+            };
+            poses[rolePath] = pose;
+            Vector3 p = pose.Translation;
+            Debug.WriteAuxiliaryLog(
+                "openxr-trackers.log",
+                $"UnclaimedActiveRole role={rolePath} pos=({p.X:F3},{p.Y:F3},{p.Z:F3})");
+        }
+    }
+
+    private void LogTrackerRoleProbeOnceLocked(long displayTime)
+    {
+        if (_loggedTrackerRoleProbeSummary != 0 ||
+            Environment.TickCount64 - _trackerRoleProbeStartTick < 2000)
+            return;
+        _loggedTrackerRoleProbeSummary = 1;
+
+        foreach (KeyValuePair<string, Space> entry in _trackerSpaces)
+        {
+            if (!_trackerSubactionPaths.TryGetValue(entry.Key, out XrPath subactionPath))
+                continue;
+
+            bool active = TryGetActivePoseState(_trackerPoseAction, subactionPath, out bool isActive) && isActive;
+            bool bound = active || IsTrackerInteractionProfileBound(subactionPath);
+            if (!active && !bound)
+                continue;
+
+            bool located = TryLocateSpace(entry.Value, displayTime, out Matrix4x4 pose, out bool posValid, out bool oriValid);
+            Vector3 p = pose.Translation;
+            Debug.WriteAuxiliaryLog(
+                "openxr-trackers.log",
+                $"TrackerRoleProbe role={entry.Key} active={active} bound={bound} located={located} posValid={posValid} oriValid={oriValid} pos=({p.X:F3},{p.Y:F3},{p.Z:F3})");
+        }
+    }
+
+    private void ProbeUnenumeratedTrackerTransportRolesLocked(long displayTime)
+    {
+        if (Volatile.Read(ref _loggedActiveTransportRoleWithoutEnumeration) != 0)
+            return;
+
+        foreach (var entry in _trackerSpaces)
+        {
+            if (!_trackerSubactionPaths.TryGetValue(entry.Key, out XrPath subactionPath))
+                continue;
+            if (!TryGetActivePoseState(_trackerPoseAction, subactionPath, out bool active) || !active)
+                continue;
+
+            bool located = TryLocateSpace(entry.Value, displayTime, out _, out bool posValid, out bool oriValid);
+            if (Interlocked.Exchange(ref _loggedActiveTransportRoleWithoutEnumeration, 1) == 0)
+                Debug.Out($"OpenXR tracker transport probe: rolePath={entry.Key} is active while xrEnumerateViveTrackerPathsHTCX returned 0 paths (located={located}, posValid={posValid}, oriValid={oriValid}).");
+            return;
+        }
     }
 
     private void DestroyInput()
@@ -770,6 +1057,11 @@ public unsafe partial class OpenXRAPI
             _rightInteractionProfilePath = default;
             _leftInteractionProfile = null;
             _rightInteractionProfile = null;
+            _trackerPersistentSubactionsAccepted = false;
+            Volatile.Write(ref _loggedEmptyTrackerEnumerationAfterAttach, 0);
+            Volatile.Write(ref _loggedActiveTransportRoleWithoutEnumeration, 0);
+            Volatile.Write(ref _loggedPoseActionStateError, 0);
+            _loggedDuplicateTrackerRoleConflicts.Clear();
             Volatile.Write(ref _lateTrackerRefreshRequired, 0);
         }
     }

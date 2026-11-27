@@ -21,10 +21,19 @@ public abstract class GameMode : XRAsset
     protected Type? _defaultPlayerPawnClass;
     [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
     protected Type? _defaultPlayerUserInterfaceClass;
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
+    protected Type? _defaultPauseMenuClass;
 
     public Type? PlayerControllerClass => _defaultPlayerControllerClass;
     public Type? PlayerPawnClass => _defaultPlayerPawnClass ?? RuntimeGameModeHostServices.Current?.DefaultPawnType;
     public Type? PlayerUserInterfaceClass => _defaultPlayerUserInterfaceClass;
+    public Type? PauseMenuClass => _defaultPauseMenuClass;
+
+    /// <summary>
+    /// Returns true when this game mode supplies its own pause menu and should not receive
+    /// a host-injected default pause menu.
+    /// </summary>
+    public virtual bool HasCustomPauseMenu => _defaultPauseMenuClass is not null;
 
     /// <summary>
     /// True when <see cref="CreateDefaultPawn"/> constructs the pawn at its final spawn pose.

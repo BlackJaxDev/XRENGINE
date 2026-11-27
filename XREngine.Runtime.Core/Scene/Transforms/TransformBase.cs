@@ -79,6 +79,87 @@ namespace XREngine.Scene.Transforms
 
         private static readonly object MatrixSubscriptionGate = new();
         private int _matrixHandlerMask;
+        private int _activePositionConstraintOwnerCount;
+        private int _activeRotationConstraintOwnerCount;
+
+        /// <summary>
+        /// Gets whether an active full-override constraint currently owns this transform's position.
+        /// Secondary bone writers such as <see cref="PhysicsChainComponent"/> skip writing
+        /// position-constrained bones so render snapshots do not flicker between competing writers.
+        /// </summary>
+        [YamlIgnore]
+        public bool HasActivePositionConstraintOwner
+            => Volatile.Read(ref _activePositionConstraintOwnerCount) > 0;
+
+        /// <summary>
+        /// Gets whether an active full-override constraint currently owns this transform's rotation.
+        /// </summary>
+        [YamlIgnore]
+        public bool HasActiveRotationConstraintOwner
+            => Volatile.Read(ref _activeRotationConstraintOwnerCount) > 0;
+
+        /// <summary>
+        /// Gets whether an active full-override transform constraint currently owns both this
+        /// transform's position and rotation.
+        /// </summary>
+        [YamlIgnore]
+        public bool HasActiveFullConstraintOwner
+            => HasActivePositionConstraintOwner && HasActiveRotationConstraintOwner;
+
+        /// <summary>
+        /// Registers one active position-override constraint owner on this transform.
+        /// </summary>
+        public void AddPositionConstraintOwner()
+            => Interlocked.Increment(ref _activePositionConstraintOwnerCount);
+
+        /// <summary>
+        /// Releases one active position-override constraint owner from this transform.
+        /// </summary>
+        public void RemovePositionConstraintOwner()
+            => DecrementConstraintOwnerCount(ref _activePositionConstraintOwnerCount);
+
+        /// <summary>
+        /// Registers one active rotation-override constraint owner on this transform.
+        /// </summary>
+        public void AddRotationConstraintOwner()
+            => Interlocked.Increment(ref _activeRotationConstraintOwnerCount);
+
+        /// <summary>
+        /// Releases one active rotation-override constraint owner from this transform.
+        /// </summary>
+        public void RemoveRotationConstraintOwner()
+            => DecrementConstraintOwnerCount(ref _activeRotationConstraintOwnerCount);
+
+        /// <summary>
+        /// Registers one active full-override constraint owner (position and rotation) on this transform.
+        /// </summary>
+        public void AddFullConstraintOwner()
+        {
+            AddPositionConstraintOwner();
+            AddRotationConstraintOwner();
+        }
+
+        /// <summary>
+        /// Releases one active full-override constraint owner (position and rotation) from this transform.
+        /// </summary>
+        public void RemoveFullConstraintOwner()
+        {
+            RemovePositionConstraintOwner();
+            RemoveRotationConstraintOwner();
+        }
+
+        private static void DecrementConstraintOwnerCount(ref int counter)
+        {
+            while (true)
+            {
+                int current = Volatile.Read(ref counter);
+                if (current <= 0)
+                    return;
+
+                if (Interlocked.CompareExchange(ref counter, current - 1, current) == current)
+                    return;
+            }
+        }
 
         /// <summary>
         /// Gets the notification bits that have an effect on this transform: the bit of each event with handlers,

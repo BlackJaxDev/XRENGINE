@@ -7,6 +7,8 @@ public unsafe partial class OpenXRAPI : IOpenXrRuntime
 {
     RuntimeOpenXrState IOpenXrRuntime.RuntimeState => (RuntimeOpenXrState)RuntimeState;
 
+    bool IOpenXrRuntime.IsSteamVrRuntime => IsSteamVrRuntimeActive();
+
     double IOpenXrRuntime.CurrentRenderDeadlineMs => CurrentRenderDeadlineMs;
 
     double IOpenXrRuntime.NextFrameSlackMs => NextFrameSlackMs;
@@ -27,6 +29,9 @@ public unsafe partial class OpenXRAPI : IOpenXrRuntime
 
     bool IOpenXrRuntime.TryGetHeadLocalPose(RuntimeOpenXrPoseTiming timing, out Matrix4x4 localPose)
         => TryGetHeadLocalPose((OpenXrPoseTiming)timing, out localPose);
+
+    bool IOpenXrRuntime.TryGetEyeLocalPose(RuntimeOpenXrPoseTiming timing, bool leftEye, out Matrix4x4 localPose)
+        => TryGetEyeLocalPose((OpenXrPoseTiming)timing, leftEye, out localPose);
 
     bool IOpenXrRuntime.TryGetControllerLocalPose(bool leftHand, RuntimeOpenXrPoseTiming timing, out Matrix4x4 localPose)
         => TryGetControllerLocalPose(leftHand, (OpenXrPoseTiming)timing, out localPose);

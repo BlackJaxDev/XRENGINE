@@ -1,9 +1,11 @@
 using MagicPhysX;
 using System.Numerics;
+using XREngine.Animation;
 using XREngine.Audio;
 using XREngine.Components;
 using XREngine.Components.Animation;
 using XREngine.Components.Movement;
+using XREngine.Components.Movement.Modules;
 using XREngine.Components.Physics;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
@@ -337,6 +339,7 @@ public static partial class EditorUnitTests
             //movementComp.JumpHoldForce = 1.0f;
             //movementComp.GravityOverride = new Vector3(0.0f, -1.0f, 0.0f);
             movementComp.InputLerpSpeed = 0.9f;
+            movementComp.TickInputWithPhysics = true;
         }
 
         private static void AddHandControllerNode(out VRControllerTransform controllerTfm, SceneNode parentNode, bool left)
@@ -443,18 +446,16 @@ public static partial class EditorUnitTests
             var rigidBodyTransform = cameraNode.GetTransformAs<RigidBodyTransform>(true)!;
             rigidBodyTransform.SetPositionAndRotation(initialPosition, initialRotation);
 
-            IPhysicsGeometry.Sphere s = new(0.2f);
-            PhysxMaterial mat = new(0.5f, 0.5f, 0.5f);
-            PhysxShape shape = new(s, mat, PxShapeFlags.TriggerShape | PxShapeFlags.Visualization, true);
             var cameraPickup = cameraNode.AddComponent<DynamicRigidBodyComponent>()!;
-            PhysxDynamicRigidBody body = new(shape, 1.0f, initialPosition, initialRotation);
-            cameraPickup.RigidBody = body;
-
-            body.Mass = 1.0f;
-            body.Flags = 0;
-            body.GravityEnabled = false;
-            body.SimulationEnabled = true;
-            body.DebugVisualize = true;
+            cameraPickup.MaterialDefinition = new PhysicsMaterialDefinition
+            {
+                StaticFriction = 0.5f,
+                DynamicFriction = 0.5f,
+                Restitution = 0.5f,
+            };
+            cameraPickup.Geometry = new IPhysicsGeometry.Sphere(0.2f);
+            cameraPickup.GravityEnabled = false;
+            cameraPickup.Density = 1.0f;
 
             return cameraPickup;
         }
@@ -518,18 +519,24 @@ public static partial class EditorUnitTests
             //footTfm.Scale = new Vector3(movementComp.StandingHeight);
             footTfm.SaveBindState();
 
-            //create node to translate camera up half the height of the character
+            // Position camera pivot at standing eye height in first-person or lowered chest/shoulder height in third-person.
             SceneNode cameraOffsetNode = new(footNode, "Camera Offset");
             var cameraOffsetTfm = cameraOffsetNode.SetTransform<Transform>();
-            cameraOffsetTfm.Translation = new Vector3(0.0f, (movementComp.HalfHeight * 1.8f), 0.0f);
+            cameraOffsetTfm.Translation = new Vector3(
+                0.0f,
+                Toggles.ThirdPersonPawn ? 1.18f : (movementComp.HalfHeight * 1.8f),
+                0.0f);
 
             SceneNode cameraParentNode;
+            BoomTransform? thirdPersonBoom = null;
             if (Toggles.ThirdPersonPawn)
             {
                 //Create camera boom with sphere shapecast
                 cameraParentNode = cameraOffsetNode.NewChildWithTransform<BoomTransform>(out var boomTfm, "3rd Person Camera Boom");
-                boomTfm.MaxLength = 10.0f;
+                boomTfm.MaxLength = Toggles.MotionBricksLocomotion ? 2.15f : 10.0f;
                 boomTfm.ZoomOutSpeed = 5.0f;
+                boomTfm.IgnoredComponents.Add(movementComp);
+                thirdPersonBoom = boomTfm;
             }
             else
                 cameraParentNode = cameraOffsetNode;
@@ -546,17 +553,83 @@ public static partial class EditorUnitTests
             characterComp.CameraComponent = camComp;
             characterComp.InputOrientationTransform = cameraNode.Transform;
             characterComp.ViewRotationTransform = cameraOffsetTfm;
+            if (thirdPersonBoom is not null)
+            {
+                var cameraRig = characterNode.AddComponent<ThirdPersonCameraRigComponent>("Third-Person Camera Rig")!;
+                cameraRig.CameraBoom = thirdPersonBoom;
+                cameraRig.CameraPivotTransform = cameraOffsetTfm;
+                cameraRig.CharacterMovement = movementComp;
+                characterComp.ThirdPersonCameraRig = cameraRig;
+            }
 
             if (camComp is not null && setUI)
             {
-                UICanvasComponent canvas = UserInterface.CreateEditorUI(rootNode, camComp);
-                canvas.IsActive = false;
-                characterComp.PauseToggled += () => UserInterface.ShowMenu(canvas, true, rootNode.Transform);
+                UICanvasComponent canvas = UserInterface.CreateEditorUI(rootNode, camComp, characterComp);
+                if (!Toggles.StartInPlayModeWithoutTransitions)
+                {
+                    canvas.IsActive = false;
+                    characterComp.PauseToggled += () => UserInterface.ShowMenu(canvas, true, rootNode.Transform);
+                }
             }
 
             characterComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
 
+            // Start TensorRT SOMA engine deserialization off the app thread immediately so avatar
+            // mounting does not stall a frame while waiting for the cached plan to load.
+            if (Toggles.MotionBricksLocomotion)
+                MotionBricksLocomotionRuntimeServices.Prewarm();
+
             return footNode;
+        }
+
+        /// <summary>
+        /// Creates a desktop character pawn at the player's current horizontal position, mounts an
+        /// existing avatar from a retired direct-launch VR rig onto its foot node, and wires desktop
+        /// height scaling and MotionBricks locomotion so untoggling OpenXR returns to desktop play.
+        /// </summary>
+        internal static PawnComponent? TransitionAvatarFromVrToDesktopMotionBricks(
+            SceneNode worldRoot,
+            SceneNode avatarRoot,
+            HumanoidComponent humanoid,
+            Vector3 vrFootWorldPosition,
+            Quaternion? vrWorldRotation = null)
+        {
+            SceneNode footNode = CreateDesktopCharacterPawn(worldRoot, setUI: false);
+            SceneNode? characterNode = footNode.Parent;
+            if (characterNode is null)
+                return null;
+
+            CharacterMovement3DComponent? movementComp = characterNode.GetComponent<CharacterMovement3DComponent>();
+            if (movementComp is not null)
+            {
+                float spawnY = float.IsFinite(vrFootWorldPosition.Y)
+                    ? vrFootWorldPosition.Y + movementComp.HalfHeight + 0.01f
+                    : Toggles.CharacterControllerCapsuleTranslationY ?? (movementComp.HalfHeight + 0.01f);
+                Vector3 targetPos = new(
+                    float.IsFinite(vrFootWorldPosition.X) ? vrFootWorldPosition.X : 0.0f,
+                    spawnY,
+                    float.IsFinite(vrFootWorldPosition.Z) ? vrFootWorldPosition.Z : 0.0f);
+                movementComp.Teleport(targetPos, clearMotion: true);
+            }
+
+            avatarRoot.Transform.SetParent(footNode.Transform, false, EParentAssignmentMode.Immediate);
+            avatarRoot.Transform.DeriveLocalMatrix(Matrix4x4.Identity);
+            if (vrWorldRotation is { } vrRot && avatarRoot.Transform is Transform avatarTfm)
+            {
+                Vector3 fwd = Vector3.Transform(Vector3.UnitZ, Quaternion.Normalize(vrRot));
+                fwd.Y = 0.0f;
+                if (fwd.LengthSquared() > 1.0e-8f)
+                    avatarTfm.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.Atan2(fwd.X, fwd.Z));
+            }
+
+            HeightScaleComponent desktopHeightScale = avatarRoot.GetComponent<HeightScaleComponent>()
+                ?? avatarRoot.AddComponent<HeightScaleComponent>()!;
+            Models.TryScaleAvatarToFitDesktopCapsule(avatarRoot, humanoid, desktopHeightScale, footNode);
+
+            if (Toggles.MotionBricksLocomotion)
+                ConfigureDesktopMotionBricksLocomotion(avatarRoot, characterNode, humanoid);
+
+            return characterNode.GetComponent<CharacterPawnComponent>();
         }
 
         #endregion
@@ -644,15 +717,31 @@ public static partial class EditorUnitTests
 
         private static void ConfigureCameraPostProcessing(CameraComponent cameraComponent)
         {
-            Debug.Rendering($"[UnitTestingWorld] ConfigureCameraPostProcessing Atmosphere={Toggles.InitializeAtmosphericScattering} VolumetricFog={Toggles.InitializeVolumetricFog} MeshletDebugDisplay={Toggles.MeshletDebugDisplay}");
+            bool hasBloomThresholdOverride = Toggles.CameraBloomThresholdOverride is float bloomOverride
+                && float.IsFinite(bloomOverride)
+                && bloomOverride >= 0.0f;
+            Debug.Rendering($"[UnitTestingWorld] ConfigureCameraPostProcessing Atmosphere={Toggles.InitializeAtmosphericScattering} VolumetricFog={Toggles.InitializeVolumetricFog} MeshletDebugDisplay={Toggles.MeshletDebugDisplay} BloomThresholdOverride={Toggles.CameraBloomThresholdOverride}");
             if (!Toggles.InitializeVolumetricFog &&
                 !Toggles.InitializeAtmosphericScattering &&
-                !Toggles.MeshletDebugDisplay)
+                !Toggles.MeshletDebugDisplay &&
+                !hasBloomThresholdOverride)
                 return;
 
             var camera = cameraComponent.Camera;
             if (!camera.RenderPipeline.OverrideProtected)
                 camera.RenderPipeline.OverrideProtected = true;
+
+            if (hasBloomThresholdOverride)
+            {
+                float bloomThreshold = Toggles.CameraBloomThresholdOverride!.Value;
+                var bloomStage = camera.GetPostProcessStageState<BloomSettings>();
+                if (bloomStage is not null)
+                {
+                    bloomStage.SetValue(nameof(BloomSettings.Threshold), bloomThreshold);
+                    if (bloomStage.TryGetBacking(out BloomSettings? bloomSettings) && bloomSettings is not null)
+                        bloomSettings.Threshold = bloomThreshold;
+                }
+            }
 
             if (Toggles.MeshletDebugDisplay)
                 ConfigureCameraMeshletDebugDisplay(camera);
@@ -846,11 +935,204 @@ public static partial class EditorUnitTests
                     {
                         heightScale.MeasureAvatarHeight();
                         heightScale.CalculateEyeOffsetFromHead(faceModel, EyeLNodeName, EyeRNodeName);
-                        eyeOffsetNode!.GetTransformAs<Transform>(true)!.Translation = VRPlayerCharacterComponent.GetScaledToRealWorldHeadOffsetFromAvatarRoot(humanComp) + heightScale.ScaledToRealWorldEyeOffsetFromHead;
+                        if (!Toggles.ThirdPersonPawn)
+                            eyeOffsetNode!.GetTransformAs<Transform>(true)!.Translation = VRPlayerCharacterComponent.GetScaledToRealWorldHeadOffsetFromAvatarRoot(humanComp) + heightScale.ScaledToRealWorldEyeOffsetFromHead;
                     }
                     faceModel.ModelChanged += FaceModel_ModelChanged;
                 }
+
+                if (Toggles.MotionBricksLocomotion)
+                    ConfigureDesktopMotionBricksLocomotion(rootNode, rigidBodyNode, humanComp);
             }
+        }
+
+        private static AnimStateMachineComponent? FindOrAddBodyLocomotionAnimator(SceneNode avatarRootNode)
+        {
+            AnimStateMachineComponent? oscBoundAnimator =
+                avatarRootNode.GetComponent<XREngine.Data.Components.AnimStateMachineOscReceiverComponent>()?.AnimStateMachine;
+            foreach (AnimStateMachineComponent candidate in avatarRootNode.GetComponents<AnimStateMachineComponent>())
+            {
+                if (ReferenceEquals(candidate, oscBoundAnimator))
+                    continue;
+                if (string.Equals(candidate.Name, "Face Tracking Animator", StringComparison.Ordinal))
+                    continue;
+                return candidate;
+            }
+
+            return avatarRootNode.AddComponent<AnimStateMachineComponent>();
+        }
+
+        private static void ConfigureDesktopMotionBricksLocomotion(
+            SceneNode avatarRootNode,
+            SceneNode rigidBodyNode,
+            HumanoidComponent humanComp)
+        {
+            AnimStateMachineComponent? animator = FindOrAddBodyLocomotionAnimator(avatarRootNode);
+            if (animator is null)
+            {
+                Debug.LogWarning($"[UnitTestingWorld] Could not attach AnimStateMachineComponent for MotionBricks on '{avatarRootNode.Name}'.");
+                return;
+            }
+
+            var motion = new MotionBricksLocomotionMotion
+            {
+                Name = "MotionBricksLocomotion",
+            };
+            var locomotionState = new AnimState(motion, "MotionBricksLocomotion");
+            var baseLayer = new AnimLayer(locomotionState)
+            {
+                InitialStateIndex = 0,
+            };
+            var stateMachine = new AnimStateMachine
+            {
+                Layers = [baseLayer],
+            };
+            stateMachine.Variables[motion.MoveXParameter] = new AnimFloat(motion.MoveXParameter, 0.0f);
+            stateMachine.Variables[motion.MoveYParameter] = new AnimFloat(motion.MoveYParameter, 0.0f);
+            stateMachine.Variables[motion.DesiredFacingYawParameter] = new AnimFloat(motion.DesiredFacingYawParameter, 0.0f);
+            stateMachine.Variables[motion.StrafeModeParameter] = new AnimBool(motion.StrafeModeParameter, false);
+            stateMachine.Variables[motion.StyleParameter] = new AnimInt(motion.StyleParameter, 0);
+            stateMachine.Variables[motion.IsGroundedParameter] = new AnimBool(motion.IsGroundedParameter, true);
+            stateMachine.Variables[motion.VerticalVelocityParameter] = new AnimFloat(motion.VerticalVelocityParameter, 0.0f);
+            stateMachine.Variables[motion.SprintHeldParameter] = new AnimBool(motion.SprintHeldParameter, false);
+
+            // Cycle activation so the replacement graph binds every humanoid slot, loads the cached
+            // TensorRT SOMA plan, and establishes a fresh root-motion baseline.
+            animator.IsActive = false;
+            animator.StateMachine = stateMachine;
+            animator.Humanoid = humanComp;
+            animator.RootMotionApplicationMode = EHumanoidRootMotionApplicationMode.ExternalConsumer;
+            animator.SetSuspendedByClip(false);
+            animator.IsActive = true;
+
+            string runtimeStatus = motion.RuntimeDiagnosticStatus;
+            if (motion.ActiveDriver is { IsReady: true })
+            {
+                CharacterMovement3DComponent? movementComp = rigidBodyNode.GetComponent<CharacterMovement3DComponent>();
+                if (movementComp is not null && movementComp.MovementModule is not RootMotionMovementModule)
+                {
+                    movementComp.MovementModule = new RootMotionMovementModule("MotionBricks Root Motion")
+                    {
+                        JumpForce = 4.9f,
+                        GravityScale = 2.0f,
+                    };
+                }
+
+                CharacterPawnComponent? pawnComp = rigidBodyNode.GetComponent<CharacterPawnComponent>();
+                CharacterRootMotionBridgeComponent bridge = rigidBodyNode.GetComponent<CharacterRootMotionBridgeComponent>()
+                    ?? rigidBodyNode.AddComponent<CharacterRootMotionBridgeComponent>("MotionBricks Root Motion Bridge")!;
+                bridge.Animator = animator;
+                bridge.CharacterMovement = movementComp;
+                bridge.AvatarFacingTransform = avatarRootNode.GetTransformAs<Transform>(true);
+                bridge.FootHeightTransform = avatarRootNode.Parent?.GetTransformAs<Transform>(false);
+                if (pawnComp?.ViewRotationTransform is { } viewTransform)
+                    bridge.AlignAvatarToWorldForward(viewTransform.WorldForward);
+                bridge.BindEndpoints();
+
+                if (pawnComp is not null)
+                {
+                    pawnComp.UseRootMotionSteering = true;
+                    EnsurePersistentCall(
+                        ref pawnComp.RootMotionSteeringUpdated,
+                        bridge.SceneNode,
+                        bridge,
+                        nameof(CharacterRootMotionBridgeComponent.ApplySteeringSnapshot),
+                        [typeof(SteeringSnapshot).AssemblyQualifiedName!]);
+                }
+
+                HumanoidProceduralEyeGazeComponent eyeGaze = avatarRootNode.GetComponent<HumanoidProceduralEyeGazeComponent>()
+                    ?? avatarRootNode.AddComponent<HumanoidProceduralEyeGazeComponent>("Procedural Eye Gaze")!;
+                eyeGaze.Humanoid = humanComp;
+                eyeGaze.Animator = animator;
+                eyeGaze.AvatarFacingTransform = avatarRootNode.GetTransformAs<Transform>(true);
+                eyeGaze.ViewerCameraTransform = pawnComp?.CameraComponent?.Transform;
+
+                MotionBricksDebugDrawComponent debugViz = avatarRootNode.GetComponent<MotionBricksDebugDrawComponent>()
+                    ?? avatarRootNode.AddComponent<MotionBricksDebugDrawComponent>("MotionBricks Debug Visualizer")!;
+                debugViz.Animator = animator;
+                debugViz.RenderEnabled = Toggles.MotionBricksDebugVisualization;
+                if (pawnComp is not null)
+                {
+                    EnsurePersistentCall(
+                        ref pawnComp.LocomotionDebugToggled,
+                        debugViz.SceneNode,
+                        debugViz,
+                        nameof(MotionBricksDebugDrawComponent.ToggleRenderEnabled));
+                }
+
+                if (Toggles.ShowAvatarCullingBoxes)
+                {
+                    avatarRootNode.IterateComponents<ModelComponent>(component =>
+                    {
+                        component.RenderBounds = true;
+                    }, iterateChildHierarchy: true);
+                }
+
+                Debug.Out($"[UnitTestingWorld] MotionBricks third-person locomotion active on '{avatarRootNode.Name}': {runtimeStatus}");
+            }
+            else
+            {
+                Debug.LogWarning(
+                    $"[UnitTestingWorld] MotionBricks third-person locomotion on '{avatarRootNode.Name}' is not ready: "
+                    + $"{runtimeStatus} (PlaybackDiagnostic='{animator.PlaybackCapabilityDiagnostic}'). Keeping standard Jolt movement.");
+            }
+        }
+
+        private static void EnsurePersistentCall(
+            ref XREvent? xrEvent,
+            SceneNode? targetNode,
+            XRObjectBase targetObject,
+            string methodName)
+        {
+            xrEvent ??= new XREvent();
+            xrEvent.PersistentCalls ??= [];
+            for (int i = 0; i < xrEvent.PersistentCalls.Count; i++)
+            {
+                XRPersistentCall existing = xrEvent.PersistentCalls[i];
+                if (existing.TargetObjectId == targetObject.ID
+                    && string.Equals(existing.MethodName, methodName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            xrEvent.PersistentCalls.Add(new XRPersistentCall
+            {
+                NodeId = targetNode?.ID ?? Guid.Empty,
+                TargetObjectId = targetObject.ID,
+                MethodName = methodName,
+                ParameterTypeNames = [],
+                UseTupleExpansion = false,
+            });
+        }
+
+        private static void EnsurePersistentCall<T>(
+            ref XREvent<T>? xrEvent,
+            SceneNode? targetNode,
+            XRObjectBase targetObject,
+            string methodName,
+            string[] parameterTypeNames)
+        {
+            xrEvent ??= new XREvent<T>();
+            xrEvent.PersistentCalls ??= [];
+            for (int i = 0; i < xrEvent.PersistentCalls.Count; i++)
+            {
+                XRPersistentCall existing = xrEvent.PersistentCalls[i];
+                if (existing.TargetObjectId == targetObject.ID
+                    && string.Equals(existing.MethodName, methodName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            xrEvent.PersistentCalls.Add(new XRPersistentCall
+            {
+                NodeId = targetNode?.ID ?? Guid.Empty,
+                TargetObjectId = targetObject.ID,
+                MethodName = methodName,
+                ParameterTypeNames = parameterTypeNames,
+                UseTupleExpansion = false,
+            });
         }
     }
 }

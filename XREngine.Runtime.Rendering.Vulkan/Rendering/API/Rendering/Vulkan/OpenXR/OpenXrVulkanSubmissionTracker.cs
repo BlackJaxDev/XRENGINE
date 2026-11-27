@@ -23,7 +23,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     // frames of these, or each frame waits for the previous frame's GPU work and the
     // CPU and GPU never overlap.
     private const int MaxInFlightEyeFrames = 3;
-    private const int MaxSubmissionsPerEyeFrame = 4;
+    private const int MaxSubmissionsPerEyeFrame = 8;
     internal const int DefaultMaxInFlightSubmissions = MaxInFlightEyeFrames * MaxSubmissionsPerEyeFrame;
     private const int MaxTrackedCommandBuffers = 3;
     internal const int MaxTrackedUploads = 64;

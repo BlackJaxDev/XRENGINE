@@ -644,6 +644,29 @@ namespace XREngine
                     UserSettings?.AntiAliasingModeOverride);
 
             /// <summary>
+            /// Gets the effective anti-aliasing reconstruction filter for MSAA, TSR, and TAA.
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static EAntiAliasingFilterMode AntiAliasingFilterMode
+                => OverrideableSettingExtensions.ResolveCascade(
+                    RuntimeEngine.Rendering.Settings.AntiAliasingFilterMode,
+                    GameSettings?.AntiAliasingFilterModeOverride,
+                    UserSettings?.AntiAliasingFilterModeOverride);
+
+            /// <summary>
+            /// Gets the effective post-resolve RCAS sharpening strength for TSR and TAA, clamped to [0, 1].
+            /// Resolved from: User Override > Project Override > Engine Default
+            /// </summary>
+            public static float AntiAliasingSharpness
+                => Math.Clamp(
+                    OverrideableSettingExtensions.ResolveCascade(
+                        RuntimeEngine.Rendering.Settings.AntiAliasingSharpness,
+                        GameSettings?.AntiAliasingSharpnessOverride,
+                        UserSettings?.AntiAliasingSharpnessOverride),
+                    0.0f,
+                    1.0f);
+
+            /// <summary>
             /// Gets the effective MSAA sample count.
             /// Resolved from: User Override > Project Override > Engine Default
             /// </summary>

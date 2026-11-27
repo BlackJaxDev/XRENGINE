@@ -285,7 +285,8 @@ public sealed partial class BackendReadyFramePackage
         bool excludeProjectiveMirrors,
         EMeshSubmissionStrategy submissionStrategy,
         int viewPair = RenderFrameViewSetPublication.AllViews,
-        EAdvancedViewRecordFlags pipelineViewPolicyFlags = EAdvancedViewRecordFlags.None)
+        EAdvancedViewRecordFlags pipelineViewPolicyFlags = EAdvancedViewRecordFlags.None,
+        bool usePublishedViewSet = true)
     {
         // A late package preparation only has command membership. It must not
         // discard the already captured canonical publication and its lease.
@@ -333,7 +334,9 @@ public sealed partial class BackendReadyFramePackage
             DependencySignature);
         SubmissionResolution = CreateCanonicalSubmissionResolution(submissionStrategy);
 
-        if (RenderFrameViewSetPublication.TryGetLatest(viewPair, out RenderFrameViewSet viewSet))
+        // Only stereo pipelines consume the OpenXR published view set. Mono viewports (desktop,
+        // mirrors, and offscreen captures) must build one canonical view from their own camera.
+        if (usePublishedViewSet && RenderFrameViewSetPublication.TryGetLatest(viewPair, out RenderFrameViewSet viewSet))
         {
             EnsureCanonicalCapacity(ref _canonicalViews, viewSet.ViewCount);
             for (int viewIndex = 0; viewIndex < viewSet.ViewCount; ++viewIndex)

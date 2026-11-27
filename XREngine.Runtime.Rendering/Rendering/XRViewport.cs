@@ -1380,7 +1380,7 @@ namespace XREngine.Rendering
             _destroyed = true;
             SetSwapBuffersSubscription(false);
             SetCollectVisibleSubscription(false);
-            _renderPipeline.MeshRenderCommands.CancelBackendReadyFramePackages();
+            _renderPipeline.ReleaseCanonicalPublicationRetention();
             RuntimeEngine.Rendering.ReleaseVulkanUpscaleBridge(this, "viewport destroyed");
             _renderPipeline.RequestTerminalTeardown();
             _frameViewHistoryLedger.Clear();
@@ -2391,6 +2391,47 @@ namespace XREngine.Rendering
                 consumedCollectGenerationOverride: null,
                 out _,
                 out _);
+
+        /// <summary>
+        /// Renders a collected exact offscreen output without reserving a desktop swapchain
+        /// completion receipt. Used by standalone Vulkan offscreen mirror captures in VR so the
+        /// mirror package validates against its own freshly collected generation.
+        /// </summary>
+        internal bool TryRenderStandaloneExactOutput(
+            XRFrameBuffer targetFbo,
+            in RenderOutputRequest outputRequest)
+        {
+            if (_destroyed || targetFbo is null || !outputRequest.IsDefined)
+                return false;
+
+            if (_renderingExactOutputCollectionGeneration == 0UL ||
+                !_renderingFrameOutputPacing.Request.Equals(outputRequest) ||
+                _renderingExactOutputCommandCollection is not { } exactOutputCommandCollection ||
+                !ReferenceEquals(
+                    exactOutputCommandCollection,
+                    MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands))
+            {
+                return false;
+            }
+
+            long collectGeneration =
+                exactOutputCommandCollection.RenderingBackendReadyPackage.Identity.CollectGeneration;
+            _renderingExactOutputCollectionGeneration = 0UL;
+            _renderingExactOutputCommandCollection = null;
+            if (collectGeneration < 0L)
+                return false;
+
+            return TryRenderInternal(
+                targetFbo,
+                worldOverride: null,
+                cameraOverride: null,
+                shadowPass: false,
+                forcedMaterial: null,
+                outputCompletionRequest: default,
+                consumedCollectGenerationOverride: collectGeneration,
+                out _,
+                out _);
+        }
 
         public bool TryRenderWithCompletion(
             XRFrameBuffer targetFbo,

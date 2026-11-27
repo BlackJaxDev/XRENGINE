@@ -38,13 +38,26 @@ internal sealed class EngineRuntimeStaticColliderAuthoringServices : IRuntimeSta
             return true;
         }
 
+        if (component.ColliderShapes.Count > 0 || component.Geometry is not null)
+        {
+            state.Queued = false;
+            return true;
+        }
+
         List<ModelComponent> models = ResolveModels(component);
         if (models.Count == 0 || !HasMeshData(models))
             return false;
 
+        IConvexHullInputProvider? provider = RuntimePhysicsServices.ConvexHullInputs;
+        if (provider is null || !provider.TryCollect(component, out ConvexHullInputCollection inputs, out string targetLabel))
+        {
+            state.Queued = false;
+            return true;
+        }
+
         state.Queued = false;
         state.Started = true;
-        _ = GenerateAndAttachAsync(component, models, state);
+        _ = Task.Run(() => GenerateAndAttachAsync(component, inputs, targetLabel, state));
         return true;
     }
 
@@ -76,28 +89,43 @@ internal sealed class EngineRuntimeStaticColliderAuthoringServices : IRuntimeSta
 
     private static async Task GenerateAndAttachAsync(
         StaticRigidBodyComponent component,
-        List<ModelComponent> models,
+        ConvexHullInputCollection inputs,
+        string targetLabel,
         State state)
     {
         try
         {
-            IConvexHullInputProvider? provider = RuntimePhysicsServices.ConvexHullInputs;
-            if (provider is null || !provider.TryCollect(component, out ConvexHullInputCollection inputs, out _))
-                return;
+            CoACD.CoACDParameters parameters = CoACD.CoACDParameters.Default;
+            IPhysicsColliderAuthoringService authoring = PhysicsColliderAuthoringServices.Require();
+            string? cacheRoot = ConvexHullDiskCache.ResolveCacheRoot();
+            int cachedInputCount = 0;
+            int generatedInputCount = 0;
+
             List<CoACD.ConvexHullMesh> hulls = [];
             foreach (ConvexHullInputBatch batch in inputs.EnumeratePreferredBatches())
             {
                 for (int i = 0; i < batch.Inputs.Count; i++)
                 {
                     ConvexHullInput input = batch.Inputs[i];
-                    IReadOnlyList<CoACD.ConvexHullMesh>? generated = await PhysicsColliderAuthoringServices.Require().GenerateAsync(
+                    if (authoring.TryLoadCachedHulls(parameters, in input, cacheRoot, out List<CoACD.ConvexHullMesh> cachedHulls))
+                    {
+                        cachedInputCount++;
+                        if (cachedHulls.Count > 0)
+                            hulls.AddRange(cachedHulls);
+                        continue;
+                    }
+
+                    IReadOnlyList<CoACD.ConvexHullMesh>? generated = await authoring.GenerateAsync(
                         input.Positions,
                         input.Indices,
-                        CoACD.CoACDParameters.Default,
+                        parameters,
                         CancellationToken.None).ConfigureAwait(false);
+                    generatedInputCount++;
                     if (generated is { Count: > 0 })
                         hulls.AddRange(generated);
+                    authoring.StoreCachedHulls(parameters, in input, cacheRoot, generated ?? Array.Empty<CoACD.ConvexHullMesh>());
                 }
+
                 if (hulls.Count > 0)
                     break;
             }
@@ -109,6 +137,9 @@ internal sealed class EngineRuntimeStaticColliderAuthoringServices : IRuntimeSta
             if (scene?.BackendService is not IPhysicsConvexHullInstaller installer)
                 throw new NotSupportedException(
                     $"Physics backend '{scene?.GetType().Name ?? "<none>"}' does not install convex-hull authoring support.");
+
+            Debug.Physics(
+                $"[StaticColliderAuthoring] Prepared {hulls.Count} convex hull(s) for '{targetLabel}' ({cachedInputCount} cached, {generatedInputCount} generated).");
             installer.PrepareAndAttach(component, hulls);
         }
         catch (Exception ex)

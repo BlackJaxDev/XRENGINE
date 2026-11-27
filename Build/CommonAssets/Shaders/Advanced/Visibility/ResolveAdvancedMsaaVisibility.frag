@@ -83,6 +83,15 @@ void main()
         }
     }
 
+    // Preserve stamped portal metadata on uncovered mirror sky pixels so downstream
+    // passes retain the portal sub-view ownership of background pixels inside mirrors.
+    if (!foundCoveredSample && textureSamples(RawVisibilityMetadata) > 0)
+    {
+        uint sample0Metadata = texelFetch(RawVisibilityMetadata, coordinate, 0).r;
+        if (sample0Metadata != XR_ADV_MSAA_VIS_INVALID)
+            OutVisibilityMetadata = sample0Metadata;
+    }
+
     // The nearest covered sample is conservative for early depth reduction:
     // closest is max under reverse-Z and min under forward-Z. An uncovered
     // pixel retains far depth and invalid visibility for the background pass.

@@ -887,30 +887,30 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         uint deformationLevel = 0u;
         AdvancedDrawRecord canonicalDraw = default;
         AdvancedInstanceRecord instance = default;
-        bool hasCanonicalInstance = false;
-        if (skinned && _gpuDeformation.UsesPackedAggregateInputs)
+        bool hasCanonicalInstance =
+            publication.Draws.TryGet(draw, out canonicalDraw) &&
+            publication.Instances.TryGet(canonicalDraw.Instance, out instance);
+        if (skinned && _gpuDeformation.UsesPackedAggregateInputs && !hasCanonicalInstance)
+            throw new InvalidOperationException("Aggregate visibility requires the exact canonical instance bounds.");
+        if (hasCanonicalInstance)
         {
-            if (!publication.Draws.TryGet(draw, out canonicalDraw) ||
-                !publication.Instances.TryGet(canonicalDraw.Instance, out instance))
-                throw new InvalidOperationException("Aggregate visibility requires the exact canonical instance bounds.");
-            hasCanonicalInstance = true;
-            // Geometry is immutable bind-pose topology. Animated bounds belong to the current instance publication.
+            // Canonical geometry stores immutable registration-time bounds. The canonical
+            // instance record stores the current world bounds after transforms and skinning
+            // move the draw, so visibility candidates read from the instance record.
             commandBounds.BoundingSphere = instance.BoundsSphere;
             commandBounds.AabbMin = instance.BoundsMin;
             commandBounds.AabbMax = instance.BoundsMax;
-            if (mesh is { HasBlendshapeDeformation: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
-                visibilityFlags |= EAdvancedVisibilityPreparationFlags.Uncertain | EAdvancedVisibilityPreparationFlags.ConservativeVisible;
         }
-        else if (skinnedClusterCut)
+        if (skinned && mesh is { HasBlendshapeDeformation: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+            visibilityFlags |= EAdvancedVisibilityPreparationFlags.Uncertain | EAdvancedVisibilityPreparationFlags.ConservativeVisible;
+        if (renderer?.Material is AdvancedProjectiveMirrorMaterial)
         {
-            // The authored-vertex preparation (the Vulkan route) keeps its candidate bounds, but the
-            // deformation level choice still needs the posed instance bounds. The job deforms the
-            // prefix of the chosen level on both preparation policies, and the task stage clamps the
-            // cut to that level, so the drawn clusters read only deformed vertices.
-            hasCanonicalInstance =
-                publication.Draws.TryGet(draw, out canonicalDraw) &&
-                publication.Instances.TryGet(canonicalDraw.Instance, out instance);
+            // Keep admitted projective mirrors in the early visibility pass so their winning
+            // opaque depth always populates the Hi-Z depth pyramid before late occlusion culling.
+            visibilityFlags |= EAdvancedVisibilityPreparationFlags.ConservativeVisible;
         }
+        if ((command.Flags & (uint)GPUIndirectRenderFlags.PortalSurface) != 0u)
+            visibilityFlags |= EAdvancedVisibilityPreparationFlags.PortalSurface;
         if (skinnedClusterCut && hasCanonicalInstance && mesh is not null)
             deformationLevel = ChooseDeformationLevel(
                 publication,

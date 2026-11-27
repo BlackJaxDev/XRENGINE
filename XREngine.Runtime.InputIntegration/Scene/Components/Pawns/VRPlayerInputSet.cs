@@ -234,6 +234,14 @@ namespace XREngine.Components
 
         public override void RegisterInput(InputInterface input)
         {
+            if (input.Unregister)
+            {
+                _smoothTurnStickX = 0.0f;
+                _snapTurnLatched = false;
+                CharacterPawn.MoveRight(0.0f);
+                CharacterPawn.MoveForward(0.0f);
+            }
+
             input.RegisterVRBoolAction(EVRActionCategory.Global, EVRGameAction.Jump, CharacterPawn.Jump);
             input.RegisterVRVector2Action(EVRActionCategory.Global, EVRGameAction.Locomote, Locomote);
             input.RegisterVRVector2Action(EVRActionCategory.Global, EVRGameAction.Turn, Turn);
@@ -385,10 +393,14 @@ namespace XREngine.Components
                 InitRightHandBody();
             if (LeftHandRigidBody is null && LeftHandTransform is not null)
                 InitLeftHandBody();
+            RegisterTick(ETickGroup.Normal, (int)ETickOrder.Input, UpdateSmoothTurn);
         }
 
         protected override void OnComponentDeactivated()
         {
+            UnregisterTick(ETickGroup.Normal, (int)ETickOrder.Input, UpdateSmoothTurn);
+            _smoothTurnStickX = 0.0f;
+            _snapTurnLatched = false;
             Release(left: true);
             Release(left: false);
             base.OnComponentDeactivated();
@@ -591,18 +603,30 @@ namespace XREngine.Components
             get => _snapTurnDegrees;
             set => SetField(ref _snapTurnDegrees, float.IsFinite(value) ? Math.Clamp(value, 1, 180) : 45);
         }
+        private float _smoothTurnDegreesPerSecond = 165.0f;
+        /// <summary>
+        /// Continuous yaw rotation speed in degrees per second when pushing the right VR thumbstick
+        /// horizontally with <see cref="SnapTurningEnabled"/> disabled.
+        /// </summary>
+        public float SmoothTurnDegreesPerSecond
+        {
+            get => _smoothTurnDegreesPerSecond;
+            set => SetField(ref _smoothTurnDegreesPerSecond, float.IsFinite(value) ? Math.Clamp(value, 15.0f, 540.0f) : 165.0f);
+        }
+        private const float SmoothTurnDeadzone = 0.08f;
+        private const float LocomoteDeadzone = 0.12f;
+        private float _smoothTurnStickX;
         private bool _snapTurnLatched;
 
         private void Turn(Vector2 oldValue, Vector2 newValue)
         {
-            if (GetSiblingComponent<XREngine.Components.VR.VRPlayerCharacterComponent>(false)?.IsCalibrating == true)
-                return;
+            float magnitude = MathF.Abs(newValue.X);
             if (!SnapTurningEnabled)
             {
-                CharacterPawn.LookRight(newValue.X);
+                _smoothTurnStickX = magnitude >= SmoothTurnDeadzone ? newValue.X : 0.0f;
                 return;
             }
-            float magnitude = MathF.Abs(newValue.X);
+            _smoothTurnStickX = 0.0f;
             if (magnitude < 0.2f)
                 _snapTurnLatched = false;
             else if (magnitude >= 0.7f && !_snapTurnLatched)
@@ -612,10 +636,32 @@ namespace XREngine.Components
             }
         }
 
+        private void UpdateSmoothTurn()
+        {
+            if (SnapTurningEnabled || _smoothTurnStickX == 0.0f)
+                return;
+
+            // VR Vector2 actions dispatch only on value changes; integrate the held right thumbstick
+            // every input tick so smooth yaw rotation runs continuously at SmoothTurnDegreesPerSecond.
+            float lookMultiplier = MathF.Max(1.0f, CharacterPawn.GamePadXLookInputMultiplier);
+            CharacterPawn.LookRight(_smoothTurnStickX * (SmoothTurnDegreesPerSecond / lookMultiplier));
+        }
+
         private void Locomote(Vector2 oldValue, Vector2 newValue)
         {
-            CharacterPawn.MoveRight(newValue.X);
-            CharacterPawn.MoveForward(newValue.Y);
+            // Apply a radial deadzone so controller thumbstick rest drift cannot hold locomotion active.
+            float length = newValue.Length();
+            if (!float.IsFinite(length) || length < LocomoteDeadzone)
+            {
+                CharacterPawn.MoveRight(0.0f);
+                CharacterPawn.MoveForward(0.0f);
+                return;
+            }
+
+            float scaledMagnitude = Math.Clamp((length - LocomoteDeadzone) / (1.0f - LocomoteDeadzone), 0.0f, 1.0f);
+            Vector2 direction = newValue / length;
+            CharacterPawn.MoveRight(direction.X * scaledMagnitude);
+            CharacterPawn.MoveForward(direction.Y * scaledMagnitude);
         }
     }
 }

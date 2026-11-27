@@ -39,6 +39,20 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices, ID
         }
     }
 
+    public event Action? LateXrPoseUpdated
+    {
+        add
+        {
+            if (value is not null)
+                RuntimeEngine.VRState.LateXrPoseUpdated += value;
+        }
+        remove
+        {
+            if (value is not null)
+                RuntimeEngine.VRState.LateXrPoseUpdated -= value;
+        }
+    }
+
     public event Action<float>? IPDScalarChanged
     {
         add

@@ -56,18 +56,28 @@ public sealed partial class WeightedTransformConstraintComponent : XRComponent
     private bool _rebakePending;
     private bool _tickRegistered;
     private int _registeredTickOrder;
+    private TransformBase? _registeredConstraintTarget;
+    private TransformConstraintChannels _registeredConstraintChannels;
 
     /// <summary>The transform that the constraint moves. When null, the owning node's transform is used.</summary>
     public TransformBase? TargetTransform
     {
         get => _targetTransform;
-        set => SetField(ref _targetTransform, value);
+        set
+        {
+            if (SetField(ref _targetTransform, value))
+                RefreshFullConstraintOwnership();
+        }
     }
 
     public List<TransformConstraintSource> Sources
     {
         get => _sources;
-        set => SetField(ref _sources, value ?? []);
+        set
+        {
+            if (SetField(ref _sources, value ?? []))
+                RefreshFullConstraintOwnership();
+        }
     }
 
     /// <summary>Selects how the sources become a target pose. See <see cref="TransformConstraintMode"/>.</summary>
@@ -85,13 +95,21 @@ public sealed partial class WeightedTransformConstraintComponent : XRComponent
     public TransformConstraintChannels Channels
     {
         get => _channels;
-        set => SetField(ref _channels, value);
+        set
+        {
+            if (SetField(ref _channels, value))
+                RefreshFullConstraintOwnership();
+        }
     }
 
     public float Weight
     {
         get => _weight;
-        set => SetField(ref _weight, Math.Clamp(value, 0.0f, 1.0f));
+        set
+        {
+            if (SetField(ref _weight, Math.Clamp(value, 0.0f, 1.0f)))
+                RefreshFullConstraintOwnership();
+        }
     }
 
     /// <summary>
@@ -112,7 +130,11 @@ public sealed partial class WeightedTransformConstraintComponent : XRComponent
     public bool Locked
     {
         get => _locked;
-        set => SetField(ref _locked, value);
+        set
+        {
+            if (SetField(ref _locked, value))
+                RefreshFullConstraintOwnership();
+        }
     }
 
     /// <summary>
@@ -153,7 +175,11 @@ public sealed partial class WeightedTransformConstraintComponent : XRComponent
     public bool HasRestPose
     {
         get => _hasRestPose;
-        set => SetField(ref _hasRestPose, value);
+        set
+        {
+            if (SetField(ref _hasRestPose, value))
+                RefreshFullConstraintOwnership();
+        }
     }
 
     /// <summary>The target's local position when the constraint weight or the total source weight is zero.</summary>
@@ -194,6 +220,8 @@ public sealed partial class WeightedTransformConstraintComponent : XRComponent
                 _frozenPoseCaptured = false;
             else if (wasFrozen && RebakeOffsetsWhenUnfrozen)
                 _rebakePending = true;
+
+            RefreshFullConstraintOwnership();
         }
     }
 
@@ -306,13 +334,81 @@ public sealed partial class WeightedTransformConstraintComponent : XRComponent
         base.OnComponentActivated();
         _frozenPoseCaptured = false;
         _rebakePending = false;
+        RefreshFullConstraintOwnership();
         RegisterConstraintTick();
     }
 
     protected override void OnComponentDeactivated()
     {
         UnregisterConstraintTick();
+        ReleaseFullConstraintOwnership();
         base.OnComponentDeactivated();
+    }
+
+    private TransformConstraintChannels ResolveDrivenOwnershipChannels()
+    {
+        if (!IsActiveInHierarchy || !Locked)
+            return TransformConstraintChannels.None;
+
+        TransformConstraintChannels owned = TransformConstraintChannels.None;
+        if ((Channels & TransformConstraintChannels.Position) == TransformConstraintChannels.Position)
+            owned |= TransformConstraintChannels.Position;
+        if ((Channels & TransformConstraintChannels.Rotation) == TransformConstraintChannels.Rotation)
+            owned |= TransformConstraintChannels.Rotation;
+        if (owned == TransformConstraintChannels.None)
+            return TransformConstraintChannels.None;
+
+        if (FreezeToWorld)
+            return owned;
+
+        if (Weight < 1.0f - 1.0e-4f)
+            return TransformConstraintChannels.None;
+
+        if (HasRestPose)
+            return owned;
+
+        for (int i = 0; i < _sources.Count; ++i)
+            if (_sources[i].SourceTransform is not null && _sources[i].Weight > 0.0f)
+                return owned;
+
+        return TransformConstraintChannels.None;
+    }
+
+    private void RefreshFullConstraintOwnership()
+    {
+        TransformConstraintChannels desiredChannels = ResolveDrivenOwnershipChannels();
+        TransformBase? desiredTarget = desiredChannels != TransformConstraintChannels.None
+            ? (_targetTransform ?? Transform)
+            : null;
+        if (ReferenceEquals(_registeredConstraintTarget, desiredTarget)
+            && _registeredConstraintChannels == desiredChannels)
+            return;
+
+        ReleaseFullConstraintOwnership();
+        if (desiredTarget is null)
+            return;
+
+        if ((desiredChannels & TransformConstraintChannels.Position) == TransformConstraintChannels.Position)
+            desiredTarget.AddPositionConstraintOwner();
+        if ((desiredChannels & TransformConstraintChannels.Rotation) == TransformConstraintChannels.Rotation)
+            desiredTarget.AddRotationConstraintOwner();
+
+        _registeredConstraintTarget = desiredTarget;
+        _registeredConstraintChannels = desiredChannels;
+    }
+
+    private void ReleaseFullConstraintOwnership()
+    {
+        if (_registeredConstraintTarget is null)
+            return;
+
+        if ((_registeredConstraintChannels & TransformConstraintChannels.Position) == TransformConstraintChannels.Position)
+            _registeredConstraintTarget.RemovePositionConstraintOwner();
+        if ((_registeredConstraintChannels & TransformConstraintChannels.Rotation) == TransformConstraintChannels.Rotation)
+            _registeredConstraintTarget.RemoveRotationConstraintOwner();
+
+        _registeredConstraintTarget = null;
+        _registeredConstraintChannels = TransformConstraintChannels.None;
     }
 
     /// <summary>

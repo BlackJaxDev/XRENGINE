@@ -181,7 +181,13 @@ public partial class AdvancedRenderPipeline
         ui.AnchorId = "advanced.screenSpaceUI";
         ui.ConditionEvaluator = () => AllowsScreenSpaceUi;
         var uiCommands = new ViewportRenderCommandContainer(this);
-        uiCommands.Add<VPRC_RenderScreenSpaceUI>();
+        AppendScreenSpaceUiWithBackdropBlur(
+            uiCommands,
+            [
+                EditorHighlightOutputTextureName,
+                TsrOutputTextureName,
+                FinalPostProcessOutputTextureName,
+            ]);
         ui.TrueCommands = uiCommands;
     }
 }
