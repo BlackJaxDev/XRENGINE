@@ -262,6 +262,12 @@ pointer geometry; without a record it receives only the delta. Focus changes rem
 registrations before attaching the next target. Re-entrant focus callbacks settle
 on the latest request, and canvas deactivation removes its input mappings.
 
+`UICanvasInputComponent` hit-tests and dispatches hover changes on the update
+thread, in a component tick that runs after the pawn input tick. A cursor move
+therefore changes the hover target in the same update frame that receives it, and
+the canvas captures the new hover styles in its next publication. Press and
+release handlers read the same top target on the same thread.
+
 Hit transitions use reusable lists and identity sets. Idle queries reuse prior
 hits when pointer coordinates, output mapping result, hit generation, and capture
 state agree. `RenderInfo2D.MembershipId` provides stable membership independent of

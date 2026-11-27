@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Runtime.ExceptionServices;
 using NUnit.Framework;
 using XREngine.Components;
 using XREngine.Rendering;
@@ -13,13 +12,10 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class UICanvasInputLifetimeTests
 {
     [Test]
-    public void DirectDestroy_UnsubscribesActivationHostAfterHostReplacement()
+    public void DirectDestroy_UnregistersPointerTickAndInputEvents()
     {
         using UITestShaderScope shader = new();
-        (IRuntimeRenderingHostServices firstHost, SchedulingProbe first) = SchedulingProbe.Create();
-        using IDisposable firstScope = RuntimeRenderingHostServices.Install(firstHost);
         SceneNode root = CreateRoot(out UICanvasInputComponent input);
-        first.TrackedOwner = input;
         int delivered = 0;
         input.LeftClickDown += _ => delivered++;
         input.RightClick += _ => delivered++;
@@ -28,20 +24,13 @@ public sealed class UICanvasInputLifetimeTests
         try
         {
             root.IsActiveSelf = true;
-            Assert.That(first.ActiveCollect, Is.EqualTo(1));
-            Assert.That(first.ActiveSwap, Is.EqualTo(1));
-            (IRuntimeRenderingHostServices secondHost, SchedulingProbe second) = SchedulingProbe.Create();
-            second.TrackedOwner = input;
-            using IDisposable secondScope = RuntimeRenderingHostServices.Install(secondHost);
+            Assert.That(PointerTickCount(input), Is.EqualTo(1));
             input.Destroy(true);
             typeof(UICanvasInputComponent).GetMethod("OnEscapeStateChanged",
                 BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(input, [true]);
             Assert.Multiple(() =>
             {
-                Assert.That(first.ActiveCollect, Is.Zero);
-                Assert.That(first.ActiveSwap, Is.Zero);
-                Assert.That(second.ActiveCollect, Is.Zero);
-                Assert.That(second.ActiveSwap, Is.Zero);
+                Assert.That(PointerTickCount(input), Is.Zero);
                 Assert.That(delivered, Is.Zero);
                 Assert.That(EventOwner(input, "LeftClickDown"), Is.Null);
                 Assert.That(EventOwner(input, "RightClick"), Is.Null);
@@ -53,59 +42,71 @@ public sealed class UICanvasInputLifetimeTests
     }
 
     [Test]
-    public void ThrowingCleanup_StillReleasesSwapAndFocusAndRejectsReentrantActivation()
+    public void ThrowingCleanup_StillReleasesPointerTickAndFocusAndRejectsReentrantActivation()
     {
         using UITestShaderScope shader = new();
-        (IRuntimeRenderingHostServices host, SchedulingProbe scheduling) = SchedulingProbe.Create();
-        using IDisposable hostScope = RuntimeRenderingHostServices.Install(host);
         SceneNode root = CreateRoot(out UICanvasInputComponent input);
-        scheduling.TrackedOwner = input;
         UIButtonComponent button = root.NewChild("Focus target").AddComponent<UIButtonComponent>()!;
         try
         {
             root.IsActiveSelf = true;
             input.FocusedComponent = button;
             Assert.That(button.IsFocused, Is.True);
-            scheduling.AfterCollectUnsubscribe = () =>
+            bool thrown = false;
+            button.PropertyChanged += (_, args) =>
             {
+                if (thrown || args.PropertyName != nameof(UIButtonComponent.IsFocused) || button.IsFocused)
+                    return;
+                thrown = true;
                 input.FocusedComponent = button;
                 input.IsActive = true;
-                throw new InvalidOperationException("Collect cleanup failed.");
+                throw new InvalidOperationException("Focus cleanup failed.");
             };
             Assert.That(() => input.Destroy(true), Throws.Exception);
             Assert.Multiple(() =>
             {
+                Assert.That(thrown, Is.True);
                 Assert.That(input.FocusedComponent, Is.Null);
                 Assert.That(button.IsFocused, Is.False);
-                Assert.That(scheduling.ActiveCollect, Is.Zero);
-                Assert.That(scheduling.ActiveSwap, Is.Zero);
+                Assert.That(PointerTickCount(input), Is.Zero);
             });
         }
         finally { root.Destroy(true); }
     }
 
     [Test]
-    public void DeactivateThenReactivate_InstallsOneCurrentHostPair()
+    public void DeactivateThenReactivate_RegistersOnePointerTick()
     {
         using UITestShaderScope shader = new();
-        (IRuntimeRenderingHostServices host, SchedulingProbe scheduling) = SchedulingProbe.Create();
-        using IDisposable hostScope = RuntimeRenderingHostServices.Install(host);
         SceneNode root = CreateRoot(out UICanvasInputComponent input);
-        scheduling.TrackedOwner = input;
         try
         {
             root.IsActiveSelf = true;
             root.IsActiveSelf = false;
-            Assert.That(scheduling.ActiveCollect, Is.Zero);
-            Assert.That(scheduling.ActiveSwap, Is.Zero);
+            Assert.That(PointerTickCount(input), Is.Zero);
             root.IsActiveSelf = true;
-            Assert.That(scheduling.ActiveCollect, Is.EqualTo(1));
-            Assert.That(scheduling.ActiveSwap, Is.EqualTo(1));
+            Assert.That(PointerTickCount(input), Is.EqualTo(1));
             input.Destroy(true);
-            Assert.That(scheduling.ActiveCollect, Is.Zero);
-            Assert.That(scheduling.ActiveSwap, Is.Zero);
+            Assert.That(PointerTickCount(input), Is.Zero);
         }
         finally { root.Destroy(true); }
+    }
+
+    /// <summary>Counts the pointer hit-test ticks that the component holds in its tick registrations.</summary>
+    private static int PointerTickCount(UICanvasInputComponent input)
+    {
+        FieldInfo? field = null;
+        for (Type? type = input.GetType(); type is not null && field is null; type = type.BaseType)
+            field = type.GetField("_tickCache", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.That(field, Is.Not.Null);
+        int count = 0;
+        foreach (object entry in (System.Collections.IEnumerable)field!.GetValue(input)!)
+        {
+            Delegate tick = (Delegate)entry.GetType().GetField("Item3")!.GetValue(entry)!;
+            if (tick.Method.Name == "TickPointerInput" && ReferenceEquals(tick.Target, input))
+                count++;
+        }
+        return count;
     }
 
     [Test]
@@ -159,53 +160,4 @@ public sealed class UICanvasInputLifetimeTests
     private static object? EventOwner(UICanvasInputComponent input, string name)
         => typeof(UICanvasInputComponent).GetField(name,
             BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(input);
-
-    public class SchedulingProbe : DispatchProxy
-    {
-        private IRuntimeRenderingHostServices _fallback = null!;
-        public int ActiveCollect { get; private set; }
-        public int ActiveSwap { get; private set; }
-        public Action? AfterCollectUnsubscribe { get; set; }
-        public UICanvasInputComponent? TrackedOwner { get; set; }
-
-        public static (IRuntimeRenderingHostServices Host, SchedulingProbe Probe) Create()
-        {
-            IRuntimeRenderingHostServices host = Create<IRuntimeRenderingHostServices, SchedulingProbe>();
-            SchedulingProbe probe = (SchedulingProbe)(object)host;
-            probe._fallback = RuntimeRenderingHostServices.Current;
-            return (host, probe);
-        }
-
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            ArgumentNullException.ThrowIfNull(targetMethod);
-            bool tracked = args is [{ } callback, ..] &&
-                callback is Action action && ReferenceEquals(action.Target, TrackedOwner);
-            switch (targetMethod.Name)
-            {
-                case nameof(IRuntimeRenderSchedulingServices.SubscribeViewportCollectVisible):
-                    if (tracked) ActiveCollect++;
-                    return null;
-                case nameof(IRuntimeRenderSchedulingServices.UnsubscribeViewportCollectVisible):
-                    if (tracked)
-                    {
-                        ActiveCollect--;
-                        AfterCollectUnsubscribe?.Invoke();
-                    }
-                    return null;
-                case nameof(IRuntimeRenderSchedulingServices.SubscribeViewportSwapBuffers):
-                    if (tracked) ActiveSwap++;
-                    return null;
-                case nameof(IRuntimeRenderSchedulingServices.UnsubscribeViewportSwapBuffers):
-                    if (tracked) ActiveSwap--;
-                    return null;
-            }
-            try { return targetMethod.Invoke(_fallback, args); }
-            catch (TargetInvocationException exception) when (exception.InnerException is not null)
-            {
-                ExceptionDispatchInfo.Capture(exception.InnerException).Throw();
-                throw;
-            }
-        }
-    }
 }

@@ -567,6 +567,10 @@ namespace XREngine.Components
                 _cursorOutputPosition = new Vector2(x, y);
         }
 
+        /// <summary>
+        /// Finds the hit records of the presented publication under the cursor. <see cref="TickPointerInput"/> calls
+        /// it on the update thread, before <see cref="SwapBuffers"/> dispatches the result.
+        /// </summary>
         private void CollectVisible()
         {
             if (_inputDeactivating || _inputTerminal || _intersectionDispatchActive || _intersectionCollectActive)
@@ -751,6 +755,10 @@ namespace XREngine.Components
             finally { publication.Release(); }
         }
 
+        /// <summary>
+        /// Picks the top element and interactable from the collected hits and dispatches the hover changes. It
+        /// queries again first when the presented publication changed after <see cref="CollectVisible"/>.
+        /// </summary>
         private void SwapBuffers()
         {
             if (_inputDeactivating || _inputTerminal || _intersectionSwapActive || _intersectionCollectActive)
@@ -1290,9 +1298,23 @@ namespace XREngine.Components
             finally { publication.Release(); }
         }
 
-        private IRuntimeRenderSchedulingServices? _viewportSubscriptionHost;
-        private bool _subscribedToCollect;
-        private bool _subscribedToSwap;
+        // The pointer tick runs after the pawn input tick (ETickOrder.Input) and the gamepad navigation tick,
+        // so it reads the cursor position that this update frame received.
+        private static readonly int PointerTickOrder = (int)ETickOrder.Input + 3;
+        private bool _pointerTickRegistered;
+
+        /// <summary>
+        /// Hit-tests the cursor against the presented publication and dispatches the hover, leave, and captured-move
+        /// events on the update thread, in the same update frame that received the cursor position. The canvas then
+        /// captures the hover styles in its next publication, and the render thread draws that publication in its
+        /// next render. A dispatch at the collect swap point would wait for the end of a collect pass instead.
+        /// </summary>
+        private void TickPointerInput()
+        {
+            CollectVisible();
+            SwapBuffers();
+        }
+
         protected override void OnComponentActivated()
         {
             if (_inputCleanupActive)
@@ -1316,16 +1338,10 @@ namespace XREngine.Components
                 if (!OwnsInputActivation(lifecycle))
                     return;
                 RegisterGamepadNavigationTick();
-                if (_viewportSubscriptionHost is null)
+                if (!_pointerTickRegistered)
                 {
-                    IRuntimeRenderSchedulingServices host = RuntimeRenderingHostServices.Current;
-                    _viewportSubscriptionHost = host;
-                    _subscribedToCollect = true;
-                    host.SubscribeViewportCollectVisible(CollectVisible);
-                    if (!OwnsInputActivation(lifecycle))
-                        return;
-                    _subscribedToSwap = true;
-                    host.SubscribeViewportSwapBuffers(SwapBuffers);
+                    _pointerTickRegistered = true;
+                    RegisterTick(ETickGroup.Normal, PointerTickOrder, TickPointerInput);
                 }
             }
             catch

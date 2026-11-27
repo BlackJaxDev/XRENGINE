@@ -31,12 +31,8 @@ public partial class UICanvasInputComponent
         _inputDeactivating = true;
         _inputLifecycleRevision++;
 
-        IRuntimeRenderSchedulingServices? host = _viewportSubscriptionHost;
-        bool collectSubscribed = _subscribedToCollect;
-        bool swapSubscribed = _subscribedToSwap;
-        _viewportSubscriptionHost = null;
-        _subscribedToCollect = false;
-        _subscribedToSwap = false;
+        bool pointerTickRegistered = _pointerTickRegistered;
+        _pointerTickRegistered = false;
         UIPublication? publication = _inputPublication;
         _inputPublication = null;
         _inputCanvas = null;
@@ -103,13 +99,8 @@ public partial class UICanvasInputComponent
             TopMostInteractable = null;
             TryInputCleanup(() => publication?.Release(), ref failures);
             TryInputCleanup(() => SynchronizeFocusScope(null), ref failures);
-            if (host is not null)
-            {
-                if (collectSubscribed)
-                    TryInputCleanup(() => host.UnsubscribeViewportCollectVisible(CollectVisible), ref failures);
-                if (swapSubscribed)
-                    TryInputCleanup(() => host.UnsubscribeViewportSwapBuffers(SwapBuffers), ref failures);
-            }
+            if (pointerTickRegistered)
+                TryInputCleanup(() => UnregisterTick(ETickGroup.Normal, PointerTickOrder, TickPointerInput), ref failures);
         }
         finally { _inputCleanupActive = false; }
         ThrowInputCleanupFailures(failures);
