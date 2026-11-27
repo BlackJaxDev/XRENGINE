@@ -19,6 +19,8 @@ internal sealed partial class VulkanFrameLoop
     // materialization is not charged to this budget and retains normal throughput.
     private static readonly long ColdMeshPreparationSliceTicks =
         Math.Max(1L, Stopwatch.Frequency / 250L);
+    // The bound of a full cold preparation during a drag resize: 100 ms.
+    private static readonly long FullColdMeshPreparationBudgetTicks = Stopwatch.Frequency / 10L;
     private long _presentNowMeshLastProgressTimestamp;
     private readonly HashSet<ulong> _presentNowMeshCompletedSignatures =
         new(MaxWarmMeshPreparationSignatures);
@@ -147,9 +149,13 @@ internal sealed partial class VulkanFrameLoop
                 }
                 else
                 {
+                    // A drag resize changes the screen UI layout on every frame, and new UI batch runs need new
+                    // mesh cohorts. A sliced cold preparation would reject most drag frames, and a rejected
+                    // frame shows the scene without the UI. Prepare the whole cohort instead.
                     meshMaterializationComplete = DrainQueuedMeshRenderRequests(
                         allowPreparedCohort: true,
-                        out meshMaterializationDeferredReason);
+                        out meshMaterializationDeferredReason,
+                        prepareColdRequestsInFull: attempt.InteractiveResize);
                 }
             }
 
@@ -1018,7 +1024,8 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     private bool DrainQueuedMeshRenderRequests(
         bool allowPreparedCohort,
-        out string deferredReason)
+        out string deferredReason,
+        bool prepareColdRequestsInFull = false)
     {
         int requestCount;
         using (VulkanCpuStageScope rawRequestDrainStage = new(
@@ -1040,6 +1047,12 @@ internal sealed partial class VulkanFrameLoop
             requestCount,
             allowPreparedCohort,
             out deferredReason,
+            foregroundRequired: prepareColdRequestsInFull,
+            // A full preparation still has a bound, so a mesh that cannot prepare defers the frame instead of
+            // stopping the modal resize loop.
+            readinessDeadlineTimestamp: prepareColdRequestsInFull
+                ? Stopwatch.GetTimestamp() + FullColdMeshPreparationBudgetTicks
+                : long.MaxValue,
             allowFrameOwnedAuthoringOperations: true);
     }
 
