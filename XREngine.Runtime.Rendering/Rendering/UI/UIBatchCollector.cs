@@ -690,21 +690,6 @@ public sealed partial class UIBatchCollector : IDisposable
     private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration), Stack<MaterialGPUResources>> _parkedMaterialGPU = [];
     private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration, XRTexture2D Atlas), Stack<TextGPUResources>> _parkedTextGPU = [];
     private int _parkedCohortCount;
-
-    // One unit quad for every material cohort and one for every text cohort. Each cohort draws instances of the
-    // quad from its own buffers, so the quad geometry never changes. A shared quad has its index buffer built
-    // once, so a new cohort does not wait for its own quad upload before the frame can admit it.
-    private static XRMesh SharedMaterialQuadMesh => s_sharedMaterialQuadMesh ??= CreateSharedQuadMesh("UIBatchMaterialQuadMesh");
-    private static XRMesh SharedTextQuadMesh => s_sharedTextQuadMesh ??= CreateSharedQuadMesh("UIBatchTextQuadMesh");
-    private static XRMesh? s_sharedMaterialQuadMesh;
-    private static XRMesh? s_sharedTextQuadMesh;
-
-    private static XRMesh CreateSharedQuadMesh(string name)
-    {
-        XRMesh mesh = XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false));
-        mesh.Name = name;
-        return mesh;
-    }
     private const int MaxParkedCohorts = 512;
     // The render frame in which the collector last moved inactive cohorts to the parked stacks.
     private ulong _lastCohortRefillFrame = ulong.MaxValue;
@@ -781,6 +766,7 @@ public sealed partial class UIBatchCollector : IDisposable
         public void Dispose()
         {
             XRMeshRenderer? meshRenderer = Mesh;
+            XRMesh? mesh = meshRenderer?.Mesh;
             XRMaterial? material = meshRenderer?.Material;
             GlyphTransformsBuf?.Destroy();
             GlyphTexCoordsBuf?.Destroy();
@@ -788,6 +774,7 @@ public sealed partial class UIBatchCollector : IDisposable
             GlyphTextIndexBuf?.Destroy();
             GlyphDrawIndexBuf?.Destroy();
             meshRenderer?.Destroy();
+            mesh?.Destroy();
             material?.Destroy();
             Fence?.Dispose();
             Fence = null;
@@ -2176,12 +2163,16 @@ public sealed partial class UIBatchCollector : IDisposable
         if (webGpu)
             material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedV2;
 
-        _matQuadMesh = new XRMeshRenderer(SharedMaterialQuadMesh, material)
+        _matQuadMesh = new XRMeshRenderer(
+            XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
+            material)
         {
             Name = "UIBatchMaterialQuadRenderer",
             GenerationPriority = EMeshGenerationPriority.RenderPipeline,
             CaptureUniformsOnRender = true
         };
+        if (_matQuadMesh.Mesh is not null)
+            _matQuadMesh.Mesh.Name = "UIBatchMaterialQuadMesh";
 
         DisableShaderPipelines(_matQuadMesh);
         _matQuadMesh.EnsureRenderPipelineVersionsCreated();
@@ -2826,8 +2817,12 @@ public sealed partial class UIBatchCollector : IDisposable
         if (webGpu)
             material.EngineSemantic = EngineMaterialSemanticIdentity.UITextBatchedBitmapV2;
 
-        gpu.Mesh = new XRMeshRenderer(SharedTextQuadMesh, material);
+        gpu.Mesh = new XRMeshRenderer(
+            XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
+            material);
         gpu.Mesh.Name = "UIBatchTextRenderer";
+        if (gpu.Mesh.Mesh is not null)
+            gpu.Mesh.Mesh.Name = "UIBatchTextQuadMesh";
         gpu.Mesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
         gpu.Mesh.CaptureUniformsOnRender = true;
         gpu.Mesh.BindingPublishers.Add(new UIRequiredTextureBindings(fontAtlas));
@@ -4347,6 +4342,7 @@ public sealed partial class UIBatchCollector : IDisposable
         gpu.Fence?.Dispose();
         gpu.Fence = null;
         XRMeshRenderer? meshRenderer = gpu.Mesh;
+        XRMesh? mesh = meshRenderer?.Mesh;
         XRMaterial? material = meshRenderer?.Material;
         gpu.Transform?.Destroy();
         gpu.Color?.Destroy();
@@ -4372,12 +4368,14 @@ public sealed partial class UIBatchCollector : IDisposable
         }
         gpu.TextureMeshes.Clear();
         meshRenderer?.Destroy();
+        mesh?.Destroy();
         material?.Destroy();
     }
 
     private void DestroyLegacyMaterialGPU()
     {
         XRMeshRenderer? meshRenderer = _matQuadMesh;
+        XRMesh? mesh = meshRenderer?.Mesh;
         XRMaterial? material = meshRenderer?.Material;
         _matQuadTransformBuf?.Destroy();
         _matQuadColorBuf?.Destroy();
@@ -4404,6 +4402,7 @@ public sealed partial class UIBatchCollector : IDisposable
         _materialTextureMeshes.Clear();
         _staleMaterialTextures.Clear();
         meshRenderer?.Destroy();
+        mesh?.Destroy();
         material?.Destroy();
         _matQuadTransformBuf = null;
         _matQuadColorBuf = null;
