@@ -677,12 +677,26 @@ public static class NativeUIElements
     }
 
     /// <summary>Rebinds pooled primitive editors without retaining prior property targets.</summary>
+    /// <summary>Finds the first text input in <paramref name="node"/> or its descendants, depth first.</summary>
+    private static UITextInputComponent? FindTextInput(SceneNode node)
+    {
+        if (node.GetComponent<UITextInputComponent>() is { } input)
+            return input;
+        for (int index = 0; index < node.Transform.Children.Count; index++)
+            if (node.Transform.Children[index].SceneNode is { } child && FindTextInput(child) is { } found)
+                return found;
+        return null;
+    }
+
     public static void RebindPropertyEditor(SceneNode root, PropertyInfo? property, object?[]? targets,
         Func<bool>? ownerIsCurrent = null)
     {
         if (ownerIsCurrent?.Invoke() == false) return;
         // A vector or rotation editor binds its fields to a transformer component, and the transformer binds
-        // to the source property. Only the transformer changes target, so its fields are not rebound.
+        // to the source property. The transformer changes target here. Each field child is named after the
+        // transformer property that it edits (X, Y, Z, Pitch, and so on). A recycled virtual row clears the
+        // field bindings, so a field without a binding binds to the transformer again. Without this, the
+        // fields keep showing the values of the row's previous target.
         if (root.GetComponent<InspectorPropertyEditors.DataTransformerBase>() is { } transformer)
         {
             transformer.Targets = null;
@@ -690,6 +704,18 @@ public static class NativeUIElements
             transformer.Property = property;
             if (ownerIsCurrent?.Invoke() == false) return;
             transformer.Targets = targets;
+            if (property is null || targets is null) return;
+            object?[] transformerTargets = [transformer];
+            for (int index = 0; index < root.Transform.Children.Count; index++)
+            {
+                if (ownerIsCurrent?.Invoke() == false) return;
+                // A field whose input still has its binding already follows this transformer.
+                if (root.Transform.Children[index].SceneNode is not { Name: { } fieldName } field ||
+                    FindTextInput(field) is not { Binding: null } ||
+                    transformer.GetType().GetProperty(fieldName, BindingFlags.Public | BindingFlags.Instance) is not { } fieldProperty)
+                    continue;
+                RebindPropertyEditor(field, fieldProperty, transformerTargets, ownerIsCurrent);
+            }
             return;
         }
         for (int index = 0; index < root.Components.Count; index++)
