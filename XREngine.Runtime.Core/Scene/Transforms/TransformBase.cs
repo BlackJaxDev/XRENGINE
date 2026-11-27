@@ -456,6 +456,27 @@ namespace XREngine.Scene.Transforms
         }
 
         /// <summary>
+        /// Sets the depth of every descendant to one more than its parent's depth. A subtree that is built while
+        /// detached and attached later then reports its real depth. UI hit testing compares these depths to pick
+        /// the topmost element, so a stale child depth made a row win over the field inside it.
+        /// </summary>
+        private void PropagateDepthToDescendants()
+        {
+            int childDepth = _depth + 1;
+            lock (_children)
+            {
+                for (int index = 0; index < _children.Count; index++)
+                {
+                    TransformBase? child = _children[index];
+                    if (child is null || child._depth == childDepth)
+                        continue;
+                    child.Depth = childDepth;
+                    child.PropagateDepthToDescendants();
+                }
+            }
+        }
+
+        /// <summary>
         /// The parent of this transform.
         /// Will affect this transform's world matrix.
         /// </summary>
@@ -1752,6 +1773,7 @@ namespace XREngine.Scene.Transforms
                     if (changedParent is not null)
                     {
                         Depth = changedParent.Depth + 1;
+                        PropagateDepthToDescendants();
                         RequireChangedParent(changedParent);
                         if (!changedParent._children.Contains(this))
                             changedParent._children.Add(this);
@@ -1759,7 +1781,10 @@ namespace XREngine.Scene.Transforms
                         if (changedParent.World is { } world) SetInheritedWorld(changedParent, world);
                     }
                     else
+                    {
                         Depth = 0;
+                        PropagateDepthToDescendants();
+                    }
                     RequireChangedParent(changedParent);
                     if (SceneNode is { } parentChangedNode && !ReferenceEquals(parentChangedNode.World, World))
                         parentChangedNode.World = World;
