@@ -482,6 +482,29 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     }
 
     /// <summary>
+    /// Reads the submitted access state (layout, stages, and access) of the first mip level and array layer of one
+    /// image aspect. A command buffer that changes an image and then restores this state leaves the next recorded
+    /// command buffer with the entry state that it was recorded against.
+    /// </summary>
+    internal bool TryGetSubmittedImageAccessState(
+        Image image,
+        ImageAspectFlags aspect,
+        out VulkanImageAccessState state)
+    {
+        state = VulkanImageAccessState.Undefined;
+        if (image.Handle == 0)
+            return false;
+        VulkanTrackedImageSubresource key = new(image.Handle, 0, 0, aspect);
+        lock (_vulkanImageLayoutLock)
+        {
+            if (!_trackedImageSubresourceStates.TryGetValue(key, out VulkanImageSubresourceState? subresource))
+                return false;
+            state = subresource.Submitted;
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Resolves one common submitted layout across the requested image range.
     /// This is the renderer-free read side of the command authority's image
     /// state ledger; output target selection consumes the resulting value as a

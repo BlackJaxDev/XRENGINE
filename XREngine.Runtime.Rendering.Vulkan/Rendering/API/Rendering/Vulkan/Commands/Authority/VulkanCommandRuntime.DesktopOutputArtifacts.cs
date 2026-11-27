@@ -61,6 +61,7 @@ internal sealed partial class VulkanCommandRuntime
         RetireArtifacts(CommandBuffers.DynamicUiOverlays, "Swapchain.DynamicUiOverlay");
         RetireArtifacts(imguiOverlayCommandBuffers, "Swapchain.ImGuiOverlay");
         RetireArtifacts(CommandBuffers.DesktopOffscreenCopies, "Swapchain.OffscreenCopy");
+        RetireArtifacts(CommandBuffers.DesktopDragSceneBases, "Swapchain.DragSceneBase");
         if (CommandBuffers.PrimaryOwners is { } uiOwners)
             for (int index = 0; index < uiOwners.Length; index++)
                 uiOwners[index]?.RetireRecordedUiPublicationReceipts();
@@ -72,6 +73,7 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffers.DynamicUiSecondaries = null;
         CommandBuffers.DynamicUiOverlays = null;
         CommandBuffers.DesktopOffscreenCopies = null;
+        CommandBuffers.DesktopDragSceneBases = null;
         CommandBuffers.DynamicUiOpCounts = null;
         CommandBuffers.DynamicUiSignatures = null;
         CommandBuffers.DirtyFlags = null;
@@ -125,6 +127,7 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffer[] dynamicUiOverlay = Allocate(CommandBufferLevel.Primary, "Swapchain.DynamicUiOverlay");
         CommandBuffer[] imguiOverlay = Allocate(CommandBufferLevel.Primary, "Swapchain.ImGuiOverlay");
         CommandBuffer[] offscreenCopy = Allocate(CommandBufferLevel.Primary, "Swapchain.OffscreenCopy");
+        CommandBuffer[] dragSceneBase = Allocate(CommandBufferLevel.Primary, "Swapchain.DragSceneBase");
         VulkanNativeDependencyGraph dependencies = resources.NativeDependencies;
         VulkanNativeDependencyHandle output = dependencies.Register(
             EVulkanNativeDependencyOwner.Output,
@@ -137,6 +140,7 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffers.DynamicUiSecondaries = dynamicUiSecondary;
         CommandBuffers.DynamicUiOverlays = dynamicUiOverlay;
         CommandBuffers.DesktopOffscreenCopies = offscreenCopy;
+        CommandBuffers.DesktopDragSceneBases = dragSceneBase;
         CommandBuffers.DynamicUiOpCounts = Enumerable.Repeat(-1, imageCount).ToArray();
         CommandBuffers.DynamicUiSignatures = Enumerable.Repeat(ulong.MaxValue, imageCount).ToArray();
         CommandBuffers.DirtyFlags = Enumerable.Repeat(true, imageCount).ToArray();

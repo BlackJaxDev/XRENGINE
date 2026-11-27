@@ -35,6 +35,8 @@ internal sealed class VulkanCommandBufferState
     internal CommandBuffer[]? DynamicUiOverlays;
     // Copy passes from the desktop offscreen color target into the acquired image.
     internal CommandBuffer[]? DesktopOffscreenCopies;
+    // Scene base passes that drag-resize frames record before a UI-only primary.
+    internal CommandBuffer[]? DesktopDragSceneBases;
     internal int[]? DynamicUiOpCounts;
     internal ulong[]? DynamicUiSignatures;
     internal ulong[]? FrameOpSignatures;

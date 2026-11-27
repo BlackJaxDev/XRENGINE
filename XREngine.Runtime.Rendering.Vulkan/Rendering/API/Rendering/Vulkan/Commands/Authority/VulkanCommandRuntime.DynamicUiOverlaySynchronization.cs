@@ -397,6 +397,20 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     /// <summary>
+    /// Records a transition between two exact access states and publishes the new state to the command buffer's
+    /// image tracking. Use it to restore a submitted state that a later recorded command buffer expects.
+    /// </summary>
+    internal void EmitImageStateTransition(
+        VulkanTrackedCommandEncoder encoder,
+        VulkanFrameTelemetry telemetry,
+        CommandBuffer commandBuffer,
+        Image image,
+        in ImageSubresourceRange range,
+        in VulkanImageAccessState prior,
+        in VulkanImageAccessState next)
+        => EmitImageTransition(encoder, telemetry, commandBuffer, image, in range, in prior, in next);
+
+    /// <summary>
     /// Establishes the first swapchain-image access in a command buffer that is
     /// submitted directly behind the image-acquire semaphore. The acquire wait
     /// is scoped to color-attachment output, so the layout transition must join

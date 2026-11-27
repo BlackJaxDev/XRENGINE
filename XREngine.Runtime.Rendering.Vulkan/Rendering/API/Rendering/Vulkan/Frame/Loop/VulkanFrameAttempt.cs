@@ -195,6 +195,13 @@ internal ref struct VulkanFrameAttempt
     public bool HasDesktopOffscreenCopyCommandBuffer;
     /// <summary>Copies the offscreen color image into the acquired image after the scene.</summary>
     public CommandBuffer DesktopOffscreenCopyCommandBuffer;
+    /// <summary>The drag-resize scene base was recorded for this frame.</summary>
+    public bool HasDesktopDragSceneBaseCommandBuffer;
+    /// <summary>
+    /// Writes the last accepted scene image into the acquired image before a drag-resize frame that draws only
+    /// the screen UI.
+    /// </summary>
+    public CommandBuffer DesktopDragSceneBaseCommandBuffer;
     /// <summary>
     /// Indicates whether the ImGui overlay command buffer has been recorded for the current frame attempt.
     /// </summary>

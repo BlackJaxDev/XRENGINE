@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan
 {
     internal sealed partial class VulkanFrameLoop
     {
-        private const uint DesktopSubmitCommandBufferCapacity = 5;
+        private const uint DesktopSubmitCommandBufferCapacity = 6;
 
         internal VulkanDesktopFramePhaseResult SubmitDesktopFrame(
             ref VulkanFrameAttempt attempt)
@@ -103,6 +103,7 @@ namespace XREngine.Rendering.Vulkan
                      attempt.FrameNumber, attempt.OutputGeneration)))
                 return SettleFailedWorldUiOutput(ref attempt,
                     "Required Vulkan world UI native recording was not complete before submission");
+            TryRecordDesktopDragSceneBase(ref attempt);
             CommandBuffer* commandBuffers =
                 stackalloc CommandBuffer[
                     (int)DesktopSubmitCommandBufferCapacity];
@@ -122,6 +123,16 @@ namespace XREngine.Rendering.Vulkan
                         commandBuffers,
                         ref commandBufferCount,
                         attempt.TextureUploadCommandBuffer);
+                }
+
+                // The scene base writes the acquired image first, so the UI-only primary loads a current scene.
+                if (attempt.HasDesktopDragSceneBaseCommandBuffer &&
+                    attempt.DesktopDragSceneBaseCommandBuffer.Handle != 0)
+                {
+                    AppendDesktopSubmitCommandBuffer(
+                        commandBuffers,
+                        ref commandBufferCount,
+                        attempt.DesktopDragSceneBaseCommandBuffer);
                 }
 
                 AppendDesktopSubmitCommandBuffer(
@@ -680,7 +691,7 @@ namespace XREngine.Rendering.Vulkan
             if (attempt.CommandArtifactsSettled)
                 return;
 
-            Span<ulong> handles = stackalloc ulong[4];
+            Span<ulong> handles = stackalloc ulong[5];
             int count = 0;
             count = AddRejectedArtifactHandle(
                 handles,
@@ -692,6 +703,13 @@ namespace XREngine.Rendering.Vulkan
                     handles,
                     count,
                     attempt.DesktopOffscreenCopyCommandBuffer);
+            }
+            if (attempt.HasDesktopDragSceneBaseCommandBuffer)
+            {
+                count = AddRejectedArtifactHandle(
+                    handles,
+                    count,
+                    attempt.DesktopDragSceneBaseCommandBuffer);
             }
             if (attempt.HasImGuiOverlayCommandBuffer)
             {
