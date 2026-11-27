@@ -2065,7 +2065,6 @@ namespace XREngine.Rendering
                 //    Debug.Out($"[VP:ScreenUI] CollectVisible dispatching to canvas. DrawSpace={ui.CanvasTransform.DrawSpace} active={ui.IsActive} VP[{Index}]");
                 //s_vpScreenUIDiagCount++;
                 ui.CollectVisibleItemsScreenSpace(this);
-                ui.PrepareBackendReadyFramePackage(this);
             }
             //else if (s_vpScreenUIDiagCount < 5)
             //{

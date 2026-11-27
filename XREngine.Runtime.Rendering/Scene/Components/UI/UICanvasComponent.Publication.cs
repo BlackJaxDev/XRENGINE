@@ -657,6 +657,38 @@ public partial class UICanvasComponent
         _renderPipeline.MeshRenderCommands.AddCPU(command, Camera2D);
     }
 
+    // The render frame in which this canvas last latched a publication. All outputs of one frame share it.
+    private ulong _latchedRenderFrameId = ulong.MaxValue;
+
+    /// <summary>
+    /// Collects the newest UI publication into the canvas batch and command buffers on the render thread, swaps
+    /// those buffers, and commits the publication as the current one. A screen-space canvas runs this just before it
+    /// records its draws (a late latch). A publication that the update thread captured during the previous frame
+    /// then reaches this render, and does not wait for a collect pass that a later render consumes.
+    /// The first call in a render frame does the work. Later calls in the same frame keep that result, so all
+    /// outputs of one frame draw the same packet.
+    /// </summary>
+    private void LatchNewestScreenPublication(IRuntimeViewportHost? viewport)
+    {
+        ulong renderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+        if (_latchedRenderFrameId == renderFrameId)
+            return;
+        _latchedRenderFrameId = renderFrameId;
+
+        using var sample = RuntimeEngine.Profiler.Start("UICanvasComponent.LatchNewestScreenPublication");
+        EnsureBatchCollectorWired();
+        BeginPublicationCollection();
+        if (_renderPipeline.AssignedPipeline is not null)
+            CollectPublishedCanvasDraws();
+        if (viewport is not null)
+            PrepareLatchedFramePackage(viewport);
+        if (!CanCommitCollectedPublication())
+            return;
+        BatchCollector.SwapBuffers();
+        _renderPipeline.MeshRenderCommands.SwapBuffers();
+        CommitCollectedPublication();
+    }
+
     private bool CanCommitCollectedPublication()
         => _collectingPublication is { } publication &&
             BatchCollector.CollectedPublicationGeneration == publication.Generation &&

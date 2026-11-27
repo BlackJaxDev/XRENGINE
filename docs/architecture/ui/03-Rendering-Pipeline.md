@@ -15,6 +15,14 @@ The camera maps the canvas's bottom-left pixel coordinates into its output.
    render records, clip regions, hit records, focus scopes, and scroll ancestry.
 3. Collection reads that publication's ordered render records. It reuses compatible
    retained batch runs and inserts frozen commands for unbatched primitives.
+   A screen canvas collects on the render thread, at the start of
+   `RenderScreenSpace` (a late latch). It takes the newest captured publication,
+   collects it, swaps the canvas batch and command buffers, and commits it as the
+   current publication. The first call in a render frame does this work. Later
+   outputs in the same frame draw the same packet. A publication that the update
+   thread captures during one frame therefore reaches the next render. It does not
+   wait for a collect pass that a later render consumes. The collect thread only
+   sizes the screen canvas and swaps its `VisualScene2D`.
 4. Render submission retains the exact publication and resources used by its draws.
 5. An accepted output receipt advances that output's input publication.
 

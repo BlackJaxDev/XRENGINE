@@ -49,23 +49,19 @@ public interface IRuntimeScreenSpaceUserInterface
         out Vector2 framebufferScale);
 
     /// <summary>
-    /// Collects visible screen-space UI items for the supplied viewport.
+    /// Prepares screen-space UI for the supplied viewport on the collect thread. An implementation can collect its
+    /// draws here, or later in <see cref="RenderScreenSpace"/>.
     /// </summary>
     void CollectVisibleItemsScreenSpace(IRuntimeViewportHost? viewport);
 
     /// <summary>
-    /// Freezes the collected UI command membership and backend-planning inputs
-    /// before the command buffers are published to the render consumer.
-    /// </summary>
-    void PrepareBackendReadyFramePackage(IRuntimeViewportHost viewport);
-
-    /// <summary>
-    /// Swaps the UI command buffers used by screen-space rendering.
+    /// Swaps the UI buffers that the collect publish point owns.
     /// </summary>
     void SwapBuffersScreenSpace();
 
     /// <summary>
-    /// Renders screen-space UI into the current viewport or supplied output framebuffer.
+    /// Renders screen-space UI into the current viewport or supplied output framebuffer. An implementation that
+    /// collects on the render thread collects its newest UI state here, before it records the draws.
     /// </summary>
     void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO);
 }

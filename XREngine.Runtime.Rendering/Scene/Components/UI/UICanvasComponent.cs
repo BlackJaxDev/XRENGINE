@@ -498,8 +498,12 @@ namespace XREngine.Components
         void IRuntimeScreenSpaceUserInterface.CollectVisibleItemsScreenSpace(IRuntimeViewportHost? viewport)
             => CollectVisibleItemsScreenSpace(viewport as XRViewport);
 
-        void IRuntimeScreenSpaceUserInterface.PrepareBackendReadyFramePackage(
-            IRuntimeViewportHost viewport)
+        /// <summary>
+        /// Freezes the collected canvas commands into the backend-ready package that the canvas pipeline validates
+        /// when it renders. The latch runs on the render thread, so the package takes the collect generation that the
+        /// render frame consumes. Validation then sees the same generation that a collect-thread package would carry.
+        /// </summary>
+        private void PrepareLatchedFramePackage(IRuntimeViewportHost viewport)
         {
             RenderResourceGeneration? activeGeneration = _renderPipeline.ActiveGeneration;
             RenderResourceRegistry? registry = activeGeneration?.Registry;
@@ -507,8 +511,8 @@ namespace XREngine.Components
             int instanceRevision = registry?.InstanceRevision ?? 0;
             var dimensions = _renderPipeline.ResolveBackendReadyFramePackageDimensions(viewport);
             BackendReadyFramePackageIdentity identity = new(
-                RuntimeRenderingHostServices.FrameTiming.CollectFrameId,
-                RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration,
+                RuntimeRenderingHostServices.FrameTiming.SwapFrameId,
+                RuntimeRenderingHostServices.FrameTiming.ConsumedCollectGeneration,
                 _renderPipeline.AssignedPipeline?.CommandGeneration ?? 0UL,
                 _renderPipeline.ResourceGeneration,
                 descriptorGeneration,
@@ -534,7 +538,12 @@ namespace XREngine.Components
         //private int _screenRenderDiagCount = 0;
         public void RenderScreenSpace(IRuntimeViewportHost? viewport, XRFrameBuffer? outputFBO)
         {
-            if (!IsActive || GetCanvasTransformOrNull() is null || AcquireCurrentPublication() is not { } publication)
+            if (!IsActive || GetCanvasTransformOrNull() is null)
+                return;
+            // Collect the newest publication now, so this render draws the UI state that the update thread
+            // captured most recently.
+            LatchNewestScreenPublication(viewport);
+            if (AcquireCurrentPublication() is not { } publication)
                 return;
 
             bool requiresBackdrop = publication.HasVisibleBackdrop;
@@ -675,22 +684,17 @@ namespace XREngine.Components
             }
         }
 
-        private int _screenSwapDiagCount = 0;
+        /// <summary>
+        /// Swaps the buffers of the canvas' 2D scene at the collect publish point. A screen-space canvas swaps its
+        /// batch and command buffers later, on the render thread, when it latches the newest publication.
+        /// </summary>
         public void SwapBuffersScreenSpace()
         {
-            if (!IsActive || !CanCommitCollectedPublication())
+            if (!IsActive)
                 return;
 
             using var sample = RuntimeEngine.Profiler.Start("UICanvasComponent.SwapBuffersScreenSpace");
-            int updatingCount = _renderPipeline.MeshRenderCommands.GetUpdatingCommandCount();
-            BatchCollector.SwapBuffers();
-            _renderPipeline.MeshRenderCommands.SwapBuffers();
             VisualScene2D.GlobalSwapBuffers();
-            CommitCollectedPublication();
-            int renderingCount = _renderPipeline.MeshRenderCommands.GetRenderingCommandCount();
-            //if (_screenSwapDiagCount < 20 || _screenSwapDiagCount % 300 == 0)
-            //    Debug.Out($"[UICanvas:ScreenSwap] frame={_screenSwapDiagCount} updatingBefore={updatingCount} renderingAfter={renderingCount}");
-            _screenSwapDiagCount++;
         }
 
         protected override void OnComponentActivated()
@@ -862,7 +866,11 @@ namespace XREngine.Components
                 RecalculateDirtyMatrices(children[i]);
         }
 
-        //private int _screenCollectDiagCount = 0;
+        /// <summary>
+        /// Keeps a screen-space canvas ready to render on the collect thread: it installs the update hooks that run
+        /// layout and sizes the canvas to the viewport. The canvas creates its pipeline and collects its draws on the
+        /// render thread instead, when <see cref="RenderScreenSpace"/> latches the newest publication.
+        /// </summary>
         public void CollectVisibleItemsScreenSpace(XRViewport? viewport = null)
         {
             if (!IsActive || GetCanvasTransformOrNull() is null)
@@ -876,29 +884,6 @@ namespace XREngine.Components
             EnsureTimerHooksInstalled();
 
             EnsureScreenCanvasSize(viewport);
-
-            // Ensure batch collector is wired to the pipeline
-            EnsureBatchCollectorWired();
-
-            BeginPublicationCollection();
-
-            // Layout is current at this point; just collect the rendered items from the quadtree.
-            // Components that support batching will register with BatchCollector
-            // instead of adding individual render commands.
-            if (_renderPipeline.AssignedPipeline is not null)
-            {
-                _renderPipeline.MeshRenderCommands.GetCommandsAddedCount(); // reset counter
-                using var collectSample = RuntimeEngine.Profiler.Start("UICanvasComponent.CollectVisibleItemsScreenSpace.CollectRenderedItems");
-                CollectPublishedCanvasDraws();
-                int addedCount = _renderPipeline.MeshRenderCommands.GetCommandsAddedCount();
-                //if (_screenCollectDiagCount < 20 || _screenCollectDiagCount % 300 == 0)
-                //{
-                //    var proj = Camera2D.ProjectionMatrix;
-                //    var bounds = CanvasTransform.GetActualBounds();
-                //    Debug.Out($"[UICanvas:ScreenCollect] frame={_screenCollectDiagCount} addedCmds={addedCount} sceneItems={VisualScene2D.Renderables.Count} treeBounds={VisualScene2D.RenderTree.Bounds} canvasBounds={bounds} cam2DProj=({proj.M11:F4},{proj.M22:F4},{proj.M41:F4},{proj.M42:F4})");
-                //}
-                //_screenCollectDiagCount++;
-            }
         }
 
         //private int _collectDiagCount = 0;

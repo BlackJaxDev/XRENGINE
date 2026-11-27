@@ -180,11 +180,15 @@ For a normal 3D viewport, the flow is:
 XRViewport.CollectVisible()
   -> resolve camera and world
   -> world.VisualScene.CollectRenderedItems(...)
-  -> optional screen-space UI collect and UI-package preparation
+  -> optional screen-space UI canvas sizing
   -> prepare BackendReadyFramePackage
 ```
 
 The viewport does not decide the spatial structure itself. It delegates that to the scene.
+
+A screen-space UI canvas does not collect its draws here. It collects them on the
+render thread when it renders, so the render uses the newest UI publication. See
+[the UI rendering pipeline](../ui/03-Rendering-Pipeline.md#screen-canvas-flow).
 
 The backend-ready package is prepared before the collect thread waits for the
 previous render. It captures sorted pass membership, command/mesh counts,
@@ -244,7 +248,7 @@ Separately, each viewport swaps its own render-pass command buckets:
 XRViewport.SwapBuffers()
   -> RenderCommandCollection.SwapBuffers()
        -> publish the already-prepared BackendReadyFramePackage
-  -> optional screen-space UI swap
+  -> optional screen-space UI 2D scene swap
 ```
 
 This is the handoff from command collection to command consumption for that
@@ -711,7 +715,7 @@ Viewport responsibilities:
 
 - swap `RenderCommandCollection`
 - publish its complete backend-ready package by ownership transfer
-- swap screen-space UI command buffers
+- swap the screen-space UI 2D scene (the canvas swaps its command buffers on the render thread)
 
 ### Render
 

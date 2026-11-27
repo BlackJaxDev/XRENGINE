@@ -119,10 +119,6 @@ public sealed class CameraComponentLazyInitializationTests
         {
         }
 
-        public void PrepareBackendReadyFramePackage(IRuntimeViewportHost viewport)
-        {
-        }
-
         public void SwapBuffersScreenSpace()
         {
         }
