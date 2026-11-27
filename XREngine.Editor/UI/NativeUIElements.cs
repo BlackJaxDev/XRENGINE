@@ -387,8 +387,8 @@ public static class NativeUIElements
         return child;
     }
 
-    // A checked box fills with the accent color. The icon font has no check glyph, so the fill shows the
-    // state, and a mixed state shows a dash.
+    // A checked box fills with the accent color and shows a white Lucide check mark. A mixed state shows a
+    // dash on a half-strength fill. The glyph stays white; hover and focus change only the border.
     private const float CheckboxBorderWidth = 1.5f;
     private static readonly ColorF4 CheckboxOffFill = new(0.0f, 0.0f, 0.0f, 0.22f);
 
@@ -404,7 +404,12 @@ public static class NativeUIElements
     }
 
     private static string CheckboxGlyph(UIToggleComponent.ECurrentState state)
-        => state == UIToggleComponent.ECurrentState.Intermediate ? "-" : string.Empty;
+        => state switch
+        {
+            UIToggleComponent.ECurrentState.True => EditorIcons.Check,
+            UIToggleComponent.ECurrentState.Intermediate => EditorIcons.Minus,
+            _ => string.Empty,
+        };
 
     public static (UIToggleComponent Toggle, UIMaterialComponent Background, UITextComponent Glyph) CreateCheckboxToggle(
         SceneNode parent,
@@ -431,9 +436,9 @@ public static class NativeUIElements
 
         parent.NewChild(out UITextComponent glyph, "ToggleLabel");
         glyph.Text = string.Empty;
-        glyph.Font = FontGlyphSet.LoadDefaultUIIconFont();
+        glyph.Font = EditorIcons.Font;
         glyph.FontSize = glyphFontSize;
-        glyph.Color = ColorF4.Gray;
+        glyph.Color = ColorF4.White;
         glyph.HorizontalAlignment = EHorizontalAlignment.Center;
         glyph.VerticalAlignment = EVerticalAlignment.Center;
 
@@ -456,7 +461,7 @@ public static class NativeUIElements
                 return;
             materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
             materialComponent.BatchBorderColor = ColorF4.Gray;
-            glyph.Color = ColorF4.Gray;
+            glyph.Color = ColorF4.White;
         }
 
         void MouseLeave(UIInteractableComponent _)
@@ -465,7 +470,7 @@ public static class NativeUIElements
                 return;
             materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
             materialComponent.BatchBorderColor = ColorF4.Gray;
-            glyph.Color = ColorF4.Gray;
+            glyph.Color = ColorF4.White;
         }
 
         toggle.OnStateChanged += SetCheckState;
@@ -545,11 +550,11 @@ public static class NativeUIElements
         }
         catch (InvalidOperationException) when (!GlyphNodeCurrent()) { return false; }
         if (!GlyphNodeCurrent()) return false;
-        glyph.Font = FontGlyphSet.LoadDefaultUIIconFont();
+        glyph.Font = EditorIcons.Font;
         if (!GlyphNodeCurrent()) return false;
         glyph.FontSize = glyphFontSize;
         if (!GlyphNodeCurrent()) return false;
-        glyph.Color = ColorF4.Gray;
+        glyph.Color = ColorF4.White;
         if (!GlyphNodeCurrent()) return false;
         glyph.HorizontalAlignment = EHorizontalAlignment.Center;
         if (!GlyphNodeCurrent()) return false;
@@ -589,13 +594,13 @@ public static class NativeUIElements
         {
             if (!Current() || toggle.CanInteract && toggle.IsMouseDirectlyOver) return;
             SetBorder(ColorF4.Gray);
-            if (Current()) glyph.Color = ColorF4.Gray;
+            if (Current()) glyph.Color = ColorF4.White;
         }
         void MouseLeave(UIInteractableComponent _)
         {
             if (!Current() || toggle.CanInteract && toggle.IsFocused) return;
             SetBorder(ColorF4.Gray);
-            if (Current()) glyph.Color = ColorF4.Gray;
+            if (Current()) glyph.Color = ColorF4.White;
         }
         toggle.OnStateChanged += SetCheckState;
         toggle.GotFocus += GotFocus;

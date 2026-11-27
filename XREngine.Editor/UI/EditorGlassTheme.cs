@@ -193,6 +193,7 @@ public static class EditorGlassTheme
         Hover = new UIStyleProperties { BackgroundColor = ButtonHoverFill },
         Focused = new UIStyleProperties { BackgroundColor = ButtonHoverFill, BorderWidth = 1.0f, BorderColor = Accent },
         Pressed = new UIStyleProperties { BackgroundColor = ButtonPressedFill, VisualScale = new Vector2(0.98f, 0.98f) },
+        ImmediateHighlight = true,
         ColorTransition = UITransitionSpec.AppleEaseOut(0.12f),
         TransformTransition = UITransitionSpec.AppleEaseOut(0.12f),
     };
@@ -210,6 +211,7 @@ public static class EditorGlassTheme
         Hover = new UIStyleProperties { BackgroundColor = ButtonHoverFill },
         Focused = new UIStyleProperties { BackgroundColor = ButtonHoverFill },
         Pressed = new UIStyleProperties { BackgroundColor = RowSelectedFill },
+        ImmediateHighlight = true,
         ColorTransition = UITransitionSpec.AppleEaseOut(0.10f),
     };
 
@@ -226,6 +228,7 @@ public static class EditorGlassTheme
         Hover = new UIStyleProperties { BackgroundColor = RowHoverFill },
         Focused = new UIStyleProperties { BackgroundColor = RowHoverFill },
         Pressed = new UIStyleProperties { BackgroundColor = RowSelectedFill },
+        ImmediateHighlight = true,
         ColorTransition = UITransitionSpec.AppleEaseOut(0.10f),
     };
 
@@ -242,6 +245,7 @@ public static class EditorGlassTheme
         Hover = new UIStyleProperties { BackgroundColor = RowHoverFill, TextColor = TextPrimary },
         Focused = new UIStyleProperties { BackgroundColor = RowHoverFill, BorderWidth = 1.0f, BorderColor = Accent },
         Pressed = new UIStyleProperties { BackgroundColor = ButtonPressedFill },
+        ImmediateHighlight = true,
         ColorTransition = UITransitionSpec.AppleEaseOut(0.10f),
     };
 
@@ -259,6 +263,7 @@ public static class EditorGlassTheme
         },
         Hover = new UIStyleProperties { BackgroundColor = new ColorF4(1.0f, 1.0f, 1.0f, 0.06f) },
         Focused = new UIStyleProperties { BorderColor = Accent },
+        ImmediateHighlight = true,
         ColorTransition = UITransitionSpec.AppleEaseOut(0.10f),
     };
 

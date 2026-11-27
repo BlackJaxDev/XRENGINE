@@ -31,6 +31,8 @@ public partial class HierarchyPanel
         public required UIButtonComponent Toggle;
         public required UIBoundableTransform ToggleTransform;
         public required UIMaterialComponent ToggleIndicator;
+        /// <summary>The white check mark inside the active checkbox. It shows only while the node is active.</summary>
+        public required UIBoundableTransform ToggleCheck;
         /// <summary>Last state drawn by the toggle checkbox: -1 unset, 0 inactive, 1 active, 2 active but locked.</summary>
         public int ToggleIndicatorState = -1;
         public required UIButtonComponent Unload;
@@ -75,11 +77,14 @@ public partial class HierarchyPanel
     }.ToQuadStyle();
 
     /// <summary>
-    /// Shows the active state of a node or scene as a small rounded checkbox: an accent fill when active,
-    /// and an empty outline when inactive. A locked toggle shows at half strength.
+    /// Shows the active state of a node or scene as a small rounded checkbox: an accent fill with a white check
+    /// mark when active, and an empty outline when inactive. A locked toggle shows at half strength.
     /// </summary>
-    private static void ApplyActiveIndicator(UIMaterialComponent indicator, bool active, bool enabled)
+    private static void ApplyActiveIndicator(UIMaterialComponent indicator, UIBoundableTransform check, bool active, bool enabled)
     {
+        EVisibility checkVisibility = active ? EVisibility.Visible : EVisibility.Hidden;
+        if (check.Visibility != checkVisibility)
+            check.Visibility = checkVisibility;
         ColorF4 accent = EditorGlassTheme.Accent;
         ColorF4 fill = active
             ? new ColorF4(accent.R, accent.G, accent.B, enabled ? 1.0f : 0.45f)
@@ -98,7 +103,7 @@ public partial class HierarchyPanel
         if (state.ToggleIndicatorState == code)
             return;
         state.ToggleIndicatorState = code;
-        ApplyActiveIndicator(state.ToggleIndicator, active, enabled);
+        ApplyActiveIndicator(state.ToggleIndicator, state.ToggleCheck, active, enabled);
     }
 
     private const float ScrollbarClearance = ScrollbarWidth + ScrollbarPadding * 2.0f;
@@ -616,7 +621,11 @@ public partial class HierarchyPanel
         indicatorTransform.Width = 12;
         indicatorTransform.Height = 12;
         indicatorTransform.BlocksInputBehind = false;
-        ApplyActiveIndicator(toggleIndicator, active: true, enabled: true);
+        // The check mark is a shader vector icon, so it is sharp at this small size and needs no font.
+        UIMaterialComponent toggleCheck = NativeUIElements.CreateIcon(indicatorNode, EUIQuadIcon.Check,
+            new Vector2(0.5f, 0.5f), Vector2.Zero, 9.0f, ColorF4.White, strokeWidth: 1.6f);
+        UIBoundableTransform toggleCheckTransform = toggleCheck.BoundableTransform;
+        ApplyActiveIndicator(toggleIndicator, toggleCheckTransform, active: true, enabled: true);
 
         var unloadNode = rowNode.NewChild<UIButtonComponent>(out var unload);
         unload.IsTabStop = false;
@@ -649,7 +658,7 @@ public partial class HierarchyPanel
             Transform = rowTransform, Button = button, Background = background,
             Label = label, LabelTransform = labelTransform, Arrow = arrow,
             ArrowTransform = arrowTransform, ArrowIcon = arrowIcon, ArrowIconState = 0,
-            Toggle = toggle, ToggleTransform = toggleTransform, ToggleIndicator = toggleIndicator, ToggleIndicatorState = 1,
+            Toggle = toggle, ToggleTransform = toggleTransform, ToggleIndicator = toggleIndicator, ToggleCheck = toggleCheckTransform, ToggleIndicatorState = 1,
             Unload = unload, UnloadTransform = unloadTransform,
             RenameInput = renameInput, RenameTransform = renameTransform
         };

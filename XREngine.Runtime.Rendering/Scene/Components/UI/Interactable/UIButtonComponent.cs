@@ -338,6 +338,8 @@ namespace XREngine.Rendering.UI
                             : EUIInteractionState.Default;
 
             UIStyleProperties resolved = _style.ResolveForState(state);
+            if (_style.ImmediateHighlight && state is EUIInteractionState.Hover or EUIInteractionState.Pressed)
+                immediate = true;
             UIStyleAnimatorComponent? animator = GetSiblingComponent<UIStyleAnimatorComponent>()
                 ?? SceneNode?.AddComponent<UIStyleAnimatorComponent>();
             if (animator is null)

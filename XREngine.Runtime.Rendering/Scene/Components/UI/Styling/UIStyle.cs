@@ -37,6 +37,13 @@ public sealed class UIStyle
     public UITransitionSpec ColorTransition { get; set; } = UITransitionSpec.AppleEaseOut(0.14f);
 
     /// <summary>
+    /// When true, entering the hover or pressed state applies its style at once, and only leaving it uses
+    /// <see cref="ColorTransition"/>. A hover highlight that fades in trails a moving pointer, so desktop menus
+    /// and lists highlight at once and fade out.
+    /// </summary>
+    public bool ImmediateHighlight { get; set; }
+
+    /// <summary>
     /// Transition curve for <see cref="UIBoundableTransform.VisualScale"/> and <see cref="UIBoundableTransform.VisualOffset"/>.
     /// </summary>
     public UITransitionSpec TransformTransition { get; set; } = UITransitionSpec.AppleEaseOut(0.14f);
