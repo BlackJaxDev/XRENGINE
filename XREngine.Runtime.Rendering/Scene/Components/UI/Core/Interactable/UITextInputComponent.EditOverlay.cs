@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Numerics;
 using XREngine.Components;
 using XREngine.Data.Colors;
@@ -23,6 +24,18 @@ public partial class UITextInputComponent
     /// overlays in tree order: after the field background and its text, and before later controls.
     /// </summary>
     private const int OverlayZIndex = 0;
+
+    /// <summary>
+    /// The time that the caret stays shown, and then hidden, in one blink. It matches the Windows default caret
+    /// blink time.
+    /// </summary>
+    private static readonly long CaretBlinkHalfPeriodTicks = Stopwatch.Frequency * 530 / 1000;
+
+    /// <summary>The timestamp of the last caret move or edit. The caret stays shown for one half period after it.</summary>
+    private long _caretBlinkStartTimestamp;
+
+    /// <summary>True when the caret has a place in the current layout.</summary>
+    private bool _caretPlaced;
 
     /// <summary>Gets the caret overlay key for lookup in a presented UI packet.</summary>
     public bool TryGetCaretOverlayPublicationKey(out long membershipId, out UIElementIdentity identity)
@@ -117,14 +130,21 @@ public partial class UITextInputComponent
             return;
         if (ReferenceEquals(layout, _overlayLayout) && _overlayCaret == CursorPosition &&
             _overlaySelectionStart == SelectionStart && _overlaySelectionEnd == SelectionEnd)
+        {
+            UpdateCaretBlink();
             return;
+        }
         _overlayLayout = layout;
         _overlayCaret = CursorPosition;
         _overlaySelectionStart = SelectionStart;
         _overlaySelectionEnd = SelectionEnd;
         EnsureCaretVisible();
 
-        if (TryGetCaretLocalBounds(layout, out Vector4 caret))
+        // A move or an edit restarts the blink with the caret shown, so that the caret does not vanish while the
+        // user types.
+        _caretBlinkStartTimestamp = Stopwatch.GetTimestamp();
+        _caretPlaced = TryGetCaretLocalBounds(layout, out Vector4 caret);
+        if (_caretPlaced)
             PlaceOverlay(ref _caretOverlay, caret, "Text caret", ColorF4.White, OverlayZIndex);
         else if (_caretOverlay is not null)
             _caretOverlay.Visibility = EVisibility.Collapsed;
@@ -172,6 +192,21 @@ public partial class UITextInputComponent
             PlaceSelectionOverlay(ref used, run);
         for (int i = used; i < _selectionOverlays.Count; i++)
             _selectionOverlays[i].Visibility = EVisibility.Collapsed;
+    }
+
+    /// <summary>
+    /// Shows the caret for one half period and hides it for the next. It writes the visibility only when the phase
+    /// changes, because each write makes the canvas publish again.
+    /// </summary>
+    private void UpdateCaretBlink()
+    {
+        if (!_caretPlaced || _caretOverlay is not { IsDestroyed: false } caret)
+            return;
+        long elapsed = Stopwatch.GetTimestamp() - _caretBlinkStartTimestamp;
+        bool shown = elapsed / CaretBlinkHalfPeriodTicks % 2 == 0;
+        EVisibility visibility = shown ? EVisibility.Visible : EVisibility.Hidden;
+        if (caret.Visibility != visibility)
+            caret.Visibility = visibility;
     }
 
     private void PlaceSelectionOverlay(ref int used, Vector4 bounds)
