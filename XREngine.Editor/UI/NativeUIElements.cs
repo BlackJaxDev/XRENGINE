@@ -389,7 +389,6 @@ public static class NativeUIElements
 
     // A checked box fills with the accent color and shows a white Lucide check mark. A mixed state shows a
     // dash on a half-strength fill. The glyph stays white; hover and focus change only the border.
-    private const float CheckboxBorderWidth = 1.5f;
     private static readonly ColorF4 CheckboxOffFill = new(0.0f, 0.0f, 0.0f, 0.22f);
 
     private static ColorF4 CheckboxFill(UIToggleComponent.ECurrentState state)
@@ -401,6 +400,63 @@ public static class NativeUIElements
             UIToggleComponent.ECurrentState.Intermediate => new ColorF4(accent.R, accent.G, accent.B, 0.45f),
             _ => CheckboxOffFill,
         };
+    }
+
+    /// <summary>
+    /// Draws a checkbox box like the hierarchy toggle: a rounded quad in the glass style. A checked or mixed box
+    /// has the accent fill and no outline; an empty box has a soft outline that brightens under the pointer.
+    /// </summary>
+    private static void ApplyCheckboxBox(UIMaterialComponent box, UIToggleComponent.ECurrentState state, bool highlighted)
+    {
+        ColorF4 fill = CheckboxFill(state);
+        box.SetBatchSolidColor(new Vector4(fill.R, fill.G, fill.B, fill.A));
+        bool filled = state != UIToggleComponent.ECurrentState.False;
+        UIQuadStyle style = filled ? CheckboxFilledStyle : highlighted ? CheckboxEmptyHoverStyle : CheckboxEmptyStyle;
+        if (box.QuadStyle != style)
+            box.QuadStyle = style;
+    }
+
+    private static readonly UIQuadStyle CheckboxFilledStyle = new UIStyleProperties
+    {
+        CornerRadii = new Vector4(4.0f),
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    private static readonly UIQuadStyle CheckboxEmptyStyle = new UIStyleProperties
+    {
+        CornerRadii = new Vector4(4.0f),
+        BorderWidth = 1.25f,
+        BorderColor = EditorGlassTheme.TextDisabled,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    private static readonly UIQuadStyle CheckboxEmptyHoverStyle = new UIStyleProperties
+    {
+        CornerRadii = new Vector4(4.0f),
+        BorderWidth = 1.25f,
+        BorderColor = EditorGlassTheme.TextSecondary,
+        DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    private static readonly UIQuadStyle CheckboxCheckIcon = new UIStyleProperties
+    {
+        Icon = EUIQuadIcon.Check, BorderWidth = 1.7f, DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    private static readonly UIQuadStyle CheckboxMixedIcon = new UIStyleProperties
+    {
+        Icon = EUIQuadIcon.Minus, BorderWidth = 1.7f, DecodeSrgbColors = true,
+    }.ToQuadStyle();
+
+    /// <summary>Shows the shader check icon for a checked box, a dash for a mixed box, and nothing for an empty box.</summary>
+    private static void ApplyCheckboxMark(UIMaterialComponent mark, UIToggleComponent.ECurrentState state)
+    {
+        EVisibility visibility = state == UIToggleComponent.ECurrentState.False ? EVisibility.Hidden : EVisibility.Visible;
+        if (mark.BoundableTransform.Visibility != visibility)
+            mark.BoundableTransform.Visibility = visibility;
+        UIQuadStyle style = state == UIToggleComponent.ECurrentState.Intermediate ? CheckboxMixedIcon : CheckboxCheckIcon;
+        if (mark.QuadStyle != style)
+            mark.QuadStyle = style;
     }
 
     private static string CheckboxGlyph(UIToggleComponent.ECurrentState state)
@@ -415,15 +471,17 @@ public static class NativeUIElements
         SceneNode parent,
         PropertyInfo? property = null,
         object?[]? targets = null,
-        float size = 20.0f,
+        float size = 16.0f,
         float glyphFontSize = 16.0f)
     {
         var materialComponent = parent.AddComponent<UIMaterialComponent>()!;
-        materialComponent.SetBatchBorderStyle(CheckboxOffFill, ColorF4.Gray, CheckboxBorderWidth);
+        ApplyCheckboxBox(materialComponent, UIToggleComponent.ECurrentState.False, highlighted: false);
 
+        // The box sits at the left of its cell, centered on the row.
         var tfm = materialComponent.BoundableTransform;
-        tfm.MinAnchor = new Vector2(0.0f, 0.0f);
-        tfm.MaxAnchor = new Vector2(0.0f, 0.0f);
+        tfm.MinAnchor = new Vector2(0.0f, 0.5f);
+        tfm.MaxAnchor = new Vector2(0.0f, 0.5f);
+        tfm.NormalizedPivot = new Vector2(0.0f, 0.5f);
         tfm.Width = size;
         tfm.Height = size;
 
@@ -434,43 +492,44 @@ public static class NativeUIElements
             toggle.IsReadOnly = !property.CanWrite;
         }
 
+        // The check mark is a shader vector icon like the hierarchy toggle's, so it is sharp at this size.
+        UIMaterialComponent mark = CreateIcon(parent, EUIQuadIcon.Check, new Vector2(0.5f, 0.5f), Vector2.Zero,
+            MathF.Round(size * 0.62f), ColorF4.White, strokeWidth: 1.7f);
+        mark.BoundableTransform.Visibility = EVisibility.Hidden;
+
+        // The text glyph stays for callers that read it, but it shows nothing.
         parent.NewChild(out UITextComponent glyph, "ToggleLabel");
         glyph.Text = string.Empty;
-        glyph.Font = EditorIcons.Font;
-        glyph.FontSize = glyphFontSize;
-        glyph.Color = ColorF4.White;
         glyph.HorizontalAlignment = EHorizontalAlignment.Center;
         glyph.VerticalAlignment = EVerticalAlignment.Center;
 
+        bool highlighted = false;
         void SetCheckState(UIToggleComponent.ECurrentState state)
         {
-            materialComponent.SetBatchBorderStyle(CheckboxFill(state), materialComponent.BatchBorderColor, CheckboxBorderWidth);
-            glyph.Text = CheckboxGlyph(state);
+            ApplyCheckboxBox(materialComponent, state, highlighted);
+            ApplyCheckboxMark(mark, state);
         }
 
         void GotFocus(UIInteractableComponent _)
         {
-            materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            materialComponent.BatchBorderColor = ColorF4.White;
-            glyph.Color = ColorF4.White;
+            highlighted = true;
+            ApplyCheckboxBox(materialComponent, toggle.CurrentState, highlighted);
         }
 
         void LostFocus(UIInteractableComponent _)
         {
             if (toggle.CanInteract && toggle.IsMouseDirectlyOver)
                 return;
-            materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            materialComponent.BatchBorderColor = ColorF4.Gray;
-            glyph.Color = ColorF4.White;
+            highlighted = false;
+            ApplyCheckboxBox(materialComponent, toggle.CurrentState, highlighted);
         }
 
         void MouseLeave(UIInteractableComponent _)
         {
             if (toggle.CanInteract && toggle.IsFocused)
                 return;
-            materialComponent.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            materialComponent.BatchBorderColor = ColorF4.Gray;
-            glyph.Color = ColorF4.White;
+            highlighted = false;
+            ApplyCheckboxBox(materialComponent, toggle.CurrentState, highlighted);
         }
 
         toggle.OnStateChanged += SetCheckState;
@@ -486,7 +545,7 @@ public static class NativeUIElements
     internal static bool TryCreateCheckboxToggleGuarded(SceneNode parent, PropertyInfo property,
         object?[] targets, Func<bool> isCurrent,
         out (UIToggleComponent Toggle, UIMaterialComponent Background, UITextComponent Glyph) result,
-        float size = 20.0f, float glyphFontSize = 16.0f,
+        float size = 16.0f, float glyphFontSize = 12.0f,
         Action<RuntimeComponentCreationReceipt>? retainFailedReceipt = null)
     {
         result = default;
@@ -503,7 +562,7 @@ public static class NativeUIElements
             : materialLease.IsCurrent(parent) && toggleLease.IsCurrent(parent) && glyphLease.IsCurrent(parent);
         UIMaterialComponent? material = AddGuardedComponent<UIMaterialComponent>(parent, Current, retainFailedReceipt);
         if (!Current() || material is null) return false;
-        material.SetBatchBorderStyle(CheckboxOffFill, ColorF4.Gray, CheckboxBorderWidth);
+        ApplyCheckboxBox(material, UIToggleComponent.ECurrentState.False, highlighted: false);
         if (!Current()) return false;
         UIBoundableTransform bounds = material.BoundableTransform;
         if (!Current() || !ReferenceEquals(parent.Transform, bounds)) return false;
@@ -561,10 +620,11 @@ public static class NativeUIElements
         glyph.VerticalAlignment = EVerticalAlignment.Center;
         if (!GlyphNodeCurrent()) return false;
 
+        bool highlighted = false;
         void SetCheckState(UIToggleComponent.ECurrentState state)
         {
             if (!Current()) return;
-            material.SetBatchBorderStyle(CheckboxFill(state), material.BatchBorderColor, CheckboxBorderWidth);
+            ApplyCheckboxBox(material, state, highlighted);
             if (!Current()) return;
             string? text = CheckboxGlyph(state);
             try
@@ -577,29 +637,28 @@ public static class NativeUIElements
             catch (InvalidOperationException) when (!Current()) { }
         }
 
-        void SetBorder(ColorF4 color)
+        void SetBorder(bool highlight)
         {
             if (!Current()) return;
-            material.UITransform.RecordUIChange(UIChangeDomain.Visual);
-            if (!Current()) return;
-            material.BatchBorderColor = color;
+            highlighted = highlight;
+            ApplyCheckboxBox(material, toggle.CurrentState, highlighted);
         }
         void GotFocus(UIInteractableComponent _)
         {
             if (!Current()) return;
-            SetBorder(ColorF4.White);
+            SetBorder(true);
             if (Current()) glyph.Color = ColorF4.White;
         }
         void LostFocus(UIInteractableComponent _)
         {
             if (!Current() || toggle.CanInteract && toggle.IsMouseDirectlyOver) return;
-            SetBorder(ColorF4.Gray);
+            SetBorder(false);
             if (Current()) glyph.Color = ColorF4.White;
         }
         void MouseLeave(UIInteractableComponent _)
         {
             if (!Current() || toggle.CanInteract && toggle.IsFocused) return;
-            SetBorder(ColorF4.Gray);
+            SetBorder(false);
             if (Current()) glyph.Color = ColorF4.White;
         }
         toggle.OnStateChanged += SetCheckState;
