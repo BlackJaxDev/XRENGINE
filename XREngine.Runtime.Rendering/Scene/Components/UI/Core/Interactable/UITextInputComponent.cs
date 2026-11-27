@@ -860,11 +860,18 @@ namespace XREngine.Rendering.UI
             input.RegisterKeyStateChange(EKey.Escape, Escape);
         }
 
+        /// <summary>
+        /// Inserts one typed character. Character events have no release, so this does not start the key repeat
+        /// timer: the operating system sends repeated characters while a key is held.
+        /// </summary>
         private void OnCharacterTyped(char character)
         {
             if (_terminal || AnyControl || IsComposing)
                 return;
-            AddChar(true, character.ToString());
+            _keyRepeatTimer.Cancel();
+            _lastMovementInput = null;
+            _lastChar = null;
+            UserAddText(character.ToString());
         }
 
         private void Enter(bool pressed)
@@ -1719,8 +1726,46 @@ namespace XREngine.Rendering.UI
                 return false;
             if (!TryFindCaretStop(layout.Carets.Span, out UITextCaretStop stop))
                 return false;
-            bounds = new(stop.Position.X, stop.Position.Y - stop.LineHeight, 1f, stop.LineHeight);
+            float lineHeight = stop.LineHeight > 0.0f ? stop.LineHeight : TextComponent.FontSize ?? 0.0f;
+            if (lineHeight <= 0.0f)
+                return false;
+            Vector2 baseline = layout.Glyphs.Length == 0 ? GetEmptyTextBaseline(lineHeight) : stop.Position;
+            // Caret stops sit on the text baseline in a bottom-up space. Extend the caret below the baseline for
+            // descenders and above it for capitals, so that it covers the visible line.
+            bounds = new(baseline.X, baseline.Y - lineHeight * CaretDescentRatio,
+                CaretWidth, lineHeight * (CaretDescentRatio + CaretAscentRatio));
             return true;
+        }
+
+        private const float CaretDescentRatio = 0.25f;
+        private const float CaretAscentRatio = 0.85f;
+        private const float CaretCapHeightRatio = 0.7f;
+        private const float CaretWidth = 2.0f;
+
+        /// <summary>
+        /// Gets the baseline that typed text would use in an empty field. Layout gives an empty field one caret stop at
+        /// the origin, but text in the field is aligned in the text area. This places the caret where the first
+        /// typed character appears.
+        /// </summary>
+        private Vector2 GetEmptyTextBaseline(float lineHeight)
+        {
+            UITextComponent text = TextComponent;
+            Vector2 size = text.BoundableTransform.ActualSize;
+            Vector4 margins = text.BoundableTransform.Margins;
+            float capHeight = lineHeight * CaretCapHeightRatio;
+            float x = text.HorizontalAlignment switch
+            {
+                EHorizontalAlignment.Center => (size.X - margins.Z) * 0.5f,
+                EHorizontalAlignment.Right => size.X - margins.Z,
+                _ => 0.0f
+            };
+            float y = text.VerticalAlignment switch
+            {
+                EVerticalAlignment.Top => size.Y - capHeight - margins.W,
+                EVerticalAlignment.Center => (size.Y - capHeight - margins.W) * 0.5f,
+                _ => 0.0f
+            };
+            return new(MathF.Max(0.0f, x), MathF.Max(0.0f, y));
         }
     }
 }

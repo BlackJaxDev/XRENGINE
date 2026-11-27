@@ -17,6 +17,13 @@ public partial class UITextInputComponent
     private int _overlaySelectionEnd = -1;
     private bool _overlayTickRegistered;
 
+    /// <summary>
+    /// The Z index of the caret and selection quads. The transparent UI pass sorts Z index from far to near, so a
+    /// positive value draws behind the panel backgrounds and a negative value draws over popups. Zero keeps the
+    /// overlays in tree order: after the field background and its text, and before later controls.
+    /// </summary>
+    private const int OverlayZIndex = 0;
+
     /// <summary>Gets the caret overlay key for lookup in a presented UI packet.</summary>
     public bool TryGetCaretOverlayPublicationKey(out long membershipId, out UIElementIdentity identity)
     {
@@ -118,7 +125,7 @@ public partial class UITextInputComponent
         EnsureCaretVisible();
 
         if (TryGetCaretLocalBounds(layout, out Vector4 caret))
-            PlaceOverlay(ref _caretOverlay, caret, "Text caret", ColorF4.White, 20);
+            PlaceOverlay(ref _caretOverlay, caret, "Text caret", ColorF4.White, OverlayZIndex);
         else if (_caretOverlay is not null)
             _caretOverlay.Visibility = EVisibility.Collapsed;
 
@@ -147,7 +154,9 @@ public partial class UITextInputComponent
             float width = MathF.Abs(right.Position.X - left.Position.X);
             if (width <= 0)
                 continue;
-            Vector4 rect = new(x, left.Position.Y - left.LineHeight, width, left.LineHeight);
+            // Cover the same baseline-relative band as the caret.
+            Vector4 rect = new(x, left.Position.Y - left.LineHeight * CaretDescentRatio, width,
+                left.LineHeight * (CaretDescentRatio + CaretAscentRatio));
             if (hasRun && runLine == left.Line && rect.X <= run.X + run.Z + 0.5f)
                 run.Z = MathF.Max(run.X + run.Z, rect.X + rect.Z) - run.X;
             else
@@ -168,7 +177,7 @@ public partial class UITextInputComponent
     private void PlaceSelectionOverlay(ref int used, Vector4 bounds)
     {
         UIBoundableTransform? overlay = used < _selectionOverlays.Count ? _selectionOverlays[used] : null;
-        PlaceOverlay(ref overlay, bounds, "Text selection", new ColorF4(0.2f, 0.45f, 0.9f, 0.45f), -20);
+        PlaceOverlay(ref overlay, bounds, "Text selection", new ColorF4(0.2f, 0.45f, 0.9f, 0.45f), OverlayZIndex);
         if (used == _selectionOverlays.Count && overlay is not null)
             _selectionOverlays.Add(overlay);
         used++;
