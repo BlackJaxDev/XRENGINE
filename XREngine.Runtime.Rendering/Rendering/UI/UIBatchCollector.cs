@@ -81,6 +81,7 @@ public sealed partial class UIBatchCollector : IDisposable
 
     private void RetireKnownIdleRenderer(AbstractRenderer renderer, long backendGeneration)
     {
+        DestroyParkedCohorts(renderer, backendGeneration);
         _staleMaterialRunKeys.Clear();
         foreach (var pair in _materialRunGPU)
             if (ReferenceEquals(pair.Key.Renderer, renderer) && pair.Key.BackendGeneration == backendGeneration)
@@ -681,6 +682,17 @@ public sealed partial class UIBatchCollector : IDisposable
     private readonly List<(AbstractRenderer Renderer, long BackendGeneration, int Pass, ulong RunId)> _staleMaterialRunKeys = [];
     private readonly HashSet<(int Pass, ulong RunId)> _activeMaterialRunKeys = [];
     private int _gpuCohortCount;
+
+    // Retired cohorts that keep their GPU objects. A new run takes one of these before it creates a cohort. A new
+    // cohort is a new mesh renderer, material, and buffer set, and the Vulkan frame admission holds the whole frame
+    // until such cold meshes are ready. An inspector rebuild makes about a hundred new runs at once, so without
+    // these cohorts every selection change stalled presentation for seconds.
+    private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration), Stack<MaterialGPUResources>> _parkedMaterialGPU = [];
+    private readonly Dictionary<(AbstractRenderer Renderer, long BackendGeneration, XRTexture2D Atlas), Stack<TextGPUResources>> _parkedTextGPU = [];
+    private int _parkedCohortCount;
+    private const int MaxParkedCohorts = 512;
+    // The render frame in which the collector last moved inactive cohorts to the parked stacks.
+    private ulong _lastCohortRefillFrame = ulong.MaxValue;
 
     private sealed class MaterialGPUResources
     {
@@ -1773,7 +1785,7 @@ public sealed partial class UIBatchCollector : IDisposable
             while (cohorts.Count != 0)
             {
                 MaterialGPUResources gpu = cohorts[^1];
-                DestroyMaterialGPU(gpu);
+                ParkMaterialGPU(renderer, gpu);
                 cohorts.RemoveAt(cohorts.Count - 1);
                 _gpuCohortCount--;
             }
@@ -1803,12 +1815,162 @@ public sealed partial class UIBatchCollector : IDisposable
             while (cohorts.Count != 0)
             {
                 TextGPUResources gpu = cohorts[^1];
-                gpu.Dispose();
+                ParkTextGPU(renderer, key.Atlas, gpu);
                 cohorts.RemoveAt(cohorts.Count - 1);
                 _gpuCohortCount--;
             }
             _textGPU.Remove(key);
         }
+    }
+
+    /// <summary>
+    /// Keeps a retired material cohort for a later run of the same renderer generation. The cohort keeps its
+    /// mesh renderers, material, and buffers, and forgets the entries and slots of its old run. When the parked
+    /// stacks are full, the cohort is destroyed instead.
+    /// </summary>
+    private void ParkMaterialGPU(AbstractRenderer renderer, MaterialGPUResources gpu)
+    {
+        if (_parkedCohortCount >= MaxParkedCohorts)
+        {
+            DestroyMaterialGPU(gpu);
+            return;
+        }
+        ResetMaterialGPUForNewRun(gpu);
+        var key = (renderer, renderer.BackendGeneration);
+        if (!_parkedMaterialGPU.TryGetValue(key, out Stack<MaterialGPUResources>? stack))
+            _parkedMaterialGPU.Add(key, stack = new Stack<MaterialGPUResources>());
+        stack.Push(gpu);
+        _parkedCohortCount++;
+    }
+
+    /// <summary>Keeps a retired text cohort for a later run that draws with the same font atlas.</summary>
+    private void ParkTextGPU(AbstractRenderer renderer, XRTexture2D atlas, TextGPUResources gpu)
+    {
+        if (_parkedCohortCount >= MaxParkedCohorts)
+        {
+            gpu.Dispose();
+            return;
+        }
+        ResetTextGPUForNewRun(gpu);
+        var key = (renderer, renderer.BackendGeneration, atlas);
+        if (!_parkedTextGPU.TryGetValue(key, out Stack<TextGPUResources>? stack))
+            _parkedTextGPU.Add(key, stack = new Stack<TextGPUResources>());
+        stack.Push(gpu);
+        _parkedCohortCount++;
+    }
+
+    /// <summary>
+    /// Takes a parked material cohort for a new run. When none is parked, it first moves the GPU-idle cohorts of
+    /// inactive runs to the parked stacks, at most once per render frame.
+    /// </summary>
+    private MaterialGPUResources? TryTakeParkedMaterialGPU(AbstractRenderer renderer)
+    {
+        var key = (renderer, renderer.BackendGeneration);
+        if (!_parkedMaterialGPU.TryGetValue(key, out Stack<MaterialGPUResources>? stack) || stack.Count == 0)
+        {
+            RefillParkedCohorts(renderer);
+            if (!_parkedMaterialGPU.TryGetValue(key, out stack) || stack.Count == 0)
+                return null;
+        }
+        _parkedCohortCount--;
+        return stack.Pop();
+    }
+
+    /// <summary>Takes a parked text cohort that draws with <paramref name="atlas"/> for a new run.</summary>
+    private TextGPUResources? TryTakeParkedTextGPU(AbstractRenderer renderer, XRTexture2D atlas)
+    {
+        var key = (renderer, renderer.BackendGeneration, atlas);
+        if (!_parkedTextGPU.TryGetValue(key, out Stack<TextGPUResources>? stack) || stack.Count == 0)
+        {
+            RefillParkedCohorts(renderer);
+            if (!_parkedTextGPU.TryGetValue(key, out stack) || stack.Count == 0)
+                return null;
+        }
+        _parkedCohortCount--;
+        return stack.Pop();
+    }
+
+    private void RefillParkedCohorts(AbstractRenderer renderer)
+    {
+        ulong frame = RuntimeEngine.Rendering.State.RenderFrameId;
+        if (_lastCohortRefillFrame == frame)
+            return;
+        _lastCohortRefillFrame = frame;
+        RetireInactiveGpuCohorts(renderer);
+    }
+
+    /// <summary>Destroys the parked cohorts of one renderer generation, or of all renderers when it is null.</summary>
+    private void DestroyParkedCohorts(AbstractRenderer? renderer, long backendGeneration)
+    {
+        _staleParkedMaterialKeys.Clear();
+        foreach (var pair in _parkedMaterialGPU)
+            if (renderer is null || ReferenceEquals(pair.Key.Renderer, renderer) && pair.Key.BackendGeneration == backendGeneration)
+                _staleParkedMaterialKeys.Add(pair.Key);
+        foreach (var key in _staleParkedMaterialKeys)
+        {
+            Stack<MaterialGPUResources> stack = _parkedMaterialGPU[key];
+            while (stack.Count != 0)
+            {
+                DestroyMaterialGPU(stack.Pop());
+                _parkedCohortCount--;
+            }
+            _parkedMaterialGPU.Remove(key);
+        }
+        _staleParkedTextKeys.Clear();
+        foreach (var pair in _parkedTextGPU)
+            if (renderer is null || ReferenceEquals(pair.Key.Renderer, renderer) && pair.Key.BackendGeneration == backendGeneration)
+                _staleParkedTextKeys.Add(pair.Key);
+        foreach (var key in _staleParkedTextKeys)
+        {
+            Stack<TextGPUResources> stack = _parkedTextGPU[key];
+            while (stack.Count != 0)
+            {
+                stack.Pop().Dispose();
+                _parkedCohortCount--;
+            }
+            _parkedTextGPU.Remove(key);
+        }
+    }
+
+    private readonly List<(AbstractRenderer Renderer, long BackendGeneration)> _staleParkedMaterialKeys = [];
+    private readonly List<(AbstractRenderer Renderer, long BackendGeneration, XRTexture2D Atlas)> _staleParkedTextKeys = [];
+
+    /// <summary>
+    /// Clears the per-run upload state of a material cohort. The next upload then writes every entry of the new
+    /// run, and the retained slots start empty.
+    /// </summary>
+    private static void ResetMaterialGPUForNewRun(MaterialGPUResources gpu)
+    {
+        gpu.NeedsPush = true;
+        gpu.UploadedEntries.Clear();
+        gpu.Slots.Clear();
+        gpu.UploadedSlots.Clear();
+        gpu.InitializedSlots.Clear();
+        gpu.UploadedDrawIndices.Clear();
+        gpu.CurrentDrawIndices.Clear();
+        gpu.ScratchSlots.Clear();
+        gpu.HasUploadedEntries = false;
+        gpu.HasUploadedBorder = false;
+        gpu.HasUploadedImage = false;
+        gpu.UploadedVariant = -1;
+    }
+
+    /// <summary>Clears the per-run upload state of a text cohort, so the next upload writes the whole new run.</summary>
+    private static void ResetTextGPUForNewRun(TextGPUResources gpu)
+    {
+        gpu.NeedsPush = true;
+        gpu.GlyphRanges.Clear();
+        gpu.TextSlots.Clear();
+        gpu.ActiveGlyphRanges.Clear();
+        gpu.ActiveTextSlots.Clear();
+        gpu.SortedTextSlots.Clear();
+        gpu.DirtyGlyphRanges.Clear();
+        gpu.UploadedTextSlots.Clear();
+        gpu.InitializedTextSlots.Clear();
+        gpu.UploadedDrawIndices.Clear();
+        gpu.CurrentDrawIndices.Clear();
+        gpu.UploadedEntries.Clear();
+        gpu.HasUploadedData = false;
     }
 
     private static void SweepDeferredCohorts(AbstractRenderer renderer)
@@ -1909,7 +2071,7 @@ public sealed partial class UIBatchCollector : IDisposable
             RetireInactiveGpuCohorts(renderer);
         if (CountGpuCohorts() >= _canvasGpuCohortLimit)
             throw new InvalidOperationException("UI GPU cohort budget is full while earlier draws remain in use.");
-        MaterialGPUResources gpu = new();
+        MaterialGPUResources gpu = TryTakeParkedMaterialGPU(renderer) ?? new();
         if (!_materialRunGPU.ContainsKey(key))
             _materialRunGPU.Add(key, cohorts);
         cohorts.Add(gpu);
@@ -2620,6 +2782,15 @@ public sealed partial class UIBatchCollector : IDisposable
             RetireInactiveGpuCohorts(renderer);
         if (CountGpuCohorts() >= _canvasGpuCohortLimit)
             throw new InvalidOperationException("UI GPU cohort budget is full while earlier draws remain in use.");
+
+        if (TryTakeParkedTextGPU(renderer, fontAtlas) is { } parked)
+        {
+            if (!_textGPU.ContainsKey(key))
+                _textGPU.Add(key, cohorts);
+            cohorts.Add(parked);
+            _gpuCohortCount++;
+            return parked;
+        }
 
         TextGPUResources gpu = new();
 
@@ -4128,6 +4299,8 @@ public sealed partial class UIBatchCollector : IDisposable
                 }
             }
         _materialRunGPU.Clear();
+        try { DestroyParkedCohorts(null, 0); }
+        catch (Exception failure) { (failures ??= []).Add(failure); }
         if (_legacyMaterialGpuCreated)
             try { DestroyLegacyMaterialGPU(); }
             catch (Exception failure) { (failures ??= []).Add(failure); }
