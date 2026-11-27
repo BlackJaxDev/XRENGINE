@@ -3300,6 +3300,7 @@ public sealed partial class UIBatchCollector : IDisposable
             renderer.BackendGeneration, intent)
         {
             CapturedMesh = mesh.Mesh,
+            Crop = batch.CropRegion,
             IsBorder = batch.Border,
             BorderColorBuffer = borderColor,
             BorderColorRevision = borderColorRevision,
@@ -3571,6 +3572,7 @@ public sealed partial class UIBatchCollector : IDisposable
             renderer.BackendGeneration, intent)
         {
             CapturedMesh = mesh.Mesh,
+            Crop = batch.CropRegion,
             IsText = true,
             TextAtlasSnapshot = snapshot,
             TextAtlas = snapshot.Texture,

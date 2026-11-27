@@ -14,6 +14,8 @@ internal readonly record struct UIStaticDrawContract(
     UIIndexedDrawIntent Intent)
 {
     internal XRMesh? CapturedMesh { get; init; }
+    /// <summary>The clip rectangle of the run. A run keeps its identity when its clip moves, so the clip is part of the contract.</summary>
+    internal XREngine.Data.Geometry.BoundingRectangle? Crop { get; init; }
     internal bool IsBorder { get; init; }
     internal XRDataBuffer? BorderColorBuffer { get; init; }
     internal ulong BorderColorRevision { get; init; }

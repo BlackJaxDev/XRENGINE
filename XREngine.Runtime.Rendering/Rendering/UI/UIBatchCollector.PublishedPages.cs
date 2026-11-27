@@ -428,7 +428,9 @@ public sealed partial class UIBatchCollector
                 !_oldMaterialRunByHandle.TryGetValue(entry.PrimitiveHandle, out var match) ||
                 match.Pass != pass) continue;
             MaterialQuadBatchData old = match.Run;
-            if (_claimedPreviousRunIds.Contains(old.RunId) || current.CropRegion != old.CropRegion ||
+            // The clip rectangle is draw state that the run applies when it renders, not GPU cohort content.
+            // A resize moves most clips, so a clip change keeps the run and its prepared GPU cohort.
+            if (_claimedPreviousRunIds.Contains(old.RunId) ||
                 current.CompositionOwner != old.CompositionOwner ||
                 current.CompositionSegmentIdentity != old.CompositionSegmentIdentity ||
                 !ReferenceEquals(current.Texture, old.Texture) ||
@@ -449,7 +451,8 @@ public sealed partial class UIBatchCollector
                 !_oldTextRunByHandle.TryGetValue(entry.PrimitiveHandle, out var match) ||
                 match.Pass != pass) continue;
             TextBatchData old = match.Run;
-            if (_claimedPreviousRunIds.Contains(old.RunId) || current.CropRegion != old.CropRegion ||
+            // A clip change keeps the run, as for material runs.
+            if (_claimedPreviousRunIds.Contains(old.RunId) ||
                 current.CompositionOwner != old.CompositionOwner ||
                 current.CompositionSegmentIdentity != old.CompositionSegmentIdentity ||
                 !ReferenceEquals(current.Atlas, old.Atlas) || current.AtlasType != old.AtlasType ||
