@@ -42,49 +42,65 @@ internal sealed partial class VulkanResourceRuntime
             DescriptorLifetime.DrainPendingMeshDescriptorPoolSlabRetirements();
         releasedOwnerCount +=
             DescriptorLifetime.DrainPendingMeshDescriptorSetRetirements();
+        // Take every waiting generation at once. A resize retires hundreds of render target generations, and
+        // the owner scans below then run once for all of them instead of once for each generation.
+        VulkanSupersededDescriptorOwnerBatch? batch = null;
+        int dequeuedCount = 0;
         while (Lifetime.TryDequeueSupersededResourceDescriptorOwner(
                    out VulkanSupersededResourceDescriptorOwner pending))
         {
+            (batch ??= new VulkanSupersededDescriptorOwnerBatch()).Add(pending);
+            dequeuedCount++;
+        }
+
+        if (batch is not null)
+        {
             try
             {
-                Interlocked.Increment(ref _supersededResourceGenerationsDrained);
-                VulkanDescriptorSetGenerationReference[] affected =
-                    SnapshotDescriptorOwnersForSupersededResource(pending);
-                if (affected.Length == 0)
-                    continue;
-
-                releasedOwnerCount +=
-                    Descriptors.RetireSupersededComputeDescriptorPools(affected);
-
-                VkObject<XRMaterial>[] materials = BackendObjects.Snapshot<XRMaterial>();
-                for (int index = 0; index < materials.Length; index++)
-                {
-                    if (materials[index] is VkMaterial material)
-                        releasedOwnerCount +=
-                            material.ReleaseSupersededDescriptorProgramStates(affected, pending);
-                }
-
-                VkObject<XRMeshRenderer.BaseVersion>[] meshes =
-                    BackendObjects.Snapshot<XRMeshRenderer.BaseVersion>();
-                for (int index = 0; index < meshes.Length; index++)
-                {
-                    if (meshes[index] is VkMeshRenderer mesh)
-                        releasedOwnerCount +=
-                            mesh.ReleaseSupersededDescriptorAllocations(affected, pending);
-                }
+                Interlocked.Add(ref _supersededResourceGenerationsDrained, dequeuedCount);
+                SnapshotDescriptorOwnersForSupersededResources(batch);
+                if (!batch.AffectedSets.IsEmpty)
+                    releasedOwnerCount += ReleaseSupersededDescriptorOwners(batch);
             }
             catch
             {
-                // Keep the exact generation queued for a later normal boundary;
+                // Keep the exact generations queued for a later normal boundary;
                 // cache eviction must never turn a transient failure into a leak.
-                Lifetime.EnqueueSupersededResourceDescriptorOwner(
-                    pending.ResourceKey,
-                    pending.Generation);
+                foreach (VulkanSupersededResourceDescriptorOwner pending in batch.Pending)
+                    Lifetime.EnqueueSupersededResourceDescriptorOwner(
+                        pending.ResourceKey,
+                        pending.Generation);
                 throw;
             }
         }
 
         Interlocked.Add(ref _supersededDescriptorOwnersReleased, releasedOwnerCount);
+        return releasedOwnerCount;
+    }
+
+    /// <summary>
+    /// Releases the compute descriptor pools, material program states, and mesh descriptor allocations whose
+    /// descriptor sets pin a retired generation of the batch. Each owner collection is scanned once.
+    /// </summary>
+    private int ReleaseSupersededDescriptorOwners(VulkanSupersededDescriptorOwnerBatch batch)
+    {
+        int releasedOwnerCount = Descriptors.RetireSupersededComputeDescriptorPools(batch.AffectedSets);
+
+        VkObject<XRMaterial>[] materials = BackendObjects.Snapshot<XRMaterial>();
+        for (int index = 0; index < materials.Length; index++)
+        {
+            if (materials[index] is VkMaterial material)
+                releasedOwnerCount += material.ReleaseSupersededDescriptorProgramStates(batch);
+        }
+
+        VkObject<XRMeshRenderer.BaseVersion>[] meshes =
+            BackendObjects.Snapshot<XRMeshRenderer.BaseVersion>();
+        for (int index = 0; index < meshes.Length; index++)
+        {
+            if (meshes[index] is VkMeshRenderer mesh)
+                releasedOwnerCount += mesh.ReleaseSupersededDescriptorAllocations(batch);
+        }
+
         return releasedOwnerCount;
     }
 
@@ -101,9 +117,11 @@ internal sealed partial class VulkanResourceRuntime
                    state.Generation == descriptorSet.Generation;
     }
 
-    private VulkanDescriptorSetGenerationReference[]
-        SnapshotDescriptorOwnersForSupersededResource(
-            in VulkanSupersededResourceDescriptorOwner pending)
+    /// <summary>
+    /// Finds, in one pass over the tracked descriptor sets, each set that pins a retired generation of the batch,
+    /// and stores those sets in the batch.
+    /// </summary>
+    private void SnapshotDescriptorOwnersForSupersededResources(VulkanSupersededDescriptorOwnerBatch batch)
     {
         lock (Lifetime.Tracker.SyncRoot)
         {
@@ -111,21 +129,15 @@ internal sealed partial class VulkanResourceRuntime
             foreach ((ulong descriptorSetHandle, VulkanDescriptorSetLifetimeRecord state)
                      in Lifetime.Tracker.DescriptorSetLifetimes)
             {
-                if (!state.PinnedReferences.TryGetValue(
-                        pending.ResourceKey,
-                        out ulong pinnedGeneration) ||
-                    pinnedGeneration != pending.Generation ||
-                    state.Generation == 0)
-                {
+                if (state.Generation == 0 || !batch.PinsPendingGeneration(state))
                     continue;
-                }
 
                 (result ??= []).Add(new VulkanDescriptorSetGenerationReference(
                     new Silk.NET.Vulkan.DescriptorSet(descriptorSetHandle),
                     state.Generation));
             }
 
-            return result is null ? [] : [.. result];
+            batch.SetAffectedSets(result);
         }
     }
 }

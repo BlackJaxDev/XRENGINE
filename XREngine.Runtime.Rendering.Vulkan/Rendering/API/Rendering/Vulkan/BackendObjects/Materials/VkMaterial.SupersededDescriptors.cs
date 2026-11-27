@@ -9,11 +9,9 @@ internal unsafe partial class VkMaterial
     /// native resource generation. Their pools follow normal deferred retirement,
     /// while a later bind recreates current descriptors for every frame slot.
     /// </summary>
-    internal int ReleaseSupersededDescriptorProgramStates(
-        ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets,
-        in VulkanSupersededResourceDescriptorOwner pending)
+    internal int ReleaseSupersededDescriptorProgramStates(VulkanSupersededDescriptorOwnerBatch batch)
     {
-        if (affectedSets.IsEmpty)
+        if (batch.AffectedSets.IsEmpty)
             return 0;
 
         lock (_stateSync)
@@ -21,7 +19,7 @@ internal unsafe partial class VkMaterial
             List<uint>? keysToRelease = null;
             foreach ((uint key, ProgramDescriptorState state) in _programStates)
             {
-                if (ProgramStatePinsSupersededResource(state, affectedSets, pending))
+                if (ProgramStatePinsSupersededResource(state, batch))
                     (keysToRelease ??= []).Add(key);
             }
             if (keysToRelease is null)
@@ -46,8 +44,7 @@ internal unsafe partial class VkMaterial
 
     private bool ProgramStatePinsSupersededResource(
         ProgramDescriptorState programState,
-        ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets,
-        in VulkanSupersededResourceDescriptorOwner pending)
+        VulkanSupersededDescriptorOwnerBatch batch)
     {
         VulkanResourceLifetimeTracker tracker = BackendContext.Resources.Lifetime.Tracker;
         lock (tracker.SyncRoot)
@@ -69,18 +66,11 @@ internal unsafe partial class VkMaterial
                     !tracker.DescriptorSetLifetimes.TryGetValue(
                         handle,
                         out VulkanDescriptorSetLifetimeRecord? descriptorState) ||
-                    descriptorState.Pool.Handle != programState.DescriptorPool.Handle ||
-                    !descriptorState.PinnedReferences.TryGetValue(
-                        pending.ResourceKey,
-                        out ulong pinnedGeneration) ||
-                    pinnedGeneration != pending.Generation)
+                    descriptorState.Pool.Handle != programState.DescriptorPool.Handle)
                     continue;
 
-                for (int affectedIndex = 0; affectedIndex < affectedSets.Length; affectedIndex++)
-                {
-                    if (affectedSets[affectedIndex].Set.Handle == handle)
-                        return true;
-                }
+                if (batch.IsAffectedSet(handle, descriptorState))
+                    return true;
             }
         }
 

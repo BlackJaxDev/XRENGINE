@@ -116,19 +116,17 @@ internal unsafe partial class VkMeshRenderer
 	/// still names an exact retiring native resource generation. Shared material tiers
 	/// are intentionally excluded because this renderer does not own them.
 	/// </summary>
-	internal int ReleaseSupersededDescriptorAllocations(
-		ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets,
-		in VulkanSupersededResourceDescriptorOwner pending)
+	internal int ReleaseSupersededDescriptorAllocations(VulkanSupersededDescriptorOwnerBatch batch)
 	{
 		int detachedCount = 0;
 		using (VulkanFrameLockScope.Enter(_recordDrawSync, EVulkanFrameWaitReason.None, EVulkanLockContentionSite.MeshRecord))
 		{
 			List<DescriptorAllocationKey>? keysToRelease = null;
-			if (!affectedSets.IsEmpty)
+			if (!batch.AffectedSets.IsEmpty)
 			{
 				foreach (KeyValuePair<DescriptorAllocationKey, DescriptorAllocation> pair in _descriptorAllocations)
 				{
-					if (AllocationOwnsAffectedDescriptorSet(pair.Value, affectedSets, pending))
+					if (AllocationOwnsAffectedDescriptorSet(pair.Value, batch))
 						(keysToRelease ??= []).Add(pair.Key);
 				}
 			}
@@ -191,8 +189,7 @@ internal unsafe partial class VkMeshRenderer
 
 	private bool AllocationOwnsAffectedDescriptorSet(
 		DescriptorAllocation allocation,
-		ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets,
-		in VulkanSupersededResourceDescriptorOwner pending)
+		VulkanSupersededDescriptorOwnerBatch batch)
 	{
 		VulkanResourceLifetimeTracker tracker = BackendContext.Resources.Lifetime.Tracker;
 		lock (tracker.SyncRoot)
@@ -218,18 +215,11 @@ internal unsafe partial class VkMeshRenderer
 						!tracker.DescriptorSetLifetimes.TryGetValue(
 							handle,
 							out VulkanDescriptorSetLifetimeRecord? state) ||
-						state.Pool.Handle != allocation.Pool.Handle ||
-						!state.PinnedReferences.TryGetValue(
-							pending.ResourceKey,
-							out ulong pinnedGeneration) ||
-						pinnedGeneration != pending.Generation)
+						state.Pool.Handle != allocation.Pool.Handle)
 						continue;
 
-					for (int affectedIndex = 0; affectedIndex < affectedSets.Length; affectedIndex++)
-					{
-						if (affectedSets[affectedIndex].Set.Handle == handle)
-							return true;
-					}
+					if (batch.IsAffectedSet(handle, state))
+						return true;
 				}
 			}
 		}
