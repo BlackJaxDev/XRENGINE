@@ -24,15 +24,6 @@ internal sealed class RetainedGlyphRanges
     public uint HighWater => _highWater;
     public void BeginFrame() => _epoch++;
 
-    /// <summary>Forgets every glyph range, so a parked cohort that a new run takes starts with empty storage.</summary>
-    public void Clear()
-    {
-        _allocations.Clear();
-        _free.Clear();
-        _stale.Clear();
-        _highWater = 0;
-    }
-
     public Allocation Reserve(ulong handle, int fallbackIndex, int glyphCount)
     {
         if (glyphCount <= 0)

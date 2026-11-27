@@ -21,15 +21,6 @@ internal sealed class RetainedQuadSlots
     public uint HighWater => _highWater;
     public void BeginFrame() => _epoch++;
 
-    /// <summary>Forgets every slot, so a parked cohort that a new run takes starts with empty storage.</summary>
-    public void Clear()
-    {
-        _slots.Clear();
-        _free.Clear();
-        _stale.Clear();
-        _highWater = 0;
-    }
-
     public Slot Reserve(ulong handle, int fallbackIndex)
     {
         var key = (handle, handle == 0 ? fallbackIndex : 0);
