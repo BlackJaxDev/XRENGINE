@@ -54,9 +54,10 @@ bool intersectsDecalTile(XRAdvancedDecalRecord decal, XRAdvancedViewRecord view,
     float sliceMin, float sliceMax)
 {
     if ((decal.flags & 1u) == 0u) return false;
+    uint maskViewIndex = XR_ADV_ViewMaskIndex(view, u_Push.viewIndex);
     bool affectsView = (decal.viewMaskLo | decal.viewMaskHi) == 0u ||
-        (u_Push.viewIndex < 32u ? (decal.viewMaskLo & (1u << u_Push.viewIndex)) != 0u :
-            (u_Push.viewIndex < 64u && (decal.viewMaskHi & (1u << (u_Push.viewIndex - 32u))) != 0u));
+        (maskViewIndex < 32u ? (decal.viewMaskLo & (1u << maskViewIndex)) != 0u :
+            (maskViewIndex < 64u && (decal.viewMaskHi & (1u << (maskViewIndex - 32u))) != 0u));
     if (!affectsView) return false;
 
     mat4 decalToWorld = inverse(decal.worldToDecal);

@@ -39,6 +39,13 @@ internal sealed class ImportedAnimationBindingRuntime(XRComponent owner)
     private readonly Dictionary<ImportedAnimationBindingDescriptor, ResolvedBinding> _resolved = [];
     private readonly Dictionary<SourceAssetReference, object?> _resolvedAssets = [];
     private readonly Dictionary<ImportedAnimationQuaternionBindingKey, QuaternionChannelAccumulator> _quaternionBindings = [];
+    private readonly HashSet<ImportedAnimationBindingDescriptor> _loggedMissingOptionalBindings = [];
+
+    /// <summary>
+    /// Allows unresolved optional target nodes, absent blendshapes, and absent animated parameters
+    /// to resolve to logged no-op setters instead of rejecting the owning state machine.
+    /// </summary>
+    public bool AllowMissingOptionalTargets { get; set; }
 
     public bool TryValidate(AnimationClip clip, out string diagnostic)
     {
@@ -125,6 +132,7 @@ internal sealed class ImportedAnimationBindingRuntime(XRComponent owner)
         _resolved.Clear();
         _resolvedAssets.Clear();
         _quaternionBindings.Clear();
+        _loggedMissingOptionalBindings.Clear();
     }
 
     private bool TryGetResolved(
@@ -150,8 +158,17 @@ internal sealed class ImportedAnimationBindingRuntime(XRComponent owner)
         out string diagnostic)
     {
         resolved = null!;
-        if (!TryResolveNode(binding, out SceneNode? node, out diagnostic))
+        if (TryResolveAnimatedParameterBinding(binding, out resolved, out diagnostic))
+            return true;
+        if (!string.IsNullOrEmpty(diagnostic))
             return false;
+
+        if (!TryResolveNode(binding, out SceneNode? node, out diagnostic))
+        {
+            if (AllowMissingOptionalTargets)
+                return TryCreateNoOpBinding(binding, diagnostic, out resolved, out diagnostic);
+            return false;
+        }
 
         if (binding.RequiresAdapter)
             return TryResolveAdapter(node, binding, out resolved, out diagnostic);
@@ -169,9 +186,77 @@ internal sealed class ImportedAnimationBindingRuntime(XRComponent owner)
         if (TryResolveBlendshapeBinding(node, binding, out resolved, out diagnostic))
             return true;
         if (!string.IsNullOrEmpty(diagnostic))
+        {
+            if (AllowMissingOptionalTargets)
+                return TryCreateNoOpBinding(binding, diagnostic, out resolved, out diagnostic);
             return false;
+        }
 
         return TryResolveReflectedBinding(node, binding, out resolved, out diagnostic);
+    }
+
+    private bool TryResolveAnimatedParameterBinding(
+        ImportedAnimationBindingDescriptor binding,
+        out ResolvedBinding resolved,
+        out string diagnostic)
+    {
+        resolved = null!;
+        diagnostic = string.Empty;
+        if (binding.ClassId is not 95
+            || !binding.Script.IsNull
+            || !string.IsNullOrEmpty(binding.NodePath)
+            || binding.PathHash != 0
+            || binding.IsPPtrCurve
+            || string.IsNullOrWhiteSpace(binding.Attribute))
+            return false;
+
+        if (owner is not AnimStateMachineComponent stateMachineComponent)
+        {
+            if (AllowMissingOptionalTargets)
+                return TryCreateNoOpBinding(binding, "No AnimStateMachineComponent owns the animated parameter target.", out resolved, out diagnostic);
+            return false;
+        }
+
+        if (!stateMachineComponent.StateMachine.Variables.TryGetValue(binding.Attribute, out AnimVar? variable))
+        {
+            string missingDiagnostic = $"Animated parameter '{binding.Attribute}' is not declared on '{owner.SceneNode.Name}'.";
+            if (AllowMissingOptionalTargets)
+                return TryCreateNoOpBinding(binding, missingDiagnostic, out resolved, out diagnostic);
+            diagnostic = missingDiagnostic;
+            return false;
+        }
+
+        resolved = new ResolvedBinding
+        {
+            FloatSetter = value => stateMachineComponent.StateMachine.ApplyAnimatedFloatParameter(variable, value),
+        };
+        return true;
+    }
+
+    private bool TryCreateNoOpBinding(
+        ImportedAnimationBindingDescriptor binding,
+        string reason,
+        out ResolvedBinding resolved,
+        out string diagnostic)
+    {
+        if (_loggedMissingOptionalBindings.Add(binding))
+            Debug.Animation($"[UnityAnimationBinding] Optional target '{Describe(binding)}' bound as no-op: {reason}");
+
+        resolved = binding.ValueKind == EImportedAnimationBindingValueKind.ObjectReference
+            ? new ResolvedBinding { ObjectSetter = NoOpObjectSetter }
+            : new ResolvedBinding { FloatSetter = NoOpFloatSetter };
+        diagnostic = string.Empty;
+        return true;
+    }
+
+    private static void NoOpFloatSetter(float value)
+    {
+    }
+
+    private static bool NoOpObjectSetter(SourceAssetReference value, out string diagnostic)
+    {
+        diagnostic = string.Empty;
+        return true;
     }
 
     private bool TryResolveNode(

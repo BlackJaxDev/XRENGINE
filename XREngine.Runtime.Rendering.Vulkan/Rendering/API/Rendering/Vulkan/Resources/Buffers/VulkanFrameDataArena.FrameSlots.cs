@@ -54,7 +54,8 @@ internal sealed partial class VulkanFrameDataArena
                             chunks[0]!.Capacity,
                             _usages[lane],
                             _labels[lane],
-                            preferDeviceLocal: lane == (int)EVulkanFrameDataLane.AdvancedVisibilityStorage);
+                            preferDeviceLocal: lane == (int)EVulkanFrameDataLane.AdvancedVisibilityStorage,
+                            preferHostCached: lane == (int)EVulkanFrameDataLane.Readback);
                         chunks[slot] = chunk;
                         if (chunk.AllocationLength > MaximumMappedBytes ||
                             allocatedBytes > MaximumMappedBytes - chunk.AllocationLength ||

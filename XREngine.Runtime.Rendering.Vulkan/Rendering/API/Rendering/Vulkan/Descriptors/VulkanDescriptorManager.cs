@@ -821,6 +821,8 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 for (int i = 0; i < candidates.Count; i++)
                 {
                     VkMeshRenderer.DescriptorAllocation candidate = candidates[i];
+                    if (candidate.IsRetired)
+                        continue;
                     if (candidate.UsesSharedMaterialTier &&
                         !ReferenceEquals(candidate.Material, material))
                     {
@@ -859,6 +861,8 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 for (int i = 0; i < candidates.Count; i++)
                 {
                     VkMeshRenderer.DescriptorAllocation candidate = candidates[i];
+                    if (candidate.IsRetired)
+                        continue;
                     if (candidate.UsesSharedMaterialTier &&
                         !ReferenceEquals(candidate.Material, allocation.Material))
                     {

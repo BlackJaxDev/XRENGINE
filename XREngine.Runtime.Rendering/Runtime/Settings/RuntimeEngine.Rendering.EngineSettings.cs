@@ -805,11 +805,11 @@ public static partial class RuntimeEngine
                 private EVrFoveationQualityPreset _vrFoveationQualityPreset = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationQualityPreset;
                 private bool _vrFoveationRequireRequested = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.VrFoveationRequireRequested;
                 private EAdvancedRenderPipelineMode _advancedRenderPipelineMode = EAdvancedRenderPipelineMode.Available;
-                private ERvcPipelineMode _rvcPipelineMode = ERvcPipelineMode.Off;
+                private ERvcPipelineMode _rvcPipelineMode = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcPipelineMode;
                 private bool _rvcQuadViewEnabled = false;
                 private float _rvcQuadViewWideResolutionScale = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcQuadViewWideResolutionScale;
                 private bool _rvcQuadViewSharedVisibilityEnabled = XREngine.Rendering.RuntimeRenderingHostServiceDefaults.RvcQuadViewSharedVisibilityEnabled;
-                private bool _rvcStereoReuseEnabled = false;
+                private bool _rvcStereoReuseEnabled = XREnvironment.IsEnabled(XREngineEnvironmentVariables.RvcStereoReuse, defaultValue: false);
                 private bool _rvcInsetWideReuseEnabled = true;
                 private bool _rvcTemporalReuseEnabled = false;
                 private bool _rvcPeripheralLightAggregationEnabled = false;
@@ -876,6 +876,7 @@ public static partial class RuntimeEngine
                 private bool _usePointShadowAtlas = true;
                 private uint _shadowAtlasPageSize = 4096u;
                 private int _maxShadowAtlasPages = 1;
+                private int _maxDirectionalShadowAtlasPages = 2;
                 private long _maxShadowAtlasMemoryBytes = 0L;
                 private int _maxShadowTilesRenderedPerFrame = 16;
                 private float _maxShadowRenderMilliseconds = 2.0f;
@@ -1038,6 +1039,36 @@ public static partial class RuntimeEngine
                 private static void MarkShadowAtlasRenderResourcesChanged(string settingName)
                     => global::XREngine.Rendering.AbstractRenderer.Current?.NotifyRenderResourcesChanged(settingName);
 
+                private EUiBackdropBlurFormat _uiBackdropBlurFormat = ResolveInitialUiBackdropBlurFormat();
+                private int _uiBackdropBlurFormatAtomic = (int)ResolveInitialUiBackdropBlurFormat();
+
+                private static EUiBackdropBlurFormat ResolveInitialUiBackdropBlurFormat()
+                {
+                    string? raw = XREnvironment.GetValue(XREngineEnvironmentVariables.UiBackdropBlurFormat);
+                    if (!string.IsNullOrWhiteSpace(raw) &&
+                        Enum.TryParse<EUiBackdropBlurFormat>(raw.Trim(), ignoreCase: true, out EUiBackdropBlurFormat parsed))
+                    {
+                        return parsed;
+                    }
+
+                    return EUiBackdropBlurFormat.Rgba8;
+                }
+
+                [Category("UI")]
+                [Description("GPU texture format used by the on-demand Dual-Kawase UI backdrop blur pyramid. Toggle between Rgba8 (lowest bandwidth), R11fG11fB10f, and Rgba16f (higher precision on dark scenes) at runtime.")]
+                public EUiBackdropBlurFormat UiBackdropBlurFormat
+                {
+                    get => (EUiBackdropBlurFormat)Volatile.Read(ref _uiBackdropBlurFormatAtomic);
+                    set
+                    {
+                        if (!SetField(ref _uiBackdropBlurFormat, value))
+                            return;
+
+                        Volatile.Write(ref _uiBackdropBlurFormatAtomic, (int)value);
+                        global::XREngine.Rendering.AbstractRenderer.Current?.NotifyRenderResourcesChanged(nameof(UiBackdropBlurFormat));
+                    }
+                }
+
                 [Category("Shadows")]
                 [Description("Width and height of each dynamic shadow atlas page in texels.")]
                 public uint ShadowAtlasPageSize
@@ -1052,6 +1083,14 @@ public static partial class RuntimeEngine
                 {
                     get => _maxShadowAtlasPages;
                     set => SetField(ref _maxShadowAtlasPages, Math.Clamp(value, 1, 64));
+                }
+
+                [Category("Shadows")]
+                [Description("Maximum number of pages allocated for the directional shadow atlas so primary capture maps do not evict full-resolution cascades.")]
+                public int MaxDirectionalShadowAtlasPages
+                {
+                    get => _maxDirectionalShadowAtlasPages;
+                    set => SetField(ref _maxDirectionalShadowAtlasPages, Math.Clamp(value, 1, 64));
                 }
 
                 [Category("Shadows")]

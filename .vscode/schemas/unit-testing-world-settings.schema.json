@@ -504,6 +504,10 @@
       "type": "boolean",
       "description": "Adds a face tracking component to the avatar for testing."
     },
+    "FaceTrackingSettings": {
+      "$ref": "#/definitions/UnitTestingFaceTrackingSettings",
+      "description": "Configures VRCFT VPM template conversion, dynamic OSC parameter binding, and OSCQuery discovery when FaceTracking is enabled."
+    },
     "AnimationClipVMD": {
       "type": "boolean",
       "description": "Imports a VMD animation clip for testing."
@@ -1582,6 +1586,75 @@
         "Passthrough"
       ],
       "markdownDescription": "Supported values: `OpenAL_EFX`, `SteamAudio`, `Passthrough`."
+    },
+    "UnitTestingFaceTrackingSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "UseVrcftTemplates": {
+          "type": "boolean",
+          "description": "Enables or disables UseVrcftTemplates."
+        },
+        "PackageSource": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Generated from PackageSource on UnitTestingFaceTrackingSettings."
+        },
+        "PackageId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Generated from PackageId on UnitTestingFaceTrackingSettings."
+        },
+        "PackageVersion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Generated from PackageVersion on UnitTestingFaceTrackingSettings."
+        },
+        "ControllerPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Generated from ControllerPaths on UnitTestingFaceTrackingSettings."
+        },
+        "FaceMeshPathOverride": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Generated from FaceMeshPathOverride on UnitTestingFaceTrackingSettings."
+        },
+        "SourceFaceMeshPath": {
+          "type": "string",
+          "description": "Generated from SourceFaceMeshPath on UnitTestingFaceTrackingSettings."
+        },
+        "OscReceivePort": {
+          "type": "integer",
+          "description": "Generated from OscReceivePort on UnitTestingFaceTrackingSettings."
+        },
+        "OscSendPort": {
+          "type": "integer",
+          "description": "Generated from OscSendPort on UnitTestingFaceTrackingSettings."
+        },
+        "EnableOscQuery": {
+          "type": "boolean",
+          "description": "Enables or disables EnableOscQuery."
+        },
+        "OscQueryServiceName": {
+          "type": "string",
+          "description": "Generated from OscQueryServiceName on UnitTestingFaceTrackingSettings."
+        },
+        "OscQueryHttpPort": {
+          "type": "integer",
+          "description": "Generated from OscQueryHttpPort on UnitTestingFaceTrackingSettings."
+        }
+      }
     },
     "EHumanoidRootMotionApplicationMode": {
       "type": "string",

@@ -1,0 +1,264 @@
+#version 450
+// Builds the per-view RVC pixel-to-shadelet map, deduplicates pixels inside
+// foveated 2x2 and 4x4 blocks in shared memory, and bins unique shadelets
+// into Standard and Uber indirect dispatch lists.
+#include "Advanced/Rvc/RvcShadeletCacheInterface.glslinc"
+#include "Advanced/Shading/StandardMaterial.glslinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2D VisibilityMetadata;
+XR_ADV_SHADING_LAYOUT(2) uniform sampler2D VisibilityDepth;
+#define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
+
+#include "Advanced/Shading/FoveatedQuadShading.glslinc"
+
+shared uint s_identityX[64];
+shared uint s_identityY[64];
+shared uint s_material[64];
+shared float s_depth[64];
+shared uint s_flags[64];
+shared uint s_allocatedEntry[64];
+shared uint s_groupStdCount;
+shared uint s_groupUberCount;
+shared uint s_groupCoveredCount;
+shared uint s_groupIntraReusedCount;
+shared uint s_groupAllocBase;
+shared uint s_groupStdBase;
+shared uint s_groupUberBase;
+shared uint s_groupAdmittedStd;
+shared uint s_groupAdmittedUber;
+
+bool RvcIsUberMaterial(XRAdvancedMaterialRecord material)
+{
+    return material.constantWordCount == XR_UBER_WORD_COUNT &&
+        material.constantWordOffset <= uint(XR_ADV_MaterialConstants.words.length()) &&
+        material.constantWordCount <= uint(XR_ADV_MaterialConstants.words.length()) - material.constantWordOffset &&
+        (all(equal(material.materialLayoutHash, uvec2(XR_UBER_OPAQUE_LAYOUT_LO, XR_UBER_OPAQUE_LAYOUT_HI))) ||
+         all(equal(material.materialLayoutHash, uvec2(XR_UBER_MASKED_LAYOUT_LO, XR_UBER_MASKED_LAYOUT_HI))));
+}
+
+uint RvcResolveShadeletBlockSize(uvec2 pixel, XRAdvancedViewRecord view, float depth, bool viewDependent)
+{
+    if (viewDependent)
+        return 1u;
+
+    if ((u_Push.kernelIndex & RVC_DISPATCH_FLAG_FORCE_FULL_RES_NEAR) != 0u)
+    {
+        vec3 worldPos = RvcReconstructWorldPosition(vec2(pixel) + 0.5, depth, view);
+        float linearDepth = -XR_ADV_TransformRowVector(vec4(worldPos, 1.0), view.view).z;
+        if (linearDepth > 0.0 && linearDepth < RVC_SHADELET_FORCE_FULL_RES_NEAR_METERS)
+            return 1u;
+    }
+
+    vec2 blockCenter = vec2((pixel & ~uvec2(3u)) + uvec2(2u));
+    vec2 uv = blockCenter / vec2(max(u_Push.screenExtent, uvec2(1u)));
+    bool hasFoveation = view.foveationCenterAndBias.w != 0.0;
+    vec2 center = hasFoveation ? view.foveationCenterAndBias.xy : vec2(0.5);
+    float midRadius = hasFoveation ? view.foveationRadii.y : XR_ADV_FOVEATED_QUAD_DEFAULT_MID_RADIUS;
+    float outerRadius = hasFoveation ? view.foveationRadii.w : XR_ADV_FOVEATED_QUAD_DEFAULT_OUTER_RADIUS;
+    float eccentricity = length((uv - center) * 2.0);
+    return eccentricity >= outerRadius ? 4u : eccentricity >= midRadius ? 2u : 1u;
+}
+
+void main()
+{
+    uint local = gl_LocalInvocationIndex;
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    uint viewIndex = u_Push.viewIndex;
+    bool inBounds = all(lessThan(pixel, u_Push.screenExtent)) && viewIndex < u_Push.viewCount;
+
+    if (local == 0u)
+    {
+        s_groupStdCount = 0u;
+        s_groupUberCount = 0u;
+        s_groupCoveredCount = 0u;
+        s_groupIntraReusedCount = 0u;
+    }
+
+    uvec2 identity = uvec2(0u);
+    uint metadata = 0u;
+    float depth = 0.0;
+    uint materialDense = XR_ADV_INVALID_DENSE_INDEX;
+    uint kernelDense = XR_ADV_INVALID_DENSE_INDEX;
+    uint recordFlags = 0u;
+    uint blockSize = 1u;
+    uint existingEntry = RVC_SHADELET_INVALID;
+    bool stereoReused = false;
+    bool validPixel = false;
+
+    if (inBounds)
+    {
+        bool stereoReuseActive = viewIndex > 0u &&
+            (u_Push.kernelIndex & RVC_DISPATCH_FLAG_STEREO_REUSE_ACTIVE) != 0u;
+        if (stereoReuseActive)
+        {
+            existingEntry = imageLoad(RvcPixelToShadelet, ivec3(pixel, int(viewIndex))).r;
+            stereoReused = (existingEntry & RVC_SHADELET_STEREO_REUSE_BIT) != 0u &&
+                existingEntry != RVC_SHADELET_INVALID;
+        }
+
+        identity = texelFetch(VisibilityIdentity, ivec2(pixel), 0).rg;
+        if (RvcIsValidVisibilityIdentity(identity))
+        {
+            metadata = texelFetch(VisibilityMetadata, ivec2(pixel), 0).r;
+            if (XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense))
+            {
+                depth = texelFetch(VisibilityDepth, ivec2(pixel), 0).r;
+                XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+                if (!RvcIsFarDepthValue(depth, view))
+                {
+                    XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
+                    bool isUber = RvcIsUberMaterial(material);
+                    bool viewDependent = XR_ADV_IsProjectiveMirrorMaterial(material);
+                    if (isUber)
+                        recordFlags |= RVC_SHADELET_RECORD_UBER_FLAG;
+                    if (viewDependent)
+                        recordFlags |= RVC_SHADELET_RECORD_VIEW_DEPENDENT_FLAG;
+                    blockSize = RvcResolveShadeletBlockSize(pixel, view, depth, viewDependent);
+                    validPixel = true;
+                }
+            }
+        }
+    }
+
+    s_identityX[local] = validPixel ? identity.x : 0u;
+    s_identityY[local] = validPixel ? identity.y : 0u;
+    s_material[local] = validPixel ? materialDense : XR_ADV_INVALID_DENSE_INDEX;
+    s_depth[local] = depth;
+    s_flags[local] = recordFlags;
+    s_allocatedEntry[local] = stereoReused ? existingEntry : RVC_SHADELET_INVALID;
+    barrier();
+
+    bool isFollower = false;
+    uint repLocal = local;
+    bool needsAllocation = false;
+    bool isUber = (recordFlags & RVC_SHADELET_RECORD_UBER_FLAG) != 0u;
+    uint localFamilyIdx = 0u;
+
+    if (validPixel)
+    {
+        atomicAdd(s_groupCoveredCount, 1u);
+        if (!stereoReused)
+        {
+            if (blockSize > 1u)
+            {
+                uvec2 localCoord = gl_LocalInvocationID.xy;
+                uvec2 repCoord = localCoord & ~uvec2(blockSize - 1u);
+                if (any(notEqual(repCoord, localCoord)))
+                {
+                    uint candidateRep = repCoord.y * 8u + repCoord.x;
+                    float repDepth = s_depth[candidateRep];
+                    bool sameSurface =
+                        s_material[candidateRep] == materialDense &&
+                        s_identityX[candidateRep] == identity.x &&
+                        s_identityY[candidateRep] == identity.y &&
+                        (s_flags[candidateRep] & RVC_SHADELET_RECORD_VIEW_DEPENDENT_FLAG) == 0u &&
+                        abs(depth - repDepth) <= max(abs(repDepth), 1.0e-4) * RVC_SHADELET_STEREO_DISTANCE_TOLERANCE;
+                    if (sameSurface)
+                    {
+                        isFollower = true;
+                        repLocal = candidateRep;
+                        atomicAdd(s_groupIntraReusedCount, 1u);
+                    }
+                }
+            }
+
+            if (!isFollower)
+            {
+                needsAllocation = true;
+                localFamilyIdx = isUber
+                    ? atomicAdd(s_groupUberCount, 1u)
+                    : atomicAdd(s_groupStdCount, 1u);
+            }
+        }
+    }
+    barrier();
+
+    uint maxShadelets = RvcResolveShadeletCapacity();
+    if (local == 0u)
+    {
+        uint groupSurvivors = s_groupStdCount + s_groupUberCount;
+        s_groupAllocBase = groupSurvivors > 0u
+            ? atomicAdd(RvcShadeletState.totalAllocated, groupSurvivors)
+            : 0u;
+        uint remaining = s_groupAllocBase < maxShadelets ? (maxShadelets - s_groupAllocBase) : 0u;
+        uint admittedStd = min(s_groupStdCount, remaining);
+        uint admittedUber = min(s_groupUberCount, remaining - admittedStd);
+        s_groupAdmittedStd = admittedStd;
+        s_groupAdmittedUber = admittedUber;
+        s_groupStdBase = admittedStd > 0u
+            ? atomicAdd(RvcShadeletState.totalStandard, admittedStd)
+            : 0u;
+        s_groupUberBase = admittedUber > 0u
+            ? atomicAdd(RvcShadeletState.totalUber, admittedUber)
+            : 0u;
+        if (s_groupCoveredCount > 0u)
+            atomicAdd(RvcShadeletState.totalCoveredPixels, s_groupCoveredCount);
+        if (s_groupIntraReusedCount > 0u)
+            atomicAdd(RvcShadeletState.intraViewReusedPixels, s_groupIntraReusedCount);
+        uint groupOverflow = groupSurvivors - (admittedStd + admittedUber);
+        if (groupOverflow > 0u)
+        {
+            atomicAdd(RvcShadeletState.overflowCount, groupOverflow);
+            atomicAdd(RvcShadeletState.directFallbackPixels, groupOverflow);
+        }
+    }
+    barrier();
+
+    if (needsAllocation)
+    {
+        bool admitted = isUber
+            ? (localFamilyIdx < s_groupAdmittedUber)
+            : (localFamilyIdx < s_groupAdmittedStd);
+        if (admitted)
+        {
+            uint shadeletIndex = s_groupAllocBase + (isUber ? (s_groupAdmittedStd + localFamilyIdx) : localFamilyIdx);
+            uint binSlot = isUber
+                ? (maxShadelets - 1u - (s_groupUberBase + localFamilyIdx))
+                : (s_groupStdBase + localFamilyIdx);
+
+            XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+            XRAdvancedViewRecord view0 = XR_ADV_LoadView(0u);
+            vec3 headCenter = u_Push.viewCount > 1u
+                ? 0.5 * (view0.cameraPositionAndNear.xyz + XR_ADV_LoadView(1u).cameraPositionAndNear.xyz)
+                : view0.cameraPositionAndNear.xyz;
+            vec3 worldPos = RvcReconstructWorldPosition(vec2(pixel) + 0.5, depth, view);
+            uint cellHash = RvcComputeSurfaceCellHash(
+                worldPos, headCenter, RvcResolveViewVerticalPixelAngle(view0), float(blockSize));
+
+            RvcShadeletRecordGpu rec;
+            rec.representativePixelAndView = uvec2(
+                (pixel.x & 0xFFFFu) | ((pixel.y & 0xFFFFu) << 16u),
+                (viewIndex & 0xFFu) | ((blockSize & 0xFFu) << 8u) | recordFlags);
+            rec.identity = identity;
+            rec.metadata = metadata;
+            rec.surfaceCellHash = cellHash;
+            rec.materialDense = materialDense;
+            rec.kernelDense = kernelDense;
+
+            RvcShadeletRecords.records[shadeletIndex] = rec;
+            RvcShadeletBinIndices.indices[binSlot] = shadeletIndex;
+            s_allocatedEntry[local] = shadeletIndex;
+        }
+        else
+        {
+            s_allocatedEntry[local] = RVC_SHADELET_DIRECT_PIXEL_BIT;
+        }
+    }
+    barrier();
+
+    if (!inBounds)
+        return;
+
+    uint finalEntry = RVC_SHADELET_INVALID;
+    if (stereoReused)
+        finalEntry = existingEntry;
+    else if (isFollower)
+        finalEntry = s_allocatedEntry[repLocal];
+    else if (validPixel)
+        finalEntry = s_allocatedEntry[local];
+
+    imageStore(RvcPixelToShadelet, ivec3(pixel, int(viewIndex)), uvec4(finalEntry, 0u, 0u, 0u));
+}

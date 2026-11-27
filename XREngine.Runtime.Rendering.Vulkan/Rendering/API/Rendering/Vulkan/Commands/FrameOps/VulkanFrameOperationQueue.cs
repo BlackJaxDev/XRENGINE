@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanFrameOperationQueue : IDisposable
 {
-    private const int AdvancedVisibilityLeaseCapacity = 16;
+    private const int AdvancedVisibilityLeaseCapacity = 32;
     internal const int FrameViewHistoryCapacity = 512;
     internal const int OutputCompletionCapacity = 512;
 
@@ -313,9 +313,13 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
                 if (candidate.MatchesRequest(in request) &&
                     candidate.TryRetain())
                 {
-                    lease = candidate;
-                    failureReason = "Ready";
-                    return true;
+                    if (candidate.MatchesRequest(in request))
+                    {
+                        lease = candidate;
+                        failureReason = "Ready";
+                        return true;
+                    }
+                    candidate.Release();
                 }
             }
 
@@ -620,6 +624,8 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             return [];
 
         Dictionary<int, FrameOp[]> buffers = CurrentThread.CaptureBuffersByCount;
+        // Release any abandoned operations from an un-cleared buffer, then clear
+        // the array so recycled pooled operations are never released a second time.
         if (!buffers.TryGetValue(operationCount, out FrameOp[]? result))
         {
             result = new FrameOp[operationCount];
@@ -628,10 +634,25 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         else
         {
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(result);
+            Array.Clear(result);
         }
 
         Array.Copy(capture.Buffer, result, operationCount);
         return result;
+    }
+
+    /// <summary>
+    /// Releases visibility leases on a thread-local capture array and clears its
+    /// element references so pooled operations recycled on later frames cannot be
+    /// released through this cached array.
+    /// </summary>
+    internal static void ReleaseAndClearCapturedOperations(FrameOp[] operations)
+    {
+        if (operations.Length == 0)
+            return;
+
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(operations);
+        Array.Clear(operations);
     }
 
     internal FrameOp[] DrainPending()
@@ -944,11 +965,18 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             for (int index = 0; index < operationCount; index++)
             {
                 FrameOp operation = Pending[index];
-                if (operation is TextureUploadFrameOp ||
-                    operation.ContextReference.OutputCompletionReceiptId != 0UL)
+                if (operation is TextureUploadFrameOp)
+                {
                     Pending[retainedIndex++] = operation;
+                }
+                else if (operation.ContextReference.OutputCompletionReceiptId != 0UL)
+                {
+                    Pending[retainedIndex++] = RetainOperationAcrossFrameBoundary(operation);
+                }
                 else
+                {
                     DrainedFrameOpsBuffer[drainedIndex++] = operation;
+                }
             }
 
             if (retainedIndex < Pending.Count)
@@ -972,10 +1000,15 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             for (int index = 0; index < operations.Length; index++)
             {
                 FrameOp operation = operations[index];
-                if (operation is TextureUploadFrameOp ||
-                    operation.ContextReference.OutputCompletionReceiptId != 0UL)
+                if (operation is TextureUploadFrameOp)
                 {
                     operations[retainedCount++] = operation;
+                    continue;
+                }
+
+                if (operation.ContextReference.OutputCompletionReceiptId != 0UL)
+                {
+                    operations[retainedCount++] = RetainOperationAcrossFrameBoundary(operation);
                     continue;
                 }
 
@@ -990,6 +1023,32 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             return discardedCount;
         }
     }
+
+    /// <summary>
+    /// Detaches a receipt-bound operation from frame-pooled snapshots and per-frame
+    /// operation workspaces before it survives into a later render frame. Without
+    /// sealing, the next frame's snapshot pool reset overwrites its bound buffers.
+    /// </summary>
+    private static FrameOp RetainOperationAcrossFrameBoundary(FrameOp operation)
+    {
+        if (!RequiresCrossFrameSnapshotSeal(operation))
+            return operation;
+
+        FrameOp sealedCopy = operation.CreateSealedAuthoringCopy();
+        operation.ReleaseAuthoringSnapshot();
+        return sealedCopy;
+    }
+
+    private static bool RequiresCrossFrameSnapshotSeal(FrameOp operation)
+        => operation switch
+        {
+            ComputeDispatchOp compute => compute.Snapshot.IsFramePoolOwned,
+            ComputeDispatchIndirectOp indirectCompute => indirectCompute.Snapshot.IsFramePoolOwned,
+            IndirectDrawOp indirectDraw => indirectDraw.DrawRef.ProgramBindingSnapshot?.IsFramePoolOwned == true,
+            MeshTaskDispatchIndirectCountOp meshTask => meshTask.ProgramBindingSnapshot.IsFramePoolOwned,
+            MeshDrawOp meshDraw => meshDraw.DrawRef.ProgramBindingSnapshot?.IsFramePoolOwned == true,
+            _ => false,
+        };
 
     /// <summary>
     /// Abandons scene work while PresentNow cannot accept a frame. Receipt-bound

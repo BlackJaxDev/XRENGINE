@@ -19,6 +19,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         ReadOnlySpan<byte> recordedStaleTextureRows,
         AdvancedGpuScenePublicationSnapshot snapshot,
         ReadOnlySpan<BackendReadyCanonicalViewRecord> views,
+        ReadOnlySpan<AdvancedViewRecord> portalViews,
         in BackendReadyCanonicalFrameRecord frame,
         ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
         int diagnosticCount,
@@ -61,7 +62,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             return false;
         }
 
-        ulong requiredBytes = CalculateFramePublicationStorageBytes(views.Length, passes.Length);
+        ulong requiredBytes = CalculateFramePublicationStorageBytes(views.Length, passes.Length, portalViews.Length);
         ulong consumedBytes = AlignUp(Math.Max(slot.StorageBytesConsumed, rollbackCursor), StorageAlignment);
         ulong capacity = _storageCapacityPerFrameSlot[frameSlot];
         if (requiredBytes > capacity || consumedBytes > capacity - requiredBytes)
@@ -76,8 +77,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         }
 
         ulong plannedEndCursor = checked(consumedBytes + requiredBytes);
-        if (!TryUploadViews(frameSlot, views, out VulkanFrameDataSlice viewSlice) ||
-            !TryUploadFrameMetadata(frameSlot, in frame, views.Length, passes,
+        if (!TryUploadViews(frameSlot, views, portalViews, out VulkanFrameDataSlice viewSlice) ||
+            !TryUploadFrameMetadata(frameSlot, in frame, views.Length + portalViews.Length, passes,
                 diagnosticCount, out VulkanFrameDataSlice metadataSlice))
         {
             failure = EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;

@@ -227,6 +227,149 @@ vec3 XR_ADV_ReconstructWorldPositionFromDepth(
     return world.xyz / world.w;
 }
 
+// Reconstructs the exact hardware framebuffer depth [0, 1] of a covered visibility
+// triangle at pixelCenter without evaluating material attributes or derivatives.
+// Transparent-background in-place portals use this to restore primary scene depth
+// on uncovered mirror pixels after PortalDepthOnlyReset and reflected PortalRaster.
+bool XR_ADV_TryReconstructPrimaryDepth(
+    uvec2 identity,
+    uint metadata,
+    vec2 pixelCenter,
+    out float outDepth)
+{
+    outDepth = 0.0;
+    uint payloadVersion = (metadata >> XR_ADV_VIS_VERSION_SHIFT) & 0xFFu;
+    if (identity.x == 0u ||
+        identity.x == XR_ADV_VIS_INVALID ||
+        identity.y == XR_ADV_VIS_INVALID ||
+        metadata == XR_ADV_VIS_INVALID ||
+        payloadVersion != XR_ADV_VISIBILITY_PAYLOAD_VERSION)
+    {
+        return false;
+    }
+
+    uint producer = metadata & XR_ADV_VIS_PRODUCER_MASK;
+    uint viewIndex = (metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu;
+    if (!XR_ADV_IsSupportedVisibilityProducer(producer) ||
+        viewIndex >= uint(XR_ADV_Views.records.length()))
+    {
+        return false;
+    }
+
+    uint drawDense = XR_ADV_ResolveVisibilityStableIndex(
+        identity.x,
+        VisibilityDrawLookupSegment,
+        XR_ADV_DIAGNOSTIC_DRAW);
+    if (drawDense == XR_ADV_INVALID_DENSE_INDEX ||
+        drawDense >= uint(XR_ADV_Draws.records.length()))
+    {
+        return false;
+    }
+
+    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    uint geometryDense = XR_ADV_ResolveVisibilityHandle(
+        draw.geometry,
+        VisibilityGeometryLookupSegment,
+        XR_ADV_DIAGNOSTIC_MESH);
+    if (geometryDense == XR_ADV_INVALID_DENSE_INDEX)
+        return false;
+
+    XRAdvancedGeometryRecord geometry = XR_ADV_LoadGeometry(geometryDense);
+    if (!XR_ADV_GeometryIsResident(geometry) &&
+        geometry.missingBehavior == XR_ADV_GEOMETRY_MISSING_USE_FALLBACK &&
+        geometry.fallbackGeometry.index != draw.geometry.index)
+    {
+        uint fallbackDense = XR_ADV_ResolveVisibilityHandle(
+            geometry.fallbackGeometry,
+            VisibilityGeometryLookupSegment,
+            XR_ADV_DIAGNOSTIC_MESH);
+        if (fallbackDense != XR_ADV_INVALID_DENSE_INDEX)
+            geometry = XR_ADV_LoadGeometry(fallbackDense);
+    }
+    if (!XR_ADV_GeometryIsResident(geometry))
+        return false;
+
+    uint currentTransformDense = XR_ADV_ResolveVisibilityHandle(
+        draw.currentTransform,
+        VisibilityTransformLookupSegment,
+        XR_ADV_DIAGNOSTIC_DRAW);
+    if (currentTransformDense == XR_ADV_INVALID_DENSE_INDEX)
+        return false;
+
+    uvec3 sourceVertices;
+    if (!XR_ADV_TryPrimitiveVertices(geometry, producer, identity.y, sourceVertices))
+        return false;
+
+    XRAdvancedPreparedDrawDeformationRecord preparedDeformation;
+    bool hasPreparedDeformation = XR_ADV_TryLoadPreparedDrawDeformation(
+        drawDense,
+        draw,
+        preparedDeformation);
+    bool producerRequiresDeformation =
+        producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET ||
+        producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED;
+    if (producerRequiresDeformation && !hasPreparedDeformation)
+        return false;
+
+    bool deformed = hasPreparedDeformation;
+    if (deformed && any(greaterThanEqual(sourceVertices, uvec3(preparedDeformation.vertexCount))))
+        return false;
+
+    uint currentVertexBase = deformed
+        ? preparedDeformation.currentVertexOffset
+        : geometry.currentVertexData.elementOffset;
+    uvec3 currentIndices = uvec3(currentVertexBase) + sourceVertices;
+    XRAdvancedPackedVertex current0;
+    XRAdvancedPackedVertex current1;
+    XRAdvancedPackedVertex current2;
+    if (!XR_ADV_TryLoadVertex(deformed, false, currentIndices.x, current0) ||
+        !XR_ADV_TryLoadVertex(deformed, false, currentIndices.y, current1) ||
+        !XR_ADV_TryLoadVertex(deformed, false, currentIndices.z, current2))
+    {
+        return false;
+    }
+
+    XRAdvancedTransformRecord currentTransform = XR_ADV_LoadTransform(currentTransformDense);
+    XRAdvancedViewRecord viewRecord = XR_ADV_LoadView(viewIndex);
+    vec3 currentWorld0 = XR_ADV_TransformPositionRowVector(current0.position, currentTransform.world);
+    vec3 currentWorld1 = XR_ADV_TransformPositionRowVector(current1.position, currentTransform.world);
+    vec3 currentWorld2 = XR_ADV_TransformPositionRowVector(current2.position, currentTransform.world);
+    vec4 currentClip0 = XR_ADV_CurrentJitteredClip(viewRecord, currentWorld0);
+    vec4 currentClip1 = XR_ADV_CurrentJitteredClip(viewRecord, currentWorld1);
+    vec4 currentClip2 = XR_ADV_CurrentJitteredClip(viewRecord, currentWorld2);
+
+    vec3 weights;
+    vec3 weightDx;
+    vec3 weightDy;
+    if (!XR_ADV_TryPerspectiveBarycentrics(
+            pixelCenter,
+            currentClip0,
+            currentClip1,
+            currentClip2,
+            viewRecord,
+            weights,
+            weightDx,
+            weightDy))
+    {
+        return false;
+    }
+
+    vec3 worldPos = XR_ADV_Interpolate(currentWorld0, currentWorld1, currentWorld2, weights, false);
+    vec4 clip = XR_ADV_CurrentJitteredClip(viewRecord, worldPos);
+    if (!XR_ADV_IsFinite(clip) || abs(clip.w) <= XR_ADV_RECONSTRUCTION_MIN_W)
+        return false;
+
+    float ndcZ = clip.z / clip.w;
+    float depth = (viewRecord.flags & XR_ADV_VIEW_DEPTH_ZERO_TO_ONE) != 0u
+        ? ndcZ
+        : ndcZ * 0.5 + 0.5;
+    if (isnan(depth) || isinf(depth))
+        return false;
+
+    outDepth = clamp(depth, 0.0, 1.0);
+    return true;
+}
+
 bool XR_ADV_TryReconstructSurface(
     uvec2 identity,
     uint metadata,

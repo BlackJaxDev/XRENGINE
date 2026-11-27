@@ -8,6 +8,9 @@ layout(push_constant, std430) uniform XRAdvancedMsaaResolvePushConstants
 {
     uint viewIndex;
     uint reversedDepth;
+#if defined(XR_ADV_PORTAL_MSAA_STENCIL_REPOPULATE)
+    uint targetPortalViewIndex;
+#endif
 } XR_ADV_MsaaResolvePush;
 
 void main()

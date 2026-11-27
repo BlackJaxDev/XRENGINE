@@ -275,6 +275,9 @@ public sealed class CharacterRootMotionBridgeComponent : XRComponent
     /// </summary>
     public void ApplySteering(in SteeringSnapshot steering)
     {
+        if (!IsActiveInHierarchy)
+            return;
+
         SyncFootHeight(_subscribedMovement ?? ResolveCharacterMovement());
 
         AnimStateMachineComponent? animator = _subscribedAnimator ?? ResolveAnimator();

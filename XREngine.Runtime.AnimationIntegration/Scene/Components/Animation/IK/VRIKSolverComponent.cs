@@ -19,9 +19,12 @@ namespace XREngine.Components.Animation
         private const double BaselineIntervalSeconds = 1.0;
         private static readonly long BaselineIntervalTicks = Math.Max(1L, (long)Math.Round(BaselineIntervalSeconds * System.Diagnostics.Stopwatch.Frequency));
 
+        static VRIKSolverComponent()
+            => VrikCalibratorHostRegistration.EnsureRegistered();
+
         public IKSolverVR Solver { get; } = new();
         private EHumanoidPosePreviewMode? _previewModeBeforeCalibration;
-        private readonly List<(XRComponent Component, bool WasActive, EHumanoidRootMotionApplicationMode RootMode)> _suspendedAnimationWriters = [];
+        private readonly List<(XRComponent Component, bool PreviousState, EHumanoidRootMotionApplicationMode RootMode)> _suspendedAnimationWriters = [];
 
         /// <summary>Display the avatar's measured T-pose with its eyes at the headset and its body facing headset yaw.</summary>
         public VrCalibrationResult ApplyCanonicalCalibrationPose(Matrix4x4 headWorld, Vector3 eyeOffsetFromHead = default)
@@ -76,7 +79,7 @@ namespace XREngine.Components.Animation
             SuspendAnimationWriters(Humanoid.SceneNode);
         }
 
-        /// <summary>Restore the animation preview state after capture or cancellation.</summary>
+        /// <summary>Restores the animation preview state and suspended writers after capture or cancellation.</summary>
         public void EndCalibrationPose()
         {
             if (_previewModeBeforeCalibration is not EHumanoidPosePreviewMode previous)
@@ -85,12 +88,19 @@ namespace XREngine.Components.Animation
             _previewModeBeforeCalibration = null;
             for (int i = 0; i < _suspendedAnimationWriters.Count; i++)
             {
-                var (component, wasActive, rootMode) = _suspendedAnimationWriters[i];
+                var (component, previousState, rootMode) = _suspendedAnimationWriters[i];
+                if (component.IsDestroyed)
+                    continue;
                 if (component is AnimStateMachineComponent stateMachine)
+                {
                     stateMachine.RootMotionApplicationMode = rootMode;
+                    stateMachine.SetSuspendedByClip(previousState);
+                }
                 else if (component is AnimationClipComponent clip)
+                {
                     clip.RootMotionApplicationMode = rootMode;
-                component.IsActive = wasActive;
+                    clip.IsActive = previousState;
+                }
             }
             _suspendedAnimationWriters.Clear();
         }
@@ -99,15 +109,25 @@ namespace XREngine.Components.Animation
         {
             foreach (XRComponent component in node.GetComponents<XRComponent>())
             {
-                EHumanoidRootMotionApplicationMode rootMode;
                 if (component is AnimStateMachineComponent stateMachine)
-                    rootMode = stateMachine.RootMotionApplicationMode;
-                else if (component is AnimationClipComponent clip)
-                    rootMode = clip.RootMotionApplicationMode;
-                else
+                {
+                    // Keep non-body overlay state machines (such as facial blendshapes) active
+                    // during calibration so expressions remain live in the calibration mirror.
+                    if (!stateMachine.DrivesHumanoidBodyPose)
+                        continue;
+
+                    // Suspend the state machine without deactivating it so it does not
+                    // re-run initialization when calibration ends.
+                    _suspendedAnimationWriters.Add((stateMachine, stateMachine.SuspendedByClip, stateMachine.RootMotionApplicationMode));
+                    stateMachine.SetSuspendedByClip(true);
                     continue;
-                _suspendedAnimationWriters.Add((component, component.IsActive, rootMode));
-                component.IsActive = false;
+                }
+
+                if (component is AnimationClipComponent clip)
+                {
+                    _suspendedAnimationWriters.Add((clip, clip.IsActive, clip.RootMotionApplicationMode));
+                    clip.IsActive = false;
+                }
             }
 
             foreach (TransformBase child in node.Transform.Children)

@@ -28,7 +28,9 @@ internal sealed partial class VulkanFrameLoop
         bool withTransparency,
         Action<ScreenshotReadbackResult> callback,
         out string? failure,
-        BlitImageInfo? compositedSource)
+        BlitImageInfo? compositedSource,
+        Silk.NET.Vulkan.Semaphore waitSemaphore = default,
+        Silk.NET.Vulkan.Semaphore signalSemaphore = default)
     {
         ArgumentNullException.ThrowIfNull(callback);
         failure = null;
@@ -212,11 +214,18 @@ internal sealed partial class VulkanFrameLoop
             stagingPrepared = true;
 
             CommandBuffer commandBuffer = slot.CommandBuffer;
+            bool gpuChainedPresent = compositedSource.HasValue && waitSemaphore.Handle != 0 && signalSemaphore.Handle != 0;
+            PipelineStageFlags waitStage = PipelineStageFlags.TransferBit;
             SubmitInfo submitInfo = new()
             {
                 SType = StructureType.SubmitInfo,
                 CommandBufferCount = 1,
                 PCommandBuffers = &commandBuffer,
+                WaitSemaphoreCount = gpuChainedPresent ? 1u : 0u,
+                PWaitSemaphores = gpuChainedPresent ? &waitSemaphore : null,
+                PWaitDstStageMask = gpuChainedPresent ? &waitStage : null,
+                SignalSemaphoreCount = gpuChainedPresent ? 1u : 0u,
+                PSignalSemaphores = gpuChainedPresent ? &signalSemaphore : null,
             };
 
             VulkanSubmissionDiagnosticContext diagnosticContext = new()
@@ -252,9 +261,9 @@ internal sealed partial class VulkanFrameLoop
             }
 
             submitted = true;
-            // Publish ownership immediately after native acceptance, before any
-            // bookkeeping can throw and enter presentation recovery.
-            if (compositedSource.HasValue)
+            // Only the synchronous fallback (when no GPU present semaphore chain was provided)
+            // needs a CPU fence wait before allowing WSI presentation.
+            if (compositedSource.HasValue && !gpuChainedPresent)
                 _pendingCompositedScreenshotFence = slot.Fence;
             ReadbackOutputResources.MarkStagingSliceSubmitted(slot.StagingSlice);
             Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.Submitted);
@@ -264,10 +273,7 @@ internal sealed partial class VulkanFrameLoop
                 source,
                 VulkanReadbackLayoutPolicy.ResolvePostTransfer(source));
             Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackQueuedCount);
-            // A swapchain image cannot be read after WSI takes ownership. This explicit
-            // diagnostic path waits only for its copy fence before allowing presentation.
-            // Ordinary viewport captures remain asynchronous and never take this wait.
-            if (compositedSource.HasValue)
+            if (compositedSource.HasValue && !gpuChainedPresent)
                 CompletePendingCompositedScreenshotCopy();
             return true;
         }
@@ -1274,6 +1280,7 @@ internal sealed partial class VulkanFrameLoop
     internal void DisposeScreenshotReadbacks()
     {
         FailPendingCompositedScreenshots("The Vulkan renderer shut down before composited capture.");
+        DestroyCompositedPresentSemaphores();
         for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
             VulkanScreenshotReadbackSlot? slot = OutputRuntime.Capture.ScreenshotReadbackSlots[i];

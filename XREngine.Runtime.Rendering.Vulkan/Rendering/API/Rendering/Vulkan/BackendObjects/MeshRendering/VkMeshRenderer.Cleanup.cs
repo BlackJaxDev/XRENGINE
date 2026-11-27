@@ -144,8 +144,12 @@ internal unsafe partial class VkMeshRenderer
 					bool wasActive = ReferenceEquals(_activeDescriptorAllocation, allocation);
 					RemoveDescriptorDrawSlotLookupEntries(allocation);
 					RemoveDescriptorOwnerLookupEntries(allocation);
+					RemoveFrameDescriptorAllocationEntries(allocation);
 					if (BackendContext.Resources.Descriptors.ReleaseSharedMeshDescriptorAllocation(key, allocation))
+					{
+						allocation.MarkRetired();
 						_pendingSupersededDescriptorAllocationRetirements.Enqueue((key, allocation));
+					}
 					if (wasActive)
 						ClearActiveDescriptorAllocation();
 					detachedCount++;
@@ -280,7 +284,7 @@ internal unsafe partial class VkMeshRenderer
 			if (allocation.Pool.Handle == activePoolHandle)
 				activePoolReleased = true;
 
-			ReleaseDescriptorAllocationReference(pair.Key, allocation, destroyPoolImmediately);
+			ReleaseDescriptorAllocationReference(pair.Key, allocation, destroyPoolImmediately, removeLookupEntries: false);
 		}
 
         _descriptorAllocations.Clear();
@@ -308,14 +312,51 @@ internal unsafe partial class VkMeshRenderer
 	private void ReleaseDescriptorAllocationReference(
 		in DescriptorAllocationKey key,
 		DescriptorAllocation allocation,
-		bool destroyPoolImmediately = false)
+		bool destroyPoolImmediately = false,
+		bool removeLookupEntries = true)
 	{
-		RemoveDescriptorOwnerLookupEntries(allocation);
+		if (removeLookupEntries)
+		{
+			RemoveDescriptorDrawSlotLookupEntries(allocation);
+			RemoveDescriptorOwnerLookupEntries(allocation);
+			RemoveFrameDescriptorAllocationEntries(allocation);
+			if (ReferenceEquals(_activeDescriptorAllocation, allocation))
+				ClearActiveDescriptorAllocation();
+		}
 		if (!BackendContext.Resources.Descriptors.ReleaseSharedMeshDescriptorAllocation(key, allocation))
 			return;
 
+		allocation.MarkRetired();
 		ReleaseDescriptorOwnershipTelemetry(allocation);
 		ReleaseDescriptorAllocationResources(allocation, destroyPoolImmediately);
+	}
+
+	/// <summary>
+	/// Removes every per-frame descriptor cache entry that points to <paramref name="allocation"/> so
+	/// a retired variant cannot be reactivated by a later proof-stamp lookup.
+	/// </summary>
+	private void RemoveFrameDescriptorAllocationEntries(
+		DescriptorAllocation allocation)
+	{
+		while (true)
+		{
+			(ComputeDispatchSnapshot Snapshot, XRMaterial Material, VkRenderProgram Program, int DrawSlot, int FrameIndex) keyToRemove = default;
+			bool found = false;
+			foreach (var pair in _frameDescriptorAllocations)
+			{
+				if (!ReferenceEquals(pair.Value.Allocation, allocation))
+					continue;
+
+				keyToRemove = pair.Key;
+				found = true;
+				break;
+			}
+
+			if (!found)
+				return;
+
+			_frameDescriptorAllocations.Remove(keyToRemove);
+		}
 	}
 
 	private void RemoveDescriptorOwnerLookupEntries(
@@ -361,6 +402,7 @@ internal unsafe partial class VkMeshRenderer
 		DescriptorAllocation allocation,
 		bool destroyPoolImmediately = false)
 	{
+		allocation.MarkRetired();
 		if (allocation.PoolSlabLease is not null)
 		{
 			BackendContext.Resources.DescriptorLifetime.ReleaseMeshDescriptorPoolSlab(

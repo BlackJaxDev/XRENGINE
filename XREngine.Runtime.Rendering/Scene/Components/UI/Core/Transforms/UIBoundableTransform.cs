@@ -157,6 +157,72 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _padding, value);
         }
 
+        private float _opacity = 1.0f;
+        /// <summary>
+        /// Local visual opacity in [0, 1]. Multiplies descendant opacity without invalidating layout.
+        /// </summary>
+        public float Opacity
+        {
+            get => _opacity;
+            set => SetField(ref _opacity, Math.Clamp(value, 0.0f, 1.0f));
+        }
+
+        /// <summary>
+        /// Effective visual opacity after multiplying this transform's opacity with all ancestor UI transforms.
+        /// </summary>
+        [YamlIgnore]
+        public float EffectiveOpacity
+        {
+            get
+            {
+                float effective = _opacity;
+                if (effective <= 0.0f)
+                    return 0.0f;
+
+                for (TransformBase? parent = Parent; parent is not null; parent = parent.Parent)
+                {
+                    if (parent is UIBoundableTransform boundable)
+                    {
+                        effective *= boundable._opacity;
+                        if (effective <= 0.0f)
+                            return 0.0f;
+                    }
+                }
+
+                return effective;
+            }
+        }
+
+        private Vector2 _visualScale = Vector2.One;
+        /// <summary>
+        /// Layout-free visual scale applied around <see cref="VisualPivot"/> during render matrix composition.
+        /// </summary>
+        public Vector2 VisualScale
+        {
+            get => _visualScale;
+            set => SetField(ref _visualScale, value);
+        }
+
+        private Vector2 _visualOffset = Vector2.Zero;
+        /// <summary>
+        /// Layout-free visual offset in logical pixels applied during render matrix composition.
+        /// </summary>
+        public Vector2 VisualOffset
+        {
+            get => _visualOffset;
+            set => SetField(ref _visualOffset, value);
+        }
+
+        private Vector2 _visualPivot = new(0.5f, 0.5f);
+        /// <summary>
+        /// Normalized pivot in [0, 1] inside actual bounds used by <see cref="VisualScale"/>.
+        /// </summary>
+        public Vector2 VisualPivot
+        {
+            get => _visualPivot;
+            set => SetField(ref _visualPivot, value);
+        }
+
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
@@ -177,6 +243,11 @@ namespace XREngine.Rendering.UI
                 case nameof(MaxAnchor):
                     InvalidateArrange();
                     break;
+                case nameof(VisualScale):
+                case nameof(VisualOffset):
+                case nameof(VisualPivot):
+                    MarkLocalModified(true);
+                    break;
             }
         }
 
@@ -186,7 +257,10 @@ namespace XREngine.Rendering.UI
                 !XRMath.Approx(_prevDepthTranslation, DepthTranslation) ||
                 !XRMath.Approx(_prevRotationRadians, RotationRadians) ||
                 !XRMath.VectorsEqual(_prevScale, Scale) ||
-                !XRMath.Approx(_prevPivotTranslation, LocalPivotTranslation))
+                !XRMath.Approx(_prevPivotTranslation, LocalPivotTranslation) ||
+                !XRMath.VectorsEqual(_prevVisualScale, _visualScale) ||
+                !XRMath.VectorsEqual(_prevVisualOffset, _visualOffset) ||
+                !XRMath.VectorsEqual(_prevVisualPivot, _visualPivot))
                 return true;
 
             var p = PlacementInfo;
@@ -204,6 +278,9 @@ namespace XREngine.Rendering.UI
         private float _prevRotationRadians = 0.0f;
         private Vector3 _prevScale = Vector3.One;
         private Vector2 _prevPivotTranslation = Vector2.Zero;
+        private Vector2 _prevVisualScale = Vector2.One;
+        private Vector2 _prevVisualOffset = Vector2.Zero;
+        private Vector2 _prevVisualPivot = new(0.5f, 0.5f);
 
         /// <summary>
         /// Creates the local transformation of the origin relative to the parent UI transform.
@@ -229,6 +306,15 @@ namespace XREngine.Rendering.UI
                     Matrix4x4.CreateFromAxisAngle(Globals.Backward, RotationRadians) *
                     Matrix4x4.CreateTranslation(new Vector3(-LocalPivotTranslation, 0.0f));
             }
+            if (!XRMath.VectorsEqual(_visualScale, Vector2.One) || !XRMath.VectorsEqual(_visualOffset, Vector2.Zero))
+            {
+                Vector2 pivotPx = new(ActualWidth * _visualPivot.X, ActualHeight * _visualPivot.Y);
+                mtx =
+                    Matrix4x4.CreateTranslation(new Vector3(-pivotPx, 0.0f)) *
+                    Matrix4x4.CreateScale(_visualScale.X, _visualScale.Y, 1.0f) *
+                    Matrix4x4.CreateTranslation(new Vector3(pivotPx + _visualOffset, 0.0f)) *
+                    mtx;
+            }
             UpdatePrevious();
             return mtx;
         }
@@ -240,6 +326,9 @@ namespace XREngine.Rendering.UI
             _prevRotationRadians = RotationRadians;
             _prevScale = Scale;
             _prevPivotTranslation = LocalPivotTranslation;
+            _prevVisualScale = _visualScale;
+            _prevVisualOffset = _visualOffset;
+            _prevVisualPivot = _visualPivot;
         }
 
         private Vector2 _minAnchor = Vector2.Zero;

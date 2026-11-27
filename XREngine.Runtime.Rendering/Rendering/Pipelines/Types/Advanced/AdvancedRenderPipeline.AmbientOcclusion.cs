@@ -127,15 +127,24 @@ public partial class AdvancedRenderPipeline
         => mode is not (0 or AoModeVoxel);
 
     /// <summary>
+    /// True when the active camera selects an ambient occlusion mode that runs AO passes
+    /// in this frame, independent of whether portal views route AO through native compute.
+    /// </summary>
+    internal bool HasActiveCameraAmbientOcclusion()
+        => UsesAmbientOcclusionPasses && VrEyeFrameRules.AllowsAmbientOcclusion() &&
+            AoModeRunsPasses(EvaluateAmbientOcclusionMode());
+
+    /// <summary>
     /// True when the AO passes of this frame write the whole native AO image after the native AO
     /// stage: the passes run (<see cref="AppendAdvancedAmbientOcclusionCommands"/>), and the
     /// finalize framebuffer exists in the current resource generation. The native stage then
     /// skips its neutral fill, because the finalize quad overwrites it before shading reads it.
-    /// AO off, VXAO, an eye frame whose eye feature profile turns AO off, a missing camera and
-    /// a missing finalize target all keep the fill.
+    /// Frames with active portal sub-views keep the native compute GTAO stage because it reads
+    /// per-pixel view indices and rejects cross-portal depth taps.
     /// </summary>
     internal bool AmbientOcclusionPassesReplaceNeutralFill(XRRenderPipelineInstance instance)
-        => UsesAmbientOcclusionPasses && VrEyeFrameRules.AllowsAmbientOcclusion() &&
+        => PortalFramePlan.Count == 0 &&
+            UsesAmbientOcclusionPasses && VrEyeFrameRules.AllowsAmbientOcclusion() &&
             AoModeRunsPasses(EvaluateAmbientOcclusionMode()) &&
             instance.Resources.TryGetFrameBuffer(AoFinalizeFBOName, out XRFrameBuffer? finalize) &&
             finalize is not null;
@@ -163,7 +172,7 @@ public partial class AdvancedRenderPipeline
         var active = commands.Add<VPRC_IfElse>();
         active.Label = "AdvancedAmbientOcclusionActive";
         active.AnchorId = "advanced.ambientOcclusion";
-        active.ConditionEvaluator = () => AoModeRunsPasses(EvaluateAmbientOcclusionMode());
+        active.ConditionEvaluator = () => PortalFramePlan.Count == 0 && AoModeRunsPasses(EvaluateAmbientOcclusionMode());
 
         var aoCommands = new ViewportRenderCommandContainer(this);
         using (aoCommands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))

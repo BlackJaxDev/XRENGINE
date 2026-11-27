@@ -1,0 +1,128 @@
+#version 450
+// Validates stereo shadelet reuse from view 0 into view 1 before view 1 builds
+// its shadelet map. Reprojects each visible view 1 pixel into view 0 and checks
+// primitive identity, depth agreement, surface cell, view-dependency flag, and
+// roughness/metallic specular safety. Validated pixels receive view 0's shadelet
+// index tagged with RVC_SHADELET_STEREO_REUSE_BIT.
+#include "Advanced/Rvc/RvcShadeletCacheInterface.glslinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = XR_ADV_VISIBILITY_SET, binding = 66) uniform usampler2DArray RvcVisibilityIdentity;
+layout(set = XR_ADV_VISIBILITY_SET, binding = 67) uniform sampler2DArray RvcVisibilityDepth;
+
+// Specular safety gate (KeepSharpSpecularPerView): glossy and low-roughness
+// metallic surfaces stay per-view so highlights keep true stereo parallax.
+const float RVC_STEREO_MIN_DIELECTRIC_ROUGHNESS = 0.35;
+const float RVC_STEREO_MIN_METALLIC_ROUGHNESS = 0.55;
+
+shared uint s_candidates;
+shared uint s_reused;
+shared uint s_rejected;
+
+void main()
+{
+    uint local = gl_LocalInvocationIndex;
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    uint viewIndex = u_Push.viewIndex;
+    bool inBounds = all(lessThan(pixel, u_Push.screenExtent)) && viewIndex == 1u && u_Push.viewCount >= 2u;
+
+    if (local == 0u)
+    {
+        s_candidates = 0u;
+        s_reused = 0u;
+        s_rejected = 0u;
+    }
+    barrier();
+
+    uint outputEntry = RVC_SHADELET_INVALID;
+    if (inBounds)
+    {
+        uvec2 id1 = texelFetch(RvcVisibilityIdentity, ivec3(pixel, 1), 0).rg;
+        if (RvcIsValidVisibilityIdentity(id1))
+        {
+            XRAdvancedViewRecord view0 = XR_ADV_LoadView(0u);
+            XRAdvancedViewRecord view1 = XR_ADV_LoadView(1u);
+            float d1 = texelFetch(RvcVisibilityDepth, ivec3(pixel, 1), 0).r;
+            if (!RvcIsFarDepthValue(d1, view1))
+            {
+                atomicAdd(s_candidates, 1u);
+                vec3 w1 = RvcReconstructWorldPosition(vec2(pixel) + 0.5, d1, view1);
+                vec4 clip0 = XR_ADV_TransformRowVector(vec4(w1, 1.0), view0.viewProjectionJittered);
+                bool accepted = false;
+                if (clip0.w > 1.0e-5)
+                {
+                    vec2 ndc0 = clip0.xy / clip0.w;
+                    vec2 uv0 = XR_ADV_ClipNdcToFramebufferUv(view0, ndc0);
+                    if (all(greaterThanEqual(uv0, vec2(0.0))) && all(lessThan(uv0, vec2(1.0))))
+                    {
+                        ivec2 p0 = clamp(ivec2(uv0 * view0.renderSizeAndInverse.xy), ivec2(0), ivec2(u_Push.screenExtent) - 1);
+                        uvec2 id0 = texelFetch(RvcVisibilityIdentity, ivec3(p0, 0), 0).rg;
+                        if (all(equal(id0, id1)))
+                        {
+                            float d0 = texelFetch(RvcVisibilityDepth, ivec3(p0, 0), 0).r;
+                            if (!RvcIsFarDepthValue(d0, view0))
+                            {
+                                vec3 w0 = RvcReconstructWorldPosition(vec2(p0) + 0.5, d0, view0);
+                                float dist = max(distance(w1, view1.cameraPositionAndNear.xyz), 0.1);
+                                if (distance(w1, w0) <= dist * RVC_SHADELET_STEREO_DISTANCE_TOLERANCE)
+                                {
+                                    vec3 headCenter = 0.5 * (view0.cameraPositionAndNear.xyz + view1.cameraPositionAndNear.xyz);
+                                    float pixelAngle = RvcResolveViewVerticalPixelAngle(view0);
+                                    uint cell0 = RvcComputeSurfaceCellHash(w0, headCenter, pixelAngle, 1.0);
+                                    uint cell1 = RvcComputeSurfaceCellHash(w1, headCenter, pixelAngle, 1.0);
+                                    if (cell0 == cell1)
+                                    {
+                                        uint entry0 = imageLoad(RvcPixelToShadelet, ivec3(p0, 0)).r;
+                                        uint maxShadelets = RvcResolveShadeletCapacity();
+                                        if (entry0 != RVC_SHADELET_INVALID &&
+                                            (entry0 & RVC_SHADELET_DIRECT_PIXEL_BIT) == 0u)
+                                        {
+                                            uint idx0 = entry0 & RVC_SHADELET_INDEX_MASK;
+                                            if (idx0 < maxShadelets && idx0 < RvcShadeletState.totalAllocated)
+                                            {
+                                                RvcShadeletRecordGpu rec0 = RvcShadeletRecords.records[idx0];
+                                                bool viewDependent = (rec0.representativePixelAndView.y & RVC_SHADELET_RECORD_VIEW_DEPENDENT_FLAG) != 0u;
+                                                if (!viewDependent)
+                                                {
+                                                    vec4 normRoughMetal = unpackUnorm4x8(RvcShadeletShadedOutputs.outputs[idx0].surfacePacked.w);
+                                                    float roughness = normRoughMetal.z;
+                                                    float metallic = normRoughMetal.w;
+                                                    bool specularSafe = roughness >= RVC_STEREO_MIN_DIELECTRIC_ROUGHNESS &&
+                                                        (metallic <= 0.5 || roughness >= RVC_STEREO_MIN_METALLIC_ROUGHNESS);
+                                                    if (specularSafe)
+                                                    {
+                                                        outputEntry = idx0 | RVC_SHADELET_STEREO_REUSE_BIT;
+                                                        accepted = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (accepted)
+                    atomicAdd(s_reused, 1u);
+                else
+                    atomicAdd(s_rejected, 1u);
+            }
+        }
+
+        imageStore(RvcPixelToShadelet, ivec3(pixel, 1), uvec4(outputEntry, 0u, 0u, 0u));
+    }
+
+    barrier();
+    if (local == 0u)
+    {
+        if (s_candidates > 0u)
+            atomicAdd(RvcShadeletState.stereoCandidates, s_candidates);
+        if (s_reused > 0u)
+            atomicAdd(RvcShadeletState.stereoReusedPixels, s_reused);
+        if (s_rejected > 0u)
+            atomicAdd(RvcShadeletState.stereoRejected, s_rejected);
+    }
+}

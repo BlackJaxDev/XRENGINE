@@ -910,6 +910,8 @@ namespace XREngine.Rendering.Commands
 
             scene?.RequestAdvancedResidentPublication();
             if (nativeAuthoredDecals) scene?.RequestAdvancedAuthoredDecalPublication();
+            bool usePublishedViewSet = ownerPipeline is not null &&
+                pipeline.UsesStereoResources(ownerPipeline, submissionViewport);
             _updatingBackendReadyPackage.PrepareCanonicalFromScene(
                 scene,
                 camera,
@@ -918,7 +920,8 @@ namespace XREngine.Rendering.Commands
                 _updatingExcludeProjectiveMirrors,
                 _updatingMeshSubmissionStrategy,
                 submissionViewport?.OpenXrViewPair ?? RenderFrameViewSetPublication.AllViews,
-                pipeline?.ResolveCanonicalViewPolicyFlags(camera) ?? EAdvancedViewRecordFlags.None);
+                pipeline?.ResolveCanonicalViewPolicyFlags(camera) ?? EAdvancedViewRecordFlags.None,
+                usePublishedViewSet);
         }
 
         /// <summary>
@@ -948,6 +951,8 @@ namespace XREngine.Rendering.Commands
                     return false;
                 }
 
+                XRViewport? submissionViewport = ownerPipeline.RenderState.WindowViewport ?? ownerPipeline.LastWindowViewport;
+                bool usePublishedViewSet = ownerPipeline.Pipeline.UsesStereoResources(ownerPipeline, submissionViewport);
                 _updatingBackendReadyPackage.PrepareCanonicalFromScene(
                     scene,
                     camera,
@@ -955,9 +960,9 @@ namespace XREngine.Rendering.Commands
                     viewportHeight,
                     _updatingExcludeProjectiveMirrors,
                     _updatingMeshSubmissionStrategy,
-                    (ownerPipeline?.RenderState.WindowViewport ?? ownerPipeline?.LastWindowViewport)?.OpenXrViewPair
-                        ?? RenderFrameViewSetPublication.AllViews,
-                    ownerPipeline?.Pipeline?.ResolveCanonicalViewPolicyFlags(camera) ?? EAdvancedViewRecordFlags.None);
+                    submissionViewport?.OpenXrViewPair ?? RenderFrameViewSetPublication.AllViews,
+                    ownerPipeline.Pipeline.ResolveCanonicalViewPolicyFlags(camera),
+                    usePublishedViewSet);
                 return _updatingBackendReadyPackage.TryGetCanonicalPublication(
                            out _, out _) &&
                        !_updatingBackendReadyPackage.CanonicalViews.IsEmpty;
@@ -1318,7 +1323,8 @@ namespace XREngine.Rendering.Commands
             Action<IRenderCommandMesh>? onExcludedGpuFallbackMesh = null,
             bool suppressCpuOcclusionForPass = false,
             bool enforceAdvancedLatePassEligibility = false,
-            EAdvancedSourceOrderedSlice sourceOrderedSlice = EAdvancedSourceOrderedSlice.All)
+            EAdvancedSourceOrderedSlice sourceOrderedSlice = EAdvancedSourceOrderedSlice.All,
+            Predicate<RenderCommand>? commandFilter = null)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
@@ -1441,6 +1447,11 @@ namespace XREngine.Rendering.Commands
             for (int commandIndex = firstCommandIndex; commandIndex < lastCommandIndex; commandIndex++)
             {
                 RenderCommand cmd = GetCommandAt(list, commandIndex);
+                if (commandFilter is not null && !commandFilter(cmd))
+                {
+                    cpuCmdIndex++;
+                    continue;
+                }
                 if (enforceAdvancedLatePassEligibility &&
                     cmd is RenderCommandMesh3D
                     {

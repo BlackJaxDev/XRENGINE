@@ -11,16 +11,16 @@ namespace XREngine.Editor.WindowRecording;
 /// the elapsed time into the window title. <see cref="Stop"/> sends <c>q</c> to ffmpeg, which
 /// then writes the MP4 index and exits.
 /// </summary>
-internal sealed class EditorWindowVideoSession
+internal sealed class EditorWindowVideoSession : IEditorWindowVideoSession
 {
-    /// <summary>The output frame rate.</summary>
-    public const int FramesPerSecond = 60;
+    /// <summary>The default output frame rate.</summary>
+    public const int FramesPerSecond = EditorWindowRecordingOptions.DefaultFramesPerSecond;
 
-    /// <summary>The largest output width. Larger windows are scaled down with the same aspect ratio.</summary>
-    public const int MaxWidth = 1920;
+    /// <summary>The default largest output width. Larger windows are scaled down with the same aspect ratio.</summary>
+    public const int MaxWidth = EditorWindowRecordingOptions.DefaultMaxWidth;
 
-    /// <summary>The largest output height. Larger windows are scaled down with the same aspect ratio.</summary>
-    public const int MaxHeight = 1080;
+    /// <summary>The default largest output height. Larger windows are scaled down with the same aspect ratio.</summary>
+    public const int MaxHeight = EditorWindowRecordingOptions.DefaultMaxHeight;
 
     /// <summary>The number of ffmpeg stderr lines that a failure message holds.</summary>
     private const int StderrLineCount = 12;
@@ -41,13 +41,20 @@ internal sealed class EditorWindowVideoSession
     private Timer? _titleTimer;
     private long _lastTitleSecond = -1;
     private int _stopRequested;
+    private int _autoStopTriggered;
 
-    private EditorWindowVideoSession(XRWindow window, Process process, string outputPath, string baseTitle)
+    private EditorWindowVideoSession(
+        XRWindow window,
+        Process process,
+        string outputPath,
+        string baseTitle,
+        EditorWindowRecordingOptions options)
     {
         _window = window;
         _process = process;
         OutputPath = outputPath;
         BaseTitle = baseTitle;
+        Options = options;
         _elapsed = Stopwatch.StartNew();
     }
 
@@ -60,15 +67,33 @@ internal sealed class EditorWindowVideoSession
     /// <summary>Gets the recorded window.</summary>
     public XRWindow Window => _window;
 
+    /// <inheritdoc/>
+    public EEditorWindowRecordingBackend Backend => EEditorWindowRecordingBackend.WindowsGraphicsCapture;
+
+    /// <inheritdoc/>
+    public EditorWindowRecordingOptions Options { get; }
+
     /// <summary>Gets the time since ffmpeg started.</summary>
     public TimeSpan Elapsed => _elapsed.Elapsed;
+
+    /// <inheritdoc/>
+    public long CapturedFrameCount => 0;
+
+    /// <inheritdoc/>
+    public long WrittenVideoFrameCount => 0;
+
+    /// <inheritdoc/>
+    public long DroppedReadbackCount => 0;
 
     /// <summary>
     /// Raised on a thread-pool thread when ffmpeg exits after <see cref="Begin"/> and without
     /// a <see cref="Stop"/> call. The argument is a message with the exit code and the last
     /// stderr lines.
     /// </summary>
-    public event Action<EditorWindowVideoSession, string>? Failed;
+    public event Action<IEditorWindowVideoSession, string>? Failed;
+
+    /// <inheritdoc/>
+    public event Action<IEditorWindowVideoSession>? Completed;
 
     /// <summary>
     /// Starts ffmpeg for <paramref name="window"/> and returns the running session. Returns
@@ -77,8 +102,14 @@ internal sealed class EditorWindowVideoSession
     /// Subscribe to <see cref="Failed"/>, then call <see cref="Begin"/> to start the title
     /// timer and the exit watch.
     /// </summary>
-    public static EditorWindowVideoSession? TryStart(XRWindow window, string ffmpegPath, string outputPath, out string? failure)
+    public static EditorWindowVideoSession? TryStart(
+        XRWindow window,
+        string ffmpegPath,
+        string outputPath,
+        out string? failure,
+        EditorWindowRecordingOptions? options = null)
     {
+        EditorWindowRecordingOptions resolvedOptions = (options ?? new EditorWindowRecordingOptions()).Normalize();
         nint windowHandle = window.OperatingSystemWindowHandle;
         if (windowHandle == 0)
         {
@@ -93,7 +124,7 @@ internal sealed class EditorWindowVideoSession
         Process process;
         try
         {
-            process = Process.Start(CreateStartInfo(ffmpegPath, windowHandle, outputPath))
+            process = Process.Start(CreateStartInfo(ffmpegPath, windowHandle, outputPath, resolvedOptions))
                 ?? throw new InvalidOperationException("Process.Start returned no process.");
         }
         catch (Exception ex)
@@ -103,7 +134,7 @@ internal sealed class EditorWindowVideoSession
         }
 
         string baseTitle = window.WindowTitle;
-        EditorWindowVideoSession session = new(window, process, outputPath, baseTitle);
+        EditorWindowVideoSession session = new(window, process, outputPath, baseTitle, resolvedOptions);
         session.BeginReadingStderr();
 
         // A bad capture source (a minimized window, a missing filter option, or an output
@@ -222,15 +253,21 @@ internal sealed class EditorWindowVideoSession
     /// suit social video upload: H.264 High profile, CRF 26 with a 8 Mbit/s peak cap, a
     /// keyframe every two seconds, no audio, and the MP4 index at the front of the file.
     /// </summary>
-    internal static ProcessStartInfo CreateStartInfo(string ffmpegPath, nint windowHandle, string outputPath)
+    internal static ProcessStartInfo CreateStartInfo(
+        string ffmpegPath,
+        nint windowHandle,
+        string outputPath,
+        EditorWindowRecordingOptions? options = null)
     {
-        string fps = FramesPerSecond.ToString(CultureInfo.InvariantCulture);
+        EditorWindowRecordingOptions resolved = (options ?? new EditorWindowRecordingOptions()).Normalize();
+        string fps = resolved.FramesPerSecond.ToString(CultureInfo.InvariantCulture);
+        int cursor = resolved.IncludeCursor ? 1 : 0;
         string captureSource = string.Create(
             CultureInfo.InvariantCulture,
-            $"gfxcapture=hwnd={(long)windowHandle}:max_framerate={FramesPerSecond}:capture_cursor=1");
+            $"gfxcapture=hwnd={(long)windowHandle}:max_framerate={resolved.FramesPerSecond}:capture_cursor={cursor}");
         string scaleFilter = string.Create(
             CultureInfo.InvariantCulture,
-            $"scale='min({MaxWidth},iw)':'min({MaxHeight},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2");
+            $"scale='min({resolved.MaxWidth},iw)':'min({resolved.MaxHeight},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2");
         string captureGraph = $"{captureSource},hwdownload,format=bgra,{scaleFilter}";
 
         ProcessStartInfo startInfo = new()
@@ -243,7 +280,8 @@ internal sealed class EditorWindowVideoSession
             RedirectStandardError = true,
         };
 
-        string[] arguments =
+        bool useNvenc = ResolveUseNvenc(ffmpegPath, resolved.Encoder);
+        List<string> arguments =
         [
             "-hide_banner",
             "-loglevel", "warning",
@@ -252,23 +290,78 @@ internal sealed class EditorWindowVideoSession
             "-f", "lavfi",
             "-i", captureGraph,
             "-r", fps,
-            "-c:v", "libx264",
-            "-preset", "faster",
-            "-crf", "26",
-            "-maxrate", "8M",
-            "-bufsize", "16M",
-            "-profile:v", "high",
-            "-level:v", "4.2",
+        ];
+        AppendVideoEncoderArguments(arguments, resolved, useNvenc);
+        arguments.AddRange([
             "-pix_fmt", "yuv420p",
-            "-g", (FramesPerSecond * 2).ToString(CultureInfo.InvariantCulture),
+            "-g", (resolved.FramesPerSecond * 2).ToString(CultureInfo.InvariantCulture),
             "-an",
             "-movflags", "+faststart",
             outputPath,
-        ];
+        ]);
         foreach (string argument in arguments)
             startInfo.ArgumentList.Add(argument);
 
         return startInfo;
+    }
+
+    internal static bool ResolveUseNvenc(string ffmpegPath, EEditorWindowVideoEncoder requested)
+        => requested switch
+        {
+            EEditorWindowVideoEncoder.Nvenc => true,
+            EEditorWindowVideoEncoder.X264 => false,
+            _ => EditorVideoFfmpegLocator.SupportsNvenc(ffmpegPath),
+        };
+
+    internal static void AppendVideoEncoderArguments(
+        List<string> arguments,
+        EditorWindowRecordingOptions options,
+        bool useNvenc)
+    {
+        string bufsize = ResolveBufferSize(options.MaxBitrate);
+        if (useNvenc)
+        {
+            arguments.AddRange([
+                "-c:v", "h264_nvenc",
+                "-preset", "p4",
+                "-tune", "hq",
+                "-rc", "vbr",
+                "-cq", options.Crf.ToString(CultureInfo.InvariantCulture),
+                "-b:v", "0",
+                "-maxrate", options.MaxBitrate,
+                "-bufsize", bufsize,
+                "-profile:v", "high",
+                "-level:v", "4.2",
+            ]);
+            return;
+        }
+
+        arguments.AddRange([
+            "-c:v", "libx264",
+            "-preset", options.Preset,
+            "-crf", options.Crf.ToString(CultureInfo.InvariantCulture),
+            "-maxrate", options.MaxBitrate,
+            "-bufsize", bufsize,
+            "-profile:v", "high",
+            "-level:v", "4.2",
+        ]);
+    }
+
+    internal static string ResolveBufferSize(string maxBitrate)
+    {
+        if (string.IsNullOrWhiteSpace(maxBitrate))
+            return "16M";
+
+        string trimmed = maxBitrate.Trim();
+        char suffix = trimmed[^1];
+        if ((suffix is 'M' or 'm' or 'K' or 'k') &&
+            double.TryParse(trimmed[..^1], NumberStyles.Float, CultureInfo.InvariantCulture, out double value) &&
+            value > 0.0)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{value * 2.0:0.##}{char.ToUpperInvariant(suffix)}");
+        }
+
+        return "16M";
     }
 
     private void BeginReadingStderr()
@@ -322,6 +415,13 @@ internal sealed class EditorWindowVideoSession
         // The timer fires four times per second, but the title shows whole seconds. Send a
         // title change to the window thread only when the shown value changes.
         TimeSpan elapsed = _elapsed.Elapsed;
+        if (Options.MaxDuration is { } maxDuration && elapsed >= maxDuration)
+        {
+            if (Interlocked.Exchange(ref _autoStopTriggered, 1) == 0)
+                _ = Task.Run(() => Completed?.Invoke(this));
+            return;
+        }
+
         long second = (long)elapsed.TotalSeconds;
         if (Interlocked.Exchange(ref _lastTitleSecond, second) == second)
             return;

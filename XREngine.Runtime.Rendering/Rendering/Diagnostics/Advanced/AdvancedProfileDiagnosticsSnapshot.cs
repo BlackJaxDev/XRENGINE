@@ -11,4 +11,5 @@ public sealed record AdvancedProfileDiagnosticsSnapshot(
     int ResourceGeneration,
     ulong OutputId,
     AdvancedProfileStageDiagnostic[] Stages,
-    AdvancedProfileEyeDiagnostic[] Eyes);
+    AdvancedProfileEyeDiagnostic[] Eyes,
+    AdvancedProfilePortalDiagnostic Portals = default);

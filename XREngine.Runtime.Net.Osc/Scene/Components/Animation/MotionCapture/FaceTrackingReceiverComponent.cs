@@ -6,7 +6,7 @@ using static XREngine.Animation.AnimTransitionCondition;
 
 namespace XREngine.Data.Components
 {
-    public class FaceTrackingReceiverComponent : OscReceiverComponent
+    public class FaceTrackingReceiverComponent : AnimStateMachineOscReceiverComponent
     {
         public const string Tracking_Eye_CenterPitchYaw = FaceTrackingProtocol.Tracking_Eye_CenterPitchYaw;
         public const string Tracking_Eye_EyesClosedAmount = FaceTrackingProtocol.Tracking_Eye_EyesClosedAmount;
@@ -164,9 +164,19 @@ namespace XREngine.Data.Components
         public const string Param_OSCmRemote_BinaryScaler = FaceTrackingProtocol.Param_OSCmRemote_BinaryScaler;
         public const string Param_OSCmRemote_BinaryMod = FaceTrackingProtocol.Param_OSCmRemote_BinaryMod;
 
-        public AnimStateMachineComponent? AnimStateMachine { get; set; } = null;
-        public AnimStateMachineComponent? GetAnimStateMachine()
-            => AnimStateMachine ?? GetSiblingComponent<AnimStateMachineComponent>();
+        private bool _useLegacyHardcodedBindings = true;
+        /// <summary>
+        /// When <see langword="true"/>, registers the legacy hardcoded <c>v2/*</c> and
+        /// <c>/tracking/eye/*</c> receiver addresses alongside dynamic schema bindings.
+        /// </summary>
+        public bool UseLegacyHardcodedBindings
+        {
+            get => _useLegacyHardcodedBindings;
+            set => SetField(ref _useLegacyHardcodedBindings, value);
+        }
+
+        /// <inheritdoc />
+        protected override bool ShouldRegisterStaticReceiverAddresses => UseLegacyHardcodedBindings;
 
         public FaceTrackingReceiverComponent()
         {

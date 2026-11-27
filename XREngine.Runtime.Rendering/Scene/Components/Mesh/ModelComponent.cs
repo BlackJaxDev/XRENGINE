@@ -852,7 +852,7 @@ namespace XREngine.Components.Scene.Mesh
                 {
                     XRMeshRenderer renderer = renderers[index];
                     if (renderer?.Mesh is { HasBlendshapes: true } &&
-                        renderer.GetBlendshapeIndex(blendshapeName, out uint blendshapeIndex))
+                        renderer.GetBlendshapeIndex(blendshapeName, comp, out uint blendshapeIndex))
                     {
                         renderer.SetBlendshapeWeightNormalized(blendshapeIndex, weight);
                     }

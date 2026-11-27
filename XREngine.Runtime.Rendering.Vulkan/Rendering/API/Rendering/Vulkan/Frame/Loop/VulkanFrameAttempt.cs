@@ -187,6 +187,13 @@ internal ref struct VulkanFrameAttempt
     /// which is important for ensuring that the overlays are displayed correctly.
     /// </summary>
     public CommandBuffer DynamicTextOverlayCommandBuffer;
+    /// <summary>
+    /// Secondary command buffer that holds the recorded dynamic UI text draws for this frame attempt,
+    /// retained so post-recording recovery paths can still re-emit the text overlay onto the swapchain.
+    /// </summary>
+    public CommandBuffer DynamicTextSecondaryCommandBuffer;
+    /// <summary>Number of dynamic UI text operations recorded into <see cref="DynamicTextSecondaryCommandBuffer"/>.</summary>
+    public int DynamicTextOverlayOperationCount;
     /// <summary>The scene records into the desktop offscreen color target of this frame slot.</summary>
     public bool UsesDesktopOffscreenTarget;
     /// <summary>The offscreen color image that the scene records into.</summary>
@@ -271,6 +278,8 @@ internal ref struct VulkanFrameAttempt
     public bool PresentWaitSemaphoreProvenanceValid;
     /// <summary>Expected present wait semaphore captured from the acquired target lease.</summary>
     public Semaphore ExpectedPresentWaitSemaphore;
+    /// <summary>Optional binary semaphore signaled by a GPU-chained composited screenshot copy before presentation.</summary>
+    public Semaphore CompositedScreenshotChainedPresentSemaphore;
     /// <summary>Stage timestamps retained for the final presentation ledger.</summary>
     public long AcquireStartedTimestamp;
     public long AcquireCompletedTimestamp;

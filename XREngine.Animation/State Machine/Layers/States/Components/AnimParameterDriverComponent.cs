@@ -124,7 +124,7 @@ namespace XREngine.Animation
         private float _randomMax = 0.0f;
         /// <summary>
         /// The maximum value for the random operation.
-        /// Exclusive, so the result will be in the range [RandomMin, RandomMax).
+        /// Exclusive for float targets, inclusive for integer targets.
         /// </summary>
         public float RandomMax
         {
@@ -132,47 +132,153 @@ namespace XREngine.Animation
             set => SetField(ref _randomMax, value);
         }
 
+        private float _randomChance = 0.5f;
+        /// <summary>
+        /// Probability in [0, 1] of setting a boolean destination to true during <see cref="EOperation.Random"/>.
+        /// </summary>
+        public float RandomChance
+        {
+            get => _randomChance;
+            set => SetField(ref _randomChance, value);
+        }
+
+        private bool _convertRange;
+        /// <summary>
+        /// Remaps the source value from [<see cref="SourceMin"/>, <see cref="SourceMax"/>]
+        /// to [<see cref="DestMin"/>, <see cref="DestMax"/>] during <see cref="EOperation.Copy"/>.
+        /// </summary>
+        public bool ConvertRange
+        {
+            get => _convertRange;
+            set => SetField(ref _convertRange, value);
+        }
+
+        private float _sourceMin = 0.0f;
+        public float SourceMin
+        {
+            get => _sourceMin;
+            set => SetField(ref _sourceMin, value);
+        }
+
+        private float _sourceMax = 1.0f;
+        public float SourceMax
+        {
+            get => _sourceMax;
+            set => SetField(ref _sourceMax, value);
+        }
+
+        private float _destMin = 0.0f;
+        public float DestMin
+        {
+            get => _destMin;
+            set => SetField(ref _destMin, value);
+        }
+
+        private float _destMax = 1.0f;
+        public float DestMax
+        {
+            get => _destMax;
+            set => SetField(ref _destMax, value);
+        }
+
         public override void StateEntered(AnimState state, IDictionary<string, AnimVar> variables)
         {
             if (!variables.TryGetValue(DstParameterName, out AnimVar? dstVar))
                 return;
 
+            string effectiveSourceName = string.IsNullOrEmpty(SrcParameterName)
+                ? DstParameterName
+                : SrcParameterName;
+
             AnimVar? srcVar;
             switch (Operation)
             {
                 case EOperation.Set:
-                    dstVar.FloatValue = ConstantValue;
+                    AssignTargetValue(dstVar, ConstantValue);
                     break;
                 case EOperation.Add:
-                    if (variables.TryGetValue(SrcParameterName, out srcVar))
-                        dstVar.FloatValue = srcVar.FloatValue + ConstantValue;
+                    if (variables.TryGetValue(effectiveSourceName, out srcVar))
+                        AssignTargetValue(dstVar, srcVar.FloatValue + ConstantValue);
                     break;
                 case EOperation.Subtract:
-                    if (variables.TryGetValue(SrcParameterName, out srcVar))
-                        dstVar.FloatValue = srcVar.FloatValue - ConstantValue;
+                    if (variables.TryGetValue(effectiveSourceName, out srcVar))
+                        AssignTargetValue(dstVar, srcVar.FloatValue - ConstantValue);
                     break;
                 case EOperation.Multiply:
-                    if (variables.TryGetValue(SrcParameterName, out srcVar))
-                        dstVar.FloatValue = srcVar.FloatValue * ConstantValue;
+                    if (variables.TryGetValue(effectiveSourceName, out srcVar))
+                        AssignTargetValue(dstVar, srcVar.FloatValue * ConstantValue);
                     break;
                 case EOperation.Divide:
-                    if (variables.TryGetValue(SrcParameterName, out srcVar) && ConstantValue != 0.0f)
-                        dstVar.FloatValue = srcVar.FloatValue / ConstantValue;
+                    if (variables.TryGetValue(effectiveSourceName, out srcVar) && ConstantValue != 0.0f)
+                        AssignTargetValue(dstVar, srcVar.FloatValue / ConstantValue);
                     break;
                 case EOperation.Min:
-                    if (variables.TryGetValue(SrcParameterName, out srcVar))
-                        dstVar.FloatValue = Math.Min(srcVar.FloatValue, ConstantValue);
+                    if (variables.TryGetValue(effectiveSourceName, out srcVar))
+                        AssignTargetValue(dstVar, Math.Min(srcVar.FloatValue, ConstantValue));
                     break;
                 case EOperation.Max:
-                    if (variables.TryGetValue(SrcParameterName, out srcVar))
-                        dstVar.FloatValue = Math.Max(srcVar.FloatValue, ConstantValue);
+                    if (variables.TryGetValue(effectiveSourceName, out srcVar))
+                        AssignTargetValue(dstVar, Math.Max(srcVar.FloatValue, ConstantValue));
                     break;
                 case EOperation.Random:
-                    dstVar.FloatValue = RandomMin + Random.Shared.NextSingle() * (RandomMax - RandomMin);
+                    ApplyRandomValue(dstVar);
                     break;
                 case EOperation.Copy:
-                    if (variables.TryGetValue(SrcParameterName, out srcVar))
-                        dstVar.FloatValue = srcVar.FloatValue;
+                    if (variables.TryGetValue(effectiveSourceName, out srcVar))
+                    {
+                        float copied = srcVar.FloatValue;
+                        if (ConvertRange)
+                        {
+                            float span = SourceMax - SourceMin;
+                            if (MathF.Abs(span) > float.Epsilon)
+                            {
+                                float t = (copied - SourceMin) / span;
+                                copied = DestMin + t * (DestMax - DestMin);
+                            }
+                            else
+                            {
+                                copied = DestMin;
+                            }
+                        }
+                        AssignTargetValue(dstVar, copied);
+                    }
+                    break;
+            }
+        }
+
+        private void ApplyRandomValue(AnimVar dstVar)
+        {
+            if (dstVar is AnimBool animBool)
+            {
+                animBool.BoolValue = Random.Shared.NextSingle() < Math.Clamp(RandomChance, 0.0f, 1.0f);
+                return;
+            }
+
+            if (dstVar is AnimInt animInt)
+            {
+                int min = (int)MathF.Round(MathF.Min(RandomMin, RandomMax));
+                int max = (int)MathF.Round(MathF.Max(RandomMin, RandomMax));
+                animInt.IntValue = max > min && max < int.MaxValue
+                    ? Random.Shared.Next(min, max + 1)
+                    : min;
+                return;
+            }
+
+            dstVar.FloatValue = RandomMin + Random.Shared.NextSingle() * (RandomMax - RandomMin);
+        }
+
+        private static void AssignTargetValue(AnimVar dstVar, float value)
+        {
+            switch (dstVar)
+            {
+                case AnimBool animBool:
+                    animBool.BoolValue = value > 0.0f;
+                    break;
+                case AnimInt animInt:
+                    animInt.IntValue = float.IsFinite(value) ? (int)MathF.Round(value) : 0;
+                    break;
+                default:
+                    dstVar.FloatValue = value;
                     break;
             }
         }

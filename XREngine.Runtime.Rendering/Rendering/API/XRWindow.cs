@@ -60,6 +60,7 @@ namespace XREngine.Rendering
             public void FocusChanged(bool focused) => owner.OnFocusChanged(focused);
             public void FileDropped(string[] paths) => owner.OnFileDropped(paths);
             public void KeyDown(EKey key) => AnyWindowKeyDown?.Invoke(owner, key);
+            public void GamepadButtonDown(EGamePadButton button) => AnyWindowGamepadButtonDown?.Invoke(owner, button);
             public bool CloseRequested() => owner.HandleDesktopCloseRequested();
             public void InteractiveResizeStarted() => owner.BeginInteractiveResize("native-window");
             public void InteractiveResizeUpdated(IVector2 extent)
@@ -94,10 +95,16 @@ namespace XREngine.Rendering
         /// to their owning thread.
         /// </summary>
         public static event Action<XRWindow, EKey>? AnyWindowKeyDown;
+        /// <summary>
+        /// Fired for every primary-gamepad button-down transition on a focused native window before
+        /// pawn input consumes the corresponding snapshot.
+        /// </summary>
+        public static event Action<XRWindow, EGamePadButton>? AnyWindowGamepadButtonDown;
         public event Action<XRWindow, bool>? FocusChanged;
         public event Action<XRWindow, string[]>? FileDropped;
         public event Action<XRWindow>? ClosingRequested;
         public event Action<XRWindow, Vector2D<int>>? FramebufferResized;
+        public event Action? PreRenderViewportsCallback;
         public event Action? RenderViewportsCallback;
         public event Action? PostRenderViewportsCallback;
 
@@ -1628,10 +1635,16 @@ namespace XREngine.Rendering
             }
 
             if (waitForGpu)
+            {
                 TryRendererCleanupStep(renderer, reason,
                     "RetirePhysicsChainOutputPages",
                     () => XREngine.Rendering.Compute.GPUPhysicsChainDispatcher.Instance
                         .NotifyOutputProducerKnownIdle(renderer));
+                TryRendererCleanupStep(renderer, reason,
+                    "RetireSkinningPrepassReceipts",
+                    () => XREngine.Rendering.Compute.SkinningPrepassDispatcher
+                        .NotifyRendererKnownIdleIfCreated(renderer));
+            }
 
             bool wrappersDestroyed = TryRendererCleanupStep(
                 renderer,
@@ -1648,6 +1661,15 @@ namespace XREngine.Rendering
                 reason,
                 "CleanUp",
                 waitForGpu ? renderer.CleanUpAfterGpuIdle : renderer.CleanUp);
+            if ((_isDisposing || reason is "EndTick" or "Dispose" or "DisposeExternalPump") &&
+                RuntimeEngine.Windows.Count <= 1)
+            {
+                TryRendererCleanupStep(
+                    renderer,
+                    reason,
+                    "ResetSharedPreparationAfterShutdown",
+                    AdvancedSharedPreparationService.ResetAfterRendererRetirement);
+            }
             return wrappersDestroyed && stableObjectsDestroyed && cleanupCompleted;
         }
 
@@ -3087,6 +3109,11 @@ namespace XREngine.Rendering
                     }
                 }
 
+                using (var preRenderCallbackSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.PreRenderViewportsCallback"))
+                {
+                    PreRenderViewportsCallback?.Invoke();
+                }
+
                 long viewportsCallbackStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 using (var renderCallbackSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderViewportsCallback"))
                 {
@@ -3961,6 +3988,8 @@ namespace XREngine.Rendering
 
                     try
                     {
+                        for (int i = 0; i < Viewports.Count; i++)
+                            Viewports[i].RenderPipelineInstance.ReleaseCanonicalPublicationRetention();
                         Viewports.Clear();
                     }
                     catch
@@ -4092,6 +4121,8 @@ namespace XREngine.Rendering
                     _scenePanelAdapter.Dispose();
                     try
                     {
+                        for (int i = 0; i < Viewports.Count; i++)
+                            Viewports[i].RenderPipelineInstance.ReleaseCanonicalPublicationRetention();
                         Viewports.Clear();
                     }
                     catch

@@ -27,6 +27,8 @@ public sealed class OpenVrModelCatalog
 
     private VR? _utilityRuntime;
     private bool _triedUtilityRuntime;
+    private bool _loggedOpenVrTrackers;
+    private readonly HashSet<string> _loggedTrackerModelResolutions = new(StringComparer.Ordinal);
 
     public event Action? ModelsChanged;
 
@@ -90,18 +92,56 @@ public sealed class OpenVrModelCatalog
         if (string.IsNullOrWhiteSpace(openXrTrackerUserPath))
             return false;
 
-        Span<uint> indices = stackalloc uint[(int)Valve.VR.OpenVR.k_unMaxTrackedDeviceCount];
-        int count = 0;
+        Span<uint> connectedIndices = stackalloc uint[(int)Valve.VR.OpenVR.k_unMaxTrackedDeviceCount];
+        Span<uint> allIndices = stackalloc uint[(int)Valve.VR.OpenVR.k_unMaxTrackedDeviceCount];
+        int connectedCount = 0;
+        int allCount = 0;
         for (uint i = 0; i < Valve.VR.OpenVR.k_unMaxTrackedDeviceCount; i++)
         {
-            if (cvr.GetTrackedDeviceClass(i) == ETrackedDeviceClass.GenericTracker)
-                indices[count++] = i;
+            if (cvr.GetTrackedDeviceClass(i) != ETrackedDeviceClass.GenericTracker)
+                continue;
+
+            allIndices[allCount++] = i;
+            if (cvr.IsTrackedDeviceConnected(i))
+                connectedIndices[connectedCount++] = i;
         }
-        if (count == 0)
+        LogOpenVrTrackersOnce(cvr, allIndices[..allCount]);
+        if (allCount == 0)
             return false;
 
-        deviceIndex = SelectTrackerIndex(openXrTrackerUserPath, indices[..count]);
-        return TryGetModelName(cvr, deviceIndex, out modelName);
+        // Always prefer connected trackers (for example live Tundra trackers) so disconnected
+        // paired Vive trackers never override the render model when roles collide in SteamVR.
+        ReadOnlySpan<uint> candidates = connectedCount > 0 ? connectedIndices[..connectedCount] : allIndices[..allCount];
+        deviceIndex = SelectTrackerIndex(cvr, openXrTrackerUserPath, candidates);
+        if (!TryGetModelName(cvr, deviceIndex, out modelName))
+            return false;
+
+        if (_loggedTrackerModelResolutions.Add(openXrTrackerUserPath))
+        {
+            TryGetSerialNumber(cvr, deviceIndex, out string? serial);
+            Debug.WriteAuxiliaryLog(
+                "openxr-trackers.log",
+                $"OpenVrTrackerModel path={openXrTrackerUserPath} index={deviceIndex} connected={cvr.IsTrackedDeviceConnected(deviceIndex)} serial={serial ?? "<none>"} model={modelName}");
+        }
+        return true;
+    }
+
+    private void LogOpenVrTrackersOnce(CVRSystem cvr, ReadOnlySpan<uint> indices)
+    {
+        if (_loggedOpenVrTrackers || indices.Length == 0)
+            return;
+        _loggedOpenVrTrackers = true;
+
+        for (int i = 0; i < indices.Length; i++)
+        {
+            uint index = indices[i];
+            bool connected = cvr.IsTrackedDeviceConnected(index);
+            TryGetSerialNumber(cvr, index, out string? serial);
+            TryGetModelName(cvr, index, out string? model);
+            Debug.WriteAuxiliaryLog(
+                "openxr-trackers.log",
+                $"OpenVrTrackerDevice index={index} connected={connected} serial={serial ?? "<none>"} model={model ?? "<none>"}");
+        }
     }
 
     public bool HasSystem(bool activeOpenVr, bool allowUtilityRuntime)
@@ -170,10 +210,45 @@ public sealed class OpenVrModelCatalog
         return !string.IsNullOrWhiteSpace(modelName);
     }
 
-    private static uint SelectTrackerIndex(string path, ReadOnlySpan<uint> indices)
+    private static bool TryGetSerialNumber(CVRSystem cvr, uint deviceIndex, out string? serialNumber)
+    {
+        serialNumber = null;
+        ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
+        StringBuilder builder = new(128);
+        uint length = cvr.GetStringTrackedDeviceProperty(
+            deviceIndex, ETrackedDeviceProperty.Prop_SerialNumber_String,
+            builder, (uint)builder.Capacity, ref error);
+        if (error == ETrackedPropertyError.TrackedProp_BufferTooSmall)
+        {
+            builder.EnsureCapacity((int)length);
+            error = ETrackedPropertyError.TrackedProp_Success;
+            cvr.GetStringTrackedDeviceProperty(
+                deviceIndex, ETrackedDeviceProperty.Prop_SerialNumber_String,
+                builder, length, ref error);
+        }
+        if (error != ETrackedPropertyError.TrackedProp_Success)
+            return false;
+        serialNumber = builder.ToString();
+        return !string.IsNullOrWhiteSpace(serialNumber);
+    }
+
+    private static uint SelectTrackerIndex(CVRSystem cvr, string path, ReadOnlySpan<uint> indices)
     {
         if (indices.Length == 1)
             return indices[0];
+
+        // Match OpenXR persistent hardware paths (for example /devices/htc/vive_trackerlhr-d963d299)
+        // to the exact SteamVR tracker serial number so mixed Vive and Tundra trackers load their own model.
+        for (int i = 0; i < indices.Length; i++)
+        {
+            if (TryGetSerialNumber(cvr, indices[i], out string? serial) &&
+                !string.IsNullOrWhiteSpace(serial) &&
+                path.Contains(serial, StringComparison.OrdinalIgnoreCase))
+            {
+                return indices[i];
+            }
+        }
+
         for (int i = 0; i < TrackerRoleOrder.Length; i++)
         {
             if (string.Equals(TrackerRoleOrder[i], path, StringComparison.Ordinal))

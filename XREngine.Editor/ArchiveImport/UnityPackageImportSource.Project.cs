@@ -87,6 +87,77 @@ internal static partial class UnityPackageImportSource
         }
     }
 
+    /// <summary>
+    /// Stages a single companion package archive or folder into a cached Unity project root
+    /// containing <c>Assets/</c> and <c>Packages/&lt;package-name&gt;/</c> for GUID resolution.
+    /// </summary>
+    public static string PrepareStandalonePackageProject(
+        string dependencyPath,
+        string cacheRoot,
+        Action<float, string>? progress = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dependencyPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(cacheRoot);
+
+        DependencySource dependency = InspectDependency(dependencyPath, cacheRoot);
+        List<DependencySource> dependencies = [dependency];
+        string combinedHash = ComputeCombinedHash("standalone-package-v1", dependencies);
+        string parent = Path.Combine(Path.GetFullPath(cacheRoot), "UnityProjects");
+        string target = Path.Combine(parent, combinedHash);
+
+        lock (CacheLock)
+        {
+            RejectReparsePoints(parent);
+            if (IsCombinedComplete(target, combinedHash))
+            {
+                progress?.Invoke(1f, "Standalone Unity package project cache ready.");
+                return target;
+            }
+            if (Directory.Exists(target) || File.Exists(target))
+                throw new InvalidDataException($"The standalone Unity package cache entry '{combinedHash}' is incomplete.");
+
+            Directory.CreateDirectory(parent);
+            RejectReparsePoints(parent);
+            string staging = Path.Combine(parent, $".{combinedHash}.{Guid.NewGuid():N}.staging");
+            Directory.CreateDirectory(staging);
+            try
+            {
+                RejectReparsePoints(staging);
+                Directory.CreateDirectory(Path.Combine(staging, "Assets"));
+                var origins = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var canonicalPaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                progress?.Invoke(0.1f, "Staging standalone Unity package.");
+                AddDependency(dependency, staging, origins, canonicalPaths, 1);
+                if (dependency.Kind == DependencyKind.Folder &&
+                    !string.Equals(ComputeFolderHash(dependency.Path, dependency.IsProject), dependency.Hash, StringComparison.Ordinal))
+                    throw new IOException($"Companion source '{dependency.Path}' changed during import.");
+                if (dependency.Kind == DependencyKind.Zip &&
+                    !string.Equals(ComputeFileHash(dependency.Path), dependency.Hash, StringComparison.Ordinal))
+                    throw new IOException($"Companion archive '{dependency.Path}' changed during import.");
+
+                ValidateGuids(staging, origins);
+                File.WriteAllText(Path.Combine(staging, CombinedCompletionFile), combinedHash);
+                try
+                {
+                    PublishCacheDirectory(staging, target);
+                }
+                catch (IOException) when (IsCombinedComplete(target, combinedHash))
+                {
+                    // Another process published the same project first.
+                }
+
+                progress?.Invoke(1f, "Standalone Unity package project is ready.");
+                return target;
+            }
+            finally
+            {
+                if (Directory.Exists(staging))
+                    Directory.Delete(staging, recursive: true);
+            }
+        }
+    }
+
     private static bool IsCombinedComplete(string root, string hash)
     {
         RejectReparsePoints(root);

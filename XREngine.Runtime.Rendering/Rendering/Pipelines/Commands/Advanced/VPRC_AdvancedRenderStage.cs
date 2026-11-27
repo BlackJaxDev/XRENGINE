@@ -21,8 +21,17 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
         set => SetField(ref _globalIlluminationPlan, value);
     }
     private GlobalIlluminationPlan? _globalIlluminationPlan;
+    private readonly AdvancedPortalTransparentPass _portalTransparentPass = new();
     internal const string LateVisibilityRasterPassName =
         "Advanced.LateVisibilityRaster";
+    internal const string PortalVisibilityPassName =
+        "Advanced.PortalVisibility";
+    internal const string PortalSkyUnwindPassName =
+        "Advanced.PortalSkyUnwind";
+    internal const string PortalTransparentsPassName =
+        "Advanced.PortalTransparents";
+    internal const string PortalUnwindPassName =
+        "Advanced.PortalUnwind";
     internal const string MultisampleVisibilityResolvePassName =
         "Advanced.MultisampleVisibilityResolve";
     internal const string DecalBufferPassName =
@@ -140,6 +149,12 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return;
         }
 
+        if (Stage == EAdvancedRenderStage.LatePasses)
+        {
+            ExecuteLatePassesStage(state, in world);
+            return;
+        }
+
         if (!IsNativeSceneConsumer(Stage))
         {
             using IDisposable? stagePassScope = PushRenderGraphPass(Descriptor.PassName);
@@ -187,6 +202,15 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     Phase = EAdvancedVisibilityStageBackendPhase.LateRaster,
                 },
                 LateVisibilityRasterPassName))
+                return;
+            if (request.PortalFramePlan is { Count: > 0 } &&
+                !EnqueueLatePhase(
+                    visibility,
+                    request with
+                    {
+                        Phase = EAdvancedVisibilityStageBackendPhase.PortalVisibility,
+                    },
+                    PortalVisibilityPassName))
                 return;
             if (samples > 1u)
             {
@@ -296,6 +320,8 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return false;
         }
         AdvancedRenderPipeline pipeline = familyHost.AdvancedStageFamilyDefinition;
+        if (Stage == EAdvancedRenderStage.VisibilityPreparation)
+            SchedulePipelinePortals(pipeline, state, in world);
         bool useNeutralWebAmbientOcclusion = rendererHost.BackendId == RendererBackendId.WebGPU &&
             !ActivePipelineInstance.Resources.TryGetTexture(AdvancedAmbientOcclusionContract.ResourceName, out _);
         AdvancedPreparationPublication publication =
@@ -321,12 +347,18 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
         bool isMinimalVisibilityOutput =
             pipeline.IsMinimalVisibilityOutput;
         IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
-        bool enableBuiltInAmbientOcclusion =
-            rendererHost.BackendId == RendererBackendId.WebGPU &&
+        bool usePortalNativeAmbientOcclusion =
             !isMinimalVisibilityOutput &&
-            !useNeutralWebAmbientOcclusion &&
-            pipeline.EnableBuiltInAmbientOcclusion &&
+            pipeline.PortalFramePlan.Count > 0 &&
+            pipeline.HasActiveCameraAmbientOcclusion() &&
             ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true };
+        bool enableBuiltInAmbientOcclusion =
+            usePortalNativeAmbientOcclusion ||
+            (rendererHost.BackendId == RendererBackendId.WebGPU &&
+             !isMinimalVisibilityOutput &&
+             !useNeutralWebAmbientOcclusion &&
+             pipeline.EnableBuiltInAmbientOcclusion &&
+             ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true });
         (bool ambientOcclusionMultiBounce, bool ambientOcclusionSpecularOcclusion) =
             pipeline.ResolveAmbientOcclusionShadingOptions(ActivePipelineInstance, null);
         if (requiresAmbientOcclusion && !isMinimalVisibilityOutput &&
@@ -486,7 +518,17 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     ActivePipelineInstance.RenderState.SceneCamera ?? ActivePipelineInstance.RenderState.RenderingCamera,
                     pipeline),
             RvcFoveatedQuadShading = requiresNativeOpaqueShading && samples <= 1u &&
-                ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcFoveatedQuadShadingEnabled: true },
+                ActivePipelineInstance.Pipeline is RvcRenderPipeline { RvcFoveatedQuadShadingEnabled: true, IsShadeletCacheActive: false },
+            RvcShadeletCacheEnabled = (requiresNativeOpaqueShading || Stage == EAdvancedRenderStage.WorkClassification) && samples <= 1u &&
+                pipeline.DeclaresRvcShadeletCache &&
+                ActivePipelineInstance.Pipeline is RvcRenderPipeline { IsShadeletCacheActive: true },
+            RvcStereoReuseEnabled = requiresNativeOpaqueShading && samples <= 1u &&
+                ActivePipelineInstance.Pipeline is RvcRenderPipeline { IsShadeletCacheActive: true, RvcStereoReuseEnabled: true },
+            RvcForceFullResNear = ActivePipelineInstance.Pipeline is RvcRenderPipeline rvcPipelineNear &&
+                rvcPipelineNear.LastRvcPlan.ShadeletDensity.ForceNearFieldAndUiTo1x1,
+            RvcDebugViewMode = ActivePipelineInstance.Pipeline is RvcRenderPipeline rvcPipelineDebug
+                ? rvcPipelineDebug.RvcDebugViewMode
+                : ERvcDebugViewMode.Disabled,
             // Only OpenXR eye instances qualify, so the desktop output always shades at full rate.
             AdvancedEdgeHalfRateShading = requiresNativeOpaqueShading && samples <= 1u &&
                 RuntimeEngine.Rendering.Settings.VrAdvancedEdgeHalfRateShading &&
@@ -509,6 +551,9 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
             SkipNeutralAmbientOcclusionFill = Stage == EAdvancedRenderStage.AmbientOcclusion &&
                 !enableBuiltInAmbientOcclusion &&
                 pipeline.AmbientOcclusionPassesReplaceNeutralFill(ActivePipelineInstance),
+            PortalFramePlan = pipeline.PortalFramePlan is { Count: > 0 } portalPlan
+                ? portalPlan
+                : null,
         };
         if (request.RecordRvcShadeletTelemetry)
             RuntimeEngine.Rendering.Stats.Rvc.RecordShadeletTelemetryRequest();
@@ -895,15 +940,31 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 builder.ReadWriteBuffer(RvcShadeletTelemetryResourceNames.Counters(slot));
         }
 
+        // RVC shadelet cache passes run inside NativeOpaqueShading when active.
+        if (descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
+            context.HasResource(RvcShadeletCacheResourceNames.PixelToShadelet))
+        {
+            builder.ReadWriteTexture(RvcShadeletCacheResourceNames.PixelToShadelet);
+            for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; ++slot)
+            {
+                builder.ReadWriteBuffer(RvcShadeletCacheResourceNames.Records(slot));
+                builder.ReadWriteBuffer(RvcShadeletCacheResourceNames.BinIndices(slot));
+                builder.ReadWriteBuffer(RvcShadeletCacheResourceNames.ShadedOutputs(slot));
+                builder.ReadWriteBuffer(RvcShadeletCacheResourceNames.DispatchAndCounters(slot));
+            }
+        }
+
         int stageIndex = (int)descriptor.Stage;
         if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
         {
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
-            // Reserve the optional node even when this generation is not MSAA so the
-            // following synthetic passes retain their stable execution identities.
+            // Reserve optional nodes even when this generation does not activate them so
+            // following synthetic passes retain stable execution identities.
+            context.ReserveSyntheticPassIndex(PortalVisibilityPassName);
             context.ReserveSyntheticPassIndex(MultisampleVisibilityResolvePassName);
             context.ReserveSyntheticPassIndex(DecalBufferPassName);
             DescribeLateRasterPass(context, builder.PassIndex, usesMultisampleVisibility, packedSamples);
+            DescribePortalVisibilityPass(context, usesMultisampleVisibility, packedSamples);
             if (usesMultisampleVisibility)
                 DescribeMultisampleResolvePass(context, packedSamples);
             if (context.HasResource(AdvancedDecalBufferResourceNames.Albedo))
@@ -916,7 +977,7 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     MultisampleVisibilityResolvePassName,
                     ERenderGraphPassStage.Graphics).PassIndex
                 : context.GetOrCreateSyntheticPass(
-                    LateVisibilityRasterPassName,
+                    PortalVisibilityPassName,
                     ERenderGraphPassStage.Graphics).PassIndex);
         }
         else if (descriptor.Stage == EAdvancedRenderStage.WorkClassification)
@@ -927,7 +988,7 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     MultisampleVisibilityResolvePassName,
                     ERenderGraphPassStage.Graphics).PassIndex
                 : context.GetOrCreateSyntheticPass(
-                    LateVisibilityRasterPassName,
+                    PortalVisibilityPassName,
                     ERenderGraphPassStage.Graphics).PassIndex);
         else if (descriptor.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
             // The lane draws the family's sealed bins after the visibility raster
@@ -937,7 +998,7 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     MultisampleVisibilityResolvePassName,
                     ERenderGraphPassStage.Graphics).PassIndex
                 : context.GetOrCreateSyntheticPass(
-                    LateVisibilityRasterPassName,
+                    PortalVisibilityPassName,
                     ERenderGraphPassStage.Graphics).PassIndex);
         else if (descriptor.Stage == EAdvancedRenderStage.NativeOpaqueShading)
         {
@@ -958,6 +1019,15 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     .SampleTexture(Tex(AdvancedDecalBufferResourceNames.Albedo))
                     .SampleTexture(Tex(AdvancedDecalBufferResourceNames.Surface));
             }
+        }
+        else if (descriptor.Stage == EAdvancedRenderStage.LatePasses)
+        {
+            builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
+            context.ReserveSyntheticPassIndex(PortalSkyUnwindPassName);
+            context.ReserveSyntheticPassIndex(PortalTransparentsPassName);
+            context.ReserveSyntheticPassIndex(PortalUnwindPassName);
+            if (context.HasResource(AdvancedRenderPipeline.ForwardPassFBOName))
+                DescribePortalUnwindPasses(context, builder.PassIndex);
         }
         else if (stageIndex > 0)
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
@@ -994,6 +1064,181 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
             DescribeCanonicalRasterAttachments(context, builder, ERenderPassLoadOp.Load);
     }
 
+    private void SchedulePipelinePortals(
+        AdvancedRenderPipeline pipeline,
+        XRRenderPipelineInstance.RenderingState state,
+        in RenderWorldSnapshot world)
+    {
+        if ((state.TemporalAuthoringViewSet ?? state.FrameViewSet) is not RenderFrameViewSet frozenViews ||
+            frozenViews.ViewCount <= 0)
+        {
+            pipeline.SchedulePortalViews(ReadOnlySpan<AdvancedViewRecord>.Empty, null);
+            ActivePipelineInstance.RecordAdvancedProfilePortalDiagnostic(
+                world.FrameId, pipeline.PortalFramePlan, pipeline.PortalFroxelSlotBudget);
+            return;
+        }
+
+        int viewCount = Math.Min(frozenViews.ViewCount, RenderFrameViewSet.MaxViewCount);
+        Span<AdvancedViewRecord> primaryRecords = stackalloc AdvancedViewRecord[viewCount];
+        BackendReadyFramePackage backendPackage =
+            ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage;
+        for (int viewIndex = 0; viewIndex < viewCount; ++viewIndex)
+        {
+            BackendReadyCanonicalViewRecord canonicalView =
+                BackendReadyFramePackage.CreateCanonicalViewRecord(
+                    frozenViews.GetView(viewIndex), world.FrameId);
+            canonicalView = backendPackage.ApplyCanonicalViewPolicy(canonicalView);
+            primaryRecords[viewIndex] = AdvancedViewRecordFactory.Create(in canonicalView);
+        }
+
+        pipeline.SchedulePortalViews(primaryRecords, world.GpuScene.AdvancedScenePublisher);
+        ActivePipelineInstance.RecordAdvancedProfilePortalDiagnostic(
+            world.FrameId, pipeline.PortalFramePlan, pipeline.PortalFroxelSlotBudget);
+    }
+
+    private void ExecuteLatePassesStage(
+        XRRenderPipelineInstance.RenderingState state,
+        in RenderWorldSnapshot world)
+    {
+        using (PushRenderGraphPass(Descriptor.PassName))
+        {
+            PublishStageDiagnostic(
+                EAdvancedVisibilityStageBackendPhase.Complete,
+                EAdvancedProfileStageDiagnosticState.CommandScopeReached,
+                "The logical stage command scope was reached; no native-stage enqueue belongs to this marker.");
+        }
+
+        if (ActivePipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost { UsesAdvancedStageFamily: true } familyHost)
+            return;
+        AdvancedRenderPipeline pipeline = familyHost.AdvancedStageFamilyDefinition;
+        if (pipeline.IsMinimalVisibilityOutput || pipeline.PortalFramePlan is not { Count: > 0 } portalPlan)
+            return;
+        if (!ActivePipelineInstance.Resources.TryGetFrameBuffer(
+                AdvancedRenderPipeline.ForwardPassFBOName, out XRFrameBuffer? forwardTarget) ||
+            forwardTarget is null)
+            return;
+        if (!TryBuildStageRequest(
+                state,
+                in world,
+                reportRejections: false,
+                out AdvancedVisibilityStageBackendRequest baseRequest,
+                out IAdvancedVisibilityStageBackendCapability? visibility,
+                out _,
+                out string? failureReason) ||
+            visibility is null)
+        {
+            PublishStageDiagnostic(
+                EAdvancedVisibilityStageBackendPhase.PortalUnwind,
+                EAdvancedProfileStageDiagnosticState.RejectedPrerequisite,
+                failureReason);
+            return;
+        }
+
+        AdvancedVisibilityStageBackendRequest unwindBaseRequest = baseRequest with
+        {
+            Target = forwardTarget,
+            IdentityTargetName = AdvancedVisibilityResourceNames.Identity,
+            MetadataTargetName = AdvancedVisibilityResourceNames.Metadata,
+            SelectionTargetName = SingleSampleSelectionTargetName(ActivePipelineInstance),
+            DepthTargetName = AdvancedVisibilityResourceNames.DepthStencil,
+        };
+
+        if (AdvancedPortalTransparentPass.HasReflectedTransparents(
+                portalPlan, ActivePipelineInstance.ActiveMeshRenderCommands))
+        {
+            if (!EnqueueLatePhase(
+                    visibility,
+                    unwindBaseRequest with
+                    {
+                        Phase = EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind,
+                    },
+                    PortalSkyUnwindPassName))
+                return;
+
+            _portalTransparentPass.Execute(
+                ActivePipelineInstance,
+                forwardTarget,
+                portalPlan,
+                PortalTransparentsPassName);
+        }
+
+        _ = EnqueueLatePhase(
+            visibility,
+            unwindBaseRequest with
+            {
+                Phase = EAdvancedVisibilityStageBackendPhase.PortalUnwind,
+            },
+            PortalUnwindPassName);
+    }
+
+    private static void DescribePortalUnwindPasses(
+        RenderGraphDescribeContext context,
+        int lateStagePassIndex)
+    {
+        RenderPassBuilder skyPass = context.GetOrCreateSyntheticPass(
+                PortalSkyUnwindPassName,
+                ERenderGraphPassStage.Graphics)
+            .UseEngineDescriptors()
+            .DependsOn(lateStagePassIndex);
+        DescribeForwardPortalUnwindAttachments(skyPass);
+
+        RenderPassBuilder transparentsPass = context.GetOrCreateSyntheticPass(
+                PortalTransparentsPassName,
+                ERenderGraphPassStage.Graphics)
+            .UseEngineDescriptors()
+            .DependsOn(skyPass.PassIndex);
+        DescribeForwardPortalUnwindAttachments(transparentsPass);
+
+        RenderPassBuilder unwindPass = context.GetOrCreateSyntheticPass(
+                PortalUnwindPassName,
+                ERenderGraphPassStage.Graphics)
+            .UseEngineDescriptors()
+            .DependsOn(transparentsPass.PassIndex);
+        DescribeForwardPortalUnwindAttachments(unwindPass);
+    }
+
+    private static void DescribeForwardPortalUnwindAttachments(RenderPassBuilder builder)
+    {
+        builder.UseColorAttachment(
+            RenderGraphResourceNames.MakeFboColor(AdvancedRenderPipeline.ForwardPassFBOName, 0),
+            ERenderGraphAccess.ReadWrite,
+            ERenderPassLoadOp.Load,
+            ERenderPassStoreOp.Store);
+        builder.UseDepthAttachment(
+            RenderGraphResourceNames.MakeFboDepth(AdvancedRenderPipeline.ForwardPassFBOName),
+            ERenderGraphAccess.ReadWrite,
+            ERenderPassLoadOp.Load,
+            ERenderPassStoreOp.Store);
+        builder.UseStencilAttachment(
+            RenderGraphResourceNames.MakeFboStencil(AdvancedRenderPipeline.ForwardPassFBOName),
+            ERenderGraphAccess.ReadWrite,
+            ERenderPassLoadOp.Load,
+            ERenderPassStoreOp.Store);
+    }
+
+    private static void DescribePortalVisibilityPass(
+        RenderGraphDescribeContext context,
+        bool usesMultisampleVisibility,
+        bool packedSamples)
+    {
+        RenderPassBuilder builder = context.GetOrCreateSyntheticPass(
+                PortalVisibilityPassName,
+                ERenderGraphPassStage.Graphics)
+            .UseEngineDescriptors()
+            .DependsOn(context.GetOrCreateSyntheticPass(
+                LateVisibilityRasterPassName,
+                ERenderGraphPassStage.Graphics).PassIndex)
+            .ReadBuffer(AdvancedVisibilityResourceNames.Candidates)
+            .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
+            .ReadBuffer(AdvancedVisibilityResourceNames.Producers)
+            .ReadBuffer(AdvancedVisibilityResourceNames.PayloadRangeIndices)
+            .ReadBuffer(AdvancedVisibilityResourceNames.RangeArgumentOffsets);
+        if (usesMultisampleVisibility)
+            DescribeMultisampleRasterAttachments(builder, ERenderPassLoadOp.Load, packedSamples);
+        else
+            DescribeCanonicalRasterAttachments(context, builder, ERenderPassLoadOp.Load);
+    }
+
     /// <summary>
     /// The decal buffer pass draws the mesh surface decal bins of the early and late segments.
     /// It clears and writes both decal targets and only tests the final single-sample depth.
@@ -1003,7 +1248,7 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
         RenderPassBuilder builder = context.GetOrCreateSyntheticPass(DecalBufferPassName, ERenderGraphPassStage.Graphics)
             .UseEngineDescriptors()
             .DependsOn(context.GetOrCreateSyntheticPass(
-                usesMultisampleVisibility ? MultisampleVisibilityResolvePassName : LateVisibilityRasterPassName,
+                usesMultisampleVisibility ? MultisampleVisibilityResolvePassName : PortalVisibilityPassName,
                 ERenderGraphPassStage.Graphics).PassIndex)
             .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
             .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
@@ -1027,7 +1272,7 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
     {
         RenderPassBuilder builder = context.GetOrCreateSyntheticPass(MultisampleVisibilityResolvePassName, ERenderGraphPassStage.Graphics)
             .UseEngineDescriptors()
-            .DependsOn(context.GetOrCreateSyntheticPass(LateVisibilityRasterPassName, ERenderGraphPassStage.Graphics).PassIndex)
+            .DependsOn(context.GetOrCreateSyntheticPass(PortalVisibilityPassName, ERenderGraphPassStage.Graphics).PassIndex)
             .SampleTexture(Tex(AdvancedVisibilityResourceNames.IdentityMultisample))
             .SampleTexture(Tex(packedSamples ? AdvancedVisibilityResourceNames.MetadataSelectionMultisample : AdvancedVisibilityResourceNames.MetadataMultisample))
             .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencilMultisample));
@@ -1154,7 +1399,8 @@ public sealed partial class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 break;
 
             case EAdvancedRenderStage.AmbientOcclusion:
-                builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencil))
+                builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata))
+                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencil))
                     .ReadWriteTexture(Tex(AdvancedAmbientOcclusionContract.ResourceName));
                 break;
 

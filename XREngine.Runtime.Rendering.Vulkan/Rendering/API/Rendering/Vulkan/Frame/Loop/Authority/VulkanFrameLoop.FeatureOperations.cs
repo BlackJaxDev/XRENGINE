@@ -18,6 +18,7 @@ internal sealed partial class VulkanFrameLoop
     // Lane groups accepted this frame live in a ring: at most four groups per
     // frame and three frames in flight, each slot validated by render frame id.
     private const int DirectionalShadowLaneRingCapacity = 16;
+    private readonly Lock _directionalShadowLaneRingSync = new();
     private readonly VulkanAdvancedDirectionalShadowLaneStorage[] _directionalShadowLaneRing =
         CreateDirectionalShadowLaneRing();
     private int _directionalShadowLaneRingCursor;
@@ -29,7 +30,8 @@ internal sealed partial class VulkanFrameLoop
                EAdvancedRenderStage.DirectionalShadowRaster or
                EAdvancedRenderStage.AmbientOcclusion or
                EAdvancedRenderStage.WorkClassification or
-               EAdvancedRenderStage.NativeOpaqueShading) &&
+               EAdvancedRenderStage.NativeOpaqueShading or
+               EAdvancedRenderStage.LatePasses) &&
            _commandRuntime.HasAdvancedVisibilityReservationGeneration &&
            _commandRuntime.GetAdvancedVisibilityPhysicalReadiness(out _) ==
                VulkanAdvancedVisibilityPipelineReadiness.Ready &&
@@ -184,27 +186,46 @@ internal sealed partial class VulkanFrameLoop
             RecordRvcShadeletTelemetry = request.RecordRvcShadeletTelemetry,
             ShowOcclusionCulledBounds = request.ShowOcclusionCulledBounds,
             RvcFoveatedQuadShading = request.RvcFoveatedQuadShading,
+            RvcShadeletCacheEnabled = request.RvcShadeletCacheEnabled,
+            RvcStereoReuseEnabled = request.RvcStereoReuseEnabled,
+            RvcForceFullResNear = request.RvcForceFullResNear,
+            RvcDebugViewMode = request.RvcDebugViewMode,
             AdvancedEdgeHalfRateShading = request.AdvancedEdgeHalfRateShading,
             AdvancedEdgeHalfRateRadius = request.AdvancedEdgeHalfRateRadius,
             AdvancedEdgeHalfRateDebugTint = request.AdvancedEdgeHalfRateDebugTint,
             HiddenAreaEllipses = request.HiddenAreaEllipses,
             DecalBufferEnabled = request.DecalBufferEnabled,
             SkipNeutralAmbientOcclusionFill = request.SkipNeutralAmbientOcclusionFill,
+            PortalFramePlan = request.PortalFramePlan,
+            FroxelDepthSlices = Math.Max(1u, request.FroxelDepthSlices),
         };
+        VulkanAdvancedVisibilityInputLease inputLease;
         if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster)
         {
-            if (!TryCaptureDirectionalShadowLane(
-                    in request,
-                    out VulkanAdvancedDirectionalShadowLaneStorage laneStorage,
-                    out failureReason))
+            // Keep the ring slot capture and its copy into the queue lease atomic across
+            // concurrent desktop and OpenXR authors so neither overwrites the other's slot.
+            using (_directionalShadowLaneRingSync.EnterScope())
             {
-                return false;
+                if (!TryCaptureDirectionalShadowLane(
+                        in request,
+                        out VulkanAdvancedDirectionalShadowLaneStorage laneStorage,
+                        out failureReason))
+                {
+                    return false;
+                }
+                vulkanRequest = vulkanRequest with { DirectionalShadowLane = laneStorage };
+                if (!_frameOperationQueue.TryAcquireAdvancedVisibilityInput(
+                        in vulkanRequest,
+                        out inputLease,
+                        out failureReason))
+                {
+                    return false;
+                }
             }
-            vulkanRequest = vulkanRequest with { DirectionalShadowLane = laneStorage };
         }
-        if (!_frameOperationQueue.TryAcquireAdvancedVisibilityInput(
+        else if (!_frameOperationQueue.TryAcquireAdvancedVisibilityInput(
                 in vulkanRequest,
-                out VulkanAdvancedVisibilityInputLease inputLease,
+                out inputLease,
                 out failureReason))
         {
             return false;

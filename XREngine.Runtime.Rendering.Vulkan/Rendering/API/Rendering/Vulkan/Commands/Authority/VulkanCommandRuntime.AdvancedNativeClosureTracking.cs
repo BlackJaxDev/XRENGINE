@@ -54,6 +54,14 @@ internal sealed partial class VulkanCommandRuntime
             TrackAdvancedNativeImageClosure(commandBuffer, closure.RvcDepthArrayResource);
             TrackAdvancedNativeBufferClosure(commandBuffer, closure.RvcTelemetryCounters);
         }
+        if (closure.HasRvcShadeletCache)
+        {
+            TrackAdvancedNativeImageClosure(commandBuffer, closure.RvcPixelToShadeletResource);
+            TrackAdvancedNativeBufferClosure(commandBuffer, closure.RvcShadeletRecords);
+            TrackAdvancedNativeBufferClosure(commandBuffer, closure.RvcShadeletBinIndices);
+            TrackAdvancedNativeBufferClosure(commandBuffer, closure.RvcShadeletShadedOutputs);
+            TrackAdvancedNativeBufferClosure(commandBuffer, closure.RvcShadeletDispatchCounters);
+        }
     }
 
     private void TrackAdvancedNativeImageClosure(CommandBuffer commandBuffer,

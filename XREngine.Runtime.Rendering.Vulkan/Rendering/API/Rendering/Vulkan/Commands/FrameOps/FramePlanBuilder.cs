@@ -979,6 +979,39 @@ internal sealed class FramePlanBuilder
             }
         }
 
+        // A required-producer SubmissionMarkerOp has no resource uses of its own, so
+        // without explicit DAG edges topological sorting can emit the marker before
+        // delayed producer operations in its certified [OriginalIndex - count, OriginalIndex) cohort.
+        for (int index = 0; index < operationCount; index++)
+        {
+            ref readonly FrameOperationHeader header = ref operations.GetHeader(index);
+            if (header.OpCode != EVulkanPrimaryPlanNodeKind.SubmissionMarker)
+                continue;
+
+            ref readonly SubmissionMarkerPayload marker = ref operations.GetSubmissionMarker(index);
+            if (marker.RequiredOperationCount <= 0)
+                continue;
+
+            int markerOriginalIndex = header.OriginalIndex;
+            int firstRequiredOriginalIndex = checked(markerOriginalIndex - marker.RequiredOperationCount);
+            int remaining = marker.RequiredOperationCount;
+            for (int producerIndex = 0; producerIndex < operationCount && remaining > 0; producerIndex++)
+            {
+                if (producerIndex == index)
+                    continue;
+                int producerOriginalIndex = operations.GetHeader(producerIndex).OriginalIndex;
+                if (producerOriginalIndex < firstRequiredOriginalIndex ||
+                    producerOriginalIndex >= markerOriginalIndex)
+                {
+                    continue;
+                }
+
+                AddResourceDependencyEdge(slot, producerIndex, index, ref edgeCount);
+                indegree[index]++;
+                remaining--;
+            }
+        }
+
         for (int priority = 0; priority < operationCount; priority++)
             priorities[preferredOrder[priority]] = priority;
 

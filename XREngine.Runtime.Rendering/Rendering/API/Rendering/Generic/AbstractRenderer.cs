@@ -1750,6 +1750,27 @@ namespace XREngine.Rendering
             => null;
 
         /// <summary>
+        /// True when this backend can record and submit a standalone offscreen capture
+        /// directly without waiting for a desktop swapchain present.
+        /// </summary>
+        internal virtual bool SupportsStandaloneOffscreenCapture => false;
+
+        /// <summary>
+        /// Captures, records, and submits a standalone offscreen framebuffer render directly on
+        /// the graphics queue, returning a completion fence that signals when the GPU finishes.
+        /// </summary>
+        internal virtual bool TryExecuteStandaloneOffscreenCapture(
+            XRFrameBuffer targetFrameBuffer,
+            uint width,
+            uint height,
+            Func<bool> emitOperations,
+            out XRGpuFence? completionFence)
+        {
+            completionFence = null;
+            return false;
+        }
+
+        /// <summary>
         /// Executes a producer whose complete GPU write cohort is required before
         /// its completion fence can certify the output. Immediate backends cannot
         /// roll back partial writes, so they always insert a retention fence after

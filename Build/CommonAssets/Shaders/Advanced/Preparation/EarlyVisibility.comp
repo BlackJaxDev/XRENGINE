@@ -30,6 +30,7 @@ const uint FLAG_CONSERVATIVE = 1u << 4u;
 const uint FLAG_EARLY_VISIBLE = 1u << 5u;
 const uint FLAG_DEFERRED = 1u << 6u;
 const uint FLAG_BOUNDS_REJECTED = 1u << 10u;
+const uint FLAG_PORTAL_SURFACE = 1u << 11u;
 const uint RETEST_AGE_SHIFT = 16u;
 const uint RETEST_AGE_MASK = 15u << RETEST_AGE_SHIFT;
 const uint RETEST_AGE_LIMIT = 7u;
@@ -88,14 +89,19 @@ bool sphereInsideFrustum(vec4 sphere)
         sphereInsidePlane(sphere.xyz, sphere.w, clipW - clipZ);
 }
 
-bool candidateIncludesSelectedView(uvec2 viewMask)
+bool candidateIncludesView(uvec2 viewMask, uint viewIndex)
 {
-    uint viewId = XR_ADV_LoadView(XR_ADV_PREP_VIEW_INDEX).viewId;
+    uint viewId = XR_ADV_LoadView(viewIndex).viewId;
     if (viewId < 32u)
         return (viewMask.x & (1u << viewId)) != 0u;
     if (viewId < 64u)
         return (viewMask.y & (1u << (viewId - 32u))) != 0u;
     return false;
+}
+
+bool candidateIncludesSelectedView(uvec2 viewMask)
+{
+    return candidateIncludesView(viewMask, XR_ADV_PREP_VIEW_INDEX);
 }
 
 bool appendEarly(uint candidateIndex)
@@ -138,7 +144,9 @@ void main()
     // early raster. Only invocation 0 of the row writes the view's parity word,
     // so the flip has one writer.
     if (candidateIndex == 0u &&
-        XR_ADV_MeshletHistoryAvailable(XR_ADV_PREP_VIEW_INDEX))
+        XR_ADV_MeshletHistoryAvailable(XR_ADV_PREP_VIEW_INDEX) &&
+        (XR_ADV_PREP_VIEW_INDEX >= uint(XR_ADV_Views.records.length()) ||
+         (XR_ADV_Views.records[XR_ADV_PREP_VIEW_INDEX].flags & XR_ADV_VIEW_SKIP_HIZ_AND_HISTORY) == 0u))
     {
         XR_ADV_VisibilityMeshletHistory.words[XR_ADV_PREP_VIEW_INDEX] ^= 1u;
     }
@@ -179,6 +187,26 @@ void main()
         return;
     }
 
+    // Portal and mirror sub-views run single-phase frustum visibility without
+    // reading or mutating primary persistent visibility history or deferred lists.
+    // Do not test candidate.ViewMask against primaryViewIndex: candidate.ViewMask
+    // is built from the primary camera frustum, whereas a reflected mirror or
+    // portal sees geometry outside, below, or behind the primary frustum.
+    if (XR_ADV_PREP_VIEW_INDEX < uint(XR_ADV_Views.records.length()) &&
+        (XR_ADV_Views.records[XR_ADV_PREP_VIEW_INDEX].flags & XR_ADV_VIEW_SKIP_HIZ_AND_HISTORY) != 0u)
+    {
+        uint excludedDrawIndex = XR_ADV_Views.records[XR_ADV_PREP_VIEW_INDEX].depthAndExcludeDraw >> 4u;
+        if ((candidate.Flags & (FLAG_BOUNDS_REJECTED | FLAG_PORTAL_SURFACE)) != 0u ||
+            XR_ADV_SelectedViewExcludesInstance(candidateIndex, XR_ADV_PREP_VIEW_INDEX) ||
+            (excludedDrawIndex != 0u && candidate.Draw.x == excludedDrawIndex) ||
+            !sphereInsideFrustum(candidate.BoundsSphere))
+        {
+            return;
+        }
+        appendEarly(candidateIndex);
+        return;
+    }
+
     // History is dense per candidate, not indexed by the stable draw handle.
     // Stable handles may contain tombstone gaps and would let one view's
     // history overlap the next view's segment.
@@ -204,7 +232,7 @@ void main()
         XR_ADV_VisibilityPersistentState.records[persistentWord + 5u]);
     state.DepthPyramidGeneration = XR_ADV_VisibilityPersistentState.records[persistentWord + 6u];
     state.Flags = XR_ADV_VisibilityPersistentState.records[persistentWord + 7u];
-    if ((candidate.Flags & FLAG_BOUNDS_REJECTED) != 0u ||
+    if ((candidate.Flags & (FLAG_BOUNDS_REJECTED | FLAG_PORTAL_SURFACE)) != 0u ||
         !candidateIncludesSelectedView(candidate.ViewMask) ||
         XR_ADV_SelectedViewExcludesInstance(candidateIndex, XR_ADV_PREP_VIEW_INDEX) ||
         XR_ADV_SelectedViewExcludesProjectiveMirror(candidateIndex, XR_ADV_PREP_VIEW_INDEX))

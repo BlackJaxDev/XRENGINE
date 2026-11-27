@@ -895,9 +895,10 @@ internal unsafe partial class VkMeshRenderer(
         // they would be emitted with an invalid pass index and dropped at recording time.
         if (producer.Context.PipelineInstance is null)
             return false;
-        if (!SkinningPrepassDispatcher.ValidateVulkanOutputWitness(
+        if (!SkinningPrepassDispatcher.TryValidateOrRefreshVulkanOutputWitness(
                 MeshRenderer,
-                request.DeformationOutputWitness))
+                request.DeformationOutputWitness,
+                out DeformationOutputWitness effectiveDeformationOutputWitness))
         {
             _ = SetPrepareResult(
                 false,
@@ -906,6 +907,7 @@ internal unsafe partial class VkMeshRenderer(
                 out _);
             return false;
         }
+        ulong effectiveSkinnedOutputSetIdentity = request.SkinnedOutputSetIdentity;
         if (RuntimeRenderingHostServices.FrameTiming.CurrentRenderPipelineContext is null ||
             RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId == 0)
         {
@@ -1048,7 +1050,7 @@ internal unsafe partial class VkMeshRenderer(
 
                 if (!SkinningPrepassDispatcher.ValidateVulkanOutputWitness(
                         MeshRenderer,
-                        request.DeformationOutputWitness))
+                        in effectiveDeformationOutputWitness))
                 {
                     programBindingSnapshot = null;
                     CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
@@ -1059,6 +1061,8 @@ internal unsafe partial class VkMeshRenderer(
                         out _);
                     return false;
                 }
+                if (effectiveDeformationOutputWitness.IsValid)
+                    effectiveSkinnedOutputSetIdentity = MeshRenderer.SkinnedOutputSetIdentity;
 
                 using (VulkanCpuStageScope bindingSnapshotStage = new(
                            materializationSnapshot.Telemetry,
@@ -1158,8 +1162,8 @@ internal unsafe partial class VkMeshRenderer(
             SourceFlatDirection = request.SourceFlatDirection,
             EditorHighlightBits = request.EditorHighlightBits,
             EditorHighlightOutput = request.EditorHighlightOutput,
-            DeformationOutputWitness = request.DeformationOutputWitness,
-            SkinnedOutputSetIdentity = request.SkinnedOutputSetIdentity,
+            DeformationOutputWitness = effectiveDeformationOutputWitness,
+            SkinnedOutputSetIdentity = effectiveSkinnedOutputSetIdentity,
             PassStateFlags = request.PassStateFlags,
             PreparationCompatibilitySignature =
                 request.PreparationCompatibilitySignature,

@@ -89,7 +89,7 @@ internal static class WebGpuAdvancedShadingProgramContract
             if (!HasNativeSchemas(artifact, exports, depthBank, uberRaster, modifiersAbsent, decalsAbsent))
                 throw new NotSupportedException("WebGPU.Advanced.NativeSchemaMismatch: recook native shading and exports with engine-surface schema 6, Uber-base schema 1, the 36-table scene directory, authored-basis/decal/shadow/AO/world-ambient schema 1, and the selected texture-bank contract.");
             for (uint binding = 0; binding < 7; binding++) Require(artifact, 0, binding, "read-only-storage", 4);
-            Require(artifact, 0, 7, "uniform", 944, "FrozenView");
+            Require(artifact, 0, 7, "uniform", FrozenViewByteSize, "FrozenView");
             Require(artifact, 0, 8, "uniform", 160, "Parameters");
             Require(artifact, 1, 0, multisample ? "texture-multisampled-2d-uint" : "texture-2d-uint", name: multisample ? "RawVisibilityIdentity" : "VisibilityIdentity");
             Require(artifact, 1, 1, multisample ? "texture-multisampled-2d-uint" : "texture-2d-uint", name: multisample ? "RawVisibilityMetadataSelection" : "VisibilityMetadata");
@@ -250,6 +250,12 @@ internal static class WebGpuAdvancedShadingProgramContract
 
     private static string Output(uint binding, bool exports) => exports || binding < 2
         ? "storage-texture-2d-write-rgba16float" : binding == 2 ? "storage-texture-2d-write-r32float" : "storage-texture-2d-write-r32uint";
+    /// <summary>
+    /// Byte size of the cooked WebGPU <c>FrozenView</c> uniform block (the prefix of
+    /// <see cref="AdvancedViewRecord"/> preceding trailing portal fields).
+    /// </summary>
+    internal const int FrozenViewByteSize = 944;
+
     private static void Require(ShaderProgramArtifact artifact, uint group, uint binding, string type, uint bytes = 0, string? name = null)
     {
         foreach (ShaderStageResourceLayout resource in artifact.Resources)

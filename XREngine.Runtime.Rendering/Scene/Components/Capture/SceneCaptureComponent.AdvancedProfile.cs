@@ -5,7 +5,16 @@ namespace XREngine.Components.Lights;
 
 public partial class SceneCaptureComponent
 {
-    private bool _useAdvancedCapturePipeline;
+    private bool _useAdvancedCapturePipeline = ShouldDefaultToAdvancedCapturePipeline();
+
+    /// <summary>
+    /// Selects the Advanced HDR capture pipeline by default when Vulkan runs with
+    /// Advanced pipeline selection active, so probes avoid legacy raster shader compilation.
+    /// </summary>
+    private static bool ShouldDefaultToAdvancedCapturePipeline()
+        => RuntimeEngine.Rendering.State.IsVulkan &&
+           RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode is
+               EAdvancedRenderPipelineMode.Available or EAdvancedRenderPipelineMode.Required;
 
     /// <summary>
     /// Requests the capability-gated Advanced HDR capture family. Failure to bind
@@ -21,11 +30,14 @@ public partial class SceneCaptureComponent
         => new(ERenderPipelineOffscreenViewIntent.SceneCapture,
             ERenderPipelineOffscreenOutput.HdrColor, EnableLateTransparency: true);
 
-    private void ConfigureCapturePipeline(XRViewport viewport)
-    {
-        RenderPipelineRequest request = UseAdvancedCapturePipeline
+    private RenderPipelineRequest CreateCapturePipelineRequest()
+        => UseAdvancedCapturePipeline
             ? RenderPipelineRequest.AdvancedOffscreenCapture(AdvancedCaptureIntent)
             : RenderPipelineRequest.OffscreenCapture();
+
+    private void ConfigureCapturePipeline(XRViewport viewport)
+    {
+        RenderPipelineRequest request = CreateCapturePipelineRequest();
         // The shared viewport is serialized by the capture queue. A component's
         // resource refresh cannot reach here while its previous face writer is live.
         bool replace = viewport.PipelineRequest.OffscreenIntent != request.OffscreenIntent ||

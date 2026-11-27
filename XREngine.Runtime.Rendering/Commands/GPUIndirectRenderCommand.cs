@@ -219,6 +219,12 @@ namespace XREngine.Rendering.Commands
         /// discard, or dissolve). Advanced visibility routes the draw to the masked raster, which runs that step.
         /// </summary>
         CoverageDiscard = 1u << 29,
+        /// <summary>
+        /// The draw represents an in-place stencil portal or mirror surface. Primary visibility
+        /// preparation skips it so the portal visibility pass can carve its stencil mask and
+        /// rasterize the reflected scene before depth restoration.
+        /// </summary>
+        PortalSurface = 1u << 30,
     }
 
     public enum GPUSortAlgorithm

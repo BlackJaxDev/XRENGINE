@@ -1,0 +1,46 @@
+#version 450
+// Prepares per-view slice offsets and indirect dispatch group counts for
+// RvcMaterialShadeletShading.comp and overflow direct repair.
+#include "Advanced/Rvc/RvcShadeletCacheInterface.glslinc"
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    bool buildArgs = (u_Push.kernelIndex & RVC_DISPATCH_FLAG_BUILD_ARGS_PHASE) != 0u;
+    if (!buildArgs)
+    {
+        RvcShadeletState.standardDispatch.w = RvcShadeletState.totalStandard;
+        RvcShadeletState.uberDispatch.w = RvcShadeletState.totalUber;
+        RvcShadeletState.overflowDispatch.w = RvcShadeletState.overflowCount;
+        RvcShadeletState.standardSliceCount = 0u;
+        RvcShadeletState.uberSliceCount = 0u;
+        RvcShadeletState.standardDispatch.xyz = uvec3(0u, 1u, 1u);
+        RvcShadeletState.uberDispatch.xyz = uvec3(0u, 1u, 1u);
+        RvcShadeletState.overflowDispatch.xyz = uvec3(0u, 1u, 1u);
+        return;
+    }
+
+    uint stdBase = RvcShadeletState.standardDispatch.w;
+    uint uberBase = RvcShadeletState.uberDispatch.w;
+    uint prevOverflow = RvcShadeletState.overflowDispatch.w;
+    uint stdCount = RvcShadeletState.totalStandard >= stdBase
+        ? RvcShadeletState.totalStandard - stdBase
+        : 0u;
+    uint uberCount = RvcShadeletState.totalUber >= uberBase
+        ? RvcShadeletState.totalUber - uberBase
+        : 0u;
+    uint viewOverflow = RvcShadeletState.overflowCount > prevOverflow
+        ? RvcShadeletState.overflowCount - prevOverflow
+        : 0u;
+
+    RvcShadeletState.standardSliceCount = stdCount;
+    RvcShadeletState.uberSliceCount = uberCount;
+    RvcShadeletState.standardDispatch.xyz = uvec3((stdCount + 63u) / 64u, 1u, 1u);
+    RvcShadeletState.uberDispatch.xyz = uvec3((uberCount + 63u) / 64u, 1u, 1u);
+    // Overflow repair runs linear 64-thread workgroups over screen pixels only when this view overflowed.
+    uint totalPixels = u_Push.screenExtent.x * u_Push.screenExtent.y;
+    RvcShadeletState.overflowDispatch.xyz = viewOverflow > 0u
+        ? uvec3((totalPixels + 63u) / 64u, 1u, 1u)
+        : uvec3(0u, 1u, 1u);
+}

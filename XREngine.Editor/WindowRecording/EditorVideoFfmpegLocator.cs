@@ -15,6 +15,78 @@ internal static class EditorVideoFfmpegLocator
 
     private static readonly object Sync = new();
     private static string? _resolvedPath;
+    private static string? _resolvedRawPipePath;
+    private static readonly Dictionary<string, bool> NvencSupportCache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Tests once whether <paramref name="ffmpegPath"/> can encode H.264 using hardware NVIDIA
+    /// NVENC (<c>h264_nvenc</c>) on the active GPU/driver and caches the result for the session.
+    /// </summary>
+    public static bool SupportsNvenc(string ffmpegPath)
+    {
+        if (string.IsNullOrWhiteSpace(ffmpegPath))
+            return false;
+
+        lock (Sync)
+        {
+            if (NvencSupportCache.TryGetValue(ffmpegPath, out bool cached))
+                return cached;
+        }
+
+        bool supported = ProbeNvencHardwareEncoder(ffmpegPath);
+        lock (Sync)
+            NvencSupportCache[ffmpegPath] = supported;
+        return supported;
+    }
+
+    private static bool ProbeNvencHardwareEncoder(string ffmpegPath)
+    {
+        try
+        {
+            ProcessStartInfo startInfo = new()
+            {
+                FileName = ffmpegPath,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+            string[] args =
+            [
+                "-hide_banner",
+                "-loglevel", "error",
+                "-f", "lavfi",
+                "-i", "color=c=black:s=256x256:d=0.05",
+                "-frames:v", "1",
+                "-c:v", "h264_nvenc",
+                "-preset", "p4",
+                "-pix_fmt", "yuv420p",
+                "-f", "null",
+                "-",
+            ];
+            foreach (string arg in args)
+                startInfo.ArgumentList.Add(arg);
+
+            using Process? process = Process.Start(startInfo);
+            if (process is null)
+                return false;
+
+            Task<string> stderrTask = process.StandardError.ReadToEndAsync();
+            Task<string> stdoutTask = process.StandardOutput.ReadToEndAsync();
+            if (!process.WaitForExit((int)QueryTimeout.TotalMilliseconds))
+            {
+                try { process.Kill(entireProcessTree: true); } catch (Exception) { }
+                return false;
+            }
+            stderrTask.Wait(TimeSpan.FromSeconds(1));
+            stdoutTask.Wait(TimeSpan.FromSeconds(1));
+            return process.ExitCode == 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// Returns an ffmpeg executable with <c>gfxcapture</c> and <c>libx264</c>. The search
@@ -45,6 +117,7 @@ internal static class EditorVideoFfmpegLocator
                 }
 
                 _resolvedPath = candidate;
+                _resolvedRawPipePath ??= candidate;
                 failure = null;
                 return candidate;
             }
@@ -52,6 +125,49 @@ internal static class EditorVideoFfmpegLocator
             failure = rejected.Count == 0
                 ? $"No ffmpeg executable was found. Set {XREngineEnvironmentVariables.FfmpegPath} or put ffmpeg 8.0 or later on PATH."
                 : $"No ffmpeg candidate has both gfxcapture and libx264 ({string.Join("; ", rejected)}). Use ffmpeg 8.0 or later, for example from Tools/Dependencies/Get-PortableFfmpeg.ps1.";
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Returns an ffmpeg executable with <c>libx264</c> for raw-pixel stdin piping (used by the
+    /// in-process renderer readback backend, which does not require <c>gfxcapture</c>).
+    /// </summary>
+    /// <param name="failure">The reason that no candidate was usable, or null on success.</param>
+    public static string? TryResolveForRawPipe(out string? failure)
+    {
+        lock (Sync)
+        {
+            if (_resolvedRawPipePath is not null && File.Exists(_resolvedRawPipePath))
+            {
+                failure = null;
+                return _resolvedRawPipePath;
+            }
+
+            if (_resolvedPath is not null && File.Exists(_resolvedPath))
+            {
+                _resolvedRawPipePath = _resolvedPath;
+                failure = null;
+                return _resolvedPath;
+            }
+
+            List<string> rejected = [];
+            foreach (string candidate in EnumerateCandidates())
+            {
+                if (!SupportsRawPipeEncoding(candidate, out string? reason))
+                {
+                    rejected.Add($"'{candidate}': {reason}");
+                    continue;
+                }
+
+                _resolvedRawPipePath = candidate;
+                failure = null;
+                return candidate;
+            }
+
+            failure = rejected.Count == 0
+                ? $"No ffmpeg executable was found. Set {XREngineEnvironmentVariables.FfmpegPath} or put ffmpeg on PATH."
+                : $"No ffmpeg candidate has libx264 ({string.Join("; ", rejected)}).";
             return null;
         }
     }
@@ -125,6 +241,21 @@ internal static class EditorVideoFfmpegLocator
         }
 
         return null;
+    }
+
+    private static bool SupportsRawPipeEncoding(string ffmpegPath, out string? reason)
+    {
+        string? encoders = RunQuery(ffmpegPath, "-encoders", out reason);
+        if (encoders is null)
+            return false;
+        if (!encoders.Contains("libx264", StringComparison.Ordinal))
+        {
+            reason = "the libx264 encoder is missing (it needs a GPL ffmpeg build)";
+            return false;
+        }
+
+        reason = null;
+        return true;
     }
 
     private static bool SupportsWindowRecording(string ffmpegPath, out string? reason)

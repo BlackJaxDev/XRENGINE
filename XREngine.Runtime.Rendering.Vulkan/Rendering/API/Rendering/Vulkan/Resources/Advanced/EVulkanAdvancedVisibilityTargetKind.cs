@@ -13,4 +13,7 @@ internal enum EVulkanAdvancedVisibilityTargetKind : byte
 
     /// <summary>The mesh surface decal buffer: two RGBA8 targets and the read-only resolved depth.</summary>
     DecalBuffer = 2,
+
+    /// <summary>The HDR forward pass target used for deepest-out portal sky and glass composite unwind.</summary>
+    PortalUnwind = 3,
 }

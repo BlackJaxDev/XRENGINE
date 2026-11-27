@@ -439,7 +439,7 @@ namespace XREngine.Rendering.Commands
             BindStorageBuffer(_resetCountersComputeShader, _visibleMeshletTaskCountBuffer, 10);
             _resetCountersComputeShader.BindBuffer(_meshletDispatchIndirectBuffer, 11);
             _resetCountersComputeShader.BindBuffer(_meshletExpansionOverflowFlagBuffer, 12);
-            _resetCountersComputeShader.BindBuffer(_meshletDispatchCountBuffer, 14);
+            BindStorageBuffer(_resetCountersComputeShader, _meshletDispatchCountBuffer, 14);
 
             _resetCountersComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
 

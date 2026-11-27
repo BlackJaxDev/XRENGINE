@@ -22,4 +22,9 @@ public enum EAdvancedShadingDebugView : uint
     /// producer (indexed draws) are neutral grey.
     /// </summary>
     MeshletId = 11u,
+    /// <summary>
+    /// Colors each pixel by its portal stencil node ID (1..31) with brightness stepped
+    /// by recursion depth. Primary view pixels (node 0) are dark grey.
+    /// </summary>
+    PortalStencilNode = 12u,
 }

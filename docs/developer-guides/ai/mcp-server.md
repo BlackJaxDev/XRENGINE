@@ -704,7 +704,6 @@ The edits enter Undo and do not save assets.
 | `create_scene` | Create a new scene in the active world. |
 | `create_scene_node` | Create a scene node in the active world/scene. |
 | `create_world` | Create a new world with one empty visible scene and make it the active world. save_world writes it to disk. |
-| `cutscene_add_track` | Add a track to the cutscene asset of a director. track_type is transform, camera_cut, camera_property, property, animation_clip, or simulation_control. target_node_id is the node that the track acts on. Each clip has start and duration in seconds, and optional clip_offset, speed, and extrapolation (None, Hold). Curves have times in clip seconds, values (1 number per key for float curves, 3 for position and scale, 4 for rotation as x,y,z,w), and interpolation (Linear or Step). A transform clip uses position, rotation, and scale. A camera_cut clip uses camera_node_id (default: target_node_id). A camera_property clip uses field_of_view. A property clip uses float_curve, vector3_curve, or quaternion_curve with component_type and member_path on the track. An animation_clip clip uses animation_clip_path. A simulation_control track has no clips and uses simulation_policy, warm_up_seconds, and seed. |
 | `cutscene_create_asset` | Create an empty cutscene asset with a duration and assign it to the CutsceneDirectorComponent of a node. The tool adds the director when the node has none. The asset replaces the current asset of the director and is not saved until cutscene_save_asset. |
 | `cutscene_open` | Open a cutscene. In edit mode this starts a preview that restores the scene when it closes. In play mode this opens a director. Uses asset_path (edit mode only), node_id of a node with a CutsceneDirectorComponent, the selected node, or the only director in the world. Set close to true to end the open cutscene. |
 | `cutscene_play` | Play or pause the open cutscene. A negative rate plays backward. At the end of the range the state becomes Paused. |
@@ -761,7 +760,6 @@ The edits enter Undo and do not save assets.
 | `get_method_info` | Get detailed method signature including parameters, return type, generic constraints, and attributes. |
 | `get_model_material_bindings` | Read model source slots, assigned materials, legacy and surface texture bindings, source paths, and sampling metadata. Native Uber preflight does not prove GPU execution. Does not decode textures or read GPU pixels. |
 | `get_network_runtime_measurements` | Read high-rate send, receive, pose application, and relay scope counters plus admission and rejection status. |
-| `get_node_bounds` | Return the world-space bounding box of the renderable meshes on a node and its descendants, in the current pose. Scripts use it to place cameras relative to an object. |
 | `get_node_world_transform` | Get a scene node's world transform (translation, rotation, scale). |
 | `get_object_properties` | Read all property values from any XRBase-derived instance by GUID. |
 | `get_openxr_runtime_diagnostics` | Read the current OpenXR session summary, exact submission ownership ledger and deferred swapchain retirement counters. Does not wait for GPU completion. |
@@ -800,6 +798,7 @@ The edits enter Undo and do not save assets.
 | `get_vulkan_live_resource_owners` | Group live tracked Vulkan native resources by object type and registering owner, largest groups first. Cold diagnostic for locating retained-resource growth; do not poll per frame. |
 | `get_vulkan_memory_statistics` | Return the Vulkan memory allocator's statistics (VMA JSON: usage per heap and memory type, block counts and sizes; with detailed_map, every block and allocation). Cold diagnostic for attributing GPU and mapped memory; do not poll per frame. |
 | `get_vulkan_resource_planner_states` | List the Vulkan renderer's retained resource-planner states (published table and each OpenXR planner with its nested table) with their keys and the physical image memory each allocator holds. Cold diagnostic for attributing duplicated render targets; runs on the render thread between frames. |
+| `get_window_video_recording_status` | Get status, elapsed time, backend, frame counts, and output path for editor window video recording. |
 | `get_world_tick_telemetry` | Read cumulative world tick counters: tick group dispatches, pending registration cost and the costliest kinds of tick callback. Set XRE_WORLD_TICK_TELEMETRY=1 before editor launch to enable observation; compare two reads to observe a window. |
 | `get_zero_readback_material_table_diagnostics` | Return the fixed per-pass zero-readback material-table gate reached by the latest render frame. |
 | `import_scene` | Import a scene asset from disk and add it to the active world. |
@@ -901,6 +900,8 @@ The edits enter Undo and do not save assets.
 | `set_transform` | Set a scene node transform (translation, rotation, scale). |
 | `snapshot_world_state` | Capture an in-memory snapshot of the active world state for later restore. |
 | `start_viewport_sequence_capture` | Start a bounded asynchronous viewport frame-sequence capture with manifest, contact sheet, timing, camera, and image-difference metadata. |
+| `start_window_video_recording` | Start recording an editor window to an MP4 file at up to 60 fps. Supports 'auto', 'wgc', and 'readback' (works on locked/remote desktops). |
+| `stop_window_video_recording` | Stop the active editor window video recording and finalize its MP4 file. |
 | `sweep_render_pipeline_depth` | Read depth from every live render-pipeline FBO that has a depth/stencil attachment at a normalized viewport coordinate. |
 | `toggle_scene_visibility` | Toggle scene visibility. |
 | `transaction_begin` | Begin an MCP transaction by capturing a rollback snapshot of the current world state. |

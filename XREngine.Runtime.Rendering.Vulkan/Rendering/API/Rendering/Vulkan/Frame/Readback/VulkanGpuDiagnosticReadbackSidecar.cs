@@ -186,7 +186,8 @@ internal sealed class VulkanGpuDiagnosticReadbackSidecar
         => decoder is EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters or
             EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters or
             EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters or
-            EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry;
+            EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry or
+            EGpuDiagnosticReadbackDecoder.RvcShadeletCache;
 
     private static bool IsEligible(
         in GpuDiagnosticReadbackPlanNode node,

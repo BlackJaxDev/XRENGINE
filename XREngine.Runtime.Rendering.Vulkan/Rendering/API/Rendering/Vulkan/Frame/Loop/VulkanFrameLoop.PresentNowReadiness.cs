@@ -1693,6 +1693,10 @@ internal sealed partial class VulkanFrameLoop
     private void ResetIncompleteAcceptedPresentNowPlan(
         ref VulkanFrameAttempt attempt)
     {
+        // Release any deformation output receipt uses staged into the shared
+        // ingress before the attempt reached plan transfer, so a failed or
+        // paused desktop frame never pins compute deformation output slots.
+        _preparedMeshIngress.Clear();
         _framePlanner.Operations.DiscardDrainedFrameViewHistoryOwnership();
         VulkanAcceptedFramePlan? acceptedPlan = attempt.AcceptedFramePlan;
         if (acceptedPlan is null)
@@ -1704,6 +1708,7 @@ internal sealed partial class VulkanFrameLoop
 
     private void DiscardPausedPresentNowSceneWork()
     {
+        _preparedMeshIngress.Clear();
         int discardedOperations =
             _framePlanner.Operations.DiscardPausedSceneOperations();
         int discardedMeshRequests = MeshOperationRequests.DiscardPending();

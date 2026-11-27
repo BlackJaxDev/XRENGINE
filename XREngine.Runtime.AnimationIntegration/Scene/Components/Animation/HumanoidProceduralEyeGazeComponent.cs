@@ -100,6 +100,8 @@ public sealed class HumanoidProceduralEyeGazeComponent : XRComponent
     private float _timeSinceLastBlinkSeconds = 2.0f;
     private bool _doubleBlinkPending;
     private float _lastAppliedBlinkWeight = -1.0f;
+    private bool _suppressEyeGaze;
+    private bool _suppressBlinking;
 
     /// <summary>
     /// Target <see cref="HumanoidComponent"/> whose native eye muscles are driven before pose solve.
@@ -192,6 +194,47 @@ public sealed class HumanoidProceduralEyeGazeComponent : XRComponent
     public float CurrentGazePitch => _currentPitch;
     public float CurrentBlinkWeight => MathF.Max(0.0f, _lastAppliedBlinkWeight);
 
+    /// <summary>True when another owner (such as live OSC face tracking) suppresses procedural eye gaze.</summary>
+    public bool SuppressEyeGaze => _suppressEyeGaze;
+
+    /// <summary>True when another owner (such as live OSC face tracking) suppresses procedural blinking.</summary>
+    public bool SuppressBlinking => _suppressBlinking;
+
+    /// <summary>True when either procedural eye gaze or procedural blinking is externally suppressed.</summary>
+    public bool IsExternallySuppressed => _suppressEyeGaze || _suppressBlinking;
+
+    /// <summary>
+    /// Lets an external facial driver (such as live OSC face tracking) suppress procedural eye
+    /// muscles and blink blendshapes without deactivating this component. When blinking enters
+    /// suppression, clears any procedural blink weight once so it does not overwrite face tracking
+    /// on subsequent frames.
+    /// </summary>
+    /// <param name="suppressEyeGaze">True to stop writing humanoid eye muscles.</param>
+    /// <param name="suppressBlinking">True to stop writing blink blendshapes.</param>
+    public void SetExternalSuppression(bool suppressEyeGaze, bool suppressBlinking)
+    {
+        bool wasSuppressed = _suppressEyeGaze || _suppressBlinking;
+        bool blinkingNewlySuppressed = suppressBlinking && !_suppressBlinking;
+
+        _suppressEyeGaze = suppressEyeGaze;
+        _suppressBlinking = suppressBlinking;
+
+        if (blinkingNewlySuppressed)
+        {
+            if (_lastAppliedBlinkWeight > 0.0f)
+                ApplyBlinkWeightToBindings(0.0f);
+            _blinkElapsedSeconds = -1.0f;
+            _lastAppliedBlinkWeight = -1.0f;
+        }
+
+        if (wasSuppressed && (!suppressEyeGaze || !suppressBlinking))
+        {
+            _lastTickTimestamp = Stopwatch.GetTimestamp();
+            if (!suppressBlinking)
+                _timeUntilNextBlinkSeconds = MathF.Min(_timeUntilNextBlinkSeconds, 1.0f);
+        }
+    }
+
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
@@ -223,44 +266,52 @@ public sealed class HumanoidProceduralEyeGazeComponent : XRComponent
     {
         if (!float.IsFinite(deltaSeconds) || deltaSeconds <= 0.0f)
             return;
+        if (_suppressEyeGaze && _suppressBlinking)
+            return;
 
         float dt = Math.Clamp(deltaSeconds, 0.0f, 0.10f);
         HumanoidComponent? humanoid = ResolveHumanoid();
         if (humanoid is null)
             return;
 
-        ReadLocomotionSignals(
-            out Vector2 moveWorldXZ,
-            out int styleIndex,
-            out bool isGrounded,
-            out float verticalVelocity);
+        if (!_suppressEyeGaze)
+        {
+            ReadLocomotionSignals(
+                out Vector2 moveWorldXZ,
+                out int styleIndex,
+                out bool isGrounded,
+                out float verticalVelocity);
 
-        float moveMag = moveWorldXZ.Length();
-        bool isMoving = moveMag > 0.08f;
+            float moveMag = moveWorldXZ.Length();
+            bool isMoving = moveMag > 0.08f;
 
-        ResolveHeadBasis(humanoid, out Vector3 headPos, out Vector3 headForward, out Vector3 headLeft, out Vector3 headUp);
+            ResolveHeadBasis(humanoid, out Vector3 headPos, out Vector3 headForward, out Vector3 headLeft, out Vector3 headUp);
 
-        if (isMoving)
-            UpdateLocomotionGaze(dt, moveWorldXZ, moveMag, styleIndex, isGrounded, verticalVelocity, headForward, headLeft);
-        else
-            UpdateIdleGaze(dt, styleIndex, isGrounded, verticalVelocity, headPos, headForward, headLeft, headUp);
+            if (isMoving)
+                UpdateLocomotionGaze(dt, moveWorldXZ, moveMag, styleIndex, isGrounded, verticalVelocity, headForward, headLeft);
+            else
+                UpdateIdleGaze(dt, styleIndex, isGrounded, verticalVelocity, headPos, headForward, headLeft, headUp);
 
-        _wasMoving = isMoving;
+            _wasMoving = isMoving;
 
-        // Advance eyes with crisp ballistic saccade dynamics (human eyes snap quickly then hold still).
-        float eyeAlpha = 1.0f - MathF.Exp(-SaccadeResponseRatePerSecond * dt);
-        _currentYaw += (_targetYaw - _currentYaw) * eyeAlpha;
-        _currentPitch += (_targetPitch - _currentPitch) * eyeAlpha;
-        _currentVergence += (_targetVergence - _currentVergence) * eyeAlpha;
+            // Advance eyes with crisp ballistic saccade dynamics (human eyes snap quickly then hold still).
+            float eyeAlpha = 1.0f - MathF.Exp(-SaccadeResponseRatePerSecond * dt);
+            _currentYaw += (_targetYaw - _currentYaw) * eyeAlpha;
+            _currentPitch += (_targetPitch - _currentPitch) * eyeAlpha;
+            _currentVergence += (_targetVergence - _currentVergence) * eyeAlpha;
 
-        float leftEyeInOut = Math.Clamp(_currentYaw - _currentVergence, -1.0f, 1.0f);
-        float rightEyeInOut = Math.Clamp(-_currentYaw - _currentVergence, -1.0f, 1.0f);
-        float eyePitch = Math.Clamp(_currentPitch, -1.0f, 1.0f);
+            float leftEyeInOut = Math.Clamp(_currentYaw - _currentVergence, -1.0f, 1.0f);
+            float rightEyeInOut = Math.Clamp(-_currentYaw - _currentVergence, -1.0f, 1.0f);
+            float eyePitch = Math.Clamp(_currentPitch, -1.0f, 1.0f);
 
-        humanoid.SetValue(EHumanoidValue.LeftEyeDownUp, eyePitch);
-        humanoid.SetValue(EHumanoidValue.RightEyeDownUp, eyePitch);
-        humanoid.SetValue(EHumanoidValue.LeftEyeInOut, leftEyeInOut);
-        humanoid.SetValue(EHumanoidValue.RightEyeInOut, rightEyeInOut);
+            humanoid.SetValue(EHumanoidValue.LeftEyeDownUp, eyePitch);
+            humanoid.SetValue(EHumanoidValue.RightEyeDownUp, eyePitch);
+            humanoid.SetValue(EHumanoidValue.LeftEyeInOut, leftEyeInOut);
+            humanoid.SetValue(EHumanoidValue.RightEyeInOut, rightEyeInOut);
+        }
+
+        if (_suppressBlinking)
+            return;
 
         if (_enableBlinking)
             UpdateBlinking(dt);

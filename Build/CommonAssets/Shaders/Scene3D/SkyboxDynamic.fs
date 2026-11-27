@@ -153,6 +153,42 @@ float Fbm6(vec2 p)
     return v;
 }
 
+float Fbm3_2(vec3 p)
+{
+    float v = 0.5 * Noise3(p);
+    p = (FBM3_OCTAVE_ROT * p) * 2.03 + vec3(17.0, 11.0, 5.3);
+    v += 0.25 * Noise3(p);
+    return v * (4.0 / 3.0);
+}
+
+float Fbm3_3(vec3 p)
+{
+    float v = 0.0;
+    float a = 0.5;
+    for (int i = 0; i < 3; ++i)
+    {
+        v += a * Noise3(p);
+        p = (FBM3_OCTAVE_ROT * p) * 2.03 + vec3(17.0, 11.0, 5.3);
+        a *= 0.5;
+    }
+    return v * (8.0 / 7.0);
+}
+
+float Fbm3_4(vec3 p)
+{
+    float v = 0.0;
+    float a = 0.5;
+    float norm = 0.0;
+    for (int i = 0; i < 4; ++i)
+    {
+        v += a * Noise3(p);
+        norm += a;
+        p = (FBM3_OCTAVE_ROT * p) * 2.08 + vec3(4.3, 9.1, 2.7);
+        a *= 0.52;
+    }
+    return v / max(norm, 1e-5);
+}
+
 float Fbm3(vec3 p)
 {
     float v = 0.0;
@@ -365,53 +401,66 @@ void main()
     color = mix(night, color + night * 0.15, clamp(dayFactor + duskFactor * 0.35, 0.0, 1.0));
 
     // --- Seamless directional clouds projected onto a curved planetary cloud dome ---
-    float timeAdvect = SkyCloudSpeed * SkyTimeOfDay * 240.0;
-    vec3 windDir = SafeNormalize3(vec3(0.86, 0.0, 0.51));
-    float cloudDomeDist = ProjectCloudDomeDistance(dir);
-    vec3 cloudP = dir * SkyCloudScale * (cloudDomeDist * 0.72);
-    cloudP.y *= 0.25;
-    vec3 advected = cloudP + windDir * (timeAdvect * 0.45);
-    vec3 cloudWarp = vec3(
-        Fbm3(advected * 0.55 + vec3(3.1, 1.7, 7.4)) - 0.5,
-        0.0,
-        Fbm3(advected * 0.55 + vec3(11.7, 2.9, 2.3)) - 0.5);
-    vec3 warped = advected + cloudWarp * 0.55;
-    float cloudBase = Fbm3_6(warped);
-    float cloudDetail = Noise3(warped * 4.5 - windDir * (timeAdvect * 0.25));
-    float cloudShape = smoothstep(0.26, 0.78, cloudBase * 0.80 + cloudDetail * 0.20);
-    float cloudMask = smoothstep(-0.08, 0.12, dir.y);
-    float horizonCloudFade = smoothstep(0.0, 0.10, dir.y);
-    float cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloudShape, SkyCloudSharpness)) * cloudMask * horizonCloudFade;
+    // Skip below-horizon and zero-coverage pixels before evaluating 3D cloud FBM octaves.
+    float cloud = 0.0;
+    if (dir.y > 0.0 && SkyCloudCoverage > 0.001)
+    {
+        float timeAdvect = SkyCloudSpeed * SkyTimeOfDay * 240.0;
+        vec3 windDir = SafeNormalize3(vec3(0.86, 0.0, 0.51));
+        float cloudDomeDist = ProjectCloudDomeDistance(dir);
+        vec3 cloudP = dir * SkyCloudScale * (cloudDomeDist * 0.72);
+        cloudP.y *= 0.25;
+        vec3 advected = cloudP + windDir * (timeAdvect * 0.45);
+        vec3 cloudWarp = vec3(
+            Fbm3_2(advected * 0.55 + vec3(3.1, 1.7, 7.4)) - 0.5,
+            0.0,
+            Fbm3_2(advected * 0.55 + vec3(11.7, 2.9, 2.3)) - 0.5);
+        vec3 warped = advected + cloudWarp * 0.55;
+        float cloudBase = Fbm3_4(warped);
+        float cloudDetail = Noise3(warped * 4.5 - windDir * (timeAdvect * 0.25));
+        float cloudShape = smoothstep(0.26, 0.78, cloudBase * 0.80 + cloudDetail * 0.20);
+        float cloudMask = smoothstep(-0.08, 0.12, dir.y);
+        float horizonCloudFade = smoothstep(0.0, 0.10, dir.y);
+        cloud = smoothstep(1.0 - SkyCloudCoverage, 1.0, pow(cloudShape, SkyCloudSharpness)) * cloudMask * horizonCloudFade;
 
-    // Cloud shading: directional sun self-shadowing + Beer-Lambert powder + silver lining
-    float sunOffsetDensity = Fbm3(warped + vec3(sunDir.x, 0.0, sunDir.z) * 0.22);
-    float sunLitTerm = clamp((cloudBase - sunOffsetDensity) * 2.4 + 0.55, 0.0, 1.0);
-    float muSun = dot(dir, sunDir);
-    float silver = pow(max(muSun, 0.0), 8.0);
-    float powder = 1.0 - exp(-cloud * 2.5);
-    float litWeight = clamp(mix(powder, sunLitTerm, 0.55), 0.0, 1.0);
-    vec3 cloudLit = mix(vec3(0.11, 0.14, 0.22), vec3(1.00, 0.98, 0.93), dayFactor);
-    vec3 cloudShadow = mix(vec3(0.02, 0.03, 0.06), vec3(0.55, 0.61, 0.74), dayFactor);
-    vec3 cloudColor = mix(cloudShadow, cloudLit, litWeight);
-    cloudColor += vec3(1.30, 0.55, 0.22) * silver * duskFactor * 1.2;
-    // Distant cloud atmospheric perspective blend near the horizon
-    cloudColor = mix(cloudColor, color, smoothstep(0.42, 0.02, dir.y) * 0.72);
-
-    color = mix(color, cloudColor, cloud);
+        if (cloud > 0.001)
+        {
+            // Cloud shading: directional sun self-shadowing + Beer-Lambert powder + silver lining
+            float sunOffsetDensity = Fbm3_3(warped + vec3(sunDir.x, 0.0, sunDir.z) * 0.22);
+            float sunLitTerm = clamp((cloudBase - sunOffsetDensity) * 2.4 + 0.55, 0.0, 1.0);
+            float muSun = dot(dir, sunDir);
+            float silver = pow(max(muSun, 0.0), 8.0);
+            float powder = 1.0 - exp(-cloud * 2.5);
+            float litWeight = clamp(mix(powder, sunLitTerm, 0.55), 0.0, 1.0);
+            vec3 cloudLit = mix(vec3(0.11, 0.14, 0.22), vec3(1.00, 0.98, 0.93), dayFactor);
+            vec3 cloudShadow = mix(vec3(0.02, 0.03, 0.06), vec3(0.55, 0.61, 0.74), dayFactor);
+            vec3 cloudColor = mix(cloudShadow, cloudLit, litWeight);
+            cloudColor += vec3(1.30, 0.55, 0.22) * silver * duskFactor * 1.2;
+            // Distant cloud atmospheric perspective blend near the horizon
+            cloudColor = mix(cloudColor, color, smoothstep(0.42, 0.02, dir.y) * 0.72);
+            color = mix(color, cloudColor, cloud);
+        }
+    }
 
     // --- Sun disc with limb darkening + aureole, cloud occluded ---
-    float cosSun = dot(dir, sunDir);
-    float sunDisc = smoothstep(SkySunDiscSize, 1.0, cosSun);
-    float limbT = clamp((cosSun - SkySunDiscSize) / max(1.0 - SkySunDiscSize, 1e-4), 0.0, 1.0);
-    float limbDark = mix(0.55, 1.0, pow(limbT, 0.5));
-    vec3 sunColor = mix(vec3(1.4, 0.55, 0.18), vec3(1.0, 0.96, 0.88), smoothstep(-0.05, 0.35, sunDir.y));
-    float sunAureole = pow(max(cosSun, 0.0), 96.0) * 0.80 + pow(max(cosSun, 0.0), 32.0) * 0.12;
-    float sunOcclusion = 1.0 - cloud * 0.85;
-    color += sunColor * (sunDisc * 18.0 * limbDark + sunAureole) * dayFactor * sunOcclusion;
+    if (dayFactor > 0.001)
+    {
+        float cosSun = dot(dir, sunDir);
+        float sunDisc = smoothstep(SkySunDiscSize, 1.0, cosSun);
+        float limbT = clamp((cosSun - SkySunDiscSize) / max(1.0 - SkySunDiscSize, 1e-4), 0.0, 1.0);
+        float limbDark = mix(0.55, 1.0, pow(limbT, 0.5));
+        vec3 sunColor = mix(vec3(1.4, 0.55, 0.18), vec3(1.0, 0.96, 0.88), smoothstep(-0.05, 0.35, sunDir.y));
+        float sunAureole = pow(max(cosSun, 0.0), 96.0) * 0.80 + pow(max(cosSun, 0.0), 32.0) * 0.12;
+        float sunOcclusion = 1.0 - cloud * 0.85;
+        color += sunColor * (sunDisc * 18.0 * limbDark + sunAureole) * dayFactor * sunOcclusion;
+    }
 
     // --- Moon ---
-    vec3 moonContribution = ShadeMoon(dir, moonDir, sunDir, nightFactor);
-    color += moonContribution * (1.0 - cloud * 0.9);
+    if (nightFactor > 0.001)
+    {
+        vec3 moonContribution = ShadeMoon(dir, moonDir, sunDir, nightFactor);
+        color += moonContribution * (1.0 - cloud * 0.9);
+    }
 
     // NaN/Inf guard -> safe horizon gradient fallback
     if (any(isnan(color)) || any(isinf(color)))

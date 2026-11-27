@@ -101,6 +101,7 @@ internal static class AnimStateMachineSerialization
             OriginalPath = CookedSourcePathProjection.ProjectOriginalPath(stateMachine, stateMachine.OriginalPath),
             OriginalLastWriteTimeUtc = stateMachine.OriginalLastWriteTimeUtc,
             AnimatePhysics = stateMachine.AnimatePhysics,
+            AllowMissingImportedBindings = stateMachine.AllowMissingImportedBindings,
             Variables = variables,
             Layers = layers
         };
@@ -128,6 +129,7 @@ internal static class AnimStateMachineSerialization
         stateMachine.OriginalPath = model.OriginalPath;
         stateMachine.OriginalLastWriteTimeUtc = model.OriginalLastWriteTimeUtc;
         stateMachine.AnimatePhysics = model.AnimatePhysics;
+        stateMachine.AllowMissingImportedBindings = model.AllowMissingImportedBindings ?? false;
 
         EventDictionary<string, AnimVar> variables = [];
         if (model.Variables is not null)
@@ -236,7 +238,13 @@ internal static class AnimStateMachineSerialization
                 Operation = parameterDriver.Operation,
                 ConstantValue = parameterDriver.ConstantValue,
                 RandomMin = parameterDriver.RandomMin,
-                RandomMax = parameterDriver.RandomMax
+                RandomMax = parameterDriver.RandomMax,
+                RandomChance = parameterDriver.RandomChance,
+                ConvertRange = parameterDriver.ConvertRange,
+                SourceMin = parameterDriver.SourceMin,
+                SourceMax = parameterDriver.SourceMax,
+                DestMin = parameterDriver.DestMin,
+                DestMax = parameterDriver.DestMax
             },
             TrackingControllerComponent trackingController => new AnimStateComponentSerializedModel
             {
@@ -381,7 +389,13 @@ internal static class AnimStateMachineSerialization
                     Operation = model.Operation,
                     ConstantValue = model.ConstantValue,
                     RandomMin = model.RandomMin,
-                    RandomMax = model.RandomMax
+                    RandomMax = model.RandomMax,
+                    RandomChance = model.RandomChance ?? 0.5f,
+                    ConvertRange = model.ConvertRange ?? false,
+                    SourceMin = model.SourceMin ?? 0.0f,
+                    SourceMax = model.SourceMax ?? 1.0f,
+                    DestMin = model.DestMin ?? 0.0f,
+                    DestMax = model.DestMax ?? 1.0f
                 },
                 AnimStateComponentKind.TrackingController => new TrackingControllerComponent
                 {
@@ -456,6 +470,8 @@ internal sealed partial class AnimStateMachineSerializedModel
     public DateTime? OriginalLastWriteTimeUtc { get; set; }
 
     public bool AnimatePhysics { get; set; }
+
+    public bool? AllowMissingImportedBindings { get; set; }
 
     public List<AnimVarSerializedModel> Variables { get; set; } = [];
 
@@ -554,6 +570,18 @@ internal sealed partial class AnimStateComponentSerializedModel
     public float RandomMin { get; set; }
 
     public float RandomMax { get; set; }
+
+    public float? RandomChance { get; set; }
+
+    public bool? ConvertRange { get; set; }
+
+    public float? SourceMin { get; set; }
+
+    public float? SourceMax { get; set; }
+
+    public float? DestMin { get; set; }
+
+    public float? DestMax { get; set; }
 
     public TrackingControllerComponent.ETrackingMode TrackingModeHead { get; set; }
 

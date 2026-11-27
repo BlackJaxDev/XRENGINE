@@ -61,6 +61,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
     private readonly AdvancedSamplerRecord[] _samplerCacheRecords =
         new AdvancedSamplerRecord[SamplerCacheCapacity];
     private readonly Sampler[] _samplerCache = new Sampler[SamplerCacheCapacity];
+    private readonly AdvancedViewRecord[] _viewUploadScratch =
+        new AdvancedViewRecord[RenderFrameViewSet.MaxViewCount + AdvancedPortalSchedulerOptions.HardMaxTotalPortalViewsPerFrame];
     private AdvancedTextureRecord[] _textureRecordScratch = [];
     private readonly VulkanAdvancedTextureReadinessTracker _textureReadiness = new();
     private AdvancedEncodedTextureReference[] _encodedTextureScratch = [];
@@ -285,7 +287,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         int diagnosticCount,
         out VulkanAdvancedScenePublicationUse use,
         out EVulkanAdvancedSceneResourceFailure failure,
-        out string reason)
+        out string reason,
+        ReadOnlySpan<AdvancedViewRecord> portalViews = default)
     {
         ArgumentNullException.ThrowIfNull(database);
         use = default;
@@ -343,7 +346,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
 
             // Scene tables may be shared by several outputs, but their set-0
             // view/frame/pass ranges are immutable and must not alias another view.
-            int existingIndex = slot.Find(database, publication, views, in frame, passes, globalPassCoverage, diagnosticCount);
+            int existingIndex = slot.Find(database, publication, views, in frame, passes, globalPassCoverage, diagnosticCount, portalViews);
             S13aPublicationTelemetry.AdvancedSceneSlotPreparation(existing: existingIndex >= 0);
             if (existingIndex >= 0)
                 return TryArmUse(
@@ -408,13 +411,14 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 return false;
             }
 
-            if (views.Length > RenderFrameViewSet.MaxViewCount)
+            if (views.Length > RenderFrameViewSet.MaxViewCount ||
+                portalViews.Length > AdvancedPortalSchedulerOptions.HardMaxTotalPortalViewsPerFrame)
             {
                 failure = EVulkanAdvancedSceneResourceFailure.InvalidPublication;
-                reason = "The canonical view set exceeds the supported view count.";
+                reason = "The canonical or portal view set exceeds the supported view count.";
                 return false;
             }
-            slot.Entries[slot.EntryCount].Globals!.Capture(views, in frame, passes, globalPassCoverage, diagnosticCount);
+            slot.Entries[slot.EntryCount].Globals!.Capture(views, in frame, passes, globalPassCoverage, diagnosticCount, portalViews);
 
             int sharedEntryIndex = slot.FindPublication(database, in publication);
             bool built = sharedEntryIndex >= 0
@@ -426,6 +430,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     slot.Entries[sharedEntryIndex].RecordedStaleTextureRows,
                     snapshot,
                     views,
+                    portalViews,
                     in frame,
                     passes,
                     diagnosticCount,
@@ -438,6 +443,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                     frameGeneration,
                     snapshot,
                     views,
+                    portalViews,
                     in frame,
                     passes,
                     diagnosticCount,
@@ -726,6 +732,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         ulong frameGeneration,
         AdvancedGpuScenePublicationSnapshot snapshot,
         ReadOnlySpan<BackendReadyCanonicalViewRecord> views,
+        ReadOnlySpan<AdvancedViewRecord> portalViews,
         in BackendReadyCanonicalFrameRecord frame,
         ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
         int diagnosticCount,
@@ -845,7 +852,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         {
             published = TryBuildPublicationWithGeometry(
                 slot, frameSlot, frameGeneration, snapshot, in sharedGeometry,
-                views, in frame, passes, diagnosticCount,
+                views, portalViews, in frame, passes, diagnosticCount,
                 out state, out failure, out reason);
             return published;
         }
@@ -864,6 +871,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         AdvancedGpuScenePublicationSnapshot snapshot,
         in VulkanAdvancedGeometryPublication sharedGeometry,
         ReadOnlySpan<BackendReadyCanonicalViewRecord> views,
+        ReadOnlySpan<AdvancedViewRecord> portalViews,
         in BackendReadyCanonicalFrameRecord frame,
         ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
         int diagnosticCount,
@@ -883,6 +891,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 textureHighWater,
                 samplerHighWater,
                 views.Length,
+                portalViews.Length,
                 passes.Length);
         ulong requiredStorage = allocationPlan.RequiredBytes;
         VulkanFrameDataArena storageArena = _resources.FrameDataArena!;
@@ -1042,6 +1051,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 out VulkanFrameDataSlice decalSlice,
                 out VulkanFrameDataSlice giResourceSlice,
                 views,
+                portalViews,
                 in frame,
                 passes,
                 diagnosticCount,
@@ -1581,6 +1591,14 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} has no strong retained source.";
                 return false;
             }
+            if (source.IsDestroyed)
+            {
+                // A retired runtime texture (for example an offscreen mirror slot torn down after
+                // mode switch) can remain in the canonical texture table until the next prune pass.
+                // Keep encoded reference 0 (not resident) instead of failing the frame permanently.
+                ++staleTextureCount;
+                continue;
+            }
             if (_resources.BackendObjects.Get(source) is not
                     IVkImageDescriptorSource descriptorSource)
             {
@@ -1860,6 +1878,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         out VulkanFrameDataSlice decals,
         out VulkanFrameDataSlice giResources,
         ReadOnlySpan<BackendReadyCanonicalViewRecord> sourceViews,
+        ReadOnlySpan<AdvancedViewRecord> portalViews,
         in BackendReadyCanonicalFrameRecord frame,
         ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
         int diagnosticCount,
@@ -1972,11 +1991,11 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                    out lookups,
                    out lookupSegments) &&
                TryUploadFallbackTable(frameSlot, out fallbackTable) &&
-               TryUploadViews(frameSlot, sourceViews, out views) &&
+               TryUploadViews(frameSlot, sourceViews, portalViews, out views) &&
                TryUploadFrameMetadata(
                    frameSlot,
                    in frame,
-                   sourceViews.Length,
+                   sourceViews.Length + portalViews.Length,
                    passes,
                    diagnosticCount,
                    out frameMetadata) &&
@@ -2354,23 +2373,40 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
     private bool TryUploadViews(
         int frameSlot,
         ReadOnlySpan<BackendReadyCanonicalViewRecord> source,
+        ReadOnlySpan<AdvancedViewRecord> portalViews,
         out VulkanFrameDataSlice slice)
     {
-        // Stereo and multiview frames fit this fixed ABI budget. Rejecting a
-        // wider view family is preferable to allocating in the hot path.
-        if (source.Length > 8)
+        if (source.Length > RenderFrameViewSet.MaxViewCount ||
+            portalViews.Length > AdvancedPortalSchedulerOptions.HardMaxTotalPortalViewsPerFrame)
         {
             slice = default;
             return false;
         }
-        int count = Math.Max(source.Length, 1);
-        Span<AdvancedViewRecord> records = stackalloc AdvancedViewRecord[8];
+
+        int primaryCount = Math.Max(source.Length, 1);
+        if (portalViews.IsEmpty)
+        {
+            Span<AdvancedViewRecord> records = stackalloc AdvancedViewRecord[RenderFrameViewSet.MaxViewCount];
+            for (int index = 0; index < source.Length; ++index)
+                records[index] = AdvancedViewRecordFactory.Create(in source[index]);
+            return _resources.FrameDataArena!.TryAllocateWrite(
+                frameSlot,
+                EVulkanFrameDataLane.AdvancedSceneStorage,
+                MemoryMarshal.AsBytes(records[..primaryCount]),
+                StorageAlignment,
+                out slice);
+        }
+
+        int totalCount = primaryCount + portalViews.Length;
+        Span<AdvancedViewRecord> combined = _viewUploadScratch.AsSpan(0, totalCount);
+        combined[0] = default;
         for (int index = 0; index < source.Length; ++index)
-            records[index] = AdvancedViewRecordFactory.Create(in source[index]);
+            combined[index] = AdvancedViewRecordFactory.Create(in source[index]);
+        portalViews.CopyTo(combined[primaryCount..]);
         return _resources.FrameDataArena!.TryAllocateWrite(
             frameSlot,
             EVulkanFrameDataLane.AdvancedSceneStorage,
-            MemoryMarshal.AsBytes(records[..count]),
+            MemoryMarshal.AsBytes(combined),
             StorageAlignment,
             out slice);
     }
@@ -3203,7 +3239,8 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             AdvancedGpuScenePublicationSnapshot snapshot,
             int textureHighWater,
             int samplerHighWater,
-            int viewCount,
+            int primaryViewCount,
+            int portalViewCount,
             int passCount)
     {
         AdvancedMaterialPublicationSnapshot material =
@@ -3264,8 +3301,9 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
             samplerHighWater + 1));
         plan.AddTransient(AlignUp(FallbackTableByteLength, StorageAlignment));
         plan.AddTransient(CalculateFramePublicationStorageBytes(
-            viewCount,
-            passCount));
+            primaryViewCount,
+            passCount,
+            portalViewCount));
         return plan;
     }
 
@@ -3429,17 +3467,23 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
         plan.SetPatch(owner, patch, bytes, bytes, GetResidentEnd(resident.Slice));
     }
 
-    private static ulong CalculateFramePublicationStorageBytes(
+    internal static ulong CalculateFramePublicationStorageBytes(
         int viewCount,
-        int passCount)
+        int passCount,
+        int portalViewCount = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(viewCount);
         ArgumentOutOfRangeException.ThrowIfNegative(passCount);
-        if (viewCount > 8)
+        ArgumentOutOfRangeException.ThrowIfNegative(portalViewCount);
+        if (viewCount > RenderFrameViewSet.MaxViewCount)
             throw new InvalidOperationException(
-                "The canonical advanced Vulkan ABI supports at most eight views per frame publication.");
+                "The canonical advanced Vulkan ABI supports at most eight primary views per frame publication.");
+        if (portalViewCount > AdvancedPortalSchedulerOptions.HardMaxTotalPortalViewsPerFrame)
+            throw new InvalidOperationException(
+                $"The canonical advanced Vulkan ABI supports at most {AdvancedPortalSchedulerOptions.HardMaxTotalPortalViewsPerFrame} portal sub-views per frame publication.");
 
-        ulong viewBytes = checked((ulong)Math.Max(viewCount, 1) *
+        int totalViews = checked(Math.Max(viewCount, 1) + portalViewCount);
+        ulong viewBytes = checked((ulong)totalViews *
             (uint)Unsafe.SizeOf<AdvancedViewRecord>());
         ulong metadataBytes = checked(
             (ulong)Unsafe.SizeOf<VulkanAdvancedFrameMetadataHeader>() +

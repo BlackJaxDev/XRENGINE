@@ -1461,7 +1461,7 @@ namespace XREngine.Components.Lights
         /// draws nothing, so the records keep their committed values: a tile that is not
         /// drawn must keep the matrix that it was rendered with.
         /// </summary>
-        internal void ApplyPlannedDirectionalCascadeRefreshes(
+        internal uint ApplyPlannedDirectionalCascadeRefreshes(
             ShadowRequestSource source,
             Span<DirectionalShadowGpuRecord> records,
             int cascadeCount,
@@ -1470,6 +1470,7 @@ namespace XREngine.Components.Lights
             ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop
                 : source;
+            uint plannedMask = 0u;
 
             lock (_cascadeDataLock)
             {
@@ -1504,8 +1505,11 @@ namespace XREngine.Components.Lights
                     record.AtlasUvScaleBias = Vector4.Zero;
                     state.PlannedRefreshMatrices[i] = record.CurrentWorldToLight;
                     state.PlannedRefreshPending[i] = true;
+                    plannedMask |= 1u << i;
                 }
             }
+
+            return plannedMask;
         }
 
         /// <summary>

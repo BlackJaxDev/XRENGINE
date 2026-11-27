@@ -259,6 +259,7 @@ vec3 EncodeVelocityDebug(vec2 velocity)
 }
 
 #ifdef XR_TSR_STABLE_OUTPUT
+uniform usampler2DArray TsrVisibilityMetadata;
 float TsrLoadCurrentDepth(ivec2 pixel) { return texelFetch(DepthView, ivec3(pixel, int(gl_ViewID_OVR)), 0).r; }
 vec2 TsrLoadVelocity(ivec2 pixel) { return texelFetch(Velocity, ivec3(pixel, int(gl_ViewID_OVR)), 0).xy; }
 float TsrLoadHistoryDepth(ivec2 pixel) { return texelFetch(HistoryDepth, ivec3(pixel, int(gl_ViewID_OVR)), 0).r; }
@@ -266,6 +267,7 @@ vec4 TsrLoadHistoryColor(ivec2 pixel) { return texelFetch(TsrHistoryColor, ivec3
 vec4 TsrLoadHistoryMetadata(ivec2 pixel) { return texelFetch(TsrHistoryMetadata, ivec3(pixel, int(gl_ViewID_OVR)), 0); }
 vec3 TsrLoadCurrentColor(ivec2 pixel) { return texelFetch(PostProcessOutputTexture, ivec3(pixel, int(gl_ViewID_OVR)), 0).rgb; }
 float TsrLoadCurrentReactivity(ivec2 pixel) { return texelFetch(AdvancedReactiveMask, ivec3(pixel, int(gl_ViewID_OVR)), 0).r; }
+uint TsrLoadVisibilityViewIndex(ivec2 pixel) { return (texelFetch(TsrVisibilityMetadata, ivec3(pixel, int(gl_ViewID_OVR)), 0).r >> 8u) & 0xFFu; }
 #endif
 #ifdef XR_TSR_EDGE_MASK
 // Edge mask of this frame, written at internal resolution by the edge-mask pass.
@@ -408,7 +410,6 @@ void main()
     ComputeNeighborhoodBounds(uv, minBound, maxBound, meanYCoCg, sampleMin, sampleMax);
     float historyAge = 0.0;
 
-    float currentDepth = texture(DepthView, EyeUv(uv)).r;
     vec3 historyYCoCg = currentYCoCg;
     bool canUseHistory = TsrCanSampleHistory(HistoryReady, historyUV);
     canUseHistory = canUseHistory && !isPostTemporalForward
@@ -417,6 +418,8 @@ void main()
     bool historyAllowed = canUseHistory;
     float surfaceSupport = 0.0;
     float rejectionReason = 1.0;
+#else
+    float currentDepth = texture(DepthView, EyeUv(uv)).r;
 #endif
 
     if (canUseHistory)
@@ -447,12 +450,13 @@ void main()
 #endif
     }
 
+    float motionMask = TsrComputeMotionMask(velocity, ReactiveVelocityScale);
     // Preserve mature, surface-validated rare detail within the observed range.
 #ifdef XR_TSR_STABLE_OUTPUT
     float canonicalReactive = clamp(texture(AdvancedReactiveMask, EyeUv(uv)).r, 0.0, 1.0);
     TsrCoverageResult coverage = TsrResolveCoverage(uv, historyUV, currentJitter, previousJitter,
         historyAllowed, isPostTemporalForward ? 1.0 : canonicalReactive,
-        TsrComputeMotionMask(velocity, ReactiveVelocityScale), currentLuma, depthDiscontinuity);
+        motionMask, currentLuma, depthDiscontinuity);
     bool writeCoverageState = false;
     if (coverage.historyValid)
     {
@@ -470,7 +474,7 @@ void main()
         writeCoverageState = true;
     }
     float detailProtection = TsrComputeDetailProtection(canUseHistory, historyAge,
-        TsrComputeMotionMask(velocity, ReactiveVelocityScale), canonicalReactive);
+        motionMask, canonicalReactive);
     minBound = mix(minBound, min(minBound, sampleMin), detailProtection);
     maxBound = mix(maxBound, max(maxBound, sampleMax), detailProtection);
     minBound = mix(minBound, min(minBound, coverage.colorMin), coverage.retention);
@@ -478,7 +482,6 @@ void main()
 #endif
     vec3 clippedHistory = TsrClipHistoryToNeighborhood(historyYCoCg, minBound, maxBound);
     float historyLuma = TsrRgbToYCoCg(TsrExpandHdrColor(TsrYCoCgToRgb(clippedHistory))).x;
-    float motionMask = TsrComputeMotionMask(velocity, ReactiveVelocityScale);
     float geometryInstability = TsrComputeGeometryInstability(depthDiscontinuity, motionMask);
     float reactiveMask = TsrComputeReactiveMask(
         currentSample.a,
@@ -487,7 +490,9 @@ void main()
         motionMask,
         ReactiveTransparencyRange,
         ReactiveLumaThreshold);
-#ifdef XR_ADVANCED_REACTIVE_MASK
+#ifdef XR_TSR_STABLE_OUTPUT
+    reactiveMask = max(reactiveMask, canonicalReactive);
+#elif defined(XR_ADVANCED_REACTIVE_MASK)
     reactiveMask = max(reactiveMask, clamp(texture(AdvancedReactiveMask, EyeUv(uv)).r, 0.0, 1.0));
 #endif
     float confidence = TsrComputeConfidence(

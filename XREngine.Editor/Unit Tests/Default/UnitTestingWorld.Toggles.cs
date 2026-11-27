@@ -114,8 +114,8 @@ public static partial class EditorUnitTests
     {
         public UnitTestingVrLaunchMode Mode { get; set; } = UnitTestingVrLaunchMode.Desktop; //Selects the VR launch path: Desktop, Emulated scene-only VR, Monado-backed OpenXR, vendor OpenVR, or vendor OpenXR.
         public EVrViewRenderMode ViewRenderMode { get; set; } = EVrViewRenderMode.ParallelCommandBufferRecording; //Requests how VR eye views are rendered. OpenXR Vulkan SinglePassStereo strictly requires true layered multiview rendering and never falls back to per-eye rendering; unavailable capabilities are logged and the XR output is not rendered.
-        public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Default; //Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (every view mode), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.
-        public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.Off; //Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.
+        public EVrRenderPipeline RenderPipeline { get; set; } = EVrRenderPipeline.Rvc; //Selects the VR eye pipeline: Default (plain DefaultRenderPipeline, every view mode), Advanced (every view mode), or Rvc (SinglePassStereo and ParallelCommandBufferRecording). An unsupported pair renders no XR output and logs a diagnostic; no other pipeline is used.
+        public ERvcPipelineMode RvcPipelineMode { get; set; } = ERvcPipelineMode.ForwardPlusOracle; //Requested RVC mode when RenderPipeline is Rvc. Off, or a mode that the RVC resolver cannot run, renders no XR output.
         public bool AdvancedEdgeHalfRateShading { get; set; } = false; //Advanced eyes shade one pixel for each 2x2 block of the same triangle outside AdvancedEdgeHalfRateRadius and copy it to the rest of the block. Vulkan eyes without MSAA only; the desktop view is never affected.
         public float AdvancedEdgeHalfRateRadius { get; set; } = 0.6f; //Full-rate radius around the lens center of each eye, as a fraction of the half extent of the eye image, in steps of 0.05.
         public bool AdvancedEdgeHalfRateDebugTint { get; set; } = false; //Diagnostic: tints the 2x2 blocks that Advanced edge half-rate shading shades at half rate.
@@ -488,6 +488,7 @@ public static partial class EditorUnitTests
         public bool LipSync = true; //Adds a lip sync component to the avatar for testing.
         public bool FaceMotion3D = false; //Adds a face motion 3D capture component to the avatar for testing.
         public bool FaceTracking = false; //Adds a face tracking component to the avatar for testing.
+        public UnitTestingFaceTrackingSettings FaceTrackingSettings { get; set; } = new(); //Configures VRCFT VPM template conversion, dynamic OSC parameter binding, and OSCQuery discovery when FaceTracking is enabled.
 
         //Animation
         public bool AnimationClipVMD = false; //Imports a VMD animation clip for testing.

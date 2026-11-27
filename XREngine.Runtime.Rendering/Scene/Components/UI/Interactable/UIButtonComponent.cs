@@ -20,13 +20,48 @@ namespace XREngine.Rendering.UI
         private ColorF4 _highlightTextColor = ColorF4.White;
 
         protected override void OnMouseDirectOverlapEnter()
-            => Highlight();
+            => UpdateHighlightState(mouseDirectlyOver: true, gamepadSelected: IsGamepadSelected);
         protected override void OnMouseDirectOverlapLeave()
-            => Unhighlight();
+            => UpdateHighlightState(mouseDirectlyOver: false, gamepadSelected: IsGamepadSelected);
         protected override void OnGamepadNavigateEnter()
-            => Highlight();
+            => UpdateHighlightState(mouseDirectlyOver: IsMouseDirectlyOver, gamepadSelected: true);
         protected override void OnGamepadNavigateLeave()
-            => Unhighlight();
+            => UpdateHighlightState(mouseDirectlyOver: IsMouseDirectlyOver, gamepadSelected: false);
+
+        protected override void OnGotFocus()
+        {
+            base.OnGotFocus();
+            if (_style is not null)
+                ApplyStyleForCurrentState(immediate: false, gamepadSelected: IsGamepadSelected, focused: true);
+        }
+
+        protected override void OnLostFocus()
+        {
+            base.OnLostFocus();
+            if (_isPressed)
+                IsPressed = false;
+            if (_style is not null)
+                ApplyStyleForCurrentState(immediate: false, gamepadSelected: IsGamepadSelected, focused: false);
+        }
+
+        private void UpdateHighlightState(bool mouseDirectlyOver, bool gamepadSelected)
+        {
+            bool shouldHighlight = mouseDirectlyOver || gamepadSelected;
+            if (shouldHighlight)
+            {
+                if (!IsHighlighted)
+                    Highlight(gamepadSelected);
+                else if (_style is not null)
+                    ApplyStyleForCurrentState(immediate: false, gamepadSelected: gamepadSelected, focused: IsFocused);
+            }
+            else
+            {
+                if (IsHighlighted)
+                    Unhighlight(gamepadSelected);
+                else if (_style is not null)
+                    ApplyStyleForCurrentState(immediate: false, gamepadSelected: gamepadSelected, focused: IsFocused);
+            }
+        }
 
         public void RegisterClickActions(params Action<UIInteractableComponent>[] actions)
         {
@@ -43,6 +78,12 @@ namespace XREngine.Rendering.UI
         {
             base.OnComponentActivated();
 
+            if (_style is not null)
+            {
+                ApplyStyleForCurrentState(immediate: true);
+                return;
+            }
+
             var bg = BackgroundMaterialComponent?.Material;
             bg?.SetVector4(BackgroundColorUniformName, DefaultBackgroundColor);
 
@@ -53,6 +94,45 @@ namespace XREngine.Rendering.UI
 
         public UIMaterialComponent? BackgroundMaterialComponent => GetSiblingComponent<UIMaterialComponent>();
         public UITextComponent? TextComponent => SceneNode?.FirstChild?.GetComponent<UITextComponent>();
+
+        private UIStyle? _style;
+        /// <summary>
+        /// Optional CSS-inspired style preset driving smooth hover, pressed, and default transitions.
+        /// When null, the button falls back to direct <see cref="DefaultBackgroundColor"/> and
+        /// <see cref="HighlightBackgroundColor"/> assignment.
+        /// </summary>
+        public UIStyle? Style
+        {
+            get => _style;
+            set
+            {
+                if (SetField(ref _style, value) && value is not null)
+                    ApplyStyleForCurrentState(immediate: true);
+            }
+        }
+
+        private bool _isPressed;
+        /// <summary>
+        /// Gets a value indicating whether the button is currently in the pressed visual state.
+        /// </summary>
+        public bool IsPressed
+        {
+            get => _isPressed;
+            private set => SetField(ref _isPressed, value);
+        }
+
+        /// <summary>
+        /// Updates the pressed visual state and triggers any configured <see cref="Style"/> transition.
+        /// </summary>
+        public void SetPressed(bool pressed)
+        {
+            if (_isPressed == pressed)
+                return;
+
+            IsPressed = pressed;
+            if (_style is not null)
+                ApplyStyleForCurrentState(immediate: false);
+        }
 
         public ColorF4 DefaultBackgroundColor
         {
@@ -130,25 +210,83 @@ namespace XREngine.Rendering.UI
         }
 
         protected virtual void Highlight()
+            => Highlight(IsGamepadSelected);
+
+        private void Highlight(bool gamepadSelected)
         {
             if (IsHighlighted)
                 return;
 
             IsHighlighted = true;
 
+            if (_style is not null)
+            {
+                ApplyStyleForCurrentState(immediate: false, gamepadSelected: gamepadSelected, focused: IsFocused);
+                return;
+            }
+
             SetBackgroundHighlighted();
             SetTextHighlighted();
         }
 
         protected virtual void Unhighlight()
+            => Unhighlight(IsGamepadSelected);
+
+        private void Unhighlight(bool gamepadSelected)
         {
             if (!IsHighlighted)
                 return;
 
             IsHighlighted = false;
+            if (_isPressed)
+                IsPressed = false;
+
+            if (_style is not null)
+            {
+                ApplyStyleForCurrentState(immediate: false, gamepadSelected: gamepadSelected, focused: IsFocused);
+                return;
+            }
 
             SetBackgroundDefault();
             SetTextDefault();
+        }
+
+        private void ApplyStyleForCurrentState(bool immediate)
+            => ApplyStyleForCurrentState(immediate, IsGamepadSelected, IsFocused);
+
+        private void ApplyStyleForCurrentState(bool immediate, bool gamepadSelected, bool focused)
+        {
+            if (_style is null)
+                return;
+
+            EUIInteractionState state = _isPressed
+                ? EUIInteractionState.Pressed
+                : gamepadSelected
+                    ? (_style.Focused is not null ? EUIInteractionState.Focused : EUIInteractionState.Hover)
+                    : IsHighlighted
+                        ? EUIInteractionState.Hover
+                        : focused
+                            ? EUIInteractionState.Focused
+                            : EUIInteractionState.Default;
+
+            UIStyleProperties resolved = _style.ResolveForState(state);
+            UIStyleAnimatorComponent? animator = GetSiblingComponent<UIStyleAnimatorComponent>()
+                ?? SceneNode?.AddComponent<UIStyleAnimatorComponent>();
+            if (animator is null)
+                return;
+
+            if (immediate)
+            {
+                animator.ApplyImmediate(in resolved);
+            }
+            else
+            {
+                animator.TransitionTo(
+                    in resolved,
+                    _style.ColorTransition,
+                    _style.TransformTransition,
+                    _style.BlurTransition);
+            }
         }
 
         private void SetTextHighlighted()

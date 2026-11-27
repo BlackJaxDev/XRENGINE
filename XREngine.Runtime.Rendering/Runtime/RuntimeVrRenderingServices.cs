@@ -18,6 +18,7 @@ public interface IRuntimeVrRenderModelHandle : IDisposable
     bool IsLoaded { get; }
     void Clear();
     void LoadModelAsync(RuntimeVrRenderModelDescriptor? renderModel);
+    void SetVisible(bool visible) { }
 }
 
 public enum RuntimeVrRenderModelSourceKind
@@ -37,7 +38,8 @@ public sealed class RuntimeVrRenderModelDescriptor
         RuntimeVrRenderModelSourceKind sourceKind,
         string? openVrModelName,
         byte[]? binaryModelData,
-        string? binaryModelFileExtension)
+        string? binaryModelFileExtension,
+        bool alignOpenVrModelToGripPose = false)
     {
         Key = key;
         DisplayName = displayName;
@@ -45,6 +47,7 @@ public sealed class RuntimeVrRenderModelDescriptor
         OpenVrModelName = openVrModelName;
         BinaryModelData = binaryModelData;
         BinaryModelFileExtension = binaryModelFileExtension;
+        AlignOpenVrModelToGripPose = alignOpenVrModelToGripPose;
     }
 
     public string Key { get; }
@@ -53,9 +56,21 @@ public sealed class RuntimeVrRenderModelDescriptor
     public string? OpenVrModelName { get; }
     public byte[]? BinaryModelData { get; }
     public string? BinaryModelFileExtension { get; }
+    public bool AlignOpenVrModelToGripPose { get; }
 
-    public static RuntimeVrRenderModelDescriptor FromOpenVrModelName(string modelName, string key, string displayName)
-        => new(key, displayName, RuntimeVrRenderModelSourceKind.OpenVrDeviceModel, modelName, null, null);
+    public static RuntimeVrRenderModelDescriptor FromOpenVrModelName(
+        string modelName,
+        string key,
+        string displayName,
+        bool alignOpenVrModelToGripPose = false)
+        => new(
+            key,
+            displayName,
+            RuntimeVrRenderModelSourceKind.OpenVrDeviceModel,
+            modelName,
+            null,
+            null,
+            alignOpenVrModelToGripPose);
 
     public static RuntimeVrRenderModelDescriptor FromOpenXrControllerModel(byte[] glbData, string key, string displayName)
         => new(key, displayName, RuntimeVrRenderModelSourceKind.OpenXrControllerModel, null, glbData, ".glb");

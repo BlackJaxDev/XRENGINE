@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using XREngine.Components.Physics;
 using XREngine.Components.Movement;
 using XREngine.Rendering;
@@ -215,7 +216,7 @@ public static class RuntimeRenderingBootstrap
 
             DisposeStep(renderingHost, ref failures);
             if (failures is [Exception failure])
-                throw failure;
+                ExceptionDispatchInfo.Capture(failure).Throw();
             if (failures is { Count: > 1 })
                 throw new AggregateException("Runtime rendering services failed to tear down cleanly.", failures);
         }

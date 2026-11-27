@@ -130,7 +130,7 @@ internal sealed partial class VulkanFrameLoop
             if (capturedOps is not null)
             {
                 VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(capturedOps);
-                VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
+                VulkanFrameOperationQueue.ReleaseAndClearCapturedOperations(capturedOps);
             }
             OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth--;
         }
@@ -250,7 +250,7 @@ internal sealed partial class VulkanFrameLoop
             if (capturedOps is not null)
             {
                 VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(capturedOps);
-                VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
+                VulkanFrameOperationQueue.ReleaseAndClearCapturedOperations(capturedOps);
             }
             OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth--;
         }
@@ -315,7 +315,7 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
-            VulkanAdvancedVisibilityInputLease.ReleaseOperations(ops);
+            VulkanFrameOperationQueue.ReleaseAndClearCapturedOperations(ops);
         }
         return frozen;
     }
@@ -501,10 +501,27 @@ internal sealed partial class VulkanFrameLoop
         if (!TryRefreshResourceRegistryWrappers(plannerContext.ResourceRegistry, visitedRegistries, reason, allowSynchronousUpload, out failureReason))
             return false;
 
-        foreach (FrameOp op in ops)
+        for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
+            FrameOp op = ops[opIndex];
             if (!TryRefreshResourceRegistryWrappers(op.Context.ResourceRegistry, visitedRegistries, reason, allowSynchronousUpload, out failureReason))
                 return false;
+
+            // Prepare every operation framebuffer target (including external ShadowAtlas pages
+            // and Advanced visibility targets) before primary recording validates native extents.
+            if (op.Target is XRFrameBuffer target && visitedRegistries.Add(target))
+            {
+                using ExternalResourcePlannerReadbackScope opPlannerScope =
+                    EnterFrameOpResourcePlannerReadbackScope(in op.ContextReference);
+                if (!TryPrepareFrameOperationTargetCore(
+                        target,
+                        allowSynchronousUpload,
+                        out _,
+                        out failureReason))
+                {
+                    return false;
+                }
+            }
         }
 
         return true;

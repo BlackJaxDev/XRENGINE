@@ -37,8 +37,26 @@ public class VPRC_RvcPass : ViewportRenderCommand
             (plan.GpuPassExecution.BackendImplementedStages & Stage) != 0;
     }
 
+    private const ERvcGpuPassStage VulkanImplementedStages =
+        ERvcGpuPassStage.VisibilityTargets |
+        ERvcGpuPassStage.OpenXrVisibilityMaskStencil |
+        ERvcGpuPassStage.AttributeReconstruction |
+        ERvcGpuPassStage.HzbRejection |
+        ERvcGpuPassStage.PixelToShadeletMap |
+        ERvcGpuPassStage.MaterialShadeletShading |
+        ERvcGpuPassStage.FoveatedShadingRate |
+        ERvcGpuPassStage.ReuseValidation |
+        ERvcGpuPassStage.FoveatedResolve |
+        ERvcGpuPassStage.DiagnosticOverlay;
+
     protected override void Execute()
     {
+        if (ParentPipeline is RvcRenderPipeline { IsShadeletCacheActive: true } &&
+            (VulkanImplementedStages & Stage) != 0)
+        {
+            return;
+        }
+
         Debug.RenderingWarningEvery(
             $"RVC.Pass.{Stage}.KernelPending",
             TimeSpan.FromSeconds(5),

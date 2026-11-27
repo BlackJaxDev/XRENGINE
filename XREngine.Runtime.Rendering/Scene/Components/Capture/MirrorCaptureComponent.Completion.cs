@@ -18,6 +18,8 @@ public partial class MirrorCaptureComponent
                         publishedTexture = view.Published?.Texture?.ID,
                         first = view.Slots[0].GetDiagnostics(),
                         second = view.Slots[1].GetDiagnostics(),
+                        third = CaptureSlotsPerCamera > 2 ? view.Slots[2].GetDiagnostics() : null,
+                        fourth = CaptureSlotsPerCamera > 3 ? view.Slots[3].GetDiagnostics() : null,
                     };
             return new
             {
@@ -36,6 +38,7 @@ public partial class MirrorCaptureComponent
     }
     private void RequestMirrorRetirement()
     {
+        UnregisterPortalSurfaceFromWorld();
         lock (_mirrorLifetimeSync)
         {
             _retirementRequested = true;
@@ -62,13 +65,22 @@ public partial class MirrorCaptureComponent
             }
             if (_captureWindow is { } window)
             {
-                window.RenderViewportsCallback -= AdvanceMirrorCaptures;
+                window.PreRenderViewportsCallback -= AdvanceMirrorCapturesFromPreRender;
                 _captureWindow = null;
             }
+            if (_beforeXrEyeRenderSubscribed)
+            {
+                RuntimeEngine.VRState.BeforeXrEyeRender -= AdvanceMirrorCapturesForXr;
+                _beforeXrEyeRenderSubscribed = false;
+            }
+            _lastMirrorCaptureFrameId = ulong.MaxValue;
             WithdrawAllViews();
             if (!RetireViews())
                 return false;
             Array.Clear(_requestedCameras);
+            Array.Clear(_requestedCameraLastSeenFrame);
+            Array.Clear(_requestedCameraIsStereoEye);
+            Array.Clear(_slotRebindRequested);
             _retirementQueued = false;
             _capacityWarning = false;
             return true;
@@ -77,41 +89,53 @@ public partial class MirrorCaptureComponent
     private void WithdrawAllViews()
     {
         _nativeDisplay.Enabled = false;
+        ClearStereoTransparentDisplays();
         for (int i = 0; i < CameraCapacity; ++i)
-        {
-            _nativeMaterial.WithdrawView(i);
-            if (_views[i] is not { } view)
-                continue;
-            view.Published = null;
-            for (int j = 0; j < CaptureSlotsPerCamera; ++j)
-                view.Slots[j].Capture.WithdrawPublishedOutput();
-        }
+            WithdrawSingleView(i);
+    }
+    private void WithdrawSingleView(int index)
+    {
+        _nativeMaterial.WithdrawView(index);
+        ClearStereoTransparentDisplays();
+        if (_views[index] is not { } view)
+            return;
+        view.Published = null;
+        for (int j = 0; j < CaptureSlotsPerCamera; ++j)
+            view.Slots[j].Capture.WithdrawPublishedOutput();
     }
     private bool RetireViews()
     {
         bool retired = true;
         for (int i = 0; i < CameraCapacity; ++i)
-        {
-            if (_views[i] is not { } view)
-                continue;
-            bool viewRetired = true;
-            for (int j = 0; j < CaptureSlotsPerCamera; ++j)
-            {
-                MirrorCaptureSlot slot = view.Slots[j];
-                slot.SettleReaders();
-                slot.Node.IsActiveSelf = false;
-                if (!slot.Capture.ResourcesRetired || !slot.ReadersRetired)
-                    viewRetired = false;
-            }
-            if (!viewRetired)
-            {
+            if (!RetireSingleView(i))
                 retired = false;
-                continue;
-            }
-            for (int j = 0; j < CaptureSlotsPerCamera; ++j)
-                view.Slots[j].Node.Destroy();
-            _views[i] = null;
+        if (retired)
+        {
+            _sharedAdvancedPipeline?.Destroy();
+            _sharedAdvancedPipeline = null;
+            _sharedDefaultPipeline?.Destroy();
+            _sharedDefaultPipeline = null;
         }
         return retired;
+    }
+    private bool RetireSingleView(int index)
+    {
+        if (_views[index] is not { } view)
+            return true;
+        bool viewRetired = true;
+        for (int j = 0; j < CaptureSlotsPerCamera; ++j)
+        {
+            MirrorCaptureSlot slot = view.Slots[j];
+            slot.SettleReaders();
+            slot.Node.IsActiveSelf = false;
+            if (!slot.Capture.ResourcesRetired || !slot.ReadersRetired)
+                viewRetired = false;
+        }
+        if (!viewRetired)
+            return false;
+        for (int j = 0; j < CaptureSlotsPerCamera; ++j)
+            view.Slots[j].Node.Destroy();
+        _views[index] = null;
+        return true;
     }
 }

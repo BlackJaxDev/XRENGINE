@@ -1,8 +1,11 @@
 # Planar mirror capture
 
-`MirrorCaptureComponent` renders a planar reflection into a private offscreen
-capture and displays that result on the mirror surface. It is an in-world
-render-to-texture feature; it does not request main-view post-processing work.
+`MirrorCaptureComponent` renders planar reflections using two capture modes selected by `EMirrorCaptureMode` (`CaptureMode`):
+
+- `OffscreenCapture` (default): renders a planar reflection into a private offscreen capture target and displays that result on the mirror surface. It is an in-world render-to-texture feature and does not request main-view post-processing work.
+- `InPlaceStencil`: renders the mirror directly inside the main `AdvancedRenderPipeline` visibility buffer and HDR target using stencil-masked portal sub-views (`AdvancedStencilBitLayout` bits `2..6`, mask `0x7C`) without allocating offscreen capture targets or running a separate scene collection.
+
+The legacy `AdvancedForwardMirrorComponent` is removed; `MirrorCaptureComponent` owns both planar mirror modes.
 
 ## Authoring
 
@@ -11,7 +14,19 @@ the owning node so its positive local Z faces the reflecting side. Node scale
 sets the display plane size; a scale of `4, 4, 4` creates a four-unit quad in
 the plane's local axes.
 
-`UseAdvancedCapturePipeline` selects the capture and display path:
+### In-place stencil mode (`EMirrorCaptureMode.InPlaceStencil`)
+
+In `InPlaceStencil` mode on `AdvancedRenderPipeline`, the component allocates no private offscreen capture banks, registers with `AdvancedGpuScenePublisher` as an `IAdvancedPortalSurfaceProvider`, and tags its canonical display draw with `GPUIndirectRenderFlags.PortalSurface` so primary opaque visibility skips the mirror quad.
+
+- `MsaaShadingMode` (`EMirrorMsaaShadingMode`): selects `SingleSample` (default, caches radiance per portal sub-view on MSAA frames) or `PerSample` (full per-sample shading inside the mirror).
+- `AllowRecursion`: opts the mirror into recursive portal scheduling up to `AdvancedPortalSchedulerOptions.MaxRecursionDepth`.
+- `RenderTransparents`: opts the mirror into reflected `TransparentForward` draws during `LatePasses` before mirror glass compositing unwinds stencil.
+- `GlassTint`, `FresnelStrength`, and `SpecularStrength`: control the alpha-blended mirror glass surface composite applied during deepest-out portal unwind.
+- Transform history: `MirrorCaptureComponent` records its previous-frame world matrix and reflection plane so moving or rotating mirrors supply exact `PreviousView` and `PreviousViewProjectionJittered` matrices for TSR velocity and settle to bit-exact zero velocity on stationary frames.
+
+### Offscreen capture mode (`EMirrorCaptureMode.OffscreenCapture`)
+
+`UseAdvancedCapturePipeline` selects the offscreen capture and display path:
 
 - `false` is the default and uses the traditional capture/display path.
 - `true` uses the Advanced offscreen capture family and native projective

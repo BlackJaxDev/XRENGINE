@@ -16,10 +16,11 @@ internal readonly record struct VulkanVisibilityRasterPipeline(
     PrimitiveTopology Topology,
     bool IsMeshShaderPipeline,
     VulkanVisibilityVertexInputSnapshot VertexInput,
-    VulkanAdvancedVisibilityTargetClosure TargetClosure)
+    VulkanAdvancedVisibilityTargetClosure TargetClosure,
+    bool HasNoVertexInput = false)
 {
     internal bool IsValid
         => Program is { IsLinked: true } && ProgramLinkGeneration != 0UL &&
            Pipeline.Handle != 0UL && PipelineLayout.Handle != 0UL &&
-           (IsMeshShaderPipeline || VertexInput.IsValid) && TargetClosure.IsValid;
+           (IsMeshShaderPipeline || HasNoVertexInput || VertexInput.IsValid) && TargetClosure.IsValid;
 }

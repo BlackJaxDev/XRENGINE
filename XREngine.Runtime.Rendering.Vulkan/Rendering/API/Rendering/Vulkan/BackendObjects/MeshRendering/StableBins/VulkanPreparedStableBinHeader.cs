@@ -13,7 +13,9 @@ internal readonly record struct VulkanPreparedStableBinHeader(
     VulkanVisibilityRasterPipeline ShadowRasterPipeline = default,
     VulkanVisibilityRasterPipeline DecalRasterPipeline = default,
     VulkanResidentDrawTemplateNativeState DecalNativeState = default,
-    VulkanVisibilityRasterPipeline LateRasterPipeline = default)
+    VulkanVisibilityRasterPipeline LateRasterPipeline = default,
+    VulkanVisibilityRasterPipeline PortalNormalRasterPipeline = default,
+    VulkanVisibilityRasterPipeline PortalInvertedRasterPipeline = default)
 {
     /// <summary>
     /// A bin is recordable by the advanced visibility raster lane only after
@@ -46,4 +48,8 @@ internal readonly record struct VulkanPreparedStableBinHeader(
     /// <summary>The decal buffer lane can draw this bin with its blended pipeline.</summary>
     internal bool IsDecalBufferReady => HasSealedSubmission && IsSurfaceDecal &&
         DecalRasterPipeline.IsValid && DecalNativeState.IsValid;
+
+    /// <summary>True when both portal winding pipelines are sealed for this visibility bin.</summary>
+    internal bool IsPortalRasterReady => IsRasterReady &&
+        PortalNormalRasterPipeline.IsValid && PortalInvertedRasterPipeline.IsValid;
 }

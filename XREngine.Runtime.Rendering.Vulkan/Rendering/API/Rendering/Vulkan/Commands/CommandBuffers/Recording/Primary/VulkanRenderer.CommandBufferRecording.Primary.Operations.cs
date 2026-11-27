@@ -284,6 +284,8 @@ internal sealed partial class VulkanCommandRuntime
                 RecordAdvancedVisibilityLateComputePayload(ref state, in payload, in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster) =>
                 RecordAdvancedVisibilityLateRasterPayload(ref state, in payload, in info),
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.PortalVisibility) =>
+                RecordAdvancedPortalVisibilityPayload(ref state, in payload, in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.MultisampleResolve) =>
                 RecordAdvancedVisibilityMultisampleResolvePayload(ref state, in payload, in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.DecalBuffer) =>
@@ -292,6 +294,9 @@ internal sealed partial class VulkanCommandRuntime
             (EAdvancedRenderStage.AmbientOcclusion, EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.NativeOpaqueShading, EAdvancedVisibilityStageBackendPhase.Complete) =>
                 RecordAdvancedNativeComputePayload(ref state, in payload, in info),
+            (EAdvancedRenderStage.LatePasses, EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind) or
+            (EAdvancedRenderStage.LatePasses, EAdvancedVisibilityStageBackendPhase.PortalUnwind) =>
+                RecordAdvancedPortalUnwindPayload(ref state, in payload, in info),
             _ => throw new VulkanPlanPreconditionException(
                 $"Advanced visibility stage '{payload.Request.Stage}' phase '{payload.Request.Phase}' is outside the admitted physical family."),
         };
@@ -315,6 +320,9 @@ internal sealed partial class VulkanCommandRuntime
                 EAdvancedVisibilityStageBackendPhase.LateRaster) =>
                 EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.PortalVisibility) =>
+                EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.MultisampleResolve) =>
                 EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
@@ -332,6 +340,11 @@ internal sealed partial class VulkanCommandRuntime
             (EAdvancedRenderStage.DirectionalShadowRaster,
                 EAdvancedVisibilityStageBackendPhase.Complete) =>
                 EVulkanCpuStage.PrimaryAdvancedDirectionalShadowOperation,
+            (EAdvancedRenderStage.LatePasses,
+                EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind) or
+            (EAdvancedRenderStage.LatePasses,
+                EAdvancedVisibilityStageBackendPhase.PortalUnwind) =>
+                EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
             _ => EVulkanCpuStage.PrimaryOtherOperation,
         };
 
@@ -967,6 +980,52 @@ internal sealed partial class VulkanCommandRuntime
                     viewIndex,
                     view.ReversedDepth ? 1u : 0u));
             Api.CmdDraw(state.CommandBuffer, 3u, 1u, 0u, 0u);
+        }
+        if (payload.Input.PortalFramePlan is { Count: > 0 } portalPlan)
+        {
+            VulkanAdvancedMsaaResolvePipeline portalStencil = payload.PortalMsaaStencilRepopulatePipeline;
+            if (!portalStencil.IsValid ||
+                portalStencil.Program.LinkGeneration != portalStencil.ProgramLinkGeneration ||
+                portalStencil.TargetClosure != payload.TargetClosure)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "Advanced MSAA portal stencil repopulation pipeline changed after frame-plan sealing.");
+            }
+            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Graphics, portalStencil.Pipeline);
+            BindAdvancedVisibilityDescriptorSets(
+                state.CommandBuffer,
+                PipelineBindPoint.Graphics,
+                portalStencil.PipelineLayout,
+                in payload,
+                payload.NativeComputeDescriptorSet);
+            ReadOnlySpan<AdvancedScheduledPortalView> scheduledNodes = portalPlan.ScheduledNodes;
+            for (int nodeIndex = 0; nodeIndex < scheduledNodes.Length; ++nodeIndex)
+            {
+                ref readonly AdvancedScheduledPortalView node = ref scheduledNodes[nodeIndex];
+                if (node.PrimaryViewIndex >= payload.State.ViewCount)
+                    continue;
+                Rect2D nodeScissor = ToClampedScissorRect(node.ScissorRect, extent);
+                if (nodeScissor.Extent.Width == 0u || nodeScissor.Extent.Height == 0u)
+                    continue;
+                SetViewportScissorTracked(state.CommandBuffer, in viewport, in nodeScissor);
+                Api.CmdSetStencilReference(
+                    state.CommandBuffer,
+                    StencilFaceFlags.FaceFrontAndBack,
+                    AdvancedStencilBitLayout.EncodePortalNode(node.StencilNodeId));
+                RenderFrameViewDescriptor primaryView = payload.Request.Views.GetView(
+                    checked((int)node.PrimaryViewIndex));
+                PushConstantsTracked(
+                    state.CommandBuffer,
+                    portalStencil.PipelineLayout,
+                    ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                    0u,
+                    new AdvancedVisibilityMsaaPortalStencilPushConstants(
+                        node.PrimaryViewIndex,
+                        primaryView.ReversedDepth ? 1u : 0u,
+                        node.ViewIndex));
+                Api.CmdDraw(state.CommandBuffer, 3u, 1u, 0u, 0u);
+            }
+            SetViewportScissorTracked(state.CommandBuffer, in viewport, in scissor);
         }
         CmdEndLabel(state.CommandBuffer);
         return info.OperationIndex;
@@ -1622,6 +1681,11 @@ internal sealed partial class VulkanCommandRuntime
         uint ViewIndex,
         uint ReversedDepth);
 
+    private readonly record struct AdvancedVisibilityMsaaPortalStencilPushConstants(
+        uint ViewIndex,
+        uint ReversedDepth,
+        uint TargetPortalViewIndex);
+
     /// <summary>
     /// Executes a planned non-graphics secondary range. The dense frame-op
     /// migration retained secondary buckets and plan actions, so this bridge is
@@ -1726,16 +1790,22 @@ internal sealed partial class VulkanCommandRuntime
         int firstRequiredSourceIndex = checked(
             markerHeader.OriginalIndex - payload.RequiredOperationCount);
         bool complete = firstRequiredSourceIndex >= 0;
+        int firstMissingSourceIndex = -1;
+        byte firstMissingOutcome = 0;
         for (int sourceIndex = firstRequiredSourceIndex;
              complete && sourceIndex < markerHeader.OriginalIndex;
              sourceIndex++)
         {
-            complete =
-                (uint)sourceIndex <
-                    (uint)state.RequiredProducerRecordingOutcomesBySourceIndex.Length &&
-                state.RequiredProducerRecordingOutcomesBySourceIndex[sourceIndex] ==
-                    (RequiredProducerOperationBit |
-                     RequiredProducerRecordedBit);
+            byte outcome = (uint)sourceIndex <
+                (uint)state.RequiredProducerRecordingOutcomesBySourceIndex.Length
+                ? state.RequiredProducerRecordingOutcomesBySourceIndex[sourceIndex]
+                : (byte)0;
+            if (outcome != (RequiredProducerOperationBit | RequiredProducerRecordedBit))
+            {
+                complete = false;
+                firstMissingSourceIndex = sourceIndex;
+                firstMissingOutcome = outcome;
+            }
         }
 
         if (complete)
@@ -1751,10 +1821,47 @@ internal sealed partial class VulkanCommandRuntime
             payload.Fence.Fail(EGpuFenceFailureSite.RequiredProducerMissing,
                 EGpuFenceNativeSubmission.NotCalled);
             state.FrameOpsRequireRerecordLocal = true;
+            string detail = DescribeMissingRequiredProducerOperation(
+                ref state,
+                info.OperationIndex,
+                markerHeader.OriginalIndex,
+                payload.RequiredOperationCount,
+                firstMissingSourceIndex,
+                firstMissingOutcome);
             throw new VulkanPlanPreconditionException(
-                "A required GPU producer operation was not recorded; the partial primary command buffer must not be submitted.");
+                $"A required GPU producer operation was not recorded; the partial primary command buffer must not be submitted. {detail}");
         }
         return info.OperationIndex;
+    }
+
+    private static string DescribeMissingRequiredProducerOperation(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        int markerOpIndex,
+        int markerOriginalIndex,
+        int requiredOperationCount,
+        int missingSourceIndex,
+        byte missingOutcome)
+    {
+        ref readonly FrameOpContext markerContext = ref state.Ops.GetContext(markerOpIndex);
+        int missingOpIndex = -1;
+        for (int opIndex = 0; opIndex < state.Ops.Length; opIndex++)
+        {
+            if (state.Ops.GetHeader(opIndex).OriginalIndex == missingSourceIndex)
+            {
+                missingOpIndex = opIndex;
+                break;
+            }
+        }
+
+        if (missingOpIndex < 0)
+        {
+            return $"markerOp={markerOpIndex} markerOrig={markerOriginalIndex} reqCount={requiredOperationCount} markerPipe={markerContext.PipelineIdentity} markerVp={markerContext.ViewportIdentity} markerSched={markerContext.SchedulingIdentity} missingOrig={missingSourceIndex} outcome=0x{missingOutcome:X2} missingOp=NotInStream";
+        }
+
+        ref readonly FrameOperationHeader missingHeader = ref state.Ops.GetHeader(missingOpIndex);
+        ref readonly FrameOpContext missingContext = ref state.Ops.GetContext(missingOpIndex);
+        bool deferred = state.PipelineDeferredOperationIndices.Contains(missingOpIndex);
+        return $"markerOp={markerOpIndex} markerOrig={markerOriginalIndex} reqCount={requiredOperationCount} markerPipe={markerContext.PipelineIdentity} markerVp={markerContext.ViewportIdentity} markerSched={markerContext.SchedulingIdentity} missingOp={missingOpIndex} missingOrig={missingSourceIndex} opCode={missingHeader.OpCode} pass={missingHeader.PassIndex} pipe={missingContext.PipelineIdentity} vp={missingContext.ViewportIdentity} sched={missingContext.SchedulingIdentity} deferred={deferred} outcome=0x{missingOutcome:X2}";
     }
 
     private int RecordBufferCopyPayload(scoped ref PrimaryCommandBufferRecordingState state, in BufferCopyPayload payload, in VulkanPrimaryOperationRecordingInfo info)

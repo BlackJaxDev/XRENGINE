@@ -239,39 +239,88 @@ internal sealed partial class VulkanCommandRuntime
         out TemporalHistorySubmissionCandidate rebasedCandidate,
         out TemporalHistoryResourceSet reads,
         out TemporalHistoryResourceSet writes,
-        out VulkanTemporalHistoryNativeCoverage nativeCoverage)
+        out VulkanTemporalHistoryNativeCoverage nativeCoverage,
+        out string? failureDetail)
     {
         rebasedCandidate = default;
         reads = default;
         writes = default;
         nativeCoverage = default;
+        failureDetail = null;
         if (!candidate.IsValid)
         {
             rebasedCandidate = candidate;
             return true;
         }
 
-        if (!TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.ColorReadTexture, null, out var colorRead) ||
-            !TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.DepthReadTexture, ImageAspectFlags.DepthBit, out var depthRead) ||
-            !TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.TsrColorReadTexture, null, out var tsrRead) ||
-            !TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.MetadataReadTexture, null, out var metadataRead) ||
-            !TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.ExposureReadTexture, null, out var exposureRead) ||
-            !TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.ColorHistoryTarget, depth: false, out var colorWrite, out var colorTarget, out var colorSource) ||
-            !TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.DepthHistoryTarget, depth: true, out var depthWrite, out var depthTarget, out _) ||
-            !TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.TsrColorHistoryTarget, depth: false, out var tsrWrite, out var tsrTarget, out var tsrSource) ||
-            !TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.MetadataHistoryTarget, depth: false, out var metadataWrite, out var metadataTarget, out var metadataSource) ||
-            !TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.ExposureHistoryTarget, depth: false, out var exposureWrite, out var exposureTarget, out var exposureSource) ||
-            !TryResolveTemporalResolveProducer(operations, plan, in candidate, candidate.TemporalResolveTarget,
-                in colorSource, in exposureSource, out var temporalTarget, out var temporalIndex,
+        if (!TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.ColorReadTexture, null, out var colorRead))
+        {
+            failureDetail = "resolve:color-read";
+            return false;
+        }
+        if (!TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.DepthReadTexture, ImageAspectFlags.DepthBit, out var depthRead))
+        {
+            failureDetail = "resolve:depth-read";
+            return false;
+        }
+        if (!TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.TsrColorReadTexture, null, out var tsrRead))
+        {
+            failureDetail = "resolve:tsr-color-read";
+            return false;
+        }
+        if (!TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.MetadataReadTexture, null, out var metadataRead))
+        {
+            failureDetail = "resolve:metadata-read";
+            return false;
+        }
+        if (!TryResolveTemporalHistoryRead(operations, plan, in candidate, candidate.ExposureReadTexture, null, out var exposureRead))
+        {
+            failureDetail = "resolve:exposure-read";
+            return false;
+        }
+        if (!TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.ColorHistoryTarget, depth: false, out var colorWrite, out var colorTarget, out var colorSource, out int colorWriteIndex))
+        {
+            failureDetail = "resolve:color-write";
+            return false;
+        }
+        if (!TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.DepthHistoryTarget, depth: true, out var depthWrite, out var depthTarget, out _, out _))
+        {
+            failureDetail = "resolve:depth-write";
+            return false;
+        }
+        if (!TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.TsrColorHistoryTarget, depth: false, out var tsrWrite, out var tsrTarget, out var tsrSource, out int tsrWriteIndex))
+        {
+            failureDetail = "resolve:tsr-color-write";
+            return false;
+        }
+        if (!TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.MetadataHistoryTarget, depth: false, out var metadataWrite, out var metadataTarget, out var metadataSource, out _))
+        {
+            failureDetail = "resolve:metadata-write";
+            return false;
+        }
+        if (!TryResolveTemporalHistoryWrite(operations, plan, in candidate, candidate.ExposureHistoryTarget, depth: false, out var exposureWrite, out var exposureTarget, out var exposureSource, out _))
+        {
+            failureDetail = "resolve:exposure-write";
+            return false;
+        }
+        if (!TryResolveTemporalResolveProducer(operations, plan, in candidate, candidate.TemporalResolveTarget,
+                in colorSource, in exposureSource, colorWriteIndex, out var temporalTarget, out var temporalIndex,
                 out var temporalColor, out var temporalAux, out var temporalColorIndex,
                 out var temporalAuxIndex,
-                out var temporalExtent) ||
-            !TryResolveTemporalResolveProducer(operations, plan, in candidate, candidate.TsrResolveTarget,
-                in tsrSource, in metadataSource, out var tsrResolveTarget, out var tsrIndex,
+                out var temporalExtent))
+        {
+            failureDetail = "resolve:temporal-producer";
+            return false;
+        }
+        if (!TryResolveTemporalResolveProducer(operations, plan, in candidate, candidate.TsrResolveTarget,
+                in tsrSource, in metadataSource, tsrWriteIndex, out var tsrResolveTarget, out var tsrIndex,
                 out var tsrColor, out var tsrAux, out var tsrColorIndex,
                 out var tsrAuxIndex,
                 out var tsrExtent))
+        {
+            failureDetail = "resolve:tsr-producer";
             return false;
+        }
 
         reads = new(colorRead, depthRead, tsrRead, metadataRead, exposureRead);
         writes = new(colorWrite, depthWrite, tsrWrite, metadataWrite, exposureWrite);
@@ -437,11 +486,13 @@ internal sealed partial class VulkanCommandRuntime
         bool depth,
         out TemporalHistoryResourceIdentity identity,
         out XRFrameBuffer? recordedTarget,
-        out TemporalHistoryResourceIdentity sourceIdentity)
+        out TemporalHistoryResourceIdentity sourceIdentity,
+        out int writeOperationIndex)
     {
         identity = default;
         recordedTarget = null;
         sourceIdentity = default;
+        writeOperationIndex = -1;
         if (target is null)
             return true;
 
@@ -509,6 +560,8 @@ internal sealed partial class VulkanCommandRuntime
             identity = current;
             recordedTarget = canonicalTarget;
             sourceIdentity = currentSource;
+            if (writeOperationIndex < 0)
+                writeOperationIndex = index;
             found = true;
         }
 
@@ -539,6 +592,7 @@ internal sealed partial class VulkanCommandRuntime
         XRFrameBuffer? target,
         in TemporalHistoryResourceIdentity expectedColorSource,
         in TemporalHistoryResourceIdentity expectedAuxiliarySource,
+        int beforeOperationIndex,
         out XRFrameBuffer? recordedTarget,
         out int originalIndex,
         out TemporalHistoryResourceIdentity colorIdentity,
@@ -559,7 +613,13 @@ internal sealed partial class VulkanCommandRuntime
         if (!expectedColorSource.IsValid)
             return false;
 
-        for (int index = 0; index < operations.Count; index++)
+        // Only inspect draws that run before the history copy blit. Post-copy passes such as
+        // RCAS sharpening in DefaultRenderPipeline can draw back into TsrUpscaleFBO without
+        // modifying the already-captured temporal history.
+        int scanLimit = beforeOperationIndex >= 0 && beforeOperationIndex <= operations.Count
+            ? beforeOperationIndex
+            : operations.Count;
+        for (int index = 0; index < scanLimit; index++)
         {
             if (operations.GetHeader(index).OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
                 continue;

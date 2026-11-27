@@ -43,4 +43,30 @@ public enum EAdvancedViewRecordFlags : uint
     MsaaSampleCountBit1 = 1u << 11,
     MsaaSampleCountBit2 = 1u << 12,
     MsaaSampleCountBit3 = 1u << 13,
+    /// <summary>
+    /// Marks an in-place portal or mirror sub-view owned by a primary eye view.
+    /// Classification and native shading accept pixels carrying this view when its
+    /// <see cref="AdvancedViewRecord.PrimaryViewIndex"/> matches the active primary view.
+    /// </summary>
+    PortalSubView = 1u << 14,
+    /// <summary>
+    /// Marks a view with an odd number of planar reflections. Rasterization flips front-face
+    /// winding to clockwise and the visibility fragment shader inverts <c>gl_FrontFacing</c>.
+    /// </summary>
+    InvertedWinding = 1u << 15,
+    /// <summary>
+    /// Enables world-space user clipping (<c>gl_ClipDistance[0]</c>) against
+    /// <see cref="AdvancedViewRecord.ClipPlaneWorld"/> in visibility raster shaders.
+    /// </summary>
+    ClipPlaneEnabled = 1u << 16,
+    /// <summary>
+    /// Runs single-phase frustum and normal-cone culling for this view without reading or
+    /// writing the depth pyramid or meshlet occlusion history.
+    /// </summary>
+    SkipHiZAndHistory = 1u << 17,
+    /// <summary>
+    /// Tells multisample native opaque shading to evaluate the representative sample once for
+    /// pixels belonging to this portal view instead of shading every MSAA sample.
+    /// </summary>
+    SingleSampleMsaaShading = 1u << 18,
 }

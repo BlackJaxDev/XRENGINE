@@ -5,7 +5,7 @@ public static class RuntimeMemberAccessorRegistry
 {
     private readonly record struct Key(Type Target, string Name, string Kind);
     private sealed record Entry(Guid Token, Type[] Parameters, Delegate? Getter, Delegate? Setter, Action<object, object?[]>? Invoke,
-        Action<object, Delegate>? Subscribe, Action<object, Delegate>? Unsubscribe);
+        Delegate? TypedInvoke, Action<object, Delegate>? Subscribe, Action<object, Delegate>? Unsubscribe);
 
     private static readonly object Sync = new();
     private static readonly Dictionary<Key, Entry> Entries = [];
@@ -14,22 +14,32 @@ public static class RuntimeMemberAccessorRegistry
         where TTarget : class
         => Register(new(typeof(TTarget), name, "property"), new(Guid.NewGuid(), [],
             (Func<object, object?>)(target => get((TTarget)target)),
-            set is null ? null : (Action<object, object?>)((target, value) => set((TTarget)target, (TValue)value!)), null, null, null));
+            set is null ? null : (Action<object, object?>)((target, value) => set((TTarget)target, (TValue)value!)), null, null, null, null));
 
     public static IDisposable RegisterField<TTarget, TValue>(string name, Func<TTarget, TValue> get, Action<TTarget, TValue>? set)
         where TTarget : class
         => Register(new(typeof(TTarget), name, "field"), new(Guid.NewGuid(), [],
             (Func<object, object?>)(target => get((TTarget)target)),
-            set is null ? null : (Action<object, object?>)((target, value) => set((TTarget)target, (TValue)value!)), null, null, null));
+            set is null ? null : (Action<object, object?>)((target, value) => set((TTarget)target, (TValue)value!)), null, null, null, null));
 
     public static IDisposable RegisterMethod<TTarget>(string name, Type[] parameters, Action<TTarget, object?[]> invoke)
         where TTarget : class
         => Register(new(typeof(TTarget), name, "method"), new(Guid.NewGuid(), (Type[])parameters.Clone(), null, null,
-            (target, arguments) => invoke((TTarget)target, arguments), null, null));
+            (target, arguments) => invoke((TTarget)target, arguments), null, null, null));
+
+    /// <summary>
+    /// Registers a single-argument instance method with a typed delegate so hot-path persistent calls
+    /// can invoke it without boxing value-type arguments or allocating parameter arrays.
+    /// </summary>
+    public static IDisposable RegisterMethod<TTarget, TArg>(string name, Action<TTarget, TArg> invoke)
+        where TTarget : class
+        => Register(new(typeof(TTarget), name, "method"), new(Guid.NewGuid(), [typeof(TArg)], null, null,
+            (target, arguments) => invoke((TTarget)target, (TArg)arguments[0]!),
+            (Action<object, TArg>)((target, arg) => invoke((TTarget)target, arg)), null, null));
 
     public static IDisposable RegisterEvent<TTarget, THandler>(string name, Action<TTarget, THandler> subscribe, Action<TTarget, THandler> unsubscribe)
         where TTarget : class where THandler : Delegate
-        => Register(new(typeof(TTarget), name, "event"), new(Guid.NewGuid(), [], null, null, null,
+        => Register(new(typeof(TTarget), name, "event"), new(Guid.NewGuid(), [], null, null, null, null,
             (target, handler) => subscribe((TTarget)target, (THandler)handler),
             (target, handler) => unsubscribe((TTarget)target, (THandler)handler)));
 
@@ -63,9 +73,37 @@ public static class RuntimeMemberAccessorRegistry
         Entry? entry = Find(target.GetType(), name, "method");
         if (entry?.Invoke is null || entry.Parameters.Length != arguments.Length)
             return false;
-        if (parameterTypes is not null && !entry.Parameters.SequenceEqual(parameterTypes))
+        if (parameterTypes is not null && !ParametersMatch(entry.Parameters, parameterTypes))
             return false;
         entry.Invoke(target, arguments);
+        return true;
+    }
+
+    /// <summary>
+    /// Invokes a registered single-argument method directly through its typed delegate without boxing.
+    /// </summary>
+    public static bool TryInvokeTyped<TArg>(object target, string name, Type[]? parameterTypes, TArg argument)
+    {
+        Entry? entry = Find(target.GetType(), name, "method");
+        if (entry is null || entry.Parameters.Length != 1)
+            return false;
+        if (parameterTypes is not null && !ParametersMatch(entry.Parameters, parameterTypes))
+            return false;
+        if (entry.TypedInvoke is Action<object, TArg> typed)
+        {
+            typed(target, argument);
+            return true;
+        }
+        return false;
+    }
+
+    private static bool ParametersMatch(Type[] registered, Type[] requested)
+    {
+        if (registered.Length != requested.Length)
+            return false;
+        for (int i = 0; i < registered.Length; i++)
+            if (registered[i] != requested[i])
+                return false;
         return true;
     }
 

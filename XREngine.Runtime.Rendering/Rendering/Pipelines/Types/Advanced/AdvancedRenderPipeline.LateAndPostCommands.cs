@@ -731,7 +731,8 @@ public partial class AdvancedRenderPipeline
             .SampleTexture(HistoryDepthViewTextureName)
             .SampleTexture(TsrHistoryColorTextureName)
             .SampleTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
-            .SampleTexture(TsrHistoryMetadataTextureName);
+            .SampleTexture(TsrHistoryMetadataTextureName)
+            .SampleTexture(AdvancedVisibilityResourceNames.Metadata);
         if (EditorHighlightModule is not null)
             resources.SampleTexture(EditorHighlightMaskTextureName);
         return resources;

@@ -116,8 +116,9 @@ bool XR_ADV_ShadowAffectsView(XRAdvancedShadowRecord record, XRAdvancedViewRecor
     if (record.type == 0u && (((record.flags & 16u) != 0u) != ((view.flags & 12u) != 0u)))
         return false;
     if ((record.viewMaskLo | record.viewMaskHi) == 0u) return true;
-    return viewIndex < 32u ? (record.viewMaskLo & (1u << viewIndex)) != 0u :
-        viewIndex < 64u && (record.viewMaskHi & (1u << (viewIndex - 32u))) != 0u;
+    uint maskViewIndex = XR_ADV_ViewMaskIndex(view, viewIndex);
+    return maskViewIndex < 32u ? (record.viewMaskLo & (1u << maskViewIndex)) != 0u :
+        maskViewIndex < 64u && (record.viewMaskHi & (1u << (maskViewIndex - 32u))) != 0u;
 }
 
 // Projects a world position to shadow-map UV and depth without the [0, 1] bounds test.
@@ -240,19 +241,24 @@ float XR_ADV_DirectionalTapDepth(XRAdvancedShadowRecord record, XRAdvancedTextur
     XRAdvancedEncodedTextureReference textureReference, vec2 localUv, vec2 lower, vec2 upper)
 {
     vec2 uv = clamp(localUv * record.uvScaleBias.xy + record.uvScaleBias.zw, lower, upper);
-    return XR_ADV_FetchShadow(record, textureRecord, textureReference, uv, vec3(0.0)).r;
+    if (textureRecord.dimension == 5u)
+        return XR_ADV_SampleTexture2DArrayLod(textureReference, vec3(uv, float(record.textureLayer)), 0.0).r;
+    return XR_ADV_SampleTexture2DLod(textureReference, uv, 0.0).r;
 }
 
 float XR_ADV_DirectionalTapLit(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
     XRAdvancedEncodedTextureReference textureReference, vec2 localUv, vec2 lower, vec2 upper, float receiver)
 {
     vec2 uv = clamp(localUv * record.uvScaleBias.xy + record.uvScaleBias.zw, lower, upper);
-    return XR_ADV_CompareShadow(record,
-        XR_ADV_FetchShadow(record, textureRecord, textureReference, uv, vec3(0.0)), receiver);
+    vec4 texel = textureRecord.dimension == 5u
+        ? XR_ADV_SampleTexture2DArrayLod(textureReference, vec3(uv, float(record.textureLayer)), 0.0)
+        : XR_ADV_SampleTexture2DLod(textureReference, uv, 0.0);
+    return XR_ADV_CompareShadow(record, texel, receiver);
 }
 
-// Contact-hardening penumbra in tile-local UV, or -1 when no blocker is found.
-// Each blocker tap evaluates the receiver depth on the triangle plane so sloped
+// Contact-hardening penumbra in tile-local UV, -1 when no blocker is found (fully lit),
+// or -2 when every blocker tap across a search disk wider than the penumbra is occluded
+// (deep umbra). Each blocker tap evaluates receiver depth on the triangle plane so sloped
 // surfaces do not report fake blocker separation or detach at corners.
 float XR_ADV_DirectionalPenumbra(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
     XRAdvancedEncodedTextureReference textureReference, vec2 localUv, vec2 lower, vec2 upper,
@@ -288,7 +294,12 @@ float XR_ADV_DirectionalPenumbra(XRAdvancedShadowRecord record, XRAdvancedTextur
     float penumbra = avgBlockerDelta / max(abs(avgBlocker), 0.0001) *
         max(record.contactParameters.x, 0.0);
     float minRadius = max(record.softShadowParameters.z, localTexel);
-    return clamp(penumbra, minRadius, max(record.softShadowParameters.w, minRadius));
+    float clampedPenumbra = clamp(penumbra, minRadius, max(record.softShadowParameters.w, minRadius));
+    // When every blocker tap across a wider search disk is occluded, the filter disk lies
+    // inside the shadow umbra and needs no second filter pass.
+    if (blockerCount == samples && samples >= 8 && clampedPenumbra <= searchRadius * 0.9)
+        return -2.0;
+    return clampedPenumbra;
 }
 
 // Mirrors the forward atlas filter selection: Hard uses one tap, a 4-tap tent or a
@@ -317,6 +328,7 @@ float XR_ADV_SampleDirectionalFiltered(XRAdvancedShadowRecord record, XRAdvanced
             {
                 radius = XR_ADV_DirectionalPenumbra(record, textureRecord, textureReference,
                     localUv, lower, upper, receiver, receiverPlaneGrad, localTexel, rotCos, rotSin, reversed);
+                if (radius < -1.5) return 0.0;
                 if (radius < 0.0) return 1.0;
             }
         }
@@ -372,6 +384,9 @@ float XR_ADV_DirectionalContactShadow(
     ivec2 originPixel,
     float noise)
 {
+    if ((view.flags & XR_ADV_VIEW_PORTAL_SUBVIEW) != 0u)
+        return 1.0;
+
     float distance = record.contactParameters.y;
     if (record.contactSamples == 0u || distance <= 0.0 || viewDepth <= 0.0)
         return 1.0;
@@ -400,6 +415,11 @@ float XR_ADV_DirectionalContactShadow(
     ivec2 depthExtent = textureSize(VisibilityDepth, 0).xy;
     vec2 depthExtentF = vec2(depthExtent);
     bool reversedDepth = (view.flags & XR_ADV_SHADOW_VIEW_REVERSED_DEPTH) != 0u || view.depthParams.w != 0.0;
+    bool depthZeroToOne = (view.flags & XR_ADV_VIEW_DEPTH_ZERO_TO_ONE) != 0u;
+    vec4 rayOriginClip = XR_ADV_CurrentJitteredClip(view, rayOrigin);
+    vec4 rayDirClip = XR_ADV_TransformRowVector(vec4(L, 0.0), view.viewProjectionJittered);
+    float rayOriginViewZ = -XR_ADV_TransformRowVector(vec4(rayOrigin, 1.0), view.view).z;
+    float rayDirViewZ = -XR_ADV_TransformRowVector(vec4(L, 0.0), view.view).z;
 
     float occlusion = 0.0;
     for (int i = 0; i < 32; ++i)
@@ -410,11 +430,11 @@ float XR_ADV_DirectionalContactShadow(
         // while still covering the full contact distance.
         float travel = distance * mix(t, t * t, 0.5);
         float localStep = distance * (0.5 + t) * invSamples;
-        vec3 samplePos = rayOrigin + L * travel;
 
-        vec4 sampleClip = XR_ADV_CurrentJitteredClip(view, samplePos);
+        vec4 sampleClip = rayOriginClip + rayDirClip * travel;
         if (sampleClip.w <= 1.0e-5) continue;
-        vec2 sampleUv = XR_ADV_ClipNdcToFramebufferUv(view, sampleClip.xy / sampleClip.w);
+        vec3 sampleNdc = sampleClip.xyz / sampleClip.w;
+        vec2 sampleUv = XR_ADV_ClipNdcToFramebufferUv(view, sampleNdc.xy);
         if (any(lessThanEqual(sampleUv, vec2(0.0))) || any(greaterThanEqual(sampleUv, vec2(1.0))))
             continue;
 
@@ -427,10 +447,15 @@ float XR_ADV_DirectionalContactShadow(
             (reversedDepth ? (sceneDepth <= 0.0) : (sceneDepth >= 1.0)))
             continue;
 
+        // Reject open-air steps directly in hardware depth before reconstructing world position.
+        float sampleDepth = depthZeroToOne ? sampleNdc.z : sampleNdc.z * 0.5 + 0.5;
+        if (reversedDepth ? (sceneDepth <= sampleDepth) : (sceneDepth >= sampleDepth))
+            continue;
+
         vec3 scenePos = XR_ADV_ReconstructWorldPositionFromDepth(vec2(samplePixel) + 0.5, sceneDepth, view);
         if (!XR_ADV_IsFinite(scenePos)) continue;
 
-        float sampleViewDepth = -XR_ADV_TransformRowVector(vec4(samplePos, 1.0), view.view).z;
+        float sampleViewDepth = rayOriginViewZ + rayDirViewZ * travel;
         float sceneViewDepth = -XR_ADV_TransformRowVector(vec4(scenePos, 1.0), view.view).z;
         float depthDelta = sampleViewDepth - sceneViewDepth;
         if (depthDelta <= contactBias) continue;
@@ -716,14 +741,10 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
     if ((light.flags & 2u) == 0u) return 1.0;
     vec3 planeNormal = XR_ADV_ShadowReceiverPlaneNormal(surface, N);
 
-    XRAdvancedShadowRecord record0;
-    XRAdvancedShadowRecord record1;
-    XRAdvancedTextureRecord tex0;
-    XRAdvancedTextureRecord tex1;
-    XRAdvancedEncodedTextureReference ref0;
-    XRAdvancedEncodedTextureReference ref1;
-    uint prepareReason0 = XR_ADV_SHADOW_OUTSIDE;
-    uint prepareReason1 = XR_ADV_SHADOW_OUTSIDE;
+    // Store only cascade indices instead of keeping two full XRAdvancedShadowRecord structs
+    // (~60 VGPRs each) live across the PCSS and contact-shadow loops.
+    uint slot0 = 0u;
+    uint slot1 = 0u;
     uint sampleCount = 0u;
     float blendFactor = 0.0;
     XRAdvancedViewRecord view = XR_ADV_LoadView(surface.viewIndex);
@@ -732,7 +753,7 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
     bool handledByCache = false;
 #if defined(XR_ADV_SHADOW_GROUP_CACHE)
     if (light.type == 0u && s_shadowCacheLight != XR_ADV_SHADOW_CACHE_NO_LIGHT &&
-        surface.viewIndex == s_shadowCacheView &&
+        XR_ADV_ViewMaskIndex(view, surface.viewIndex) == s_shadowCacheView &&
         light.shadowRecord.index == s_shadowCacheHandle.index &&
         light.shadowRecord.generation == s_shadowCacheHandle.generation)
     {
@@ -757,14 +778,8 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
             if (type == 0u && linearDepth > depthRangeAndCascade.z) continue;
             vec3 unusedCoordinate;
             if (!XR_ADV_ProjectShadow(s_shadowCacheRecords[i], surface.worldPosition, unusedCoordinate)) continue;
-            record0 = s_shadowCacheRecords[i];
-            tex0 = s_shadowCacheTextures[i];
-            ref0 = s_shadowCacheReferences[i];
-            prepareReason0 = s_shadowCachePrepareReasons[i];
-            record1 = record0;
-            tex1 = tex0;
-            ref1 = ref0;
-            prepareReason1 = XR_ADV_SHADOW_OK;
+            slot0 = i;
+            slot1 = i;
             sampleCount = 1u;
             if (type == 0u)
             {
@@ -776,10 +791,7 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
                         if (s_shadowCacheRecords[next].type != 0u ||
                             (s_shadowCacheFlags[next] & XR_ADV_SHADOW_CACHE_AFFECTS_VIEW) == 0u) continue;
                         if (!XR_ADV_ProjectShadow(s_shadowCacheRecords[next], surface.worldPosition, unusedCoordinate)) continue;
-                        record1 = s_shadowCacheRecords[next];
-                        tex1 = s_shadowCacheTextures[next];
-                        ref1 = s_shadowCacheReferences[next];
-                        prepareReason1 = s_shadowCachePrepareReasons[next];
+                        slot1 = next;
                         blendFactor = clamp((linearDepth - depthRangeAndCascade.z + blendWidth) / blendWidth, 0.0, 1.0);
                         sampleCount = 2u;
                         break;
@@ -815,7 +827,8 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
         }
         for (uint i = 0u; i < root.cascadeCount; ++i)
         {
-            XRAdvancedShadowRecord record = XR_ADV_Shadows.records[root.cascadeOffset + i];
+            uint recordIndex = root.cascadeOffset + i;
+            XRAdvancedShadowRecord record = XR_ADV_Shadows.records[recordIndex];
             if (!XR_ADV_ShadowAffectsView(record, view, surface.viewIndex)) continue;
             if ((record.flags & 1u) == 0u || (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u)
             {
@@ -825,12 +838,8 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
             if (record.type == 0u && linearDepth > record.depthRangeAndCascade.z) continue;
             vec3 unusedCoordinate;
             if (!XR_ADV_ProjectShadow(record, surface.worldPosition, unusedCoordinate)) continue;
-            record0 = record;
-            prepareReason0 = XR_ADV_PrepareShadowRecord(record, tex0, ref0);
-            record1 = record0;
-            tex1 = tex0;
-            ref1 = ref0;
-            prepareReason1 = XR_ADV_SHADOW_OK;
+            slot0 = recordIndex;
+            slot1 = recordIndex;
             sampleCount = 1u;
             if (record.type == 0u)
             {
@@ -839,11 +848,11 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
                 {
                     for (uint next = i + 1u; next < root.cascadeCount; ++next)
                     {
-                        XRAdvancedShadowRecord adjacent = XR_ADV_Shadows.records[root.cascadeOffset + next];
+                        uint nextIndex = root.cascadeOffset + next;
+                        XRAdvancedShadowRecord adjacent = XR_ADV_Shadows.records[nextIndex];
                         if (adjacent.type != 0u || !XR_ADV_ShadowAffectsView(adjacent, view, surface.viewIndex)) continue;
                         if (!XR_ADV_ProjectShadow(adjacent, surface.worldPosition, unusedCoordinate)) continue;
-                        record1 = adjacent;
-                        prepareReason1 = XR_ADV_PrepareShadowRecord(adjacent, tex1, ref1);
+                        slot1 = nextIndex;
                         blendFactor = clamp((linearDepth - record.depthRangeAndCascade.z + blendWidth) / blendWidth, 0.0, 1.0);
                         sampleCount = 2u;
                         break;
@@ -864,18 +873,29 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
     float visibility1 = 1.0;
     for (uint pass = 0u; pass < sampleCount; ++pass)
     {
-        if (pass == 1u)
+        uint activeSlot = pass == 0u ? slot0 : slot1;
+        XRAdvancedShadowRecord activeRecord;
+        XRAdvancedTextureRecord activeTex;
+        XRAdvancedEncodedTextureReference activeRef;
+        uint passReason;
+#if defined(XR_ADV_SHADOW_GROUP_CACHE)
+        if (handledByCache)
         {
-            record0 = record1;
-            tex0 = tex1;
-            ref0 = ref1;
-            prepareReason0 = prepareReason1;
+            activeRecord = s_shadowCacheRecords[activeSlot];
+            activeTex = s_shadowCacheTextures[activeSlot];
+            activeRef = s_shadowCacheReferences[activeSlot];
+            passReason = s_shadowCachePrepareReasons[activeSlot];
         }
-        uint passReason = prepareReason0;
+        else
+#endif
+        {
+            activeRecord = XR_ADV_Shadows.records[activeSlot];
+            passReason = XR_ADV_PrepareShadowRecord(activeRecord, activeTex, activeRef);
+        }
         float passVisibility = 1.0;
         if (passReason == XR_ADV_SHADOW_OK)
         {
-            passVisibility = XR_ADV_SampleShadowRecordPrepared(record0, tex0, ref0,
+            passVisibility = XR_ADV_SampleShadowRecordPrepared(activeRecord, activeTex, activeRef,
                 surface.worldPosition, N, planeNormal, L, screenPixel, passReason);
         }
         if (pass == 0u)
@@ -893,8 +913,15 @@ float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surfa
     if (light.type == 0u && visibility > 0.001)
     {
         vec3 offsetNormal = dot(planeNormal, N) < 0.0 ? -planeNormal : planeNormal;
+#if defined(XR_ADV_SHADOW_GROUP_CACHE)
+        XRAdvancedShadowRecord contactRecord = handledByCache
+            ? s_shadowCacheRecords[slot0]
+            : XR_ADV_Shadows.records[slot0];
+#else
+        XRAdvancedShadowRecord contactRecord = XR_ADV_Shadows.records[slot0];
+#endif
         visibility *= XR_ADV_DirectionalContactShadow(
-            record0, view, surface.viewIndex, surface.worldPosition, offsetNormal, L,
+            contactRecord, view, surface.viewIndex, surface.worldPosition, offsetNormal, L,
             linearDepth, ivec2(screenPixel), XR_ADV_ShadowNoise(screenPixel));
     }
     return visibility;

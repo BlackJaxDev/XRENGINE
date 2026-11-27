@@ -394,11 +394,17 @@ namespace XREngine.Components.Animation
 
             _isPlaying = true;
 
-            if (SuspendSiblingStateMachine && _suspendedSiblingAnimator is null && TryGetSiblingComponent<AnimStateMachineComponent>(out var animator) && animator is not null)
+            if (SuspendSiblingStateMachine && _suspendedSiblingAnimator is null)
             {
-                _suspendedSiblingAnimator = animator;
-                _suspendedSiblingWasAlreadySuspended = animator.SuspendedByClip;
-                animator.SetSuspendedByClip(true);
+                foreach (AnimStateMachineComponent candidate in SceneNode.GetComponents<AnimStateMachineComponent>())
+                {
+                    if (!candidate.DrivesHumanoidBodyPose)
+                        continue;
+                    _suspendedSiblingAnimator = candidate;
+                    _suspendedSiblingWasAlreadySuspended = candidate.SuspendedByClip;
+                    candidate.SetSuspendedByClip(true);
+                    break;
+                }
             }
 
             EnsureHumanoidAnimationIKSolver();

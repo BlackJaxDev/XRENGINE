@@ -87,8 +87,10 @@ XRAdvancedMeshletDrawCullState XR_ADV_MeshletDrawCullState(
     float determinant = dot(axisX, cross(axisY, axisZ));
     bool uniformScale = minScale > 0.0 &&
         (state.maxScale - minScale) <= state.maxScale * XR_ADV_MESHLET_CONE_UNIFORM_SCALE_TOLERANCE;
+    // Only ECullMode.Back (1u) uses back-face normal-cone culling.
+    // ECullMode.Front (2u) and ECullMode.None (0u) must keep back-facing meshlets.
     state.coneAllowed =
-        cullMode != 0u &&
+        cullMode == 1u &&
         producer == XR_ADV_VIS_PRODUCER_STATIC_MESHLET &&
         determinant > 0.0 &&
         uniformScale;

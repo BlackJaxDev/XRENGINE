@@ -260,6 +260,70 @@ internal sealed partial class SkinningPrepassDispatcher
             return true;
         }
 
+        /// <summary>
+        /// Validates <paramref name="witness"/> against the active deformation output. When an
+        /// intervening cohort rotated this renderer to a newer output slot (for example, an OpenXR
+        /// late-pose pass ran between desktop shadow pre-render and desktop materialization), this
+        /// method rebinds <paramref name="effectiveWitness"/> to the current healthy output slot so
+        /// materialization reads buffers that match the installed output state.
+        /// </summary>
+        public bool TryValidateOrRefreshConsumerWitness(
+            in DeformationOutputWitness witness,
+            out DeformationOutputWitness effectiveWitness)
+        {
+            if (ValidateConsumerWitness(in witness))
+            {
+                effectiveWitness = witness;
+                return true;
+            }
+
+            effectiveWitness = default;
+            VulkanOutputReceipt originalReceipt = witness.Receipt;
+            if (originalReceipt is null ||
+                !ReferenceEquals(originalReceipt.BackendOwner, witness.BackendOwner) ||
+                originalReceipt.AttemptId != witness.AttemptId ||
+                !originalReceipt.IsHealthyForFrozenConsumer ||
+                !HasRetiredSlotWithReceipt(originalReceipt))
+            {
+                return false;
+            }
+
+            VulkanOutputReceipt? activeReceipt = _outputReceipt;
+            if (activeReceipt is null ||
+                !ReferenceEquals(_outputBackendOwner, witness.BackendOwner) ||
+                !ReferenceEquals(activeReceipt.BackendOwner, witness.BackendOwner) ||
+                _outputAttemptId != activeReceipt.AttemptId ||
+                !activeReceipt.IsHealthyForFrozenConsumer ||
+                _lastDidSkinning != witness.DoesSkinning ||
+                _lastDidBlendshapes != witness.DoesBlendshapes ||
+                _lastUsedPrecombinedBlendshapes != witness.UsesPrecombinedBlendshapes ||
+                !TryCaptureOutputAllocationIdentity(witness.BackendOwner, out OutputAllocationIdentity currentAllocation) ||
+                !_outputAllocationIdentity.Matches(currentAllocation))
+            {
+                return false;
+            }
+
+            effectiveWitness = new DeformationOutputWitness(
+                activeReceipt,
+                witness.BackendOwner,
+                activeReceipt.AttemptId,
+                _outputAttemptVersion,
+                _lastDispatchedPoseHash,
+                _lastDidSkinning,
+                _lastDidBlendshapes,
+                _lastUsedPrecombinedBlendshapes,
+                currentAllocation);
+            return true;
+        }
+
+        private bool HasRetiredSlotWithReceipt(VulkanOutputReceipt receipt)
+        {
+            for (int i = 0; i < _outputSlotCount; i++)
+                if (_outputSlots[i]?.HasRetiredReceipt(receipt) == true)
+                    return true;
+            return false;
+        }
+
         public bool CanReuseOutput(bool doSkinning, bool doBlendshapes, bool usePrecombinedBlendshapes)
         {
             if (RuntimeEngine.Rendering.State.IsVulkan && _outputReceipt is null)
@@ -374,6 +438,11 @@ internal sealed partial class SkinningPrepassDispatcher
             _hasValidOutput = false;
             _outputAttemptUnfenced = false;
             _outputBackendOwner = backendOwner;
+            if ((uint)_activeOutputSlot < (uint)_outputSlotCount &&
+                _outputSlots[_activeOutputSlot] is { } activeSlot)
+            {
+                activeSlot.LastBackendOwner = backendOwner;
+            }
             _outputAllocationIdentity = allocationIdentity;
             _outputAttemptId = attemptId;
             _outputAttemptVersion = outputVersion;
@@ -395,6 +464,63 @@ internal sealed partial class SkinningPrepassDispatcher
             receipt.AddReference();
         }
 
+        /// <summary>
+        /// Clears cached Vulkan receipts and output ownership that belong to a retiring renderer
+        /// after its GPU has drained. The replacement renderer then allocates fresh wrappers cleanly.
+        /// </summary>
+        public void ResetForRetiredRenderer(AbstractRenderer retiredRenderer)
+        {
+            bool ownerMatches = ReferenceEquals(_outputBackendOwner, retiredRenderer);
+            bool receiptMatches = _outputReceipt is { } receipt &&
+                ReferenceEquals(receipt.BackendOwner, retiredRenderer);
+            bool anySlotChanged = false;
+            for (int i = 0; i < _outputSlotCount; i++)
+                if (_outputSlots[i]?.ResetForRetiredRenderer(retiredRenderer) == true)
+                    anySlotChanged = true;
+
+            if (!ownerMatches && !receiptMatches && !anySlotChanged)
+                return;
+
+            if (receiptMatches)
+                ClearOutputReceipt();
+
+            if (ownerMatches || receiptMatches)
+                ResetBackendOutputTrackingState();
+        }
+
+        private void ResetStaleBackendOwnerStateIfNeeded(AbstractRenderer currentBackendOwner)
+        {
+            bool ownerStale = _outputBackendOwner is not null &&
+                !ReferenceEquals(_outputBackendOwner, currentBackendOwner);
+            bool receiptStale = _outputReceipt is { } receipt &&
+                !ReferenceEquals(receipt.BackendOwner, currentBackendOwner);
+            if (!ownerStale && !receiptStale)
+                return;
+
+            for (int i = 0; i < _outputSlotCount; i++)
+                _outputSlots[i]?.ResetForBackendOwnerChange(currentBackendOwner);
+
+            ClearOutputReceipt();
+            ResetBackendOutputTrackingState();
+        }
+
+        private void ResetBackendOutputTrackingState()
+        {
+            _outputBackendOwner = null;
+            _outputAllocationIdentity = default;
+            _outputAttemptUnfenced = false;
+            _outputAttemptId = 0UL;
+            _outputAttemptVersion = 0UL;
+            _hasValidOutput = false;
+            _hasValidSkinnedBounds = false;
+            _seededFromRenderState = false;
+            _seedInputsSettled = false;
+            _settleLogged = false;
+            _lastReuseRejection = null;
+            _renderer.ResetSkinPaletteSeedState();
+            _renderer.MarkSkinnedOutputDirty();
+        }
+
         public bool CanOverwriteOutput(
             AbstractRenderer backendOwner,
             out string? failureReason,
@@ -402,6 +528,7 @@ internal sealed partial class SkinningPrepassDispatcher
         {
             failureReason = null;
             failureSnapshot = default;
+            ResetStaleBackendOwnerStateIfNeeded(backendOwner);
             if (_outputReceipt?.HasConsumerUses == true)
             {
                 failureReason = "Vulkan deformation output is retained by a frozen consumer.";
@@ -524,6 +651,11 @@ internal sealed partial class SkinningPrepassDispatcher
             _outputAttemptId = attemptId;
             _outputAttemptVersion = outputVersion;
             _outputBackendOwner = backendOwner;
+            if ((uint)_activeOutputSlot < (uint)_outputSlotCount &&
+                _outputSlots[_activeOutputSlot] is { } activeSlot)
+            {
+                activeSlot.LastBackendOwner = backendOwner;
+            }
             _lastDidSkinning = doSkinning;
             _lastDidBlendshapes = doBlendshapes;
             _lastUsedPrecombinedBlendshapes = usePrecombinedBlendshapes;

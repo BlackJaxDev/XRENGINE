@@ -22,6 +22,7 @@ namespace XREngine.Components
         private int _lastSentSchemaVersion = -1;
         private bool _stateMachineInitialized;
         private bool _playbackCapabilitiesValid;
+        private bool _drivesHumanoidBodyPose;
         private float[]? _livePoseMuscleScratch;
         private HumanoidProjectedRootPose _appliedRootMotionPose = HumanoidProjectedRootPose.Identity;
         private HumanoidProjectedRootPose _previousAppliedRootMotionPose = HumanoidProjectedRootPose.Identity;
@@ -109,6 +110,13 @@ namespace XREngine.Components
             private set => SetField(ref _playbackCapabilityDiagnostic, value);
         }
 
+        /// <summary>
+        /// True when the validated state machine writes humanoid body muscles, root motion, or IK
+        /// goals. False for overlay state machines that write only blendshapes, parameters, or
+        /// eye/jaw facial muscles, allowing them to keep running during VR IK and calibration.
+        /// </summary>
+        public bool DrivesHumanoidBodyPose => _drivesHumanoidBodyPose;
+
         private bool _evaluationSuspended;
         /// <summary>
         /// True while another owner drives the target. This flag is separate from
@@ -175,6 +183,7 @@ namespace XREngine.Components
                 case nameof(StateMachine):
                     ResetImportedAnimationBindings();
                     _playbackCapabilitiesValid = false;
+                    _drivesHumanoidBodyPose = false;
                     break;
                 case nameof(IsActive) when field is bool isActive && !isActive && !IsActiveInHierarchy:
                     ResetDrivenPose();
@@ -196,7 +205,7 @@ namespace XREngine.Components
                 return;
             }
 
-            if (!SuspendedByClip)
+            if (!SuspendedByClip && _drivesHumanoidBodyPose)
                 GetHumanoidComponent()?.ResetRootMotionBaseline();
             if (!SuspendedByClip)
             {
@@ -233,14 +242,16 @@ namespace XREngine.Components
                 _stateMachineInitialized = false;
             }
             _playbackCapabilitiesValid = false;
+            _drivesHumanoidBodyPose = false;
             ResetImportedAnimationBindings();
             _changedLastEval.Clear();
         }
 
         private void ResetDrivenPose()
         {
-            var humanoid = GetHumanoidComponent();
-            if (humanoid is not null)
+            bool ownsBodyPose = _drivesHumanoidBodyPose
+                || (!_playbackCapabilitiesValid && StateMachine.Layers.Count == 0);
+            if (ownsBodyPose && GetHumanoidComponent() is HumanoidComponent humanoid)
                 humanoid.ResetPose();
             else
                 StateMachine.ResetAnimatedState();
@@ -250,7 +261,9 @@ namespace XREngine.Components
             if (SuspendedByClip || EvaluationSuspended || !_playbackCapabilitiesValid)
                 return;
 
-            var humanoid = GetHumanoidComponent();
+            // Non-body overlay graphs (such as facial blendshape or eye controllers) do not own
+            // the skeleton pose and keep evaluating during VR IK and T-pose calibration.
+            HumanoidComponent? humanoid = _drivesHumanoidBodyPose ? GetHumanoidComponent() : null;
             if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
 
@@ -275,7 +288,7 @@ namespace XREngine.Components
             if (!_playbackCapabilitiesValid && !TryPrepareStateMachinePlayback())
                 return;
 
-            var humanoid = GetHumanoidComponent();
+            HumanoidComponent? humanoid = _drivesHumanoidBodyPose ? GetHumanoidComponent() : null;
             if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
 
@@ -308,6 +321,7 @@ namespace XREngine.Components
             {
                 PlaybackCapabilityDiagnostic = diagnostic;
                 _playbackCapabilitiesValid = false;
+                _drivesHumanoidBodyPose = false;
                 return false;
             }
 
@@ -319,6 +333,7 @@ namespace XREngine.Components
                     diagnostic = "The state machine contains Unity humanoid data, but no HumanoidComponent owns the target avatar definition.";
                     PlaybackCapabilityDiagnostic = diagnostic;
                     _playbackCapabilitiesValid = false;
+                    _drivesHumanoidBodyPose = false;
                     return false;
                 }
 
@@ -326,12 +341,14 @@ namespace XREngine.Components
                 {
                     PlaybackCapabilityDiagnostic = diagnostic;
                     _playbackCapabilitiesValid = false;
+                    _drivesHumanoidBodyPose = false;
                     return false;
                 }
             }
 
             PlaybackCapabilityDiagnostic = string.Empty;
             _playbackCapabilitiesValid = true;
+            _drivesHumanoidBodyPose = StateMachine.DrivesHumanoidBodyPose();
             diagnostic = string.Empty;
             return true;
         }

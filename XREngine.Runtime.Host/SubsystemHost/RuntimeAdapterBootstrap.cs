@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using XREngine.Components.Animation;
 using XREngine.Input;
 using XREngine.Networking;
@@ -73,7 +74,7 @@ public static class RuntimeAdapterBootstrap
     private static void ThrowCleanupFailures(List<Exception>? failures)
     {
         if (failures is [Exception failure])
-            throw failure;
+            ExceptionDispatchInfo.Capture(failure).Throw();
         if (failures is { Count: > 1 })
             throw new AggregateException("Runtime adapter host cleanup failed.", failures);
     }

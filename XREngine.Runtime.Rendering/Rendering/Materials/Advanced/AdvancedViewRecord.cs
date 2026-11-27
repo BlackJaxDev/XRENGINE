@@ -53,4 +53,25 @@ public struct AdvancedViewRecord
     public uint SourceCameraIdentityHi;
     public uint CullingLayerMask;
     public uint RenderTimeBits;
+
+    /// <summary>
+    /// World-space clipping plane (<c>xyz</c> = outward unit normal, <c>w</c> = signed plane offset)
+    /// applied to <c>gl_ClipDistance[0]</c> when <see cref="EAdvancedViewRecordFlags.ClipPlaneEnabled"/> is set.
+    /// </summary>
+    public Vector4 ClipPlaneWorld;
+
+    /// <summary>Owning primary eye view index (<c>0..primaryViewCount - 1</c>) for portal sub-views.</summary>
+    public uint PrimaryViewIndex;
+
+    /// <summary>Parent view index in the portal recursion tree.</summary>
+    public uint ParentViewIndex;
+
+    /// <summary>Portal stencil node identifier (<c>0</c> for primary views, <c>1..31</c> for active portal nodes).</summary>
+    public uint StencilNodeId;
+
+    /// <summary>
+    /// Packed portal recursion depth and self-exclusion draw index: bits 0..3 hold recursion depth,
+    /// and bits 4..31 hold the excluded mirror draw index (<c>0</c> means no draw excluded).
+    /// </summary>
+    public uint DepthAndExcludeDraw;
 }

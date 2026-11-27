@@ -344,16 +344,44 @@ public static partial class EditorImGuiUI
         EVrDesktopView view = EditorOpenXrPawnSwitcher.DesktopView;
         string currentLabel = OpenXrDesktopViews[(int)view].Label;
         ImGui.SetNextItemWidth(OpenXrDesktopViewComboWidth);
-        if (!ImGui.BeginCombo("Desktop view##OpenXR", currentLabel))
-            return;
-
-        foreach ((EVrDesktopView option, string label) in OpenXrDesktopViews)
+        if (ImGui.BeginCombo("Desktop view##OpenXR", currentLabel))
         {
-            if (ImGui.Selectable(label, option == view))
-                EditorOpenXrPawnSwitcher.SetDesktopView(option);
+            foreach ((EVrDesktopView option, string label) in OpenXrDesktopViews)
+            {
+                if (ImGui.Selectable(label, option == view))
+                    EditorOpenXrPawnSwitcher.SetDesktopView(option);
+            }
+
+            ImGui.EndCombo();
         }
 
-        ImGui.EndCombo();
+        if (EditorOpenXrPawnSwitcher.ActiveVrPlayer is { } vrPlayer)
+        {
+            ImGui.SameLine(0f, ToolbarSpacing);
+            if (vrPlayer.IsCalibrating)
+            {
+                if (ImGui.Button("Cancel Calibration##OpenXR"))
+                    vrPlayer.CancelCalibration();
+            }
+            else if (ImGui.Button("Calibrate VR##OpenXR"))
+            {
+                vrPlayer.BeginCalibration();
+            }
+        }
+
+        UserSettings? userSettings = Engine.UserSettings;
+        bool bodyMeasurementMissing = userSettings is not null &&
+            userSettings.PlayerHeight is null &&
+            userSettings.PlayerArmSpan is null;
+        ImGui.SameLine(0f, ToolbarSpacing);
+        if (bodyMeasurementMissing)
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1.0f, 0.85f, 0.3f, 1.0f));
+        if (ImGui.Button(bodyMeasurementMissing ? "Set VR Height...##OpenXR" : "VR Body...##OpenXR"))
+            _showUserSettings = true;
+        if (bodyMeasurementMissing)
+            ImGui.PopStyleColor();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Open User Settings -> VR Body Measurements to set PlayerHeight or PlayerArmSpan.");
     }
 
     private static void DrawGraphicsApiSelector()

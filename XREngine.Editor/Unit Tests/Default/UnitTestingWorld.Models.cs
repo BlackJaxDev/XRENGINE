@@ -22,7 +22,9 @@ using XREngine.Rendering.Meshlets;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
+using XREngine.Scene.Importers;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 using System.Diagnostics;
@@ -539,28 +541,29 @@ public static partial class EditorUnitTests
                                 try
                                 {
                                     SceneNode importedRoot = result.RootNode;
-                                    bool mountPrefabOnDesktopPawn = model.Kind is UnitTestModelImportKind.Animated
+                                    bool mountPrefabOnCharacterPawn = model.Kind is UnitTestModelImportKind.Animated
                                         && createdCrowd.Count == 0
                                         && characterParentNode is not null
                                         && Toggles.Locomotion
-                                        && Toggles.MotionBricksLocomotion
-                                        && !Toggles.VRPawn
+                                        && (Toggles.VRPawn || Toggles.MotionBricksLocomotion)
                                         && result.AvatarRoot is not null;
-                                    if (mountPrefabOnDesktopPawn)
+                                    if (mountPrefabOnCharacterPawn)
                                     {
                                         SceneNode avatarRoot = result.AvatarRoot!;
                                         List<ModelComponent> pawnSuspendedModels = SuspendSerializedPrefabModelPublication(avatarRoot);
                                         characterParentNode!.Transform.AddChild(avatarRoot.Transform, childPreservesWorldTransform: false, EParentAssignmentMode.Immediate);
-                                        // Stage avatar meshes after humanoid, scaling, and MotionBricks setup
+                                        // Stage avatar meshes after humanoid, scaling, and locomotion/VR setup
                                         // finish so background Uber shader compilation completes first and the
                                         // avatar does not flash in T-pose or trigger scale-change rebuilds.
                                         OnFinishedImportingAvatar(
                                             avatarRoot,
                                             characterParentNode,
                                             result.SourceContentSha256,
-                                            onSetupCompleted: () => StageSerializedPrefabModelPublication(avatarRoot, pawnSuspendedModels));
+                                            onSetupCompleted: () => StageSerializedPrefabModelPublication(avatarRoot, pawnSuspendedModels),
+                                            sourceModelPath: result.PrimaryModelPath);
+                                        string modeLabel = Toggles.VRPawn ? "VR character pawn" : "desktop MotionBricks locomotion";
                                         Debug.Meshes(
-                                            $"[UnityPrefab] Mounted '{resolvedPath}' onto '{characterParentNode.Name}' for desktop MotionBricks locomotion " +
+                                            $"[UnityPrefab] Mounted '{resolvedPath}' onto '{characterParentNode.Name}' for {modeLabel} " +
                                             $"({result.ModelCount} models, {result.MaterialCount} materials).");
                                         return;
                                     }
@@ -617,7 +620,7 @@ public static partial class EditorUnitTests
                                         for (int crowdIndex = 0; crowdIndex < crowd.Count; crowdIndex++)
                                         {
                                             if (setUpAvatars)
-                                                OnFinishedImportingAvatar(crowd[crowdIndex].AvatarRoot, null, result.SourceContentSha256);
+                                                OnFinishedImportingAvatar(crowd[crowdIndex].AvatarRoot, null, result.SourceContentSha256, sourceModelPath: result.PrimaryModelPath);
                                             StageSerializedPrefabModelPublication(crowd[crowdIndex].Root, crowdSuspendedModels![crowdIndex]);
                                         }
                                     }
@@ -625,7 +628,7 @@ public static partial class EditorUnitTests
                                     {
                                         if (IsSerializedPrefabPath(resolvedPath) ||
                                             !string.IsNullOrWhiteSpace(model.SceneRootName))
-                                            OnFinishedImportingAvatar(result.AvatarRoot, null, result.SourceContentSha256);
+                                            OnFinishedImportingAvatar(result.AvatarRoot, null, result.SourceContentSha256, sourceModelPath: result.PrimaryModelPath);
                                         StageSerializedPrefabModelPublication(importedRoot, suspendedModels);
                                     }
 
@@ -720,9 +723,10 @@ public static partial class EditorUnitTests
                                             OnFinishedImportingAvatar(
                                                 importedNode,
                                                 characterParentNode,
-                                                sourceContentSha256);
+                                                sourceContentSha256,
+                                                sourceModelPath: resolvedPath);
                                         foreach (CrowdAvatar avatar in crowd)
-                                            OnFinishedImportingAvatar(avatar.AvatarRoot, null, sourceContentSha256);
+                                            OnFinishedImportingAvatar(avatar.AvatarRoot, null, sourceContentSha256, sourceModelPath: resolvedPath);
                                     }
                                     finally
                                     {
@@ -1570,20 +1574,23 @@ public static partial class EditorUnitTests
             SceneNode? rootNode,
             SceneNode? characterParentNode,
             string? sourceModelContentSha256,
-            Action? onSetupCompleted = null)
+            Action? onSetupCompleted = null,
+            string? sourceModelPath = null)
             => OnFinishedImportingAvatar(
                 rootNode,
                 characterParentNode,
                 startupClips: null,
                 sourceModelContentSha256,
-                onSetupCompleted);
+                onSetupCompleted,
+                sourceModelPath);
 
         private static void OnFinishedImportingAvatar(
             SceneNode? rootNode,
             SceneNode? characterParentNode,
             AvatarStartupClipLoadResult? startupClips,
             string? sourceModelContentSha256,
-            Action? onSetupCompleted = null)
+            Action? onSetupCompleted = null,
+            string? sourceModelPath = null)
         {
             if (rootNode is null)
             {
@@ -1596,7 +1603,8 @@ public static partial class EditorUnitTests
                 characterParentNode,
                 startupClips,
                 sourceModelContentSha256,
-                onSetupCompleted);
+                onSetupCompleted,
+                sourceModelPath);
         }
 
         private static void QueueAvatarPostImportSetup(
@@ -1604,7 +1612,8 @@ public static partial class EditorUnitTests
             SceneNode? characterParentNode,
             AvatarStartupClipLoadResult? startupClips,
             string? sourceModelContentSha256,
-            Action? onSetupCompleted = null)
+            Action? onSetupCompleted = null,
+            string? sourceModelPath = null)
         {
             HumanoidComponent? humanComp = null;
             HeightScaleBaseComponent? heightScale = null;
@@ -1636,6 +1645,9 @@ public static partial class EditorUnitTests
                         if (humanComp is null || humanComp.IsDestroyed)
                             return true;
 
+                        int appliedMetaLimits = SerializedHumanoidAvatarSetup.ApplyMetaMuscleLimits(humanComp, sourceModelPath);
+                        if (appliedMetaLimits > 0)
+                            Debug.Animation($"[UnitTestingWorld] Applied {appliedMetaLimits} modified Unity humanoid bone limit(s) to '{rootNode.Name}'.");
                         humanComp.InitializeSceneNodeBindings();
                         stage++;
                         return false;
@@ -1657,7 +1669,7 @@ public static partial class EditorUnitTests
                         }
 
                         if (Toggles.FaceTracking)
-                            ConfigureAvatarFaceTracking(rootNode, animator);
+                            ConfigureAvatarFaceTracking(rootNode, humanComp);
 
                         stage++;
                         return false;
@@ -1666,7 +1678,7 @@ public static partial class EditorUnitTests
                         if (humanComp is null || humanComp.IsDestroyed)
                             return true;
 
-                        vrIKSolver = ConfigureAvatarCharacterIK(rootNode, humanComp);
+                        vrIKSolver = ConfigureAvatarCharacterIK(rootNode, humanComp, requireVrSolver: bindToStartupPawn && Toggles.VRPawn);
                         stage++;
                         return false;
 
@@ -1697,9 +1709,9 @@ public static partial class EditorUnitTests
 
                         ConfigureAvatarPostSetupFeatures(rootNode, humanComp);
 
-                        // Skip startup override clips when desktop MotionBricks locomotion owns the state machine,
-                        // because AnimationClipComponent suspends AnimStateMachineComponent playback.
-                        bool skipStartupClips = bindToStartupPawn && Toggles.Locomotion && Toggles.MotionBricksLocomotion && !Toggles.VRPawn;
+                        // Skip startup override clips when VR full-body IK or desktop MotionBricks
+                        // locomotion owns the avatar bones.
+                        bool skipStartupClips = bindToStartupPawn && Toggles.Locomotion && (Toggles.VRPawn || Toggles.MotionBricksLocomotion);
                         if (!skipStartupClips)
                         {
                             if (startupClips is not null)
@@ -1717,42 +1729,130 @@ public static partial class EditorUnitTests
             });
         }
 
-        private static void ConfigureAvatarFaceTracking(SceneNode rootNode, AnimStateMachineComponent animator)
+        private static void ConfigureAvatarFaceTracking(SceneNode rootNode, HumanoidComponent humanComp)
         {
             const string faceTrackingParameterPrefix = "/avatar/parameters/";
-            var ftOscReceiver = rootNode.AddComponent<FaceTrackingReceiverComponent>()!;
-            ftOscReceiver.ParameterPrefix = faceTrackingParameterPrefix;
-            ftOscReceiver.GenerateARKitStateMachine();
+            UnitTestingFaceTrackingSettings settings = Toggles.FaceTrackingSettings;
+            string avatarId = AnimStateMachineOscReceiverComponent.CreateDeterministicAvatarId(rootNode.Name);
 
-            var ftOscSender = rootNode.AddComponent<OscSenderComponent>()!;
-            ftOscSender.ParameterPrefix = faceTrackingParameterPrefix;
+            // Ensure a procedural eye gaze and blinking component exists on the avatar so the OSC
+            // receiver can dynamically hand off eye animation whenever face tracking is inactive.
+            HumanoidProceduralEyeGazeComponent proceduralEyeGaze = rootNode.GetComponent<HumanoidProceduralEyeGazeComponent>()
+                ?? rootNode.AddComponent<HumanoidProceduralEyeGazeComponent>("Procedural Eye Gaze")!;
+            proceduralEyeGaze.Humanoid = humanComp;
+            proceduralEyeGaze.AvatarFacingTransform = rootNode.GetTransformAs<Transform>(true);
 
-            animator.StateMachine.VariableChanged += StateMachineVariableChanged;
+            // Keep face tracking on its own AnimStateMachineComponent so body locomotion
+            // (MotionBricks) and VR calibration never overwrite or suspend facial expressions.
+            var faceTrackingAnimator = rootNode.AddComponent<AnimStateMachineComponent>("Face Tracking Animator")!;
+            faceTrackingAnimator.Humanoid = humanComp;
 
-            void StateMachineVariableChanged(AnimVar variable)
+            if (!settings.UseVrcftTemplates)
             {
-                string address = variable.ParameterName;
-                switch (variable)
+                var legacySender = rootNode.AddComponent(() => new OscSenderComponent
                 {
-                    case AnimFloat f:
-                        ftOscSender.Send(address, f.Value);
-                        break;
-                    case AnimInt i:
-                        ftOscSender.Send(address, i.Value);
-                        break;
-                    case AnimBool b:
-                        ftOscSender.Send(address, b.Value);
-                        break;
+                    Port = settings.OscSendPort,
+                    ParameterPrefix = faceTrackingParameterPrefix,
+                }, "Face Tracking OSC Sender")!;
+
+                var legacyReceiver = rootNode.AddComponent(() => new FaceTrackingReceiverComponent
+                {
+                    AnimStateMachine = faceTrackingAnimator,
+                    OutboundSender = legacySender,
+                    ProceduralEyeGaze = proceduralEyeGaze,
+                    ParameterPrefix = faceTrackingParameterPrefix,
+                    Port = settings.OscReceivePort,
+                    EnableOscQuery = settings.EnableOscQuery,
+                    OscQueryServiceName = settings.OscQueryServiceName,
+                    OscQueryHttpPort = settings.OscQueryHttpPort,
+                    AvatarId = avatarId,
+                    AvatarName = rootNode.Name ?? "XRENGINE Avatar",
+                }, "Face Tracking OSC Receiver")!;
+                legacyReceiver.GenerateARKitStateMachine();
+
+                faceTrackingAnimator.StateMachine.VariableChanged += variable
+                    => legacySender.SendStateMachineParameterIfAllowed(faceTrackingAnimator.StateMachine, variable, legacyReceiver);
+                return;
+            }
+
+            VrcftTemplateAttachResult? attachResult = null;
+            if (!string.IsNullOrWhiteSpace(settings.PackageSource)
+                && settings.ControllerPaths is { Count: > 0 })
+            {
+                string desktopDir = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                var attachOptions = new VrcftTemplateAttachOptions
+                {
+                    PackageSource = settings.PackageSource,
+                    PackageId = settings.PackageId,
+                    PackageVersion = settings.PackageVersion,
+                    ControllerPaths = settings.ControllerPaths,
+                    FaceMeshPathOverride = settings.FaceMeshPathOverride,
+                    SourceFaceMeshPath = settings.SourceFaceMeshPath,
+                    ResolveLocalPath = path => ResolveUnityDependencyPath(desktopDir, path),
+                    ApplyLocalDefaults = true,
+                    AllowMissingImportedBindings = true,
+                };
+
+                try
+                {
+                    attachResult = VrcftTemplateAttachmentService.Attach(
+                        rootNode,
+                        attachOptions,
+                        faceTrackingAnimator);
+                    EditorImGuiUI.RecordVrcftTemplateAttachResult(rootNode, attachResult);
+                }
+                catch (Exception ex)
+                {
+                    Debug.AnimationWarning(
+                        $"[VrcftTemplate] Failed to attach face-tracking controllers to '{rootNode.Name}': {ex.Message}");
                 }
             }
+            else
+            {
+                Debug.Animation(
+                    $"[VrcftTemplate] FaceTracking is enabled on '{rootNode.Name}', but FaceTrackingSettings.PackageSource " +
+                    "or ControllerPaths is empty. Configure them in UnitTestingWorldSettings.jsonc or attach controllers in the inspector.");
+            }
+
+            // Activate the outbound OSC sender before the receiver so the initial schema bind
+            // emits /avatar/change to UDP port 9001 with the configured AvatarId immediately.
+            var ftOscSender = rootNode.AddComponent(() => new OscSenderComponent
+            {
+                Port = settings.OscSendPort,
+                ParameterPrefix = faceTrackingParameterPrefix,
+            }, "Face Tracking OSC Sender")!;
+
+            var ftOscReceiver = rootNode.AddComponent(() =>
+            {
+                var receiver = new AnimStateMachineOscReceiverComponent
+                {
+                    AnimStateMachine = faceTrackingAnimator,
+                    OutboundSender = ftOscSender,
+                    ProceduralEyeGaze = proceduralEyeGaze,
+                    ParameterPrefix = faceTrackingParameterPrefix,
+                    Port = settings.OscReceivePort,
+                    EnableDynamicParameterBinding = true,
+                    EnableOscQuery = settings.EnableOscQuery,
+                    OscQueryServiceName = settings.OscQueryServiceName,
+                    OscQueryHttpPort = settings.OscQueryHttpPort,
+                    AvatarId = avatarId,
+                    AvatarName = rootNode.Name ?? "XRENGINE Avatar",
+                };
+                if (attachResult is not null && attachResult.OscParameterTypeOverrides.Count > 0)
+                    receiver.SetOscQueryParameterTypeOverrides(attachResult.OscParameterTypeOverrides);
+                return receiver;
+            }, "Face Tracking OSC Receiver")!;
+
+            faceTrackingAnimator.StateMachine.VariableChanged += variable
+                => ftOscSender.SendStateMachineParameterIfAllowed(faceTrackingAnimator.StateMachine, variable, ftOscReceiver);
         }
 
-        private static VRIKSolverComponent? ConfigureAvatarCharacterIK(SceneNode rootNode, HumanoidComponent humanComp)
+        private static VRIKSolverComponent? ConfigureAvatarCharacterIK(SceneNode rootNode, HumanoidComponent humanComp, bool requireVrSolver = false)
         {
-            if (!Toggles.AddCharacterIK)
+            if (!Toggles.AddCharacterIK && !requireVrSolver)
                 return null;
 
-            if (!Toggles.VRPawn)
+            if (!Toggles.VRPawn && !requireVrSolver)
             {
                 var humanik = rootNode.AddComponent<HumanoidIKSolverComponent>()!;
 
@@ -2110,7 +2210,7 @@ public static partial class EditorUnitTests
             });
         }
 
-        private static void TryScaleAvatarToFitDesktopCapsule(
+        internal static void TryScaleAvatarToFitDesktopCapsule(
             SceneNode avatarRoot,
             HumanoidComponent humanoid,
             HeightScaleComponent heightScale,

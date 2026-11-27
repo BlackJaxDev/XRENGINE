@@ -1049,6 +1049,11 @@ public unsafe partial class OpenXRAPI
             }
         }
 
+        // Admission is closed and OpenXR GPU work is idle. Release eye package and
+        // picking leases now so deferred swapchain retirement cannot pin canonical
+        // scene journals while desktop rendering continues.
+        CancelOpenXrEyeFramePackages();
+
         if (CleanupSwapchains() != OpenXrSwapchainCleanupOutcome.Completed ||
             _graphicsBinding?.HasPendingDeferredSwapchainRetirement == true)
         {
@@ -1059,8 +1064,6 @@ public unsafe partial class OpenXRAPI
             Debug.LogWarning("[OpenXR] Deferred runtime teardown because Vulkan swapchain retirement is still pending.");
             return false;
         }
-
-        CancelOpenXrEyeFramePackages();
 
         DestroyInput();
 

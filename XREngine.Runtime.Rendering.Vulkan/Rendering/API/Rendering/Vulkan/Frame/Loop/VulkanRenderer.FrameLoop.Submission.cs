@@ -59,12 +59,18 @@ namespace XREngine.Rendering.Vulkan
                             EVulkanPresentNowReadinessStage.FramePlanSeal,
                             reason,
                             recoveryOverlaySnapshot: null,
-                            recoveryDynamicTextSecondaryCommandBuffer: default,
-                            recoveryDynamicTextOperationCount: 0)
+                            recoveryDynamicTextSecondaryCommandBuffer:
+                                attempt.DynamicTextSecondaryCommandBuffer,
+                            recoveryDynamicTextOperationCount:
+                                attempt.DynamicTextOverlayOperationCount)
                         : HandleDesktopRecordingDeferred(
                             ref attempt,
                             reason,
-                            recoveryOverlaySnapshot: null);
+                            recoveryOverlaySnapshot: null,
+                            recoveryDynamicTextSecondaryCommandBuffer:
+                                attempt.DynamicTextSecondaryCommandBuffer,
+                            recoveryDynamicTextOperationCount:
+                                attempt.DynamicTextOverlayOperationCount);
                 }
                 if (attempt.HasWindowPresentationSourceOwner &&
                     !TryValidatePresentationSourceForSubmission(
@@ -85,12 +91,18 @@ namespace XREngine.Rendering.Vulkan
                             EVulkanPresentNowReadinessStage.FramePlanSeal,
                             reason,
                             recoveryOverlaySnapshot: null,
-                            recoveryDynamicTextSecondaryCommandBuffer: default,
-                            recoveryDynamicTextOperationCount: 0)
+                            recoveryDynamicTextSecondaryCommandBuffer:
+                                attempt.DynamicTextSecondaryCommandBuffer,
+                            recoveryDynamicTextOperationCount:
+                                attempt.DynamicTextOverlayOperationCount)
                         : HandleDesktopRecordingDeferred(
                             ref attempt,
                             reason,
-                            recoveryOverlaySnapshot: null);
+                            recoveryOverlaySnapshot: null,
+                            recoveryDynamicTextSecondaryCommandBuffer:
+                                attempt.DynamicTextSecondaryCommandBuffer,
+                            recoveryDynamicTextOperationCount:
+                                attempt.DynamicTextOverlayOperationCount);
                 }
 
                 ThrowIfDesktopFrameFaultInjected(
@@ -201,12 +213,18 @@ namespace XREngine.Rendering.Vulkan
                             EVulkanPresentNowReadinessStage.FramePlanSeal,
                             reason,
                             recoveryOverlaySnapshot: null,
-                            recoveryDynamicTextSecondaryCommandBuffer: default,
-                            recoveryDynamicTextOperationCount: 0)
+                            recoveryDynamicTextSecondaryCommandBuffer:
+                                attempt.DynamicTextSecondaryCommandBuffer,
+                            recoveryDynamicTextOperationCount:
+                                attempt.DynamicTextOverlayOperationCount)
                         : HandleDesktopRecordingDeferred(
                             ref attempt,
                             reason,
-                            recoveryOverlaySnapshot: null);
+                            recoveryOverlaySnapshot: null,
+                            recoveryDynamicTextSecondaryCommandBuffer:
+                                attempt.DynamicTextSecondaryCommandBuffer,
+                            recoveryDynamicTextOperationCount:
+                                attempt.DynamicTextOverlayOperationCount);
                 }
 
                 try

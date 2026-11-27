@@ -61,6 +61,18 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// <summary>Shades one pixel per peripheral block of the same primitive, then fills the rest.</summary>
     internal bool RvcFoveatedQuadShading { get; init; }
 
+    /// <summary>Runs the RVC GPU shadelet-cache passes instead of per-kernel pixel shading.</summary>
+    internal bool RvcShadeletCacheEnabled { get; init; }
+
+    /// <summary>Validates and reuses view-0 shadelets into view 1 during stereo RVC rendering.</summary>
+    internal bool RvcStereoReuseEnabled { get; init; }
+
+    /// <summary>Keeps near-field pixels at 1x1 shadelet density.</summary>
+    internal bool RvcForceFullResNear { get; init; }
+
+    /// <summary>Optional RVC debug view overlay applied during shadelet resolve.</summary>
+    internal ERvcDebugViewMode RvcDebugViewMode { get; init; }
+
     /// <summary>Shades one pixel per 2x2 block of the same primitive outside the edge radius of an Advanced eye, then fills the rest.</summary>
     internal bool AdvancedEdgeHalfRateShading { get; init; }
 
@@ -81,6 +93,26 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// overwrite the native AO image before shading. The transitions still run.
     /// </summary>
     internal bool SkipNeutralAmbientOcclusionFill { get; init; }
+
+    /// <summary>
+    /// Scheduled portal and mirror sub-views authored for this frame, or null when none are active.
+    /// </summary>
+    internal AdvancedPortalFramePlan? PortalFramePlan { get; init; }
+
+    /// <summary>Number of exponential clustered lighting depth slices configured for this family.</summary>
+    internal uint FroxelDepthSlices { get; init; } = AdvancedFroxelGridDimensions.DefaultDepthSlices;
+
+    /// <summary>True for the in-place stencil portal visibility phase.</summary>
+    internal bool IsPortalVisibilityPhase => Phase == EAdvancedVisibilityStageBackendPhase.PortalVisibility;
+
+    /// <summary>True for the pre-transparent reflected sky unwind phase.</summary>
+    internal bool IsPortalSkyUnwindPhase => Phase == EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind;
+
+    /// <summary>True for the deepest-out portal glass composite and stencil unwind phase.</summary>
+    internal bool IsPortalUnwindPhase => Phase == EAdvancedVisibilityStageBackendPhase.PortalUnwind;
+
+    /// <summary>True for either late portal unwind graphics phase on the HDR forward target.</summary>
+    internal bool IsPortalLatePhase => IsPortalSkyUnwindPhase || IsPortalUnwindPhase;
 
     /// <summary>True for the directional shadow lane, which records the family's bins into an atlas page.</summary>
     internal bool IsDirectionalShadowStage => Stage == EAdvancedRenderStage.DirectionalShadowRaster;
@@ -111,6 +143,8 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.LateRaster) or
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.PortalVisibility) or
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.MultisampleResolve) or
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.DecalBuffer) or
@@ -119,7 +153,11 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
             (EAdvancedRenderStage.AmbientOcclusion,
                 EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.NativeOpaqueShading,
-                EAdvancedVisibilityStageBackendPhase.Complete)) &&
+                EAdvancedVisibilityStageBackendPhase.Complete) or
+            (EAdvancedRenderStage.LatePasses,
+                EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind) or
+            (EAdvancedRenderStage.LatePasses,
+                EAdvancedVisibilityStageBackendPhase.PortalUnwind)) &&
            Publication.FrameId != 0u &&
            Reservation.IsValid &&
            BackendPackage.IsValid &&
@@ -238,11 +276,12 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
         // the family's publication and views, never its visibility targets.
         if (IsDirectionalShadowStage || other.IsDirectionalShadowStage)
             return true;
-        // The decal buffer targets its own framebuffer. It shares the resolved
-        // visibility depth, and its request carries the resolved target names.
-        if (IsDecalBufferPhase || other.IsDecalBufferPhase)
+        // The decal buffer and late portal unwind phases target their own framebuffers while
+        // sharing the resolved visibility depth and target names.
+        if (IsDecalBufferPhase || other.IsDecalBufferPhase ||
+            IsPortalLatePhase || other.IsPortalLatePhase)
         {
-            return IsDecalBufferPhase
+            return (IsDecalBufferPhase || IsPortalLatePhase)
                 ? HasExpectedVisibilityTargetNames(raw: false)
                 : other.HasExpectedVisibilityTargetNames(raw: false);
         }

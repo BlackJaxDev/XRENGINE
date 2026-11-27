@@ -220,6 +220,11 @@ public static class BootstrapPawnFactory
         player.EyeLBoneName = "Eye_L";
         player.EyeRBoneName = "Eye_R";
         player.EyesModelResolveName = "Face";
+        string? sourceHash = humanoid.AvatarDefinition.SourceModelContentSha256;
+        string? definitionHash = humanoid.AvatarDefinition.DefinitionContentSha256;
+        player.AvatarIdentity = !string.IsNullOrWhiteSpace(sourceHash)
+            ? $"{sourceHash}:{definitionHash}"
+            : definitionHash;
 
         var localAvatarVisibility = characterNode.GetComponent<VrLocalAvatarVisibilityComponent>()
             ?? characterNode.AddComponent<VrLocalAvatarVisibilityComponent>()!;
@@ -471,18 +476,16 @@ public static class BootstrapPawnFactory
         var rigidBodyTransform = cameraNode.GetTransformAs<RigidBodyTransform>(true)!;
         rigidBodyTransform.SetPositionAndRotation(initialPosition, initialRotation);
 
-        IPhysicsGeometry.Sphere s = new(0.2f);
-        PhysxMaterial mat = new(0.5f, 0.5f, 0.5f);
-        PhysxShape shape = new(s, mat, PxShapeFlags.TriggerShape | PxShapeFlags.Visualization, true);
         var cameraPickup = cameraNode.AddComponent<DynamicRigidBodyComponent>()!;
-        PhysxDynamicRigidBody body = new(shape, 1.0f, initialPosition, initialRotation);
-        cameraPickup.RigidBody = body;
-
-        body.Mass = 1.0f;
-        body.Flags = 0;
-        body.GravityEnabled = false;
-        body.SimulationEnabled = true;
-        body.DebugVisualize = true;
+        cameraPickup.MaterialDefinition = new PhysicsMaterialDefinition
+        {
+            StaticFriction = 0.5f,
+            DynamicFriction = 0.5f,
+            Restitution = 0.5f,
+        };
+        cameraPickup.Geometry = new IPhysicsGeometry.Sphere(0.2f);
+        cameraPickup.GravityEnabled = false;
+        cameraPickup.Density = 1.0f;
 
         return cameraPickup;
     }

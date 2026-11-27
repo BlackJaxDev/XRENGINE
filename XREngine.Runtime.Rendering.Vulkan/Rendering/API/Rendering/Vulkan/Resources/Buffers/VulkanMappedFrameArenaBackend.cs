@@ -39,7 +39,8 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
         out void* mappedPtr,
         out bool isHostCoherent,
         out ulong allocationLength,
-        bool preferDeviceLocal = false)
+        bool preferDeviceLocal = false,
+        bool preferHostCached = false)
     {
         buffer = default;
         memory = default;
@@ -90,6 +91,7 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                     requirements,
                     enableDeviceAddress,
                     preferDeviceLocal,
+                    preferHostCached,
                     ownerLabel,
                     out memory,
                     out uint memoryTypeIndex,
@@ -298,13 +300,15 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
         => _deviceContext.ObserveNativeResult(operation, result);
 
     /// <summary>
-    /// Prefers mapped device-local storage only when requested by the lane.
+    /// Prefers mapped device-local storage for GPU-read lanes and host-cached system memory
+    /// for CPU-readback lanes so host copies do not traverse uncached write-combined memory.
     /// An allocation capacity failure can try another type; native faults cannot.
     /// </summary>
     private bool TryAllocateChunkMemory(
         in MemoryRequirements requirements,
         bool enableDeviceAddress,
         bool preferDeviceLocal,
+        bool preferHostCached,
         string ownerLabel,
         out DeviceMemory memory,
         out uint memoryTypeIndex,
@@ -315,20 +319,29 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
         memoryTypeIndex = 0;
         properties = default;
         allocationRetried = false;
-        ReadOnlySpan<MemoryPropertyFlags> preferences = stackalloc MemoryPropertyFlags[]
-        {
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.DeviceLocalBit | MemoryPropertyFlags.HostCoherentBit,
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.DeviceLocalBit,
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-            MemoryPropertyFlags.HostVisibleBit,
-        };
+        ReadOnlySpan<MemoryPropertyFlags> preferences = preferHostCached
+            ? stackalloc MemoryPropertyFlags[]
+            {
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit | MemoryPropertyFlags.HostCachedBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCachedBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                MemoryPropertyFlags.HostVisibleBit,
+            }
+            : stackalloc MemoryPropertyFlags[]
+            {
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.DeviceLocalBit | MemoryPropertyFlags.HostCoherentBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.DeviceLocalBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                MemoryPropertyFlags.HostVisibleBit,
+            };
         uint attemptedTypes = 0;
         MemoryAllocateFlagsInfo addressFlags = new()
         {
             SType = StructureType.MemoryAllocateFlagsInfo,
             Flags = MemoryAllocateFlags.DeviceAddressBit,
         };
-        for (int preference = preferDeviceLocal ? 0 : 2; preference < preferences.Length; ++preference)
+        int startPreference = preferHostCached ? 0 : (preferDeviceLocal ? 0 : 2);
+        for (int preference = startPreference; preference < preferences.Length; ++preference)
         {
             while (TryResolveMemoryType(
                 requirements.MemoryTypeBits & ~attemptedTypes,

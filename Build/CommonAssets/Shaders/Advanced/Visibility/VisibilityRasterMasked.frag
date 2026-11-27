@@ -110,6 +110,9 @@ void main()
         discard;
     }
     XRAdvancedViewRecord coverageView = XR_ADV_LoadView(VisibilityViewIndex);
+    // Vulkan sets FrontFace.Clockwise for inverted-winding portal pipelines, so
+    // hardware gl_FrontFacing already matches the real front face of the triangle.
+    bool frontFacing = gl_FrontFacing;
     vec2 upscaleDerivativeScale = XR_ADV_UpscaleDerivativeScale(coverageView);
     if (uber)
     {
@@ -135,7 +138,7 @@ void main()
         coordinates.worldPosition = VisibilityCoverageWorldPosition;
         coordinates.localPosition = VisibilityCoverageLocalPosition;
         coordinates.color = VisibilityCoverageColor;
-        coordinates.frontFacing = gl_FrontFacing;
+        coordinates.frontFacing = frontFacing;
         coordinates.pixel = gl_FragCoord.xy;
         coordinates.time = uintBitsToFloat(coverageView.renderTimeBits);
         vec4 baseColor;
@@ -219,7 +222,7 @@ void main()
         VisibilityProducer,
         VisibilityOrigin,
         true,
-        gl_FrontFacing,
+        frontFacing,
         VisibilityVelocityValid != 0u,
         VisibilityViewIndex,
         selectionValid,

@@ -815,12 +815,15 @@ namespace XREngine.Scene
         }
 
         /// <summary>
-        /// Gets whether scene capture work is pending. A capture camera does not use cascades, so the atlas planning
-        /// counts this work as a consumer of the primary directional shadow map. The test counts all pending capture
-        /// work, because it cannot read the shadow policy of a queued capture without an allocation.
+        /// Gets whether scene capture work is active or pending. A capture camera does not use
+        /// cascades, so directional atlas planning reserves the primary directional shadow map for
+        /// the entire capture or probe-grid batch instead of oscillating as individual face work
+        /// items are dequeued and re-queued between frames.
         /// </summary>
         private bool HasPendingShadowCaptureWork
-            => PendingCaptureWorkItemCount > 0;
+            => PendingCaptureWorkItemCount > 0 ||
+               PendingCaptureComponentCount > 0 ||
+               LightProbeBatchCaptureActive;
 
         /// <summary>
         /// Returns whether this collect pass collects the shadow views of <paramref name="light"/>. The same camera frusta

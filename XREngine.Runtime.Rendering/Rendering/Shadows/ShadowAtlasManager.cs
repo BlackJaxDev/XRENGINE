@@ -413,6 +413,7 @@ public sealed partial class ShadowAtlasManager
         ShadowAtlasManagerSettings normalized = NormalizeSettings(settings);
         bool resourceShapeChanged = normalized.PageSize != _settings.PageSize ||
             normalized.MaxPages != _settings.MaxPages ||
+            normalized.MaxDirectionalPages != _settings.MaxDirectionalPages ||
             normalized.MaxMemoryBytes != _settings.MaxMemoryBytes ||
             normalized.MinTileResolution != _settings.MinTileResolution ||
             normalized.MaxTileResolution != _settings.MaxTileResolution;
@@ -887,7 +888,7 @@ public sealed partial class ShadowAtlasManager
         int entryCount = _balancedAllocationEntries.Count;
         ApplyDirectionalCascadeGroupResolutionCaps(entryCount);
         ShadowAtlasEncodingState state = GetEncodingState(atlasKind, encoding);
-        ApplyFeasibilityWaterlineDemotions(entryCount);
+        ApplyFeasibilityWaterlineDemotions(atlasKind, entryCount);
         if (entryCount == 0)
         {
             PublishPendingSkippedAllocations(state);
@@ -1291,6 +1292,8 @@ public sealed partial class ShadowAtlasManager
         _solveDiagnostics.BalancedSolveAttemptCount++;
         ResetBalancedAllocationSolveState(entryCount);
         TryReusePersistentAllocations(state, entryCount);
+        if (state.AtlasKind == EShadowAtlasKind.Directional)
+            ReleaseNonReusedDirectionalResidentAllocations(entryCount);
         TryAllocateDirectionalCascadeGroups(state, entryCount);
 
         for (int i = 0; i < entryCount; i++)
@@ -1321,6 +1324,14 @@ public sealed partial class ShadowAtlasManager
             if (failureReason == SkipReason.None)
                 failureReason = state.LastFailureReason is SkipReason.None ? SkipReason.AllocationFailed : state.LastFailureReason;
 
+            if (!_repackRequested &&
+                failureReason is SkipReason.PageBudgetExceeded or SkipReason.AllocationFailed &&
+                state.FreeTexelCount >= (long)entry.MinimumResolution * entry.MinimumResolution)
+            {
+                // Request a next-frame repack when enough free texels exist but fragmentation blocks placement.
+                RequestRepack();
+            }
+
             entry.Allocation = CreateSkippedAllocation(entry.Request, failureReason);
             entry.AllocationSolved = true;
             _balancedAllocationEntries[i] = entry;
@@ -1335,6 +1346,22 @@ public sealed partial class ShadowAtlasManager
 
     private static int CalculateBalancedDemotionBatchSize(int entryCount)
         => Math.Clamp(entryCount / 16, 1, 8);
+
+    private void ReleaseNonReusedDirectionalResidentAllocations(int entryCount)
+    {
+        // Free old directional blocks whose target resolution changed before contiguous group
+        // allocation runs so resized groups can reuse their own freed page space without leaking.
+        for (int i = 0; i < entryCount; i++)
+        {
+            BalancedAllocationEntry entry = _balancedAllocationEntries[i];
+            if (!entry.AllocationSolved &&
+                entry.Request.ProjectionType == EShadowProjectionType.DirectionalCascade &&
+                _residentAllocations.ContainsKey(entry.Request.Key))
+            {
+                ReleaseResidentAllocation(entry.Request.Key);
+            }
+        }
+    }
 
     private void TryReusePersistentAllocations(ShadowAtlasEncodingState state, int entryCount)
     {
@@ -1390,10 +1417,16 @@ public sealed partial class ShadowAtlasManager
                TryReduceAllocationAtIndex(entryIndex, entryCount, out bool demotedSolvedAllocation))
         {
             attempts++;
-            if (demotedSolvedAllocation)
-                ReleaseSolvedAllocation(state, entryIndex);
-
             BalancedAllocationEntry repaired = _balancedAllocationEntries[entryIndex];
+            if (demotedSolvedAllocation)
+            {
+                if (repaired.Request.ProjectionType == EShadowProjectionType.DirectionalCascade)
+                    ReleaseAndReallocateDemotedDirectionalPeers(state, entryIndex, entryCount);
+                else
+                    ReleaseSolvedAllocation(state, entryIndex);
+            }
+
+            repaired = _balancedAllocationEntries[entryIndex];
             if (TryAllocateCandidate(state, repaired.Request, repaired.Resolution, out allocation, out failureReason))
                 return true;
 
@@ -1404,6 +1437,44 @@ public sealed partial class ShadowAtlasManager
         allocation = default;
         failureReason = state.LastFailureReason is SkipReason.None ? SkipReason.AllocationFailed : state.LastFailureReason;
         return false;
+    }
+
+    private void ReleaseAndReallocateDemotedDirectionalPeers(
+        ShadowAtlasEncodingState state,
+        int entryIndex,
+        int entryCount)
+    {
+        ShadowMapRequest seed = _balancedAllocationEntries[entryIndex].Request;
+        ReleaseSolvedAllocation(state, entryIndex);
+        for (int i = 0; i < entryCount; i++)
+        {
+            if (i == entryIndex)
+                continue;
+
+            BalancedAllocationEntry peer = _balancedAllocationEntries[i];
+            if (!peer.AllocationSolved || !IsSameDirectionalCascadeGroup(seed, peer.Request))
+                continue;
+
+            ReleaseSolvedAllocation(state, i);
+            if (i < entryIndex)
+            {
+                // Earlier indices will not be visited again by the outer solve loop, so re-solve
+                // them at the reduced group resolution immediately.
+                peer = _balancedAllocationEntries[i];
+                if (TryAllocateCandidate(state, peer.Request, peer.Resolution, out ShadowAtlasAllocation peerAlloc, out SkipReason peerSkip))
+                {
+                    peer.Allocation = peerAlloc;
+                    peer.AllocationSolved = true;
+                }
+                else
+                {
+                    peer.Allocation = CreateSkippedAllocation(peer.Request, peerSkip == SkipReason.None ? SkipReason.AllocationFailed : peerSkip);
+                    peer.AllocationSolved = true;
+                }
+
+                _balancedAllocationEntries[i] = peer;
+            }
+        }
     }
 
     private void ReleaseSolvedAllocation(ShadowAtlasEncodingState state, int entryIndex)
@@ -1708,12 +1779,17 @@ public sealed partial class ShadowAtlasManager
            x.Key.Source == y.Key.Source &&
            x.Encoding == y.Encoding;
 
-    private void ApplyFeasibilityWaterlineDemotions(int entryCount)
+    private int GetPageLimit(EShadowAtlasKind atlasKind)
+        => atlasKind == EShadowAtlasKind.Directional && _settings.MaxDirectionalPages > 0
+            ? Math.Max(1, _settings.MaxDirectionalPages)
+            : Math.Max(1, _settings.MaxPages);
+
+    private void ApplyFeasibilityWaterlineDemotions(EShadowAtlasKind atlasKind, int entryCount)
     {
         if (entryCount <= 1)
             return;
 
-        long capacity = checked((long)_settings.PageSize * _settings.PageSize * Math.Max(1, _settings.MaxPages));
+        long capacity = checked((long)_settings.PageSize * _settings.PageSize * GetPageLimit(atlasKind));
         long waterline = capacity;
         long requested = CalculateRequestedTexels(entryCount);
         while (requested > waterline && TryReduceWaterlineAllocation(entryCount))
@@ -2766,7 +2842,12 @@ public sealed partial class ShadowAtlasManager
     private void AddOrUpdateResidentAllocation(ShadowRequestKey key, in ShadowAtlasAllocation allocation, ulong lastRequestedFrame)
     {
         if (_residentAllocations.TryGetValue(key, out ShadowResidentEntry existing))
+        {
+            // Free the old buddy block whenever a resident key moves or resizes without prior release.
+            if (!IsSameResidentPlacement(existing.Allocation, allocation))
+                GetEncodingState(existing.Allocation.AtlasKind, existing.Allocation.Key.Encoding).TryFree(existing.Allocation);
             RemoveResidentPageIndex(key, existing.Allocation);
+        }
 
         _residentAllocations[key] = new ShadowResidentEntry(allocation, lastRequestedFrame);
         AddResidentPageIndex(key, allocation);
@@ -4688,6 +4769,10 @@ public sealed partial class ShadowAtlasManager
                 continue;
             }
 
+            // Release any resident or already-solved member blocks of this group before reserving
+            // a contiguous 2x2 grid so partial group reuse cannot leave orphaned buddy blocks.
+            ReleaseDirectionalCascadeGroupMembersBeforeGridAllocate(state, groupKey, entryCount);
+
             int pageCountBefore = state.PageCount;
             _solveDiagnostics.PageAllocationAttemptCount++;
             if (!state.TryAllocateContiguousGrid(
@@ -4733,6 +4818,44 @@ public sealed partial class ShadowAtlasManager
                     ordinal++;
                     break;
                 }
+            }
+
+            // Return any unused quadrants of the 2x2 grid when a directional light uses fewer than 4 cascades.
+            for (; ordinal < MaxDirectionalCascadeGroupTileCount; ordinal++)
+            {
+                int unusedX = originX + ((ordinal & 1) * tileSize);
+                int unusedY = originY + ((ordinal >> 1) * tileSize);
+                state.TryFree(pageIndex, unusedX, unusedY, tileSize);
+            }
+        }
+    }
+
+    private void ReleaseDirectionalCascadeGroupMembersBeforeGridAllocate(
+        ShadowAtlasEncodingState state,
+        DirectionalCascadeSolveGroupKey groupKey,
+        int entryCount)
+    {
+        for (int j = 0; j < entryCount; j++)
+        {
+            BalancedAllocationEntry entry = _balancedAllocationEntries[j];
+            if (!IsSameDirectionalCascadeGroup(groupKey, entry.Request))
+                continue;
+
+            bool releasedResident = false;
+            if (_residentAllocations.TryGetValue(entry.Request.Key, out ShadowResidentEntry resident))
+            {
+                ReleaseResidentAllocation(entry.Request.Key);
+                releasedResident = entry.AllocationSolved &&
+                    IsSameResidentPlacement(resident.Allocation, entry.Allocation);
+            }
+
+            if (entry.AllocationSolved)
+            {
+                if (!releasedResident && entry.Allocation.IsResident)
+                    state.TryFree(entry.Allocation);
+                entry.Allocation = default;
+                entry.AllocationSolved = false;
+                _balancedAllocationEntries[j] = entry;
             }
         }
     }
@@ -5410,6 +5533,7 @@ public sealed partial class ShadowAtlasManager
         {
             PageSize = pageSize,
             MaxPages = Math.Clamp(settings.MaxPages, 1, 64),
+            MaxDirectionalPages = settings.MaxDirectionalPages > 0 ? Math.Clamp(settings.MaxDirectionalPages, 1, 64) : 0,
             MaxMemoryBytes = Math.Max(0L, settings.MaxMemoryBytes),
             MaxTilesRenderedPerFrame = Math.Max(0, settings.MaxTilesRenderedPerFrame),
             MaxRenderMilliseconds = MathF.Max(0.0f, settings.MaxRenderMilliseconds),

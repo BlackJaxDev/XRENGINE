@@ -103,6 +103,8 @@ namespace XREngine.Scene
         private long _lastStreamingPressureLogFrameTicks = -1;
         private ulong _lastCaptureAdmissionFrameId = ulong.MaxValue;
         private int _consecutiveCaptureDeferrals;
+        private int _consecutiveBatchPacingDeferrals;
+        private long _lastRenderAdmissionTimestampTicks;
         private bool _captureDeferredForStreamingThisFrame;
         private int _captureWorkQueueDepth;
         private int _lightProbeBatchCaptureNesting;
@@ -295,12 +297,41 @@ namespace XREngine.Scene
 
             _lastCaptureAdmissionFrameId = frameId;
             _captureDeferredForStreamingThisFrame = false;
+
+            long nowTicks = Stopwatch.GetTimestamp();
+            double previousFrameMs = _lastRenderAdmissionTimestampTicks != 0
+                ? Stopwatch.GetElapsedTime(_lastRenderAdmissionTimestampTicks, nowTicks).TotalMilliseconds
+                : 0.0;
+            _lastRenderAdmissionTimestampTicks = nowTicks;
+
             if (!XRTexture2D.HasLargeProgressiveUploadBacklog)
             {
                 Interlocked.Exchange(ref _consecutiveCaptureDeferrals, 0);
+
+                // During sequential light-probe batch capture, yield up to two interactive desktop
+                // frames whenever the previous frame exceeded 60 Hz headroom so startup stays
+                // responsive while probes continue making steady forward progress.
+                const double BatchInteractiveFrameCeilingMs = 14.0;
+                const int MaximumConsecutiveBatchPacingDeferrals = 2;
+                if (LightProbeBatchCaptureActive &&
+                    previousFrameMs > BatchInteractiveFrameCeilingMs &&
+                    _consecutiveBatchPacingDeferrals < MaximumConsecutiveBatchPacingDeferrals)
+                {
+                    _consecutiveBatchPacingDeferrals++;
+                    _captureDeferredForStreamingThisFrame = true;
+                    LastCaptureDeferralReason = ERenderOutputPolicyReason.GpuBudget;
+                    RuntimeEngine.Rendering.Stats.FrameOutputs.RecordWork(
+                        new FrameOutputWorkTelemetry(
+                            GpuBudgetDeferrals: 1,
+                            StaleResultReuses: PendingCaptureComponentCount > 0 ? 1 : 0));
+                    return true;
+                }
+
+                _consecutiveBatchPacingDeferrals = 0;
                 LastCaptureDeferralReason = ERenderOutputPolicyReason.None;
                 return false;
             }
+            _consecutiveBatchPacingDeferrals = 0;
 
             uint maximumDeferrals = MaximumCaptureDeferralFrames;
             int consecutiveDeferrals = Volatile.Read(ref _consecutiveCaptureDeferrals);

@@ -741,16 +741,31 @@ internal sealed partial class VulkanFrameLoop
                         "eye mirror render",
                         out frameDataSlotCompletionProven))
                 {
-                    if (alternateRecordImageIndex == recordImageIndex ||
-                        !TryPrepareOpenXrFrameDataSlot(
+                    if (alternateRecordImageIndex != recordImageIndex &&
+                        TryPrepareOpenXrFrameDataSlot(
                             alternateRecordImageIndex,
                             "eye mirror render",
                             out frameDataSlotCompletionProven))
                     {
-                        RecordOpenXrRenderFailure(in request, "frame-data-slot");
-                        return false;
+                        recordImageIndex = alternateRecordImageIndex;
+                        RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrEyeFrameDataSlotAlternate();
                     }
-                    recordImageIndex = alternateRecordImageIndex;
+                    else
+                    {
+                        // Wait for the older in-flight submission on the preferred slot before
+                        // dropping the frame to a no-layer xrEndFrame that flickers the headset.
+                        RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrEyeFrameDataSlotWait();
+                        if (!TryWaitForOpenXrFrameDataSlotRelease(recordImageIndex) ||
+                            !TryPrepareOpenXrFrameDataSlot(
+                                recordImageIndex,
+                                "eye mirror render",
+                                out frameDataSlotCompletionProven))
+                        {
+                            RuntimeEngine.Rendering.Stats.Vr.RecordVrOpenXrEyeFrameDataSlotBusyFailure();
+                            RecordOpenXrRenderFailure(in request, "frame-data-slot");
+                            return false;
+                        }
+                    }
                 }
                 if (strictSpsTemporalHistory)
                 {
@@ -782,6 +797,11 @@ internal sealed partial class VulkanFrameLoop
                     : default;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.EmitFrameOps"))
                     capturedOps = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
+                // Keep pooled AdvancedVisibilityOp instances out of the shared workspace until
+                // this finally block finishes releasing them; BuildAndSeal releases their input
+                // leases before recording ends, which would otherwise allow another thread to
+                // re-rent the same instance before our finally runs.
+                PinAdvancedVisibilityOperations(capturedOps);
                 drainedFrameOps = true;
                 if (strictTemporalCapture &&
                     !VPRC_TemporalAccumulationPass.TryGetStagedCandidate(
@@ -949,8 +969,13 @@ internal sealed partial class VulkanFrameLoop
                             out TemporalHistorySubmissionCandidate rebasedCandidate,
                             out TemporalHistoryResourceSet reads,
                             out TemporalHistoryResourceSet writes,
-                            out sealedTemporalCoverage) ||
-                        !VPRC_TemporalAccumulationPass.TrySealCandidate(
+                            out sealedTemporalCoverage,
+                            out string? resolveFailureDetail))
+                    {
+                        RecordOpenXrRenderFailure(in request, "temporal-history-seal", resolveFailureDetail);
+                        return false;
+                    }
+                    if (!VPRC_TemporalAccumulationPass.TrySealCandidate(
                             in rebasedCandidate,
                             in reads,
                             in writes,
@@ -958,7 +983,8 @@ internal sealed partial class VulkanFrameLoop
                             out requiresReauthor))
                     {
                         RecordOpenXrRenderFailure(in request,
-                            requiresReauthor ? "temporal-history-reauthor" : "temporal-history-seal");
+                            requiresReauthor ? "temporal-history-reauthor" : "temporal-history-seal",
+                            requiresReauthor ? "seal:reauthor" : "seal:candidate-rejected");
                         return false;
                     }
 
@@ -1203,6 +1229,8 @@ internal sealed partial class VulkanFrameLoop
                 if (!recordingPublished)
                     VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(capturedOps);
                 VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
+                UnpinAdvancedVisibilityOperations(capturedOps);
+                Array.Clear(capturedOps);
             }
             if (ownsFrameDataSlot && !recordingPublished && !IsDeviceLost)
             {
@@ -1222,9 +1250,24 @@ internal sealed partial class VulkanFrameLoop
     /// rendering also uses those slots, but a frame uses only one of the two modes, and each
     /// acquisition proves that the slot's previous submission completed.
     /// </summary>
+    private static void PinAdvancedVisibilityOperations(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; ++index)
+            if (operations[index] is AdvancedVisibilityOp visibility)
+                visibility.PinForAcceptedPlan();
+    }
+
+    private static void UnpinAdvancedVisibilityOperations(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; ++index)
+            if (operations[index] is AdvancedVisibilityOp visibility)
+                visibility.UnpinFromAcceptedPlan();
+    }
+
     private static int ResolveOpenXrFrameDataSlotCount(int desktopSwapchainImageCount)
         => ResolveOpenXrDesktopFrameDataSlotCount(desktopSwapchainImageCount) +
-            OpenXrEyeResourcePlannerStateCount * Math.Max(OpenXrEyeFrameDataSlotsPerEye, OpenXrMaxStereoPairCount);
+            OpenXrEyeResourcePlannerStateCount * Math.Max(OpenXrEyeFrameDataSlotsPerEye, OpenXrMaxStereoPairCount) +
+            StandaloneOffscreenFrameDataSlotCount;
 
     private static int ResolveOpenXrDesktopFrameDataSlotCount(int desktopSwapchainImageCount)
         => Math.Max(Math.Max(desktopSwapchainImageCount, DesktopFrameSlotCount), 1);

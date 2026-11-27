@@ -11,6 +11,7 @@ namespace XREngine.Rendering;
 public sealed partial class AdvancedGpuDeformationResources
 {
     private const double ColdMeshPreparationBudgetMs = 4.0;
+    private const double PrepackedMeshCommitBudgetMs = 8.0;
     private const ulong AbsentMeshPreparationRetirementFrames = 240UL;
     private PendingGpuDeformationMeshPreparation? _pendingMeshPreparation;
     private readonly ConditionalWeakTable<XRMesh, UnsupportedGpuDeformationMeshPreparationWitness>
@@ -170,15 +171,21 @@ public sealed partial class AdvancedGpuDeformationResources
                 slice = default;
                 return AdvancedGpuDeformationMeshPreparationStatus.Unsupported;
             }
-            if (OutOfMeshPreparationBudget())
+            if (!TryCreatePendingFromImportedPayload(mesh, topologyGeneration,
+                    renderFrame, _meshPreparationPolicy, out pending))
+            {
+                if (OutOfMeshPreparationBudget())
+                {
+                    slice = default;
+                    return AdvancedGpuDeformationMeshPreparationStatus.Pending;
+                }
+                pending = CreatePendingMesh(mesh, topologyGeneration, renderFrame, _meshPreparationPolicy);
+            }
+            else if (OutOfPrepackedMeshCommitBudget())
             {
                 slice = default;
                 return AdvancedGpuDeformationMeshPreparationStatus.Pending;
             }
-
-            if (!TryCreatePendingFromImportedPayload(mesh, topologyGeneration,
-                    renderFrame, _meshPreparationPolicy, out pending))
-                pending = CreatePendingMesh(mesh, topologyGeneration, renderFrame, _meshPreparationPolicy);
             _pendingMeshPreparation = pending;
         }
         pending.LastOwnerVisitFrame = renderFrame;
@@ -424,6 +431,10 @@ public sealed partial class AdvancedGpuDeformationResources
         => Stopwatch.GetElapsedTime(_meshPreparationBudgetStarted).TotalMilliseconds >=
            ColdMeshPreparationBudgetMs;
 
+    private bool OutOfPrepackedMeshCommitBudget()
+        => Stopwatch.GetElapsedTime(_meshPreparationBudgetStarted).TotalMilliseconds >=
+           PrepackedMeshCommitBudgetMs;
+
     private void RememberUnsupportedMesh(PendingGpuDeformationMeshPreparation pending)
     {
         XRMeshSkinningBufferState state = pending.SkinningState ??
@@ -475,7 +486,9 @@ public sealed partial class AdvancedGpuDeformationResources
     private bool AdvancePendingMesh(PendingGpuDeformationMeshPreparation pending)
     {
         int vertexCount = pending.Mesh.VertexCount;
-        while (!OutOfMeshPreparationBudget())
+        while (pending.Stage < PendingGpuDeformationMeshPreparation.Spill
+        ? !OutOfMeshPreparationBudget()
+        : !OutOfPrepackedMeshCommitBudget())
         {
             if (pending.Stage < PendingGpuDeformationMeshPreparation.Spill)
             {

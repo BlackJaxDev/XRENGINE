@@ -13,6 +13,7 @@ namespace XREngine.Components.Lights;
 internal sealed class MirrorCaptureSlot
 {
     private readonly object _sync = new();
+    private readonly XRMesh _displayMesh;
     private AdvancedMutableTexturePublicationLifetime? _lifetime;
     private ulong _exactGeneration;
     private readonly XRGpuFence?[] _readerFences = new XRGpuFence?[16];
@@ -20,11 +21,16 @@ internal sealed class MirrorCaptureSlot
     private int _collectedReaderCount;
     private int _gpuReaderCount;
     private bool _quarantineWarningLogged;
+    private XRMaterial? _transparentMaterial;
+    private XRMaterial? _transparentVelocityMaterial;
+    private XRMaterial? _transparentReactiveMaterial;
+    private MirrorDisplayCommand? _transparentDisplay;
 
     internal MirrorCaptureSlot(SceneNode node, MirrorTextureCaptureComponent capture, XRMesh mesh)
     {
         Node = node;
         Capture = capture;
+        _displayMesh = mesh;
         Material = new XRMaterial(ShaderHelper.LoadEngineShader(Path.Combine("Common", "MirrorProjective.fs")))
         {
             Name = "MirrorCaptureSlot.DisplayMaterial",
@@ -51,8 +57,111 @@ internal sealed class MirrorCaptureSlot
     internal MirrorTextureCaptureComponent Capture { get; }
     internal MirrorDisplayCommand Display { get; }
     internal XRMaterial Material { get; }
+
+    /// <summary>
+    /// Returns the transparent-background mono display command for this slot, creating its
+    /// late-pass material on first use and syncing it with the latest published output.
+    /// </summary>
+    internal MirrorDisplayCommand GetOrCreateTransparentDisplay()
+    {
+        lock (_sync)
+        {
+            if (_transparentDisplay is not null)
+                return _transparentDisplay;
+
+            ShaderMat4 matrixParameter = new(ReflectedViewProjection, "ReflectedViewProjection");
+            ShaderBool yDownParameter = new(FramebufferYDown, "FramebufferYDown");
+            ShaderVar[] sharedParameters = [matrixParameter, yDownParameter];
+            XRMaterial velocityMaterial = new(
+                sharedParameters,
+                ShaderHelper.LoadEngineShader(Path.Combine("Common", "MirrorProjectiveTransparentMotionVectors.fs")))
+            {
+                Name = "MirrorCaptureSlot.TransparentMotionVectors",
+                Textures = [Texture],
+            };
+            velocityMaterial.RenderOptions.CullMode = ECullMode.Back;
+            velocityMaterial.RenderOptions.ExcludeFromGpuIndirect = true;
+            velocityMaterial.RenderOptions.DepthTest = new DepthTest
+            {
+                Enabled = ERenderParamUsage.Enabled,
+                UpdateDepth = false,
+                Function = EComparison.Lequal,
+            };
+            velocityMaterial.RenderOptions.BlendModeAllDrawBuffers = BlendMode.Disabled();
+            velocityMaterial.SettingUniforms += AdvancedColoredAlphaTemporalVariantFactory.BindTemporalMatrices;
+
+            XRMaterial reactiveMaterial = new(
+                sharedParameters,
+                ShaderHelper.LoadEngineShader(Path.Combine("Common", "MirrorProjectiveTransparentReactiveMask.fs")))
+            {
+                Name = "MirrorCaptureSlot.TransparentReactiveMask",
+                Textures = [Texture],
+            };
+            reactiveMaterial.RenderOptions.CullMode = ECullMode.Back;
+            reactiveMaterial.RenderOptions.ExcludeFromGpuIndirect = true;
+            reactiveMaterial.RenderOptions.DepthTest = new DepthTest
+            {
+                Enabled = ERenderParamUsage.Enabled,
+                UpdateDepth = false,
+                Function = EComparison.Lequal,
+            };
+            reactiveMaterial.RenderOptions.BlendModeAllDrawBuffers = new BlendMode
+            {
+                Enabled = ERenderParamUsage.Enabled,
+                RgbEquation = EBlendEquationMode.Max,
+                AlphaEquation = EBlendEquationMode.Max,
+                RgbSrcFactor = EBlendingFactor.One,
+                RgbDstFactor = EBlendingFactor.One,
+                AlphaSrcFactor = EBlendingFactor.One,
+                AlphaDstFactor = EBlendingFactor.One,
+            };
+
+            XRMaterial material = new(ShaderHelper.LoadEngineShader(
+                Path.Combine("Common", "MirrorProjectiveTransparent.fs")))
+            {
+                Name = "MirrorCaptureSlot.TransparentDisplayMaterial",
+                RenderPass = (int)EDefaultRenderPass.TransparentForward,
+                TransparencyMode = ETransparencyMode.AlphaBlend,
+                Parameters = sharedParameters,
+                Textures = [Texture],
+            };
+            material.AdvancedLatePassMetadata = new(
+                EAdvancedLatePassKind.SortedAlpha,
+                participatesInMotionVectors: true,
+                isOrderDependent: true)
+            {
+                TemporalVelocityMaterial = velocityMaterial,
+                TemporalReactiveMaskMaterial = reactiveMaterial,
+                RequiresRigidTemporalGeometry = true,
+                TemporalSourceShaderRevision = material.ShaderStateRevision,
+            };
+            material.RenderOptions.CullMode = ECullMode.Back;
+            material.RenderOptions.ExcludeFromGpuIndirect = true;
+            material.RenderOptions.DepthTest = new DepthTest
+            {
+                Enabled = ERenderParamUsage.Enabled,
+                UpdateDepth = false,
+                Function = EComparison.Lequal,
+            };
+            material.RenderOptions.BlendModeAllDrawBuffers = BlendMode.EnabledPremultipliedTransparent();
+            _transparentMaterial = material;
+            _transparentVelocityMaterial = velocityMaterial;
+            _transparentReactiveMaterial = reactiveMaterial;
+            _transparentDisplay = new MirrorDisplayCommand(
+                (int)EDefaultRenderPass.TransparentForward,
+                new XRMeshRenderer(_displayMesh, material),
+                Matrix4x4.Identity,
+                this)
+            {
+                ForceCpuRendering = true,
+                GpuProfilingLabel = "Mirror.TransparentProjective",
+            };
+            return _transparentDisplay;
+        }
+    }
     internal XRTexture2D? Texture { get; private set; }
     internal Matrix4x4 ReflectedViewProjection { get; private set; } = Matrix4x4.Identity;
+    internal Matrix4x4 CapturedMirrorWorldMatrix { get; private set; } = Matrix4x4.Identity;
     internal bool FramebufferYDown { get; private set; }
     internal bool AwaitingCapture { get; set; }
     internal bool Quarantined { get; private set; }
@@ -119,7 +228,12 @@ internal sealed class MirrorCaptureSlot
         }
     }
 
-    internal bool Publish(XRTexture2D texture, Matrix4x4 reflectedViewProjection, bool framebufferYDown)
+    internal bool Publish(
+        XRTexture2D texture,
+        Matrix4x4 reflectedViewProjection,
+        Matrix4x4 capturedMirrorWorldMatrix,
+        bool framebufferYDown,
+        bool writerPending = false)
     {
         AssertRenderThread();
         ArgumentNullException.ThrowIfNull(texture);
@@ -136,12 +250,25 @@ internal sealed class MirrorCaptureSlot
             _exactGeneration = generation;
             _lifetime = lifetime;
             ReflectedViewProjection = reflectedViewProjection;
+            CapturedMirrorWorldMatrix = IsFinite(capturedMirrorWorldMatrix)
+                ? capturedMirrorWorldMatrix
+                : Matrix4x4.Identity;
             FramebufferYDown = framebufferYDown;
             CaptureVersion = Capture.CaptureVersion;
             Material.Textures[0] = texture;
             Material.Parameter<ShaderMat4>("ReflectedViewProjection")!.Value = reflectedViewProjection;
             Material.Parameter<ShaderBool>("FramebufferYDown")!.Value = framebufferYDown;
-            AwaitingCapture = false;
+            if (_transparentMaterial is not null)
+            {
+                _transparentMaterial.Textures[0] = texture;
+                _transparentMaterial.Parameter<ShaderMat4>("ReflectedViewProjection")!.Value = reflectedViewProjection;
+                _transparentMaterial.Parameter<ShaderBool>("FramebufferYDown")!.Value = framebufferYDown;
+                if (_transparentVelocityMaterial is not null)
+                    _transparentVelocityMaterial.Textures[0] = texture;
+                if (_transparentReactiveMaterial is not null)
+                    _transparentReactiveMaterial.Textures[0] = texture;
+            }
+            AwaitingCapture = writerPending;
             return true;
         }
     }
@@ -201,7 +328,8 @@ internal sealed class MirrorCaptureSlot
         lock (_sync)
         {
             if (Unavailable || _readerFenceCount == _readerFences.Length || _lifetime is null || _exactGeneration == 0u ||
-                !_lifetime.TryRetainReservedGeneration(_exactGeneration))
+                (!_lifetime.TryRetainPublication(_exactGeneration) &&
+                 !_lifetime.TryRetainReservedGeneration(_exactGeneration)))
                 return false;
             Interlocked.Increment(ref _gpuReaderCount);
             return true;

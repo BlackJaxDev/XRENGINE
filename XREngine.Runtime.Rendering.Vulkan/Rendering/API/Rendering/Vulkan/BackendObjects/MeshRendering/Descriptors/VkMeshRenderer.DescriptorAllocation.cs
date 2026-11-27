@@ -38,6 +38,7 @@ internal unsafe partial class VkMeshRenderer
         public ulong[] SlotResourceFingerprints = [];
         public ulong TopologyGeneration = 1;
         private long _contentGeneration = 1;
+        private int _retired;
         public ulong[] SlotPublishedTopologyGenerations = [];
         public ulong[] SlotPublishedContentGenerations = [];
         public ulong[] SlotPublishedMaterialResourceVersions = [];
@@ -54,6 +55,14 @@ internal unsafe partial class VkMeshRenderer
 
         public ulong ContentGeneration
             => unchecked((ulong)Volatile.Read(ref _contentGeneration));
+
+        /// <summary>Gets whether the renderer has retired this allocation and scheduled its native descriptor sets or pool for release.</summary>
+        public bool IsRetired
+            => Volatile.Read(ref _retired) != 0;
+
+        /// <summary>Marks this allocation retired so descriptor cache lookups reject it before its freed native sets can be bound.</summary>
+        public void MarkRetired()
+            => Volatile.Write(ref _retired, 1);
 
         public ulong AdvanceContentGeneration()
             => VulkanGeneration.IncrementNonZero(ref _contentGeneration);

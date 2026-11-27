@@ -78,7 +78,21 @@ internal readonly record struct VulkanAdvancedVisibilityOperationPayload(
     ulong DirectionalShadowCullLinkGeneration = 0UL,
     VkRenderProgram? DirectionalShadowFinalizeProgram = null,
     Pipeline DirectionalShadowFinalizePipeline = default,
-    ulong DirectionalShadowFinalizeLinkGeneration = 0UL);
+    ulong DirectionalShadowFinalizeLinkGeneration = 0UL,
+    VulkanAdvancedPortalVisibilityState PortalVisibilityResources = default,
+    VulkanVisibilityRasterPipeline PortalStencilCarvePipeline = default,
+    VulkanVisibilityRasterPipeline PortalDepthResetPipeline = default,
+    VulkanVisibilityRasterPipeline PortalDepthOnlyResetPipeline = default,
+    VulkanVisibilityRasterPipeline PortalTransparentDepthRestorePipeline = default,
+    VulkanAdvancedNativeComputeClosure? PortalDepthRestoreClosure0 = null,
+    VulkanAdvancedNativeComputeClosure? PortalDepthRestoreClosure1 = null,
+    DescriptorSet PortalDepthRestoreDescriptorSet0 = default,
+    DescriptorSet PortalDepthRestoreDescriptorSet1 = default,
+    VulkanAdvancedMsaaResolvePipeline PortalMsaaStencilRepopulatePipeline = default,
+    VulkanVisibilityRasterPipeline PortalSkyUnwindPipeline = default,
+    VulkanVisibilityRasterPipeline PortalGlassCompositePipeline = default,
+    VulkanVisibilityRasterPipeline PortalTransparentGlassCompositePipeline = default,
+    bool SkipPortalSkyInUnwind = false);
 
 /// <summary>
 /// Per-opcode dense storage owned exclusively by a sealed operation stream.

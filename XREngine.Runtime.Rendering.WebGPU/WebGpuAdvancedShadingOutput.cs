@@ -185,7 +185,11 @@ internal sealed partial class WebGpuAdvancedShadingOutput : IDisposable
         api.BindStorageBuffer(4, frame.Tiles);
         api.BindStorageBuffer(5, frame.Counts);
         api.BindStorageBuffer(6, cohort.Bindings);
-        api.SetUniformBlock("FrozenView", MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(in visibility.View, 1)));
+        // WebGPU cooked FrozenView blocks hold the 944-byte canonical view prefix;
+        // trailing portal fields start at offset 944 and are omitted here.
+        api.SetUniformBlock(
+            "FrozenView",
+            MemoryMarshal.AsBytes(MemoryMarshal.CreateReadOnlySpan(in visibility.View, 1))[..WebGpuAdvancedShadingProgramContract.FrozenViewByteSize]);
         api.SetUniformBlock("Parameters", MemoryMarshal.AsBytes(parameters));
         api.Data.Sampler(multisample ? "RawVisibilityIdentity" : "VisibilityIdentity", identity, 0);
         api.Data.Sampler(multisample ? "RawVisibilityMetadataSelection" : "VisibilityMetadata", metadata, 1);

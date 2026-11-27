@@ -253,6 +253,7 @@ vec3 EncodeVelocityDebug(vec2 velocity)
 }
 
 #ifdef XR_TSR_STABLE_OUTPUT
+uniform usampler2D TsrVisibilityMetadata;
 float TsrLoadCurrentDepth(ivec2 pixel) { return texelFetch(DepthView, pixel, 0).r; }
 vec2 TsrLoadVelocity(ivec2 pixel) { return texelFetch(Velocity, pixel, 0).xy; }
 float TsrLoadHistoryDepth(ivec2 pixel) { return texelFetch(HistoryDepth, pixel, 0).r; }
@@ -260,6 +261,7 @@ vec4 TsrLoadHistoryColor(ivec2 pixel) { return texelFetch(TsrHistoryColor, pixel
 vec4 TsrLoadHistoryMetadata(ivec2 pixel) { return texelFetch(TsrHistoryMetadata, pixel, 0); }
 vec3 TsrLoadCurrentColor(ivec2 pixel) { return texelFetch(PostProcessOutputTexture, pixel, 0).rgb; }
 float TsrLoadCurrentReactivity(ivec2 pixel) { return texelFetch(AdvancedReactiveMask, pixel, 0).r; }
+uint TsrLoadVisibilityViewIndex(ivec2 pixel) { return (texelFetch(TsrVisibilityMetadata, pixel, 0).r >> 8u) & 0xFFu; }
 #endif
 #pragma snippet "TemporalSuperResolutionSurface"
 #pragma snippet "TemporalSuperResolutionCoverage"

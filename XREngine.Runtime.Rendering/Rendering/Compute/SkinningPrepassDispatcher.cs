@@ -86,6 +86,35 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     private static readonly Lazy<SkinningPrepassDispatcher> _instance = new(() => new SkinningPrepassDispatcher());
     public static SkinningPrepassDispatcher Instance => _instance.Value;
 
+    /// <summary>
+    /// Releases Vulkan deformation receipts and backend-owner caches for <paramref name="renderer"/>
+    /// after its GPU has drained during teardown or renderer replacement.
+    /// </summary>
+    public static void NotifyRendererKnownIdleIfCreated(AbstractRenderer renderer)
+    {
+        if (_instance.IsValueCreated)
+            _instance.Value.NotifyRendererKnownIdle(renderer);
+    }
+
+    /// <summary>
+    /// Clears cached output receipts and slot ownership that belong to a retiring renderer so a
+    /// replacement renderer does not query stale native allocations for content reuse.
+    /// </summary>
+    public void NotifyRendererKnownIdle(AbstractRenderer renderer)
+    {
+        if (!RuntimeEngine.IsRenderThread || renderer is null)
+            return;
+
+        lock (_syncRoot)
+        {
+            foreach (KeyValuePair<XRMeshRenderer, RendererResources> entry in _resources)
+                entry.Value.ResetForRetiredRenderer(renderer);
+
+            foreach (VulkanOutputReceipt receipt in _vulkanReceiptPool)
+                receipt.NotifyOwnerKnownIdle(renderer);
+        }
+    }
+
     internal readonly record struct OutputAllocationIdentity(
         GpuBufferAllocationIdentity? Positions,
         GpuBufferAllocationIdentity? Normals,
@@ -1349,6 +1378,10 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return true;
         if (shadowPass)
             return false;
+        // In-world VR mirrors render layer-isolated meshes (such as LocalVrAvatarIndex) that the VR
+        // eyes do not collect, so mirrors must dispatch compute deformation for their own visible draws.
+        if (RuntimeEngine.Rendering.State.IsMirrorPass)
+            return true;
 
         bool vrOwnsDeformation = presentation.VrRenderPriority != EVrRenderPriority.Desktop;
         return vrEyeRender == vrOwnsDeformation;
@@ -1447,6 +1480,42 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         {
             return Instance._resources.TryGetValue(renderer, out RendererResources? resources) &&
                    resources.ValidateConsumerWitness(in witness);
+        }
+    }
+
+    /// <summary>
+    /// Validates <paramref name="witness"/> for <paramref name="renderer"/>, or refreshes it to
+    /// the active healthy output slot when a clean slot rotation superseded the queued witness
+    /// before materialization. The returned witness does not retain an authoring use; the caller
+    /// retains the receipt when staging the materialized draw.
+    /// </summary>
+    internal static bool TryValidateOrRefreshVulkanOutputWitness(
+        XRMeshRenderer renderer,
+        in DeformationOutputWitness witness,
+        out DeformationOutputWitness effectiveWitness)
+    {
+        if (!witness.IsValid)
+        {
+            effectiveWitness = witness;
+            return !RequiresComputeDeformationOutput(renderer);
+        }
+
+        if (!ReferenceEquals(AbstractRenderer.Current, witness.BackendOwner))
+        {
+            effectiveWitness = default;
+            return false;
+        }
+
+        lock (Instance._syncRoot)
+        {
+            if (Instance._resources.TryGetValue(renderer, out RendererResources? resources) &&
+                resources.TryValidateOrRefreshConsumerWitness(in witness, out effectiveWitness))
+            {
+                return true;
+            }
+
+            effectiveWitness = default;
+            return false;
         }
     }
 

@@ -92,10 +92,17 @@ namespace XREngine.Scene.Transforms
 
             if (_headToEyeMatrix is null)
             {
-                _headToEyeMatrix = RuntimeVrStateServices.TryGetHeadToEyeLocalPose(IsLeftEye, out Matrix4x4 headToEye)
-                    ? headToEye
-                    : Matrix4x4.Identity;
-                matrixChanged = true;
+                if (RuntimeVrStateServices.TryGetHeadToEyeLocalPose(IsLeftEye, out Matrix4x4 headToEye))
+                {
+                    _headToEyeMatrix = headToEye;
+                    matrixChanged = true;
+                }
+                else
+                {
+                    // Keep _headToEyeMatrix unset until the active VR runtime publishes valid
+                    // eye views so early scene ticks do not lock both eyes to identity.
+                    return _ipdOffset;
+                }
             }
 
             if (matrixChanged)

@@ -182,6 +182,14 @@ namespace XREngine.Timers
         private ManualResetEventSlim _renderDone = new(false);
         private readonly CollectVisibleGenerationGate _visibilityGenerationGate = new();
         private int _renderReadyForNextCollectSignaled;
+        private int _renderFrameConsumingSnapshot;
+
+        /// <summary>
+        /// Gets whether the render thread currently owns a published threaded frame snapshot
+        /// and has not yet released collection for the next swap.
+        /// </summary>
+        public bool IsRenderFrameConsumingRenderSnapshot
+            => Volatile.Read(ref _renderFrameConsumingSnapshot) != 0;
         /// <summary>
         /// The start timestamp of the current render dispatch, or 0. The first collect release of the frame reads and
         /// clears it to measure the time from the render start to that release.
@@ -278,6 +286,7 @@ namespace XREngine.Timers
             _renderDone = new ManualResetEventSlim(false);
             _visibilityGenerationGate.Reset();
             _renderReadyForNextCollectSignaled = 0;
+            Volatile.Write(ref _renderFrameConsumingSnapshot, 0);
             Volatile.Write(ref _renderUntilCollectReleaseStartTicks, 0L);
             _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
 
@@ -768,6 +777,7 @@ namespace XREngine.Timers
 
             long renderStartTicks = Interlocked.Exchange(ref _renderUntilCollectReleaseStartTicks, 0L);
             long releaseTicks = renderStartTicks != 0L ? Stopwatch.GetTimestamp() : 0L;
+            Volatile.Write(ref _renderFrameConsumingSnapshot, 0);
             _renderDone.Set();
             if (renderStartTicks != 0L)
                 XREngine.Rendering.CollectVisibleStageTimings.RecordRenderUntilCollectRelease(releaseTicks - renderStartTicks);
@@ -789,6 +799,7 @@ namespace XREngine.Timers
             Volatile.Write(ref _renderUntilCollectReleaseStartTicks, 0L);
 
             _visibilityGenerationGate.Terminate();
+            Volatile.Write(ref _renderFrameConsumingSnapshot, 0);
             _renderDone?.Set();
         }
 

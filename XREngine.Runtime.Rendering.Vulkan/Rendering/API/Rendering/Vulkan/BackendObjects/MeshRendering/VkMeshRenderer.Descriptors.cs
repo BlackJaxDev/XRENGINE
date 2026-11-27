@@ -2327,7 +2327,8 @@ internal unsafe partial class VkMeshRenderer
 			ReferenceEquals(allocation.Program, _program);
 
 	private static bool IsDescriptorAllocationValid(DescriptorAllocation allocation, int descriptorFrameSlotCount, int setCount)
-		=> (allocation.Pool.Handle != 0 || allocation.ActiveSetMask == 0) &&
+		=> !allocation.IsRetired &&
+			(allocation.Pool.Handle != 0 || allocation.ActiveSetMask == 0) &&
             allocation.Sets is { Length: > 0 } &&
 			allocation.Sets.Length == descriptorFrameSlotCount &&
 			allocation.SlotResourceFingerprints.Length == descriptorFrameSlotCount &&

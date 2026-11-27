@@ -28,6 +28,14 @@ public partial class AnimationClipComponent
         ReportImportedAnimationBindingFailure(binding, diagnostic);
     }
 
+    /// <summary>
+    /// Ignores Animated Animator Parameter curves when an imported clip plays directly
+    /// outside an <see cref="AnimStateMachineComponent"/>.
+    /// </summary>
+    public void SetAnimatedFloatParameter(string parameterName, float value)
+    {
+    }
+
     private bool TryValidateImportedAnimationBindings(AnimationClip clip, out string diagnostic)
         => GetImportedAnimationBindingRuntime().TryValidate(clip, out diagnostic);
 

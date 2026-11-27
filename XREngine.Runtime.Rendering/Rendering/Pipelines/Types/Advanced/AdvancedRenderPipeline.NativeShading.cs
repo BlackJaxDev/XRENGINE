@@ -125,8 +125,23 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     internal bool DeclaresRvcShadeletTelemetry { get; set; }
 
+    /// <summary>
+    /// True when this family declares the RVC shadelet-cache GPU buffers and pixel-to-shadelet map.
+    /// Set by <see cref="RvcRenderPipeline"/> when an active RVC cache mode is resolved.
+    /// </summary>
+    internal bool DeclaresRvcShadeletCache { get; set; }
+
+    /// <summary>
+    /// Optional callback supplied by a host pipeline (such as <see cref="RvcRenderPipeline"/>)
+    /// so profile invalidations on this inner stage family also invalidate host instances.
+    /// </summary>
+    internal Action<string>? HostedPhysicalResourceInvalidator { get; set; }
+
     private void InvalidateNativeShadingResourceProfile()
-        => InvalidateOwnedInstancePhysicalResources("NativeShadingProfileChanged");
+    {
+        InvalidateOwnedInstancePhysicalResources("NativeShadingProfileChanged");
+        HostedPhysicalResourceInvalidator?.Invoke("NativeShadingProfileChanged");
+    }
 
     /// <summary>
     /// Historical minimum; physical froxel storage is derived from the output extent and view count.
@@ -186,10 +201,13 @@ public partial class AdvancedRenderPipeline
             DeclareAdvancedWebNeutralResource(builder);
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
+        uint froxelViewCount = AdvancedFroxelGridDimensions.CalculateTotalViewCapacity(
+            layers,
+            DecodePortalFroxelSlotCount(builder.Profile));
         uint froxelCapacity = checked(
             AdvancedFroxelGridDimensions.CalculateTilesX(Math.Max(1u, builder.Profile.InternalWidth)) *
             AdvancedFroxelGridDimensions.CalculateTilesY(Math.Max(1u, builder.Profile.InternalHeight)) *
-            FroxelDepthSlices * layers);
+            FroxelDepthSlices * froxelViewCount);
 
         for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; slot++)
         {
@@ -257,6 +275,65 @@ public partial class AdvancedRenderPipeline
                     .DebugLabel($"RVC shadelet telemetry counters slot {slot}")
                     .Add();
             }
+
+            if (DeclaresRvcShadeletCache)
+            {
+                VisibilityBuffer<uint>(builder,
+                        RvcShadeletCacheResourceNames.Records(slot),
+                        checked(RvcShadeletCacheResourceNames.DefaultMaxShadelets * (RvcShadeletCacheResourceNames.RecordByteStride / sizeof(uint))),
+                        EBufferTarget.ShaderStorageBuffer,
+                        EBufferUsage.DynamicRead)
+                    .Lifetime(RenderResourceLifetime.Transient)
+                    .DebugLabel($"RVC shadelet records slot {slot}")
+                    .Add();
+
+                VisibilityBuffer<uint>(builder,
+                        RvcShadeletCacheResourceNames.BinIndices(slot),
+                        RvcShadeletCacheResourceNames.DefaultMaxShadelets,
+                        EBufferTarget.ShaderStorageBuffer,
+                        EBufferUsage.DynamicRead)
+                    .Lifetime(RenderResourceLifetime.Transient)
+                    .DebugLabel($"RVC shadelet bin indices slot {slot}")
+                    .Add();
+
+                VisibilityBuffer<uint>(builder,
+                        RvcShadeletCacheResourceNames.ShadedOutputs(slot),
+                        checked(RvcShadeletCacheResourceNames.DefaultMaxShadelets * (RvcShadeletCacheResourceNames.ShadedOutputByteStride / sizeof(uint))),
+                        EBufferTarget.ShaderStorageBuffer,
+                        EBufferUsage.DynamicRead)
+                    .Lifetime(RenderResourceLifetime.Transient)
+                    .DebugLabel($"RVC shadelet shaded outputs slot {slot}")
+                    .Add();
+
+                VisibilityBuffer<uint>(builder,
+                        RvcShadeletCacheResourceNames.DispatchAndCounters(slot),
+                        (uint)RvcShadeletCacheCounters.GpuWordCount,
+                        EBufferTarget.DispatchIndirectBuffer,
+                        EBufferUsage.DynamicRead)
+                    .Lifetime(RenderResourceLifetime.Transient)
+                    .DebugLabel($"RVC shadelet indirect dispatch and counters slot {slot}")
+                    .Add();
+            }
+        }
+
+        if (DeclaresRvcShadeletCache)
+        {
+            ReconstructionTexture(
+                    builder,
+                    RvcShadeletCacheResourceNames.PixelToShadelet,
+                    internalSize,
+                    EPixelInternalFormat.R32ui,
+                    EPixelFormat.RedInteger,
+                    EPixelType.UnsignedInt,
+                    ESizedInternalFormat.R32ui)
+                .Layers(layers)
+                .StereoCompatible(layers > 1u)
+                .DependsOn(
+                    AdvancedVisibilityResourceNames.Identity,
+                    AdvancedVisibilityResourceNames.Metadata,
+                    AdvancedVisibilityResourceNames.DepthStencil)
+                .DebugLabel("RVC pixel-to-shadelet map")
+                .Add();
         }
 
         // 5. Native HDR Scene Output Texture

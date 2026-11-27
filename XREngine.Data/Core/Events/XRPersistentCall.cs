@@ -208,6 +208,14 @@ namespace XREngine.Data.Core
 
             try
             {
+                if (TryGetResolvedParameterTypes(out Type[]? resolvedParameterTypes))
+                {
+                    if (RuntimeMemberAccessorRegistry.TryInvokeTyped(target, MethodName, resolvedParameterTypes, arg))
+                        return true;
+                    if (RuntimeMemberAccessorRegistry.TryInvoke(target, MethodName, resolvedParameterTypes, [arg]))
+                        return true;
+                }
+
                 if (!_delegateBindAttempted || !ReferenceEquals(_cachedDelegateTarget, target))
                 {
                     _cachedDelegateTarget = target;

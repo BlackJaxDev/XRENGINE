@@ -4,6 +4,9 @@
 #include "Advanced/Reconstruction/ReconstructSurface.glslinc"
 #include "StandardMaterial.glslinc"
 #include "StandardPBR.glslinc"
+#if !defined(XR_ADV_NATIVE_SHADING_FAMILY) || XR_ADV_NATIVE_SHADING_FAMILY == XR_ADV_NATIVE_SHADING_FAMILY_STANDARD
+#define XR_ADV_PROBE_GROUP_CACHE 1
+#endif
 #include "Advanced/Shading/StandardIbl.glslinc"
 #include "AdvancedDecalModifier.glslinc"
 #pragma snippet "NormalEncoding"
@@ -99,8 +102,12 @@ void main()
             tile.packedTileCoord >> 16u) * 16u + gl_LocalInvocationID.xy;
     }
     // Every return above is uniform for the work group, so all invocations reach the
-    // barriers of the shadow cache fill.
+    // barriers of the shadow and probe cache fills.
     XR_ADV_FillShadowGroupCache(viewIndex, min(u_Push.lightCount, uint(XR_ADV_Lights.records.length())));
+#if defined(XR_ADV_PROBE_GROUP_CACHE)
+    if ((u_Push.flags & 8u) != 0u)
+        XR_ADV_FillProbeGroupCache(viewIndex);
+#endif
     // Foveated quad shading: a peripheral follower takes its block
     // representative's result in the fill pass, so it does not shade here.
     // The pixels that still shade are packed into the first invocations of the

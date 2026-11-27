@@ -749,6 +749,7 @@ public sealed partial class ShadowAtlasManager
             {
                 tile.Destroy();
                 _directionalStaticCascadeTiles[slot] = null;
+                DirectionalShadowStaticCacheDiagnostics.RecordTileReleased();
                 tile = null;
             }
             if (tile is null)

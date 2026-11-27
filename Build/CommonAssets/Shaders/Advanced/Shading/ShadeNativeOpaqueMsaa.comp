@@ -149,11 +149,11 @@ void main()
     uint sampleBase = tid * 8u;
     uvec2 packedBackground = XR_ADV_PackTentSample(backgroundColor, 0.0);
     bool reversedDepth = false;
-    if (viewIndex < u_Push.viewCount)
+    if (viewIndex < u_Push.viewCount && viewIndex < uint(XR_ADV_Views.records.length()))
     {
-        XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
-        reversedDepth = (view.flags & XR_ADV_VIEW_FLAG_REVERSED_DEPTH) != 0u ||
-            view.depthParams.w != 0.0;
+        uint primaryViewFlags = XR_ADV_Views.records[viewIndex].flags;
+        reversedDepth = (primaryViewFlags & XR_ADV_VIEW_FLAG_REVERSED_DEPTH) != 0u ||
+            XR_ADV_Views.records[viewIndex].depthParams.w != 0.0;
     }
 
     float nearestDepth = reversedDepth ? 0.0 : 1.0;
@@ -172,6 +172,12 @@ void main()
         ivec3 rawCoordinate = ivec3(pixelCoord, int(viewIndex));
         float ambientOcclusion = texelFetch(
             AmbientOcclusion, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
+        // SingleSample MSAA portal views shade once per pixel and reuse their radiance
+        // across all samples of the same portal sub-view, keeping primary edges at Nx.
+        // Keeping only radiance and reactive avoids adding a large struct phi in the loop.
+        uint cachedSingleSamplePortalView = 0xFFFFFFFFu;
+        vec3 cachedSingleSamplePortalRadiance = vec3(0.0);
+        float cachedSingleSamplePortalReactive = 0.0;
 
         for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
         {
@@ -193,6 +199,24 @@ void main()
             vec2 samplePosition = texelFetch(
                 RawVisibilitySamplePosition, rawCoordinate, sampleIndex).rg;
 
+            uint sampleViewIndex = (metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu;
+            bool singleSamplePortal =
+                sampleViewIndex != viewIndex &&
+                sampleViewIndex < uint(XR_ADV_Views.records.length()) &&
+                (XR_ADV_Views.records[sampleViewIndex].flags & XR_ADV_VIEW_SINGLE_SAMPLE_MSAA_SHADING) != 0u;
+            if (singleSamplePortal && cachedSingleSamplePortalView == sampleViewIndex)
+            {
+                radianceSum += cachedSingleSamplePortalRadiance;
+                if (useTent2x2 && sampleIndex < 8)
+                    s_TentSamples[sampleBase + uint(sampleIndex)] =
+                        XR_ADV_PackTentSample(cachedSingleSamplePortalRadiance, 1.0);
+                reactive = max(reactive, cachedSingleSamplePortalReactive);
+                uvec4 cachedTuple = uvec4(identity, metadata, selection);
+                mixedVisibility = mixedVisibility || any(notEqual(cachedTuple, firstTuple));
+                ++coveredCount;
+                continue;
+            }
+
             XRAdvancedOpaqueSampleResult sampleResult;
             XR_ADV_EvaluateNativeOpaqueSample(
                 pixel,
@@ -208,6 +232,12 @@ void main()
                 sampleResult);
 
             vec3 clampedRadiance = max(sampleResult.radiance, vec3(0.0));
+            if (singleSamplePortal && cachedSingleSamplePortalView == 0xFFFFFFFFu)
+            {
+                cachedSingleSamplePortalView = sampleViewIndex;
+                cachedSingleSamplePortalRadiance = clampedRadiance;
+                cachedSingleSamplePortalReactive = sampleResult.reactive;
+            }
             radianceSum += clampedRadiance;
             if (useTent2x2 && sampleIndex < 8)
                 s_TentSamples[sampleBase + uint(sampleIndex)] = XR_ADV_PackTentSample(clampedRadiance, 1.0);

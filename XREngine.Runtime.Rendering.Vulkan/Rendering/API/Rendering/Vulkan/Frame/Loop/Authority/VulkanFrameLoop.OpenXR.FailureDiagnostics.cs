@@ -8,14 +8,14 @@ internal sealed partial class VulkanFrameLoop
     private long _lastOpenXrFailureDiagnosticTimestamp;
     private int _openXrFailureDiagnosticCount;
 
-    /// <summary>Records bounded opt-in rejection evidence even when release logging is compiled out.</summary>
+    /// <summary>Records bounded rejection evidence in Release builds when an OpenXR eye frame fails.</summary>
     private void RecordOpenXrRenderFailure(
         in OpenXrEyeMirrorRenderRequest request,
         string stage,
         string? detail = null,
         Exception? exception = null)
     {
-        if (!VulkanFrameDiagnosticsTraceEnabled || _openXrFailureDiagnosticCount >= 64)
+        if (_openXrFailureDiagnosticCount >= 64)
             return;
 
         long now = Stopwatch.GetTimestamp();

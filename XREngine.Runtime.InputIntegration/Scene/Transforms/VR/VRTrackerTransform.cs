@@ -28,6 +28,15 @@ namespace XREngine.Data.Components.Scene
 
         public override RuntimeVrDeviceInfo? Device => Tracker;
 
+        /// <summary>
+        /// Uses the latest atomic OpenXR tracking snapshot when OpenXR is active so a pacing-thread
+        /// frame increment does not transiently hide the tracker model on the update thread.
+        /// </summary>
+        public override bool PoseCurrentlyUsable
+            => RuntimeVrStateServices.IsOpenXRActive && !SyntheticPoseEnabled
+                ? OpenXrTrackerPoseAvailable || base.PoseCurrentlyUsable
+                : base.PoseCurrentlyUsable;
+
         /// <summary>Session-scoped physical path used to keep a binding with the same tracker after reconnection.</summary>
         public string? SessionIdentity
         {

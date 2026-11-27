@@ -737,9 +737,12 @@ namespace XREngine.Components.Movement
                 return;
 
             ReportUnsupportedSettings(physicsScene.BackendService.CharacterControllerCapabilities);
+            Vector3 spawnPosition = TryConsumePendingTeleport(out Vector3 pendingTeleportPosition, out _)
+                ? pendingTeleportPosition
+                : position;
             IAbstractCharacterController? controller = physicsScene.BackendService.CreateCharacterController(
                 new PhysicsCharacterControllerCreateInfo(
-                    position,
+                    spawnPosition,
                     UpDirection,
                     Radius,
                     GetCurrentHeight(),
@@ -901,6 +904,7 @@ namespace XREngine.Components.Movement
             if (_controllerActorProxy is null || ActiveController is not { } controller)
                 return;
 
+            ApplyPendingTeleportIfAny(controller);
             ResetControllerIfBelowPhysicsPlane(controller);
             controller.Synchronize();
 
@@ -973,6 +977,89 @@ namespace XREngine.Components.Movement
 
             PhysicsStepCompleted?.Invoke(report);
             return report;
+        }
+
+        private readonly object _pendingTeleportLock = new();
+        private bool _hasPendingTeleport;
+        private Vector3 _pendingTeleportPosition;
+        private bool _pendingTeleportClearMotion = true;
+
+        /// <summary>
+        /// Moves this character controller and its scene transform to <paramref name="worldPosition"/>.
+        /// If the physics controller is already active, queues the teleport on the physics thread;
+        /// otherwise records the target position so controller creation uses it.
+        /// </summary>
+        /// <param name="worldPosition">Target world-space capsule center position.</param>
+        /// <param name="clearMotion">True to clear queued velocity and contact history.</param>
+        public void Teleport(Vector3 worldPosition, bool clearMotion = true)
+        {
+            if (!IsFinite(worldPosition))
+                return;
+
+            lock (_pendingTeleportLock)
+            {
+                _pendingTeleportPosition = worldPosition;
+                _pendingTeleportClearMotion = clearMotion;
+                _hasPendingTeleport = true;
+            }
+
+            if (SceneNode?.GetTransformAs<RigidBodyTransform>(false) is { } rigidBodyTransform)
+                rigidBodyTransform.SetPositionAndRotation(worldPosition, rigidBodyTransform.Rotation);
+            else if (Transform is Transform localTransform)
+            {
+                localTransform.Translation = localTransform.Parent is { } parent
+                    && Matrix4x4.Invert(parent.WorldMatrix, out Matrix4x4 inverseParent)
+                    ? Vector3.Transform(worldPosition, inverseParent)
+                    : worldPosition;
+            }
+
+            if (clearMotion)
+                ResetManagedMovementAfterTeleport();
+
+            if (ActiveController is not null)
+                RuntimeThreadServices.Current.EnqueuePhysicsThread(ApplyPendingTeleportOnPhysicsThread);
+        }
+
+        private bool TryConsumePendingTeleport(out Vector3 worldPosition, out bool clearMotion)
+        {
+            lock (_pendingTeleportLock)
+            {
+                if (!_hasPendingTeleport)
+                {
+                    worldPosition = Vector3.Zero;
+                    clearMotion = true;
+                    return false;
+                }
+
+                worldPosition = _pendingTeleportPosition;
+                clearMotion = _pendingTeleportClearMotion;
+                _hasPendingTeleport = false;
+                return true;
+            }
+        }
+
+        private void ApplyPendingTeleportOnPhysicsThread()
+        {
+            if (ActiveController is not { } controller)
+                return;
+
+            if (ApplyPendingTeleportIfAny(controller))
+            {
+                controller.Synchronize();
+                RigidBodyTransform.OnPhysicsStepped();
+            }
+        }
+
+        private bool ApplyPendingTeleportIfAny(IAbstractCharacterController controller)
+        {
+            if (!TryConsumePendingTeleport(out Vector3 worldPosition, out bool clearMotion))
+                return false;
+
+            controller.Teleport(worldPosition, clearMotion);
+            if (clearMotion)
+                ResetManagedMovementAfterTeleport();
+            Teleported?.Invoke();
+            return true;
         }
 
         private void ResetControllerIfBelowPhysicsPlane(IAbstractCharacterController controller)

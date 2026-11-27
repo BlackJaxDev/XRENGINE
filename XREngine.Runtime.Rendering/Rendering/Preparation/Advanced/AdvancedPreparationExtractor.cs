@@ -903,6 +903,14 @@ public sealed partial class AdvancedPreparationExtractor : IDisposable
         }
         if (skinned && mesh is { HasBlendshapeDeformation: true } && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
             visibilityFlags |= EAdvancedVisibilityPreparationFlags.Uncertain | EAdvancedVisibilityPreparationFlags.ConservativeVisible;
+        if (renderer?.Material is AdvancedProjectiveMirrorMaterial)
+        {
+            // Keep admitted projective mirrors in the early visibility pass so their winning
+            // opaque depth always populates the Hi-Z depth pyramid before late occlusion culling.
+            visibilityFlags |= EAdvancedVisibilityPreparationFlags.ConservativeVisible;
+        }
+        if ((command.Flags & (uint)GPUIndirectRenderFlags.PortalSurface) != 0u)
+            visibilityFlags |= EAdvancedVisibilityPreparationFlags.PortalSurface;
         if (skinnedClusterCut && hasCanonicalInstance && mesh is not null)
             deformationLevel = ChooseDeformationLevel(
                 publication,

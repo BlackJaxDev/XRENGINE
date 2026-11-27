@@ -94,6 +94,7 @@ namespace XREngine.Animation
 
         internal void PrepareRuntimeEvaluation(AnimationSlotLayout layout)
         {
+            EnsureScratchCapacity(_children.Count);
             for (int i = 0; i < Children.Count; i++)
                 Children[i].RuntimeValueStore.Resize(layout);
         }
@@ -111,16 +112,37 @@ namespace XREngine.Animation
         [MemoryPackIgnore]
         private int _boundingChildCount;
 
-        // Pre-allocated weight storage
+        // Pre-allocated weight and blend storage (sized to Children.Count for zero per-frame allocations)
         private struct ChildWeight
         {
             public Child Child;
             public float Weight;
         }
         [MemoryPackIgnore]
-        private readonly ChildWeight[] _childWeights = new ChildWeight[4];
+        private ChildWeight[] _childWeights = [];
         [MemoryPackIgnore]
         private int _weightCount;
+        [MemoryPackIgnore]
+        private AnimationValueStore?[] _activeChildStores = [];
+        [MemoryPackIgnore]
+        private float[] _activeChildWeights = [];
+        [MemoryPackIgnore]
+        private readonly Child?[] _directionalChildren = new Child?[4];
+        [MemoryPackIgnore]
+        private readonly float[] _directionalAngleDistances = new float[4];
+        [MemoryPackIgnore]
+        private readonly float[] _directionalWeights = new float[3];
+
+        private void EnsureScratchCapacity(int childCount)
+        {
+            int required = Math.Max(4, childCount);
+            if (_childWeights.Length < required)
+                _childWeights = new ChildWeight[required];
+            if (_activeChildStores.Length < required)
+                _activeChildStores = new AnimationValueStore?[required];
+            if (_activeChildWeights.Length < required)
+                _activeChildWeights = new float[required];
+        }
 
         private string _xParameterName = string.Empty;
         public string XParameterName
@@ -147,9 +169,21 @@ namespace XREngine.Animation
             /// </summary>
             Barycentric,
             /// <summary>
-            /// A barycentric blend is created with the nearest 3 children, relative to the center (0, 0).
+            /// A directional blend using angular distances relative to the origin (0, 0).
             /// </summary>
             Directional,
+            /// <summary>
+            /// Unity 2D Freeform Cartesian blend using Cartesian Gradient Band Interpolation.
+            /// </summary>
+            FreeformCartesian,
+            /// <summary>
+            /// Unity 2D Freeform Directional blend using Polar Gradient Band Interpolation.
+            /// </summary>
+            FreeformDirectional,
+            /// <summary>
+            /// Unity 2D Simple Directional blend using Polar Gradient Band Interpolation.
+            /// </summary>
+            SimpleDirectional,
         }
 
         private EBlendType _blendType = EBlendType.Barycentric;
@@ -173,6 +207,7 @@ namespace XREngine.Animation
         private void UpdateSortedArrays()
         {
             _needsSort = false;
+            EnsureScratchCapacity(_children.Count);
             if (_children.Count == 0)
             {
                 _sortedByX = [];
@@ -239,60 +274,75 @@ namespace XREngine.Animation
             if (variables.TryGetValue(YParameterName, out AnimVar? yVar))
                 y = yVar.FloatValue;
 
-            if (_needsSort || _sortedByX.Length != _children.Count || _sortedByY.Length != _children.Count)
-                UpdateSortedArrays();
-
-            // If we have no children, there's nothing to blend
-            if (_children.Count == 0)
+            if (!TryCalculateWeights(x, y))
                 return;
 
-            // If we have only one child, just tick it directly
-            if (_children.Count == 1)
+            if (_weightCount == 1)
             {
-                CopyChildAnimationValues(_children[0], variables, weight, normalizedTime, additive);
+                CopyChildAnimationValues(_childWeights[0].Child, variables, weight, normalizedTime, additive);
                 return;
-            }
-
-            // If we have only two children, use linear interpolation
-            if (_children.Count == 2)
-            {
-                switch (BlendType)
-                {
-                    case EBlendType.Cartesian:
-                        // Use linear interpolation along the direct line
-                        CalculateLinearWeightsNoBounding(x, y);
-                        break;
-                    default:
-                        // Use inverse-distance weighting for other blend types
-                        CalculateInverseDistanceWeightsNoBounding(x, y);
-                        break;
-                }
-            }
-            else
-            {
-                // Find the children that bound (x,y)
-                FindBoundingChildren(x, y);
-
-                // If we couldn't find any bounding children, there's must be none
-                if (_boundingChildCount == 0)
-                    return;
-
-                // Calculate weights for each child based on blend type
-                switch (BlendType)
-                {
-                    case EBlendType.Barycentric:
-                        CalculateBaryCentricWeights(x, y);
-                        break;
-                    case EBlendType.Cartesian:
-                        CalculateCartesianWeights(x, y);
-                        break;
-                    case EBlendType.Directional:
-                        CalculateDirectionalWeights(x, y);
-                        break;
-                }
             }
 
             BlendWeightedChildAnimationValues(variables, weight, normalizedTime, additive);
+        }
+
+        internal bool TryCalculateWeights(float x, float y)
+        {
+            x = float.IsFinite(x) ? x : 0.0f;
+            y = float.IsFinite(y) ? y : 0.0f;
+
+            if (_needsSort || _sortedByX.Length != _children.Count || _sortedByY.Length != _children.Count)
+                UpdateSortedArrays();
+            EnsureScratchCapacity(_children.Count);
+
+            _weightCount = 0;
+            if (_children.Count == 0)
+                return false;
+
+            if (_children.Count == 1)
+            {
+                _childWeights[_weightCount++] = new ChildWeight { Child = _children[0], Weight = 1.0f };
+                return true;
+            }
+
+            switch (BlendType)
+            {
+                case EBlendType.FreeformCartesian:
+                    CalculateCartesianGradientBandWeights(x, y);
+                    return _weightCount > 0;
+                case EBlendType.FreeformDirectional:
+                case EBlendType.SimpleDirectional:
+                    CalculatePolarGradientBandWeights(x, y);
+                    return _weightCount > 0;
+            }
+
+            if (_children.Count == 2)
+            {
+                if (BlendType == EBlendType.Cartesian)
+                    CalculateLinearWeightsNoBounding(x, y);
+                else
+                    CalculateInverseDistanceWeightsNoBounding(x, y);
+                return _weightCount > 0;
+            }
+
+            FindBoundingChildren(x, y);
+            if (_boundingChildCount == 0)
+                return false;
+
+            switch (BlendType)
+            {
+                case EBlendType.Barycentric:
+                    CalculateBaryCentricWeights(x, y);
+                    break;
+                case EBlendType.Cartesian:
+                    CalculateCartesianWeights(x, y);
+                    break;
+                case EBlendType.Directional:
+                    CalculateDirectionalWeights(x, y);
+                    break;
+            }
+
+            return _weightCount > 0;
         }
 
         private void BlendWeightedChildAnimationValues(
@@ -330,8 +380,11 @@ namespace XREngine.Animation
                             _childWeights[3].Child.Motion, _childWeights[3].Weight,
                             variables, weight);
                         return;
+                    default:
+                        for (int i = 0; i < _weightCount; i++)
+                            _childWeights[i].Child.Motion?.GetAnimationValues(this, variables, weight * _childWeights[i].Weight);
+                        return;
                 }
-                return;
             }
 
             for (int i = 0; i < _weightCount; i++)
@@ -369,6 +422,24 @@ namespace XREngine.Animation
                         _childWeights[1].Weight,
                         _childWeights[2].Weight,
                         _childWeights[3].Weight,
+                        ValueStore);
+                    return;
+                default:
+                    int activeCount = 0;
+                    for (int i = 0; i < _weightCount; i++)
+                    {
+                        float childWeight = _childWeights[i].Weight;
+                        if (childWeight <= 0.0f || _childWeights[i].Child.Motion is null)
+                            continue;
+                        _activeChildStores[activeCount] = _childWeights[i].Child.RuntimeValueStore;
+                        _activeChildWeights[activeCount] = childWeight;
+                        activeCount++;
+                    }
+                    AnimationValueStore.WeightedBlend(
+                        _activeChildStores,
+                        _activeChildWeights,
+                        activeCount,
+                        normalizeWeights: true,
                         ValueStore);
                     return;
             }
@@ -419,35 +490,11 @@ namespace XREngine.Animation
             float y = variables.TryGetValue(YParameterName, out AnimVar? yVariable)
                 ? yVariable.FloatValue
                 : 0.0f;
-            x = float.IsFinite(x) ? x : 0.0f;
-            y = float.IsFinite(y) ? y : 0.0f;
 
-            if (_needsSort || _sortedByX.Length != _children.Count || _sortedByY.Length != _children.Count)
-                UpdateSortedArrays();
-            if (_children.Count == 0)
+            if (!TryCalculateWeights(x, y))
                 return 0.0;
-            if (_children.Count == 1)
-                return GetChildDuration(_children[0], variables);
-
-            if (_children.Count == 2)
-            {
-                if (BlendType == EBlendType.Cartesian)
-                    CalculateLinearWeightsNoBounding(x, y);
-                else
-                    CalculateInverseDistanceWeightsNoBounding(x, y);
-            }
-            else
-            {
-                FindBoundingChildren(x, y);
-                if (_boundingChildCount == 0)
-                    return 0.0;
-                switch (BlendType)
-                {
-                    case EBlendType.Barycentric: CalculateBaryCentricWeights(x, y); break;
-                    case EBlendType.Cartesian: CalculateCartesianWeights(x, y); break;
-                    case EBlendType.Directional: CalculateDirectionalWeights(x, y); break;
-                }
-            }
+            if (_weightCount == 1)
+                return GetChildDuration(_childWeights[0].Child, variables);
 
             double weightedDuration = 0.0;
             double totalWeight = 0.0;
@@ -543,6 +590,150 @@ namespace XREngine.Animation
             _childWeights[_weightCount++] = new ChildWeight { Child = b, Weight = weightB };
         }
 
+        private void CalculateCartesianGradientBandWeights(float x, float y)
+        {
+            _weightCount = 0;
+            int childCount = _children.Count;
+            float weightSum = 0.0f;
+
+            for (int i = 0; i < childCount; i++)
+            {
+                Child childI = _children[i];
+                float ipX = x - childI.PositionX;
+                float ipY = y - childI.PositionY;
+                float minInfluence = 1.0f;
+
+                for (int j = 0; j < childCount; j++)
+                {
+                    if (j == i)
+                        continue;
+
+                    Child childJ = _children[j];
+                    float ijX = childJ.PositionX - childI.PositionX;
+                    float ijY = childJ.PositionY - childI.PositionY;
+                    float denom = ijX * ijX + ijY * ijY;
+                    if (denom <= 1.0e-12f)
+                        continue;
+
+                    float h = 1.0f - (ipX * ijX + ipY * ijY) / denom;
+                    if (h < minInfluence)
+                    {
+                        minInfluence = h;
+                        if (minInfluence <= 0.0f)
+                            break;
+                    }
+                }
+
+                if (minInfluence > 0.0f)
+                {
+                    _childWeights[_weightCount++] = new ChildWeight { Child = childI, Weight = minInfluence };
+                    weightSum += minInfluence;
+                }
+            }
+
+            NormalizeOrFallbackToNearest(x, y, weightSum);
+        }
+
+        private void CalculatePolarGradientBandWeights(float x, float y)
+        {
+            const float magEpsilon = 1.0e-6f;
+            const float angleWeight = 2.0f;
+
+            _weightCount = 0;
+            int childCount = _children.Count;
+            Vector2 sample = new(x, y);
+            float sampleMag = sample.Length();
+            float weightSum = 0.0f;
+
+            for (int i = 0; i < childCount; i++)
+            {
+                Child childI = _children[i];
+                Vector2 posI = new(childI.PositionX, childI.PositionY);
+                float magI = posI.Length();
+                float minInfluence = 1.0f;
+
+                for (int j = 0; j < childCount; j++)
+                {
+                    if (j == i)
+                        continue;
+
+                    Child childJ = _children[j];
+                    Vector2 posJ = new(childJ.PositionX, childJ.PositionY);
+                    float magJ = posJ.Length();
+                    float avgMag = 0.5f * (magI + magJ);
+                    if (avgMag <= magEpsilon)
+                        continue;
+
+                    float magIJ = (magJ - magI) / avgMag;
+                    float magIP = (sampleMag - magI) / avgMag;
+                    float angIJ = magI <= magEpsilon || magJ <= magEpsilon
+                        ? 0.0f
+                        : SignedAngle(posI, posJ);
+                    float angIP = magI <= magEpsilon || sampleMag <= magEpsilon
+                        ? 0.0f
+                        : SignedAngle(posI, sample);
+
+                    float vijY = angleWeight * angIJ;
+                    float vipY = angleWeight * angIP;
+                    float denom = magIJ * magIJ + vijY * vijY;
+                    if (denom <= 1.0e-12f)
+                        continue;
+
+                    float h = 1.0f - (magIP * magIJ + vipY * vijY) / denom;
+                    if (h < minInfluence)
+                    {
+                        minInfluence = h;
+                        if (minInfluence <= 0.0f)
+                            break;
+                    }
+                }
+
+                if (minInfluence > 0.0f)
+                {
+                    _childWeights[_weightCount++] = new ChildWeight { Child = childI, Weight = minInfluence };
+                    weightSum += minInfluence;
+                }
+            }
+
+            NormalizeOrFallbackToNearest(x, y, weightSum);
+        }
+
+        private void NormalizeOrFallbackToNearest(float x, float y, float weightSum)
+        {
+            if (weightSum > 1.0e-12f && float.IsFinite(weightSum))
+            {
+                float invSum = 1.0f / weightSum;
+                for (int i = 0; i < _weightCount; i++)
+                    _childWeights[i].Weight *= invSum;
+                return;
+            }
+
+            _weightCount = 0;
+            Child nearest = _children[0];
+            float nearestDistSq = float.MaxValue;
+            for (int i = 0; i < _children.Count; i++)
+            {
+                Child candidate = _children[i];
+                float dx = candidate.PositionX - x;
+                float dy = candidate.PositionY - y;
+                float distSq = dx * dx + dy * dy;
+                if (distSq < nearestDistSq)
+                {
+                    nearestDistSq = distSq;
+                    nearest = candidate;
+                }
+            }
+
+            _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
+        }
+
+        private static float SignedAngle(Vector2 from, Vector2 to)
+        {
+            float dot = from.X * to.X + from.Y * to.Y;
+            float det = from.X * to.Y - from.Y * to.X;
+            return MathF.Atan2(det, dot);
+        }
+
         private void CalculateDirectionalWeights(float x, float y)
         {
             _weightCount = 0;
@@ -562,10 +753,8 @@ namespace XREngine.Animation
             // Normalize the target direction
             Vector2 targetDirNorm = targetDir / targetMagnitude;
 
-            // Find children in the general direction of the target
-            // and calculate their angular distance to the target direction
-            List<(Child child, float angleDist, float dotProduct)> childDistances = new();
-
+            // Find bounding children in the forward hemisphere without heap allocations.
+            int directionalCount = 0;
             for (int i = 0; i < _boundingChildCount; i++)
             {
                 Child child = _boundingChildren[i]!;
@@ -576,77 +765,71 @@ namespace XREngine.Animation
                 if (childMagnitude < 0.0001f)
                     continue;
 
-                // Normalize the child direction
                 Vector2 childDirNorm = childPos / childMagnitude;
-
-                // Calculate dot product (cosine of angle between directions)
                 float dot = Vector2.Dot(targetDirNorm, childDirNorm);
-
-                // Convert to angle distance (0 = same direction, p = opposite direction)
                 float angleDist = MathF.Acos(Math.Clamp(dot, -1.0f, 1.0f));
 
-                // Only consider children in the general direction (within p/2 radians or 90 degrees)
                 if (angleDist <= MathF.PI / 2)
                 {
-                    childDistances.Add((child, angleDist, dot));
+                    // Insertion sort into the 4-element scratch arrays by ascending angle distance.
+                    int insert = directionalCount;
+                    while (insert > 0 && _directionalAngleDistances[insert - 1] > angleDist)
+                    {
+                        _directionalChildren[insert] = _directionalChildren[insert - 1];
+                        _directionalAngleDistances[insert] = _directionalAngleDistances[insert - 1];
+                        insert--;
+                    }
+                    _directionalChildren[insert] = child;
+                    _directionalAngleDistances[insert] = angleDist;
+                    directionalCount++;
                 }
             }
 
             // If no children are in the forward hemisphere, use the nearest bounding child
-            if (childDistances.Count == 0)
+            if (directionalCount == 0)
             {
                 Child nearest = FindNearestBoundingChild(x, y);
                 _childWeights[_weightCount++] = new ChildWeight { Child = nearest, Weight = 1.0f };
                 return;
             }
 
-            // Sort children by angle distance (closest direction first)
-            childDistances.Sort((a, b) => a.angleDist.CompareTo(b.angleDist));
-
             // Take up to 3 closest directional children
-            int count = Math.Min(3, childDistances.Count);
-            float[] weights = new float[count];
-            float weightSum = 0;
+            int count = Math.Min(3, directionalCount);
+            float weightSum = 0.0f;
 
             // Check for exact match
-            if (count > 0 && childDistances[0].angleDist < EPSILON)
+            if (count > 0 && _directionalAngleDistances[0] < EPSILON)
             {
-                // If one child is exactly in the same direction, use only that child
                 _childWeights[_weightCount++] = new ChildWeight
                 {
-                    Child = childDistances[0].child,
+                    Child = _directionalChildren[0]!,
                     Weight = 1.0f
                 };
                 return;
             }
 
-            // Calculate inverse-distance weights (closer directions have more influence)
             for (int i = 0; i < count; i++)
             {
-                // Use angular distance for weighting
-                // Add small epsilon to avoid division by zero
-                weights[i] = 1.0f / (childDistances[i].angleDist + EPSILON);
-                weightSum += weights[i];
+                _directionalWeights[i] = 1.0f / (_directionalAngleDistances[i] + EPSILON);
+                weightSum += _directionalWeights[i];
             }
 
-            // Normalize weights
             if (weightSum > EPSILON)
             {
                 for (int i = 0; i < count; i++)
                 {
                     _childWeights[_weightCount++] = new ChildWeight
                     {
-                        Child = childDistances[i].child,
-                        Weight = weights[i] / weightSum
+                        Child = _directionalChildren[i]!,
+                        Weight = _directionalWeights[i] / weightSum
                     };
                 }
             }
             else
             {
-                // Fallback if weights are invalid
                 _childWeights[_weightCount++] = new ChildWeight
                 {
-                    Child = childDistances[0].child,
+                    Child = _directionalChildren[0]!,
                     Weight = 1.0f
                 };
             }
@@ -674,26 +857,26 @@ namespace XREngine.Animation
         //    return nearest;
         //}
 
-        private readonly Comparer<Child?> _xComp = Comparer<Child?>.Create(static (a, b) =>
+        private int BinarySearchByX(float x)
         {
-            if (a == null && b == null)
-                return 0;
-            if (a == null)
-                return 1;
-            if (b == null)
-                return -1;
-            return a.PositionX.CompareTo(b.PositionX);
-        });
-        private readonly Comparer<Child?> _yComp = Comparer<Child?>.Create(static (a, b) =>
-        {
-            if (a == null && b == null)
-                return 0;
-            if (a == null)
-                return 1;
-            if (b == null)
-                return -1;
-            return a.PositionY.CompareTo(b.PositionY);
-        });
+            int low = 0;
+            int high = _sortedByX.Length - 1;
+            int leftIdx = -1;
+            while (low <= high)
+            {
+                int mid = low + ((high - low) >> 1);
+                if (_sortedByX[mid].PositionX <= x)
+                {
+                    leftIdx = mid;
+                    low = mid + 1;
+                }
+                else
+                {
+                    high = mid - 1;
+                }
+            }
+            return leftIdx;
+        }
 
         private void FindBoundingChildren(float x, float y)
         {
@@ -703,14 +886,8 @@ namespace XREngine.Animation
             if (_children.Count < 3)
                 return;
 
-            // Binary search for approximate indices
-            int leftIdx = Array.BinarySearch(_sortedByX, new Child { PositionX = x }, _xComp);
-            if (leftIdx < 0) 
-                leftIdx = ~leftIdx - 1;
-
-            //int bottomIdx = Array.BinarySearch(_sortedByY, new Child { PositionY = y }, _yComp);
-            //if (bottomIdx < 0) 
-            //    bottomIdx = ~bottomIdx - 1;
+            // Allocation-free binary search for the last child with PositionX <= x.
+            int leftIdx = BinarySearchByX(x);
 
             // Initialize quadrant children
             Child? bottomLeft = null, bottomRight = null, topLeft = null, topRight = null;
@@ -816,28 +993,35 @@ namespace XREngine.Animation
                 }
             }
 
-            // Find bottom-right and top-left from the remaining children
-            Child[] remaining = new Child[2];
+            // Find bottom-right and top-left from the remaining children without allocating an array.
+            Child? remaining0 = null;
+            Child? remaining1 = null;
             int remainingCount = 0;
 
             for (int i = 0; i < _boundingChildCount; i++)
             {
                 Child child = _boundingChildren[i]!;
                 if (child != bottomLeft && child != topRight && remainingCount < 2)
-                    remaining[remainingCount++] = child;
+                {
+                    if (remainingCount == 0)
+                        remaining0 = child;
+                    else
+                        remaining1 = child;
+                    remainingCount++;
+                }
             }
 
             if (remainingCount == 2)
             {
-                if (remaining[0].PositionX > remaining[1].PositionX)
+                if (remaining0!.PositionX > remaining1!.PositionX)
                 {
-                    bottomRight = remaining[0];
-                    topLeft = remaining[1];
+                    bottomRight = remaining0;
+                    topLeft = remaining1;
                 }
                 else
                 {
-                    bottomRight = remaining[1];
-                    topLeft = remaining[0];
+                    bottomRight = remaining1;
+                    topLeft = remaining0;
                 }
             }
 

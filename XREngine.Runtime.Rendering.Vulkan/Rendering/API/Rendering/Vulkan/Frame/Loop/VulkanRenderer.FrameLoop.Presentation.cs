@@ -239,15 +239,18 @@ namespace XREngine.Rendering.Vulkan
         {
             ThrowIfDesktopFrameFaultInjected(
                 EVulkanDesktopFrameFaultPoint.Presentation);
-            CaptureCompositedScreenshotsBeforePresent(in attempt);
+            CaptureCompositedScreenshotsBeforePresent(ref attempt);
             Exception? auxiliaryFailure = null;
             bool dispatched = false;
             Semaphore queuedPresentSemaphore = attempt.PresentSemaphore;
+            Semaphore expectedOwnerSemaphore = attempt.CompositedScreenshotChainedPresentSemaphore.Handle != 0
+                ? attempt.CompositedScreenshotChainedPresentSemaphore
+                : attempt.FrameTargetLease.SubmissionSignalSemaphore;
             attempt.PresentWaitSemaphoreProvenanceValid =
                 queuedPresentSemaphore.Handle != 0 &&
                 attempt.ExpectedPresentWaitSemaphore.Handle != 0 &&
                 queuedPresentSemaphore.Handle == attempt.ExpectedPresentWaitSemaphore.Handle &&
-                attempt.FrameTargetLease.SubmissionSignalSemaphore.Handle == queuedPresentSemaphore.Handle;
+                expectedOwnerSemaphore.Handle == queuedPresentSemaphore.Handle;
             uint queuedImageIndex = attempt.ImageIndex;
             var swapChains = stackalloc[] { OutputRuntime.Desktop.Swapchain };
             PresentInfoKHR presentInfo = new()

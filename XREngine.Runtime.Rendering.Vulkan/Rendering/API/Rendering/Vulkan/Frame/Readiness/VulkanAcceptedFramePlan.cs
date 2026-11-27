@@ -886,6 +886,8 @@ internal sealed class VulkanAcceptedFramePlan
 
         CaptureDeformationReadLeases(operations);
         CaptureDeformationReadLeases(textureUploadOperations);
+        PinOperations(operations);
+        PinOperations(textureUploadOperations);
 
         operations.CopyTo(
             _authoredOperations.AsSpan(_authoredOperationCount));
@@ -911,6 +913,11 @@ internal sealed class VulkanAcceptedFramePlan
                 0,
                 _authoredTextureUploadOperationCount));
 
+        UnpinOperations(_authoredOperations.AsSpan(0, _authoredOperationCount));
+        UnpinOperations(
+            _authoredTextureUploadOperations.AsSpan(
+                0,
+                _authoredTextureUploadOperationCount));
         _authoredOperations.AsSpan(0, _authoredOperationCount).Clear();
         _authoredTextureUploadOperations.AsSpan(
             0,
@@ -1554,6 +1561,11 @@ internal sealed class VulkanAcceptedFramePlan
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
             _authoredOperations.AsSpan(0, _authoredOperationCount));
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+            _authoredTextureUploadOperations.AsSpan(
+                0,
+                _authoredTextureUploadOperationCount));
+        UnpinOperations(_authoredOperations.AsSpan(0, _authoredOperationCount));
+        UnpinOperations(
             _authoredTextureUploadOperations.AsSpan(
                 0,
                 _authoredTextureUploadOperationCount));

@@ -25,7 +25,8 @@ public static partial class EditorUnitTests
             int MaterialCount,
             int SourceToonMaterialCount,
             int SourceToonDowngradeCount,
-            string SourceContentSha256);
+            string SourceContentSha256,
+            string? PrimaryModelPath);
 
         /// <summary>
         /// Adds one source file as an independent scene in the startup world.
@@ -153,6 +154,7 @@ public static partial class EditorUnitTests
                     : DefaultLayers.DynamicIndex;
                 importRoot.IterateHierarchy(node => node.Layer = layer);
 
+                (string? primaryModelPath, _) = SerializedHumanoidAvatarSetup.FindPrimaryModelDependency(manifest);
                 result = new SerializedPrefabStartupImportResult(
                     importRoot,
                     convertedRoot,
@@ -160,7 +162,8 @@ public static partial class EditorUnitTests
                     materialCount,
                     sourceToonCount,
                     downgradeCount,
-                    manifest.ComputeSourceContentSha256());
+                    manifest.ComputeSourceContentSha256(),
+                    primaryModelPath);
                 yield return new JobProgress(1.0f, result);
             }
 
@@ -320,6 +323,7 @@ public static partial class EditorUnitTests
             List<ModelComponent> suspendedModels)
         {
             const int MaxModelsPerPresentedFrame = 4;
+            const int MaxDeformingModelsPerPresentedFrame = 1;
             if (suspendedModels.Count == 0)
                 return;
 
@@ -330,19 +334,23 @@ public static partial class EditorUnitTests
             long lastActivationTimestamp = 0L;
             long materialWaitStartTicks = Stopwatch.GetTimestamp();
             long materialWaitLimitTicks = Stopwatch.Frequency * 10L;
-            long presentFallbackTicks = Stopwatch.Frequency / 4L;
+            long presentFallbackTicks = Stopwatch.Frequency;
 
             Debug.Meshes(
                 $"[UnityPrefab] Staging {suspendedModels.Count} model components under " +
-                $"'{rootNode.Name}' at up to {MaxModelsPerPresentedFrame} per presented frame.");
+                $"'{rootNode.Name}' at up to {MaxModelsPerPresentedFrame} static / {MaxDeformingModelsPerPresentedFrame} deforming per presented frame.");
             Engine.AddAppThreadCoroutine(() =>
             {
                 if (rootNode.IsDestroyed)
                     return true;
 
-                // Wait until the renderer actually presents after the previous model batch so new
+                // Wait until the renderer advances a frame after the previous model batch so new
                 // cold meshes never pile up across consecutive rejected PresentNow attempts.
-                ulong currentPresentFrameId = RuntimeEngine.Rendering.Stats.FrameLifecycle.PresentFrameId;
+                // In VR, desktop presents can stay held while OpenXR renders, so use RenderFrameId.
+                bool inVr = XREngine.Input.RuntimeVrStateServices.IsOpenXRActive || XREngine.Input.RuntimeVrStateServices.IsInVR;
+                ulong currentPresentFrameId = inVr
+                    ? RuntimeEngine.Rendering.State.RenderFrameId
+                    : RuntimeEngine.Rendering.Stats.FrameLifecycle.PresentFrameId;
                 long nowTicks = Stopwatch.GetTimestamp();
                 if (lastActivationTimestamp != 0L
                     && currentPresentFrameId <= lastActivationPresentFrameId
@@ -366,6 +374,7 @@ public static partial class EditorUnitTests
                 // background threads so Vulkan PresentNow does not stall on cold shader builds.
                 bool materialWaitExpired = nowTicks - materialWaitStartTicks >= materialWaitLimitTicks;
                 int activatedThisFrame = 0;
+                int deformingActivatedThisFrame = 0;
                 while (nextModelIndex < suspendedModels.Count && activatedThisFrame < MaxModelsPerPresentedFrame)
                 {
                     ModelComponent component = suspendedModels[nextModelIndex];
@@ -375,12 +384,18 @@ public static partial class EditorUnitTests
                         continue;
                     }
 
+                    bool isDeforming = HasDeformingMesh(component);
+                    if (isDeforming && deformingActivatedThisFrame >= MaxDeformingModelsPerPresentedFrame)
+                        break;
+
                     if (!materialWaitExpired && !AreModelMaterialsReadyForAdmission(component))
                         break;
 
                     component.IsActive = true;
                     nextModelIndex++;
                     activatedThisFrame++;
+                    if (isDeforming)
+                        deformingActivatedThisFrame++;
                 }
 
                 if (activatedThisFrame > 0)
@@ -396,6 +411,32 @@ public static partial class EditorUnitTests
                     $"[UnityPrefab] Finished staged model publication for '{rootNode.Name}'.");
                 return true;
             });
+        }
+
+        private static bool HasDeformingMesh(ModelComponent component)
+        {
+            if (component.Model is { } model)
+            {
+                for (int i = 0; i < model.Meshes.Count; i++)
+                {
+                    foreach (SubMeshLOD lod in model.Meshes[i].LODs)
+                    {
+                        if (lod.Mesh is { } lodMesh && (lodMesh.HasSkinning || lodMesh.HasBlendshapes))
+                            return true;
+                    }
+                }
+            }
+
+            for (int i = 0; i < component.Meshes.Count; i++)
+            {
+                if (component.Meshes[i].CurrentLODRenderer?.Mesh is { } currentMesh &&
+                    (currentMesh.HasSkinning || currentMesh.HasBlendshapes))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>

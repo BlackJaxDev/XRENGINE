@@ -41,6 +41,7 @@ public partial class EngineTimer
         _visibilityGenerationGate.Reset();
         _renderDone.Reset();
         _renderReadyForNextCollectSignaled = 0;
+        Volatile.Write(ref _renderFrameConsumingSnapshot, 0);
         CallerThreadCollectionRenderFrameId = 0UL;
         Interlocked.Exchange(ref _firstTerminalFault, null);
         Volatile.Write(ref _collectVisiblePhase, "Idle");

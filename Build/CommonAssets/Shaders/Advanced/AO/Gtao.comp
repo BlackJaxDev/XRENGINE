@@ -3,10 +3,12 @@
 #include "Advanced/Reconstruction/ReconstructSurface.glslinc"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 #if defined(XR_ADV_VISIBILITY_ARRAY)
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
 XR_ADV_SHADING_LAYOUT(2) uniform sampler2DArray VisibilityDepth;
 XR_ADV_SHADING_IMAGE(r8, 49) writeonly uniform image2DArray AmbientOcclusionOutput;
 #define XR_ADV_AO_PIXEL(p, v) ivec3(p, v)
 #else
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2D VisibilityMetadata;
 XR_ADV_SHADING_LAYOUT(2) uniform sampler2D VisibilityDepth;
 XR_ADV_SHADING_IMAGE(r8, 49) writeonly uniform image2D AmbientOcclusionOutput;
 #define XR_ADV_AO_PIXEL(p, v) ivec2(p)
@@ -27,10 +29,31 @@ bool XR_ADV_AO_IsFinite(vec3 x) { return !any(isnan(x)) && !any(isinf(x)); }
 bool XR_ADV_AO_IsReversedDepth(XRAdvancedViewRecord v) { return (v.flags & XR_ADV_REVERSED_DEPTH) != 0u || v.depthParams.w != 0.0; }
 bool XR_ADV_AO_IsFarDepth(float z, XRAdvancedViewRecord v) { return !XR_ADV_AO_IsFinite(z) || (XR_ADV_AO_IsReversedDepth(v) ? z <= 0.0 : z >= 1.0); }
 
-bool XR_ADV_AO_TryGetViewPosition(ivec2 p, uint viewIndex, XRAdvancedViewRecord v, out vec3 position)
+// Reads the pixel's owning view index from VisibilityMetadata. Pixels inside an
+// active mirror or portal return their portal sub-view index; uncovered pixels
+// and pixels outside portals return primaryView.
+uint XR_ADV_AO_ReadPixelView(ivec2 p, uint primaryView)
 {
-    float z = texelFetch(VisibilityDepth, XR_ADV_AO_PIXEL(p, viewIndex), 0).r;
+    uint metadata = texelFetch(VisibilityMetadata, XR_ADV_AO_PIXEL(p, primaryView), 0).r;
+    if (metadata == XR_ADV_VIS_INVALID)
+        return primaryView;
+    uint pixelView = (metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu;
+    return XR_ADV_ViewBelongsToPrimary(pixelView, primaryView) ? pixelView : primaryView;
+}
+
+bool XR_ADV_AO_TryGetViewPosition(
+    ivec2 p,
+    uint layerViewIndex,
+    uint expectedPixelView,
+    XRAdvancedViewRecord v,
+    out vec3 position)
+{
     position = vec3(0.0);
+    // Reject cross-portal neighbor taps so normal derivation and horizon marching
+    // never blend primary depth with reflected sub-view depth across a mirror border.
+    if (XR_ADV_AO_ReadPixelView(p, layerViewIndex) != expectedPixelView)
+        return false;
+    float z = texelFetch(VisibilityDepth, XR_ADV_AO_PIXEL(p, layerViewIndex), 0).r;
     if (XR_ADV_AO_IsFarDepth(z, v)) return false;
     vec2 pixelCenter = vec2(p) + 0.5;
     vec3 world = XR_ADV_ReconstructWorldPositionFromDepth(pixelCenter, z, v);
@@ -78,7 +101,8 @@ bool XR_ADV_AO_TryGetShortestCenterEdge(
 bool XR_ADV_AO_TryGetDepthNormal(
     ivec2 p,
     ivec2 extent,
-    uint viewIndex,
+    uint layerViewIndex,
+    uint expectedPixelView,
     XRAdvancedViewRecord v,
     vec3 center,
     vec3 viewDir,
@@ -89,10 +113,10 @@ bool XR_ADV_AO_TryGetDepthNormal(
     vec3 u;
     vec3 d;
     normal = vec3(0.0, 0.0, 1.0);
-    bool hl = XR_ADV_AO_TryGetViewPosition(max(p - ivec2(1, 0), ivec2(0)), viewIndex, v, l);
-    bool hr = XR_ADV_AO_TryGetViewPosition(min(p + ivec2(1, 0), extent - 1), viewIndex, v, r);
-    bool hu = XR_ADV_AO_TryGetViewPosition(max(p - ivec2(0, 1), ivec2(0)), viewIndex, v, u);
-    bool hd = XR_ADV_AO_TryGetViewPosition(min(p + ivec2(0, 1), extent - 1), viewIndex, v, d);
+    bool hl = XR_ADV_AO_TryGetViewPosition(max(p - ivec2(1, 0), ivec2(0)), layerViewIndex, expectedPixelView, v, l);
+    bool hr = XR_ADV_AO_TryGetViewPosition(min(p + ivec2(1, 0), extent - 1), layerViewIndex, expectedPixelView, v, r);
+    bool hu = XR_ADV_AO_TryGetViewPosition(max(p - ivec2(0, 1), ivec2(0)), layerViewIndex, expectedPixelView, v, u);
+    bool hd = XR_ADV_AO_TryGetViewPosition(min(p + ivec2(0, 1), extent - 1), layerViewIndex, expectedPixelView, v, d);
     vec3 xAxis;
     vec3 yAxis;
     if (!XR_ADV_AO_TryGetShortestCenterEdge(hl, l, hr, r, center, xAxis) ||
@@ -127,11 +151,12 @@ void main()
     // Each backend dispatches one eye at a time; z is always zero within it.
     uint viewIndex = u_Push.viewIndex;
     if (viewIndex >= u_Push.viewCount || any(greaterThanEqual(uvec2(pixel), u_Push.screenExtent))) return;
-    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
     if ((u_Push.flags & XR_ADV_AO_ENABLED) == 0u) { imageStore(AmbientOcclusionOutput, XR_ADV_AO_PIXEL(pixel, viewIndex), vec4(1.0)); return; }
+    uint centerPixelView = XR_ADV_AO_ReadPixelView(pixel, viewIndex);
+    XRAdvancedViewRecord view = XR_ADV_LoadView(centerPixelView);
     ivec2 extent = textureSize(VisibilityDepth, 0).xy;
     vec3 center;
-    if (!XR_ADV_AO_TryGetViewPosition(pixel, viewIndex, view, center)) { imageStore(AmbientOcclusionOutput, XR_ADV_AO_PIXEL(pixel, viewIndex), vec4(1.0)); return; }
+    if (!XR_ADV_AO_TryGetViewPosition(pixel, viewIndex, centerPixelView, view, center)) { imageStore(AmbientOcclusionOutput, XR_ADV_AO_PIXEL(pixel, viewIndex), vec4(1.0)); return; }
     float centerDepth = abs(center.z);
     if (!XR_ADV_AO_IsFinite(centerDepth) || centerDepth <= 1.0e-4) { imageStore(AmbientOcclusionOutput, XR_ADV_AO_PIXEL(pixel, viewIndex), vec4(1.0)); return; }
     float centerLengthSquared = dot(center, center);
@@ -141,7 +166,7 @@ void main()
     float projectionY = abs(view.projectionUnjittered[1][1]);
     if (!XR_ADV_AO_IsFinite(projectionX) || !XR_ADV_AO_IsFinite(projectionY) || projectionX <= 1.0e-5 || projectionY <= 1.0e-5) { imageStore(AmbientOcclusionOutput, XR_ADV_AO_PIXEL(pixel, viewIndex), vec4(1.0)); return; }
     vec3 normal;
-    if (!XR_ADV_AO_TryGetDepthNormal(pixel, extent, viewIndex, view, center, viewDir, normal)) { imageStore(AmbientOcclusionOutput, XR_ADV_AO_PIXEL(pixel, viewIndex), vec4(1.0)); return; }
+    if (!XR_ADV_AO_TryGetDepthNormal(pixel, extent, viewIndex, centerPixelView, view, center, viewDir, normal)) { imageStore(AmbientOcclusionOutput, XR_ADV_AO_PIXEL(pixel, viewIndex), vec4(1.0)); return; }
     float radiusPixels = clamp(XR_ADV_AO_RADIUS * projectionY * 0.5 * float(extent.y) / centerDepth, 1.0, 192.0);
     float invProjX = 1.0 / projectionX;
     float invProjY = 1.0 / projectionY;
@@ -183,7 +208,7 @@ void main()
                 ivec2 samplePixel = pixel + offset * side;
                 if (any(lessThan(samplePixel, ivec2(0))) || any(greaterThanEqual(samplePixel, extent))) continue;
                 vec3 samplePosition;
-                if (!XR_ADV_AO_TryGetViewPosition(samplePixel, viewIndex, view, samplePosition)) continue;
+                if (!XR_ADV_AO_TryGetViewPosition(samplePixel, viewIndex, centerPixelView, view, samplePosition)) continue;
                 vec3 delta = samplePosition - center; float distance = length(delta);
                 if (!XR_ADV_AO_IsFinite(distance) || distance <= 1.0e-4 || distance > XR_ADV_AO_RADIUS || max(0.0, -dot(delta, viewDir)) > XR_ADV_AO_RADIUS * XR_ADV_AO_THICKNESS_RATIO) continue;
                 vec3 inPlane = delta - plane * dot(delta, plane); float inPlaneLength = length(inPlane);

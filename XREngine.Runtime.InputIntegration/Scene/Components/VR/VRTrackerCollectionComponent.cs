@@ -28,8 +28,12 @@ namespace XREngine.Data.Components.Scene
         protected override void OnComponentDeactivated()
         {
             RuntimeVrStateServices.FrameAdvanced -= ReverifyOpenXrTrackersThrottled;
-            foreach (SceneNode node in _ownedTrackerNodes)
-                node.Destroy(true);
+            if (!SceneNode.IsDestroyed && !SceneNode.IsDestroyQueued)
+            {
+                foreach (SceneNode node in _ownedTrackerNodes)
+                    if (!node.IsDestroyed && !node.IsDestroyQueued)
+                        node.Destroy(true);
+            }
             _ownedTrackerNodes.Clear();
             Trackers.Clear();
             OpenXrTrackers.Clear();
@@ -144,30 +148,29 @@ namespace XREngine.Data.Components.Scene
         /// <param name="device"></param>
         private void AddRealTracker(RuntimeVrDeviceInfo device)
         {
-            SceneNode trackerNode = SceneNode.NewChild();
-            _ownedTrackerNodes.Add(trackerNode);
-            trackerNode.Name = $"Tracker {device.DeviceIndex}";
-
+            SceneNode trackerNode = new() { Name = $"Tracker {device.DeviceIndex}" };
             VRTrackerTransform tfm = trackerNode.SetTransform<VRTrackerTransform>();
             tfm.Tracker = device;
 
             VRTrackerModelComponent modelComponent = trackerNode.AddComponent<VRTrackerModelComponent>()!;
             modelComponent.DeviceIndex = device.DeviceIndex;
 
+            trackerNode.Transform.SetParent(SceneNode.Transform, false, XREngine.Scene.Transforms.EParentAssignmentMode.Immediate);
+            _ownedTrackerNodes.Add(trackerNode);
             Trackers.Add(device.DeviceIndex, (device, tfm));
         }
 
         private void AddOpenXrTracker(RuntimeVrTrackerInfo tracker)
         {
-            SceneNode trackerNode = SceneNode.NewChild();
-            _ownedTrackerNodes.Add(trackerNode);
-            trackerNode.Name = $"OpenXR Tracker {GetOpenXrTrackerDisplayName(tracker)}";
-
+            SceneNode trackerNode = new() { Name = $"OpenXR Tracker {GetOpenXrTrackerDisplayName(tracker)}" };
             VRTrackerTransform tfm = trackerNode.SetTransform<VRTrackerTransform>();
             tfm.ApplyOpenXrTrackerInfo(tracker);
 
             VRTrackerModelComponent modelComponent = trackerNode.AddComponent<VRTrackerModelComponent>()!;
             modelComponent.OpenXrTrackerUserPath = tracker.UserPath;
+
+            trackerNode.Transform.SetParent(SceneNode.Transform, false, XREngine.Scene.Transforms.EParentAssignmentMode.Immediate);
+            _ownedTrackerNodes.Add(trackerNode);
 
             uint syntheticDeviceIndex = uint.MaxValue - (uint)Trackers.Count;
             while (Trackers.ContainsKey(syntheticDeviceIndex))

@@ -337,6 +337,11 @@ struct XRAdvancedViewRecord
     uint sourceCameraIdentityHi;
     uint cullingLayerMask;
     uint renderTimeBits;
+    vec4 clipPlaneWorld;
+    uint primaryViewIndex;
+    uint parentViewIndex;
+    uint stencilNodeId;
+    uint depthAndExcludeDraw;
 };
 
 struct XRAdvancedBufferReference

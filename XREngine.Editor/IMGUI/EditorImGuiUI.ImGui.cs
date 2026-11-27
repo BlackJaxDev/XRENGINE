@@ -926,15 +926,22 @@ public static partial class EditorImGuiUI
                 io.MouseHoveredViewport == viewport.ID &&
                 !io.WantCaptureMouse;
 
+            bool pauseMenuOpen = EditorPlayModePauseMenu.IsOpen;
             SetScenePointerInputAllowed(
+                !pauseMenuOpen &&
                 editorAcceptsInput &&
                 (allowEngineInputThroughScenePanel || allowEngineInputThroughFullViewport));
 
             // In FullViewportBehindImGuiUI mode, the dock space uses PassthruCentralNode so
             // WantCaptureMouse is already false over the scene area. No extra bypass needed
             // beyond the existing condition — but ensure we don't block engine input when
-            // we're NOT in play mode and the mouse is NOT over an ImGui panel.
-            Engine.Input.SetUIInputCaptured(uiWantsCapture && !allowEngineInputThroughScenePanel && editorAcceptsInput);
+            // we're NOT in play mode and the mouse is NOT over an ImGui panel, or when the
+            // injected direct-to-play pause menu owns pointer and Escape input.
+            Engine.Input.SetUIInputCaptured(
+                !pauseMenuOpen &&
+                uiWantsCapture &&
+                !allowEngineInputThroughScenePanel &&
+                editorAcceptsInput);
         }
 
         /// <summary>
@@ -1604,6 +1611,18 @@ public static partial class EditorImGuiUI
 
             if (ImGui.MenuItem("Runtime Environment", null, _showRuntimeEnvironment))
                 _showRuntimeEnvironment = !_showRuntimeEnvironment;
+
+            if (ImGui.BeginMenu("UI Backdrop Blur Format"))
+            {
+                EUiBackdropBlurFormat currentFormat = RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat;
+                if (ImGui.MenuItem("Rgba8 (Lowest Bandwidth)", null, currentFormat == EUiBackdropBlurFormat.Rgba8))
+                    RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat = EUiBackdropBlurFormat.Rgba8;
+                if (ImGui.MenuItem("R11fG11fB10f (Packed HDR)", null, currentFormat == EUiBackdropBlurFormat.R11fG11fB10f))
+                    RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat = EUiBackdropBlurFormat.R11fG11fB10f;
+                if (ImGui.MenuItem("Rgba16f (Highest Precision)", null, currentFormat == EUiBackdropBlurFormat.Rgba16f))
+                    RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat = EUiBackdropBlurFormat.Rgba16f;
+                ImGui.EndMenu();
+            }
 
             ImGui.Separator();
 

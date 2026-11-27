@@ -190,6 +190,7 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
     public bool UsePointShadowAtlas => RuntimeRenderingHostServiceDefaults.UsePointShadowAtlas;
     public uint ShadowAtlasPageSize => RuntimeRenderingHostServiceDefaults.ShadowAtlasPageSize;
     public int MaxShadowAtlasPages => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasPages;
+    public int MaxDirectionalShadowAtlasPages => RuntimeRenderingHostServiceDefaults.MaxDirectionalShadowAtlasPages;
     public long MaxShadowAtlasMemoryBytes => RuntimeRenderingHostServiceDefaults.MaxShadowAtlasMemoryBytes;
     public int MaxShadowTilesRenderedPerFrame => RuntimeRenderingHostServiceDefaults.MaxShadowTilesRenderedPerFrame;
     public float MaxShadowRenderMilliseconds => RuntimeRenderingHostServiceDefaults.MaxShadowRenderMilliseconds;

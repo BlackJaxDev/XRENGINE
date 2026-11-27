@@ -1761,6 +1761,12 @@ namespace XREngine.Rendering
             return Mesh is not null && Mesh.GetBlendshapeIndex(name, out index);
         }
 
+        public bool GetBlendshapeIndex(string name, StringComparison comparison, out uint index)
+        {
+            index = 0;
+            return Mesh is not null && Mesh.GetBlendshapeIndex(name, comparison, out index);
+        }
+
         /// <summary>
         /// Get the weight of a blendshape by index, with the weight returned being a percentage from 0 to 100.
         /// </summary>
@@ -3558,7 +3564,7 @@ namespace XREngine.Rendering
                 tfm.RenderMatrixChanged += BoneTransformRenderMatrixChanged;
                 _bones[i] = rb;
 
-                Matrix4x4 currentMatrix = GetCurrentBoneMatrix(tfm);
+                Matrix4x4 currentMatrix = GetEffectiveBoneMatrix(tfm, GetCurrentBoneMatrix(tfm));
                 BoneMatricesBuffer.Set(boneIndex, currentMatrix);
                 Matrix4x4 adjustedInvBind = rootBindMtx * invBindWorldMtx;
                 BoneInvBindMatricesBuffer.Set(boneIndex, adjustedInvBind);
@@ -3724,6 +3730,24 @@ namespace XREngine.Rendering
             }
         }
 
+        private Func<TransformBase, Matrix4x4, Matrix4x4>? _boneMatrixModifier;
+
+        /// <summary>
+        /// Sets an optional per-bone world-matrix filter applied when populating this renderer's
+        /// skinning palette. Used by first-person VR head-chop proxies without mutating shared bones.
+        /// </summary>
+        public void SetBoneMatrixModifier(Func<TransformBase, Matrix4x4, Matrix4x4>? modifier)
+        {
+            if (ReferenceEquals(_boneMatrixModifier, modifier))
+                return;
+
+            _boneMatrixModifier = modifier;
+            RefreshBoneMatricesFromRenderState();
+        }
+
+        private Matrix4x4 GetEffectiveBoneMatrix(TransformBase transform, Matrix4x4 matrix)
+            => _boneMatrixModifier is { } modifier ? modifier(transform, matrix) : matrix;
+
         internal static Matrix4x4 GetCurrentBoneMatrix(TransformBase transform)
         {
             // Imported skeletons can be skinned before the first render snapshot is published.
@@ -3757,7 +3781,7 @@ namespace XREngine.Rendering
             if (_dirtyBoneFlags is null || _dirtyBoneIndices is null || _dirtyBoneMatrices is null)
                 return;
 
-            if (!MarkBoneMatrixDirty(bone.Index, renderMatrix))
+            if (!MarkBoneMatrixDirty(bone.Index, GetEffectiveBoneMatrix(transform, renderMatrix)))
                 return;
 
             MarkSkinnedOutputDirty();
@@ -3836,7 +3860,7 @@ namespace XREngine.Rendering
             foreach (RenderBone bone in _bones)
             {
                 uint index = bone.Index;
-                Matrix4x4 renderMatrix = GetCurrentBoneMatrix(bone.Transform);
+                Matrix4x4 renderMatrix = GetEffectiveBoneMatrix(bone.Transform, GetCurrentBoneMatrix(bone.Transform));
                 boneMatrices.Set(index, renderMatrix);
                 skinPalette.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(ComposeSkinPaletteMatrix(index, renderMatrix)));
                 MarkBoneMatrixDirty(index, renderMatrix);
@@ -3861,7 +3885,7 @@ namespace XREngine.Rendering
             var hash = new HashCode();
             foreach (RenderBone bone in _bones)
             {
-                Matrix4x4 m = GetCurrentBoneMatrix(bone.Transform);
+                Matrix4x4 m = GetEffectiveBoneMatrix(bone.Transform, GetCurrentBoneMatrix(bone.Transform));
                 hash.Add(m.M11); hash.Add(m.M12); hash.Add(m.M13); hash.Add(m.M14);
                 hash.Add(m.M21); hash.Add(m.M22); hash.Add(m.M23); hash.Add(m.M24);
                 hash.Add(m.M31); hash.Add(m.M32); hash.Add(m.M33); hash.Add(m.M34);
@@ -4272,7 +4296,7 @@ namespace XREngine.Rendering
 
                     transform.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
                     transform.RenderMatrixChanged += BoneTransformRenderMatrixChanged;
-                    reseeded |= MarkBoneMatrixDirty(boneIndex, GetCurrentBoneMatrix(transform));
+                    reseeded |= MarkBoneMatrixDirty(boneIndex, GetEffectiveBoneMatrix(transform, GetCurrentBoneMatrix(transform)));
                 }
                 if (_gpuDrivenBoneCount != previousDrivenCount)
                     change = RefreshGpuDrivenBoneCoverageLocked();

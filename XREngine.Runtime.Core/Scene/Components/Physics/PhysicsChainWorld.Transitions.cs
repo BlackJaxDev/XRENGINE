@@ -290,6 +290,21 @@ public sealed partial class PhysicsChainWorld
         return BeginMutation(node, node.World, node.World, null);
     }
 
+    internal static WorldMutationLease? BeginNodeDestructionMutation(SceneNode node)
+    {
+        if (s_activeWorldMutation is { } active)
+        {
+            if (!active.AllowsLifecycleChange(node) && node.World is null)
+                active.AdmitDetachedObject(node, requireOwnerless: true);
+            if (!active.AllowsLifecycleChange(node))
+                throw new InvalidOperationException(
+                    "Complete the current scene mutation before destroying another node.");
+            active.AllowChildDetachment();
+            return active.Retain();
+        }
+        return BeginMutation(node, node.World, node.World, null, allowChildDetach: true);
+    }
+
     internal static WorldMutationLease? BeginTransformDestructionMutation(TransformBase transform)
     {
         if (s_activeWorldMutation is { } active)

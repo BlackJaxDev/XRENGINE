@@ -76,6 +76,16 @@ internal sealed record MeshDrawOp(int PassIndex, XRFrameBuffer? Target, PendingM
 
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.MeshDraw;
 
+    protected override void OnSealedAuthoringCopyCreated()
+    {
+        if (_draw.ProgramBindingSnapshot is not { IsFramePoolOwned: true } snapshot)
+            return;
+
+        ComputeDispatchSnapshot copy = snapshot.CreateSealedCopy();
+        _draw = _draw with { ProgramBindingSnapshot = copy };
+        OwnAuthoringSnapshot(copy);
+    }
+
     internal static MeshDrawOp Rent(
         int passIndex,
         XRFrameBuffer? target,

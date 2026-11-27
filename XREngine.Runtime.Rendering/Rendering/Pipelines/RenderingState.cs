@@ -73,6 +73,18 @@ public sealed partial class XRRenderPipelineInstance
         /// The right eye camera for stereo rendering.
         /// </summary>
         public XRCamera? StereoRightEyeCamera { get; private set; }
+
+        /// <summary>
+        /// Temporarily replaces <see cref="StereoRightEyeCamera"/> and returns the previous
+        /// camera so scoped sub-passes (such as reflected stereo portal transparents) can
+        /// restore it deterministically.
+        /// </summary>
+        internal XRCamera? ReplaceStereoRightEyeCamera(XRCamera? camera)
+        {
+            XRCamera? previous = StereoRightEyeCamera;
+            StereoRightEyeCamera = camera;
+            return previous;
+        }
         /// <summary>
         /// The output FBO target for the render pass.
         /// May be null if rendering to the screen.
@@ -110,6 +122,36 @@ public sealed partial class XRRenderPipelineInstance
         public bool HasRequiredOffscreenAuthoringFailure { get; private set; }
         public string? RequiredOffscreenAuthoringFailureReason { get; private set; }
         public int RequiredOffscreenAuthoringFailureCount { get; private set; }
+        /// <summary>
+        /// True after <c>VPRC_RenderScreenSpaceUI</c> executes during the active pipeline invocation,
+        /// so late scene-decline fallbacks do not emit the screen-space UI twice.
+        /// </summary>
+        internal bool HasExecutedScreenSpaceUi { get; private set; }
+        internal void MarkScreenSpaceUiExecuted()
+            => HasExecutedScreenSpaceUi = true;
+
+        /// <summary>
+        /// The resolved display color texture most recently presented to the desktop window during this pipeline invocation.
+        /// </summary>
+        public XRTexture2D? ResolvedWindowPresentTexture { get; private set; }
+
+        /// <summary>
+        /// Whether sampling <see cref="ResolvedWindowPresentTexture"/> on Vulkan requires a vertical UV flip to match window coordinates.
+        /// </summary>
+        public bool ResolvedWindowPresentFlipY { get; private set; }
+
+        internal void SetResolvedWindowPresentSource(XRTexture2D? texture, bool flipYOnVulkan)
+        {
+            ResolvedWindowPresentTexture = texture;
+            ResolvedWindowPresentFlipY = flipYOnVulkan;
+        }
+
+        /// <summary>
+        /// Pipeline-agnostic blurred backdrop texture (mono <see cref="XRTexture2D"/> or stereo
+        /// <see cref="XRTexture2DArray"/>) produced by <c>VPRC_PrepareUiBackdropBlur</c>
+        /// for frosted-glass UI quads during the active frame, or null when no UI requests backdrop blur.
+        /// </summary>
+        public XRTexture? UiBackdropBlurTexture { get; internal set; }
         /// <summary>
         /// True when the active pipeline invocation deferred without throwing because a required
         /// GPU resource (such as shader compilation, deformation mesh packing, or a producer
@@ -336,6 +378,10 @@ public sealed partial class XRRenderPipelineInstance
             HasRequiredOffscreenAuthoringFailure = false;
             RequiredOffscreenAuthoringFailureReason = null;
             RequiredOffscreenAuthoringFailureCount = 0;
+            HasExecutedScreenSpaceUi = false;
+            ResolvedWindowPresentTexture = null;
+            ResolvedWindowPresentFlipY = false;
+            UiBackdropBlurTexture = null;
             HasPendingResourcePreparation = false;
             PendingResourcePreparationReason = null;
             GlobalMaterialOverride = globalMaterialOverride;
@@ -468,6 +514,10 @@ public sealed partial class XRRenderPipelineInstance
             HasRequiredOffscreenAuthoringFailure = false;
             RequiredOffscreenAuthoringFailureReason = null;
             RequiredOffscreenAuthoringFailureCount = 0;
+            HasExecutedScreenSpaceUi = false;
+            ResolvedWindowPresentTexture = null;
+            ResolvedWindowPresentFlipY = false;
+            UiBackdropBlurTexture = null;
             HasPendingResourcePreparation = false;
             PendingResourcePreparationReason = null;
             DirectionalCascadeLayeredShadowPass = false;

@@ -50,6 +50,33 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
     /// </summary>
     internal VulkanAdvancedComputePipeline OcclusionCulledBounds { get; init; }
 
+    /// <summary>RVC pixel-to-shadelet deduplication and binning kernel.</summary>
+    internal VulkanAdvancedComputePipeline RvcPixelToShadeletMap { get; init; }
+
+    /// <summary>RVC indirect dispatch argument builder for shadelet shading and overflow repair.</summary>
+    internal VulkanAdvancedComputePipeline RvcBuildShadeletDispatch { get; init; }
+
+    /// <summary>RVC binned Standard shadelet shading and overflow repair kernel.</summary>
+    internal VulkanAdvancedComputePipeline RvcShadeletStandard { get; init; }
+
+    /// <summary>RVC binned Uber shadelet shading and overflow repair kernel.</summary>
+    internal VulkanAdvancedComputePipeline RvcShadeletUber { get; init; }
+
+    /// <summary>RVC stereo cross-eye shadelet reuse validation kernel.</summary>
+    internal VulkanAdvancedComputePipeline RvcReuseValidation { get; init; }
+
+    /// <summary>RVC foveated shadelet resolve and diagnostic overlay kernel.</summary>
+    internal VulkanAdvancedComputePipeline RvcFoveatedResolve { get; init; }
+
+    /// <summary>True when every RVC shadelet-cache compute pipeline required for this scene is ready.</summary>
+    internal bool IsRvcShadeletCacheCurrentFor(bool requiresUber)
+        => RvcPixelToShadeletMap.IsCurrent &&
+           RvcBuildShadeletDispatch.IsCurrent &&
+           RvcShadeletStandard.IsCurrent &&
+           RvcReuseValidation.IsCurrent &&
+           RvcFoveatedResolve.IsCurrent &&
+           (!requiresUber || RvcShadeletUber.IsCurrent);
+
     internal bool IsCurrent => Classify.IsCurrent && BuildArguments.IsCurrent && AmbientOcclusion.IsCurrent &&
         BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent && ShadeLean.IsCurrent &&
         RvcShadeletTelemetry.IsCurrent && FoveatedQuadFill.IsCurrent;

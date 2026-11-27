@@ -317,19 +317,21 @@ namespace XREngine.Components.Lights
 
         private XRViewport GetOrCreateSharedCaptureViewport()
         {
-            XRViewport viewport = s_sharedCaptureViewport ??= CreateSharedCaptureViewport(Resolution);
+            XRViewport viewport = s_sharedCaptureViewport ??= CreateSharedCaptureViewport(
+                Resolution,
+                CreateCapturePipelineRequest());
             ConfigureSharedCaptureViewport(viewport);
             return viewport;
         }
 
-        private static XRViewport CreateSharedCaptureViewport(uint initialResolution)
+        private static XRViewport CreateSharedCaptureViewport(uint initialResolution, RenderPipelineRequest pipelineRequest)
         {
             uint extent = Math.Max(1u, initialResolution);
             Transform captureTransform = new();
             XRCamera captureCamera = new(captureTransform, new XRPerspectiveCameraParameters(90.0f, 1.0f, 0.1f, 10000.0f));
             XRViewport viewport = new(null, extent, extent)
             {
-                PipelineRequest = RenderPipelineRequest.OffscreenCapture(),
+                PipelineRequest = pipelineRequest,
                 SetRenderPipelineFromCamera = false,
                 AutomaticallyCollectVisible = false,
                 AutomaticallySwapBuffers = false,
@@ -338,7 +340,7 @@ namespace XREngine.Components.Lights
                 CullWithFrustum = true,
                 Camera = captureCamera,
                 RenderPipeline =
-                    RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline(),
+                    RuntimeEngine.Rendering.NewRenderPipeline(pipelineRequest),
             };
 
             return viewport;

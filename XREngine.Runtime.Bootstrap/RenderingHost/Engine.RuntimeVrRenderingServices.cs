@@ -129,7 +129,8 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             renderModel = RuntimeVrRenderModelDescriptor.FromOpenVrModelName(
                 modelName!,
                 $"openvr-controller:{(leftHand ? "left" : "right")}:{modelName}",
-                $"{(leftHand ? "Left" : "Right")} SteamVR controller model");
+                $"{(leftHand ? "Left" : "Right")} SteamVR controller model",
+                alignOpenVrModelToGripPose: RuntimeEngine.VRState.IsOpenXRActive);
             return true;
         }
 
@@ -201,8 +202,16 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             if (RuntimeEngine.VRState.IsOpenVRActive)
                 return false;
 
-            return IsOpenXrRuntimeRequestedOrInitialized() && !IsTruthyEnvironmentValue(
-                XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrAllowOpenVrRenderModelFallback));
+            string? explicitOverride = XREnvironment.GetValue(XREngineEnvironmentVariables.OpenXrAllowOpenVrRenderModelFallback);
+            if (!string.IsNullOrWhiteSpace(explicitOverride))
+                return !IsTruthyEnvironmentValue(explicitOverride);
+
+            // Allow OpenVR utility render models automatically when SteamVR is the active OpenXR
+            // runtime so Valve Index controllers and Vive/Tundra trackers load their real meshes.
+            if (RuntimeEngine.VRState.OpenXRApi?.IsSteamVrRuntime == true)
+                return false;
+
+            return IsOpenXrRuntimeRequestedOrInitialized();
         }
 
         private static bool IsOpenXrRuntimeRequestedOrInitialized()
@@ -261,11 +270,24 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
 
         public EngineRuntimeVrRenderModelHandle(SceneNode node, string? childName)
         {
-            _renderNode = node.NewChild(childName ?? "VR Render Model");
+            _renderNode = new SceneNode
+            {
+                Name = childName ?? "VR Render Model",
+                Layer = DefaultLayers.CharactersIndex,
+            };
             _modelComponent = _renderNode.AddComponent<ModelComponent>()!;
+            _renderNode.Transform.SetParent(node.Transform, false, EParentAssignmentMode.Immediate);
         }
 
         public bool IsLoaded => !_disposed && (_isLoading || _modelComponent.Model is not null || _importedModelRoot is not null);
+
+        public void SetVisible(bool visible)
+        {
+            if (_disposed || _renderNode.IsDestroyed || _renderNode.IsDestroyQueued)
+                return;
+            if (_renderNode.IsActiveSelf != visible)
+                _renderNode.IsActiveSelf = visible;
+        }
 
         public void Clear()
         {
@@ -308,9 +330,9 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
 
             if (renderModel.OpenVrModelName is { Length: > 0 } modelName)
             {
-                Model model = new();
-                _modelComponent.Model = model;
-                _ = Task.Run(() => LoadOpenVrModelAsync(modelName, model, generation));
+                _isLoading = true;
+                bool alignToGripPose = renderModel.AlignOpenVrModelToGripPose;
+                _ = Task.Run(() => LoadOpenVrModelAsync(modelName, alignToGripPose, generation));
                 return;
             }
 
@@ -338,7 +360,10 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
 
                 _importedModelRoot = importedRoot;
                 if (_importedModelRoot is not null)
+                {
                     _importedModelRoot.Name = renderModel.DisplayName;
+                    ApplyLayerRecursively(_importedModelRoot, DefaultLayers.CharactersIndex);
+                }
             }
             catch (Exception ex)
             {
@@ -409,28 +434,108 @@ internal sealed class EngineRuntimeVrRenderingServices : IRuntimeVrRenderingServ
             }
         }
 
-        private async Task LoadOpenVrModelAsync(string modelName, Model model, int generation)
+        private async Task LoadOpenVrModelAsync(string modelName, bool alignToGripPose, int generation)
         {
             try
             {
-                RuntimeVrModelComponentData[] components = await OpenVrModelLoader.LoadAsync(modelName);
-                foreach (RuntimeVrModelComponentData component in components)
+                RuntimeVrModelComponentData[] components = await OpenVrModelLoader.LoadAsync(modelName, alignToGripPose);
+                if (_disposed || generation != _loadGeneration || components.Length == 0)
+                {
+                    if (!_disposed && generation == _loadGeneration)
+                        _isLoading = false;
+                    return;
+                }
+
+                Engine.EnqueueUpdateThreadTask(() =>
                 {
                     if (_disposed || generation != _loadGeneration)
                         return;
 
-                    XRMesh mesh = new(component.Vertices, component.TriangleIndices);
-                    XRMaterial material = component.Texture is { } texture
-                        ? XRMaterial.CreateLitTextureMaterial(
-                            new XRTexture2D(texture.Width, texture.Height, texture.RgbaPixels))
-                        : XRMaterial.CreateLitColorMaterial(ColorF4.Magenta);
-                    model.Meshes.Add(new SubMesh(new SubMeshLOD(material, mesh, 0.0f)));
-                }
+                    try
+                    {
+                        SubMesh[] subMeshes = new SubMesh[components.Length];
+                        for (int i = 0; i < components.Length; i++)
+                        {
+                            RuntimeVrModelComponentData component = components[i];
+                            XRMesh mesh = new(component.Vertices, component.TriangleIndices);
+                            XRMaterial material = component.Texture is { } texture
+                                ? XRMaterial.CreateAuthoredLitPbrTextureMaterial(
+                                    new XRTexture2D(texture.Width, texture.Height, texture.RgbaPixels),
+                                    roughnessFactor: 0.72f,
+                                    metallicFactor: 0.08f)
+                                : XRMaterial.CreateAuthoredLitPbrColorMaterial(
+                                    new ColorF4(0.24f, 0.25f, 0.28f, 1.0f),
+                                    roughness: 0.65f,
+                                    metallic: 0.15f);
+                            subMeshes[i] = new SubMesh(new SubMeshLOD(material, mesh, 0.0f))
+                            {
+                                CullingBounds = ComputeVertexBounds(component.Vertices)
+                            };
+                        }
+
+                        Model model = new(subMeshes);
+                        _modelComponent.Model = model;
+                        ApplyLayerRecursively(_renderNode, DefaultLayers.CharactersIndex);
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.VRWarning($"Failed to publish OpenVR render model '{modelName}': {ex.Message}");
+                    }
+                    finally
+                    {
+                        if (!_disposed && generation == _loadGeneration)
+                            _isLoading = false;
+                    }
+                });
+                return;
             }
             catch (Exception ex)
             {
                 if (!_disposed && generation == _loadGeneration)
                     Debug.VRWarning($"Failed to load OpenVR render model '{modelName}': {ex.Message}");
+            }
+
+            if (!_disposed && generation == _loadGeneration)
+                _isLoading = false;
+        }
+
+        private static XREngine.Data.Geometry.AABB ComputeVertexBounds(Vertex[] vertices)
+        {
+            if (vertices.Length == 0)
+                return XREngine.Data.Geometry.AABB.FromCenterSize(System.Numerics.Vector3.Zero, new System.Numerics.Vector3(0.25f));
+
+            System.Numerics.Vector3 min = vertices[0].Position;
+            System.Numerics.Vector3 max = min;
+            for (int i = 1; i < vertices.Length; i++)
+            {
+                System.Numerics.Vector3 p = vertices[i].Position;
+                min = System.Numerics.Vector3.Min(min, p);
+                max = System.Numerics.Vector3.Max(max, p);
+            }
+            return new XREngine.Data.Geometry.AABB(min, max);
+        }
+
+        private static void ApplyLayerRecursively(SceneNode root, int layer)
+        {
+            if (root.IsDestroyed || root.IsDestroyQueued)
+                return;
+
+            if (root.Layer != layer)
+                root.Layer = layer;
+
+            if (root.GetComponent<ModelComponent>() is { IsDestroyed: false } modelComponent)
+            {
+                var meshes = modelComponent.Meshes;
+                for (int i = 0; i < meshes.Count; ++i)
+                    if (meshes[i].RenderInfo.Layer != layer)
+                        meshes[i].RenderInfo.Layer = layer;
+            }
+
+            if (root.Transform is { } transform)
+            {
+                foreach (TransformBase? child in transform.Children)
+                    if (child?.SceneNode is SceneNode childNode)
+                        ApplyLayerRecursively(childNode, layer);
             }
         }
     }

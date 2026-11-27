@@ -684,6 +684,7 @@ public partial class AdvancedRenderPipeline
                 GetTexture<XRTexture>(TsrHistoryColorTextureName)!,
                 GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!,
                 GetTexture<XRTexture>(TsrHistoryMetadataTextureName)!,
+                GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)!,
             ];
             if (owner.EditorHighlightModule is not null)
                 _textureReferences = [.. _textureReferences, owner.RequirePostProcessTexture(EditorHighlightMaskTextureName)];
@@ -790,6 +791,7 @@ public partial class AdvancedRenderPipeline
             GetTexture<XRTexture>(TsrHistoryColorTextureName)!,
             GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!,
             GetTexture<XRTexture>(TsrHistoryMetadataTextureName)!,
+            GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)!,
         ];
         // The texture order matches the units that ApplyTsrUpscaleProgramBindings binds.
         if (EditorHighlightModule is not null)
@@ -903,9 +905,10 @@ public partial class AdvancedRenderPipeline
             GetTexture<XRTexture>(TsrHistoryColorTextureName)!,
             GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!,
             GetTexture<XRTexture>(TsrHistoryMetadataTextureName)!,
+            GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)!,
         ];
-        // The texture order matches the units that ApplyTsrUpscaleProgramBindings binds; the
-        // editor highlight mask takes unit 7, so the edge mask follows it.
+        // The texture order matches the units that ApplyTsrUpscaleProgramBindings binds;
+        // visibility metadata takes unit 7 and the editor highlight mask takes unit 8.
         if (EditorHighlightModule is not null)
             textures = [.. textures, RequirePostProcessTexture(EditorHighlightMaskTextureName)];
         textures = [.. textures, GetTexture<XRTexture>(TsrEdgeMaskTextureName)!];

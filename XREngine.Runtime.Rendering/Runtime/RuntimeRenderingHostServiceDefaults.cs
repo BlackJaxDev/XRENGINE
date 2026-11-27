@@ -143,6 +143,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool UsePointShadowAtlas = true;
     public const uint ShadowAtlasPageSize = 4096u;
     public const int MaxShadowAtlasPages = 1;
+    public const int MaxDirectionalShadowAtlasPages = 2;
     public const long MaxShadowAtlasMemoryBytes = 0L;
     public const int MaxShadowTilesRenderedPerFrame = 16;
     public const float MaxShadowRenderMilliseconds = 2.0f;
@@ -172,7 +173,8 @@ public static class RuntimeRenderingHostServiceDefaults
     public const bool EnableOpenXrVulkanParallelRendering = true;
     public const bool IsOpenXrRuntimeRequested = false;
     public const EVrViewRenderMode VrViewRenderMode = EVrViewRenderMode.ParallelCommandBufferRecording;
-    public const EVrRenderPipeline VrRenderPipeline = EVrRenderPipeline.Default;
+    public const EVrRenderPipeline VrRenderPipeline = EVrRenderPipeline.Rvc;
+    public const ERvcPipelineMode RvcPipelineMode = ERvcPipelineMode.ForwardPlusOracle;
     public const EVrMirrorMode VrMirrorMode = EVrMirrorMode.BlitSubmittedEye;
     public const float VrOutputTargetRateHz = 0.0f;
     public const bool VrDesktopAutoSkipWhenOverBudget = true;

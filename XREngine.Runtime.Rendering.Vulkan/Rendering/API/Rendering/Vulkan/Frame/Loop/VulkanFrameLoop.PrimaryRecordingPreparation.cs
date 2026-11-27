@@ -2414,9 +2414,14 @@ internal sealed partial class VulkanFrameLoop
 
     private static bool IsQueuedDynamicUiOverlayRequest(
         in VulkanMeshRenderRequest request)
-        => IsNamedDynamicUiOverlayOperation(
-            request.Renderer.MeshRenderer,
-            request.ResolvedMaterial.Material);
+    {
+        XRFrameBuffer? target =
+            VulkanMeshRenderRequest.GetProducerReference(in request).Target;
+        return target is null &&
+            IsNamedDynamicUiOverlayOperation(
+                request.Renderer.MeshRenderer,
+                request.ResolvedMaterial.Material);
+    }
 
     private bool EnqueueQueuedMeshDraw(
         in VulkanMeshOperationRequest request,
@@ -2525,8 +2530,8 @@ internal sealed partial class VulkanFrameLoop
         // Cold authoring operations are classified after context coalescing.
         // Only the name-owned UI batch contract is invariant across that boundary;
         // generic UI-pipeline draws remain static until both paths share capture-time
-        // classification metadata.
-        bool dynamicUi = IsNamedDynamicUiOverlayOperation(in draw);
+        // classification metadata. Keep target-backed offscreen canvases in the static stream.
+        bool dynamicUi = target is null && IsNamedDynamicUiOverlayOperation(in draw);
         return _preparedMeshIngress.TryAppend(
             passIndex,
             target,
@@ -2667,7 +2672,7 @@ internal sealed partial class VulkanFrameLoop
         in PendingMeshDraw draw,
         in FrameOpContext context)
     {
-        if (IsNamedDynamicUiOverlayOperation(in draw))
+        if (target is null && IsNamedDynamicUiOverlayOperation(in draw))
             return true;
 
         return target is null &&
@@ -2683,7 +2688,7 @@ internal sealed partial class VulkanFrameLoop
         return IsNamedDynamicUiOverlayOperation(meshRenderer, material);
     }
 
-    private static bool IsNamedDynamicUiOverlayOperation(
+    internal static bool IsNamedDynamicUiOverlayOperation(
         XRMeshRenderer meshRenderer,
         XRMaterial? material)
         => string.Equals(
@@ -2697,6 +2702,26 @@ internal sealed partial class VulkanFrameLoop
            string.Equals(
                meshRenderer.Mesh?.Name,
                "UIBatchTextQuadMesh",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               material?.Name,
+               "UIBatchMaterialQuadMaterial",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               material?.Name,
+               "UIBatchMaterialTexture",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               meshRenderer.Name,
+               "UIBatchMaterialQuadRenderer",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               meshRenderer.Name,
+               "UIBatchMaterialTextureRenderer",
+               StringComparison.Ordinal) ||
+           string.Equals(
+               meshRenderer.Mesh?.Name,
+               "UIBatchMaterialQuadMesh",
                StringComparison.Ordinal);
 
     /// <summary>

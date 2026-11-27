@@ -114,6 +114,16 @@ public interface IRuntimeVrStateServices
     }
 
     /// <summary>
+    /// Raised on the render thread after OpenXR refreshes late view and action poses, immediately
+    /// before XR mirror captures and eye rendering run.
+    /// </summary>
+    event Action? LateXrPoseUpdated
+    {
+        add { }
+        remove { }
+    }
+
+    /// <summary>
     /// Runtime currently providing VR state.
     /// </summary>
     RuntimeVrRuntimeKind ActiveRuntime { get; }
@@ -272,6 +282,7 @@ public static class RuntimeVrStateServices
     private static event Action<RuntimeVrDeviceInfo>? StaticDeviceDetected;
     private static event Action? StaticTrackingBasisChanged;
     private static event Action? StaticSessionGenerationChanged;
+    private static event Action? StaticLateXrPoseUpdated;
     private static readonly object DeviceEventSync = new();
 
     static RuntimeVrStateServices()
@@ -479,6 +490,13 @@ public static class RuntimeVrStateServices
         remove => StaticSessionGenerationChanged -= value;
     }
 
+    /// <inheritdoc cref="IRuntimeVrStateServices.LateXrPoseUpdated"/>
+    public static event Action? LateXrPoseUpdated
+    {
+        add => StaticLateXrPoseUpdated += value;
+        remove => StaticLateXrPoseUpdated -= value;
+    }
+
     #endregion
 
     #region Pose and device queries
@@ -531,6 +549,7 @@ public static class RuntimeVrStateServices
             services.DeviceDetected += ForwardDeviceDetected;
         services.TrackingBasisChanged += ForwardTrackingBasisChanged;
         services.SessionGenerationChanged += ForwardSessionGenerationChanged;
+        services.LateXrPoseUpdated += ForwardLateXrPoseUpdated;
     }
 
     private static void Detach(IRuntimeVrStateServices services)
@@ -545,6 +564,7 @@ public static class RuntimeVrStateServices
             services.DeviceDetected -= ForwardDeviceDetected;
         services.TrackingBasisChanged -= ForwardTrackingBasisChanged;
         services.SessionGenerationChanged -= ForwardSessionGenerationChanged;
+        services.LateXrPoseUpdated -= ForwardLateXrPoseUpdated;
     }
 
     private static void ForwardFrameAdvanced()
@@ -573,6 +593,9 @@ public static class RuntimeVrStateServices
 
     private static void ForwardSessionGenerationChanged()
         => StaticSessionGenerationChanged?.Invoke();
+
+    private static void ForwardLateXrPoseUpdated()
+        => StaticLateXrPoseUpdated?.Invoke();
 
     #endregion
 

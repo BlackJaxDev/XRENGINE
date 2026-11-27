@@ -369,6 +369,11 @@ public sealed class RuntimeContractGenerator : IIncrementalGenerator
             method.ReturnsVoid && method.Parameters.All(static p => p.RefKind == RefKind.None))
         {
             string[] arguments = method.Parameters.Select(static p => p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)).ToArray();
+            if (arguments.Length == 1)
+            {
+                registration = $"{expression}RegisterMethod<{targetName}, {arguments[0]}>({literal}, static (target, arg) => target.{name}(arg))";
+                return true;
+            }
             string typeList = string.Join(", ", arguments.Select(static p => $"typeof({p})"));
             string typeArray = $$"""new global::System.Type[] { {{typeList}} }""";
             string callArguments = string.Join(", ", arguments.Select(static (p, i) => $"({p})args[{i}]!"));

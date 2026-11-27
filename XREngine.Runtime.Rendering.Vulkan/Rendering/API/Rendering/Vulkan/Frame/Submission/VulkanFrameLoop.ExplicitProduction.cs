@@ -529,6 +529,8 @@ internal sealed partial class VulkanFrameLoop
         }
 
         _preparedMeshIngress.Clear();
+        try
+        {
         int requestCount;
         using (VulkanCpuStageScope rawRequestDrainStage = new(
                    _telemetry,
@@ -886,6 +888,11 @@ internal sealed partial class VulkanFrameLoop
         {
             if (!logicalPlanAccepted)
                 acceptedPlan.SettleUnsubmittedSubmissionMarkers();
+        }
+        }
+        finally
+        {
+            _preparedMeshIngress.Clear();
         }
     }
 

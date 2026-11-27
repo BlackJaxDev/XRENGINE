@@ -101,6 +101,58 @@ namespace XREngine.Animation
             set => SetField(ref _hasMuscleChannels, value);
         }
 
+        /// <summary>
+        /// Returns true when the clip contains humanoid muscle channels outside the eye and jaw
+        /// facial muscles, meaning it drives body or limb skeleton pose.
+        /// </summary>
+        public bool HasNonFacialHumanoidMuscleChannels()
+        {
+            if (!HasMuscleChannels)
+                return false;
+
+            if (RootMember is null)
+                return true;
+
+            bool foundAnyMuscle = false;
+            if (MemberTreeHasNonFacialHumanoidMuscle(RootMember, ref foundAnyMuscle))
+                return true;
+
+            return !foundAnyMuscle;
+        }
+
+        private static bool MemberTreeHasNonFacialHumanoidMuscle(AnimationMember member, ref bool foundAnyMuscle)
+        {
+            if (member.MemberType == EAnimationMemberType.Method
+                && member.MemberName is "SetValue" or "SetImportedRawValue")
+            {
+                foundAnyMuscle = true;
+                if (!TryGetImportedHumanoidMuscleArgument(member, out EHumanoidValue muscle)
+                    || !IsFacialHumanoidMuscle(muscle))
+                    return true;
+            }
+
+            var children = member.Children;
+            if (children is not null)
+            {
+                for (int i = 0; i < children.Count; i++)
+                {
+                    if (children[i] is AnimationMember child
+                        && MemberTreeHasNonFacialHumanoidMuscle(child, ref foundAnyMuscle))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsFacialHumanoidMuscle(EHumanoidValue muscle)
+            => muscle is EHumanoidValue.LeftEyeDownUp
+                or EHumanoidValue.LeftEyeInOut
+                or EHumanoidValue.RightEyeDownUp
+                or EHumanoidValue.RightEyeInOut
+                or EHumanoidValue.JawClose
+                or EHumanoidValue.JawLeftRight;
+
         private bool _hasRootMotion;
         /// <summary>
         /// Whether this clip contains root motion channels (RootT/RootQ).

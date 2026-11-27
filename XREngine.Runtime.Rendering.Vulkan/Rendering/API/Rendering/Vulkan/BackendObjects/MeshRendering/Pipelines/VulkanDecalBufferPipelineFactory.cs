@@ -19,6 +19,21 @@ internal static class VulkanDecalBufferPipelineFactory
     /// <summary>Slope-scaled depth bias, toward the camera.</summary>
     internal const float DepthBiasSlope = 1.0f;
 
+    /// <summary>
+    /// Static stencil state that passes only primary pixels whose portal node bits (bits 2..6)
+    /// are zero, blocking primary surface decals from writing onto portal or mirror pixels.
+    /// </summary>
+    internal static StencilOpState PortalExclusionStencilState => new()
+    {
+        FailOp = StencilOp.Keep,
+        PassOp = StencilOp.Keep,
+        DepthFailOp = StencilOp.Keep,
+        CompareOp = CompareOp.Equal,
+        CompareMask = AdvancedStencilBitLayout.PortalNodeMask,
+        WriteMask = 0u,
+        Reference = 0u,
+    };
+
     private static readonly VulkanVisibilityVertexInputSnapshot s_vertexInput =
         VulkanCanonicalVisibilityPipelineFactory.VertexInput;
 
@@ -53,6 +68,7 @@ internal static class VulkanDecalBufferPipelineFactory
         // A larger depth is nearer with reversed Z, a smaller one otherwise.
         float biasSign = reversedDepth ? 1.0f : -1.0f;
         CullModeFlags cull = cullMode == 0u ? CullModeFlags.None : CullModeFlags.BackBit;
+        StencilOpState portalStencil = PortalExclusionStencilState;
         VulkanGraphicsPipelineKey key = new(
             PrimitiveTopology.TriangleList,
             true,
@@ -70,9 +86,9 @@ internal static class VulkanDecalBufferPipelineFactory
             DepthTestEnabled: true,
             DepthWriteEnabled: false,
             depthCompare,
-            StencilTestEnabled: false,
-            default,
-            default,
+            StencilTestEnabled: true,
+            portalStencil,
+            portalStencil,
             0u,
             cull,
             FrontFace.CounterClockwise,
@@ -118,6 +134,9 @@ internal static class VulkanDecalBufferPipelineFactory
                 DepthTestEnable = Vk.True,
                 DepthWriteEnable = Vk.False,
                 DepthCompareOp = depthCompare,
+                StencilTestEnable = Vk.True,
+                Front = portalStencil,
+                Back = portalStencil,
             };
             PipelineColorBlendAttachmentState blend = new()
             {

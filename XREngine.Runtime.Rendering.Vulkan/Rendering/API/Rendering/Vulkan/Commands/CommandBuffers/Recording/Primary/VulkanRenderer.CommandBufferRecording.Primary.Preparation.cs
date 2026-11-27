@@ -672,10 +672,26 @@ namespace XREngine.Rendering.Vulkan
             VulkanAdvancedVisibilityResourceState familyState = default;
             VulkanAdvancedVisibilityTargetClosure rasterTargetClosure = default;
             VulkanAdvancedVisibilityTargetClosure lateRasterTargetClosure = default;
+            VulkanAdvancedVisibilityTargetClosure portalTargetClosure = default;
+            VulkanVisibilityRasterPipeline portalCarvePipeline = default;
+            VulkanVisibilityRasterPipeline portalDepthResetPipeline = default;
+            VulkanVisibilityRasterPipeline portalDepthOnlyResetPipeline = default;
+            VulkanVisibilityRasterPipeline portalTransparentDepthRestorePipeline = default;
+            VulkanVisibilityRasterPipeline portalSkyUnwindPipeline = default;
+            VulkanVisibilityRasterPipeline portalGlassCompositePipeline = default;
+            VulkanVisibilityRasterPipeline portalTransparentGlassCompositePipeline = default;
+            int portalVisibilityOperationIndex = -1;
+            VulkanAdvancedNativeComputeClosure? portalDepthRestoreClosure0 = null;
+            VulkanAdvancedNativeComputeClosure? portalDepthRestoreClosure1 = null;
+            DescriptorSet portalDepthRestoreDescriptorSet0 = default;
+            DescriptorSet portalDepthRestoreDescriptorSet1 = default;
             int preparationStageCount = 0;
             int rasterStageCount = 0;
             int lateComputeStageCount = 0;
             int lateRasterStageCount = 0;
+            int portalVisibilityStageCount = 0;
+            int portalSkyUnwindStageCount = 0;
+            int portalUnwindStageCount = 0;
             int multisampleResolveStageCount = 0;
             int ambientOcclusionStageCount = 0;
             int classificationStageCount = 0;
@@ -713,7 +729,16 @@ namespace XREngine.Rendering.Vulkan
                 AdvancedPreparationPublication publication = input.Publication;
                 AdvancedIndirectPreparationResult indirect = input.Indirect;
                 AdvancedVisibilityFamilyReservation reservation = request.Reservation;
-                if (request.RenderFrameId != framePlan.RenderFrameId ||
+                FrameOpContext operationContext =
+                    recordingState.Ops.GetContext(operationIndex);
+                // Receipt-bound offscreen captures (such as mirror slots) can survive
+                // across a held desktop frame boundary while XR takes priority, so their
+                // authored frame matches their output-completion receipt rather than the
+                // later desktop plan frame.
+                bool renderFrameMatches = operationContext.OutputCompletionReceiptId != 0UL
+                    ? request.RenderFrameId == operationContext.OutputCompletionSourceFrame
+                    : request.RenderFrameId == framePlan.RenderFrameId;
+                if (!renderFrameMatches ||
                     !framePlan.HoldsAdvancedVisibilityPlanLease(in reservation) ||
                     !_commandRuntime.IsAdvancedVisibilityReservationConsumable(in reservation))
                 {
@@ -723,7 +748,7 @@ namespace XREngine.Rendering.Vulkan
                         EVulkanCommandRecordingFailureKind.RetryFrame;
                     return false;
                 }
-                if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
+                if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + portalVisibilityStageCount + portalSkyUnwindStageCount + portalUnwindStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
                     classificationStageCount + nativeOpaqueStageCount + directionalShadowStageCount + decalBufferStageCount == 0)
                 {
                     familyRequest = request;
@@ -764,6 +789,9 @@ namespace XREngine.Rendering.Vulkan
                     case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster):
                         lateRasterStageCount++;
                         break;
+                    case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.PortalVisibility):
+                        portalVisibilityStageCount++;
+                        break;
                     case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.MultisampleResolve):
                         multisampleResolveStageCount++;
                         break;
@@ -782,9 +810,17 @@ namespace XREngine.Rendering.Vulkan
                     case (EAdvancedRenderStage.DirectionalShadowRaster, EAdvancedVisibilityStageBackendPhase.Complete):
                         directionalShadowStageCount++;
                         break;
+                    case (EAdvancedRenderStage.LatePasses, EAdvancedVisibilityStageBackendPhase.PortalSkyUnwind):
+                        portalSkyUnwindStageCount++;
+                        break;
+                    case (EAdvancedRenderStage.LatePasses, EAdvancedVisibilityStageBackendPhase.PortalUnwind):
+                        portalUnwindStageCount++;
+                        break;
                 }
                 if (preparationStageCount > 1 || rasterStageCount > 1 ||
                     lateComputeStageCount > 1 || lateRasterStageCount > 1 ||
+                    portalVisibilityStageCount > 1 ||
+                    portalSkyUnwindStageCount > 1 || portalUnwindStageCount > 1 ||
                     multisampleResolveStageCount > 1 || decalBufferStageCount > 1 ||
                     ambientOcclusionStageCount > request.Views.ViewCount ||
                     classificationStageCount > request.Views.ViewCount ||
@@ -796,8 +832,6 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                FrameOpContext operationContext =
-                    recordingState.Ops.GetContext(operationIndex);
                 using VulkanPreparedResourcePlannerThreadScope resourceScope =
                     EnterRecordingResourceScope(framePlan, in operationContext);
                 if (operationContext.AdvancedVisibilityOutputIdentity != reservation.OutputId)
@@ -820,10 +854,13 @@ namespace XREngine.Rendering.Vulkan
                 bool directionalShadowStage =
                     request.Stage == EAdvancedRenderStage.DirectionalShadowRaster;
                 bool decalBufferPhase = request.IsDecalBufferPhase;
+                bool portalLatePhase = request.IsPortalLatePhase;
                 bool requiresGraphicsTargetClosure =
                     request.Stage == EAdvancedRenderStage.VisibilityRaster ||
                     directionalShadowStage ||
+                    portalLatePhase ||
                     request.Phase is EAdvancedVisibilityStageBackendPhase.LateRaster or
+                        EAdvancedVisibilityStageBackendPhase.PortalVisibility or
                         EAdvancedVisibilityStageBackendPhase.MultisampleResolve or
                         EAdvancedVisibilityStageBackendPhase.DecalBuffer;
                 VkFrameBuffer? targetWrapper = null;
@@ -850,7 +887,9 @@ namespace XREngine.Rendering.Vulkan
                         ? TryValidateAdvancedDirectionalShadowTarget(in request, targetWrapper!, out targetShapeReason)
                         : decalBufferPhase
                             ? TryValidateAdvancedDecalBufferTarget(in request, targetWrapper!, out targetShapeReason)
-                            : TryValidateAdvancedVisibilityTarget(in request, targetWrapper!, out targetShapeReason));
+                            : portalLatePhase
+                                ? TryValidateAdvancedPortalUnwindTarget(in request, targetWrapper!, out targetShapeReason)
+                                : TryValidateAdvancedVisibilityTarget(in request, targetWrapper!, out targetShapeReason));
                 if (!targetShapeValid)
                 {
                     recordingState.RecordingDeferredReason =
@@ -901,7 +940,9 @@ namespace XREngine.Rendering.Vulkan
                     ? TryValidateAdvancedDirectionalShadowTargetFormats(in targetFormats, rasterizationSamples, out targetFormatReason)
                     : decalBufferPhase
                         ? TryValidateAdvancedDecalBufferTargetFormats(in targetFormats, rasterizationSamples, depthStencilReadOnly, out targetFormatReason)
-                        : TryValidateAdvancedVisibilityTargetFormats(in request, in targetFormats, rasterizationSamples, out targetFormatReason);
+                        : portalLatePhase
+                            ? TryValidateAdvancedPortalUnwindTargetFormats(in targetFormats, rasterizationSamples, depthStencilReadOnly, out targetFormatReason)
+                            : TryValidateAdvancedVisibilityTargetFormats(in request, in targetFormats, rasterizationSamples, out targetFormatReason);
                 if (!targetFormatsValid)
                 {
                     recordingState.RecordingDeferredReason =
@@ -947,11 +988,15 @@ namespace XREngine.Rendering.Vulkan
                         ? EVulkanAdvancedVisibilityTargetKind.DirectionalShadow
                         : decalBufferPhase
                             ? EVulkanAdvancedVisibilityTargetKind.DecalBuffer
-                            : EVulkanAdvancedVisibilityTargetKind.Visibility);
+                            : portalLatePhase
+                                ? EVulkanAdvancedVisibilityTargetKind.PortalUnwind
+                                : EVulkanAdvancedVisibilityTargetKind.Visibility);
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster)
                     rasterTargetClosure = targetClosure;
                 else if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)
                     lateRasterTargetClosure = targetClosure;
+                else if (request.Phase == EAdvancedVisibilityStageBackendPhase.PortalVisibility)
+                    portalTargetClosure = targetClosure;
                 targetProbe.End(S13aAdvancedFamilyStep.TargetClosure);
                 }
                 // The scene publication depends only on the family key (runtime,
@@ -995,6 +1040,7 @@ namespace XREngine.Rendering.Vulkan
                             framePlan,
                             recordingState.FrameDataSlot,
                             in request,
+                            input.PortalFramePlan,
                             out sceneState,
                             out sceneFailure,
                             out sceneReason,
@@ -1128,6 +1174,158 @@ namespace XREngine.Rendering.Vulkan
                 if (decalBufferPhase &&
                     !TryPrepareDecalBufferLane(ref recordingState, familyBins, input, in targetClosure))
                     return false;
+                if (request.Phase == EAdvancedVisibilityStageBackendPhase.PortalVisibility &&
+                    input.PortalFramePlan is { Count: > 0 })
+                {
+                    if (!DeviceContext.TryValidateShaderClipDistanceForPortalMirrors(out string? clipReason))
+                    {
+                        recordingState.RecordingDeferredReason =
+                            $"Advanced portal visibility is Unsupported: {clipReason}";
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                        return false;
+                    }
+                    VulkanAdvancedVisibilityPipelineReadiness portalBinsReadiness =
+                        familyBins.TryPreparePortalRasterPipelines(
+                            ResourceRuntime.AdvancedVisibilityPipelines,
+                            in targetClosure,
+                            out string portalBinsReason);
+                    if (portalBinsReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    {
+                        bool pending = portalBinsReadiness is
+                            VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                            VulkanAdvancedVisibilityPipelineReadiness.Missing;
+                        recordingState.RecordingDeferredReason = pending
+                            ? $"Advanced portal visibility is waiting for raster pipelines: {portalBinsReason}"
+                            : $"Advanced portal visibility raster pipelines failed: {portalBinsReason}";
+                        recordingState.FailureKind = pending
+                            ? EVulkanCommandRecordingFailureKind.RetryFrame
+                            : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                        return false;
+                    }
+                    bool multiviewPortal = request.Views.ViewCount > 1;
+                    VulkanAdvancedVisibilityPipelineReadiness carveReadiness =
+                        ResourceRuntime.AdvancedVisibilityPipelines.TryGetPortalStencilCarveProgram(
+                            multiviewPortal,
+                            out VkRenderProgram carveProgram,
+                            out string carveReason);
+                    VulkanAdvancedVisibilityPipelineReadiness depthResetReadiness =
+                        ResourceRuntime.AdvancedVisibilityPipelines.TryGetPortalDepthResetProgram(
+                            multiviewPortal,
+                            out VkRenderProgram depthResetProgram,
+                            out string depthResetReason);
+                    string depthOnlyResetReason = string.Empty;
+                    bool hasTransparentPortal = HasTransparentPortalNode(input.PortalFramePlan);
+                    bool msaaPortal = targetClosure.RasterizationSamples != SampleCountFlags.Count1Bit;
+                    VulkanAdvancedVisibilityPipelineReadiness depthRestoreReadiness = VulkanAdvancedVisibilityPipelineReadiness.Ready;
+                    VkRenderProgram? depthRestoreProgram = null;
+                    string depthRestoreReason = string.Empty;
+                    if (hasTransparentPortal)
+                    {
+                        depthRestoreReadiness =
+                            ResourceRuntime.AdvancedVisibilityPipelines.TryGetPortalTransparentDepthRestoreProgram(
+                                multiviewPortal,
+                                msaaPortal,
+                                out depthRestoreProgram,
+                                out depthRestoreReason);
+                    }
+                    if (carveReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
+                        depthResetReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
+                        depthRestoreReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
+                        !VulkanPortalQuadPipelineFactory.TryPrepareStencilCarve(
+                            carveProgram,
+                            in targetClosure,
+                            out portalCarvePipeline,
+                            out carveReason) ||
+                        !VulkanPortalQuadPipelineFactory.TryPrepareDepthReset(
+                            depthResetProgram,
+                            in targetClosure,
+                            out portalDepthResetPipeline,
+                            out depthResetReason) ||
+                        !VulkanPortalQuadPipelineFactory.TryPrepareDepthOnlyReset(
+                            carveProgram,
+                            in targetClosure,
+                            out portalDepthOnlyResetPipeline,
+                            out depthOnlyResetReason) ||
+                        (hasTransparentPortal &&
+                         !VulkanPortalQuadPipelineFactory.TryPrepareTransparentDepthRestore(
+                             depthRestoreProgram!,
+                             in targetClosure,
+                             out portalTransparentDepthRestorePipeline,
+                             out depthRestoreReason)))
+                    {
+                        bool pending = carveReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or VulkanAdvancedVisibilityPipelineReadiness.Missing ||
+                            depthResetReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or VulkanAdvancedVisibilityPipelineReadiness.Missing ||
+                            depthRestoreReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or VulkanAdvancedVisibilityPipelineReadiness.Missing;
+                        recordingState.RecordingDeferredReason = pending
+                            ? $"Advanced portal visibility is waiting for portal quad pipelines: {carveReason}; {depthResetReason}; {depthOnlyResetReason}; {depthRestoreReason}"
+                            : $"Advanced portal visibility quad pipelines failed: {carveReason}; {depthResetReason}; {depthOnlyResetReason}; {depthRestoreReason}";
+                        recordingState.FailureKind = pending
+                            ? EVulkanCommandRecordingFailureKind.RetryFrame
+                            : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                        return false;
+                    }
+                }
+                if (portalLatePhase && input.PortalFramePlan is { Count: > 0 })
+                {
+                    bool multiviewPortal = request.Views.ViewCount > 1;
+                    if (!portalSkyUnwindPipeline.IsValid)
+                    {
+                        VulkanAdvancedVisibilityPipelineReadiness skyReadiness =
+                            ResourceRuntime.AdvancedVisibilityPipelines.TryGetPortalSkyUnwindProgram(
+                                multiviewPortal,
+                                out VkRenderProgram skyProgram,
+                                out string skyReason);
+                        if (skyReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
+                            !VulkanPortalQuadPipelineFactory.TryPrepareSkyUnwind(
+                                skyProgram,
+                                in targetClosure,
+                                out portalSkyUnwindPipeline,
+                                out skyReason))
+                        {
+                            bool pending = skyReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing;
+                            recordingState.RecordingDeferredReason = pending
+                                ? $"Advanced portal unwind is waiting for sky pipeline: {skyReason}"
+                                : $"Advanced portal unwind sky pipeline failed: {skyReason}";
+                            recordingState.FailureKind = pending
+                                ? EVulkanCommandRecordingFailureKind.RetryFrame
+                                : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                            return false;
+                        }
+                    }
+                    if (request.IsPortalUnwindPhase &&
+                        (!portalGlassCompositePipeline.IsValid || !portalTransparentGlassCompositePipeline.IsValid))
+                    {
+                        VulkanAdvancedVisibilityPipelineReadiness glassReadiness =
+                            ResourceRuntime.AdvancedVisibilityPipelines.TryGetPortalGlassCompositeProgram(
+                                multiviewPortal,
+                                out VkRenderProgram glassProgram,
+                                out string glassReason);
+                        string transparentGlassReason = string.Empty;
+                        if (glassReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
+                            !VulkanPortalQuadPipelineFactory.TryPrepareGlassComposite(
+                                glassProgram,
+                                in targetClosure,
+                                out portalGlassCompositePipeline,
+                                out glassReason) ||
+                            !VulkanPortalQuadPipelineFactory.TryPrepareTransparentGlassComposite(
+                                glassProgram,
+                                in targetClosure,
+                                out portalTransparentGlassCompositePipeline,
+                                out transparentGlassReason))
+                        {
+                            bool pending = glassReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing;
+                            recordingState.RecordingDeferredReason = pending
+                                ? $"Advanced portal unwind is waiting for glass composite pipeline: {glassReason}; {transparentGlassReason}"
+                                : $"Advanced portal unwind glass composite pipeline failed: {glassReason}; {transparentGlassReason}";
+                            recordingState.FailureKind = pending
+                                ? EVulkanCommandRecordingFailureKind.RetryFrame
+                                : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                            return false;
+                        }
+                    }
+                }
                 S13aPublicationTelemetry.StepProbe associationProbe =
                     S13aPublicationTelemetry.BeginAdvancedFamilyStep();
                 if (requiresGraphicsTargetClosure &&
@@ -1168,11 +1366,41 @@ namespace XREngine.Rendering.Vulkan
                                 : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                         return false;
                     }
+                    VulkanAdvancedMsaaResolvePipeline portalStencilPipeline = default;
+                    if (input.PortalFramePlan is { Count: > 0 })
+                    {
+                        VulkanAdvancedVisibilityPipelineReadiness portalStencilReadiness =
+                            ResourceRuntime.AdvancedVisibilityPipelines
+                                .TryGetPortalMsaaStencilRepopulateProgram(
+                                    multiviewResolve,
+                                    out VkRenderProgram portalStencilProgram,
+                                    out string portalStencilReason);
+                        if (portalStencilReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
+                            !VulkanAdvancedMsaaResolvePipelineFactory.TryPreparePortalStencilRepopulate(
+                                portalStencilProgram,
+                                in targetClosure,
+                                out portalStencilPipeline,
+                                out portalStencilReason))
+                        {
+                            recordingState.RecordingDeferredReason = portalStencilReadiness is
+                                VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                    ? $"Advanced visibility operation is waiting for portal MSAA stencil repopulation pipeline admission: {portalStencilReason}"
+                                    : $"Advanced visibility operation is Unsupported: portal MSAA stencil repopulation pipeline failed: {portalStencilReason}";
+                            recordingState.FailureKind = portalStencilReadiness is
+                                VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                    ? EVulkanCommandRecordingFailureKind.RetryFrame
+                                    : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                            return false;
+                        }
+                    }
                     if (!recordingState.Ops.Stream
                             .TryAssociateAdvancedMultisampleResolvePipeline(
                                 operationIndex,
                                 in request,
-                                in resolvePipeline))
+                                in resolvePipeline,
+                                in portalStencilPipeline))
                     {
                         recordingState.RecordingDeferredReason =
                             "Advanced visibility operation is Unsupported: immutable MSAA resolve pipeline publication was rejected.";
@@ -1249,7 +1477,7 @@ namespace XREngine.Rendering.Vulkan
                 realizationProbe.End(S13aAdvancedFamilyStep.RasterRealization);
             }
 
-            if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
+            if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + portalVisibilityStageCount + portalSkyUnwindStageCount + portalUnwindStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
                 classificationStageCount + nativeOpaqueStageCount + directionalShadowStageCount == 0)
                 return true;
             bool hasMinimalProducerStages =
@@ -1284,10 +1512,14 @@ namespace XREngine.Rendering.Vulkan
                 !lateRasterTargetClosure.IsValid ||
                 !rasterTargetClosure.UsesDynamicRendering ||
                 !lateRasterTargetClosure.UsesDynamicRendering ||
-                rasterTargetClosure != lateRasterTargetClosure)
+                rasterTargetClosure != lateRasterTargetClosure ||
+                (portalVisibilityStageCount == 1 &&
+                 (!portalTargetClosure.IsValid ||
+                  !portalTargetClosure.UsesDynamicRendering ||
+                  portalTargetClosure != rasterTargetClosure)))
             {
                 recordingState.RecordingDeferredReason =
-                    "Advanced visibility operation is Unsupported: raster and late raster must share one exact dynamic-rendering target closure.";
+                    "Advanced visibility operation is Unsupported: raster, late raster, and portal visibility must share one exact dynamic-rendering target closure.";
                 recordingState.FailureKind =
                     EVulkanCommandRecordingFailureKind.RendererTerminal;
                 return false;
@@ -1416,6 +1648,58 @@ namespace XREngine.Rendering.Vulkan
                             : EVulkanCommandRecordingFailureKind
                                 .RecoverAfterStateChange;
                     return false;
+                }
+
+                if (request.Phase == EAdvancedVisibilityStageBackendPhase.PortalVisibility &&
+                    familyInput?.PortalFramePlan is { Count: > 0 } portalPlan)
+                {
+                    VulkanAdvancedSceneLookupSegments portalLookupSegments =
+                        familySceneState.LookupSegments;
+                    if (!familyResources.TryPreparePortalVisibilityResources(
+                            in familyState,
+                            in portalLookupSegments,
+                            checked((uint)portalPlan.Count),
+                            out VulkanAdvancedPortalVisibilityState portalResources,
+                            out string portalResourceReason))
+                    {
+                        recordingState.RecordingDeferredReason =
+                            $"Advanced portal visibility segment pool failed: {portalResourceReason}";
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                        return false;
+                    }
+                    if (!recordingState.Ops.Stream.TryAssociatePortalVisibilityResources(
+                            operationIndex,
+                            in request,
+                            in portalResources,
+                            in portalCarvePipeline,
+                            in portalDepthResetPipeline,
+                            in portalDepthOnlyResetPipeline,
+                            in portalTransparentDepthRestorePipeline))
+                    {
+                        recordingState.RecordingDeferredReason =
+                            "Advanced portal visibility operation sealing failed.";
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                        return false;
+                    }
+                    portalVisibilityOperationIndex = operationIndex;
+                }
+
+                if (request.IsPortalLatePhase &&
+                    familyInput?.PortalFramePlan is { Count: > 0 })
+                {
+                    if (!recordingState.Ops.Stream.TryAssociatePortalUnwindPipelines(
+                            operationIndex,
+                            in request,
+                            in portalSkyUnwindPipeline,
+                            in portalGlassCompositePipeline,
+                            in portalTransparentGlassCompositePipeline,
+                            skipPortalSkyInUnwind: portalSkyUnwindStageCount > 0))
+                    {
+                        recordingState.RecordingDeferredReason =
+                            "Advanced portal unwind operation sealing failed.";
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                        return false;
+                    }
                 }
 
                 if (request.Stage == EAdvancedRenderStage.DirectionalShadowRaster &&
@@ -1613,6 +1897,34 @@ namespace XREngine.Rendering.Vulkan
                             nativeClosure.UsesMultisampleVisibility,
                             out _, out _, out _);
                     }
+                    if (request.RvcShadeletCacheEnabled &&
+                        !nativeClosure.UsesMultisampleVisibility &&
+                        request.Stage is EAdvancedRenderStage.WorkClassification or EAdvancedRenderStage.NativeOpaqueShading)
+                    {
+                        VulkanAdvancedVisibilityPipelineReadiness rvcReadiness =
+                            ResourceRuntime.AdvancedVisibilityPipelines.TryGetRvcShadeletCachePipelines(
+                                sealedHasUber,
+                                ref nativePipelines,
+                                out string rvcReason);
+                        if (rvcReadiness == VulkanAdvancedVisibilityPipelineReadiness.Failed)
+                        {
+                            recordingState.RecordingDeferredReason =
+                                $"Advanced visibility operation is Unsupported: RVC shadelet-cache pipeline failed: {rvcReason}.";
+                            recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                            return false;
+                        }
+                        if (rvcReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                        {
+                            // Keep rendering on the already-ready native GPU shading path while cold
+                            // RVC shadelet-cache compute shaders (especially Uber) finish compiling in
+                            // the background so OpenXR headsets never drop frames to black.
+                            Debug.VulkanWarningEvery(
+                                "Vulkan.Rvc.ShadeletCache.CompilePending",
+                                TimeSpan.FromSeconds(5),
+                                "[Vulkan] RVC shadelet-cache pipelines are compiling ({0}); continuing with native GPU shading until ready.",
+                                rvcReason);
+                        }
+                    }
                     // The overlay kernel compiles on first use. Until it is ready,
                     // shading records no overlay; it never delays admission.
                     if (request.ShowOcclusionCulledBounds &&
@@ -1638,6 +1950,16 @@ namespace XREngine.Rendering.Vulkan
                         nativePipelines.ShadeUber.UsesAddressRoot &&
                         nativePipelines.ShadeUber.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion)
                         throw new VulkanPlanPreconditionException("The native Uber shading pipeline root ABI is not supported by this recorder.");
+                    if (request.RvcShadeletCacheEnabled &&
+                        !nativeClosure.UsesMultisampleVisibility &&
+                        request.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
+                        nativePipelines.IsRvcShadeletCacheCurrentFor(sealedHasUber) &&
+                        ((nativePipelines.RvcShadeletStandard.UsesAddressRoot &&
+                          nativePipelines.RvcShadeletStandard.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion) ||
+                         (sealedHasUber &&
+                          nativePipelines.RvcShadeletUber.UsesAddressRoot &&
+                          nativePipelines.RvcShadeletUber.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion)))
+                        throw new VulkanPlanPreconditionException("The RVC shadelet shading pipeline root ABI is not supported by this recorder.");
                     if (selectedShade.UsesAddressRoot && request.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
                         !nativeClosure.ShadingAddressRoot.IsValid)
                     {
@@ -1657,6 +1979,16 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.RecordingDeferredReason =
                             "Advanced visibility operation is Unsupported: immutable native-compute closure publication was rejected.";
                         return false;
+                    }
+                    if (request.NativeViewIndex == 0u && portalDepthRestoreDescriptorSet0.Handle == 0)
+                    {
+                        portalDepthRestoreClosure0 = nativeClosure;
+                        portalDepthRestoreDescriptorSet0 = nativeDescriptorSet;
+                    }
+                    else if (request.NativeViewIndex == 1u && portalDepthRestoreDescriptorSet1.Handle == 0)
+                    {
+                        portalDepthRestoreClosure1 = nativeClosure;
+                        portalDepthRestoreDescriptorSet1 = nativeDescriptorSet;
                     }
                     nativeAssociationProbe.End(S13aAdvancedFamilyStep.NativeAssociation);
                     nativeProbe.End(S13aAdvancedFamilyStep.NativeCompute);
@@ -1853,6 +2185,16 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
+            if (portalVisibilityOperationIndex >= 0 && portalTransparentDepthRestorePipeline.IsValid)
+            {
+                _ = recordingState.Ops.Stream.TryAssociatePortalTransparentDepthRestoreDescriptors(
+                    portalVisibilityOperationIndex,
+                    in portalDepthRestoreClosure0,
+                    portalDepthRestoreDescriptorSet0,
+                    in portalDepthRestoreClosure1,
+                    portalDepthRestoreDescriptorSet1);
+            }
+
             if (observe)
             {
                 S13aPublicationTelemetry.AdvancedFamilyPreparation(
@@ -1881,6 +2223,7 @@ namespace XREngine.Rendering.Vulkan
             FramePlan framePlan,
             int resourceFrameSlot,
             in VulkanAdvancedVisibilityStageRequest request,
+            AdvancedPortalFramePlan? portalFramePlan,
             out VulkanAdvancedScenePublicationState state,
             out EVulkanAdvancedSceneResourceFailure failure,
             out string reason,
@@ -1911,6 +2254,8 @@ namespace XREngine.Rendering.Vulkan
                     framePlan.Generation,
                     in authoringViews,
                     request.RenderTimeSeconds);
+                if (portalFramePlan is { Count: > 0 })
+                    preparation.CapturePortalViews(portalFramePlan.PortalViewRecords);
                 VulkanPreparedFrameGlobalResourceSnapshot globals =
                     preparation.GlobalResources;
                 AdvancedGpuScenePublicationReference publication =
@@ -2465,6 +2810,65 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
+            reason = "Ready";
+            return true;
+        }
+
+        private static bool TryValidateAdvancedPortalUnwindTarget(
+            in VulkanAdvancedVisibilityStageRequest request,
+            VkFrameBuffer target,
+            out string reason)
+        {
+            if (request.Target.Targets is not { Length: >= 2 } attachments)
+            {
+                reason = "the portal unwind framebuffer must hold HDR color attachment 0 and a depth-stencil attachment";
+                return false;
+            }
+            bool hasHdrColor0 = false;
+            bool hasDepthStencil = false;
+            for (int index = 0; index < attachments.Length; ++index)
+            {
+                if (attachments[index].Attachment == EFrameBufferAttachment.ColorAttachment0 &&
+                    attachments[index].Target is GenericRenderObject { Name: AdvancedRenderPipeline.HDRSceneTextureName })
+                {
+                    hasHdrColor0 = true;
+                }
+                else if (attachments[index].Attachment == EFrameBufferAttachment.DepthStencilAttachment &&
+                    attachments[index].Target is GenericRenderObject depthObject &&
+                    string.Equals(depthObject.Name, request.DepthTargetName, StringComparison.Ordinal))
+                {
+                    hasDepthStencil = true;
+                }
+            }
+            if (!hasHdrColor0 || !hasDepthStencil)
+            {
+                reason = "the portal unwind framebuffer must bind HDRSceneTexture at color attachment 0 and the resolved visibility depth-stencil";
+                return false;
+            }
+            if (target.FramebufferWidth == 0u || target.FramebufferHeight == 0u)
+            {
+                reason = "the native framebuffer extent is empty";
+                return false;
+            }
+            reason = string.Empty;
+            return true;
+        }
+
+        private static bool TryValidateAdvancedPortalUnwindTargetFormats(
+            in DynamicRenderingFormatSignature formats,
+            SampleCountFlags samples,
+            bool depthStencilReadOnly,
+            out string reason)
+        {
+            bool valid = samples == SampleCountFlags.Count1Bit &&
+                !depthStencilReadOnly &&
+                formats.ColorAttachmentCount >= 1u &&
+                formats.DepthAttachmentFormat == Format.D32SfloatS8Uint;
+            if (!valid)
+            {
+                reason = $"expected single-sample HDR color with writable D32SfloatS8Uint depth-stencil; received samples={samples}, colors={formats.DescribeColorFormats()}, depth={formats.DepthAttachmentFormat}, readOnly={depthStencilReadOnly}";
+                return false;
+            }
             reason = "Ready";
             return true;
         }

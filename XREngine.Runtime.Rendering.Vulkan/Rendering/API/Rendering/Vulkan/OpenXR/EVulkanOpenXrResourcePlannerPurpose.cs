@@ -7,4 +7,5 @@ internal enum EVulkanOpenXrResourcePlannerPurpose : byte
     Publish,
     EyePrewarm,
     MirrorPrewarm,
+    StandaloneOffscreen,
 }

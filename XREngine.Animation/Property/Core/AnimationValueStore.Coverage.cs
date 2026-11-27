@@ -297,8 +297,18 @@ public sealed partial class AnimationValueStore
                 value += source._floats[i] * effective;
             }
             if (total > float.Epsilon)
-                result._floats[i] = value / total;
-            result._floatCoverage[i] = PreserveCoverage(total);
+            {
+                if (!normalizeWeights && total > 1.0f)
+                {
+                    result._floats[i] = value;
+                    result._floatCoverage[i] = 1.0f;
+                }
+                else
+                {
+                    result._floats[i] = value / total;
+                    result._floatCoverage[i] = PreserveCoverage(total);
+                }
+            }
         }
 
         for (int i = 0; i < result._vectors2.Length; i++)
@@ -315,8 +325,18 @@ public sealed partial class AnimationValueStore
                 value += source._vectors2[i] * effective;
             }
             if (total > float.Epsilon)
-                result._vectors2[i] = value / total;
-            result._vector2Coverage[i] = PreserveCoverage(total);
+            {
+                if (!normalizeWeights && total > 1.0f)
+                {
+                    result._vectors2[i] = value;
+                    result._vector2Coverage[i] = 1.0f;
+                }
+                else
+                {
+                    result._vectors2[i] = value / total;
+                    result._vector2Coverage[i] = PreserveCoverage(total);
+                }
+            }
         }
 
         for (int i = 0; i < result._vectors3.Length; i++)
@@ -333,8 +353,18 @@ public sealed partial class AnimationValueStore
                 value += source._vectors3[i] * effective;
             }
             if (total > float.Epsilon)
-                result._vectors3[i] = value / total;
-            result._vector3Coverage[i] = PreserveCoverage(total);
+            {
+                if (!normalizeWeights && total > 1.0f)
+                {
+                    result._vectors3[i] = value;
+                    result._vector3Coverage[i] = 1.0f;
+                }
+                else
+                {
+                    result._vectors3[i] = value / total;
+                    result._vector3Coverage[i] = PreserveCoverage(total);
+                }
+            }
         }
 
         for (int i = 0; i < result._vectors4.Length; i++)
@@ -351,8 +381,18 @@ public sealed partial class AnimationValueStore
                 value += source._vectors4[i] * effective;
             }
             if (total > float.Epsilon)
-                result._vectors4[i] = value / total;
-            result._vector4Coverage[i] = PreserveCoverage(total);
+            {
+                if (!normalizeWeights && total > 1.0f)
+                {
+                    result._vectors4[i] = value;
+                    result._vector4Coverage[i] = 1.0f;
+                }
+                else
+                {
+                    result._vectors4[i] = value / total;
+                    result._vector4Coverage[i] = PreserveCoverage(total);
+                }
+            }
         }
 
         for (int i = 0; i < result._quaternions.Length; i++)
@@ -677,37 +717,41 @@ public sealed partial class AnimationValueStore
 
     private static void BlendOverride(ref float destination, ref float destinationCoverage, float source, float sourceAlpha)
     {
-        float destinationWeight = destinationCoverage * (1.0f - sourceAlpha);
-        float total = destinationWeight + sourceAlpha;
+        float alpha = Saturate(sourceAlpha);
+        float destinationWeight = destinationCoverage * (1.0f - alpha);
+        float total = destinationWeight + alpha;
         if (total > float.Epsilon)
-            destination = (destination * destinationWeight + source * sourceAlpha) / total;
+            destination = (destination * destinationWeight + source * alpha) / total;
         destinationCoverage = Saturate(total);
     }
 
     private static void BlendOverride(ref Vector2 destination, ref float destinationCoverage, Vector2 source, float sourceAlpha)
     {
-        float destinationWeight = destinationCoverage * (1.0f - sourceAlpha);
-        float total = destinationWeight + sourceAlpha;
+        float alpha = Saturate(sourceAlpha);
+        float destinationWeight = destinationCoverage * (1.0f - alpha);
+        float total = destinationWeight + alpha;
         if (total > float.Epsilon)
-            destination = (destination * destinationWeight + source * sourceAlpha) / total;
+            destination = (destination * destinationWeight + source * alpha) / total;
         destinationCoverage = Saturate(total);
     }
 
     private static void BlendOverride(ref Vector3 destination, ref float destinationCoverage, Vector3 source, float sourceAlpha)
     {
-        float destinationWeight = destinationCoverage * (1.0f - sourceAlpha);
-        float total = destinationWeight + sourceAlpha;
+        float alpha = Saturate(sourceAlpha);
+        float destinationWeight = destinationCoverage * (1.0f - alpha);
+        float total = destinationWeight + alpha;
         if (total > float.Epsilon)
-            destination = (destination * destinationWeight + source * sourceAlpha) / total;
+            destination = (destination * destinationWeight + source * alpha) / total;
         destinationCoverage = Saturate(total);
     }
 
     private static void BlendOverride(ref Vector4 destination, ref float destinationCoverage, Vector4 source, float sourceAlpha)
     {
-        float destinationWeight = destinationCoverage * (1.0f - sourceAlpha);
-        float total = destinationWeight + sourceAlpha;
+        float alpha = Saturate(sourceAlpha);
+        float destinationWeight = destinationCoverage * (1.0f - alpha);
+        float total = destinationWeight + alpha;
         if (total > float.Epsilon)
-            destination = (destination * destinationWeight + source * sourceAlpha) / total;
+            destination = (destination * destinationWeight + source * alpha) / total;
         destinationCoverage = Saturate(total);
     }
 
@@ -717,13 +761,14 @@ public sealed partial class AnimationValueStore
         Quaternion source,
         float sourceAlpha)
     {
-        float destinationWeight = destinationCoverage * (1.0f - sourceAlpha);
-        float total = destinationWeight + sourceAlpha;
+        float alpha = Saturate(sourceAlpha);
+        float destinationWeight = destinationCoverage * (1.0f - alpha);
+        float total = destinationWeight + alpha;
         if (total > float.Epsilon)
             destination = Quaternion.Slerp(
                 NormalizeOrIdentity(destination),
                 NormalizeOrIdentity(source),
-                sourceAlpha / total);
+                alpha / total);
         destinationCoverage = Saturate(total);
     }
 
@@ -733,10 +778,11 @@ public sealed partial class AnimationValueStore
         T source,
         float sourceAlpha)
     {
-        float destinationWeight = destinationCoverage * (1.0f - sourceAlpha);
-        if (sourceAlpha >= destinationWeight && sourceAlpha > 0.0f)
+        float alpha = Saturate(sourceAlpha);
+        float destinationWeight = destinationCoverage * (1.0f - alpha);
+        if (alpha >= destinationWeight && alpha > 0.0f)
             destination = source;
-        destinationCoverage = Saturate(destinationWeight + sourceAlpha);
+        destinationCoverage = Saturate(destinationWeight + alpha);
     }
 
     private static Quaternion BlendQuaternionFixed(

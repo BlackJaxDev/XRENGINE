@@ -22,7 +22,7 @@ public readonly record struct GpuDiagnosticReadbackPlanNode(
     /// explicit opt-in setting, so it is eligible under every submission strategy.
     /// </summary>
     public bool IsInstrumentedPass
-        => Decoder == EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry ||
+        => Decoder is EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry or EGpuDiagnosticReadbackDecoder.RvcShadeletCache ||
            GpuDiagnosticReadbackPlan.IsInstrumented(Strategy);
 
     /// <summary>
@@ -42,6 +42,7 @@ public readonly record struct GpuDiagnosticReadbackPlanNode(
         EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters => "AdvancedClassificationCounters.AggregateViews",
         EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters => "AdvancedLightingCounters.PerView",
         EGpuDiagnosticReadbackDecoder.RvcShadeletTelemetry => "RvcShadeletTelemetry.AggregateViews",
+        EGpuDiagnosticReadbackDecoder.RvcShadeletCache => "RvcShadeletCache.AggregateViews",
         _ => "None",
     };
 

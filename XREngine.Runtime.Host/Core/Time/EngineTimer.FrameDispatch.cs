@@ -74,6 +74,8 @@ public partial class EngineTimer
         Volatile.Write(ref _publishedXrFrameWaitStartTimestamp, xrFrameWaitStart);
         Volatile.Write(ref _publishedXrFrameWaitEndTimestamp, xrFrameWaitEnd);
         Volatile.Write(ref _publishedCollectStartTimestamp, collectStartTimestamp != 0L ? collectStartTimestamp : Stopwatch.GetTimestamp());
+        if (!IsCallerThreadLoop && !_usesExplicitFrameClock)
+            Volatile.Write(ref _renderFrameConsumingSnapshot, 1);
         Volatile.Write(ref _collectVisiblePhase, "GatePublish");
         _visibilityGenerationGate.Publish(generation);
         return true;

@@ -10,6 +10,13 @@ namespace XREngine.Components.VR;
 public partial class VRPlayerCharacterComponent
 {
     public string PlayerIdentity { get; set; } = "local-player-one";
+
+    /// <summary>
+    /// Gets or sets whether entering VR automatically starts calibration when no stored
+    /// calibration restores for the current avatar and body measurements are configured.
+    /// </summary>
+    public bool AutoBeginCalibrationWhenUncached { get; set; }
+
     private string? _avatarIdentity;
     public string? AvatarIdentity
     {
@@ -31,12 +38,14 @@ public partial class VRPlayerCharacterComponent
         }
         HasCommittedCalibration = false;
         _attemptedSessionRestore = false;
+        _autoCalibrationTriggered = false;
         _missingStoredTrackers = 0;
         CalibrationState = EVrCalibrationState.Uncalibrated;
         RuntimeVrDiscontinuityServices.Publish(EVrPoseDiscontinuity.AvatarReplacement);
     }
 
     private bool _attemptedSessionRestore;
+    private bool _autoCalibrationTriggered;
     private int _missingStoredTrackers;
     private int _restoreSourceSignature;
 
@@ -140,6 +149,11 @@ public partial class VRPlayerCharacterComponent
             _attemptedSessionRestore = true;
             if (!string.IsNullOrWhiteSpace(notice))
                 CalibrationMessage = notice;
+            if (AutoBeginCalibrationWhenUncached && !_autoCalibrationTriggered && !HasCommittedCalibration && !IsCalibrating)
+            {
+                _autoCalibrationTriggered = true;
+                BeginCalibration();
+            }
             return;
         }
         VrCalibrationResult result = solver.RestoreCalibration(restored.AsSpan(0, fixedCount + written), RuntimeVrStateServices.CalibrationSettings);

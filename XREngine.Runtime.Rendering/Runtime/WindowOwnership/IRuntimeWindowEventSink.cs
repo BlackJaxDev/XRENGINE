@@ -10,6 +10,7 @@ public interface IRuntimeWindowEventSink
     void FocusChanged(bool focused);
     void FileDropped(string[] paths);
     void KeyDown(EKey key);
+    void GamepadButtonDown(EGamePadButton button) { }
     bool CloseRequested();
     void InteractiveResizeStarted();
     void InteractiveResizeUpdated(IVector2 framebufferExtent);

@@ -325,6 +325,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     public bool UsePointShadowAtlas => RuntimeEngine.Rendering.Settings.UsePointShadowAtlas;
     public uint ShadowAtlasPageSize => RuntimeEngine.Rendering.Settings.ShadowAtlasPageSize;
     public int MaxShadowAtlasPages => RuntimeEngine.Rendering.Settings.MaxShadowAtlasPages;
+    public int MaxDirectionalShadowAtlasPages => RuntimeEngine.Rendering.Settings.MaxDirectionalShadowAtlasPages;
     public long MaxShadowAtlasMemoryBytes => RuntimeEngine.Rendering.Settings.MaxShadowAtlasMemoryBytes;
     public int MaxShadowTilesRenderedPerFrame => RuntimeEngine.Rendering.Settings.MaxShadowTilesRenderedPerFrame;
     public float MaxShadowRenderMilliseconds => RuntimeEngine.Rendering.Settings.MaxShadowRenderMilliseconds;
@@ -534,6 +535,8 @@ internal sealed class EngineRuntimeRenderingHostServices :
         => Engine.EnqueueRenderThreadTask(task, reason, renderThreadKind);
 
     public bool IsFrameSwapThread => Engine.IsFrameSwapThread;
+
+    public bool IsRenderFrameConsumingRenderSnapshot => Engine.Time.Timer.IsRenderFrameConsumingRenderSnapshot;
 
     public void EnqueueFrameSwapTask(Action task, string reason)
         => Engine.EnqueueSwapTask(task);

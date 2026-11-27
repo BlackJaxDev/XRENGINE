@@ -667,7 +667,8 @@ internal sealed class FrameOperationStream
             return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
 
-        if (request.Stage != EAdvancedRenderStage.VisibilityPreparation)
+        if (request.Stage != EAdvancedRenderStage.VisibilityPreparation &&
+            request.Phase != EAdvancedVisibilityStageBackendPhase.PortalVisibility)
         {
             _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
             {
@@ -835,7 +836,8 @@ internal sealed class FrameOperationStream
     internal bool TryAssociateAdvancedMultisampleResolvePipeline(
         int index,
         in VulkanAdvancedVisibilityStageRequest request,
-        in VulkanAdvancedMsaaResolvePipeline pipeline)
+        in VulkanAdvancedMsaaResolvePipeline pipeline,
+        in VulkanAdvancedMsaaResolvePipeline portalStencilRepopulatePipeline = default)
     {
         if (!pipeline.IsValid ||
             request.Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve ||
@@ -849,7 +851,9 @@ internal sealed class FrameOperationStream
         VulkanAdvancedVisibilityOperationPayload payload =
             _payloads.AdvancedVisibilities[header.PayloadIndex];
         if (!payload.Request.Equals(request) ||
-            payload.TargetClosure != pipeline.TargetClosure)
+            payload.TargetClosure != pipeline.TargetClosure ||
+            (portalStencilRepopulatePipeline.IsValid &&
+                payload.TargetClosure != portalStencilRepopulatePipeline.TargetClosure))
         {
             return false;
         }
@@ -857,6 +861,124 @@ internal sealed class FrameOperationStream
         _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
         {
             MultisampleResolvePipeline = pipeline,
+            PortalMsaaStencilRepopulatePipeline = portalStencilRepopulatePipeline,
+        };
+        return true;
+    }
+
+    internal bool TryAssociatePortalVisibilityResources(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request,
+        in VulkanAdvancedPortalVisibilityState portalResources,
+        in VulkanVisibilityRasterPipeline stencilCarvePipeline,
+        in VulkanVisibilityRasterPipeline depthResetPipeline,
+        in VulkanVisibilityRasterPipeline depthOnlyResetPipeline,
+        in VulkanVisibilityRasterPipeline transparentDepthRestorePipeline = default)
+    {
+        if (!portalResources.IsValid ||
+            !stencilCarvePipeline.IsValid ||
+            !depthResetPipeline.IsValid ||
+            !depthOnlyResetPipeline.IsValid ||
+            request.Phase != EAdvancedVisibilityStageBackendPhase.PortalVisibility ||
+            (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+        {
+            return false;
+        }
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload =
+            _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (!payload.Request.Equals(request) ||
+            payload.TargetClosure != stencilCarvePipeline.TargetClosure ||
+            payload.TargetClosure != depthResetPipeline.TargetClosure ||
+            payload.TargetClosure != depthOnlyResetPipeline.TargetClosure ||
+            (transparentDepthRestorePipeline.IsValid &&
+                payload.TargetClosure != transparentDepthRestorePipeline.TargetClosure))
+        {
+            return false;
+        }
+
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            PortalVisibilityResources = portalResources,
+            PortalStencilCarvePipeline = stencilCarvePipeline,
+            PortalDepthResetPipeline = depthResetPipeline,
+            PortalDepthOnlyResetPipeline = depthOnlyResetPipeline,
+            PortalTransparentDepthRestorePipeline = transparentDepthRestorePipeline,
+        };
+        return true;
+    }
+
+    internal bool TryAssociatePortalTransparentDepthRestoreDescriptors(
+        int index,
+        in VulkanAdvancedNativeComputeClosure? closure0,
+        DescriptorSet descriptorSet0,
+        in VulkanAdvancedNativeComputeClosure? closure1,
+        DescriptorSet descriptorSet1)
+    {
+        if ((uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+        {
+            return false;
+        }
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload =
+            _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (payload.Request.Phase != EAdvancedVisibilityStageBackendPhase.PortalVisibility)
+            return false;
+
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            PortalDepthRestoreClosure0 = closure0,
+            PortalDepthRestoreClosure1 = closure1,
+            PortalDepthRestoreDescriptorSet0 = descriptorSet0,
+            PortalDepthRestoreDescriptorSet1 = descriptorSet1,
+        };
+        return true;
+    }
+
+    internal bool TryAssociatePortalUnwindPipelines(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request,
+        in VulkanVisibilityRasterPipeline skyUnwindPipeline,
+        in VulkanVisibilityRasterPipeline glassCompositePipeline,
+        in VulkanVisibilityRasterPipeline transparentGlassCompositePipeline,
+        bool skipPortalSkyInUnwind)
+    {
+        if (!request.IsPortalLatePhase ||
+            (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+        {
+            return false;
+        }
+
+        if (request.IsPortalSkyUnwindPhase && !skyUnwindPipeline.IsValid)
+            return false;
+        if (request.IsPortalUnwindPhase &&
+            (!glassCompositePipeline.IsValid ||
+             !transparentGlassCompositePipeline.IsValid ||
+             (!skipPortalSkyInUnwind && !skyUnwindPipeline.IsValid)))
+            return false;
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload =
+            _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (!payload.Request.Equals(request) ||
+            (skyUnwindPipeline.IsValid && payload.TargetClosure != skyUnwindPipeline.TargetClosure) ||
+            (glassCompositePipeline.IsValid && payload.TargetClosure != glassCompositePipeline.TargetClosure) ||
+            (transparentGlassCompositePipeline.IsValid && payload.TargetClosure != transparentGlassCompositePipeline.TargetClosure))
+        {
+            return false;
+        }
+
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            PortalSkyUnwindPipeline = skyUnwindPipeline,
+            PortalGlassCompositePipeline = glassCompositePipeline,
+            PortalTransparentGlassCompositePipeline = transparentGlassCompositePipeline,
+            SkipPortalSkyInUnwind = skipPortalSkyInUnwind,
         };
         return true;
     }

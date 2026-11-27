@@ -36,6 +36,9 @@ public sealed class UIBatchCollector : IDisposable
     private const int TextRenderLayerOutline = 1;
     private const int TextRenderLayerFill = 2;
     private const uint TextInstanceVec4Count = 8;
+    private const uint MaterialStyleVec4Count = 7;
+    private const string UiBackdropBlurAvailableUniformName = "UiBackdropBlurAvailable";
+    private const string UiViewportSizeUniformName = "UiViewportSize";
     private static int s_textAddDiagCount;
     private static int s_textMarkerDiagCount;
     private static int s_textRenderDiagCount;
@@ -83,6 +86,7 @@ public sealed class UIBatchCollector : IDisposable
         public Vector4 Color;
         public Vector4 UIXYWH;
         public Vector4 UV;
+        public UIQuadStyle Style;
     }
 
     /// <summary>
@@ -113,6 +117,7 @@ public sealed class UIBatchCollector : IDisposable
         public float MsdfFillBias;
         public int DebugMode;
         public bool HasOutline;
+        public int GpuSlotIndex;
         public readonly List<TextEntry> Entries = [];
         public readonly List<(Vector4 transform, Vector4 uvs)> Glyphs = [];
         public int TotalGlyphs;
@@ -127,6 +132,7 @@ public sealed class UIBatchCollector : IDisposable
             MsdfFillBias = 0.5f;
             DebugMode = 0;
             HasOutline = false;
+            GpuSlotIndex = 0;
             Entries.Clear();
             Glyphs.Clear();
             TotalGlyphs = 0;
@@ -141,6 +147,8 @@ public sealed class UIBatchCollector : IDisposable
         public BoundingRectangle? CropRegion;
         public XRTexture2D? Texture;
         public bool ImageSrgb;
+        public bool RequestsBackdropBlur;
+        public int GpuSlotIndex;
         public readonly List<MaterialQuadEntry> Entries = [];
 
         public void Clear()
@@ -148,6 +156,8 @@ public sealed class UIBatchCollector : IDisposable
             CropRegion = null;
             Texture = null;
             ImageSrgb = false;
+            RequestsBackdropBlur = false;
+            GpuSlotIndex = 0;
             Entries.Clear();
         }
     }
@@ -193,6 +203,7 @@ public sealed class UIBatchCollector : IDisposable
     private sealed class CollectPassState
     {
         public EBatchMarkerKind? ActiveKind;
+        public int ActiveZIndex;
         public BoundingRectangle? ActiveCropRegion;
         public XRTexture2D? ActiveMaterialTexture;
         public bool ActiveMaterialImageSrgb;
@@ -207,6 +218,7 @@ public sealed class UIBatchCollector : IDisposable
         public void Reset()
         {
             ActiveKind = null;
+            ActiveZIndex = 0;
             ActiveCropRegion = null;
             ActiveMaterialTexture = null;
             ActiveMaterialImageSrgb = false;
@@ -311,22 +323,70 @@ public sealed class UIBatchCollector : IDisposable
 
     #endregion
 
-    #region GPU Resources — Material Quads
+    #region GPU Resources — Material Quads (per draw slot)
 
-    private XRMeshRenderer? _matQuadMesh;
-    private XRDataBuffer<Vector4>? _matQuadTransformBuf;  // binding 0: 4 × vec4 per instance (mat4 rows)
-    private XRDataBuffer<Vector4>? _matQuadColorBuf;      // binding 1: vec4 per instance
-    private XRDataBuffer<Vector4>? _matQuadBoundsBuf;     // binding 2: vec4 per instance
-    private XRDataBuffer<Vector4>? _matQuadUvBuf;         // textured binding 3: UV rectangle per instance
-    private readonly Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> _materialTextureMeshes = [];
+    private sealed class MaterialQuadGPUResources : IDisposable
+    {
+        public XRMeshRenderer? Mesh;
+        public XRMeshRenderer? BlurMesh;
+        public XRTexture2D? BoundBlurTexture;
+        public XRDataBuffer<Vector4>? TransformBuf;  // binding 0: 4 × vec4 per instance (mat4 rows)
+        public XRDataBuffer<Vector4>? ColorBuf;      // binding 1: vec4 per instance
+        public XRDataBuffer<Vector4>? BoundsBuf;     // binding 2: vec4 per instance
+        public XRDataBuffer<Vector4>? UvBuf;         // textured binding 3: UV rectangle per instance
+        public XRDataBuffer<Vector4>? StyleBuf;      // binding 4: MaterialStyleVec4Count × vec4 per instance
+        public readonly Dictionary<(XRTexture2D Texture, bool Srgb), XRMeshRenderer> TextureMeshes = [];
+        public uint Capacity;
+        public bool NeedsPush;
+
+        public void Dispose()
+        {
+            XRMeshRenderer? meshRenderer = Mesh;
+            XRMesh? mesh = meshRenderer?.Mesh;
+            XRMaterial? material = meshRenderer?.Material;
+            if (BlurMesh is not null)
+            {
+                XRMaterial? blurMaterial = BlurMesh.Material;
+                BlurMesh.Destroy();
+                blurMaterial?.Destroy();
+                BlurMesh = null;
+                BoundBlurTexture = null;
+            }
+            TransformBuf?.Destroy();
+            ColorBuf?.Destroy();
+            BoundsBuf?.Destroy();
+            UvBuf?.Destroy();
+            StyleBuf?.Destroy();
+            foreach (XRMeshRenderer texturedMesh in TextureMeshes.Values)
+            {
+                XRMaterial? texturedMaterial = texturedMesh.Material;
+                texturedMesh.Destroy();
+                texturedMaterial?.Destroy();
+            }
+            TextureMeshes.Clear();
+            meshRenderer?.Destroy();
+            mesh?.Destroy();
+            material?.Destroy();
+            TransformBuf = null;
+            ColorBuf = null;
+            BoundsBuf = null;
+            UvBuf = null;
+            StyleBuf = null;
+            Mesh = null;
+        }
+    }
+
+    private readonly List<MaterialQuadGPUResources> _materialQuadGPU = [];
     private readonly List<(XRTexture2D Texture, bool Srgb)> _staleMaterialTextures = [];
     private const int MaxMaterialTextureMeshes = 64;
-    private uint _matQuadCapacity;
-    private bool _matQuadNeedsPush;
+    private float _collectMaxBackdropBlurRadius;
+    private float _renderMaxBackdropBlurRadius;
+    private bool _materialPrewarmComplete;
+    private XRTexture2D? _prewarmedBlurTexture;
 
     #endregion
 
-    #region GPU Resources — Text Quads (per font atlas)
+    #region GPU Resources — Text Quads (per font atlas and draw slot)
 
     private sealed class TextGPUResources : IDisposable
     {
@@ -359,7 +419,8 @@ public sealed class UIBatchCollector : IDisposable
         }
     }
 
-    private readonly Dictionary<XRTexture2D, TextGPUResources> _textGPU = [];
+    private readonly Dictionary<XRTexture2D, List<TextGPUResources>> _textGPU = [];
+    private readonly Dictionary<XRTexture2D, int> _swapAtlasSlotCounts = [];
     private bool _disposed;
 
     #endregion
@@ -375,6 +436,23 @@ public sealed class UIBatchCollector : IDisposable
         get => _enabled;
         set => _enabled = value;
     }
+
+    /// <summary>
+    /// Pipeline-agnostic blurred backdrop texture active during screen-space UI rendering.
+    /// Scoped by <c>VPRC_RenderScreenSpaceUI</c> from the host pipeline's <c>RenderingState.UiBackdropBlurTexture</c>.
+    /// </summary>
+    internal static XRTexture2D? ActiveBackdropBlurTexture { get; set; }
+
+    /// <summary>
+    /// Host pipeline type name scoped by <c>VPRC_RenderScreenSpaceUI</c> for missing-blur diagnostics.
+    /// </summary>
+    internal static string? ActiveBackdropBlurHostPipelineName { get; set; }
+
+    /// <summary>
+    /// Gets the maximum backdrop blur radius in logical pixels requested by any render-side material quad this frame.
+    /// Returns 0 when no visible UI quad requests backdrop blur.
+    /// </summary>
+    public float MaxRequestedBackdropBlurRadius => _renderMaxBackdropBlurRadius;
 
     /// <summary>
     /// True if any material quad or text data was collected this frame.
@@ -409,13 +487,15 @@ public sealed class UIBatchCollector : IDisposable
         BoundingRectangle? cropRegion = null,
         XRTexture2D? texture = null,
         Vector4 uv = default,
-        bool imageSrgb = false)
+        bool imageSrgb = false,
+        in UIQuadStyle style = default)
     {
         var state = GetOrCreateCollectPassState(renderPass);
         var groups = GetOrCreatePool(_collectMaterialGroups, renderPass);
 
         MaterialQuadBatchData batch;
-        if (state.ActiveKind == EBatchMarkerKind.Material && state.ActiveCropRegion == cropRegion &&
+        if (state.ActiveKind == EBatchMarkerKind.Material && state.ActiveZIndex == zIndex &&
+            state.ActiveCropRegion == cropRegion &&
             ReferenceEquals(state.ActiveMaterialTexture, texture) &&
             state.ActiveMaterialImageSrgb == imageSrgb &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
@@ -430,6 +510,7 @@ public sealed class UIBatchCollector : IDisposable
             batch.Texture = texture;
             batch.ImageSrgb = imageSrgb;
             state.ActiveKind = EBatchMarkerKind.Material;
+            state.ActiveZIndex = zIndex;
             state.ActiveCropRegion = cropRegion;
             state.ActiveMaterialTexture = texture;
             state.ActiveMaterialImageSrgb = imageSrgb;
@@ -438,12 +519,21 @@ public sealed class UIBatchCollector : IDisposable
             passes.AddCPU(AcquireMarker(renderPass, zIndex, EBatchMarkerKind.Material, groupIndex));
         }
 
+        float requestedBlur = style.EffectiveBackdropBlurRadius;
+        if (requestedBlur > 0.001f)
+        {
+            batch.RequestsBackdropBlur = true;
+            if (requestedBlur > _collectMaxBackdropBlurRadius)
+                _collectMaxBackdropBlurRadius = requestedBlur;
+        }
+
         batch.Entries.Add(new MaterialQuadEntry
         {
             WorldMatrix = worldMatrix,
             Color = color,
             UIXYWH = uixywh,
-            UV = uv
+            UV = uv,
+            Style = style,
         });
     }
 
@@ -481,7 +571,7 @@ public sealed class UIBatchCollector : IDisposable
         var groups = GetOrCreatePool(_collectTextGroups, renderPass);
 
         TextBatchData batch;
-        if (TextBatchMatches(state, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode, cropRegion) &&
+        if (TextBatchMatches(state, zIndex, fontAtlas, atlasType, distanceRange, distanceRangeMiddle, msdfFillBias, debugMode, cropRegion) &&
             groups.TryGet(state.ActiveGroupIndex, out var existingBatch))
         {
             batch = existingBatch;
@@ -498,6 +588,7 @@ public sealed class UIBatchCollector : IDisposable
             batch.MsdfFillBias = msdfFillBias;
             batch.DebugMode = debugMode;
             state.ActiveKind = EBatchMarkerKind.Text;
+            state.ActiveZIndex = zIndex;
             state.ActiveCropRegion = cropRegion;
             state.ActiveTextAtlas = fontAtlas;
             state.ActiveTextAtlasType = atlasType;
@@ -586,6 +677,32 @@ public sealed class UIBatchCollector : IDisposable
     {
         (_collectMaterialGroups, _renderMaterialGroups) = (_renderMaterialGroups, _collectMaterialGroups);
         (_collectTextGroups, _renderTextGroups) = (_renderTextGroups, _collectTextGroups);
+        _renderMaxBackdropBlurRadius = _collectMaxBackdropBlurRadius;
+        _collectMaxBackdropBlurRadius = 0.0f;
+
+        // Assign each render-side batch group a dedicated GPU buffer slot for this frame so
+        // deferred backends (such as Vulkan) do not overwrite an earlier draw's SSBO data.
+        int nextMaterialSlot = 0;
+        foreach (var groups in _renderMaterialGroups.Values)
+        {
+            for (int i = 0; i < groups.Count; i++)
+                groups[i].GpuSlotIndex = nextMaterialSlot++;
+        }
+
+        _swapAtlasSlotCounts.Clear();
+        foreach (var groups in _renderTextGroups.Values)
+        {
+            for (int i = 0; i < groups.Count; i++)
+            {
+                TextBatchData batch = groups[i];
+                if (batch.Atlas is not { } atlas)
+                    continue;
+
+                _swapAtlasSlotCounts.TryGetValue(atlas, out int nextTextSlot);
+                batch.GpuSlotIndex = nextTextSlot;
+                _swapAtlasSlotCounts[atlas] = nextTextSlot + 1;
+            }
+        }
 
         foreach (var groups in _collectMaterialGroups.Values)
             groups.Reset(static batch => batch.Clear());
@@ -617,6 +734,8 @@ public sealed class UIBatchCollector : IDisposable
             state.Reset();
         foreach (var markerPool in _markerPools.Values)
             markerPool.ResetUsage();
+        _collectMaxBackdropBlurRadius = 0.0f;
+        _renderMaxBackdropBlurRadius = 0.0f;
     }
 
     #endregion
@@ -650,10 +769,17 @@ public sealed class UIBatchCollector : IDisposable
 
     #region GPU Resource Management — Material Quads
 
-    private void EnsureMaterialQuadMesh()
+    private MaterialQuadGPUResources EnsureMaterialQuadGPUResources(int slotIndex)
     {
-        if (_matQuadMesh is not null)
-            return;
+        while (_materialQuadGPU.Count <= slotIndex)
+            _materialQuadGPU.Add(CreateMaterialQuadGPUResources());
+
+        return _materialQuadGPU[slotIndex];
+    }
+
+    private static MaterialQuadGPUResources CreateMaterialQuadGPUResources()
+    {
+        var gpu = new MaterialQuadGPUResources();
 
         // Create the batched material
         bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
@@ -663,8 +789,20 @@ public sealed class UIBatchCollector : IDisposable
             XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.fs"), EShaderType.Fragment)
         ];
 
-        var material = new XRMaterial(Array.Empty<ShaderVar>(), shaders)
+        ShaderVar[] parameters = webGpu ? Array.Empty<ShaderVar>() :
+        [
+            new ShaderInt(0, UiBackdropBlurAvailableUniformName),
+            new ShaderVector2(new Vector2(1920.0f, 1080.0f), UiViewportSizeUniformName),
+        ];
+
+        XRTexture[] textures = webGpu ? Array.Empty<XRTexture>() :
+        [
+            XRTexture2D.GetRoleAwareFallbackTexture("Texture0"),
+        ];
+
+        var material = new XRMaterial(parameters, textures, shaders)
         {
+            Name = "UIBatchMaterialQuadMaterial",
             RenderPass = (int)EDefaultRenderPass.TransparentForward,
             RenderOptions = new RenderingParameters
             {
@@ -680,12 +818,13 @@ public sealed class UIBatchCollector : IDisposable
                     Enabled = ERenderParamUsage.Disabled
                 },
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
+                MissingTextureFallback = EMissingTextureFallback.Black,
             }
         };
         if (webGpu)
             material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedV2;
 
-        _matQuadMesh = new XRMeshRenderer(
+        gpu.Mesh = new XRMeshRenderer(
             XRMesh.Create(VertexQuad.PosZ(1.0f, true, 0.0f, false)),
             material)
         {
@@ -693,93 +832,219 @@ public sealed class UIBatchCollector : IDisposable
             GenerationPriority = EMeshGenerationPriority.RenderPipeline,
             CaptureUniformsOnRender = true
         };
-        if (_matQuadMesh.Mesh is not null)
-            _matQuadMesh.Mesh.Name = "UIBatchMaterialQuadMesh";
+        if (gpu.Mesh.Mesh is not null)
+            gpu.Mesh.Mesh.Name = "UIBatchMaterialQuadMesh";
 
-        DisableShaderPipelines(_matQuadMesh);
-        _matQuadMesh.EnsureRenderPipelineVersionsCreated();
+        DisableShaderPipelines(gpu.Mesh);
+        gpu.Mesh.EnsureRenderPipelineVersionsCreated();
 
         // Create initial SSBOs with a reasonable starting capacity
-        _matQuadCapacity = 64;
-        CreateMaterialQuadBuffers(_matQuadMesh);
-        _matQuadNeedsPush = true; // Ensure first upload allocates GPU buffers via PushData
+        gpu.Capacity = 64;
+        CreateMaterialQuadBuffers(gpu);
+        gpu.NeedsPush = true; // Ensure first upload allocates GPU buffers via PushData
+        return gpu;
     }
 
-    private void CreateMaterialQuadBuffers(XRMeshRenderer mesh)
+    private static XRMeshRenderer EnsureMaterialBlurMesh(MaterialQuadGPUResources gpu, XRTexture2D blurTexture)
     {
-        _matQuadTransformBuf?.Destroy();
-        _matQuadColorBuf?.Destroy();
-        _matQuadBoundsBuf?.Destroy();
+        if (gpu.BlurMesh is not null && ReferenceEquals(gpu.BoundBlurTexture, blurTexture))
+            return gpu.BlurMesh;
+
+        if (gpu.BlurMesh is not null)
+        {
+            XRMaterial? oldMat = gpu.BlurMesh.Material;
+            gpu.BlurMesh.Destroy();
+            oldMat?.Destroy();
+            gpu.BlurMesh = null;
+            gpu.BoundBlurTexture = null;
+        }
+
+        XRShader[] shaders =
+        [
+            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.vs"), EShaderType.Vertex),
+            XRShader.EngineShader(Path.Combine("Common", "UIQuadBatched.fs"), EShaderType.Fragment)
+        ];
+
+        ShaderVar[] parameters =
+        [
+            new ShaderInt(1, UiBackdropBlurAvailableUniformName),
+            new ShaderVector2(new Vector2(1920.0f, 1080.0f), UiViewportSizeUniformName),
+        ];
+
+        var material = new XRMaterial(parameters, [blurTexture], shaders)
+        {
+            Name = "UIBatchMaterialQuadMaterial",
+            RenderPass = (int)EDefaultRenderPass.TransparentForward,
+            RenderOptions = new RenderingParameters
+            {
+                CullMode = ECullMode.None,
+                DepthTest = new DepthTest
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = true
+                },
+                StencilTest = new StencilTest
+                {
+                    Enabled = ERenderParamUsage.Disabled
+                },
+                BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
+                MissingTextureFallback = EMissingTextureFallback.Black,
+            }
+        };
+
+        XRMeshRenderer blurMesh = new(gpu.Mesh!.Mesh!, material)
+        {
+            Name = "UIBatchMaterialQuadRenderer",
+            GenerationPriority = EMeshGenerationPriority.RenderPipeline,
+            CaptureUniformsOnRender = true
+        };
+        blurMesh.Buffers["QuadTransformBuffer"] = gpu.TransformBuf!;
+        blurMesh.Buffers["QuadColorBuffer"] = gpu.ColorBuf!;
+        blurMesh.Buffers["QuadBoundsBuffer"] = gpu.BoundsBuf!;
+        if (gpu.StyleBuf is not null)
+            blurMesh.Buffers["QuadStyleBuffer"] = gpu.StyleBuf;
+        DisableShaderPipelines(blurMesh);
+        blurMesh.EnsureRenderPipelineVersionsCreated();
+
+        gpu.BlurMesh = blurMesh;
+        gpu.BoundBlurTexture = blurTexture;
+        return blurMesh;
+    }
+
+    /// <summary>
+    /// Pre-warms initial batched quad GPU slots and backdrop-blur shader pipelines during idle frames
+    /// so opening a glass overlay incurs zero first-frame compile hitch or missing-quad flash.
+    /// </summary>
+    internal void PrewarmMaterialQuadResources(XRTexture2D? backdropBlurTexture)
+    {
+        if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
+            return;
+
+        if (_materialPrewarmComplete && ReferenceEquals(_prewarmedBlurTexture, backdropBlurTexture))
+            return;
+
+        const int prewarmSlotCount = 4;
+        bool allReady = true;
+        for (int i = 0; i < prewarmSlotCount; i++)
+        {
+            MaterialQuadGPUResources gpu = EnsureMaterialQuadGPUResources(i);
+            if (gpu.NeedsPush)
+            {
+                gpu.TransformBuf?.PushData();
+                gpu.ColorBuf?.PushData();
+                gpu.BoundsBuf?.PushData();
+                gpu.StyleBuf?.PushData();
+                gpu.NeedsPush = false;
+            }
+            if (gpu.Mesh is { } baseMesh)
+            {
+                GetImmediateRenderVersion(baseMesh).Generate();
+                allReady &= baseMesh.TryPrepareForRendering();
+            }
+
+            if (backdropBlurTexture is not null && i < 2)
+            {
+                XRMeshRenderer blurMesh = EnsureMaterialBlurMesh(gpu, backdropBlurTexture);
+                GetImmediateRenderVersion(blurMesh).Generate();
+                allReady &= blurMesh.TryPrepareForRendering();
+            }
+        }
+
+        _prewarmedBlurTexture = backdropBlurTexture;
+        _materialPrewarmComplete = allReady;
+    }
+
+    private static void CreateMaterialQuadBuffers(MaterialQuadGPUResources gpu)
+    {
+        XRMeshRenderer mesh = gpu.Mesh!;
+        gpu.TransformBuf?.Destroy();
+        gpu.ColorBuf?.Destroy();
+        gpu.BoundsBuf?.Destroy();
+        gpu.UvBuf?.Destroy();
+        gpu.StyleBuf?.Destroy();
 
         // Transform buffer: 4 vec4 rows per matrix, so elementCount = capacity * 4
-        _matQuadTransformBuf = new XRDataBuffer<Vector4>(
+        gpu.TransformBuf = new XRDataBuffer<Vector4>(
             "QuadTransformBuffer", EBufferTarget.ShaderStorageBuffer,
-            _matQuadCapacity * 4)
+            gpu.Capacity * 4)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 0,
             DisposeOnPush = false
         };
-        mesh.Buffers["QuadTransformBuffer"] = _matQuadTransformBuf;
+        mesh.Buffers["QuadTransformBuffer"] = gpu.TransformBuf;
 
         // Color buffer: 1 vec4 per instance
-        _matQuadColorBuf = new XRDataBuffer<Vector4>(
+        gpu.ColorBuf = new XRDataBuffer<Vector4>(
             "QuadColorBuffer", EBufferTarget.ShaderStorageBuffer,
-            _matQuadCapacity)
+            gpu.Capacity)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 1,
             DisposeOnPush = false
         };
-        mesh.Buffers["QuadColorBuffer"] = _matQuadColorBuf;
+        mesh.Buffers["QuadColorBuffer"] = gpu.ColorBuf;
 
         // Bounds buffer: 1 vec4 per instance
-        _matQuadBoundsBuf = new XRDataBuffer<Vector4>(
+        gpu.BoundsBuf = new XRDataBuffer<Vector4>(
             "QuadBoundsBuffer", EBufferTarget.ShaderStorageBuffer,
-            _matQuadCapacity)
+            gpu.Capacity)
         {
             Usage = EBufferUsage.StreamDraw,
             BindingIndexOverride = 2,
             DisposeOnPush = false
         };
-        mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf;
+        mesh.Buffers["QuadBoundsBuffer"] = gpu.BoundsBuf;
 
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU)
         {
-            _matQuadUvBuf = new XRDataBuffer<Vector4>(
-                "QuadUvBuffer", EBufferTarget.ShaderStorageBuffer, _matQuadCapacity)
+            gpu.UvBuf = new XRDataBuffer<Vector4>(
+                "QuadUvBuffer", EBufferTarget.ShaderStorageBuffer, gpu.Capacity)
             {
                 Usage = EBufferUsage.StreamDraw,
                 BindingIndexOverride = 3,
                 DisposeOnPush = false
             };
         }
+        else
+        {
+            // Style buffer: MaterialStyleVec4Count vec4s per instance (rounded corners, border, gradient, shadow, blur).
+            gpu.StyleBuf = new XRDataBuffer<Vector4>(
+                "QuadStyleBuffer", EBufferTarget.ShaderStorageBuffer,
+                gpu.Capacity * MaterialStyleVec4Count)
+            {
+                Usage = EBufferUsage.StreamDraw,
+                BindingIndexOverride = 4,
+                DisposeOnPush = false
+            };
+            mesh.Buffers["QuadStyleBuffer"] = gpu.StyleBuf;
+        }
     }
 
-    private XRMeshRenderer EnsureMaterialTextureMesh(XRTexture2D texture, bool srgb)
+    private XRMeshRenderer EnsureMaterialTextureMesh(MaterialQuadGPUResources gpu, XRTexture2D texture, bool srgb)
     {
         var key = (texture, srgb);
-        if (_materialTextureMeshes.TryGetValue(key, out XRMeshRenderer? existing))
+        if (gpu.TextureMeshes.TryGetValue(key, out XRMeshRenderer? existing))
             return existing;
 
         // Old image materials are retired on the render thread. They borrow the
         // image resource, so replacement must not destroy the authored texture.
         _staleMaterialTextures.Clear();
-        foreach (var cached in _materialTextureMeshes.Keys)
+        foreach (var cached in gpu.TextureMeshes.Keys)
             if (!IsCurrentMaterialTexture(cached))
                 _staleMaterialTextures.Add(cached);
         foreach (var stale in _staleMaterialTextures)
         {
-            XRMeshRenderer retired = _materialTextureMeshes[stale];
+            XRMeshRenderer retired = gpu.TextureMeshes[stale];
             XRMaterial? retiredMaterial = retired.Material;
             retired.Destroy();
             retiredMaterial?.Destroy();
-            _materialTextureMeshes.Remove(stale);
+            gpu.TextureMeshes.Remove(stale);
         }
-        if (_materialTextureMeshes.Count >= MaxMaterialTextureMeshes)
+        if (gpu.TextureMeshes.Count >= MaxMaterialTextureMeshes)
             throw new NotSupportedException("WebGPU.UI.ImageTextureBudgetExceeded: at most 64 distinct image and color-space bindings may be visible in one frame.");
 
-        EnsureMaterialQuadMesh();
         XRMaterial material = new(Array.Empty<ShaderVar>(), [texture], Array.Empty<XRShader>())
         {
             Name = "UIBatchMaterialTexture",
@@ -796,22 +1061,23 @@ public sealed class UIBatchCollector : IDisposable
                 },
                 StencilTest = new StencilTest { Enabled = ERenderParamUsage.Disabled },
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
+                MissingTextureFallback = EMissingTextureFallback.Black,
             }
         };
         material.EngineSemantic = EngineMaterialSemanticIdentity.UIQuadBatchedTextureV2;
-        XRMeshRenderer mesh = new(_matQuadMesh!.Mesh!, material)
+        XRMeshRenderer mesh = new(gpu.Mesh!.Mesh!, material)
         {
             Name = "UIBatchMaterialTextureRenderer",
             GenerationPriority = EMeshGenerationPriority.RenderPipeline,
             CaptureUniformsOnRender = true
         };
-        mesh.Buffers["QuadTransformBuffer"] = _matQuadTransformBuf!;
-        mesh.Buffers["QuadColorBuffer"] = _matQuadColorBuf!;
-        mesh.Buffers["QuadBoundsBuffer"] = _matQuadBoundsBuf!;
-        mesh.Buffers["QuadUvBuffer"] = _matQuadUvBuf!;
+        mesh.Buffers["QuadTransformBuffer"] = gpu.TransformBuf!;
+        mesh.Buffers["QuadColorBuffer"] = gpu.ColorBuf!;
+        mesh.Buffers["QuadBoundsBuffer"] = gpu.BoundsBuf!;
+        mesh.Buffers["QuadUvBuffer"] = gpu.UvBuf!;
         DisableShaderPipelines(mesh);
         mesh.EnsureRenderPipelineVersionsCreated();
-        _materialTextureMeshes.Add(key, mesh);
+        gpu.TextureMeshes.Add(key, mesh);
         return mesh;
     }
 
@@ -824,37 +1090,44 @@ public sealed class UIBatchCollector : IDisposable
         return false;
     }
 
-    private void UploadMaterialQuadData(List<MaterialQuadEntry> entries, bool textured)
+    private static void UploadMaterialQuadData(MaterialQuadGPUResources gpu, List<MaterialQuadEntry> entries, bool textured)
     {
         uint count = (uint)entries.Count;
         if (AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU && count > 65536)
             throw new NotSupportedException("WebGPU.UI.QuadCapacityExceeded: one screen UI quad group admits at most 65536 instances.");
 
         // Resize if needed
-        if (count > _matQuadCapacity)
+        if (count > gpu.Capacity)
         {
-            _matQuadCapacity = NextPowerOf2(count);
-            _matQuadTransformBuf!.Resize(_matQuadCapacity * 4);
-            _matQuadColorBuf!.Resize(_matQuadCapacity);
-            _matQuadBoundsBuf!.Resize(_matQuadCapacity);
-            _matQuadUvBuf?.Resize(_matQuadCapacity);
-            _matQuadNeedsPush = true;
+            gpu.Capacity = NextPowerOf2(count);
+            gpu.TransformBuf!.Resize(gpu.Capacity * 4);
+            gpu.ColorBuf!.Resize(gpu.Capacity);
+            gpu.BoundsBuf!.Resize(gpu.Capacity);
+            gpu.UvBuf?.Resize(gpu.Capacity);
+            gpu.StyleBuf?.Resize(gpu.Capacity * MaterialStyleVec4Count);
+            gpu.NeedsPush = true;
         }
 
         // Write transform data (4 × vec4 per instance = 16 floats per matrix)
-        bool fullUpload = _matQuadNeedsPush;
-        uint transformElementCount = fullUpload ? _matQuadCapacity * 4u : count * 4u;
-        uint instanceElementCount = fullUpload ? _matQuadCapacity : count;
-        XRBufferWriter<Vector4> transformWriter = _matQuadTransformBuf!.Alloc<Vector4>(transformElementCount);
-        XRBufferWriter<Vector4> colorWriter = _matQuadColorBuf!.Alloc<Vector4>(instanceElementCount);
-        XRBufferWriter<Vector4> boundsWriter = _matQuadBoundsBuf!.Alloc<Vector4>(instanceElementCount);
+        bool fullUpload = gpu.NeedsPush;
+        bool hasStyleBuf = gpu.StyleBuf is not null;
+        uint transformElementCount = fullUpload ? gpu.Capacity * 4u : count * 4u;
+        uint instanceElementCount = fullUpload ? gpu.Capacity : count;
+        uint styleElementCount = fullUpload ? gpu.Capacity * MaterialStyleVec4Count : count * MaterialStyleVec4Count;
+        XRBufferWriter<Vector4> transformWriter = gpu.TransformBuf!.Alloc<Vector4>(transformElementCount);
+        XRBufferWriter<Vector4> colorWriter = gpu.ColorBuf!.Alloc<Vector4>(instanceElementCount);
+        XRBufferWriter<Vector4> boundsWriter = gpu.BoundsBuf!.Alloc<Vector4>(instanceElementCount);
         XRBufferWriter<Vector4> uvWriter = textured
-            ? _matQuadUvBuf!.Alloc<Vector4>(instanceElementCount) : default;
+            ? gpu.UvBuf!.Alloc<Vector4>(instanceElementCount) : default;
+        XRBufferWriter<Vector4> styleWriter = hasStyleBuf
+            ? gpu.StyleBuf!.Alloc<Vector4>(styleElementCount) : default;
         Span<Vector4> transforms = transformWriter.Span;
         Span<Vector4> colors = colorWriter.Span;
         Span<Vector4> bounds = boundsWriter.Span;
         Span<Vector4> uvs = textured ? uvWriter.Span : default;
+        Span<Vector4> styles = hasStyleBuf ? styleWriter.Span : default;
         int transformIndex = 0;
+        int styleIndex = 0;
 
         for (int i = 0; i < entries.Count; i++)
         {
@@ -866,6 +1139,8 @@ public sealed class UIBatchCollector : IDisposable
             bounds[i] = e.UIXYWH;
             if (textured)
                 uvs[i] = e.UV;
+            if (hasStyleBuf)
+                WriteQuadStyle(styles, ref styleIndex, in e.Style);
         }
 
         transformWriter.Commit();
@@ -873,19 +1148,32 @@ public sealed class UIBatchCollector : IDisposable
         boundsWriter.Commit();
         if (textured)
             uvWriter.Commit();
-        _matQuadNeedsPush = false;
+        if (hasStyleBuf)
+            styleWriter.Commit();
+        gpu.NeedsPush = false;
     }
 
     #endregion
 
     #region GPU Resource Management — Text Quads
 
-    private TextGPUResources EnsureTextGPUResources(XRTexture2D fontAtlas)
+    private TextGPUResources EnsureTextGPUResources(XRTexture2D fontAtlas, int slotIndex)
     {
-        if (_textGPU.TryGetValue(fontAtlas, out var gpu))
-            return gpu;
+        if (!_textGPU.TryGetValue(fontAtlas, out List<TextGPUResources>? slots))
+        {
+            slots = [];
+            _textGPU[fontAtlas] = slots;
+        }
 
-        gpu = new TextGPUResources();
+        while (slots.Count <= slotIndex)
+            slots.Add(CreateTextGPUResources(fontAtlas));
+
+        return slots[slotIndex];
+    }
+
+    private static TextGPUResources CreateTextGPUResources(XRTexture2D fontAtlas)
+    {
+        var gpu = new TextGPUResources();
 
         bool webGpu = AbstractRenderer.Current?.BackendId == RendererBackendId.WebGPU;
         XRShader[] shaders = webGpu ? [] :
@@ -925,6 +1213,7 @@ public sealed class UIBatchCollector : IDisposable
                     Enabled = ERenderParamUsage.Disabled
                 },
                 BlendModeAllDrawBuffers = BlendMode.EnabledTransparent(),
+                MissingTextureFallback = EMissingTextureFallback.Black,
             }
         };
         if (webGpu)
@@ -945,8 +1234,6 @@ public sealed class UIBatchCollector : IDisposable
         gpu.TextCapacity = 32;
         CreateTextBuffers(gpu);
         gpu.NeedsPush = true; // Ensure first upload allocates GPU buffers via PushData
-
-        _textGPU[fontAtlas] = gpu;
         return gpu;
     }
 
@@ -1082,22 +1369,72 @@ public sealed class UIBatchCollector : IDisposable
         RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
         bool profileGpu = profiler.ShouldInstrumentCommandScopes;
 
+        MaterialQuadGPUResources gpu;
         if (profileGpu)
         {
             using (profiler.StartScope($"UIBatchMaterialUpload[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batch.Entries.Count}]"))
             {
-                EnsureMaterialQuadMesh();
-                UploadMaterialQuadData(batch.Entries, batch.Texture is not null);
+                gpu = EnsureMaterialQuadGPUResources(batch.GpuSlotIndex);
+                UploadMaterialQuadData(gpu, batch.Entries, batch.Texture is not null);
             }
         }
         else
         {
-            EnsureMaterialQuadMesh();
-            UploadMaterialQuadData(batch.Entries, batch.Texture is not null);
+            gpu = EnsureMaterialQuadGPUResources(batch.GpuSlotIndex);
+            UploadMaterialQuadData(gpu, batch.Entries, batch.Texture is not null);
         }
 
-        XRMeshRenderer materialQuadMesh = batch.Texture is { } texture
-            ? EnsureMaterialTextureMesh(texture, batch.ImageSrgb) : _matQuadMesh!;
+        XRTexture2D? activeBackdropBlur = batch.RequestsBackdropBlur && batch.Texture is null
+            ? ActiveBackdropBlurTexture ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.UiBackdropBlurTexture as XRTexture2D
+            : null;
+        if (batch.RequestsBackdropBlur && batch.Texture is null && activeBackdropBlur is null)
+        {
+            Debug.UIEvery(
+                "UIBatchCollector.MissingBackdropBlur",
+                TimeSpan.FromSeconds(10),
+                "[UIBatch] Backdrop blur requested (maxRadius={0:F1}px) on host pipeline '{1}', but no UiBackdropBlurTexture is available; rendering tinted glass fallback without blur.",
+                _renderMaxBackdropBlurRadius,
+                ActiveBackdropBlurHostPipelineName ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline?.GetType().Name ?? "<unknown>");
+        }
+        XRMeshRenderer materialQuadMesh;
+        bool usingBackdropBlur = false;
+        if (batch.Texture is { } texture)
+        {
+            materialQuadMesh = EnsureMaterialTextureMesh(gpu, texture, batch.ImageSrgb);
+        }
+        else if (activeBackdropBlur is not null)
+        {
+            XRMeshRenderer blurMesh = EnsureMaterialBlurMesh(gpu, activeBackdropBlur);
+            GetImmediateRenderVersion(blurMesh).Generate();
+            if (blurMesh.TryPrepareForRendering())
+            {
+                materialQuadMesh = blurMesh;
+                usingBackdropBlur = true;
+            }
+            else
+            {
+                // Fall back to the non-blurred styled quad mesh while the blur pipeline prepares,
+                // avoiding any single-frame blank card or placeholder texture flash.
+                materialQuadMesh = gpu.Mesh!;
+            }
+        }
+        else
+        {
+            materialQuadMesh = gpu.Mesh!;
+        }
+
+        if (materialQuadMesh.Material is { } quadMat && batch.Texture is null &&
+            AbstractRenderer.Current?.BackendId != RendererBackendId.WebGPU)
+        {
+            quadMat.SetInt(UiBackdropBlurAvailableUniformName, usingBackdropBlur ? 1 : 0);
+            BoundingRectangle area = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState.CurrentRenderRegion
+                ?? RuntimeEngine.Rendering.State.RenderArea;
+            if (area.Width <= 0 || area.Height <= 0)
+                area = RuntimeEngine.Rendering.State.RenderArea;
+            quadMat.SetVector2(
+                UiViewportSizeUniformName,
+                new Vector2(Math.Max(1, area.Width), Math.Max(1, area.Height)));
+        }
 
         var version = GetImmediateRenderVersion(materialQuadMesh);
         bool prepared;
@@ -1122,7 +1459,7 @@ public sealed class UIBatchCollector : IDisposable
             "UIBatchCollector.RenderMaterialQuadBatch",
             TimeSpan.FromSeconds(5),
             "[UIBatch] RenderMaterialQuadBatch: pass={0}, entries={1}, capacity={2}",
-            renderPass, batch.Entries.Count, _matQuadCapacity);
+            renderPass, batch.Entries.Count, gpu.Capacity);
 
         if (s_materialRenderDiagCount++ < 40)
         {
@@ -1197,11 +1534,11 @@ public sealed class UIBatchCollector : IDisposable
         if (profileGpu)
         {
             using (profiler.StartScope($"UIBatchTextEnsureResources[pass={GetRenderPassDisplayName(renderPass)}; group={groupIndex}; entries={batchData.Entries.Count}; glyphs={batchData.TotalGlyphs}]"))
-                gpu = EnsureTextGPUResources(batchData.Atlas);
+                gpu = EnsureTextGPUResources(batchData.Atlas, batchData.GpuSlotIndex);
         }
         else
         {
-            gpu = EnsureTextGPUResources(batchData.Atlas);
+            gpu = EnsureTextGPUResources(batchData.Atlas, batchData.GpuSlotIndex);
         }
 
         XRMeshRenderer textMesh = gpu.Mesh!;
@@ -1558,6 +1895,7 @@ public sealed class UIBatchCollector : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool TextBatchMatches(
         CollectPassState state,
+        int zIndex,
         XRTexture2D fontAtlas,
         int atlasType,
         float distanceRange,
@@ -1566,6 +1904,7 @@ public sealed class UIBatchCollector : IDisposable
         int debugMode,
         BoundingRectangle? cropRegion)
         => state.ActiveKind == EBatchMarkerKind.Text &&
+           state.ActiveZIndex == zIndex &&
            state.ActiveCropRegion == cropRegion &&
            ReferenceEquals(state.ActiveTextAtlas, fontAtlas) &&
            state.ActiveTextAtlasType == atlasType &&
@@ -1581,6 +1920,23 @@ public sealed class UIBatchCollector : IDisposable
         destination[index++] = new Vector4(m.M21, m.M22, m.M23, m.M24);
         destination[index++] = new Vector4(m.M31, m.M32, m.M33, m.M34);
         destination[index++] = new Vector4(m.M41, m.M42, m.M43, m.M44);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void WriteQuadStyle(Span<Vector4> destination, ref int index, in UIQuadStyle style)
+    {
+        float cornerExponent = style.CornerExponent > 0.0f ? style.CornerExponent : 2.0f;
+        destination[index++] = style.CornerRadii;
+        destination[index++] = new Vector4(
+            cornerExponent,
+            style.BorderWidth,
+            style.BorderHighlightBoost,
+            (float)(uint)style.Flags);
+        destination[index++] = style.BorderColor;
+        destination[index++] = style.GradientBottomColor;
+        destination[index++] = style.ShadowColor;
+        destination[index++] = style.ShadowParams;
+        destination[index++] = style.BackdropBlurParams;
     }
 
     private static uint NextPowerOf2(uint v)
@@ -1603,33 +1959,19 @@ public sealed class UIBatchCollector : IDisposable
         if (_disposed) return;
         _disposed = true;
         Clear();
-        XRMeshRenderer? meshRenderer = _matQuadMesh;
-        XRMesh? mesh = meshRenderer?.Mesh;
-        XRMaterial? material = meshRenderer?.Material;
-        _matQuadTransformBuf?.Destroy();
-        _matQuadColorBuf?.Destroy();
-        _matQuadBoundsBuf?.Destroy();
-        _matQuadUvBuf?.Destroy();
-        foreach (XRMeshRenderer texturedMesh in _materialTextureMeshes.Values)
-        {
-            XRMaterial? texturedMaterial = texturedMesh.Material;
-            texturedMesh.Destroy();
-            texturedMaterial?.Destroy();
-        }
-        _materialTextureMeshes.Clear();
+        for (int i = 0; i < _materialQuadGPU.Count; i++)
+            _materialQuadGPU[i].Dispose();
+        _materialQuadGPU.Clear();
         _staleMaterialTextures.Clear();
-        meshRenderer?.Destroy();
-        mesh?.Destroy();
-        material?.Destroy();
-        _matQuadTransformBuf = null;
-        _matQuadColorBuf = null;
-        _matQuadBoundsBuf = null;
-        _matQuadUvBuf = null;
-        _matQuadMesh = null;
 
-        foreach (var gpu in _textGPU.Values)
-            gpu.Dispose();
+        foreach (List<TextGPUResources> slots in _textGPU.Values)
+        {
+            for (int i = 0; i < slots.Count; i++)
+                slots[i].Dispose();
+            slots.Clear();
+        }
         _textGPU.Clear();
+        _swapAtlasSlotCounts.Clear();
     }
 
     #endregion

@@ -352,12 +352,13 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     XrSourceShCoefficients sourceSh;
     sourceSh.ar = sourceSh.ag = sourceSh.ab = sourceSh.br = sourceSh.bg =
         sourceSh.bb = sourceSh.c = vec4(0.0);
+    uint maskViewIndex = XR_ADV_ViewMaskIndex(view, surface.viewIndex);
     if (UBER_I(_LightModel) != 0)
     {
         if (xrSourceLuminance(rawPrimaryColor) <= 0.000001)
             primaryVisibility = 1.0;
-        sourceRawAmbient = XR_ADV_WorldAmbient(surface.viewIndex);
-        authoredSh = XR_ADV_SourceSH(surface.viewIndex, sourceSh.ar, sourceSh.ag,
+        sourceRawAmbient = XR_ADV_WorldAmbient(maskViewIndex);
+        authoredSh = XR_ADV_SourceSH(maskViewIndex, sourceSh.ar, sourceSh.ag,
             sourceSh.ab, sourceSh.br, sourceSh.bg, sourceSh.bb, sourceSh.c);
         if (!authoredSh)
         {
@@ -543,8 +544,9 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     float roughness, metallic, specularMask, reflectionMask, packedSmoothness;
     vec3 specularColor, specularTint;
     XR_UBER_Pbr(c, base.rgb, roughness, metallic, specularColor, specularTint, specularMask, reflectionMask, packedSmoothness);
-    // Mesh surface decals belong to the surface: blend them before any lighting term.
-    XR_ADV_ApplyDecalBuffer(pixel, base.rgb, roughness, metallic);
+    // Mesh surface decals belong to primary-view surfaces: blend them before any lighting term.
+    if ((view.flags & XR_ADV_VIEW_PORTAL_SUBVIEW) == 0u)
+        XR_ADV_ApplyDecalBuffer(pixel, base.rgb, roughness, metallic);
     // Apply geometric specular anti-aliasing so curved metallic parts match standard PBR
     // and do not flash bright single-pixel specular spikes under jitter.
     roughness = XR_ADV_SpecularAntiAliasing(roughness, Nx, Ny, 1.0);
@@ -571,12 +573,12 @@ void XR_UBER_Shade(uvec2 pixel, XRAdvancedSurface surface, XRAdvancedViewRecord 
     vec4 probeWeights = vec4(0.0);
     uvec4 probeIndices = uvec4(0u);
     if ((u_Push.flags & 32u) == 0u)
-        ambient = XR_ADV_WorldAmbient(surface.viewIndex) * base.rgb * (1.0 - metallic) *
+        ambient = XR_ADV_WorldAmbient(maskViewIndex) * base.rgb * (1.0 - metallic) *
             XR_ADV_DiffuseOcclusion(u_Push.flags, ao, base.rgb);
     if ((u_Push.flags & 8u) != 0u)
     {
         vec3 diffuseProbe;
-        XR_ADV_EvaluateProbeIblWithSelection(surface.viewIndex, surface.worldPosition,
+        XR_ADV_EvaluateProbeIblWithSelection(maskViewIndex, surface.worldPosition,
             N, V, base.rgb, roughness, metallic, diffuseProbe, probeSpecular,
             probeWeights, probeIndices);
         if ((u_Push.flags & 32u) == 0u) probeDiffuse = diffuseProbe * XR_ADV_DiffuseOcclusion(u_Push.flags, ao, base.rgb);

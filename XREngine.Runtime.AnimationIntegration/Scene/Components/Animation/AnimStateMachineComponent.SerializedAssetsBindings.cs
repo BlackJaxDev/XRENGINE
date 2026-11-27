@@ -29,13 +29,25 @@ public partial class AnimStateMachineComponent
         ReportImportedAnimationBindingFailure(binding, diagnostic);
     }
 
+    /// <summary>
+    /// Writes one float parameter driven by an imported Animated Animator Parameter curve.
+    /// The state machine's typed slot layout normally writes directly without invoking this method;
+    /// this entry point supports legacy playback and reflection binding checks.
+    /// </summary>
+    public void SetAnimatedFloatParameter(string parameterName, float value)
+        => StateMachine.ApplyAnimatedFloatParameter(parameterName, value);
+
     private string? ValidateImportedAnimationClipBindings(AnimationClip clip)
         => GetImportedAnimationBindingRuntime().TryValidate(clip, out string diagnostic)
             ? null
             : diagnostic;
 
     private ImportedAnimationBindingRuntime GetImportedAnimationBindingRuntime()
-        => _importedAnimationBindingRuntime ??= new ImportedAnimationBindingRuntime(this);
+    {
+        ImportedAnimationBindingRuntime runtime = _importedAnimationBindingRuntime ??= new ImportedAnimationBindingRuntime(this);
+        runtime.AllowMissingOptionalTargets = StateMachine.AllowMissingImportedBindings;
+        return runtime;
+    }
 
     private void ResetImportedAnimationBindings()
     {

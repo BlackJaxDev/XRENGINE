@@ -101,6 +101,16 @@ namespace XREngine.Components
         /// </summary>
         public event Action? EscapePressed;
 
+        /// <summary>
+        /// Fired when the gamepad Start button (<see cref="EGamePadButton.SpecialRight"/>) is pressed.
+        /// </summary>
+        public event Action? GamepadStartPressed;
+
+        /// <summary>
+        /// Fired when the gamepad Back button (<see cref="EGamePadButton.FaceRight"/>) completes a press on this canvas.
+        /// </summary>
+        public event Action? GamepadBackPressed;
+
         private IRuntimeInputControllablePawn? _owningPawn;
         /// <summary>
         /// The pawn that has this HUD linked for screen or camera space use.
@@ -124,6 +134,7 @@ namespace XREngine.Components
                         break;
                     case nameof(FocusedComponent):
                         ClearPointerPress();
+                        ClearGamepadPress(restoreVisual: true);
                         if (_focusedComponent is not null)
                         {
                             //_focusedComponent.IsFocused = false;
@@ -160,6 +171,8 @@ namespace XREngine.Components
                     }
                     if (prev is UIInteractableComponent prevInteractable)
                     {
+                        if (prevInteractable.IsGamepadSelected)
+                            prevInteractable.IsGamepadSelected = false;
                         prevInteractable.IsFocused = false;
                         prevInteractable.PropertyChanged -= FocusedComponentPropertyChanged;
                         var input = _owningPawn?.Controller?.InputDevice as InputInterface;
@@ -316,14 +329,15 @@ namespace XREngine.Components
 
             input.RegisterButtonEvent(EGamePadButton.FaceRight, EButtonInputType.Pressed, OnGamepadBackButtonDown);
             input.RegisterButtonEvent(EGamePadButton.FaceRight, EButtonInputType.Released, OnGamepadBackButtonUp);
+            input.RegisterButtonEvent(EGamePadButton.SpecialRight, EButtonInputType.Pressed, OnGamepadStartButtonDown);
 
             input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickX, OnLeftStickX, false);
             input.RegisterAxisUpdate(EGamePadAxis.LeftThumbstickY, OnLeftStickY, false);
 
-            input.RegisterButtonEvent(EGamePadButton.DPadUp, EButtonInputType.Pressed, OnDPadUp);
-            input.RegisterButtonEvent(EGamePadButton.DPadDown, EButtonInputType.Pressed, OnDPadDown);
-            input.RegisterButtonEvent(EGamePadButton.DPadLeft, EButtonInputType.Pressed, OnDPadLeft);
-            input.RegisterButtonEvent(EGamePadButton.DPadRight, EButtonInputType.Pressed, OnDPadRight);
+            input.RegisterButtonPressed(EGamePadButton.DPadUp, OnDPadUpStateChanged);
+            input.RegisterButtonPressed(EGamePadButton.DPadDown, OnDPadDownStateChanged);
+            input.RegisterButtonPressed(EGamePadButton.DPadLeft, OnDPadLeftStateChanged);
+            input.RegisterButtonPressed(EGamePadButton.DPadRight, OnDPadRightStateChanged);
         }
 
         private void OnMouseScroll(float diff)
@@ -443,6 +457,13 @@ namespace XREngine.Components
                     }
                 }
             }
+
+            bool pointerMoved = CursorPositionWorld2D != LastCursorPositionWorld2D;
+            if (pointerMoved && _suppressMouseHoverUntilMove)
+                _suppressMouseHoverUntilMove = false;
+
+            if (pointerMoved && TopMostInteractable is not null)
+                ClearGamepadSelectionForPointerHover(TopMostInteractable);
 
             ValidateAndSwapIntersections();
             LastCursorPositionWorld2D = CursorPositionWorld2D;
@@ -591,15 +612,10 @@ namespace XREngine.Components
         }
 
         private void OnGamepadInteractButtonDown()
-        {
-            if (IsVirtualGamepadDispatch)
-                return;
-            FocusedComponent?.OnInteract();
-        }
-        private void OnGamepadInteractButtonUp()
-        {
+            => HandleGamepadInteractButtonDown();
 
-        }
+        private void OnGamepadInteractButtonUp()
+            => HandleGamepadInteractButtonUp();
 
         private void OnMouseInteractButtonDown()
         {
@@ -736,18 +752,16 @@ namespace XREngine.Components
                 EscapePressed?.Invoke();
         }
         protected virtual void OnGamepadBackButtonDown()
-        {
-            if (IsVirtualGamepadDispatch)
-                return;
-            FocusedComponent?.OnBack();
-        }
+            => HandleGamepadBackButtonDown();
+
         protected virtual void OnGamepadBackButtonUp()
-        {
+            => HandleGamepadBackButtonUp();
 
-        }
+        protected virtual void OnLeftStickX(float value)
+            => HandleLeftStickX(value);
 
-        protected virtual void OnLeftStickX(float value) { }
-        protected virtual void OnLeftStickY(float value) { }
+        protected virtual void OnLeftStickY(float value)
+            => HandleLeftStickY(value);
 
         /// <summary>
         /// Called on either left click or A button.
@@ -779,6 +793,7 @@ namespace XREngine.Components
         {
             base.OnComponentActivated();
             GetCameraCanvas()?.CanvasTransform.InvalidateLayout();
+            RegisterGamepadNavigationTick();
             if (!_subscribedToTimer)
             {
                 RuntimeRenderingHostServices.Current.SubscribeViewportCollectVisible(CollectVisible);
@@ -789,6 +804,8 @@ namespace XREngine.Components
         protected override void OnComponentDeactivated()
         {
             ClearPointerPress();
+            ResetGamepadNavigationState();
+            UnregisterGamepadNavigationTick();
             base.OnComponentDeactivated();
             if (_subscribedToTimer)
             {
@@ -861,7 +878,7 @@ namespace XREngine.Components
                 else
                 {
                     //Had mouse over and still does now — re-evaluate direct-over in case TopMost changed
-                    bool shouldBeDirectlyOver = inter == TopMostInteractable;
+                    bool shouldBeDirectlyOver = !_suppressMouseHoverUntilMove && inter == TopMostInteractable;
                     if (inter.IsMouseDirectlyOver != shouldBeDirectlyOver)
                         inter.IsMouseDirectlyOver = shouldBeDirectlyOver;
 
@@ -876,7 +893,7 @@ namespace XREngine.Components
             {
                 //Got mouse over
                 inter.IsMouseOver = true;
-                inter.IsMouseDirectlyOver = inter == TopMostInteractable;
+                inter.IsMouseDirectlyOver = !_suppressMouseHoverUntilMove && inter == TopMostInteractable;
             }
             else
             {

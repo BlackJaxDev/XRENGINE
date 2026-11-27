@@ -13,6 +13,13 @@ namespace XREngine.Animation
     [MemoryPackable(GenerateType.NoGenerate)]
     public partial class AnimStateMachine : XRAsset
     {
+        /// <summary>
+        /// Prefix for controller-scoped internal animated parameters created when multiple Unity
+        /// controllers are merged into one <see cref="AnimStateMachine"/>. External bindings such
+        /// as OSC receivers skip variables that start with this prefix.
+        /// </summary>
+        public const string ScopedInternalParameterPrefix = "__xre_scope/";
+
         private static readonly string[] QuaternionComponentMethodStems =
         [
             "SetRootRotation",
@@ -50,6 +57,25 @@ namespace XREngine.Animation
             get => _animatePhysics;
             set => SetField(ref _animatePhysics, value);
         }
+
+        private bool _allowMissingImportedBindings = false;
+        /// <summary>
+        /// Allows imported clips with missing optional nodes or blendshapes to bind as
+        /// logged no-ops instead of rejecting the entire state machine.
+        /// </summary>
+        public bool AllowMissingImportedBindings
+        {
+            get => _allowMissingImportedBindings;
+            set => SetField(ref _allowMissingImportedBindings, value);
+        }
+
+        /// <summary>
+        /// True while <see cref="ApplyAnimationValues"/> writes animated float parameter curves
+        /// into <see cref="Variables"/>. External listeners such as OSC senders can check this
+        /// flag to avoid echoing internal parameter updates.
+        /// </summary>
+        [MemoryPackIgnore]
+        public bool IsApplyingAnimatedParameters { get; private set; }
 
         private bool _applyRootMotion;
         private Vector3 _pivotPosition;
@@ -125,10 +151,33 @@ namespace XREngine.Animation
 
         /// <summary>
         /// Dense array of all unique animated members, built during slot assignment.
-        /// Used for O(1) iteration in <see cref="ApplyAnimationValues"/>.
+        /// Used for defaults and reset.
         /// </summary>
         [MemoryPackIgnore]
         private AnimationMember[] _animatedMembersArray = [];
+
+        /// <summary>
+        /// Dense array of non-parameter animated members applied through their target bindings.
+        /// </summary>
+        [MemoryPackIgnore]
+        private AnimationMember[] _nonParameterAnimatedMembersArray = [];
+
+        /// <summary>
+        /// Pre-bound float slots that write directly to state machine parameters without
+        /// reflection or dictionary lookups during steady-state evaluation.
+        /// </summary>
+        private struct AnimatedParameterSlotBinding
+        {
+            public int FloatSlotIndex;
+            public string ParameterName;
+            public AnimVar? TargetVariable;
+        }
+
+        [MemoryPackIgnore]
+        private AnimatedParameterSlotBinding[] _animatedParameterBindings = [];
+
+        [MemoryPackIgnore]
+        private int _animatedParameterBindingSchemaVersion = -1;
 
         public void Initialize(object? rootObject)
         {
@@ -150,8 +199,9 @@ namespace XREngine.Animation
             AnimationSlotLayout layout = BuildSlotLayout(_animatedCurves, out Dictionary<string, AnimSlot> slotsByPath);
             SlotLayout = layout;
 
-            // Build dense member array for ApplyAnimationValues
+            // Build dense member arrays and direct parameter-curve bindings for O(1) apply.
             _animatedMembersArray = [.. _animatedCurves.Values.Distinct()];
+            BuildAnimatedParameterBindings();
 
             // Size our own store
             ValueStore.Resize(layout);
@@ -385,7 +435,7 @@ namespace XREngine.Animation
                 if (!slotsByPath.TryGetValue(path, out AnimSlot slot)
                     || slot.Type != EAnimValueType.Float
                     || member.MemberType != EAnimationMemberType.Method
-                    || member.MemberName != "SetUnityAnimationFloat"
+                    || member.MemberName is not ("SetImportedAnimationFloat" or "SetUnityAnimationFloat")
                     || member.MethodArguments.Length == 0
                     || member.MethodArguments[0] is not ImportedAnimationBindingDescriptor binding
                     || !ImportedAnimationQuaternionBindingKey.TryCreate(binding, out ImportedAnimationQuaternionBindingKey key))
@@ -478,6 +528,9 @@ namespace XREngine.Animation
 
             SlotLayout = null;
             _animatedMembersArray = [];
+            _nonParameterAnimatedMembersArray = [];
+            _animatedParameterBindings = [];
+            _animatedParameterBindingSchemaVersion = -1;
             _animatedCurves.Clear();
             _importedHumanoidContributions.Clear();
             _liveHumanoidPoseHistory?.Clear();
@@ -719,10 +772,13 @@ namespace XREngine.Animation
 
         public void ApplyAnimationValues()
         {
-            // Typed store path: iterate dense member array, apply from store (no boxing, no string lookup)
+            // Typed store path: iterate dense member arrays, apply from store (no boxing, no string lookup)
             if (SlotLayout is not null)
             {
-                foreach (var member in _animatedMembersArray)
+                if (_animatedParameterBindings.Length > 0)
+                    ApplyAnimatedParameterBindings();
+
+                foreach (var member in _nonParameterAnimatedMembersArray)
                     member.ApplyFromStore(ValueStore);
                 return;
             }
@@ -737,6 +793,123 @@ namespace XREngine.Animation
             foreach (var kvp in snapshot)
                 if (_animatedCurves.TryGetValue(kvp.Key, out var member))
                     member.ApplyAnimationValue(kvp.Value);
+        }
+
+        private void BuildAnimatedParameterBindings()
+        {
+            var nonParameterMembers = new List<AnimationMember>(_animatedMembersArray.Length);
+            var parameterBindings = new List<AnimatedParameterSlotBinding>();
+
+            for (int i = 0; i < _animatedMembersArray.Length; i++)
+            {
+                AnimationMember member = _animatedMembersArray[i];
+                if (TryGetAnimatedFloatParameterName(member, out string parameterName)
+                    && member.Slot.IsValid
+                    && member.Slot.Type == EAnimValueType.Float)
+                {
+                    Variables.TryGetValue(parameterName, out AnimVar? targetVariable);
+                    if (targetVariable is not null)
+                        member.DefaultValue = targetVariable.FloatValue;
+
+                    parameterBindings.Add(new AnimatedParameterSlotBinding
+                    {
+                        FloatSlotIndex = member.Slot.TypeIndex,
+                        ParameterName = parameterName,
+                        TargetVariable = targetVariable,
+                    });
+                    continue;
+                }
+
+                nonParameterMembers.Add(member);
+            }
+
+            _nonParameterAnimatedMembersArray = [.. nonParameterMembers];
+            _animatedParameterBindings = [.. parameterBindings];
+            _animatedParameterBindingSchemaVersion = _parameterSchemaVersion;
+        }
+
+        private void RefreshAnimatedParameterBindingsIfNeeded()
+        {
+            if (_animatedParameterBindingSchemaVersion == _parameterSchemaVersion)
+                return;
+
+            for (int i = 0; i < _animatedParameterBindings.Length; i++)
+            {
+                ref AnimatedParameterSlotBinding binding = ref _animatedParameterBindings[i];
+                Variables.TryGetValue(binding.ParameterName, out binding.TargetVariable);
+            }
+            _animatedParameterBindingSchemaVersion = _parameterSchemaVersion;
+        }
+
+        private void ApplyAnimatedParameterBindings()
+        {
+            RefreshAnimatedParameterBindingsIfNeeded();
+
+            bool previous = IsApplyingAnimatedParameters;
+            IsApplyingAnimatedParameters = true;
+            try
+            {
+                for (int i = 0; i < _animatedParameterBindings.Length; i++)
+                {
+                    ref readonly AnimatedParameterSlotBinding binding = ref _animatedParameterBindings[i];
+                    if (binding.TargetVariable is null)
+                        continue;
+
+                    binding.TargetVariable.FloatValue = ValueStore.GetFloat(binding.FloatSlotIndex);
+                }
+            }
+            finally
+            {
+                IsApplyingAnimatedParameters = previous;
+            }
+        }
+
+        private static bool TryGetAnimatedFloatParameterName(AnimationMember member, out string parameterName)
+        {
+            if (member.MemberType == EAnimationMemberType.Method
+                && string.Equals(member.MemberName, "SetAnimatedFloatParameter", StringComparison.Ordinal)
+                && member.MethodArguments.Length >= 2
+                && member.MethodArguments[0] is string name
+                && !string.IsNullOrEmpty(name))
+            {
+                parameterName = name;
+                return true;
+            }
+
+            parameterName = string.Empty;
+            return false;
+        }
+
+        /// <summary>
+        /// Writes a float parameter value inside the internal animated-parameter scope so
+        /// external observers can distinguish curve-driven updates from user or OSC input.
+        /// </summary>
+        public void ApplyAnimatedFloatParameter(string parameterName, float value)
+        {
+            if (!Variables.TryGetValue(parameterName, out AnimVar? variable))
+                return;
+
+            ApplyAnimatedFloatParameter(variable, value);
+        }
+
+        /// <summary>
+        /// Writes a float value directly to a resolved state-machine variable inside the
+        /// internal animated-parameter scope.
+        /// </summary>
+        public void ApplyAnimatedFloatParameter(AnimVar variable, float value)
+        {
+            ArgumentNullException.ThrowIfNull(variable);
+
+            bool previous = IsApplyingAnimatedParameters;
+            IsApplyingAnimatedParameters = true;
+            try
+            {
+                variable.FloatValue = value;
+            }
+            finally
+            {
+                IsApplyingAnimatedParameters = previous;
+            }
         }
 
         [MemoryPackIgnore]

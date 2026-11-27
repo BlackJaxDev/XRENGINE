@@ -187,18 +187,24 @@ namespace XREngine.Components.VR
             SetInitialState();
             RegisterCalibrationInput(false);
             RegisterMovementDiscontinuities(false);
+            RuntimeVrStateServices.LateXrPoseUpdated += RefreshCalibrationPoseForLateXr;
             RegisterTick(ETickGroup.Normal, (ETickOrder)((int)ETickOrder.Input + 1), UpdateTick);
         }
 
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
+            RuntimeVrStateServices.LateXrPoseUpdated -= RefreshCalibrationPoseForLateXr;
             RegisterCalibrationInput(true);
             RegisterMovementDiscontinuities(true);
             ReleaseSimulationSnapshot();
             RestoreSpectatorDesktop();
             if (IsCalibrating)
                 CancelCalibrationImmediate();
+            if (SceneNode.GetComponent<VrCalibrationFeedbackComponent>() is { } feedback)
+                feedback.IsActive = false;
+            if (SceneNode.FindDescendantByName("VR Calibration Feedback")?.GetComponent<VrCalibrationFeedbackComponent>() is { } childFeedback)
+                childFeedback.IsActive = false;
             GetHumanoid()?.ClearIKTargets();
             UnregisterTick(ETickGroup.Normal, (ETickOrder)((int)ETickOrder.Input + 1), UpdateTick);
         }
@@ -311,8 +317,40 @@ namespace XREngine.Components.VR
 
             avatarRootTfm.Translation = new Vector3(0.0f, rootTranslation.Y, 0.0f);
             avatarRootTfm.Rotation = rootRotation;
-            avatarRootTfm.RecalculateMatrices(true, false);
+            // Refresh child bone world matrices so calibration tracker binding and hip-aligned
+            // mirror placement read the current calibration pose in the same tick.
+            avatarRootTfm.RecalculateMatrixHierarchyImmediate(forceWorldRecalc: true, setRenderMatrixNow: false);
             AddMovementInputFromDevice(playspaceRootTfm, movementOffset.Translation);
+        }
+
+        /// <summary>
+        /// Refreshes the calibration T-pose avatar root and bone render matrices on the render
+        /// thread from the OpenXR late headset pose so the avatar stays locked to the headset.
+        /// </summary>
+        private void RefreshCalibrationPoseForLateXr()
+        {
+            if (!IsCalibrating || !RuntimeVrStateServices.IsOpenXRActive)
+                return;
+
+            IHumanoidVrCalibrationRig? humanoid = GetHumanoid();
+            if (humanoid?.HeadNode is null ||
+                humanoid.SceneNode.Transform is not Transform avatarRootTfm ||
+                (PlayspaceRoot ?? Headset?.Parent) is not Transform playspaceRootTfm)
+            {
+                return;
+            }
+
+            if (!RuntimeVrStateServices.TryGetHeadLocalPose(RuntimeVrPoseTiming.Late, out Matrix4x4 lateHeadLocal))
+                return;
+
+            Matrix4x4 lateHeadWorld = lateHeadLocal * playspaceRootTfm.RenderMatrix;
+            TransformBase.GetDirectionsXZ(lateHeadWorld, out Vector3 worldForward, out _);
+            Matrix4x4 eyeWorldPose = Matrix4x4.CreateWorld(lateHeadWorld.Translation, worldForward, Globals.Up);
+            Vector3 eyeOffsetFromHead = GetHeightScaleComponent()?.ScaledToRealWorldEyeOffsetFromHead ?? Vector3.Zero;
+            Matrix4x4 eyeToHead = Matrix4x4.CreateTranslation(-eyeOffsetFromHead);
+            Matrix4x4 headToRoot = Matrix4x4.CreateTranslation(-GetScaledToRealWorldHeadOffsetFromAvatarRoot(humanoid));
+            Matrix4x4 lateAvatarWorld = Matrix4x4.CreateScale(avatarRootTfm.Scale) * headToRoot * eyeToHead * eyeWorldPose;
+            avatarRootTfm.SetRenderMatrixHierarchyImmediate(lateAvatarWorld);
         }
 
         /// <summary>The explicit metric tracking basis. Device parent is only the compatibility default.</summary>
@@ -448,6 +486,7 @@ namespace XREngine.Components.VR
             VRTrackerCollectionComponent? trackers = GetTrackerCollection();
             if (trackers is null)
                 return false;
+            RuntimeVrStateServices.RequestTrackerRefreshForCalibration();
             SaveCalibrationState(humanoid, solver);
             IRuntimeVrHeightScaleComponent? scale = GetHeightScaleComponent();
             string notice = "Avatar measurement settings are unavailable.";
@@ -471,7 +510,9 @@ namespace XREngine.Components.VR
             }
             IsCalibrating = true;
             CalibrationState = EVrCalibrationState.Calibrating;
-            CalibrationMessage = "Stand straight in the footprints, look ahead, then pull both triggers. Cancel to keep your previous calibration.";
+            CalibrationMessage = RuntimeVrStateServices.IsTrackerRefreshPending
+                ? "Refreshing OpenXR trackers. Wait for the tracker refresh, then stand in the footprints and pull both triggers."
+                : "Stand straight in the footprints, look ahead, then pull both triggers. Cancel to keep your previous calibration.";
             _stationaryWindow.Reset();
             _previousSnapshot = default;
 
@@ -496,6 +537,10 @@ namespace XREngine.Components.VR
             get => _ikSolver;
             set => SetField(ref _ikSolver, value);
         }
+
+        /// <summary>Cancels active calibration immediately and restores the prior solver and animation preview state.</summary>
+        public void CancelCalibrationNow()
+            => CancelCalibrationImmediate();
 
         private void CancelCalibrationImmediate()
         {

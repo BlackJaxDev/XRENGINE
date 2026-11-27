@@ -173,6 +173,7 @@ public partial class UnitTestingWorldSettings
     public bool LipSync = true;
     public bool FaceMotion3D = false;
     public bool FaceTracking = false;
+    public UnitTestingFaceTrackingSettings FaceTrackingSettings { get; set; } = new();
 
     public bool AnimationClipVMD = false;
     public bool AnimationClipAnim = false;

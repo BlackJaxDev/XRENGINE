@@ -80,6 +80,16 @@ public sealed class RuntimeVrState
     public event Action? TrackingBasisChanged;
     public event Action? SessionGenerationChanged;
     public event Action<RuntimeVrPoseTiming>? RecalcMatrixOnDraw;
+    /// <summary>
+    /// Raised on the render thread after OpenXR refreshes late view and action poses, immediately
+    /// before XR mirror captures and eye rendering run.
+    /// </summary>
+    public event Action? LateXrPoseUpdated;
+    /// <summary>
+    /// Raised on the render thread after <see cref="LateXrPoseUpdated"/> and immediately before
+    /// OpenXR renders the prepared stereo eyes, so VR mirror captures sample the exact late poses.
+    /// </summary>
+    public event Action? BeforeXrEyeRender;
     public event Action<float>? IPDScalarChanged;
     public event Action<float>? RealWorldHeightChanged;
     public event Action<float>? DesiredAvatarHeightChanged;
@@ -278,6 +288,12 @@ public sealed class RuntimeVrState
 
     public void InvokeRecalcMatrixOnDraw(RuntimeVrPoseTiming timing)
         => RecalcMatrixOnDraw?.Invoke(timing);
+
+    public void InvokeLateXrPoseUpdated()
+        => LateXrPoseUpdated?.Invoke();
+
+    public void InvokeBeforeXrEyeRender()
+        => BeforeXrEyeRender?.Invoke();
 
     public void NotifyOpenXRSessionRunningChanged(bool running)
         => OpenXRSessionRunningChanged?.Invoke(running);

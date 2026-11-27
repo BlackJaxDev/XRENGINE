@@ -11,6 +11,7 @@ public static class OscNetworkBackend
     {
         CookedBinarySerializer.RegisterRuntimeFactory(static () => new OscSenderComponent());
         CookedBinarySerializer.RegisterRuntimeFactory(static () => new OscReceiverComponent());
+        CookedBinarySerializer.RegisterRuntimeFactory(static () => new AnimStateMachineOscReceiverComponent());
         CookedBinarySerializer.RegisterRuntimeFactory(static () => new FaceTrackingReceiverComponent());
         CookedBinarySerializer.RegisterRuntimeFactory(static () => new VMCCaptureComponent());
         CookedBinarySerializer.RegisterRuntimeFactory(static () => new VMCSenderComponent());

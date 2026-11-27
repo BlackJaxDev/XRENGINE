@@ -410,6 +410,17 @@ namespace XREngine.Editor.Mcp
                 tsrResolveForm = pipeline?.TsrResolveForm.ToString(),
                 temporalHistory = BuildTemporalHistoryDiagnostics(instance),
                 directionalShadowLane = DescribeDirectionalShadowLane(viewport),
+                portals = new
+                {
+                    frameId = diagnosticSnapshot.Portals.FrameId,
+                    primaryViewCount = diagnosticSnapshot.Portals.PrimaryViewCount,
+                    scheduledCount = diagnosticSnapshot.Portals.ScheduledCount,
+                    maxScheduledDepth = diagnosticSnapshot.Portals.MaxScheduledDepth,
+                    rejectedBudgetCount = diagnosticSnapshot.Portals.RejectedBudgetCount,
+                    rejectedCulledCount = diagnosticSnapshot.Portals.RejectedCulledCount,
+                    rejectedCycleCount = diagnosticSnapshot.Portals.RejectedCycleCount,
+                    froxelSlotBudget = diagnosticSnapshot.Portals.FroxelSlotBudget,
+                },
                 resources = new
                 {
                     descriptorRevision = registry.DescriptorRevision,

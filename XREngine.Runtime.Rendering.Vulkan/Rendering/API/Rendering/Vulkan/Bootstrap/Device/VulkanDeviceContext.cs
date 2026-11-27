@@ -17,6 +17,9 @@ internal sealed partial class VulkanDeviceContext
     internal bool AdvancedMultiviewMeshEnabled { get; set; }
     internal bool SampleRateShadingEnabled { get; set; }
     internal bool IndependentBlendEnabled { get; set; }
+    /// <summary>Logical-device <c>shaderClipDistance</c> feature enabled at device creation.</summary>
+    internal bool ShaderClipDistanceEnabled { get; set; }
+    private int _missingShaderClipDistanceWarningLogged;
     private int _deviceLossDiagnosticsClaimed;
     private int _capabilityPublicationState;
     private int _queuesPublished;
@@ -83,6 +86,26 @@ internal sealed partial class VulkanDeviceContext
     public Queue PresentQueue { get; private set; }
     public Queue ComputeQueue { get; private set; }
     public Queue TransferQueue { get; private set; }
+
+    /// <summary>
+    /// Verifies that the logical device enabled <c>shaderClipDistance</c> before running
+    /// in-place stencil portal mirrors. Logs one rendering warning per device lifetime when
+    /// unsupported instead of substituting an unclipped or CPU fallback path.
+    /// </summary>
+    internal bool TryValidateShaderClipDistanceForPortalMirrors(out string? failureReason)
+    {
+        if (ShaderClipDistanceEnabled)
+        {
+            failureReason = null;
+            return true;
+        }
+
+        failureReason = "Vulkan physical device does not support shaderClipDistance; in-place stencil portal mirrors are disabled.";
+        if (Interlocked.Exchange(ref _missingShaderClipDistanceWarningLogged, 1) == 0)
+            Debug.RenderingWarning(failureReason);
+
+        return false;
+    }
 
     public void RecordSubmissionDiagnostics(in VulkanSubmissionDiagnosticContext diagnostics)
     {
@@ -361,6 +384,10 @@ internal sealed partial class VulkanDeviceContext
         MinUniformBufferOffsetAlignment = 1UL;
         CreatedThroughOpenXr = false;
         SupportsMultipleGraphicsQueues = false;
+        SampleRateShadingEnabled = false;
+        IndependentBlendEnabled = false;
+        ShaderClipDistanceEnabled = false;
+        Volatile.Write(ref _missingShaderClipDistanceWarningLogged, 0);
         GraphicsQueue = default;
         SecondaryGraphicsQueue = default;
         PresentQueue = default;

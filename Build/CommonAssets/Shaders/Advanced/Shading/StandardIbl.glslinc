@@ -127,4 +127,123 @@ bool XR_ADV_TrySampleProbeNormal(XRAdvancedProbeRecord probe, vec3 normal,
     return !any(isnan(radiance)) && !any(isinf(radiance));
 }
 
+#if defined(XR_ADV_PROBE_GROUP_CACHE)
+// Per-work-group cache of active octahedral probes for one view. A 16x16 work
+// group resolves each probe's irradiance and prefilter texture handles once in
+// parallel instead of repeating 16 SSBO handle lookups per pixel.
+#define XR_ADV_PROBE_CACHE_MAX 32u
+#define XR_ADV_PROBE_CACHE_UNCACHED 0xFFFFFFFFu
+shared uint s_probeCacheCount;
+shared uint s_probeCacheView;
+shared uint s_probeCacheIndices[XR_ADV_PROBE_CACHE_MAX];
+shared uint s_probeCacheFlags[XR_ADV_PROBE_CACHE_MAX];
+shared vec4 s_probeCacheCenterAndShape[XR_ADV_PROBE_CACHE_MAX];
+shared vec4 s_probeCacheInner[XR_ADV_PROBE_CACHE_MAX];
+shared vec4 s_probeCacheOuter[XR_ADV_PROBE_CACHE_MAX];
+shared XRAdvancedEncodedTextureReference s_probeCacheIrradiance[XR_ADV_PROBE_CACHE_MAX];
+shared XRAdvancedEncodedTextureReference s_probeCachePrefilter[XR_ADV_PROBE_CACHE_MAX];
+shared vec2 s_probeCacheMipAndNorm[XR_ADV_PROBE_CACHE_MAX];
+
+float XR_ADV_ProbeWeightCompact(vec4 centerAndShape, vec4 influenceInner, vec4 influenceOuter,
+    vec3 worldPosition)
+{
+    vec3 local = worldPosition - centerAndShape.xyz;
+    if (centerAndShape.w > 0.5)
+    {
+        vec3 inner = max(influenceInner.xyz, vec3(0.0));
+        vec3 outer = max(influenceOuter.xyz, inner + vec3(1.0e-4));
+        vec3 normalizedDistance = clamp((abs(local) - inner) / (outer - inner), 0.0, 1.0);
+        return 1.0 - smoothstep(0.0, 1.0, max(normalizedDistance.x,
+            max(normalizedDistance.y, normalizedDistance.z)));
+    }
+    float distance = length(local);
+    float innerRadius = max(influenceInner.w, 0.0);
+    float outerRadius = max(influenceOuter.w, innerRadius + 1.0e-4);
+    return 1.0 - smoothstep(innerRadius, outerRadius, distance);
+}
+
+// Fills the shared probe cache when the scene has at most XR_ADV_PROBE_CACHE_MAX
+// probes. Every invocation of the work group must reach both barriers.
+void XR_ADV_FillProbeGroupCache(uint viewIndex)
+{
+    uint totalProbes = uint(XR_ADV_Probes.records.length());
+    if (gl_LocalInvocationIndex == 0u)
+    {
+        s_probeCacheView = viewIndex;
+        s_probeCacheCount = totalProbes <= XR_ADV_PROBE_CACHE_MAX ? 0u : XR_ADV_PROBE_CACHE_UNCACHED;
+    }
+    barrier();
+    if (totalProbes <= XR_ADV_PROBE_CACHE_MAX && gl_LocalInvocationIndex < totalProbes)
+    {
+        uint probeIndex = gl_LocalInvocationIndex;
+        XRAdvancedProbeRecord probe = XR_ADV_LoadProbe(probeIndex);
+        bool valid = (probe.flags & (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL)) ==
+            (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL);
+        if (valid && (probe.viewMaskLo != 0u || probe.viewMaskHi != 0u))
+            valid = viewIndex < 32u
+                ? (probe.viewMaskLo & (1u << viewIndex)) != 0u
+                : (viewIndex < 64u && (probe.viewMaskHi & (1u << (viewIndex - 32u))) != 0u);
+        if (valid)
+        {
+            XRAdvancedTextureRecord irradianceRecord, prefilterRecord;
+            XRAdvancedEncodedTextureReference irradianceReference, prefilterReference;
+            if (XR_ADV_TryResolveTextureReference(probe.irradiance.handle,
+                    VisibilityTextureLookupSegment, VisibilitySamplerLookupSegment,
+                    irradianceRecord, irradianceReference) &&
+                XR_ADV_TryResolveTextureReference(probe.prefilteredRadiance.handle,
+                    VisibilityTextureLookupSegment, VisibilitySamplerLookupSegment,
+                    prefilterRecord, prefilterReference) &&
+                irradianceRecord.dimension == 1u && prefilterRecord.dimension == 1u)
+            {
+                uint slot = atomicAdd(s_probeCacheCount, 1u);
+                if (slot < XR_ADV_PROBE_CACHE_MAX)
+                {
+                    s_probeCacheIndices[slot] = probeIndex;
+                    s_probeCacheFlags[slot] = probe.flags;
+                    s_probeCacheCenterAndShape[slot] = vec4(
+                        probe.positionAndRadius.xyz + probe.influenceOffsetAndShape.xyz,
+                        probe.influenceOffsetAndShape.w);
+                    s_probeCacheInner[slot] = probe.influenceInner;
+                    s_probeCacheOuter[slot] = probe.influenceOuter;
+                    s_probeCacheIrradiance[slot] = irradianceReference;
+                    s_probeCachePrefilter[slot] = prefilterReference;
+                    float maxMip = max(float(prefilterRecord.mipCount) - 1.0, 0.0);
+                    float normalization = (probe.flags & XR_ADV_PROBE_NORMALIZED) != 0u
+                        ? probe.proxyHalfExtents.w
+                        : 1.0;
+                    s_probeCacheMipAndNorm[slot] = vec2(maxMip, normalization);
+                }
+            }
+        }
+    }
+    barrier();
+}
+
+bool XR_ADV_TrySampleCachedProbe(uint slot, vec3 worldPosition, vec3 N, vec3 V,
+    float roughness, bool sourceFilter, out vec3 diffuse, out vec3 specular)
+{
+    diffuse = vec3(0.0);
+    specular = vec3(0.0);
+    uint flags = s_probeCacheFlags[slot];
+    vec3 R = reflect(-V, N);
+    if ((flags & XR_ADV_PROBE_PARALLAX) != 0u)
+        R = XR_ADV_ParallaxCorrectedDirection(XR_ADV_LoadProbe(s_probeCacheIndices[slot]), worldPosition, R);
+    vec2 mipAndNorm = s_probeCacheMipAndNorm[slot];
+    float r = clamp(roughness, 0.0, 1.0);
+    float mip;
+    if ((flags & XR_ADV_PROBE_UNITY_MIP_FILTER) != 0u)
+        mip = min(6.0 * (sourceFilter ? r : r * (1.7 - 0.7 * r)), mipAndNorm.x);
+    else
+    {
+        if (sourceFilter)
+            r = 2.0 * r / (1.7 + sqrt(max(2.89 - 2.8 * r, 0.0)));
+        mip = r * mipAndNorm.x;
+    }
+    diffuse = XR_ADV_SampleTexture2D(s_probeCacheIrradiance[slot], XR_ADV_OctahedralUv(N)).rgb * mipAndNorm.y;
+    specular = XR_ADV_SampleTexture2DLod(s_probeCachePrefilter[slot], XR_ADV_OctahedralUv(R), mip).rgb * mipAndNorm.y;
+    return !any(isnan(diffuse)) && !any(isinf(diffuse)) &&
+        !any(isnan(specular)) && !any(isinf(specular));
+}
+#endif
+
 #endif

@@ -167,7 +167,10 @@ bool TsrBuildCoveragePair(vec2 sourceUv, bool history, out TsrCoveragePair pair)
 bool TsrProjectCoverageSurface(TsrSurfaceSample surface, vec2 sourceUv,
     vec2 currentJitter, vec2 previousJitter, out vec2 stableHistoryUv, out float tolerance)
 {
-    vec4 clip = TSR_PREVIOUS_CLIP * vec4(
+    ivec2 extent = textureSize(DepthView, 0).xy;
+    ivec2 surfacePixel = clamp(ivec2(surface.uv * vec2(extent)), ivec2(0), extent - 1);
+    mat4 previousClipMatrix = TsrPreviousClipForPixel(surfacePixel);
+    vec4 clip = previousClipMatrix * vec4(
         XRENGINE_FramebufferTextureUVToClipXY(surface.uv), TsrClipDepth(surface.depth), 1.0);
     stableHistoryUv = vec2(0.0);
     tolerance = 0.0;
@@ -178,8 +181,7 @@ bool TsrProjectCoverageSurface(TsrSurfaceSample surface, vec2 sourceUv,
     float sourceDepth = surface.depth;
     if (!background)
     {
-        ivec2 extent = textureSize(DepthView, 0).xy;
-        ivec2 pixel = ivec2(surface.uv * vec2(extent));
+        ivec2 pixel = surfacePixel;
         vec2 offset = (sourceUv - surface.uv) * vec2(extent);
         sourceDepth += offset.x * TsrDepthGradient(pixel, ivec2(1, 0), surface.depth)
             + offset.y * TsrDepthGradient(pixel, ivec2(0, 1), surface.depth);
@@ -193,7 +195,7 @@ bool TsrProjectCoverageSurface(TsrSurfaceSample surface, vec2 sourceUv,
     }
     if (sourceDepth < 0.0 || sourceDepth > 1.0)
         return false;
-    vec4 ray = TSR_PREVIOUS_CLIP * vec4(
+    vec4 ray = previousClipMatrix * vec4(
         XRENGINE_FramebufferTextureUVToClipXY(sourceUv), TsrClipDepth(sourceDepth), 1.0);
     if (ray.w <= 1e-6 || any(isnan(ray)) || any(isinf(ray)))
         return false;
@@ -201,7 +203,7 @@ bool TsrProjectCoverageSurface(TsrSurfaceSample surface, vec2 sourceUv,
     vec2 motionUv = sourceUv - currentJitter
         - TsrFramebufferUvDisplacement(surface.velocity * 0.5, FramebufferTextureYDirection);
     return TsrIsValidUv(stableHistoryUv)
-        && all(lessThanEqual(abs(stableHistoryUv - motionUv) * vec2(textureSize(DepthView, 0).xy), vec2(0.5)));
+        && all(lessThanEqual(abs(stableHistoryUv - motionUv) * vec2(extent), vec2(0.5)));
 }
 
 bool TsrCoverageCameraStable(vec2 currentJitter, vec2 previousJitter)
@@ -234,7 +236,8 @@ bool TsrBuildProjectedCoverageWitnesses(TsrCoveragePair pair, vec2 sourceUv,
         float viewDepth = -1.0;
         if (!TsrIsFarDepth(depth))
         {
-            vec4 previous = TSR_PREVIOUS_CLIP * vec4(
+            mat4 previousClipMatrix = TsrPreviousClipForPixel(pixel);
+            vec4 previous = previousClipMatrix * vec4(
                 XRENGINE_FramebufferTextureUVToClipXY(uv), TsrClipDepth(depth), 1.0);
             if (previous.w <= 1e-6 || any(isnan(previous)) || any(isinf(previous)))
                 return false;
@@ -244,7 +247,7 @@ bool TsrBuildProjectedCoverageWitnesses(TsrCoveragePair pair, vec2 sourceUv,
                 - TsrFramebufferUvDisplacement(TsrLoadVelocity(pixel) * 0.5, FramebufferTextureYDirection);
             if (any(greaterThan(abs(projectedUv - motionUv) * vec2(extent), vec2(0.5))))
                 return false;
-            viewDepth = abs(TsrPreviousViewPosition(ndc.xy, ndc.z).z);
+            viewDepth = TsrPreviousViewDepth(ndc.xy, ndc.z);
             if (isnan(viewDepth) || isinf(viewDepth))
                 return false;
         }
@@ -273,7 +276,7 @@ bool TsrValidatePreviousCoverageWitnesses(TsrCoveragePair previousPair, vec2 sou
         vec2 uv = (vec2(pixel) + 0.5) / vec2(extent);
         bool farDepth = TsrIsFarDepth(depth);
         float viewDepth = farDepth ? -1.0
-            : abs(TsrPreviousViewPosition(XRENGINE_FramebufferTextureUVToClipXY(uv), TsrClipDepth(depth)).z);
+            : TsrPreviousViewDepth(XRENGINE_FramebufferTextureUVToClipXY(uv), TsrClipDepth(depth));
         if (isnan(viewDepth) || isinf(viewDepth))
             return false;
         bool foreground = false;
@@ -354,6 +357,10 @@ bool TsrSampleCoverageHistory(TsrCoveragePair current, vec2 sourceUv, vec2 histo
     float meanCoverage = 0.0;
     float meanAge = 0.0;
     failureReason = 6.0;
+    ivec2 depthExtent = textureSize(DepthView, 0).xy;
+    ivec2 cachedPrevCenter = ivec2(-1);
+    bool cachedPrevValid = false;
+    float cachedValidatedCoverage = 0.0;
     for (int y = 0; y < 2; ++y)
     for (int x = 0; x < 2; ++x)
     {
@@ -368,12 +375,24 @@ bool TsrSampleCoverageHistory(TsrCoveragePair current, vec2 sourceUv, vec2 histo
         if (any(isnan(state)) || any(isinf(state)) || state.x < 1.0 || state.y < 0.0)
             continue;
         vec2 depthUv = (vec2(pixel) + 0.5) / vec2(historyExtent) + previousJitter;
-        TsrCoveragePair previous;
-        if (!TsrBuildCoveragePair(depthUv, true, previous))
-            continue;
-        if (!TsrValidatePreviousCoverageWitnesses(previous, depthUv, witnesses,
-                foregroundTolerance, backgroundTolerance, validatedCoverage))
-            continue;
+        ivec2 prevCenter = ivec2(depthUv * vec2(depthExtent));
+        if (prevCenter == cachedPrevCenter)
+        {
+            if (!cachedPrevValid)
+                continue;
+            validatedCoverage = cachedValidatedCoverage;
+        }
+        else
+        {
+            cachedPrevCenter = prevCenter;
+            TsrCoveragePair previous;
+            cachedPrevValid = TsrBuildCoveragePair(depthUv, true, previous)
+                && TsrValidatePreviousCoverageWitnesses(previous, depthUv, witnesses,
+                    foregroundTolerance, backgroundTolerance, validatedCoverage);
+            cachedValidatedCoverage = validatedCoverage;
+            if (!cachedPrevValid)
+                continue;
+        }
         color += TsrLoadHistoryColor(pixel).rgb * weight;
         meanCoverage += clamp(state.y, 0.0, 1.0) * weight;
         meanAge += clamp(state.x, 1.0, 32.0) * weight;

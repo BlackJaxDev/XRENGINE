@@ -20,6 +20,7 @@ public sealed partial class AdvancedGpuScenePublisher
         _orderedRegistrationIdentityCount = 0;
         _orderedRegistrationIdentitiesValid = false;
         ClearSourceGroupReferences();
+        ClearPortalSurfaceRegistry();
 
         if (_publishedLightCount == 0 && _publishedProbeCount == 0 && _publishedDecalCount == 0 &&
             !_publishedAmbientHandle.IsValid)

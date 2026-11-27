@@ -6,6 +6,17 @@ uniform mat4 TsrPreviousInverseProjection;
 uniform bool TsrDepthReprojectionReady;
 uniform bool TsrClipDepthZeroToOne;
 uniform bool TsrReversedDepth;
+uniform int TsrPortalViewBase;
+uniform int TsrPortalReprojectionCount;
+uniform uint TsrPortalReprojectionValidMask;
+uniform mat4 TsrPortalCurrentToPreviousClip0;
+uniform mat4 TsrPortalCurrentToPreviousClip1;
+uniform mat4 TsrPortalCurrentToPreviousClip2;
+uniform mat4 TsrPortalCurrentToPreviousClip3;
+uniform mat4 TsrPortalCurrentToPreviousClip4;
+uniform mat4 TsrPortalCurrentToPreviousClip5;
+uniform mat4 TsrPortalCurrentToPreviousClip6;
+uniform mat4 TsrPortalCurrentToPreviousClip7;
 #ifdef XR_TSR_STEREO
 uniform mat4 TsrCurrentToPreviousClipRight;
 uniform mat4 TsrPreviousInverseProjectionRight;
@@ -21,6 +32,31 @@ uniform bool TsrReversedDepthRight;
 #define TSR_ZERO_TO_ONE TsrClipDepthZeroToOne
 #define TSR_REVERSED_DEPTH TsrReversedDepth
 #endif
+
+// Returns the reflected portal reprojection matrix for pixels owned by an
+// in-place portal sub-view whose depth buffer holds reflected geometry depth.
+// Primary pixels and scenes with no active portals return the primary matrix.
+mat4 TsrPreviousClipForPixel(ivec2 pixel)
+{
+    if (TsrPortalReprojectionCount > 0)
+    {
+        uint viewIndex = TsrLoadVisibilityViewIndex(pixel);
+        int slot = int(viewIndex) - TsrPortalViewBase;
+        if (slot >= 0 && slot < TsrPortalReprojectionCount
+            && (TsrPortalReprojectionValidMask & (1u << uint(slot))) != 0u)
+        {
+            if (slot == 0) return TsrPortalCurrentToPreviousClip0;
+            if (slot == 1) return TsrPortalCurrentToPreviousClip1;
+            if (slot == 2) return TsrPortalCurrentToPreviousClip2;
+            if (slot == 3) return TsrPortalCurrentToPreviousClip3;
+            if (slot == 4) return TsrPortalCurrentToPreviousClip4;
+            if (slot == 5) return TsrPortalCurrentToPreviousClip5;
+            if (slot == 6) return TsrPortalCurrentToPreviousClip6;
+            return TsrPortalCurrentToPreviousClip7;
+        }
+    }
+    return TSR_PREVIOUS_CLIP;
+}
 
 struct TsrSurfaceSample
 {
@@ -76,6 +112,14 @@ vec3 TsrPreviousViewPosition(vec2 clipXY, float clipZ)
     return position.xyz / position.w;
 }
 
+// Evaluates only the view-space depth magnitude from inverse projection without
+// computing unused X and Y view coordinates.
+float TsrPreviousViewDepth(vec2 clipXY, float clipZ)
+{
+    vec4 position = TSR_PREVIOUS_INVERSE_PROJECTION * vec4(clipXY, clipZ, 1.0);
+    return abs(position.z / position.w);
+}
+
 float TsrHistorySurfaceDepth(inout vec2 sourceUv)
 {
     ivec2 extent = textureSize(HistoryDepth, 0).xy;
@@ -127,17 +171,17 @@ float TsrDepthGradient(ivec2 pixel, ivec2 axis, float center)
     return abs(minusDelta) < abs(plusDelta) ? minusDelta : plusDelta;
 }
 
-vec3 TsrPreviousDepthPlane(TsrSurfaceSample surface, vec3 previousNdc)
+vec3 TsrPreviousDepthPlane(TsrSurfaceSample surface, vec3 previousNdc, mat4 previousClipMatrix)
 {
     ivec2 extent = textureSize(DepthView, 0).xy;
     ivec2 pixel = clamp(ivec2(surface.uv * vec2(extent)), ivec2(0), extent - 1);
     vec2 texel = 1.0 / vec2(extent);
     float dx = TsrDepthGradient(pixel, ivec2(1, 0), surface.depth);
     float dy = TsrDepthGradient(pixel, ivec2(0, 1), surface.depth);
-    vec4 px = TSR_PREVIOUS_CLIP * vec4(
+    vec4 px = previousClipMatrix * vec4(
         XRENGINE_FramebufferTextureUVToClipXY(surface.uv + vec2(texel.x, 0.0)),
         TsrClipDepth(surface.depth + dx), 1.0);
-    vec4 py = TSR_PREVIOUS_CLIP * vec4(
+    vec4 py = previousClipMatrix * vec4(
         XRENGINE_FramebufferTextureUVToClipXY(surface.uv + vec2(0.0, texel.y)),
         TsrClipDepth(surface.depth + dy), 1.0);
     vec3 normal = cross(px.xyz / px.w - previousNdc, py.xyz / py.w - previousNdc);
@@ -156,16 +200,24 @@ bool TsrDepthSampleMatchesPlane(vec2 sampleUv, float depth, bool background,
     if (isnan(expectedClipDepth) || isinf(expectedClipDepth)
         || expectedClipDepth < (TSR_ZERO_TO_ONE ? 0.0 : -1.0) || expectedClipDepth > 1.0)
         return false;
-    vec3 expectedPosition = TsrPreviousViewPosition(sampleClipXY, expectedClipDepth);
-    vec3 observedPosition = TsrPreviousViewPosition(sampleClipXY, TsrClipDepth(depth));
-    return !any(isnan(expectedPosition)) && !any(isinf(expectedPosition))
-        && !any(isnan(observedPosition)) && !any(isinf(observedPosition))
-        && abs(abs(observedPosition.z) - abs(expectedPosition.z)) <= depthTolerance;
+    float expectedViewDepth = TsrPreviousViewDepth(sampleClipXY, expectedClipDepth);
+    float observedViewDepth = TsrPreviousViewDepth(sampleClipXY, TsrClipDepth(depth));
+    return !isnan(expectedViewDepth) && !isinf(expectedViewDepth)
+        && !isnan(observedViewDepth) && !isinf(observedViewDepth)
+        && abs(observedViewDepth - expectedViewDepth) <= depthTolerance;
 }
 
 bool TsrHistoryFootprintMatchesPlane(vec2 sourceUv, bool background,
     vec3 predictedNdc, vec3 depthPlane, float depthTolerance, bool stationary)
 {
+    ivec2 extent = textureSize(HistoryDepth, 0).xy;
+    ivec2 center = clamp(ivec2(floor(sourceUv * vec2(extent))), ivec2(0), extent - 1);
+    vec2 centerUv = (vec2(center) + 0.5) / vec2(extent);
+    float centerDepth = TsrLoadHistoryDepth(center);
+    if (TsrDepthSampleMatchesPlane(centerUv, centerDepth, background,
+            predictedNdc, depthPlane, depthTolerance))
+        return true;
+
     vec2 nearestUv = sourceUv;
     float nearestDepth = TsrHistorySurfaceDepth(nearestUv);
     if (TsrDepthSampleMatchesPlane(nearestUv, nearestDepth, background,
@@ -178,11 +230,11 @@ bool TsrHistoryFootprintMatchesPlane(vec2 sourceUv, bool background,
     if (!stationary)
         return false;
 
-    ivec2 extent = textureSize(HistoryDepth, 0).xy;
-    ivec2 center = clamp(ivec2(floor(sourceUv * vec2(extent))), ivec2(0), extent - 1);
     for (int y = -1; y <= 1; ++y)
     for (int x = -1; x <= 1; ++x)
     {
+        if (x == 0 && y == 0)
+            continue;
         ivec2 pixel = clamp(center + ivec2(x, y), ivec2(0), extent - 1);
         vec2 tapUv = (vec2(pixel) + 0.5) / vec2(extent);
         float tapDepth = TsrLoadHistoryDepth(pixel);
@@ -197,9 +249,13 @@ bool TsrLocalVelocityStationary(vec2 sourceUv, vec2 extent)
 {
     ivec2 velocityExtent = textureSize(Velocity, 0).xy;
     ivec2 center = clamp(ivec2(floor(sourceUv * vec2(velocityExtent))), ivec2(0), velocityExtent - 1);
+    if (any(greaterThan(abs(TsrLoadVelocity(center) * 0.5) * extent, vec2(0.1))))
+        return false;
     for (int y = -1; y <= 1; ++y)
     for (int x = -1; x <= 1; ++x)
     {
+        if (x == 0 && y == 0)
+            continue;
         ivec2 pixel = clamp(center + ivec2(x, y), ivec2(0), velocityExtent - 1);
         if (any(greaterThan(abs(TsrLoadVelocity(pixel) * 0.5) * extent, vec2(0.1))))
             return false;
@@ -210,12 +266,25 @@ bool TsrLocalVelocityStationary(vec2 sourceUv, vec2 extent)
 bool TsrHistoryMotionFootprintMatches(vec2 sourceUv, float predictedViewDepth,
     float motionDepthTolerance)
 {
+    ivec2 extent = textureSize(HistoryDepth, 0).xy;
+    ivec2 center = clamp(ivec2(floor(sourceUv * vec2(extent))), ivec2(0), extent - 1);
+    float centerDepth = TsrLoadHistoryDepth(center);
+    if (!TsrIsFarDepth(centerDepth))
+    {
+        vec2 centerUv = (vec2(center) + 0.5) / vec2(extent);
+        float centerViewDepth = TsrPreviousViewDepth(
+            XRENGINE_FramebufferTextureUVToClipXY(centerUv), TsrClipDepth(centerDepth));
+        if (!isnan(centerViewDepth) && !isinf(centerViewDepth)
+            && abs(centerViewDepth - predictedViewDepth) <= motionDepthTolerance)
+            return true;
+    }
+
     vec2 nearestUv = sourceUv;
     float tapDepth = TsrHistorySurfaceDepth(nearestUv);
     if (!TsrIsFarDepth(tapDepth))
     {
-        float tapViewDepth = abs(TsrPreviousViewPosition(
-            XRENGINE_FramebufferTextureUVToClipXY(nearestUv), TsrClipDepth(tapDepth)).z);
+        float tapViewDepth = TsrPreviousViewDepth(
+            XRENGINE_FramebufferTextureUVToClipXY(nearestUv), TsrClipDepth(tapDepth));
         if (!isnan(tapViewDepth) && !isinf(tapViewDepth)
             && abs(tapViewDepth - predictedViewDepth) <= motionDepthTolerance)
             return true;
@@ -224,18 +293,18 @@ bool TsrHistoryMotionFootprintMatches(vec2 sourceUv, float predictedViewDepth,
     // Projection jitter can shift a moving silhouette by up to one source texel between frames.
     // Check the 3x3 previous depth neighborhood within the motion depth tolerance so animated
     // avatar silhouettes keep temporal history instead of falling back to raw jittered pixels.
-    ivec2 extent = textureSize(HistoryDepth, 0).xy;
-    ivec2 center = clamp(ivec2(floor(sourceUv * vec2(extent))), ivec2(0), extent - 1);
     for (int y = -1; y <= 1; ++y)
     for (int x = -1; x <= 1; ++x)
     {
+        if (x == 0 && y == 0)
+            continue;
         ivec2 pixel = clamp(center + ivec2(x, y), ivec2(0), extent - 1);
         float neighborDepth = TsrLoadHistoryDepth(pixel);
         if (TsrIsFarDepth(neighborDepth))
             continue;
         vec2 tapUv = (vec2(pixel) + 0.5) / vec2(extent);
-        float neighborViewDepth = abs(TsrPreviousViewPosition(
-            XRENGINE_FramebufferTextureUVToClipXY(tapUv), TsrClipDepth(neighborDepth)).z);
+        float neighborViewDepth = TsrPreviousViewDepth(
+            XRENGINE_FramebufferTextureUVToClipXY(tapUv), TsrClipDepth(neighborDepth));
         if (!isnan(neighborViewDepth) && !isinf(neighborViewDepth)
             && abs(neighborViewDepth - predictedViewDepth) <= motionDepthTolerance)
             return true;
@@ -287,7 +356,10 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
     vec2 historyDepthExtent = vec2(textureSize(HistoryDepth, 0).xy);
     if (!background)
     {
-        vec4 previousClip = TSR_PREVIOUS_CLIP * vec4(
+        ivec2 depthExtent = textureSize(DepthView, 0).xy;
+        ivec2 surfacePixel = clamp(ivec2(surface.uv * vec2(depthExtent)), ivec2(0), depthExtent - 1);
+        mat4 previousClipMatrix = TsrPreviousClipForPixel(surfacePixel);
+        vec4 previousClip = previousClipMatrix * vec4(
             XRENGINE_FramebufferTextureUVToClipXY(surface.uv), TsrClipDepth(surface.depth), 1.0);
         if (previousClip.w <= 1e-6 || any(isnan(previousClip)) || any(isinf(previousClip)))
         {
@@ -296,7 +368,7 @@ bool TsrSampleSurfaceHistory(TsrSurfaceSample surface, vec2 historyUv,
         }
         vec3 previousNdc = previousClip.xyz / previousClip.w;
         predictedNdc = previousNdc;
-        depthPlane = TsrPreviousDepthPlane(surface, previousNdc);
+        depthPlane = TsrPreviousDepthPlane(surface, previousNdc, previousClipMatrix);
         float previousDepth = TSR_ZERO_TO_ONE ? previousNdc.z : previousNdc.z * 0.5 + 0.5;
         vec2 projectedUv = XRENGINE_ClipXYToFramebufferTextureUV(previousNdc.xy);
         vec2 staticUv = surface.uv - currentJitter + previousJitter;

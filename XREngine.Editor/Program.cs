@@ -315,6 +315,7 @@ internal partial class Program
             // would otherwise begin every world immediately and suppress the editor UI.
             Engine.Run(startupSettings, gameState, beginPlayingAllWorlds: false);
             WriteBootstrapTrace("Engine.Run returned normally.");
+            DumpAutoProfileDiagnosticsIfRequested();
         }
         catch (Exception ex)
         {
@@ -794,6 +795,34 @@ internal partial class Program
         Engine.Profiler.EnableFrameLogging = enableCodeProfiler;
         RuntimeEngine.Rendering.Stats.EnableTracking = true;
         WriteBootstrapTrace("Enabled profiler capture session overrides.");
+    }
+
+    private static void DumpAutoProfileDiagnosticsIfRequested()
+    {
+        if (!IsEnabledEnvironmentFlag(XREngineEnvironmentVariables.ProfileAutoDump))
+            return;
+
+        if (IsEnabledEnvironmentFlag(XREngineEnvironmentVariables.GpuTimestampDense))
+        {
+            ProfilerDiagnosticDumps.DumpResult gpuDump =
+                ProfilerDiagnosticDumps.DumpAllGpuRenderPipelineTimingHistories();
+            WriteBootstrapTrace($"Auto GPU timing dump: success={gpuDump.Success}, message={gpuDump.Message}");
+        }
+
+        if (RuntimeEngine.Rendering.Stats.Rvc.ShadeletCacheDispatches > 0)
+        {
+            RvcShadeletCacheCounters c = RuntimeEngine.Rendering.Stats.Rvc.ShadeletCache;
+            string summary =
+                $"dispatches={RuntimeEngine.Rendering.Stats.Rvc.ShadeletCacheDispatches} " +
+                $"decoded={RuntimeEngine.Rendering.Stats.Rvc.ShadeletCacheDecoded} " +
+                $"totalAllocated={c.TotalAllocated} totalStandard={c.TotalStandard} totalUber={c.TotalUber} " +
+                $"coveredPixels={c.TotalCoveredPixels} intraReused={c.IntraViewReusedPixels} " +
+                $"stereoReused={c.StereoReusedPixels} directFallback={c.DirectFallbackPixels} " +
+                $"overflow={c.OverflowCount} stereoCandidates={c.StereoCandidates} stereoRejected={c.StereoRejected} " +
+                $"intraReuseRatio={c.IntraViewReuseRatio:F4} stereoReuseRatio={c.StereoReuseRatio:F4}";
+            EngineDebug.WriteAuxiliaryLog("rvc-shadelet-counters.log", summary + Environment.NewLine);
+            WriteBootstrapTrace($"RVC shadelet counters: {summary}");
+        }
     }
 
     private static bool? ResolveOptionalEnvironmentFlag(string name)

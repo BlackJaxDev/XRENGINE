@@ -79,12 +79,13 @@ internal sealed class VulkanAdvancedSceneResourceSlot
         in BackendReadyCanonicalFrameRecord frame,
         ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
         ReadOnlySpan<AdvancedGlobalPassPublicationCoverage> coverage,
-        int diagnosticCount)
+        int diagnosticCount,
+        ReadOnlySpan<AdvancedViewRecord> portalViews = default)
     {
         for (int index = 0; index < EntryCount; ++index)
             if (ReferenceEquals(Entries[index].Database, database) &&
                 Entries[index].Publication == publication &&
-                Entries[index].Globals!.Matches(views, in frame, passes, coverage, diagnosticCount))
+                Entries[index].Globals!.Matches(views, in frame, passes, coverage, diagnosticCount, portalViews))
             {
                 return index;
             }

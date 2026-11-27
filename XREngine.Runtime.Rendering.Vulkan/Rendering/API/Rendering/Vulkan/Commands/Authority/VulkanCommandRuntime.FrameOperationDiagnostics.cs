@@ -90,10 +90,7 @@ internal sealed partial class VulkanCommandRuntime
 
         XRMeshRenderer meshRenderer = draw.Draw.Renderer.MeshRenderer;
         XRMaterial? material = draw.Draw.MaterialOverride ?? meshRenderer.Material;
-        return
-            string.Equals(material?.Name, "UIBatchTextMaterial", StringComparison.Ordinal) ||
-            string.Equals(meshRenderer.Name, "UIBatchTextRenderer", StringComparison.Ordinal) ||
-            string.Equals(meshRenderer.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal);
+        return VulkanFrameLoop.IsNamedDynamicUiOverlayOperation(meshRenderer, material);
     }
 
     private static string BuildSwapchainWriterDetail(FrameOp operation)

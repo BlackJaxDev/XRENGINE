@@ -43,7 +43,7 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent
             writerAuthored = _writerAuthored,
             writerSubmission = _writerFence?.SubmissionStatus.ToString(),
             writerPackageGeneration = _writerPackageGeneration,
-            outputId = _outputIdentity,
+            outputId = EffectiveOutputIdentity,
             viewportIdentity = _viewport?.FrameOutputIdentity,
             pipelineIdentity = _viewport?.RenderPipelineInstance.InstanceId,
             profile = (_viewport?.RenderPipeline as AdvancedRenderPipeline)?.OffscreenProfile,

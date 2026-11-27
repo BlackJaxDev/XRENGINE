@@ -446,18 +446,16 @@ public static partial class EditorUnitTests
             var rigidBodyTransform = cameraNode.GetTransformAs<RigidBodyTransform>(true)!;
             rigidBodyTransform.SetPositionAndRotation(initialPosition, initialRotation);
 
-            IPhysicsGeometry.Sphere s = new(0.2f);
-            PhysxMaterial mat = new(0.5f, 0.5f, 0.5f);
-            PhysxShape shape = new(s, mat, PxShapeFlags.TriggerShape | PxShapeFlags.Visualization, true);
             var cameraPickup = cameraNode.AddComponent<DynamicRigidBodyComponent>()!;
-            PhysxDynamicRigidBody body = new(shape, 1.0f, initialPosition, initialRotation);
-            cameraPickup.RigidBody = body;
-
-            body.Mass = 1.0f;
-            body.Flags = 0;
-            body.GravityEnabled = false;
-            body.SimulationEnabled = true;
-            body.DebugVisualize = true;
+            cameraPickup.MaterialDefinition = new PhysicsMaterialDefinition
+            {
+                StaticFriction = 0.5f,
+                DynamicFriction = 0.5f,
+                Restitution = 0.5f,
+            };
+            cameraPickup.Geometry = new IPhysicsGeometry.Sphere(0.2f);
+            cameraPickup.GravityEnabled = false;
+            cameraPickup.Density = 1.0f;
 
             return cameraPickup;
         }
@@ -566,9 +564,12 @@ public static partial class EditorUnitTests
 
             if (camComp is not null && setUI)
             {
-                UICanvasComponent canvas = UserInterface.CreateEditorUI(rootNode, camComp);
-                canvas.IsActive = false;
-                characterComp.PauseToggled += () => UserInterface.ShowMenu(canvas, true, rootNode.Transform);
+                UICanvasComponent canvas = UserInterface.CreateEditorUI(rootNode, camComp, characterComp);
+                if (!Toggles.StartInPlayModeWithoutTransitions)
+                {
+                    canvas.IsActive = false;
+                    characterComp.PauseToggled += () => UserInterface.ShowMenu(canvas, true, rootNode.Transform);
+                }
             }
 
             characterComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
@@ -579,6 +580,56 @@ public static partial class EditorUnitTests
                 MotionBricksLocomotionRuntimeServices.Prewarm();
 
             return footNode;
+        }
+
+        /// <summary>
+        /// Creates a desktop character pawn at the player's current horizontal position, mounts an
+        /// existing avatar from a retired direct-launch VR rig onto its foot node, and wires desktop
+        /// height scaling and MotionBricks locomotion so untoggling OpenXR returns to desktop play.
+        /// </summary>
+        internal static PawnComponent? TransitionAvatarFromVrToDesktopMotionBricks(
+            SceneNode worldRoot,
+            SceneNode avatarRoot,
+            HumanoidComponent humanoid,
+            Vector3 vrFootWorldPosition,
+            Quaternion? vrWorldRotation = null)
+        {
+            SceneNode footNode = CreateDesktopCharacterPawn(worldRoot, setUI: false);
+            SceneNode? characterNode = footNode.Parent;
+            if (characterNode is null)
+                return null;
+
+            CharacterMovement3DComponent? movementComp = characterNode.GetComponent<CharacterMovement3DComponent>();
+            if (movementComp is not null)
+            {
+                float spawnY = float.IsFinite(vrFootWorldPosition.Y)
+                    ? vrFootWorldPosition.Y + movementComp.HalfHeight + 0.01f
+                    : Toggles.CharacterControllerCapsuleTranslationY ?? (movementComp.HalfHeight + 0.01f);
+                Vector3 targetPos = new(
+                    float.IsFinite(vrFootWorldPosition.X) ? vrFootWorldPosition.X : 0.0f,
+                    spawnY,
+                    float.IsFinite(vrFootWorldPosition.Z) ? vrFootWorldPosition.Z : 0.0f);
+                movementComp.Teleport(targetPos, clearMotion: true);
+            }
+
+            avatarRoot.Transform.SetParent(footNode.Transform, false, EParentAssignmentMode.Immediate);
+            avatarRoot.Transform.DeriveLocalMatrix(Matrix4x4.Identity);
+            if (vrWorldRotation is { } vrRot && avatarRoot.Transform is Transform avatarTfm)
+            {
+                Vector3 fwd = Vector3.Transform(Vector3.UnitZ, Quaternion.Normalize(vrRot));
+                fwd.Y = 0.0f;
+                if (fwd.LengthSquared() > 1.0e-8f)
+                    avatarTfm.Rotation = Quaternion.CreateFromAxisAngle(Vector3.UnitY, MathF.Atan2(fwd.X, fwd.Z));
+            }
+
+            HeightScaleComponent desktopHeightScale = avatarRoot.GetComponent<HeightScaleComponent>()
+                ?? avatarRoot.AddComponent<HeightScaleComponent>()!;
+            Models.TryScaleAvatarToFitDesktopCapsule(avatarRoot, humanoid, desktopHeightScale, footNode);
+
+            if (Toggles.MotionBricksLocomotion)
+                ConfigureDesktopMotionBricksLocomotion(avatarRoot, characterNode, humanoid);
+
+            return characterNode.GetComponent<CharacterPawnComponent>();
         }
 
         #endregion
@@ -895,13 +946,28 @@ public static partial class EditorUnitTests
             }
         }
 
+        private static AnimStateMachineComponent? FindOrAddBodyLocomotionAnimator(SceneNode avatarRootNode)
+        {
+            AnimStateMachineComponent? oscBoundAnimator =
+                avatarRootNode.GetComponent<XREngine.Data.Components.AnimStateMachineOscReceiverComponent>()?.AnimStateMachine;
+            foreach (AnimStateMachineComponent candidate in avatarRootNode.GetComponents<AnimStateMachineComponent>())
+            {
+                if (ReferenceEquals(candidate, oscBoundAnimator))
+                    continue;
+                if (string.Equals(candidate.Name, "Face Tracking Animator", StringComparison.Ordinal))
+                    continue;
+                return candidate;
+            }
+
+            return avatarRootNode.AddComponent<AnimStateMachineComponent>();
+        }
+
         private static void ConfigureDesktopMotionBricksLocomotion(
             SceneNode avatarRootNode,
             SceneNode rigidBodyNode,
             HumanoidComponent humanComp)
         {
-            AnimStateMachineComponent? animator = avatarRootNode.GetComponent<AnimStateMachineComponent>()
-                ?? avatarRootNode.AddComponent<AnimStateMachineComponent>();
+            AnimStateMachineComponent? animator = FindOrAddBodyLocomotionAnimator(avatarRootNode);
             if (animator is null)
             {
                 Debug.LogWarning($"[UnitTestingWorld] Could not attach AnimStateMachineComponent for MotionBricks on '{avatarRootNode.Name}'.");
