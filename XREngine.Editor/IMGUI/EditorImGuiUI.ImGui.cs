@@ -2682,6 +2682,28 @@ public static partial class EditorImGuiUI
             if (settingsRoot is null)
                 return;
 
+            PrepareSettingsForEditing(settingsRoot, title);
+
+            _showInspector = true;
+            SetInspectorStandaloneTarget(settingsRoot, title);
+
+            if (settingsRoot is XRAsset inspectedAsset)
+            {
+                _inspectorAssetContext = inspectedAsset.SourceAsset;
+            }
+            else
+            {
+                _inspectorAssetContext = null;
+            }
+        }
+
+        /// <summary>
+        /// Gives a settings asset its name and project file path, and adds it to dirty tracking, so an edit in an
+        /// inspector shows in the Save menu and saves to the project file. Both the ImGui and the native Settings
+        /// menus call this before they show the settings object.
+        /// </summary>
+        internal static void PrepareSettingsForEditing(object settingsRoot, string title)
+        {
             if (settingsRoot is XRAsset asset && Engine.Assets is not null)
             {
                 // Ensure this settings object participates in dirty tracking / Save dropdown.
@@ -2700,18 +2722,6 @@ public static partial class EditorImGuiUI
                 }
 
                 TryEnsureSettingsAssetTracked(asset, title);
-            }
-
-            _showInspector = true;
-            SetInspectorStandaloneTarget(settingsRoot, title);
-
-            if (settingsRoot is XRAsset inspectedAsset)
-            {
-                _inspectorAssetContext = inspectedAsset.SourceAsset;
-            }
-            else
-            {
-                _inspectorAssetContext = null;
             }
         }
 

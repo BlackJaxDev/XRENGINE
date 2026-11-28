@@ -46,6 +46,9 @@ public partial class UIEditorComponent : UIComponent
         set => SetField(ref _rootMenuOptions, value);
     }
 
+    /// <summary>Height of the header row under the menu bar.</summary>
+    private const float HeaderRowHeight = 34.0f;
+
     private float _menuHeight = 34.0f;
     public float MenuHeight
     {
@@ -195,10 +198,20 @@ public partial class UIEditorComponent : UIComponent
             if (StopTerminatedBuild(splitChild)) return;
             splitTfm.VerticalSplit = true;
             splitTfm.FirstFixedSize = true;
-            splitTfm.FixedSize = MenuHeight;
+            splitTfm.FixedSize = MenuHeight + HeaderRowHeight;
             splitTfm.SplitterSize = 0.0f;
 
-            splitChild.NewChild(out UIToolbarComponent toolbarComp, "Menu");
+            // The top holds the main menu bar and, under it, the header row with the transform and play controls,
+            // like the ImGui menu bar and toolbar.
+            SceneNode top = splitChild.NewChildWithTransform(out UIDualSplitTransform topSplit, "EditorTop");
+            if (StopTerminatedBuild(splitChild)) return;
+            topSplit.VerticalSplit = true;
+            topSplit.FirstFixedSize = true;
+            topSplit.FixedSize = MenuHeight;
+            topSplit.SplitterSize = 0.0f;
+            top.NewChild(out UIToolbarComponent toolbarComp, "Menu");
+            if (StopTerminatedBuild(splitChild)) return;
+            top.NewChild(out EditorHeaderToolbarComponent _, "Header");
             if (StopTerminatedBuild(splitChild)) return;
             toolbarComp.RootMenuOptions = RootMenuOptions;
             if (StopTerminatedBuild(splitChild)) return;

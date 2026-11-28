@@ -14,13 +14,6 @@ public class SceneViewPanel : EditorPanel
     private UIViewportComponent? _sceneViewport;
     private UIListTransform? _toolbar;
     private NativeSceneViewportInput? _sceneInput;
-    private UIButtonComponent? _translateButton;
-    private UIButtonComponent? _rotateButton;
-    private UIButtonComponent? _scaleButton;
-    private UIButtonComponent? _worldButton;
-    private UIButtonComponent? _localButton;
-    private UIButtonComponent? _parentButton;
-    private UIButtonComponent? _screenButton;
 
     private CameraComponent? _cameraComponent;
     private bool _bindingCamera;
@@ -201,13 +194,6 @@ public class SceneViewPanel : EditorPanel
     {
         if (_cameraTerminal || _cameraBindingStopped) return;
         BindCamera();
-        if (_translateButton is not null) _translateButton.IsSelected = TransformTool3D.TransformMode == ETransformMode.Translate;
-        if (_rotateButton is not null) _rotateButton.IsSelected = TransformTool3D.TransformMode == ETransformMode.Rotate;
-        if (_scaleButton is not null) _scaleButton.IsSelected = TransformTool3D.TransformMode == ETransformMode.Scale;
-        if (_worldButton is not null) _worldButton.IsSelected = TransformTool3D.TransformSpace == ETransformSpace.World;
-        if (_localButton is not null) _localButton.IsSelected = TransformTool3D.TransformSpace == ETransformSpace.Local;
-        if (_parentButton is not null) _parentButton.IsSelected = TransformTool3D.TransformSpace == ETransformSpace.Parent;
-        if (_screenButton is not null) _screenButton.IsSelected = TransformTool3D.TransformSpace == ETransformSpace.Screen;
     }
 
     private void BindCamera()
@@ -290,7 +276,7 @@ public class SceneViewPanel : EditorPanel
         toolbar.MaxAnchor = new Vector2(0, 1);
         toolbar.NormalizedPivot = new Vector2(0, 1);
         toolbar.Width = 236;
-        toolbar.Height = 96;
+        toolbar.Height = 28;
         toolbar.DisplayHorizontal = false;
         toolbar.ItemAlignment = EListAlignment.TopOrLeft;
         toolbar.ItemSize = 28;
@@ -302,15 +288,7 @@ public class SceneViewPanel : EditorPanel
             CameraComponent = Selection.SceneNode?.GetComponent<CameraComponent>();
             BindCamera();
         }, width: 114);
-        SceneNode modeRow = CreateToolbarRow(toolbarNode, 74);
-        _translateButton = NativeUIElements.CreateButton(modeRow, "Move (W)", _ => TransformTool3D.TransformMode = ETransformMode.Translate, width: 74).Button;
-        _rotateButton = NativeUIElements.CreateButton(modeRow, "Rotate (E)", _ => TransformTool3D.TransformMode = ETransformMode.Rotate, width: 74).Button;
-        _scaleButton = NativeUIElements.CreateButton(modeRow, "Scale (R)", _ => TransformTool3D.TransformMode = ETransformMode.Scale, width: 74).Button;
-        SceneNode spaceRow = CreateToolbarRow(toolbarNode, 54);
-        _worldButton = NativeUIElements.CreateButton(spaceRow, "World", _ => TransformTool3D.TransformSpace = ETransformSpace.World, width: 54).Button;
-        _localButton = NativeUIElements.CreateButton(spaceRow, "Local", _ => TransformTool3D.TransformSpace = ETransformSpace.Local, width: 54).Button;
-        _parentButton = NativeUIElements.CreateButton(spaceRow, "Parent", _ => TransformTool3D.TransformSpace = ETransformSpace.Parent, width: 54).Button;
-        _screenButton = NativeUIElements.CreateButton(spaceRow, "Screen", _ => TransformTool3D.TransformSpace = ETransformSpace.Screen, width: 54).Button;
+        // The transform mode and space buttons are in the editor header row, like the ImGui toolbar.
         _toolbar = toolbar;
         UpdateSceneControls();
     }

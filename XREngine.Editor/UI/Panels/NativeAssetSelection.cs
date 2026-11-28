@@ -49,6 +49,18 @@ public static class NativeAssetSelection
         _ = LoadAsync(assets, fullPath, type, revision);
     }
 
+    /// <summary>
+    /// Shows an object that is not an asset file, such as a settings object from the Settings menu, in the native
+    /// inspector, the same way a selected asset shows.
+    /// </summary>
+    public static void Inspect(object target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        _revision++;
+        SelectedPath = null;
+        Publish(target);
+    }
+
     public static void Clear()
     {
         _revision++;

@@ -1848,14 +1848,14 @@ public static partial class EditorUnitTests
             var assets = Engine.Assets;
             if (assets is null)
             {
-                _saveMenu.ChildOptions.Add(new ToolbarButton("No asset manager available"));
+                _saveMenu.ChildOptions.Add(new ToolbarButton("No asset manager available") { IsEnabledProvider = static () => false });
                 return;
             }
 
             var dirtyAssets = assets.DirtyAssets.ToArray();
             if (dirtyAssets.Length == 0)
             {
-                _saveMenu.ChildOptions.Add(new ToolbarButton("No modified assets"));
+                _saveMenu.ChildOptions.Add(new ToolbarButton("No modified assets") { IsEnabledProvider = static () => false });
                 return;
             }
 
@@ -1887,36 +1887,39 @@ public static partial class EditorUnitTests
         }
 
         //Generates the root menu for the editor UI.
-        //TODO: allow scripts to add menu options with attributes
+        /// <summary>
+        /// Builds the native main menu with the same menus and items as the ImGui main menu bar: File, Edit,
+        /// Settings, View, and Tools. Items that open ImGui-only windows are left out, because the native editor
+        /// does not draw ImGui. Native panels replace the ImGui panel toggles in the View menu.
+        /// </summary>
         public static List<ToolbarItemBase> GenerateRootMenu()
         {
             EnsureUndoMenuHooks();
             EnsureSaveMenuHooks();
-            _saveMenu ??= new ToolbarButton("Save");
+            _saveMenu ??= new ToolbarButton("Save...");
             RefreshSaveMenu();
 
             List<ToolbarItemBase> buttons = [
-                new ToolbarButton("File", [Key.ControlLeft, Key.F],
-            [
-                _saveMenu,
-                new ToolbarButton("Save All", SaveAll, [Key.ControlLeft, Key.ShiftLeft, Key.S]),
-                new ToolbarButton("Open", [
-                    new ToolbarButton("Project", OpenProjectDialog),
-                ]),
-                new ToolbarButton("New Project", _ => ShowNewProjectDialog()),
-            ]),
-            CreateEditMenu(),
-            new ToolbarButton("Assets"),
-            new ToolbarButton("Tools", [Key.ControlLeft, Key.T],
-            [
-                new ToolbarButton("Take Screenshot", TakeScreenshot),
-                new ToolbarButton("Shader Editor", _ => ShaderEditorWindow.Instance.Open()),
-                new ToolbarButton("MCP Assistant", _ => McpAssistantWindow.Instance.Open()),
-            ]),
-            new ToolbarButton("View"),
-            new ToolbarButton("Window"),
-            new ToolbarButton("Help"),
-        ];
+                Menu("File",
+                    new ToolbarButton("New Project...", _ => ShowNewProjectDialog()),
+                    new ToolbarButton("Open Project...", OpenProjectDialog),
+                    new ToolbarSeparator(),
+                    new ToolbarButton("Save All", SaveAll, [Key.ControlLeft, Key.ShiftLeft, Key.S]),
+                    _saveMenu,
+                    new ToolbarSeparator(),
+                    new ToolbarButton("Build Project", _ => ProjectBuilder.RequestBuild())
+                    {
+                        IsEnabledProvider = static () => Engine.CurrentProject is not null,
+                    }),
+                CreateEditMenu(),
+                CreateSettingsMenu(),
+                CreateViewMenu(),
+                Menu("Tools",
+                    new ToolbarButton("Shader Editor", _ => ShaderEditorWindow.Instance.Open()),
+                    new ToolbarButton("Assistant", _ => McpAssistantWindow.Instance.Open()),
+                    new ToolbarSeparator(),
+                    new ToolbarButton("Take Screenshot", TakeScreenshot)),
+            ];
 
             //Add dynamically loaded menu options
             foreach (GameCSProjLoader.AssemblyData assembly in GameCSProjLoader.LoadedAssemblies.Values)
@@ -1971,6 +1974,7 @@ public static partial class EditorUnitTests
         }
 
         private static ToolbarButton? _undoHistoryMenu;
+        private static ToolbarButton? _redoHistoryMenu;
         private static bool _undoHooksInitialized;
 
         private static void EnsureUndoMenuHooks()
@@ -1983,14 +1987,116 @@ public static partial class EditorUnitTests
             RefreshUndoHistoryMenu();
         }
 
+        /// <summary>Makes a menu whose items can include separators.</summary>
+        private static ToolbarButton Menu(string text, params ToolbarItemBase[] items)
+        {
+            ToolbarButton menu = new(text);
+            foreach (ToolbarItemBase item in items)
+                menu.ChildOptions.Add(item);
+            return menu;
+        }
+
         private static ToolbarButton CreateEditMenu()
         {
-            var undoButton = new ToolbarButton("Undo", OnToolbarUndo, [Key.ControlLeft, Key.Z]);
-            var redoButton = new ToolbarButton("Redo", OnToolbarRedo, [Key.ControlLeft, Key.Y]);
+            var undoButton = new ToolbarButton("Undo", OnToolbarUndo, [Key.ControlLeft, Key.Z])
+            {
+                IsEnabledProvider = static () => Undo.CanUndo,
+            };
+            var redoButton = new ToolbarButton("Redo", OnToolbarRedo, [Key.ControlLeft, Key.Y])
+            {
+                IsEnabledProvider = static () => Undo.CanRedo,
+            };
             _undoHistoryMenu ??= new ToolbarButton("Undo History");
+            _redoHistoryMenu ??= new ToolbarButton("Redo History");
             RefreshUndoHistoryMenu();
 
-            return new ToolbarButton("Edit", undoButton, redoButton, _undoHistoryMenu);
+            return new ToolbarButton("Edit", undoButton, redoButton, _undoHistoryMenu, _redoHistoryMenu);
+        }
+
+        /// <summary>
+        /// Builds the Settings menu like the ImGui Settings menu. Each settings item shows its object in the
+        /// native inspector.
+        /// </summary>
+        private static ToolbarButton CreateSettingsMenu()
+        {
+            static void Inspect(object? settings, string title)
+            {
+                if (settings is null)
+                    return;
+                EditorImGuiUI.PrepareSettingsForEditing(settings, title);
+                NativeAssetSelection.Inspect(settings);
+            }
+
+            static ToolbarButton BlurFormat(string text, EUiBackdropBlurFormat format)
+                => new(text, _ => RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat = format)
+                {
+                    IsCheckedProvider = () => RuntimeEngine.Rendering.Settings.UiBackdropBlurFormat == format,
+                };
+
+            return Menu("Settings",
+                new ToolbarButton("Effective Settings",
+                    _ => NativeAssetSelection.Inspect(EditorImGuiUI.EffectiveSettingsInspectorObject)),
+                new ToolbarButton("UI Backdrop Blur Format",
+                    BlurFormat("Rgba8 (Lowest Bandwidth)", EUiBackdropBlurFormat.Rgba8),
+                    BlurFormat("R11fG11fB10f (Packed HDR)", EUiBackdropBlurFormat.R11fG11fB10f),
+                    BlurFormat("Rgba16f (Highest Precision)", EUiBackdropBlurFormat.Rgba16f)),
+                new ToolbarSeparator(),
+                new ToolbarButton("Engine Defaults",
+                    new ToolbarButton("Global Engine Defaults",
+                        _ => Inspect(RuntimeEngine.Rendering.GlobalDefaultSettings, "Global Engine Defaults")),
+                    new ToolbarButton("Project Engine Defaults",
+                        _ => Inspect(RuntimeEngine.Rendering.ProjectDefaultSettings ?? RuntimeEngine.Rendering.DefaultSettings,
+                            "Project Engine Defaults"))
+                    {
+                        IsEnabledProvider = static () => Engine.CurrentProject is not null,
+                    }),
+                new ToolbarButton("Game Project",
+                    new ToolbarButton("Game Settings", _ => Inspect(Engine.PersistentGameSettings, "Game Settings"))
+                    {
+                        IsEnabledProvider = static () => Engine.PersistentGameSettings is not null,
+                    },
+                    new ToolbarButton("User Settings", _ => Inspect(Engine.UserSettings, "User Settings"))
+                    {
+                        IsEnabledProvider = static () => Engine.UserSettings is not null,
+                    },
+                    new ToolbarButton("Build Settings", _ => Inspect(Engine.BuildSettings, "Build Settings"))
+                    {
+                        IsEnabledProvider = static () => Engine.BuildSettings is not null,
+                    }),
+                new ToolbarButton("Editor",
+                    new ToolbarButton("Global Editor Preferences",
+                        _ => Inspect(global::XREngine.Editor.Settings.EditorPreferencesService.Current.GlobalPreferences, "Global Editor Preferences")),
+                    new ToolbarButton("Project Editor Overrides",
+                        _ => Inspect(global::XREngine.Editor.Settings.EditorPreferencesService.Current.ProjectOverrides, "Editor Preferences Overrides"))));
+        }
+
+        /// <summary>
+        /// Builds the View menu. Like the ImGui View menu, each panel item shows a check mark while the panel is open
+        /// and opens or closes it, and Reset Layout restores the default panel layout.
+        /// </summary>
+        private static ToolbarButton CreateViewMenu()
+        {
+            static ToolbarButton Panel(string text, string panel)
+                => new(text, _ => NativeDockTreeHost.Main?.TogglePanel(panel))
+                {
+                    IsCheckedProvider = () => NativeDockTreeHost.Main?.IsPanelOpen(panel) == true,
+                    IsEnabledProvider = static () => NativeDockTreeHost.Main is not null,
+                };
+
+            return Menu("View",
+                Panel("Hierarchy", NativeDockPanel.Hierarchy),
+                Panel("Inspector", NativeDockPanel.Inspector),
+                Panel("Scene", NativeDockPanel.Scene),
+                Panel("Asset Explorer", NativeDockPanel.Assets),
+                new ToolbarSeparator(),
+                Panel("Console", NativeDockPanel.Console),
+                Panel("Profiler", NativeDockPanel.Profiler),
+                Panel("Animation", NativeDockPanel.Animation),
+                new ToolbarSeparator(),
+                new ToolbarButton("Reset Layout", _ => NativeDockTreeHost.Main?.ResetLayout())
+                {
+                    IsEnabledProvider = static () => NativeDockTreeHost.Main is not null,
+                });
         }
 
         private static void OnToolbarUndo(UIInteractableComponent _)
@@ -2005,6 +2111,7 @@ public static partial class EditorUnitTests
 
         private static void RefreshUndoHistoryMenu()
         {
+            RefreshRedoHistoryMenu();
             if (_undoHistoryMenu is null)
                 return;
 
@@ -2013,7 +2120,10 @@ public static partial class EditorUnitTests
             var history = Undo.PendingUndo;
             if (history.Count == 0)
             {
-                _undoHistoryMenu.ChildOptions.Add(new ToolbarButton("No undo steps available"));
+                _undoHistoryMenu.ChildOptions.Add(new ToolbarButton("No undo steps")
+                {
+                    IsEnabledProvider = static () => false,
+                });
                 return;
             }
 
@@ -2024,7 +2134,36 @@ public static partial class EditorUnitTests
                 string label = $"{targetIndex + 1}. {entry.Description}";
                 _undoHistoryMenu.ChildOptions.Add(new ToolbarButton(label, _ => UndoMultiple(targetIndex)));
                 index++;
-                if (index >= 15)
+                if (index >= 20)
+                    break;
+            }
+        }
+
+        /// <summary>Lists the redo steps, newest first, like the ImGui Redo History menu.</summary>
+        private static void RefreshRedoHistoryMenu()
+        {
+            if (_redoHistoryMenu is null)
+                return;
+
+            _redoHistoryMenu.ChildOptions.Clear();
+            var history = Undo.PendingRedo;
+            if (history.Count == 0)
+            {
+                _redoHistoryMenu.ChildOptions.Add(new ToolbarButton("No redo steps")
+                {
+                    IsEnabledProvider = static () => false,
+                });
+                return;
+            }
+
+            int index = 0;
+            foreach (var entry in history)
+            {
+                int targetIndex = index;
+                _redoHistoryMenu.ChildOptions.Add(new ToolbarButton($"{targetIndex + 1}. {entry.Description}",
+                    _ => RedoMultiple(targetIndex)));
+                index++;
+                if (index >= 20)
                     break;
             }
         }

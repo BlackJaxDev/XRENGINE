@@ -60,7 +60,52 @@ internal sealed class NativeDockTreeHost
     }
 
     public static void Build(SceneNode root, RuntimeWorld? world)
-        => _ = new NativeDockTreeHost(root, world);
+        => Main = new NativeDockTreeHost(root, world);
+
+    /// <summary>The dock of the main editor window. The View menu opens, closes, and resets its panels.</summary>
+    internal static NativeDockTreeHost? Main { get; private set; }
+
+    /// <summary>Gets whether <paramref name="panel"/> shows in a stack of this dock.</summary>
+    internal bool IsPanelOpen(string panel) => !_disposed && ContainsPanel(_tree.Root, panel);
+
+    /// <summary>
+    /// Closes <paramref name="panel"/> when it shows, or opens it in the first stack when it is closed, like an
+    /// ImGui View menu toggle.
+    /// </summary>
+    internal void TogglePanel(string panel)
+    {
+        if (_disposed || _receivingPanel)
+            return;
+        if (ContainsPanel(_tree.Root, panel))
+        {
+            if (_tree.Close(panel))
+                CommitStructure();
+            return;
+        }
+        if (!_tree.ClosedPanels.Contains(panel))
+            _tree.ClosedPanels.Add(panel);
+        if (FirstStack(_tree.Root) is { } stack && _tree.Reopen(panel, stack.Id))
+            CommitStructure();
+    }
+
+    /// <summary>Replaces the dock tree of this window with the default panel layout.</summary>
+    internal void ResetLayout()
+    {
+        if (_disposed || _receivingPanel)
+            return;
+        NativeDockTree defaults = NativeDockTree.FromLegacy(new NativeDockLayout()).Sanitize();
+        _tree.Root = defaults.Root;
+        _tree.ClosedPanels = defaults.ClosedPanels;
+        CommitStructure();
+    }
+
+    private static bool ContainsPanel(NativeDockNode node, string panel)
+        => !node.IsSplit ? node.Tabs.Contains(panel)
+            : (node.First is { } first && ContainsPanel(first, panel)) ||
+              (node.Second is { } second && ContainsPanel(second, panel));
+
+    private static NativeDockNode? FirstStack(NativeDockNode node)
+        => !node.IsSplit ? node : node.First is { } first ? FirstStack(first) : node.Second is { } second ? FirstStack(second) : null;
 
     public static void BuildDetached(SceneNode root, RuntimeWorld world, XRWindow window,
         string windowKey, string panel, bool restoring)
@@ -362,6 +407,8 @@ internal sealed class NativeDockTreeHost
     private void Dispose()
     {
         _disposed = true;
+        if (ReferenceEquals(Main, this))
+            Main = null;
         List<Exception>? failures = null;
         try { DisposeDropTargets(); }
         catch (Exception exception) { (failures ??= []).Add(exception); }
@@ -436,9 +483,11 @@ internal sealed class NativeDockTreeHost
 
         void UpdateHandlePosition()
         {
+            // The handle centers on the splitter gap, which lies between the fixed pane and the other pane.
+            float centered = node.FixedSize + split.SplitterSize * 0.5f;
             float offset = node.Vertical
-                ? (node.FirstFixedSize ? -node.FixedSize : node.FixedSize)
-                : (node.FirstFixedSize ? node.FixedSize : -node.FixedSize);
+                ? (node.FirstFixedSize ? -centered : centered)
+                : (node.FirstFixedSize ? centered : -centered);
             handleBounds.Translation = node.Vertical ? new Vector2(0, offset) : new Vector2(offset, 0);
         }
     }

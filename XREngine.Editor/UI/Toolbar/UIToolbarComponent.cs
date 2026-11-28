@@ -43,6 +43,18 @@ public partial class UIToolbarComponent : UIComponent
     }
 
     private const float Margin = 4.0f;
+    /// <summary>Height of one drop-down menu item, close to the ImGui menu item height.</summary>
+    private const float DropdownItemHeight = 24.0f;
+    /// <summary>Height of a separator row in a drop-down menu. The line sits at its middle.</summary>
+    private const float DropdownSeparatorHeight = 9.0f;
+    private const float DropdownFontSize = 13.0f;
+    private const float DropdownShortcutFontSize = 12.0f;
+    /// <summary>Left inset of a drop-down label. The check mark column sits in it.</summary>
+    private const float DropdownLabelLeft = 26.0f;
+    private const float DropdownRightInset = 12.0f;
+    private const float DropdownChevronSpace = 16.0f;
+    private const float DropdownShortcutGap = 28.0f;
+    private const float DropdownMinWidth = 180.0f;
     /// <summary>One shared menu item style, so menu buttons do not each build their own copy.</summary>
     private static readonly UIStyle SharedMenuItemStyle = EditorGlassTheme.MenuItem;
 
@@ -231,11 +243,34 @@ public partial class UIToolbarComponent : UIComponent
         // For horizontal lists, ItemSize is the WIDTH per item. Use null to let each
         // item auto-size from its content (DesiredSize.X / text width).
         // For vertical submenus, ItemSize is the HEIGHT per item (menuHeight = 34px).
-        listTfm.ItemSize = horizontal ? null : menuHeight;
-        listTfm.Width = width;
+        // Drop-down rows set their own heights, so separators can be thinner than items.
+        listTfm.ItemSize = null;
+        listTfm.Width = width ?? (horizontal ? null : MeasureDropdownWidth(options));
         listTfm.Height = height;
-        CreateChildMenu(options, listNode, alignSubmenuToSide, toolbar);
+        CreateChildMenu(options, listNode, !horizontal, toolbar);
         return listTfm;
+    }
+
+    /// <summary>
+    /// Returns the width that fits the widest item of a drop-down menu: the label, the shortcut text, and the
+    /// submenu chevron, with the check mark column and the side insets.
+    /// </summary>
+    private static float MeasureDropdownWidth(IList<ToolbarItemBase> options)
+    {
+        FontGlyphSet font = FontGlyphSet.LoadDefaultFont();
+        float widest = 0.0f;
+        foreach (ToolbarItemBase option in options)
+        {
+            if (option is not ToolbarButton item)
+                continue;
+            float row = UITextComponent.MeasureWidth(item.Text, font, DropdownFontSize);
+            if (item.ShortcutText is { } shortcut)
+                row += DropdownShortcutGap + UITextComponent.MeasureWidth(shortcut, font, DropdownShortcutFontSize);
+            if (item.HasSubmenu)
+                row += DropdownChevronSpace;
+            widest = MathF.Max(widest, row);
+        }
+        return MathF.Max(DropdownMinWidth, MathF.Ceiling(widest + DropdownLabelLeft + DropdownRightInset + 8.0f + Margin * 2.0f));
     }
 
     //Works for both horizontal root menu and vertical submenus
@@ -319,14 +354,33 @@ public partial class UIToolbarComponent : UIComponent
 
     private void CreateSeparator(SceneNode listNode, bool alignSubmenuToSide, UIToolbarComponent toolbar, ToolbarSeparator tbs)
     {
-        var separatorNode = listNode.NewChild<UIMaterialComponent>(out var separatorMat);
-        if (alignSubmenuToSide)
-            separatorMat.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
-        EditorGlassTheme.ApplyStatic(separatorMat, EditorGlassTheme.Divider);
-        var separatorTfm = separatorNode.SetTransform<UIBoundableTransform>();
-        separatorTfm.Padding = new Vector4(0.0f);
-        separatorTfm.Width = 1.0f;
-        separatorTfm.Height = SubmenuItemHeight;
+        if (!alignSubmenuToSide)
+        {
+            var barSeparator = listNode.NewChild<UIMaterialComponent>(out var barMat);
+            EditorGlassTheme.ApplyStatic(barMat, EditorGlassTheme.Divider);
+            var barTfm = barSeparator.SetTransform<UIBoundableTransform>();
+            barTfm.Padding = new Vector4(0.0f);
+            barTfm.Width = 1.0f;
+            barTfm.Height = SubmenuItemHeight;
+            return;
+        }
+        // A drop-down separator is a short row with a thin line across its middle, inset from the sides, like an
+        // ImGui separator. The row has no margins, because the list sums the raw row heights.
+        SceneNode row = listNode.NewChild();
+        var rowTfm = row.SetTransform<UIBoundableTransform>();
+        rowTfm.MinAnchor = new Vector2(0.0f, 0.5f);
+        rowTfm.MaxAnchor = new Vector2(1.0f, 0.5f);
+        rowTfm.NormalizedPivot = new Vector2(0.0f, 0.5f);
+        rowTfm.Height = DropdownSeparatorHeight;
+        var lineNode = row.NewChild<UIMaterialComponent>(out var lineMat);
+        lineMat.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
+        EditorGlassTheme.ApplyStatic(lineMat, EditorGlassTheme.Divider);
+        var lineTfm = lineNode.GetTransformAs<UIBoundableTransform>(true)!;
+        lineTfm.MinAnchor = new Vector2(0.0f, 0.5f);
+        lineTfm.MaxAnchor = new Vector2(1.0f, 0.5f);
+        lineTfm.NormalizedPivot = new Vector2(0.0f, 0.5f);
+        lineTfm.Height = 1.0f;
+        lineTfm.Margins = new Vector4(8.0f, 0.0f, 8.0f, 0.0f);
     }
 
     private void CreateButton(SceneNode listNode, bool alignSubmenuToSide, UIToolbarComponent toolbar, ToolbarButton tbb)
@@ -343,47 +397,99 @@ public partial class UIToolbarComponent : UIComponent
         button.Style = SharedMenuItemStyle;
 
         var buttonTfm = buttonNode.GetTransformAs<UIBoundableTransform>(true)!;
-        buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
-        buttonTfm.Margins = new Vector4(Margin);
+        if (alignSubmenuToSide)
+        {
+            // A drop-down item fills the menu width, so its highlight is a full row like an ImGui menu item.
+            buttonTfm.MinAnchor = new Vector2(0.0f, 0.5f);
+            buttonTfm.MaxAnchor = new Vector2(1.0f, 0.5f);
+            buttonTfm.NormalizedPivot = new Vector2(0.0f, 0.5f);
+            buttonTfm.Height = DropdownItemHeight;
+            buttonTfm.Margins = new Vector4(0.0f);
+        }
+        else
+        {
+            buttonTfm.MaxAnchor = new Vector2(0.0f, 1.0f);
+            buttonTfm.Margins = new Vector4(Margin);
+        }
+
+        if (alignSubmenuToSide)
+        {
+            UIMaterialComponent check = NativeUIElements.CreateIcon(buttonNode, EUIQuadIcon.Check, new Vector2(0.0f, 0.5f),
+                new Vector2(DropdownLabelLeft * 0.5f, 0.0f), 11.0f, EditorGlassTheme.TextPrimary);
+            // The pass applies to the next color write, so the color is written again in the drop-down pass.
+            check.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
+            check.SetBatchSolidColor(EditorGlassTheme.TextPrimary);
+            check.BoundableTransform.Visibility = EVisibility.Hidden;
+            tbb.CheckMark = check.BoundableTransform;
+        }
 
         buttonNode.NewChild<UITextComponent>(out var text);
-
         var textTfm = text.BoundableTransform;
-        textTfm.Margins = new Vector4(10.0f, Margin, 10.0f, Margin);
-
-        text.FontSize = 14;
         text.Text = tbb.Text;
         text.Color = EditorGlassTheme.TextPrimary;
+        text.VerticalAlignment = EVerticalAlignment.Center;
         if (alignSubmenuToSide)
+        {
+            textTfm.Margins = new Vector4(DropdownLabelLeft, 0.0f, DropdownRightInset, 0.0f);
+            text.FontSize = DropdownFontSize;
             text.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+        }
+        else
+        {
+            textTfm.Margins = new Vector4(10.0f, Margin, 10.0f, Margin);
+            text.FontSize = 14;
+        }
+        tbb.Label = text;
 
-        if (tbb.ChildOptions.Count > 0)
+        if (alignSubmenuToSide && tbb.ShortcutText is { } shortcut)
+        {
+            // The shortcut sits at the right of the row in a quieter color, like ImGui menu shortcuts.
+            buttonNode.NewChild<UITextComponent>(out var shortcutText);
+            shortcutText.Text = shortcut;
+            shortcutText.FontSize = DropdownShortcutFontSize;
+            shortcutText.Color = EditorGlassTheme.TextSecondary;
+            shortcutText.HorizontalAlignment = EHorizontalAlignment.Right;
+            shortcutText.VerticalAlignment = EVerticalAlignment.Center;
+            shortcutText.BoundableTransform.Margins = new Vector4(DropdownLabelLeft, 0.0f, DropdownRightInset, 0.0f);
+            shortcutText.RenderPass = (int)EDefaultRenderPass.OnTopForward;
+        }
+
+        if (alignSubmenuToSide && tbb.HasSubmenu)
+        {
+            UIMaterialComponent chevron = NativeUIElements.CreateIcon(buttonNode, EUIQuadIcon.ChevronRight, new Vector2(1.0f, 0.5f),
+                new Vector2(-DropdownRightInset, 0.0f), 9.0f, EditorGlassTheme.TextSecondary);
+            chevron.BatchSolidRenderPass = (int)EDefaultRenderPass.OnTopForward;
+            chevron.SetBatchSolidColor(EditorGlassTheme.TextSecondary);
+        }
+
+        // The submenu is the last child of the item, so it draws over the other menu rows.
+        if (tbb.HasSubmenu)
         {
             UIListTransform submenuList = CreateMenu(buttonNode, false, null, null, tbb.ChildOptions, true, SubmenuItemHeight, toolbar);
             submenuList.BlocksInputBehind = true;
             submenuList.Visibility = EVisibility.Collapsed;
             submenuList.ExcludeFromParentAutoCalcHeight = true;
             submenuList.ExcludeFromParentAutoCalcWidth = true;
-
-            //Undo margin from button
-            submenuList.Translation = alignSubmenuToSide
-                ? new Vector2(Margin, Margin)
-                : new Vector2(-Margin, -Margin);
+            tbb.SubmenuTransform = submenuList;
 
             //Align top left of submenu...
             submenuList.NormalizedPivot = new Vector2(0.0f, 1.0f);
             if (alignSubmenuToSide)
             {
-                //...to top right of parent button
+                //...to top right of parent item, with the menu padding, so the item rows line up
                 submenuList.MaxAnchor = new Vector2(1.0f, 1.0f);
                 submenuList.MinAnchor = new Vector2(1.0f, 1.0f);
+                submenuList.Translation = new Vector2(2.0f, Margin);
             }
             else
             {
                 //...to bottom left of parent button
                 submenuList.MaxAnchor = new Vector2(0.0f, 0.0f);
                 submenuList.MinAnchor = new Vector2(0.0f, 0.0f);
+                //Undo margin from button
+                submenuList.Translation = new Vector2(-Margin, -Margin);
             }
         }
+        tbb.RefreshMenuState();
     }
 }

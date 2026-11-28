@@ -74,11 +74,79 @@ public class ToolbarButton : ToolbarItemBase
         set => SetField(ref _shortcutKeys, value);
     }
 
+    /// <summary>
+    /// Tells whether the item can run now, such as Undo when there is an undo step. The menu reads it each time
+    /// the parent menu opens and draws a disabled item dimmed. Null means always enabled.
+    /// </summary>
+    public Func<bool>? IsEnabledProvider { get; init; }
+
+    /// <summary>
+    /// Tells whether the item shows a check mark, such as a panel that is open. The menu reads it each time the
+    /// parent menu opens. Null means the item has no check mark.
+    /// </summary>
+    public Func<bool>? IsCheckedProvider { get; init; }
+
+    /// <summary>The shortcut text that a drop-down menu shows at the right of the item, such as "Ctrl+Shift+S".</summary>
+    public string? ShortcutText => FormatShortcut(ShortcutKeys);
+
+    /// <summary>True when the item opens a submenu instead of running an action.</summary>
+    public bool HasSubmenu => ChildOptions.Count > 0;
+
+    /// <summary>The submenu list that the toolbar created for this item, or null for a leaf item.</summary>
+    internal UIBoundableTransform? SubmenuTransform { get; set; }
+    /// <summary>The label of the item in its menu. <see cref="RefreshMenuState"/> dims it when the item is disabled.</summary>
+    internal UITextComponent? Label { get; set; }
+    /// <summary>The check mark of the item, shown when <see cref="IsCheckedProvider"/> returns true.</summary>
+    internal UIBoundableTransform? CheckMark { get; set; }
+
+    /// <summary>Gets whether the item can run now.</summary>
+    public bool IsEnabledNow => IsEnabledProvider?.Invoke() ?? true;
+
+    /// <summary>Reads the enabled and checked state again and applies it to the item's controls.</summary>
+    internal void RefreshMenuState()
+    {
+        bool enabled = IsEnabledNow;
+        if (InteractableComponent is { } button && button.IsEnabled != enabled)
+            button.IsEnabled = enabled;
+        if (Label is { } label)
+        {
+            var color = enabled ? EditorGlassTheme.TextPrimary : EditorGlassTheme.TextDisabled;
+            if (!label.Color.Equals(color))
+                label.Color = color;
+        }
+        if (CheckMark is { } check)
+        {
+            EVisibility visibility = IsCheckedProvider?.Invoke() == true ? EVisibility.Visible : EVisibility.Hidden;
+            if (check.Visibility != visibility)
+                check.Visibility = visibility;
+        }
+    }
+
+    /// <summary>Formats shortcut keys as text, such as "Ctrl+Shift+S". Returns null for no keys.</summary>
+    public static string? FormatShortcut(Key[]? keys)
+    {
+        if (keys is not { Length: > 0 })
+            return null;
+        string[] parts = new string[keys.Length];
+        for (int index = 0; index < keys.Length; index++)
+            parts[index] = keys[index] switch
+            {
+                Key.ControlLeft or Key.ControlRight => "Ctrl",
+                Key.ShiftLeft or Key.ShiftRight => "Shift",
+                Key.AltLeft or Key.AltRight => "Alt",
+                Key.SuperLeft or Key.SuperRight => "Win",
+                >= Key.Number0 and <= Key.Number9 => ((int)(keys[index] - Key.Number0)).ToString(),
+                Key key => key.ToString(),
+            };
+        return string.Join("+", parts);
+    }
+
     public override void OnInteracted(UIInteractableComponent component)
     {
+        if (!IsEnabledNow)
+            return;
         Action?.Invoke(component);
-        var interTfm = InteractableComponent?.Transform;
-        if (interTfm?.ChildCount >= 2)
+        if (HasSubmenu)
             ChildOptionsVisible = !ChildOptionsVisible;
         else
         {
@@ -107,16 +175,19 @@ public class ToolbarButton : ToolbarItemBase
         switch (propName)
         {
             case nameof(ChildOptionsVisible):
-
-                var interTfm = InteractableComponent?.Transform;
-                if (interTfm?.ChildCount < 2)
+                if (SubmenuTransform is not { } submenuTfm)
                     break;
 
-                var submenuTfm = InteractableComponent?.Transform?.LastChild() as UIBoundableTransform;
-                if (submenuTfm is not null)
-                    submenuTfm.Visibility = ChildOptionsVisible
-                        ? EVisibility.Visible
-                        : EVisibility.Collapsed;
+                submenuTfm.Visibility = ChildOptionsVisible
+                    ? EVisibility.Visible
+                    : EVisibility.Collapsed;
+                // The enabled and checked states can change while the menu is closed, so an opening menu reads them.
+                // It reads them after the menu shows, because the layout does not take changes inside a collapsed
+                // subtree.
+                if (ChildOptionsVisible)
+                    foreach (ToolbarItemBase child in ChildOptions)
+                        if (child is ToolbarButton item)
+                            item.RefreshMenuState();
 
                 if (ParentToolbarComponent is null)
                     break;

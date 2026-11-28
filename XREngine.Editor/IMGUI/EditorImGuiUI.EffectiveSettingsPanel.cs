@@ -17,6 +17,9 @@ public static partial class EditorImGuiUI
     private const string GlobalEngineDefaultsInspectorTitle = "Global Engine Defaults";
     private const string ProjectEngineDefaultsInspectorTitle = "Project Engine Defaults";
     private static readonly EffectiveSettingsInspectorTarget EffectiveSettingsTarget = new();
+
+    /// <summary>The effective settings object, which the native Settings menu shows in the native inspector.</summary>
+    internal static object EffectiveSettingsInspectorObject => EffectiveSettingsTarget;
     private static EffectiveSettingsRow[]? _effectiveSettingsRows;
 
     private sealed class EffectiveSettingsInspectorTarget { }
