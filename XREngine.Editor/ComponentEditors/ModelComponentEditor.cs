@@ -1091,7 +1091,7 @@ public sealed partial class ModelComponentEditor : IXRComponentEditor
             ImGui.TextDisabled("No blendshapes with an effect in this mesh.");
     }
 
-    private static void PushBlendshapeWeightsToGpu(ModelComponent modelComponent, string blendshapeName, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
+    internal static void PushBlendshapeWeightsToGpu(ModelComponent modelComponent, string blendshapeName, StringComparison comp = StringComparison.InvariantCultureIgnoreCase)
     {
         bool HasMatchingBlendshape(XRMeshRenderer x)
             => (x?.Mesh?.HasBlendshapes ?? false) && Array.Exists(x.Mesh!.BlendshapeNames, name => string.Equals(name, blendshapeName, comp));

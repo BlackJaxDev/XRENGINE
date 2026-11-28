@@ -14,6 +14,17 @@ internal sealed class EditorPropertyDelegates
         // An inspector-scoped copy only gives a row its own identity. Expressions need the runtime property.
         if (property is InspectorScopedPropertyInfo scoped)
             property = scoped.Inner;
+        // A synthetic row property, such as a blendshape weight, has no accessor methods. It reads and writes
+        // through its own GetValue and SetValue.
+        if (property.GetMethod is null && property.CanRead && property.GetIndexParameters().Length == 0)
+        {
+            PropertyInfo synthetic = property;
+            return new EditorPropertyDelegates
+            {
+                Get = target => synthetic.GetValue(target),
+                Set = synthetic.CanWrite ? (target, value) => synthetic.SetValue(target, value) : null,
+            };
+        }
         if (property.GetMethod is null || property.GetMethod.IsStatic || property.GetIndexParameters().Length != 0)
             throw new ArgumentException("A readable instance scalar property is required.", nameof(property));
         var target = Expression.Parameter(typeof(object), "target");

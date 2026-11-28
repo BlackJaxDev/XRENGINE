@@ -1,5 +1,6 @@
 using System.Reflection;
 using XREngine.Components;
+using XREngine.Components.Scene.Mesh;
 using XREngine.Extensions;
 using XREngine.Scene.Transforms;
 
@@ -84,8 +85,12 @@ public partial class InspectorPanel
             string title = string.IsNullOrWhiteSpace(component.Name) || component.Name == type.Name
                 ? type.Name.SplitCamelCase()
                 : $"{component.Name} ({type.Name.SplitCamelCase()})";
-            AddSection(layout, header, component, component, key, title,
-                CollectOwnMembers(component, typeof(XRComponent), scope), collapsed, search);
+            List<PropertyInfo> members = CollectOwnMembers(component, typeof(XRComponent), scope);
+            // A model lists its blendshape weights after its members, like the ImGui model editor. Rows are keyed by
+            // blendshape name, so only the first model of a node gets them.
+            if (scope is null && component is ModelComponent model)
+                InspectorBlendshapePropertyInfo.AddRows(model, members);
+            AddSection(layout, header, component, component, key, title, members, collapsed, search);
         }
         return layout;
     }
@@ -232,8 +237,17 @@ public partial class InspectorPanel
         if (memberTargets is null || collapsed?.Contains(key) == true)
             return;
         Type? memberType = memberTargets.Length > 0 ? memberTargets[0]?.GetType() : null;
+        bool blendshapeGroupAdded = false;
         foreach (PropertyInfo member in members)
         {
+            // The blendshape rows of a model start with their own title row.
+            if (!blendshapeGroupAdded && member is InspectorBlendshapePropertyInfo && memberTargets[0] is { } model)
+            {
+                blendshapeGroupAdded = true;
+                InspectorGroupRow blendshapeRow = InspectorGroupRow.For(model, InspectorBlendshapePropertyInfo.GroupTitle);
+                if (layout.Add(blendshapeRow, memberTargets))
+                    layout.Names[blendshapeRow] = InspectorBlendshapePropertyInfo.GroupTitle;
+            }
             // A profile group starts with a title row, like a separator title in the ImGui editor.
             if (memberType is not null && memberTargets[0] is { } groupOwner &&
                 InspectorMemberProfiles.GroupFor(memberType, member.Name) is { } group)

@@ -16,7 +16,7 @@ public sealed partial class ModelComponentEditor
         public XRMeshBlendshapeEffectSnapshot? Snapshot;
     }
 
-    private static void RefreshEffectiveBlendshapeNames(ModelComponent modelComponent, HashSet<string> namesWithEffect)
+    internal static void RefreshEffectiveBlendshapeNames(ModelComponent modelComponent, HashSet<string> namesWithEffect)
     {
         namesWithEffect.Clear();
         foreach (RenderableMesh runtimeMesh in modelComponent.Meshes)
