@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Text;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Shaders.Generator
@@ -13,7 +14,7 @@ namespace XREngine.Rendering.Shaders.Generator
         private const EGLSLVersion GLSLCurrentVersion = EGLSLVersion.Ver_460;
         private readonly string NewLine = Environment.NewLine;
 
-        private string _shaderCode = "";
+        private readonly StringBuilder _shaderCode = new();
         private int _tabCount = 0;
 
         public EGLSLVersion ShaderVersion { get; set; } = GLSLCurrentVersion;
@@ -96,19 +97,9 @@ namespace XREngine.Rendering.Shaders.Generator
         }
 
         #region String Helpers
-        private string Tabs
-        {
-            get
-            {
-                string t = "";
-                for (int i = 0; i < _tabCount; i++)
-                    t += "\t";
-                return t;
-            }
-        }
         public void Reset()
         {
-            _shaderCode = "";
+            _shaderCode.Clear();
             _tabCount = 0;
         }
 
@@ -230,7 +221,7 @@ namespace XREngine.Rendering.Shaders.Generator
         }
         public string End()
         {
-            string s = _shaderCode;
+            string s = _shaderCode.ToString();
             Reset();
             //if (Mesh.HasBlendshapes && Mesh.UtilizedBones.Length > 0)
             //    Debug.Out(s);
@@ -443,28 +434,33 @@ namespace XREngine.Rendering.Shaders.Generator
         /// </summary>
         public void Line(string str = "")
         {
-            str += NewLine;
+            // Each close bracket in the line removes one indent level before the line is written.
+            _tabCount -= CountChar(str, '}');
+            int tabs = Math.Max(0, _tabCount);
+            _shaderCode.Append('\t', tabs);
 
-            //Decrease tabs for every close bracket
-            //if (args.Length == 0)
-                _tabCount -= str.Count(x => x == '}');
-
-            bool s = false;
-            int r = str.LastIndexOf(NewLine);
-            if (r == str.Length - NewLine.Length)
+            // A line with embedded line breaks gets the same indent after each break.
+            int start = 0;
+            int lineBreak;
+            while ((lineBreak = str.IndexOf(NewLine, start, StringComparison.Ordinal)) >= 0)
             {
-                str = str[..^NewLine.Length];
-                s = true;
+                int end = lineBreak + NewLine.Length;
+                _shaderCode.Append(str, start, end - start).Append('\t', tabs);
+                start = end;
             }
-            str = str.Replace(NewLine, NewLine + Tabs);
-            if (s)
-                str += NewLine;
+            _shaderCode.Append(str, start, str.Length - start).Append(NewLine);
 
-            _shaderCode += Tabs + str;
+            // Each open bracket in the line adds one indent level for the next lines.
+            _tabCount += CountChar(str, '{');
+        }
 
-            //Increase tabs for every open bracket
-            //if (args.Length == 0)
-                _tabCount += str.Count(x => x == '{');
+        private static int CountChar(string text, char value)
+        {
+            int count = 0;
+            foreach (char c in text)
+                if (c == value)
+                    count++;
+            return count;
         }
         public void OpenBracket()
         {
