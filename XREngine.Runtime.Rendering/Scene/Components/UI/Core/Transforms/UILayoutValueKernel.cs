@@ -619,7 +619,12 @@ internal static class UILayoutValueKernel
         int second = children[node.FirstChild + 1].NodeIndex;
         bool vertical = (node.OperatorFlags & 1) != 0;
         int fixedSide = (node.OperatorFlags >> 1) & 3;
-        float extent = vertical ? region.Height : region.Width;
+        // The splitter gap sits between the two panes, so the panes share the region less the gap. Without this
+        // the second pane ended the gap width past the region, for example a docked right panel past its margin.
+        float gap = MathF.Max(0, node.OperatorValues.Z);
+        float total = vertical ? region.Height : region.Width;
+        gap = MathF.Min(gap, MathF.Max(0, total));
+        float extent = MathF.Max(0, total - gap);
         float fixedSize = node.OperatorValues.Y;
         if (float.IsNaN(fixedSize))
         {
@@ -629,7 +634,6 @@ internal static class UILayoutValueKernel
         float firstSize = fixedSide == 0 ? extent * node.OperatorValues.X
             : fixedSide == 1 ? fixedSize : extent - fixedSize;
         float secondSize = extent - firstSize;
-        float gap = node.OperatorValues.Z;
         ref UILayoutNodeOutput splitOutput = ref outputs.Edit(index);
         splitOutput.AcceptedSplitExtent = extent;
         splitOutput.AcceptedSplitFirstSize = firstSize;

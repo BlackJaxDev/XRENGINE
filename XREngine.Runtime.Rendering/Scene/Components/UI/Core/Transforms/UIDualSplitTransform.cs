@@ -98,8 +98,11 @@ namespace XREngine.Rendering.UI
                 UILayoutSystem.FitLayout(a, paddedRegion);
                 return;
             }
-            else if (VerticalSplit)
+            // The splitter gap sits between the panes, so the panes share the region less the gap.
+            float gap = MathF.Min(MathF.Max(0.0f, SplitterSize), VerticalSplit ? paddedRegion.Height : paddedRegion.Width);
+            if (VerticalSplit)
             {
+                float extent = MathF.Max(0.0f, paddedRegion.Height - gap);
                 float topSize, bottomSize;
 
                 if (FirstFixedSize.HasValue)
@@ -108,25 +111,25 @@ namespace XREngine.Rendering.UI
                     {
                         float fixedSize = GetFixedSize(true);
                         topSize = fixedSize;
-                        bottomSize = paddedRegion.Height - fixedSize;
+                        bottomSize = extent - fixedSize;
                     }
                     else
                     {
                         float fixedSize = GetFixedSize(false);
-                        topSize = paddedRegion.Height - fixedSize;
+                        topSize = extent - fixedSize;
                         bottomSize = fixedSize;
                     }
                 }
                 else
                 {
-                    float split = paddedRegion.Height * SplitPercent;
+                    float split = extent * SplitPercent;
                     topSize = split;
-                    bottomSize = paddedRegion.Height - split;
+                    bottomSize = extent - split;
                 }
 
                 if (a.PlacementInfo is UISplitChildPlacementInfo aInfo)
-                    aInfo.Offset = bottomSize + SplitterSize;
-                UILayoutSystem.FitLayout(a, new(paddedRegion.X, paddedRegion.Y + bottomSize + SplitterSize, paddedRegion.Width, topSize));
+                    aInfo.Offset = bottomSize + gap;
+                UILayoutSystem.FitLayout(a, new(paddedRegion.X, paddedRegion.Y + bottomSize + gap, paddedRegion.Width, topSize));
 
                 if (b.PlacementInfo is UISplitChildPlacementInfo bInfo)
                     bInfo.Offset = 0;
@@ -134,6 +137,7 @@ namespace XREngine.Rendering.UI
             }
             else
             {
+                float extent = MathF.Max(0.0f, paddedRegion.Width - gap);
                 float leftSize, rightSize;
 
                 if (FirstFixedSize.HasValue)
@@ -142,20 +146,20 @@ namespace XREngine.Rendering.UI
                     {
                         float fixedSize = GetFixedSize(true);
                         leftSize = fixedSize;
-                        rightSize = paddedRegion.Width - fixedSize;
+                        rightSize = extent - fixedSize;
                     }
                     else
                     {
                         float fixedSize = GetFixedSize(false);
-                        leftSize = paddedRegion.Width - fixedSize;
+                        leftSize = extent - fixedSize;
                         rightSize = fixedSize;
                     }
                 }
                 else
                 {
-                    float split = paddedRegion.Width * SplitPercent;
+                    float split = extent * SplitPercent;
                     leftSize = split;
-                    rightSize = paddedRegion.Width - split;
+                    rightSize = extent - split;
                 }
 
                 if (a.PlacementInfo is UISplitChildPlacementInfo aInfo)
@@ -163,8 +167,8 @@ namespace XREngine.Rendering.UI
                 UILayoutSystem.FitLayout(a, new(paddedRegion.X, paddedRegion.Y, leftSize, paddedRegion.Height));
 
                 if (b.PlacementInfo is UISplitChildPlacementInfo bInfo)
-                    bInfo.Offset = leftSize + SplitterSize;
-                UILayoutSystem.FitLayout(b, new(paddedRegion.X + leftSize + SplitterSize, paddedRegion.Y, rightSize, paddedRegion.Height));
+                    bInfo.Offset = leftSize + gap;
+                UILayoutSystem.FitLayout(b, new(paddedRegion.X + leftSize + gap, paddedRegion.Y, rightSize, paddedRegion.Height));
             }
         }
 

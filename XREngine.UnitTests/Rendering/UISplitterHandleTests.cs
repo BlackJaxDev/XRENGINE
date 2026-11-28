@@ -49,9 +49,10 @@ public sealed class UISplitterHandleTests
         UILayoutNodeOutput[] result = UILayoutValueKernel.Run(nodes, children,
             new BoundingRectangleF(0, 0, 200, 80));
 
-        result[0].AcceptedSplitExtent.ShouldBe(200);
+        // The accepted extent is the width that the panes share, without the 5 unit splitter gap.
+        result[0].AcceptedSplitExtent.ShouldBe(195);
         result[0].AcceptedSplitFirstSize.ShouldBe(80);
-        result[0].AcceptedSplitSecondSize.ShouldBe(120);
+        result[0].AcceptedSplitSecondSize.ShouldBe(115);
         result[0].AcceptedSplitFixedSide.ShouldBe(1);
         result[1].ActualSize.X.ShouldBe(150);
     }

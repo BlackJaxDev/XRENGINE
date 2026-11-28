@@ -223,10 +223,11 @@ public sealed class UILayoutValueKernelTests
         UILayoutNodeOutput[] result = UILayoutValueKernel.Run(nodes, children,
             new BoundingRectangleF(0, 0, 100, 40));
 
+        // The 4 unit splitter gap sits between the panes, so the panes share 96 units and the second ends at 100.
         result[0].ActualSize.ShouldBe(new Vector2(100, 40));
-        result[1].AllocatedBounds.Width.ShouldBe(50f);
-        result[2].AllocatedBounds.Width.ShouldBe(50f);
-        result[2].PlacementTranslation.X.ShouldBe(54f);
+        result[1].AllocatedBounds.Width.ShouldBe(48f);
+        result[2].AllocatedBounds.Width.ShouldBe(48f);
+        result[2].PlacementTranslation.X.ShouldBe(52f);
         result[2].LocalTranslation.X.ShouldBe(0f);
     }
 
