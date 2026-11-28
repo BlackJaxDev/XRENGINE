@@ -1357,6 +1357,10 @@ internal sealed partial class VulkanFrameLoop
 
                 bool dynamicUiOverlay = IsQueuedDynamicUiOverlayRequest(
                     in request);
+                // Screen UI batch meshes share one program per kind, so a new cohort prepares quickly. Slicing them
+                // would reject the whole frame when a panel first shows many new runs, and the rejected frame
+                // replays the scene without any UI.
+                bool screenUi = request.Pipeline?.Pipeline is UserInterfaceRenderPipeline;
                 bool previouslyMaterialized =
                     request.PreparationCompatibilitySignature != 0 &&
                     _meshOperationWarmPreparationSignatures.Contains(
@@ -1378,6 +1382,7 @@ internal sealed partial class VulkanFrameLoop
                 if ((!foregroundRequired || sliceColdPreparation) &&
                     !requireCompleteCohort &&
                     !dynamicUiOverlay &&
+                    !screenUi &&
                     (coldTailDeferred ||
                      (!resourcesReady &&
                       coldPreparationTicks >= ColdMeshPreparationSliceTicks)))
