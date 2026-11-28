@@ -1073,67 +1073,78 @@ namespace XREngine.Scene.Components.Editing
 
         #region Drag
 
-        private bool
+        // The snap settings are editor settings, like the transform mode and space, so they are static and every
+        // tool instance uses them. The ImGui toolbar and the native header row edit them.
+        private static bool
             _snapRotations = false,
             _snapTranslations = false,
             _snapScale = false,
             _snapInLocalSpace = false;
 
-        private float
+        private static float
             _rotationSnapBias = 0.0f,
-            _rotationSnapInterval = 5.0f,
+            _rotationSnapInterval = 15.0f,
             _translationSnapBias = 0.0f,
-            _translationSnapInterval = 30.0f,
+            _translationSnapInterval = 1.0f,
             _scaleSnapBias = 0.0f,
-            _scaleSnapInterval = 0.25f;
+            _scaleSnapInterval = 0.1f;
 
-        public bool SnapRotations
+        /// <summary>Turns translation, rotation, and scale snapping on or off together, like the editor Snap toggle.</summary>
+        public static bool SnapEnabled
+        {
+            get => _snapTranslations || _snapRotations || _snapScale;
+            set => _snapTranslations = _snapRotations = _snapScale = value;
+        }
+        public static bool SnapRotations
         {
             get => _snapRotations;
-            set => SetField(ref _snapRotations, value);
+            set => _snapRotations = value;
         }
-        public bool SnapTranslations
+        public static bool SnapTranslations
         {
             get => _snapTranslations;
-            set => SetField(ref _snapTranslations, value);
+            set => _snapTranslations = value;
         }
-        public bool SnapScale
+        public static bool SnapScale
         {
             get => _snapScale;
-            set => SetField(ref _snapScale, value);
+            set => _snapScale = value;
         }
 
-        public float RotationSnapBias
+        public static float RotationSnapBias
         {
             get => _rotationSnapBias;
-            set => SetField(ref _rotationSnapBias, value);
+            set => _rotationSnapBias = value;
         }
-        public float RotationSnapInterval
+        /// <summary>Rotation snap step in degrees.</summary>
+        public static float RotationSnapInterval
         {
             get => _rotationSnapInterval;
-            set => SetField(ref _rotationSnapInterval, value);
+            set => _rotationSnapInterval = MathF.Max(1.0f, value);
         }
 
-        public float TranslationSnapBias
+        public static float TranslationSnapBias
         {
             get => _translationSnapBias;
-            set => SetField(ref _translationSnapBias, value);
+            set => _translationSnapBias = value;
         }
-        public float TranslationSnapInterval
+        /// <summary>Translation snap step in world units.</summary>
+        public static float TranslationSnapInterval
         {
             get => _translationSnapInterval;
-            set => SetField(ref _translationSnapInterval, value);
+            set => _translationSnapInterval = MathF.Max(0.01f, value);
         }
 
-        public float ScaleSnapBias
+        public static float ScaleSnapBias
         {
             get => _scaleSnapBias;
-            set => SetField(ref _scaleSnapBias, value);
+            set => _scaleSnapBias = value;
         }
-        public float ScaleSnapInterval
+        /// <summary>Scale snap step.</summary>
+        public static float ScaleSnapInterval
         {
             get => _scaleSnapInterval;
-            set => SetField(ref _scaleSnapInterval, value);
+            set => _scaleSnapInterval = MathF.Max(0.01f, value);
         }
 
         private void DragRotation(Vector3 dragPointWorld)
@@ -1153,12 +1164,12 @@ namespace XREngine.Scene.Components.Editing
                 ? Vector3.Cross(dragVecLocal, startVecLocal)
                 : Vector3.TransformNormal(_worldDragPlaneNormal, _inverseSocketDragMatrix).Normalized();
 
-            Quaternion localDelta = Quaternion.CreateFromAxisAngle(dragNormalLocal, XRMath.GetFullAngleRadiansBetween(startVecLocal, dragVecLocal, dragNormalLocal));
+            float angleRad = XRMath.GetFullAngleRadiansBetween(startVecLocal, dragVecLocal, dragNormalLocal);
+            // With snapping on, the drag angle steps by the rotation snap interval, in degrees.
+            if (_snapRotations)
+                angleRad = float.DegreesToRadians(float.RadiansToDegrees(angleRad).RoundedToNearest(_rotationSnapBias, _rotationSnapInterval));
+            Quaternion localDelta = Quaternion.CreateFromAxisAngle(dragNormalLocal, angleRad);
             Quaternion newRotationLocal = Quaternion.Normalize(_localRotationDragStart * localDelta);
-            
-            //// Apply snapping if enabled
-            //if (_snapRotations)
-            //    angleRad = float.DegreesToRadians(float.RadiansToDegrees(angleRad).RoundedToNearest(_rotationSnapBias, _rotationSnapInterval));
 
             if (_targetSocket is Transform t)
                 t.Rotation = newRotationLocal;

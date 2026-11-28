@@ -10,10 +10,6 @@ namespace XREngine.Editor;
 public static partial class EditorImGuiUI
 {
     // Toolbar state
-    private static bool _snapEnabled;
-    private static float _snapTranslationValue = 1.0f;
-    private static float _snapRotationValue = 15.0f;
-    private static float _snapScaleValue = 0.1f;
     private static bool _openXrRuntimePromptRequested;
     private const string OpenXrRuntimePopupName = "Choose OpenXR runtime##EditorOpenXrRuntime";
     private static readonly (EVrDesktopView View, string Label)[] OpenXrDesktopViews =
@@ -175,39 +171,44 @@ public static partial class EditorImGuiUI
         ImGui.AlignTextToFramePadding();
         
         // Snap toggle button
-        Vector4 snapColor = _snapEnabled 
+        // The snap settings live on the transform tool, so the native header and this toolbar share them.
+        bool snapEnabled = TransformTool3D.SnapEnabled;
+        Vector4 snapColor = snapEnabled 
             ? new Vector4(0.15f, 0.55f, 0.95f, 1.0f) 
             : new Vector4(0.4f, 0.4f, 0.4f, 1.0f);
         
-        if (DrawToolbarToggleButton("Snap", "Toggle Snapping", _snapEnabled, snapColor, SvgEditorIcons.IconSnap))
-            _snapEnabled = !_snapEnabled;
+        if (DrawToolbarToggleButton("Snap", "Toggle Snapping", snapEnabled, snapColor, SvgEditorIcons.IconSnap))
+            TransformTool3D.SnapEnabled = snapEnabled = !snapEnabled;
         
         ImGui.SameLine(0f, ToolbarSpacing);
         
         // Snap value inputs (only show when snapping is enabled)
-        if (_snapEnabled)
+        if (snapEnabled)
         {
+            float translation = TransformTool3D.TranslationSnapInterval;
             ImGui.SetNextItemWidth(60f);
-            if (ImGui.DragFloat("##SnapTrans", ref _snapTranslationValue, 0.1f, 0.01f, 100f, "T: %.2f"))
-                _snapTranslationValue = MathF.Max(0.01f, _snapTranslationValue);
+            if (ImGui.DragFloat("##SnapTrans", ref translation, 0.1f, 0.01f, 100f, "T: %.2f"))
+                TransformTool3D.TranslationSnapInterval = translation;
             
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Translation Snap Value");
             
             ImGui.SameLine(0f, 4f);
             
+            float rotation = TransformTool3D.RotationSnapInterval;
             ImGui.SetNextItemWidth(50f);
-            if (ImGui.DragFloat("##SnapRot", ref _snapRotationValue, 1f, 1f, 180f, "R: %.0f°"))
-                _snapRotationValue = MathF.Max(1f, _snapRotationValue);
+            if (ImGui.DragFloat("##SnapRot", ref rotation, 1f, 1f, 180f, "R: %.0f°"))
+                TransformTool3D.RotationSnapInterval = rotation;
             
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Rotation Snap Value (degrees)");
             
             ImGui.SameLine(0f, 4f);
             
+            float scale = TransformTool3D.ScaleSnapInterval;
             ImGui.SetNextItemWidth(50f);
-            if (ImGui.DragFloat("##SnapScale", ref _snapScaleValue, 0.01f, 0.01f, 10f, "S: %.2f"))
-                _snapScaleValue = MathF.Max(0.01f, _snapScaleValue);
+            if (ImGui.DragFloat("##SnapScale", ref scale, 0.01f, 0.01f, 10f, "S: %.2f"))
+                TransformTool3D.ScaleSnapInterval = scale;
             
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Scale Snap Value");
@@ -602,19 +603,19 @@ public static partial class EditorImGuiUI
     /// </summary>
     public static bool GetSnapSettings(out float translationSnap, out float rotationSnap, out float scaleSnap)
     {
-        translationSnap = _snapTranslationValue;
-        rotationSnap = _snapRotationValue;
-        scaleSnap = _snapScaleValue;
-        return _snapEnabled;
+        translationSnap = TransformTool3D.TranslationSnapInterval;
+        rotationSnap = TransformTool3D.RotationSnapInterval;
+        scaleSnap = TransformTool3D.ScaleSnapInterval;
+        return TransformTool3D.SnapEnabled;
     }
 
     /// <summary>
     /// Sets snap enabled state.
     /// </summary>
-    public static void SetSnapEnabled(bool enabled) => _snapEnabled = enabled;
+    public static void SetSnapEnabled(bool enabled) => TransformTool3D.SnapEnabled = enabled;
     
     /// <summary>
     /// Gets whether snapping is currently enabled.
     /// </summary>
-    public static bool IsSnapEnabled => _snapEnabled;
+    public static bool IsSnapEnabled => TransformTool3D.SnapEnabled;
 }
