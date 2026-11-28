@@ -41,6 +41,15 @@ An incompatible primitive ends a painter run. Custom shaders use owned normal
 mesh commands unless they declare supported batch semantics. Missing resources
 and unsupported capture callbacks produce named diagnostics.
 
+The UI pass sorts by Z index first and draws a higher Z index first. Draws with
+the same Z index keep painter order. Panels use zero, and popups use negative
+values, so popups draw over panels. A renderable that keeps the default Z index
+of zero takes the `UITransform.LayerZIndex` of its nearest ancestor that sets
+one, up to the canvas. `UIContextMenuComponent` sets its content layer (-20) on
+its root and draws its background at -10, so the background draws first and
+menu items, combo options, tooltips, and caller-built popup controls draw over
+it. A text field caret in a popup uses the same layer as its text.
+
 ## Primitive and text storage
 
 Solid, border, image, and text records carry per-instance values. Stable handles
