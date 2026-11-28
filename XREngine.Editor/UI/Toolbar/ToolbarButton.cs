@@ -146,8 +146,10 @@ public class ToolbarButton : ToolbarItemBase
         if (!IsEnabledNow)
             return;
         Action?.Invoke(component);
+        // A menu bar item toggles its menu. A drop-down item that has a submenu opens it, because the pointer has
+        // usually opened it already on hover, and a click must not close it again.
         if (HasSubmenu)
-            ChildOptionsVisible = !ChildOptionsVisible;
+            ChildOptionsVisible = Parent is not null || !ChildOptionsVisible;
         else
         {
             ChildOptionsVisible = false;
@@ -165,6 +167,39 @@ public class ToolbarButton : ToolbarItemBase
     public override void OnCancelInteraction(UIInteractableComponent component)
         => ChildOptionsVisible = false;
 
+    /// <summary>
+    /// Opens this item's submenu when the pointer moves onto it while a menu around it is open, like ImGui. A
+    /// drop-down item opens when its parent menu is open, and a menu bar item opens when another menu bar item
+    /// is open.
+    /// </summary>
+    private void OpenOnHover()
+    {
+        if (!IsEnabledNow)
+            return;
+        bool menuOpen = Parent is { } parent
+            ? parent.ChildOptionsVisible
+            : ParentToolbarComponent?.ActiveSubmenus.Count > 0;
+        if (!menuOpen)
+            return;
+        if (HasSubmenu)
+            ChildOptionsVisible = true;
+        else
+            CloseSiblingMenus();
+    }
+
+    /// <summary>Closes the open submenus of the other items in the same menu, or the other menu bar menus.</summary>
+    private void CloseSiblingMenus()
+    {
+        IEnumerable<ToolbarItemBase>? siblings = Parent is { } parent
+            ? parent.ChildOptions
+            : ParentToolbarComponent?.RootMenuOptions;
+        if (siblings is null)
+            return;
+        foreach (ToolbarItemBase sibling in siblings.ToArray())
+            if (!ReferenceEquals(sibling, this) && sibling is ToolbarButton { ChildOptionsVisible: true } open)
+                open.ChildOptionsVisible = false;
+    }
+
     public override bool AnyOptionsFocused => 
         base.AnyOptionsFocused ||
         ChildOptions.Any(c => c.AnyOptionsFocused);
@@ -178,6 +213,13 @@ public class ToolbarButton : ToolbarItemBase
                 if (SubmenuTransform is not { } submenuTfm)
                     break;
 
+                // Like ImGui, one submenu of a menu is open at a time, and a closing menu closes its submenus.
+                if (ChildOptionsVisible)
+                    CloseSiblingMenus();
+                else
+                    foreach (ToolbarItemBase child in ChildOptions)
+                        if (child is ToolbarButton { ChildOptionsVisible: true } open)
+                            open.ChildOptionsVisible = false;
                 submenuTfm.Visibility = ChildOptionsVisible
                     ? EVisibility.Visible
                     : EVisibility.Collapsed;
@@ -211,9 +253,9 @@ public class ToolbarButton : ToolbarItemBase
         base.OnInteractablePropertyChanged(sender, e);
         switch (e.PropertyName)
         {
-            case nameof(UIButtonComponent.IsFocused):
-                if (!AnyOptionsFocused)
-                    ChildOptionsVisible = false;
+            case nameof(UIInteractableComponent.IsMouseOver):
+                if (InteractableComponent?.IsMouseOver == true)
+                    OpenOnHover();
                 break;
         }
     }

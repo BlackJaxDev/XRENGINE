@@ -48,7 +48,7 @@ public static class EditorGlassTheme
     /// <summary>Fill of the menu bar across the top of the window.</summary>
     public static ColorF4 MenuBarFill { get; set; } = Srgb(18, 20, 26, 0.64f);
     /// <summary>Fill of a drop-down menu.</summary>
-    public static ColorF4 MenuFill { get; set; } = Srgb(26, 29, 38, 0.97f);
+    public static ColorF4 MenuFill { get; set; } = Srgb(26, 29, 38, 1.0f);
 
     /// <summary>Resting fill of a button. Most buttons rest almost clear on the glass.</summary>
     public static ColorF4 ButtonFill { get; set; } = new(1.0f, 1.0f, 1.0f, 0.014f);

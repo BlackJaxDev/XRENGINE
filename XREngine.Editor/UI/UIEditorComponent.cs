@@ -181,7 +181,7 @@ public partial class UIEditorComponent : UIComponent
             RetireOwnedRoot();
             if (_editorTerminal) return;
 
-            var splitChild = SceneNode.NewChildWithTransform(out UIDualSplitTransform splitTfm, "EditorRoot");
+            var splitChild = SceneNode.NewChildWithTransform(out UIBoundableTransform rootTfm, "EditorRoot");
             _editorRoot = splitChild;
             if (StopTerminatedBuild(splitChild)) return;
             UIMaterialComponent background = splitChild.AddComponent<UIMaterialComponent>()!;
@@ -196,15 +196,25 @@ public partial class UIEditorComponent : UIComponent
             if (StopTerminatedBuild(splitChild)) return;
             background.RenderPass = (int)EDefaultRenderPass.Background;
             if (StopTerminatedBuild(splitChild)) return;
-            splitTfm.VerticalSplit = true;
-            splitTfm.FirstFixedSize = true;
-            splitTfm.FixedSize = MenuHeight + HeaderRowHeight;
-            splitTfm.SplitterSize = 0.0f;
+            rootTfm.MinAnchor = Vector2.Zero;
+            rootTfm.MaxAnchor = Vector2.One;
+
+            // The content (the dock, or a test view) fills the window under the top rows. It comes before the top
+            // in the tree, so in painter order the menu bar and its drop-down menus draw over the panels.
+            SceneNode content = splitChild.NewChildWithTransform(out UIBoundableTransform contentTfm, "EditorContent");
+            if (StopTerminatedBuild(splitChild)) return;
+            contentTfm.MinAnchor = Vector2.Zero;
+            contentTfm.MaxAnchor = Vector2.One;
+            contentTfm.Margins = new Vector4(0.0f, 0.0f, 0.0f, MenuHeight + HeaderRowHeight);
 
             // The top holds the main menu bar and, under it, the header row with the transform and play controls,
             // like the ImGui menu bar and toolbar.
             SceneNode top = splitChild.NewChildWithTransform(out UIDualSplitTransform topSplit, "EditorTop");
             if (StopTerminatedBuild(splitChild)) return;
+            topSplit.MinAnchor = new Vector2(0.0f, 1.0f);
+            topSplit.MaxAnchor = new Vector2(1.0f, 1.0f);
+            topSplit.NormalizedPivot = new Vector2(0.0f, 1.0f);
+            topSplit.Height = MenuHeight + HeaderRowHeight;
             topSplit.VerticalSplit = true;
             topSplit.FirstFixedSize = true;
             topSplit.FixedSize = MenuHeight;
@@ -221,7 +231,7 @@ public partial class UIEditorComponent : UIComponent
 
             if (EditorUnitTests.Toggles.UltralightWebView)
             {
-                SceneNode webRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "WebViewRoot");
+                SceneNode webRoot = content.NewChildWithTransform<UIBoundableTransform>(out _, "WebViewRoot");
                 if (StopTerminatedBuild(splitChild)) return;
                 var webComp = webRoot.AddComponent<UIWebViewComponent>()!;
                 if (StopTerminatedBuild(splitChild)) return;
@@ -243,7 +253,7 @@ public partial class UIEditorComponent : UIComponent
 
             if (EditorUnitTests.Toggles.VideoStreaming)
             {
-                SceneNode videoRoot = splitChild.NewChildWithTransform<UIBoundableTransform>(out _, "VideoRoot");
+                SceneNode videoRoot = content.NewChildWithTransform<UIBoundableTransform>(out _, "VideoRoot");
                 if (StopTerminatedBuild(splitChild)) return;
 
                 // Configure video components before first activation so we don't start the
@@ -272,7 +282,7 @@ public partial class UIEditorComponent : UIComponent
                 return;
             }
 
-            SceneNode dockNode = splitChild.NewChildWithTransform<UIBoundableTransform>(out UIBoundableTransform dockBounds, "DockableRoot");
+            SceneNode dockNode = content.NewChildWithTransform<UIBoundableTransform>(out UIBoundableTransform dockBounds, "DockableRoot");
             // Half a gutter here plus half a gutter around each card gives one full gutter at the window edge.
             dockBounds.Margins = new Vector4(EditorGlassTheme.PanelGutter * 0.5f);
             if (StopTerminatedBuild(splitChild)) return;
@@ -400,7 +410,8 @@ public partial class UIEditorComponent : UIComponent
             if (first is null || first.Transform.Children.Count < 2)
                 RemakeChildren();
             first = _editorRoot ?? throw new InvalidOperationException("The editor UI root is unavailable.");
-            return first!.FirstChild!;
+            // The content node is first and the top rows (menu bar and header) are last.
+            return first!.LastChild!;
         }
     }
     /// <summary>

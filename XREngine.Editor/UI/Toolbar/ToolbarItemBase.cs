@@ -81,8 +81,10 @@ public abstract class ToolbarItemBase : XRBase
         switch (e.PropertyName)
         {
             case nameof(UIButtonComponent.IsFocused):
-                if (Parent is not null && !Parent.AnyOptionsFocused)
-                    Parent.ChildOptionsVisible = false;
+                // Focus moves in two steps: the old control loses focus before the new one gets it. A check now
+                // would close a menu while the focus moves to one of its own items, so the toolbar checks after
+                // the move.
+                ParentToolbarComponent?.RequestMenuFocusCheck();
                 break;
         }
     }

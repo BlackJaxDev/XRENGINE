@@ -31,6 +31,7 @@ public partial class UIToolbarComponent : UIComponent
     private bool _remaking;
     private bool _remakePending;
     private bool _remakeTickRegistered;
+    private bool _focusCheckRegistered;
     private bool _bindingsStopped;
     private bool _destroying;
     private long _bindingGeneration;
@@ -55,6 +56,8 @@ public partial class UIToolbarComponent : UIComponent
     private const float DropdownChevronSpace = 16.0f;
     private const float DropdownShortcutGap = 28.0f;
     private const float DropdownMinWidth = 180.0f;
+    /// <summary>Z index layer of drop-down menus. It is below zero, so menus draw over panels, and above the popup layers.</summary>
+    private const int DropdownLayerZIndex = -5;
     /// <summary>One shared menu item style, so menu buttons do not each build their own copy.</summary>
     private static readonly UIStyle SharedMenuItemStyle = EditorGlassTheme.MenuItem;
 
@@ -220,6 +223,38 @@ public partial class UIToolbarComponent : UIComponent
         UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompleteDeferredRemake);
     }
 
+    /// <summary>
+    /// Asks for a check, after the current focus change, that closes each open menu whose items and submenus have
+    /// no focus. A menu control calls this when its focus changes.
+    /// </summary>
+    internal void RequestMenuFocusCheck()
+    {
+        if (_focusCheckRegistered || _destroying || IsDestroyed)
+            return;
+        _focusCheckRegistered = true;
+        RegisterTick(ETickGroup.Late, ETickOrder.Scene, CompleteMenuFocusCheck);
+    }
+
+    private void CompleteMenuFocusCheck()
+    {
+        _focusCheckRegistered = false;
+        UnregisterTick(ETickGroup.Late, ETickOrder.Scene, CompleteMenuFocusCheck);
+        // A menu stays open while the focus is anywhere in its menu bar menu, so a submenu that the pointer opened
+        // stays open while the focus is on another item of the same menu tree, like ImGui. A closing menu closes
+        // its submenus.
+        for (int index = ActiveSubmenus.Count - 1; index >= 0; index--)
+        {
+            if (index >= ActiveSubmenus.Count)
+                continue;
+            ToolbarButton menu = ActiveSubmenus[index];
+            ToolbarButton root = menu;
+            while (root.Parent is { } parent)
+                root = parent;
+            if (!root.AnyOptionsFocused)
+                menu.ChildOptionsVisible = false;
+        }
+    }
+
     public UIListTransform CreateMenu(
         SceneNode parentNode,
         bool horizontal,
@@ -245,6 +280,9 @@ public partial class UIToolbarComponent : UIComponent
         // For vertical submenus, ItemSize is the HEIGHT per item (menuHeight = 34px).
         // Drop-down rows set their own heights, so separators can be thinner than items.
         listTfm.ItemSize = null;
+        // A drop-down draws over panel content that shares its pass, such as the scene panel overlay buttons.
+        if (!horizontal)
+            listTfm.LayerZIndex = DropdownLayerZIndex;
         listTfm.Width = width ?? (horizontal ? null : MeasureDropdownWidth(options));
         listTfm.Height = height;
         CreateChildMenu(options, listNode, !horizontal, toolbar);
