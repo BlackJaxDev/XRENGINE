@@ -152,7 +152,10 @@ public partial class AssetsPanel : NativeVirtualTextPanel
     {
         _table = new UIVirtualTableProvider<AssetRow>(_tableRows,
             UIVirtualTableColumn<AssetRow>.Text("kind", "Type", 76, row => row.Path.Length == 0 ? "Error" : row.IsDirectory ? "Folder" : "Asset"),
-            UIVirtualTableColumn<AssetRow>.Text("name", "Name", 420, row => row.Name));
+            // Like the ImGui asset explorer, a row shows a folder or file icon before its name.
+            NativeIconTextColumn.Create<AssetRow>("name", "Name", 420, row => row.Name,
+                row => row.Path.Length == 0 ? SvgEditorIcons.IconError
+                    : row.IsDirectory ? SvgEditorIcons.IconFolder : SvgEditorIcons.IconFile));
         RowProviderOverride = _table;
     }
 
