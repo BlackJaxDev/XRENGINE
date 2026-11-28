@@ -111,14 +111,15 @@ internal static class UITextShapedLayoutKernel
         float regionHeight = availableSize.Y < float.MaxValue * 0.5f ? availableSize.Y : intrinsic.Y;
         float horizontalOffset = input.HorizontalAlignment switch
         {
-            EHorizontalAlignment.Center => (regionWidth - intrinsic.X - input.Margins.Z) * 0.5f,
+            EHorizontalAlignment.Center => (regionWidth - intrinsic.X) * 0.5f,
             EHorizontalAlignment.Right => regionWidth - intrinsic.X - input.Margins.Z,
             _ => 0.0f
         };
         float verticalOffset = input.VerticalAlignment switch
         {
             EVerticalAlignment.Top => regionHeight - intrinsic.Y - input.Margins.W,
-            EVerticalAlignment.Center => (regionHeight - intrinsic.Y - input.Margins.W) * 0.5f,
+            EVerticalAlignment.Center => UITextLayoutKernel.CenterBaseline(regionHeight,
+                UITextLayoutKernel.ResolveCapHeight(input, (input.FontSize ?? 1.0f) / input.EmSize), 0.0f),
             _ => 0.0f
         };
         Vector2 alignment = new(horizontalOffset, verticalOffset);

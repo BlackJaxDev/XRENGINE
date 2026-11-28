@@ -25,6 +25,29 @@ public static class UITextLayoutKernel
         return result;
     }
 
+    /// <summary>The cap height as a share of the font size when the font has no 'H' glyph.</summary>
+    private const float FallbackCapHeightRatio = 0.7f;
+
+    /// <summary>
+    /// Gets the height of a capital letter above the baseline, in layout units. Centered text uses it, so that the
+    /// visible capitals and digits sit in the middle of their box whether or not the text has descenders. This
+    /// matches how checkboxes and icons are centered in the same rows.
+    /// </summary>
+    internal static float ResolveCapHeight(UITextLayoutInput input, float scale)
+    {
+        if (input.Runes.TryGetValue('H', out UIRuneMetrics capital) && capital.Size.Y > 0.0f)
+            return capital.Bearing.Y * scale;
+        return (input.FontSize ?? input.EmSize * scale) * FallbackCapHeightRatio;
+    }
+
+    /// <summary>
+    /// Gets the baseline of the last line for centered text. The block from the last baseline to the cap top of the
+    /// first line is centered in the region. The text area is already inset by its margins, so they are not
+    /// subtracted again.
+    /// </summary>
+    internal static float CenterBaseline(float regionHeight, float capHeight, float firstLineShift)
+        => (regionHeight - (capHeight + firstLineShift)) * 0.5f;
+
     private static UITextLayoutResult MeasureUncached(UITextLayoutInput input, Vector2 availableSize)
     {
         if (input.DpiScale != 1.0f)
@@ -181,6 +204,7 @@ public static class UITextLayoutKernel
             };
         }
 
+        float capHeight = ResolveCapHeight(input, scale);
         float intrinsicHeight = glyphs.Count == 0 ? lineShifts[0] :
             MathF.Max(0.0f, maxY - minY + lineShifts[0]);
         Vector2 intrinsic = new(maxWidth, intrinsicHeight);
@@ -196,6 +220,7 @@ public static class UITextLayoutKernel
                     glyphs[i] = glyph with { Transform = glyph.Transform * fit };
                 }
                 intrinsic *= fit;
+                capHeight *= fit;
                 for (int i = 0; i < lineWidths.Count; i++)
                     lineWidths[i] *= fit;
                 for (int i = 0; i < carets.Count; i++)
@@ -210,7 +235,7 @@ public static class UITextLayoutKernel
         float verticalOffset = input.VerticalAlignment switch
         {
             EVerticalAlignment.Top => regionHeight - intrinsic.Y - input.Margins.W,
-            EVerticalAlignment.Center => (regionHeight - intrinsic.Y - input.Margins.W) * 0.5f,
+            EVerticalAlignment.Center => CenterBaseline(regionHeight, capHeight, lineShifts[0]),
             _ => 0.0f
         };
         for (int i = 0; i < glyphs.Count; i++)
@@ -218,7 +243,7 @@ public static class UITextLayoutKernel
             UITextLayoutGlyph glyph = glyphs[i];
             float horizontalOffset = input.HorizontalAlignment switch
             {
-                EHorizontalAlignment.Center => (regionWidth - lineWidths[glyph.Line] - input.Margins.Z) * 0.5f,
+                EHorizontalAlignment.Center => (regionWidth - lineWidths[glyph.Line]) * 0.5f,
                 EHorizontalAlignment.Right => regionWidth - intrinsic.X - input.Margins.Z,
                 _ => 0.0f
             };
@@ -232,7 +257,7 @@ public static class UITextLayoutKernel
             UITextCaretStop caret = carets[i];
             float horizontalOffset = input.HorizontalAlignment switch
             {
-                EHorizontalAlignment.Center => (regionWidth - lineWidths[caret.Line] - input.Margins.Z) * 0.5f,
+                EHorizontalAlignment.Center => (regionWidth - lineWidths[caret.Line]) * 0.5f,
                 EHorizontalAlignment.Right => regionWidth - intrinsic.X - input.Margins.Z,
                 _ => 0.0f
             };

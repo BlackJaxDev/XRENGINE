@@ -1755,14 +1755,14 @@ namespace XREngine.Rendering.UI
             float capHeight = lineHeight * CaretCapHeightRatio;
             float x = text.HorizontalAlignment switch
             {
-                EHorizontalAlignment.Center => (size.X - margins.Z) * 0.5f,
+                EHorizontalAlignment.Center => size.X * 0.5f,
                 EHorizontalAlignment.Right => size.X - margins.Z,
                 _ => 0.0f
             };
             float y = text.VerticalAlignment switch
             {
                 EVerticalAlignment.Top => size.Y - capHeight - margins.W,
-                EVerticalAlignment.Center => (size.Y - capHeight - margins.W) * 0.5f,
+                EVerticalAlignment.Center => UITextLayoutKernel.CenterBaseline(size.Y, capHeight, 0.0f),
                 _ => 0.0f
             };
             return new(MathF.Max(0.0f, x), MathF.Max(0.0f, y));
