@@ -2243,10 +2243,19 @@ namespace XREngine
                     // "Collection was modified" while we are reflecting through live runtime objects.
                     if (current is Array array)
                     {
+                        // Array.GetValue(int) accepts only one-dimensional arrays. Multi-dimensional arrays are
+                        // read through their flat element enumerator instead.
                         int n = Math.Min(array.Length, maxItems);
+                        IEnumerator? flat = array.Rank == 1 ? null : array.GetEnumerator();
                         for (int idx = 0; idx < n; idx++)
                         {
-                            object? item = array.GetValue(idx);
+                            object? item;
+                            if (flat is null)
+                                item = array.GetValue(idx);
+                            else if (flat.MoveNext())
+                                item = flat.Current;
+                            else
+                                break;
                             if (item is null)
                                 continue;
                             depths[item] = depth;
