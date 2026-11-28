@@ -267,6 +267,14 @@ pointer geometry; without a record it receives only the delta. Focus changes rem
 registrations before attaching the next target. Re-entrant focus callbacks settle
 on the latest request, and canvas deactivation removes its input mappings.
 
+Focus records how it arrived. Before the canvas input gives focus, it sets
+`UIInteractableComponent.IsFocusVisible`: false when a pointer press moved focus,
+true when Tab, the arrow keys, or the gamepad moved it. A key navigation also makes
+the current focus visible. Buttons show the focus ring and the focused or hover fill
+only for `ShowsFocusIndicator` (focus that is visible), so a clicked menu item or
+tree row keeps focus for keyboard activation without a filled background after the
+pointer leaves.
+
 `UICanvasInputComponent` hit-tests and dispatches hover changes on the update
 thread, in a component tick that runs after the pawn input tick. A cursor move
 therefore changes the hover target in the same update frame that receives it, and

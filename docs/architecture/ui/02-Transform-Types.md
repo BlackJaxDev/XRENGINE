@@ -119,7 +119,7 @@ Canvas layout does not call the auto-size callbacks. `UITextComponent` sets them
 ### Anchor Behavior
 
 When `MinAnchor == MaxAnchor` (point anchor):
-- Size = `Width`/`Height`, else the text intrinsic size, else the measured child size. `Min`/`Max` constraints clamp it.
+- Size = `Width`/`Height`, else the text intrinsic size, else the measured child size plus the node's own `Padding`. `Min`/`Max` constraints clamp it. Arrange insets the children by the padding, so an auto-sized list keeps its padding on all sides.
 - Position = anchor * parent size + Translation - pivot * size + margin offset
 
 When `MinAnchor != MaxAnchor` (stretched anchor):

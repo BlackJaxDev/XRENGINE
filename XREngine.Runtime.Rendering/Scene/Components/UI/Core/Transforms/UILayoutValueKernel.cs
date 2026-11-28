@@ -243,10 +243,14 @@ internal static class UILayoutValueKernel
         Vector2? textSize = node.TextInput is null ? null :
             UITextLayoutKernel.Measure(node.TextInput,
                 new Vector2(node.Width ?? constraint.X, node.Height ?? constraint.Y)).IntrinsicSize;
-        float rawWidth = node.Width ?? node.CapturedAutoWidth ?? textSize?.X ?? MeasureRawAxis(index, true, nodes, children, outputs);
-        float rawHeight = node.Height ?? node.CapturedAutoHeight ?? textSize?.Y ?? MeasureRawAxis(index, false, nodes, children, outputs);
-        float measuredWidth = node.Width ?? node.CapturedAutoWidth ?? textSize?.X ?? MeasureAutoAxis(index, true, nodes, children, outputs);
-        float measuredHeight = node.Height ?? node.CapturedAutoHeight ?? textSize?.Y ?? MeasureAutoAxis(index, false, nodes, children, outputs);
+        float rawWidth = node.Width ?? node.CapturedAutoWidth ?? textSize?.X ??
+            MeasureRawAxis(index, true, nodes, children, outputs) + AutoAxisPadding(in node, true);
+        float rawHeight = node.Height ?? node.CapturedAutoHeight ?? textSize?.Y ??
+            MeasureRawAxis(index, false, nodes, children, outputs) + AutoAxisPadding(in node, false);
+        float measuredWidth = node.Width ?? node.CapturedAutoWidth ?? textSize?.X ??
+            MeasureAutoAxis(index, true, nodes, children, outputs) + AutoAxisPadding(in node, true);
+        float measuredHeight = node.Height ?? node.CapturedAutoHeight ?? textSize?.Y ??
+            MeasureAutoAxis(index, false, nodes, children, outputs) + AutoAxisPadding(in node, false);
         output.MeasureConstraint = constraint;
         output.RawSize = new Vector2(rawWidth, rawHeight);
         Vector2 desired = new(Clamp(measuredWidth, node.MinWidth, node.MaxWidth), Clamp(measuredHeight, node.MinHeight, node.MaxHeight));
@@ -256,6 +260,22 @@ internal static class UILayoutValueKernel
         if (measureChanged || output.RawSize != priorRawSize || desired != priorDesiredSize)
             outputs.MarkMeasureChanged(index);
         return desired;
+    }
+
+    /// <summary>
+    /// Returns the padding that an auto-sized axis adds around its measured children. Arrange insets the children
+    /// by <see cref="UILayoutNodeInput.Padding"/>, so the auto size must include it, or the last child ends past the
+    /// node edge (for example, the bottom row of a drop-down menu touched the menu edge). Transform and rotation
+    /// operators and a list axis with a fixed content extent return zero.
+    /// </summary>
+    private static float AutoAxisPadding(in UILayoutNodeInput node, bool horizontal)
+    {
+        if (node.Operator is UILayoutOperator.Transform or UILayoutOperator.Rotation)
+            return 0.0f;
+        bool listAxis = node.Operator == UILayoutOperator.List && ((node.OperatorFlags & 1) != 0) == horizontal;
+        if (listAxis && (node.OperatorFlags & 16) != 0)
+            return 0.0f;
+        return horizontal ? node.Padding.X + node.Padding.Z : node.Padding.Y + node.Padding.W;
     }
 
     private static float MeasureAutoAxis(

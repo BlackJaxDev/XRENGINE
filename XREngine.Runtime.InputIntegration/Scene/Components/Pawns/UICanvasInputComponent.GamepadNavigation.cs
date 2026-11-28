@@ -53,6 +53,9 @@ public partial class UICanvasInputComponent
             return;
 
         _suppressMouseHoverUntilMove = target is not null;
+        _pointerFocusModality = false;
+        if (target is { IsFocusVisible: false })
+            target.IsFocusVisible = true;
         if (target is not null && TopMostInteractable is { IsDestroyed: false } hovered && !ReferenceEquals(hovered, target))
             hovered.IsMouseDirectlyOver = false;
 

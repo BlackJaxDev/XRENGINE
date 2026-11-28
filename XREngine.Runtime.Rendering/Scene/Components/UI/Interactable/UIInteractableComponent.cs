@@ -185,6 +185,23 @@ namespace XREngine.Rendering.UI
             set => SetField(ref _registerInputsOnFocus, value);
         }
 
+        private bool _isFocusVisible = true;
+        /// <summary>
+        /// True when focus on this component must show a visible indicator, such as a focus ring or a highlight.
+        /// The canvas input sets it before it gives focus: false when a pointer press moves focus, true when the
+        /// keyboard (Tab or arrow keys) or the gamepad moves focus. A button that the user clicks keeps focus for
+        /// keyboard activation, but it does not keep a filled background. Controls that show focus read
+        /// <see cref="ShowsFocusIndicator"/>.
+        /// </summary>
+        public bool IsFocusVisible
+        {
+            get => _isFocusVisible;
+            set => SetField(ref _isFocusVisible, value);
+        }
+
+        /// <summary>True when the component has focus and that focus must be visible (<see cref="IsFocusVisible"/>).</summary>
+        public bool ShowsFocusIndicator => IsFocused && IsFocusVisible;
+
         private bool _isFocused = false;
         /// <summary>
         /// Set when this component has focus.

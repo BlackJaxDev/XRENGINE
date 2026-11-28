@@ -54,7 +54,7 @@ namespace XREngine.Rendering.UI
         private void UpdateFocusRing()
         {
             if (_focusRingMaterial is { IsDestroyed: false } ring)
-                ring.BatchBorderColor = IsFocused && CanInteract ? FocusRingColor : ColorF4.Transparent;
+                ring.BatchBorderColor = ShowsFocusIndicator && CanInteract ? FocusRingColor : ColorF4.Transparent;
         }
 
         protected override void OnMouseDirectOverlapEnter()
@@ -69,7 +69,8 @@ namespace XREngine.Rendering.UI
         protected override void OnGotFocus()
         {
             base.OnGotFocus();
-            Highlight();
+            if (IsFocusVisible)
+                Highlight();
             UpdateFocusRing();
         }
 
@@ -83,24 +84,26 @@ namespace XREngine.Rendering.UI
 
         /// <summary>
         /// Shows the highlight while the pointer is directly over the button, the gamepad selects it,
-        /// or it has keyboard focus. Applies the style preset for the resulting state when one is set.
+        /// or it has visible keyboard focus (<see cref="UIInteractableComponent.ShowsFocusIndicator"/>). Focus from a
+        /// pointer click does not keep the highlight after the pointer leaves. Applies the style preset for the
+        /// resulting state when one is set.
         /// </summary>
         private void UpdateHighlightState(bool mouseDirectlyOver, bool gamepadSelected)
         {
-            bool shouldHighlight = mouseDirectlyOver || gamepadSelected || IsFocused;
+            bool shouldHighlight = mouseDirectlyOver || gamepadSelected || ShowsFocusIndicator;
             if (shouldHighlight)
             {
                 if (!IsHighlighted)
                     Highlight(gamepadSelected);
                 else if (_style is not null)
-                    ApplyStyleForCurrentState(immediate: false, gamepadSelected: gamepadSelected, focused: IsFocused);
+                    ApplyStyleForCurrentState(immediate: false, gamepadSelected: gamepadSelected, focused: ShowsFocusIndicator);
             }
             else
             {
                 if (IsHighlighted)
                     Unhighlight(gamepadSelected);
                 else if (_style is not null)
-                    ApplyStyleForCurrentState(immediate: false, gamepadSelected: gamepadSelected, focused: IsFocused);
+                    ApplyStyleForCurrentState(immediate: false, gamepadSelected: gamepadSelected, focused: ShowsFocusIndicator);
             }
         }
 
@@ -223,6 +226,11 @@ namespace XREngine.Rendering.UI
                 case nameof(IsFocused):
                     UpdateFocusRing();
                     break;
+                case nameof(IsFocusVisible):
+                    UpdateFocusRing();
+                    if (IsFocused)
+                        UpdateHighlightState(IsMouseDirectlyOver, IsGamepadSelected);
+                    break;
                 case nameof(IsPressed):
                     if (_style is not null)
                         ApplyStyleForCurrentState(immediate: false);
@@ -262,7 +270,7 @@ namespace XREngine.Rendering.UI
                         break;
                     }
                 case nameof(IsEnabled):
-                    if (IsEnabled && (IsFocused || IsMouseDirectlyOver))
+                    if (IsEnabled && (ShowsFocusIndicator || IsMouseDirectlyOver))
                         Highlight();
                     else if (!IsEnabled)
                         Unhighlight();
@@ -320,7 +328,7 @@ namespace XREngine.Rendering.UI
         }
 
         private void ApplyStyleForCurrentState(bool immediate)
-            => ApplyStyleForCurrentState(immediate, IsGamepadSelected, IsFocused);
+            => ApplyStyleForCurrentState(immediate, IsGamepadSelected, ShowsFocusIndicator);
 
         private void ApplyStyleForCurrentState(bool immediate, bool gamepadSelected, bool focused)
         {

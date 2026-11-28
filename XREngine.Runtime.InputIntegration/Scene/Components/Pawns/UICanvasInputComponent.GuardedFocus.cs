@@ -43,6 +43,9 @@ public partial class UICanvasInputComponent
         Action<ulong> acceptIntent)
     {
         if (!Current()) return;
+        if (target.IsFocusVisible == _pointerFocusModality)
+            target.IsFocusVisible = !_pointerFocusModality;
+        if (!Current()) return;
         UICanvasFocusOwnerProof? inputOwner = UICanvasFocusOwnerProof.Capture(this, null,
             GetCameraCanvasNonCreating(), null);
         if (inputOwner is not { IsCurrent: true } || !Current()) return;

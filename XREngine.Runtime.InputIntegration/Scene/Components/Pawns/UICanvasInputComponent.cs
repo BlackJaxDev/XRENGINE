@@ -46,6 +46,13 @@ namespace XREngine.Components
         private UIInteractableComponent? _pressedTarget;
         [RuntimeOnly, YamlIgnore]
         private ulong _nextPointerPressEpoch;
+        /// <summary>
+        /// True while the last focus-moving input was a pointer press. Set by a pointer press and cleared by
+        /// keyboard or gamepad navigation. Focus targets copy its inverse into
+        /// <see cref="UIInteractableComponent.IsFocusVisible"/>.
+        /// </summary>
+        [RuntimeOnly, YamlIgnore]
+        private bool _pointerFocusModality;
         [RuntimeOnly, YamlIgnore]
         private ulong _pressedPointerPressEpoch;
         [RuntimeOnly, YamlIgnore]
@@ -973,6 +980,7 @@ namespace XREngine.Components
             ulong sourceGeneration = source?.PointerContactGeneration ?? 0UL;
             bool wasTouch = OwningLocalPlayer?.IsTouchMouseDispatch == true;
             UIInteractableComponent? target = FindMouseInteractTarget();
+            _pointerFocusModality = true;
             FocusMouseTarget(target);
             if (_nextPointerPressEpoch != startingEpoch)
                 return;
@@ -1089,6 +1097,8 @@ namespace XREngine.Components
 
         private void FocusMouseTarget(UIInteractableComponent? target)
         {
+            if (target is not null && target.IsFocusVisible == _pointerFocusModality)
+                target.IsFocusVisible = !_pointerFocusModality;
             var controller = OwningPawn?.Controller;
             if (target is not null && controller?.FocusedInteractable is UIInteractableComponent previous &&
                 !ReferenceEquals(previous, target))
@@ -1273,6 +1283,10 @@ namespace XREngine.Components
             if (_inputDeactivating || _inputTerminal || IsVirtualGamepadDispatch ||
                 RefreshPresentedInput() is not { } publication)
                 return;
+            // Keyboard navigation makes focus visible again, also on a control that keeps focus.
+            _pointerFocusModality = false;
+            if (FocusedComponent is { IsFocusVisible: false } keyboardFocused)
+                keyboardFocused.IsFocusVisible = true;
             try
             {
             long current = FocusedComponent?.RenderInfo2D.MembershipId ?? 0;
