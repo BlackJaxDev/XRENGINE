@@ -28,33 +28,106 @@ public partial class InspectorPanel
     private UIVirtualTableProvider<XRComponent>? _componentTable;
     private UIVirtualTableProvider<NativeComponentType>? _componentTypeTable;
     private ulong _componentGeneration;
-    private UITextComponent? _componentStatusLabel;
     private readonly HashSet<SceneNode> _observedComponentNodes = new(ReferenceEqualityComparer.Instance);
+    /// <summary>The add-component view: the type search field above the list of component types.</summary>
+    private UIBoundableTransform? _componentPickerRoot;
+    private UITextInputComponent? _componentSearchInput;
+    /// <summary>The placeholder of the type search field. It also shows why the last add failed.</summary>
+    private UITextComponent? _componentSearchPlaceholder;
+    private UIBoundableTransform? _removeComponentButton;
+    private const string ComponentSearchPlaceholderText = "Search components";
 
+    /// <summary>
+    /// Creates the inspector command buttons. The narrow inspector shows the three view buttons. The remove
+    /// button shows only in the component list, where it removes the selected component.
+    /// </summary>
     private void CreateComponentCommands(SceneNode toolbar)
     {
-        NativeUIElements.CreateButton(toolbar, "Properties", _ => ShowSceneProperties(), width: 88, height: 28);
+        NativeUIElements.CreateButton(toolbar, "Properties", _ => ShowSceneProperties(), width: 80, height: 28);
         NativeUIElements.CreateButton(toolbar, "Components", _ => SetInspectorView(InspectorView.Components), width: 88, height: 28);
-        NativeUIElements.CreateButton(toolbar, "Add", _ => SetInspectorView(InspectorView.AddComponent), width: 70, height: 28);
-        NativeUIElements.CreateButton(toolbar, "Remove", _ => RemoveSelectedComponent(), width: 75, height: 28);
+        NativeUIElements.CreateButton(toolbar, "Add", _ => SetInspectorView(InspectorView.AddComponent), width: 52, height: 28);
+        var remove = NativeUIElements.CreateButton(toolbar, "Remove", _ => RemoveSelectedComponent(), width: 66, height: 28);
+        _removeComponentButton = remove.Node.GetTransformAs<UIBoundableTransform>(true);
+    }
 
-        SceneNode searchNode = toolbar.NewChild();
-        searchNode.SetTransform<UIBoundableTransform>().Width = 140;
-        var (input, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(searchNode);
-        input.SingleLineMode = true;
-        input.Text = _componentSearch;
-        input.Submitted += field =>
+    /// <summary>
+    /// Creates the add-component view in <paramref name="propertyPane"/>. A search field sits above the type
+    /// list and filters it while the user types, like the search box of the ImGui add-component popup.
+    /// Enter adds the first listed type, and Escape clears the search or, when it is empty, returns to the
+    /// properties.
+    /// </summary>
+    private void CreateComponentPicker(SceneNode propertyPane)
+    {
+        SceneNode pickerNode = propertyPane.NewChildWithTransform(out UIDualSplitTransform split, "AddComponent");
+        split.VerticalSplit = true;
+        split.FirstFixedSize = true;
+        split.FixedSize = SearchFieldHeight + 6.0f;
+        split.SplitterSize = 0;
+        split.MinAnchor = Vector2.Zero;
+        split.MaxAnchor = Vector2.One;
+        _componentPickerRoot = split;
+
+        SceneNode searchHost = pickerNode.NewChildWithTransform<UIBoundableTransform>(out _, "ComponentSearch");
+        (UITextInputComponent input, UITextComponent placeholder) =
+            CreateSearchField(searchHost, "ComponentSearchField", ComponentSearchPlaceholderText, _componentSearch);
+        _componentSearchInput = input;
+        _componentSearchPlaceholder = placeholder;
+        input.PropertyChanged += (_, args) =>
         {
-            _componentSearch = field.Text.Trim();
-            RefreshComponentTypes();
-            SetInspectorView(InspectorView.AddComponent);
+            if (args.PropertyName == nameof(UITextInputComponent.Text))
+                SetComponentSearch(input.Text);
         };
-        input.Cancelled += field => field.Text = _componentSearch;
+        input.Submitted += _ => AddFirstListedComponent();
+        input.Cancelled += field =>
+        {
+            if (string.IsNullOrEmpty(field.Text))
+                ShowSceneProperties();
+            else
+                field.Text = string.Empty;
+        };
 
-        SceneNode statusNode = toolbar.NewChild<UITextComponent>(out var status);
-        statusNode.GetTransformAs<UIBoundableTransform>(true)!.Width = 300;
-        status.VerticalAlignment = EVerticalAlignment.Center;
-        _componentStatusLabel = status;
+        SceneNode listHost = pickerNode.NewChildWithTransform<UIBoundableTransform>(out _, "ComponentTypes");
+        (_componentPickerView, _componentPicker) = CreateModeList(listHost, "ComponentTypeList");
+    }
+
+    /// <summary>Applies new type search text: it filters the type list and restores the placeholder text.</summary>
+    private void SetComponentSearch(string? text)
+    {
+        if (_componentSearchPlaceholder is { } placeholder)
+        {
+            if (placeholder.Text != ComponentSearchPlaceholderText)
+            {
+                placeholder.Text = ComponentSearchPlaceholderText;
+                placeholder.Color = EditorGlassTheme.TextDisabled;
+            }
+            EVisibility visibility = string.IsNullOrEmpty(text) ? EVisibility.Visible : EVisibility.Hidden;
+            if (placeholder.BoundableTransform.Visibility != visibility)
+                placeholder.BoundableTransform.Visibility = visibility;
+        }
+        string search = text?.Trim() ?? string.Empty;
+        if (string.Equals(search, _componentSearch, StringComparison.Ordinal))
+            return;
+        _componentSearch = search;
+        RefreshComponentTypes();
+    }
+
+    /// <summary>Shows a status message, such as an add failure, in place of the search placeholder.</summary>
+    private void ShowComponentSearchStatus(string message)
+    {
+        if (_componentSearchInput is { } input)
+            input.Text = string.Empty;
+        if (_componentSearchPlaceholder is not { } placeholder)
+            return;
+        placeholder.Text = message;
+        placeholder.Color = EditorGlassTheme.TextWarning;
+        placeholder.BoundableTransform.Visibility = EVisibility.Visible;
+    }
+
+    /// <summary>Adds the first type that the search lists. Enter in the search field calls this.</summary>
+    private void AddFirstListedComponent()
+    {
+        if (_componentTypes.Count > 0)
+            AddComponent(_componentTypes.GetItemId(0));
     }
 
     private void CreateComponentViews(SceneNode propertyPane)
@@ -69,13 +142,13 @@ public partial class InspectorPanel
         _componentTable.RowPointerLeft += ComponentPointerLeft;
         _componentList.VirtualProvider = _componentTable;
 
-        (_componentPickerView, _componentPicker) = CreateModeList(propertyPane, "AddComponent");
+        CreateComponentPicker(propertyPane);
         _componentTypeTable = new UIVirtualTableProvider<NativeComponentType>(_componentTypes,
             UIVirtualTableColumn<NativeComponentType>.Text("name", "Component", 230, item => item.Name),
             UIVirtualTableColumn<NativeComponentType>.Text("namespace", "Namespace", 300, item => item.Namespace));
         _componentTypeTable.AccessibleRowName = item => item.Name;
         _componentTypeTable.Activated += AddComponent;
-        _componentPicker.VirtualProvider = _componentTypeTable;
+        _componentPicker!.VirtualProvider = _componentTypeTable;
         RefreshComponentTypes();
         ApplyInspectorView();
     }
@@ -279,9 +352,11 @@ public partial class InspectorPanel
         if (_componentListView is not null)
             _componentListView.Visibility = showComponents
                 ? EVisibility.Visible : EVisibility.Collapsed;
-        if (_componentPickerView is not null)
-            _componentPickerView.Visibility = _inspectorView == InspectorView.AddComponent
+        if (_componentPickerRoot is not null)
+            _componentPickerRoot.Visibility = _inspectorView == InspectorView.AddComponent
                 ? EVisibility.Visible : EVisibility.Collapsed;
+        if (_removeComponentButton is not null)
+            _removeComponentButton.Visibility = showComponents ? EVisibility.Visible : EVisibility.Collapsed;
     }
 
     private void AddComponent(ulong id)
@@ -295,9 +370,14 @@ public partial class InspectorPanel
             if (generation != _componentGeneration || SceneNode.IsDestroyed || _componentList is null ||
                 !targets.SequenceEqual(_componentTargets, ReferenceEqualityComparer.Instance))
                 return;
-            if (_componentStatusLabel is not null)
-                _componentStatusLabel.Text = error ?? $"Added {type.Name}";
-            SetInspectorView(InspectorView.Components);
+            if (error is not null)
+            {
+                // The view stays open, so the user can pick another type.
+                ShowComponentSearchStatus(error);
+                return;
+            }
+            // The stacked properties show the new component section, like the ImGui popup that closes.
+            ShowSceneProperties();
         });
     }
 
@@ -311,8 +391,6 @@ public partial class InspectorPanel
             if (generation != _componentGeneration || SceneNode.IsDestroyed || _componentList is null ||
                 group.Any(entry => !_componentTargets.Contains(entry.Node)))
                 return;
-            if (_componentStatusLabel is not null)
-                _componentStatusLabel.Text = $"Removed {group[0].Component.GetType().Name}";
             ShowSceneProperties();
             SetInspectorView(InspectorView.Components);
         });
@@ -321,6 +399,7 @@ public partial class InspectorPanel
     private void ReleaseComponentViews()
     {
         ReleaseComponentViewOwners();
+        ReleaseComponentActions();
         if (_componentList is not null)
             _componentList.VirtualProvider = null;
         if (_componentPicker is not null)
@@ -331,7 +410,10 @@ public partial class InspectorPanel
         _componentPicker = null;
         _componentTable = null;
         _componentTypeTable = null;
-        _componentStatusLabel = null;
+        _componentPickerRoot = null;
+        _componentSearchInput = null;
+        _componentSearchPlaceholder = null;
+        _removeComponentButton = null;
         _componentsById.Clear();
         _componentGroupsById.Clear();
         _componentDragStarts.Clear();

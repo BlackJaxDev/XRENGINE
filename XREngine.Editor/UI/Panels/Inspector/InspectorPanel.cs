@@ -201,6 +201,8 @@ public partial class InspectorPanel : EditorPanel
             CapturePlayModeState();
         if (!IsLocked)
         {
+            // A component menu or rename popup belongs to the old target.
+            _componentActionsMenu?.Hide();
             _componentGeneration++;
             _componentTargets = [.. obj];
             _inspectorView = InspectorView.Properties;
@@ -224,6 +226,7 @@ public partial class InspectorPanel : EditorPanel
             _inspectingAsset = false;
             return;
         }
+        _componentActionsMenu?.Hide();
         _componentGeneration++;
         _componentTargets = [];
         _inspectorView = InspectorView.Properties;

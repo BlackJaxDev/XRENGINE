@@ -1,3 +1,4 @@
+using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Rendering.UI;
 using XREngine.Scene;
@@ -57,6 +58,37 @@ internal sealed class InspectorPropertyColumnLayout
     /// <summary>The name cell. With a leading inset it holds the label and the section chevron.</summary>
     internal UIBoundableTransform NameCell => _name;
 
+    private float? _labelDefaultRightMargin;
+
+    /// <summary>
+    /// When set, the name label of a section header runs across the value cell and is clipped this distance
+    /// before the right edge of the row, so it does not draw under the header actions button. Null keeps the
+    /// label inside the name cell.
+    /// </summary>
+    internal float? HeaderLabelRightReserve { get; set; }
+
+    /// <summary>
+    /// Sets the right margin and clipping of the name label from <see cref="HeaderLabelRightReserve"/> and the
+    /// current value cell width. The column layout calls this after it sizes the cells, and the row binding
+    /// calls it when the reserve changes.
+    /// </summary>
+    internal void ApplyHeaderLabelSpan()
+    {
+        if (NameLabel is not { } label)
+            return;
+        UIBoundableTransform bounds = label.BoundableTransform;
+        Vector4 margins = bounds.Margins;
+        _labelDefaultRightMargin ??= margins.Z;
+        float right = _labelDefaultRightMargin.Value;
+        if (HeaderLabelRightReserve is float reserve && _value.Width is float valueWidth)
+            right = -(_name.Margins.Z + _value.Margins.X + valueWidth - reserve);
+        if (margins.Z != right)
+            bounds.Margins = margins with { Z = right };
+        bool clip = HeaderLabelRightReserve is not null;
+        if (clip && !label.ClipToBounds)
+            label.ClipToBounds = true;
+    }
+
     internal bool TryApply(UIListTransform list, object provider, ulong incarnation,
         Func<bool> ownerCurrent, float viewportWidth)
     {
@@ -86,6 +118,8 @@ internal sealed class InspectorPropertyColumnLayout
             _value.SetWidthGuarded(valueWidth, proof, static state => RequireWrite(state));
         }
         RequireWrite(proof);
+        if (HeaderLabelRightReserve is not null)
+            ApplyHeaderLabelSpan();
         return _value.Width == valueWidth && _value.WidthWriteIntentRevision == valueIntent;
     }
 

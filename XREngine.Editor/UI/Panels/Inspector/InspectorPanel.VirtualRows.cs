@@ -37,6 +37,12 @@ public partial class InspectorPanel
         public required SceneNode HeaderToggle;
         public required UIBoundableTransform HeaderToggleTransform;
         public bool HeaderToggleShown;
+        /// <summary>The "..." button of a component section header. It opens the component actions menu.</summary>
+        public required UIButtonComponent ActionsButton;
+        public required UIBoundableTransform ActionsTransform;
+        public bool ActionsShown;
+        /// <summary>The components that the shown actions button acts on.</summary>
+        public object?[]? ActionsTargets;
         /// <summary>The object field of a component, scene node, transform, or asset reference row.</summary>
         public InspectorObjectField? ObjectField;
         /// <summary>The node and method pickers of a persistent event callback row.</summary>
@@ -376,6 +382,7 @@ public partial class InspectorPanel
         // The header holds the member search field above the command buttons.
         SceneNode header = root.NewChildWithTransform<UIBoundableTransform>(out _, "InspectorHeader");
         CreateMemberSearchField(header);
+        CreateComponentActionsMenu(header);
         SceneNode toolbar = header.NewChildWithTransform(out UIListTransform commands, "InspectorCommands");
         commands.MinAnchor = Vector2.Zero;
         commands.MaxAnchor = new Vector2(1.0f, 0.0f);
@@ -457,7 +464,26 @@ public partial class InspectorPanel
     /// </summary>
     private void CreateMemberSearchField(SceneNode header)
     {
-        SceneNode searchNode = header.NewChild("MemberSearch");
+        (UITextInputComponent input, UITextComponent placeholder) =
+            CreateSearchField(header, "MemberSearch", "Search properties", _memberSearch);
+        _memberSearchPlaceholder = placeholder;
+        input.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName != nameof(UITextInputComponent.Text))
+                return;
+            SetMemberSearch(input.Text);
+        };
+        input.Cancelled += field => field.Text = string.Empty;
+    }
+
+    /// <summary>
+    /// Creates a single-line search field along the top of <paramref name="parent"/>: a text field with a search
+    /// icon at its left, and a placeholder text that the caller shows while the field is empty.
+    /// </summary>
+    private static (UITextInputComponent Input, UITextComponent Placeholder) CreateSearchField(SceneNode parent,
+        string name, string placeholderText, string text)
+    {
+        SceneNode searchNode = parent.NewChild(name);
         UIBoundableTransform searchBounds = searchNode.SetTransform<UIBoundableTransform>();
         searchBounds.MinAnchor = new Vector2(0.0f, 1.0f);
         searchBounds.MaxAnchor = new Vector2(1.0f, 1.0f);
@@ -467,24 +493,18 @@ public partial class InspectorPanel
         var (input, _, _, _) = NativeUIElements.CreateTextInputField<UITextInputComponent>(searchNode,
             textMargins: new Vector4(26.0f, 2.0f, 8.0f, 2.0f));
         input.SingleLineMode = true;
-        input.Text = _memberSearch;
+        input.Text = text;
         NativeUIElements.CreateIcon(searchNode, EUIQuadIcon.Search, new Vector2(0.0f, 0.5f),
             new Vector2(14.0f, 0.0f), 12.0f, EditorGlassTheme.TextSecondary);
         SceneNode placeholderNode = searchNode.NewChild<UITextComponent>(out var placeholder);
         placeholderNode.GetTransformAs<UIBoundableTransform>(true)!.Margins = new Vector4(26.0f, 0.0f, 8.0f, 0.0f);
-        placeholder.Text = "Search properties";
+        placeholder.Text = placeholderText;
         placeholder.FontSize = EditorUI.Styles.PropertyInputFontSize;
         placeholder.Color = EditorGlassTheme.TextDisabled;
         placeholder.VerticalAlignment = EVerticalAlignment.Center;
         placeholder.ClipToBounds = true;
-        _memberSearchPlaceholder = placeholder;
-        input.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName != nameof(UITextInputComponent.Text))
-                return;
-            SetMemberSearch(input.Text);
-        };
-        input.Cancelled += field => field.Text = string.Empty;
+        placeholder.BoundableTransform.Visibility = string.IsNullOrEmpty(text) ? EVisibility.Visible : EVisibility.Hidden;
+        return (input, placeholder);
     }
 
     /// <summary>Applies new member search text: it filters the rows and shows or hides the placeholder.</summary>
@@ -642,6 +662,7 @@ public partial class InspectorPanel
         buttonLabel.ClipToBounds = true;
         buttonLabel.VerticalAlignment = EVerticalAlignment.Center;
         buttonLabel.HorizontalAlignment = EHorizontalAlignment.Left;
+        var (actionsButton, actionsTransform) = CreateComponentActionsButton(valueRoot);
         PropertyRow state = new()
         {
             ValueRoot = valueRoot,
@@ -650,8 +671,10 @@ public partial class InspectorPanel
             DetailLabel = buttonLabel,
             DisclosureIcon = disclosureIcon, DisclosureTransform = disclosureTransform,
             HeaderToggle = headerToggle, HeaderToggleTransform = headerToggleTransform,
+            ActionsButton = actionsButton, ActionsTransform = actionsTransform,
             LinkIcon = linkIcon,
         };
+        actionsButton.InteractAction += _ => ShowComponentActions(actionsButton, state.ActionsTargets);
         detailButton.InteractAction += _ =>
         {
             PropertyInfo? clickedProperty = state.Property;
@@ -741,6 +764,25 @@ public partial class InspectorPanel
             ? IsStackedSectionCollapsed(sectionKey) ? 0 : 1
             : -1);
         if (!Current()) return;
+        // A component section header gets the actions button. The transform header does not.
+        bool showActions = header && capturedTargets is { Length: > 0 } &&
+            Array.TrueForAll(capturedTargets, static target => target is XRComponent);
+        state.ActionsTargets = showActions ? capturedTargets : null;
+        if (state.ActionsShown != showActions)
+        {
+            state.ActionsTransform.Visibility = showActions ? EVisibility.Visible : EVisibility.Hidden;
+            state.ActionsShown = showActions;
+            if (!Current()) return;
+        }
+        // The title of a component header stops before its actions button. The binding above resets the label
+        // clipping, so a reserved span is applied again on each bind.
+        float? reserve = showActions ? ComponentActionsButtonWidth + 10.0f : null;
+        if (state.Columns.HeaderLabelRightReserve != reserve || reserve is not null)
+        {
+            state.Columns.HeaderLabelRightReserve = reserve;
+            state.Columns.ApplyHeaderLabelSpan();
+            if (!Current()) return;
+        }
         if (targets is { Length: > 0 } && property.SetMethod?.IsPublic == true &&
             (typeof(XRComponent).IsAssignableFrom(property.PropertyType) ||
              typeof(XRAsset).IsAssignableFrom(property.PropertyType)))
@@ -1193,6 +1235,17 @@ public partial class InspectorPanel
             if (!ReferenceEquals(state.BindingToken, token)) return;
             state.HeaderToggleTransform.Visibility = EVisibility.Hidden;
             state.HeaderToggleShown = false;
+        }
+        state.ActionsTargets = null;
+        if (state.ActionsShown)
+        {
+            state.ActionsTransform.Visibility = EVisibility.Hidden;
+            state.ActionsShown = false;
+        }
+        if (state.Columns.HeaderLabelRightReserve is not null)
+        {
+            state.Columns.HeaderLabelRightReserve = null;
+            state.Columns.ApplyHeaderLabelSpan();
         }
     }
 
