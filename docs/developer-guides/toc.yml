@@ -141,6 +141,8 @@
       href: runtime/browser-ui-fonts.md
     - name: Job System
       href: runtime/job-system.md
+    - name: Managed Plugins
+      href: runtime/managed-plugins.md
     - name: Native Dependencies
       href: runtime/native-dependencies.md
     - name: Overrideable Settings

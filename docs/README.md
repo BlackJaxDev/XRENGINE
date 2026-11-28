@@ -90,6 +90,7 @@ Start here for XRENGINE documentation. The main handwritten docs are split by au
 - [Runtime Environment Settings](developer-guides/runtime/runtime-environment-settings.md)
 - [Hot-Path Memory Control](developer-guides/runtime/hot-path-memory.md)
 - [Job System](developer-guides/runtime/job-system.md)
+- [Managed Plugins](developer-guides/runtime/managed-plugins.md)
 - [Profiler](developer-guides/diagnostics/profiler.md)
 - [Dedicated Vulkan RenderBench](developer-guides/diagnostics/profiler.md#dedicated-vulkan-renderbench)
 - [Runtime Data Layout Measurements](developer-guides/diagnostics/runtime-data-layout-measurements.md)

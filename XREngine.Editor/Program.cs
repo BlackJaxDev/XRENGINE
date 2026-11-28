@@ -112,6 +112,7 @@ internal partial class Program
         long afterDesktopServicesMs = processEntryStopwatch.ElapsedMilliseconds;
         using IDisposable modelAssetPipelineRegistration =
             ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
+        using IDisposable editorPlugins = XREngine.Runtime.Platform.Desktop.Plugins.DesktopPluginLoader.Install();
         long afterModelPipelineMs = processEntryStopwatch.ElapsedMilliseconds;
         using IDisposable applicationServices =
             RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.Editor);
