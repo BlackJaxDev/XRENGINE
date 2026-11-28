@@ -43,17 +43,23 @@ namespace XREngine.Rendering
         private bool _uiManifestHostFileAccess;
         // The shader-source notification count and the Stopwatch timestamp of the last time the cached
         // manifest dependencies were read from disk. TryGetUiManifest reads the disk again only when a
-        // notification arrived after that, or when UiManifestDependencyRecheckTicks passed.
+        // notification arrived after that, or when DependencyRecheckTicks passed.
         private long _uiManifestVerifiedNotifications;
         private long _uiManifestVerifiedTimestamp;
+        // The same two values for the search-root directories of the cached resolved source. The directory
+        // timestamps show an added or removed include file. TryGetResolvedShaderSourceCore reads them again
+        // only when a notification arrived, or when DependencyRecheckTicks passed. It reads the file
+        // dependencies on each call.
+        private long _resolvedSourceDirectoriesVerifiedNotifications;
+        private long _resolvedSourceDirectoriesVerifiedTimestamp;
 
         /// <summary>
-        /// The longest time that TryGetUiManifest returns a cached manifest without reading its file
-        /// dependencies from disk again (one second). A shader source notification (hot reload, a watched
-        /// file change, or a snippet change) makes the next call read the disk at once. This interval
+        /// The longest time that a cached manifest or resolved source is returned without reading its file
+        /// and directory dependencies from disk again (one second). A shader source notification (hot reload,
+        /// a watched file change, or a snippet change) makes the next call read the disk at once. This interval
         /// covers a file edit that no watcher reports.
         /// </summary>
-        private static readonly long UiManifestDependencyRecheckTicks = System.Diagnostics.Stopwatch.Frequency;
+        private static readonly long DependencyRecheckTicks = System.Diagnostics.Stopwatch.Frequency;
         private long _optimizedSourceSnippetVersion;
         private bool _optimizedSourceHostFileAccess;
         private long _sourceRevision;
@@ -466,7 +472,7 @@ namespace XREngine.Rendering
                     // cached manifest. The Advanced scene publisher calls this method for each Uber material
                     // of a full plan, and the file system calls were most of the plan time.
                     if (_uiManifestVerifiedNotifications == notifications &&
-                        now - _uiManifestVerifiedTimestamp < UiManifestDependencyRecheckTicks &&
+                        now - _uiManifestVerifiedTimestamp < DependencyRecheckTicks &&
                         ShaderSourceResolver.IsOwnerCurrent(owner))
                     {
                         manifest = _uiManifestCache;
@@ -570,12 +576,15 @@ namespace XREngine.Rendering
                 return true;
             }
 
+            long notifications = ShaderSourceDependencyIndex.NotificationsPublished;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
             if (!annotateIncludes)
             {
                 ResolvedShaderSource? cachedPayload = null;
                 ShaderSourceFileDependency[]? cachedDependencies = null;
                 ShaderSourceDirectoryDependency[]? cachedDirectoryDependencies = null;
                 ShaderSourceProviderOwner cachedOwner = default;
+                bool checkDirectories = true;
                 lock (_resolvedSourceCacheLock)
                 {
                     if (_resolvedSourcePayloadCache is not null &&
@@ -589,10 +598,17 @@ namespace XREngine.Rendering
                         cachedDependencies = _resolvedSourceDependencies;
                         cachedDirectoryDependencies = _resolvedSourceDirectoryDependencies;
                         cachedOwner = _resolvedSourceOwner;
+                        checkDirectories = _resolvedSourceDirectoriesVerifiedNotifications != notifications ||
+                            now - _resolvedSourceDirectoriesVerifiedTimestamp >= DependencyRecheckTicks;
                     }
                 }
+                // Each new material resolves the sources of its shaders, and a UI rebuild creates many materials.
+                // A read of every shader directory timestamp was most of that material creation time. When the
+                // directories were read a short time ago and no shader source notification arrived after that,
+                // check only the file dependencies.
                 if (cachedPayload is not null &&
-                    ShaderSourceResolver.AreDependenciesCurrent(cachedDependencies, cachedDirectoryDependencies, cachedOwner))
+                    ShaderSourceResolver.AreDependenciesCurrent(cachedDependencies,
+                        checkDirectories ? cachedDirectoryDependencies : null, cachedOwner))
                 {
                     lock (_resolvedSourceCacheLock)
                     {
@@ -605,6 +621,11 @@ namespace XREngine.Rendering
                             _resolvedSourceSnippetVersion == snippetVersion &&
                             _resolvedSourceHostFileAccess == hostFileAccess)
                         {
+                            if (checkDirectories)
+                            {
+                                _resolvedSourceDirectoriesVerifiedNotifications = notifications;
+                                _resolvedSourceDirectoriesVerifiedTimestamp = now;
+                            }
                             resolvedSource = cachedPayload;
                             return true;
                         }
@@ -652,6 +673,10 @@ namespace XREngine.Rendering
                         _resolvedSourceSnippetVersion = snippetVersion;
                         _resolvedSourceHostFileAccess = hostFileAccess;
                         _resolvedSourceOwner = owner;
+                        // The notification count and time were read before the resolve, so a notification that
+                        // arrives during the resolve makes the next call check the disk.
+                        _resolvedSourceDirectoriesVerifiedNotifications = notifications;
+                        _resolvedSourceDirectoriesVerifiedTimestamp = now;
                     }
 
                     ShaderSourceDependencyIndex.Update(this, sourcePath, resolvedPayload.FileDependencies);
