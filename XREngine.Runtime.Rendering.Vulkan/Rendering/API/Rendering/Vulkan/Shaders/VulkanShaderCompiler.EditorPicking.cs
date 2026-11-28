@@ -9,8 +9,19 @@ internal static partial class VulkanShaderCompiler
     /// <summary>
     /// Resolves conditional outputs with shaderc before binding the editor color
     /// reader. This runs after uniform rewriting so frequency ownership is kept.
+    /// The result is cached by its input, because the preprocessor runs on the render thread.
     /// </summary>
-    private static unsafe string FinalizeEditorPickingSource(XRShader shader, string source)
+    private static string FinalizeEditorPickingSource(XRShader shader, string source)
+    {
+        string key = VulkanEditorPickingSourceCache.ComputeKey(shader.Type, source);
+        if (VulkanEditorPickingSourceCache.TryGet(key, out string cached))
+            return cached;
+        string finalized = PreprocessAndFinalizeEditorPickingSource(shader, source);
+        VulkanEditorPickingSourceCache.Store(key, finalized);
+        return finalized;
+    }
+
+    private static unsafe string PreprocessAndFinalizeEditorPickingSource(XRShader shader, string source)
     {
         Compiler* compiler = ShadercApi.CompilerInitialize();
         if (compiler is null)

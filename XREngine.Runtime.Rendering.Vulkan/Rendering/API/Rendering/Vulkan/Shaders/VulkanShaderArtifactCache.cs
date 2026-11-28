@@ -22,6 +22,9 @@ internal static class VulkanShaderArtifactCache
     private static readonly ConcurrentDictionary<string, byte> PendingWrites = new(StringComparer.Ordinal);
     private static readonly VulkanShaderArtifactRuntimeFingerprint RuntimeFingerprint = CreateRuntimeFingerprint();
 
+    /// <summary>The identity of the native shaderc library, which is part of every disk cache key.</summary>
+    internal static string ShadercNativeIdentity => RuntimeFingerprint.ShadercNativeIdentity;
+
     internal static string GetShaderCacheDirectoryPath()
     {
         string root = ResolveRepositoryRoot(Environment.CurrentDirectory);
