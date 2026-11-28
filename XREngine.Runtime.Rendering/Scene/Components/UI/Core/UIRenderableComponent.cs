@@ -662,7 +662,8 @@ namespace XREngine.Rendering.UI
                 Bounds = new Vector4(bottomLeft.X, bottomLeft.Y, output.ActualSize.X, output.ActualSize.Y),
                 Crop = effectiveCrop,
                 RenderPass = RenderPass,
-                ZIndex = RenderCommand2D.ZIndex,
+                // A renderable with the default Z index draws in the layer of its subtree, such as a popup.
+                ZIndex = RenderCommand2D.ZIndex != 0 ? RenderCommand2D.ZIndex : bounds.ResolveLayerZIndex(),
                 Material = payload?.Material ?? _material,
                 Visible = visible,
                 SupportsBatch = supportsBatch,

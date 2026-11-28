@@ -713,10 +713,14 @@ namespace XREngine.Rendering.UI
                 SceneNode node = new("Combo option");
                 UIBoundableTransform transform = node.SetTransform<UIBoundableTransform>();
                 UIButtonComponent button = node.AddComponent<UIButtonComponent>()!;
-                button.DefaultBackgroundColor = ColorF4.DarkGray;
-                button.HighlightBackgroundColor = ColorF4.LightGray;
+                // An option row draws like a context menu item: clear on the menu surface, with the menu
+                // highlight under the hovered row.
+                button.DefaultBackgroundColor = ColorF4.Transparent;
+                button.HighlightBackgroundColor = UIContextMenuComponent.ItemHighlightBackground;
+                button.DefaultTextColor = UIContextMenuComponent.ItemDefaultTextColor;
+                button.HighlightTextColor = UIContextMenuComponent.ItemDefaultTextColor;
                 UIMaterialComponent background = node.AddComponent<UIMaterialComponent>()!;
-                background.SetBatchSolidColor(ColorF4.DarkGray);
+                background.SetBatchSolidColor(ColorF4.Transparent);
                 node.NewChild<UITextComponent>(out var label);
                 label.FontSize = UIContextMenuComponent.FontSize;
                 label.Color = UIContextMenuComponent.ItemDefaultTextColor;

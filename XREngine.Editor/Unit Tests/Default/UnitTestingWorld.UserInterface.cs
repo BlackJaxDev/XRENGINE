@@ -979,6 +979,7 @@ public static partial class EditorUnitTests
 
             // Create as a root/editor node (not parented under gameplay nodes).
             // Editor-only migration in the world instance only applies to root nodes.
+            EditorGlassTheme.ApplyRuntimeControlStyles();
             var rootCanvasNode = new SceneNode(parent.World, "TestUINode") { IsEditorOnly = true };
             _editorRootCanvasNode = rootCanvasNode;
             _cameraPreviewCameras.Clear();

@@ -28,6 +28,8 @@ public static class EditorGlassTheme
     public static ColorF4 TextSecondary { get; set; } = new(0.80f, 0.83f, 0.90f, 0.70f);
     /// <summary>Text for disabled controls.</summary>
     public static ColorF4 TextDisabled { get; set; } = new(0.80f, 0.83f, 0.90f, 0.38f);
+    /// <summary>Text for a warning or a failed action, such as a component that could not be added.</summary>
+    public static ColorF4 TextWarning { get; set; } = Srgb(255, 159, 10, 0.92f);
 
     /// <summary>Top fill of a panel card. The bottom fill is a little darker.</summary>
     public static ColorF4 PanelFillTop { get; set; } = Srgb(30, 33, 42, 0.56f);
@@ -266,6 +268,19 @@ public static class EditorGlassTheme
         ImmediateHighlight = true,
         ColorTransition = UITransitionSpec.AppleEaseOut(0.10f),
     };
+
+    /// <summary>
+    /// Sets the static styles of runtime UI controls that the editor uses, such as the context menu surface of
+    /// popups, combo boxes, and tooltips, to the glass theme. The editor UI calls this before it builds panels.
+    /// </summary>
+    public static void ApplyRuntimeControlStyles()
+    {
+        UIContextMenuComponent.BackgroundColor = MenuFill;
+        UIContextMenuComponent.BackgroundQuadStyle = MenuSurface.ToQuadStyle();
+        // Item quads have no sRGB decode, so this is the accent color in linear values.
+        UIContextMenuComponent.ItemHighlightBackground = new ColorF4(0.003f, 0.23f, 1.0f, 0.5f);
+        UIContextMenuComponent.ItemDefaultTextColor = TextPrimary;
+    }
 
     /// <summary>Applies <paramref name="style"/> to a quad without an animator.</summary>
     public static void ApplyStatic(UIMaterialComponent quad, in UIStyleProperties style)

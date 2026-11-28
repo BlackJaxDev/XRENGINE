@@ -103,16 +103,26 @@ namespace XREngine.Rendering.UI
         public static ColorF4 ItemDisabledTextColor { get; set; } = new(0.5f, 0.5f, 0.5f, 1.0f);
         public static ColorF4 ItemHighlightBackground { get; set; } = new(0.3f, 0.5f, 0.8f, 0.6f);
         public static ColorF4 SeparatorColor { get; set; } = new(0.35f, 0.35f, 0.35f, 0.8f);
+        /// <summary>
+        /// The quad style of the menu background, such as rounded corners, a border, and a shadow. The editor
+        /// sets its menu surface style here. Null draws a plain rectangle in <see cref="BackgroundColor"/>.
+        /// </summary>
+        public static UIQuadStyle? BackgroundQuadStyle { get; set; }
 
         public static float ItemHeight { get; set; } = 22.0f;
         public static float SeparatorHeight { get; set; } = 4.0f;
         public static float MenuWidth { get; set; } = 160.0f;
         public static float FontSize { get; set; } = 12.0f;
         public static float ItemPadding { get; set; } = 6.0f;
-        private const int BackgroundZIndex = -30;
-        private const int ItemBackgroundZIndex = -20;
-        private const int SeparatorZIndex = -15;
-        private const int LabelZIndex = -10;
+        // The UI pass draws a higher Z index first, so the background (-10) draws first, and the items and the
+        // shown content (-20) draw over it. Both draw over panels, which use zero. Inside the content layer the
+        // parts draw in painter order: an item background, then its label.
+        private const int BackgroundZIndex = -10;
+        /// <summary>The layer of the menu content. Content controls with the default Z index draw in it.</summary>
+        internal const int ContentZIndex = -20;
+        private const int ItemBackgroundZIndex = ContentZIndex;
+        private const int SeparatorZIndex = ContentZIndex;
+        private const int LabelZIndex = ContentZIndex;
 
         private ContextMenuItem[] _items = [];
         private readonly List<UIContextMenuItemComponent> _itemButtons = [];
@@ -277,6 +287,9 @@ namespace XREngine.Rendering.UI
             _showTransformIdentity = ObjectConstructionIdentity.Capture(Transform);
             _ = BoundableTransform.GetCanvasTransform() ??
                 throw new InvalidOperationException("A context menu needs an attached UI canvas.");
+            // Rows and controls that callers build in the menu keep the default Z index, so they take this layer.
+            if (BoundableTransform.LayerZIndex != ContentZIndex)
+                BoundableTransform.LayerZIndex = ContentZIndex;
             float itemHeight = request.ItemHeight;
             float separatorHeight = request.SeparatorHeight;
             HideNow(clearMenuItems: true);
@@ -349,6 +362,8 @@ namespace XREngine.Rendering.UI
                     (background, write) =>
                     {
                         write(() => background.SetBatchSolidColor(BackgroundColor));
+                        if (BackgroundQuadStyle is { } style)
+                            write(() => background.QuadStyle = style);
                         write(() => background.RenderCommand2D.ZIndex = BackgroundZIndex);
                         write(() => background.ClipToBounds = true);
                     });
@@ -359,6 +374,8 @@ namespace XREngine.Rendering.UI
                 if (_incompleteComponentCreations.Contains(bgMat))
                     throw new InvalidOperationException("The menu backdrop has an incomplete creation receipt.");
                 bgMat.SetQuadColor("MatColor", BackgroundColor);
+                if (BackgroundQuadStyle is { } style)
+                    bgMat.QuadStyle = style;
                 bgMat.RenderCommand2D.ZIndex = BackgroundZIndex;
                 bgMat.ClipToBounds = true;
             }

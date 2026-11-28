@@ -417,6 +417,34 @@ namespace XREngine.Rendering.UI
 
         public bool IsVisibleInHierarchy => IsVisible && (Parent is not UITransform tfm || tfm.IsVisibleInHierarchy);
 
+        private int? _layerZIndex;
+        /// <summary>
+        /// The Z index for the renderables of this subtree that keep the default Z index of zero. Null uses the
+        /// layer of the nearest ancestor that sets one. A popup sets a layer on its root, so the controls that it
+        /// shows draw over the panels and over the popup background, in painter order among themselves.
+        /// </summary>
+        public int? LayerZIndex
+        {
+            get => _layerZIndex;
+            set => SetField(ref _layerZIndex, value);
+        }
+
+        /// <summary>
+        /// Returns the layer Z index of the nearest transform, this one first, that sets
+        /// <see cref="LayerZIndex"/>, up to the canvas. Returns zero when none sets one.
+        /// </summary>
+        public int ResolveLayerZIndex()
+        {
+            for (TransformBase? current = this; current is UITransform transform; current = transform.Parent)
+            {
+                if (transform.LayerZIndex is int layer)
+                    return layer;
+                if (transform is UICanvasTransform)
+                    break;
+            }
+            return 0;
+        }
+
         private UIChildPlacementInfo? _placementInfo = null;
         /// <summary>
         /// Dictates how this UI component is arranged within the parent transform's bounds.
