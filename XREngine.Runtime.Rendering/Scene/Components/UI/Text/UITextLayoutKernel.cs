@@ -37,6 +37,20 @@ public static class UITextLayoutKernel
     {
         if (input.Runes.TryGetValue('H', out UIRuneMetrics capital) && capital.Size.Y > 0.0f)
             return capital.Bearing.Y * scale;
+        // A font without letters, such as an icon font subset, centers the ink of its glyphs instead: the
+        // centering block is the glyph top less its depth below the baseline, so an icon sits in the middle of its
+        // box like a capital letter does.
+        float top = 0.0f;
+        float depth = 0.0f;
+        foreach (Rune rune in input.Text.EnumerateRunes())
+        {
+            if (!input.Runes.TryGetValue(rune.Value, out UIRuneMetrics glyph) || glyph.Size.Y <= 0.0f)
+                continue;
+            top = MathF.Max(top, glyph.Bearing.Y);
+            depth = MathF.Max(depth, glyph.Size.Y - glyph.Bearing.Y);
+        }
+        if (top > 0.0f)
+            return (top - depth) * scale;
         return (input.FontSize ?? input.EmSize * scale) * FallbackCapHeightRatio;
     }
 

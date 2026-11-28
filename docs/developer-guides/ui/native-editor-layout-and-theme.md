@@ -97,6 +97,13 @@ from Feather) in `Build/CommonAssets/Fonts/Lucide/`: `lucide.ttf`, its
   (`XRFontImportOptions.Codepoints`), so the atlas is small and quick to build.
   To add an icon, look up its code point in `codepoints.json`, add a constant,
   and add the code point to `Codepoints`.
+- `EditorIcons.CreateGlyph` creates an icon node: one glyph, sized and
+  centered at an anchor, tinted by its text color. The header row, the dock
+  tabs (`UITabItem.Icon` with `UITabStripComponent.IconFont`), the panel and
+  component action buttons, and the Assets rows (`NativeIconTextColumn`) use it.
+- A font without an 'H' glyph, such as the icon subset, centers the ink of its
+  glyphs (`UITextLayoutKernel.ResolveCapHeight`), so an icon sits in the middle
+  of its box.
 - Use the shader icons for small marks that change often, such as disclosure
   chevrons. Use Lucide for everything else.
 

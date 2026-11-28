@@ -42,8 +42,10 @@ public partial class InspectorPanel
     /// <summary>Creates the hidden actions button at the right edge of a row's value cell.</summary>
     private (UIButtonComponent Button, UIBoundableTransform Transform) CreateComponentActionsButton(SceneNode valueRoot)
     {
-        var created = NativeUIElements.CreateButton(valueRoot, "...", width: ComponentActionsButtonWidth, height: 22.0f,
+        var created = NativeUIElements.CreateButton(valueRoot, string.Empty, width: ComponentActionsButtonWidth, height: 22.0f,
             margins: new Vector4(0.0f, 2.0f, 4.0f, 2.0f));
+        EditorIcons.CreateGlyph(created.Node, EditorIcons.Ellipsis, new Vector2(0.5f, 0.5f), Vector2.Zero, 14.0f,
+            EditorGlassTheme.TextSecondary);
         UIBoundableTransform transform = created.Node.GetTransformAs<UIBoundableTransform>(true)!;
         transform.MinAnchor = transform.MinAnchor with { X = 1.0f };
         transform.MaxAnchor = transform.MaxAnchor with { X = 1.0f };

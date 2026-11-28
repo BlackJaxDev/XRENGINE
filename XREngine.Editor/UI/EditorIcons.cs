@@ -1,4 +1,8 @@
+using System.Numerics;
+using XREngine.Data.Colors;
 using XREngine.Rendering;
+using XREngine.Rendering.UI;
+using XREngine.Scene;
 
 namespace XREngine.Editor.UI;
 
@@ -124,6 +128,30 @@ public static class EditorIcons
     public const string Terminal = "\uE181";
     /// <summary>Lucide "bug".</summary>
     public const string Bug = "\uE20C";
+    /// <summary>Lucide "magnet".</summary>
+    public const string Magnet = "\uE2B5";
+    /// <summary>Lucide "list-tree".</summary>
+    public const string ListTree = "\uE408";
+    /// <summary>Lucide "sliders-horizontal".</summary>
+    public const string SlidersHorizontal = "\uE29A";
+    /// <summary>Lucide "activity".</summary>
+    public const string Activity = "\uE038";
+    /// <summary>Lucide "film".</summary>
+    public const string Film = "\uE0D0";
+    /// <summary>Lucide "circle-x".</summary>
+    public const string CircleX = "\uE084";
+    /// <summary>Lucide "file-code".</summary>
+    public const string FileCode = "\uE0C3";
+    /// <summary>Lucide "file-image".</summary>
+    public const string FileImage = "\uE31C";
+    /// <summary>Lucide "file-audio".</summary>
+    public const string FileAudio = "\uE31A";
+    /// <summary>Lucide "package".</summary>
+    public const string Package = "\uE129";
+    /// <summary>Lucide "axis-3d".</summary>
+    public const string Axis3D = "\uE2FE";
+    /// <summary>Lucide "git-fork".</summary>
+    public const string GitFork = "\uE28D";
 
     /// <summary>The code points of every icon above. The icon font atlas holds exactly these glyphs.</summary>
     public static readonly uint[] Codepoints =
@@ -135,11 +163,39 @@ public static class EditorIcons
         0xE2EB, 0xE0E8, 0xE529, 0xE106, 0xE09E, 0xE2A1, 0xE2A0, 0xE14D,
         0xE145, 0xE0B6, 0xE0EB, 0xE0F9, 0xE193, 0xE102, 0xE1C3, 0xE524,
         0xE412, 0xE1AB, 0xE19F, 0xE358, 0xE1DD, 0xE11D, 0xE1B4, 0xE181,
-        0xE20C,
+        0xE20C, 0xE2B5, 0xE408, 0xE29A, 0xE038, 0xE0D0, 0xE084, 0xE0C3, 0xE31C, 0xE31A, 0xE129, 0xE2FE, 0xE28D,
     ];
 
     private static FontGlyphSet? _font;
 
     /// <summary>The Lucide icon font with the icons above, loaded on first use.</summary>
     public static FontGlyphSet Font => _font ??= FontGlyphSet.LoadIconFont(Codepoints);
+
+    /// <summary>
+    /// Creates an icon in <paramref name="parent"/>: a <see cref="UITextComponent"/> that draws one Lucide glyph,
+    /// <paramref name="size"/> pixels square, centered at <paramref name="anchor"/> and moved by
+    /// <paramref name="offset"/>. The text color tints the icon, so it follows the theme like a label.
+    /// </summary>
+    /// <param name="glyph">An icon constant of this class, such as <see cref="Play"/>.</param>
+    public static UITextComponent CreateGlyph(SceneNode parent, string glyph, Vector2 anchor, Vector2 offset,
+        float size, ColorF4 color)
+    {
+        SceneNode node = parent.NewChild<UITextComponent>(out var text);
+        node.Name = "Icon";
+        UIBoundableTransform bounds = text.BoundableTransform;
+        bounds.MinAnchor = anchor;
+        bounds.MaxAnchor = anchor;
+        bounds.NormalizedPivot = new Vector2(0.5f, 0.5f);
+        bounds.Translation = offset;
+        bounds.Width = size;
+        bounds.Height = size;
+        bounds.BlocksInputBehind = false;
+        text.Font = Font;
+        text.FontSize = size;
+        text.Color = color;
+        text.HorizontalAlignment = EHorizontalAlignment.Center;
+        text.VerticalAlignment = EVerticalAlignment.Center;
+        text.Text = glyph;
+        return text;
+    }
 }

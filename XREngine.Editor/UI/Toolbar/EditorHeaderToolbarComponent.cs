@@ -26,7 +26,7 @@ public sealed class EditorHeaderToolbarComponent : UIComponent
 {
     private const float ButtonHeight = 26.0f;
     private const float IconButtonWidth = 28.0f;
-    private const float IconSize = 18.0f;
+    private const float IconSize = 16.0f;
     private const float SectionGap = 14.0f;
 
     private static readonly (EVrDesktopView View, string Label)[] DesktopViews =
@@ -56,7 +56,7 @@ public sealed class EditorHeaderToolbarComponent : UIComponent
     private bool _built;
     private bool _tickRegistered;
     /// <summary>The icon quad and icon name of each icon button, so a disabled button can dim its icon.</summary>
-    private readonly Dictionary<UIButtonComponent, (UIMaterialComponent Icon, string Name)> _icons = [];
+    private readonly Dictionary<UIButtonComponent, (UITextComponent Icon, string Glyph)> _icons = [];
 
     protected override void OnComponentActivated()
     {
@@ -92,24 +92,24 @@ public sealed class EditorHeaderToolbarComponent : UIComponent
 
         SceneNode left = CreateRow(root, "HeaderTools", new Vector2(0.0f, 0.0f), new Vector2(0.0f, 0.0f), 720.0f);
         CreateSectionLabel(left, "Transform:", 66.0f);
-        _translate = CreateIconButton(left, SvgEditorIcons.IconTranslate, "Translate (W)",
+        _translate = CreateIconButton(left, EditorIcons.Move3D, "Translate (W)",
             () => TransformTool3D.TransformMode = ETransformMode.Translate);
-        _rotate = CreateIconButton(left, SvgEditorIcons.IconRotate, "Rotate (E)",
+        _rotate = CreateIconButton(left, EditorIcons.Rotate3D, "Rotate (E)",
             () => TransformTool3D.TransformMode = ETransformMode.Rotate);
-        _scale = CreateIconButton(left, SvgEditorIcons.IconScale, "Scale (R)",
+        _scale = CreateIconButton(left, EditorIcons.Scale3D, "Scale (R)",
             () => TransformTool3D.TransformMode = ETransformMode.Scale);
         CreateGap(left, SectionGap);
         CreateSectionLabel(left, "Space:", 44.0f);
-        _world = CreateIconButton(left, SvgEditorIcons.IconWorld, "World Space",
+        _world = CreateIconButton(left, EditorIcons.Globe, "World Space",
             () => TransformTool3D.TransformSpace = ETransformSpace.World);
-        _local = CreateIconButton(left, SvgEditorIcons.IconLocal, "Local Space",
+        _local = CreateIconButton(left, EditorIcons.Axis3D, "Local Space",
             () => TransformTool3D.TransformSpace = ETransformSpace.Local);
-        _parent = CreateIconButton(left, SvgEditorIcons.IconParent, "Parent Space",
+        _parent = CreateIconButton(left, EditorIcons.GitFork, "Parent Space",
             () => TransformTool3D.TransformSpace = ETransformSpace.Parent);
-        _screen = CreateIconButton(left, SvgEditorIcons.IconScreen, "Screen Space",
+        _screen = CreateIconButton(left, EditorIcons.Monitor, "Screen Space",
             () => TransformTool3D.TransformSpace = ETransformSpace.Screen);
         CreateGap(left, SectionGap);
-        _snap = CreateIconButton(left, SvgEditorIcons.IconSnap, "Toggle Snapping",
+        _snap = CreateIconButton(left, EditorIcons.Magnet, "Toggle Snapping",
             () => TransformTool3D.SnapEnabled = !TransformTool3D.SnapEnabled);
         CreateGap(left, 4.0f);
         SceneNode snapValues = left.NewChildWithTransform(out UIListTransform snapList, "SnapValues");
@@ -127,9 +127,9 @@ public sealed class EditorHeaderToolbarComponent : UIComponent
 
         // The play controls sit at the middle of the row, like the ImGui toolbar.
         SceneNode middle = CreateRow(root, "HeaderPlay", new Vector2(0.5f, 0.0f), new Vector2(0.5f, 0.0f), 200.0f);
-        _playPause = CreateIconButton(middle, SvgEditorIcons.IconPlay, "Play (F5)", PlayOrPause);
-        _stop = CreateIconButton(middle, SvgEditorIcons.IconStop, "Stop (Shift+F5)", EditorState.RequestExitPlayMode);
-        _step = CreateIconButton(middle, SvgEditorIcons.IconStepFrame, "Step Frame (F6)", EditorState.StepFrame);
+        _playPause = CreateIconButton(middle, EditorIcons.Play, "Play (F5)", PlayOrPause);
+        _stop = CreateIconButton(middle, EditorIcons.Square, "Stop (Shift+F5)", EditorState.RequestExitPlayMode);
+        _step = CreateIconButton(middle, EditorIcons.StepForward, "Step Frame (F6)", EditorState.StepFrame);
         SceneNode stateNode = middle.NewChild<UITextComponent>(out var state);
         stateNode.GetTransformAs<UIBoundableTransform>(true)!.Width = 80.0f;
         state.FontSize = EditorGlassTheme.CaptionFontSize;
@@ -191,27 +191,30 @@ public sealed class EditorHeaderToolbarComponent : UIComponent
     private static void CreateGap(SceneNode parent, float width)
         => parent.NewChild().SetTransform<UIBoundableTransform>().Width = width;
 
-    /// <summary>Creates a square button that shows one editor icon, like an ImGui toolbar icon button.</summary>
-    private UIButtonComponent CreateIconButton(SceneNode parent, string iconName, string tooltip, Action action)
+    /// <summary>Creates a square button that shows one Lucide icon, like an ImGui toolbar icon button.</summary>
+    private UIButtonComponent CreateIconButton(SceneNode parent, string glyph, string tooltip, Action action)
     {
         var created = NativeUIElements.CreateButton(parent, string.Empty, _ => action(), width: IconButtonWidth,
             height: ButtonHeight, margins: new Vector4(1.0f, 0.0f, 1.0f, 0.0f));
         created.Button.AccessibilityLabel = tooltip;
-        UIMaterialComponent icon = NativeEditorIcons.CreateIcon(created.Node, iconName, new Vector2(0.5f, 0.5f), Vector2.Zero, IconSize);
-        _icons[created.Button] = (icon, iconName);
+        UITextComponent icon = EditorIcons.CreateGlyph(created.Node, glyph, new Vector2(0.5f, 0.5f), Vector2.Zero,
+            IconSize, EditorGlassTheme.TextPrimary);
+        _icons[created.Button] = (icon, glyph);
         return created.Button;
     }
 
-    /// <summary>Shows <paramref name="iconName"/> on an icon button, dimmed while the button is disabled.</summary>
-    private void SetButtonIcon(UIButtonComponent button, string iconName)
+    /// <summary>Shows <paramref name="glyph"/> on an icon button, dimmed while the button is disabled.</summary>
+    private void SetButtonIcon(UIButtonComponent button, string glyph)
     {
         if (!_icons.TryGetValue(button, out var entry))
             return;
-        _icons[button] = (entry.Icon, iconName);
-        NativeEditorIcons.SetIcon(entry.Icon, iconName, button.IsEnabled ? ColorF4.White : DisabledIconTint);
+        _icons[button] = (entry.Icon, glyph);
+        if (entry.Icon.Text != glyph)
+            entry.Icon.Text = glyph;
+        ColorF4 color = button.IsEnabled ? EditorGlassTheme.TextPrimary : EditorGlassTheme.TextDisabled;
+        if (!entry.Icon.Color.Equals(color))
+            entry.Icon.Color = color;
     }
-
-    private static readonly ColorF4 DisabledIconTint = new(1.0f, 1.0f, 1.0f, 0.35f);
 
     /// <summary>
     /// Creates a labeled number field, such as "T 1", that applies its value on Enter and shows the stored value
@@ -343,7 +346,7 @@ public sealed class EditorHeaderToolbarComponent : UIComponent
         if (_playPause is { } play && showPause != _playIconShowsPause)
         {
             _playIconShowsPause = showPause;
-            SetButtonIcon(play, showPause ? SvgEditorIcons.IconPause : SvgEditorIcons.IconPlay);
+            SetButtonIcon(play, showPause ? EditorIcons.Pause : EditorIcons.Play);
             play.AccessibilityLabel = showPause ? "Pause" : editing ? "Play (F5)" : "Resume";
         }
         SetEnabled(_playPause, !transitioning);
@@ -386,7 +389,7 @@ public sealed class EditorHeaderToolbarComponent : UIComponent
         button.IsEnabled = enabled;
         // An icon button dims its icon while it is disabled, as a text button dims its label.
         if (_icons.TryGetValue(button, out var entry))
-            SetButtonIcon(button, entry.Name);
+            SetButtonIcon(button, entry.Glyph);
     }
 
     private static void SetText(UITextComponent? label, string text)

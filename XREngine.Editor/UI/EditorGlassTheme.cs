@@ -92,7 +92,7 @@ public static class EditorGlassTheme
     /// <summary>Text size for captions and section titles.</summary>
     public static float CaptionFontSize { get; set; } = 12.0f;
     /// <summary>Width of one tab in a panel header.</summary>
-    public static float TabWidth { get; set; } = 92.0f;
+    public static float TabWidth { get; set; } = 104.0f;
     /// <summary>Height of one tab in a panel header.</summary>
     public static float TabHeight { get; set; } = 26.0f;
 

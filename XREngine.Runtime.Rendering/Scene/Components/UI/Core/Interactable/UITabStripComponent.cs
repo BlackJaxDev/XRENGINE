@@ -14,6 +14,7 @@ public sealed partial class UITabStripComponent : UIComponent
         public required UIBoundableTransform Bounds;
         public required UITabButtonComponent Button;
         public required UITextComponent Label;
+        public required UITextComponent Icon;
         public ulong Id;
     }
 
@@ -30,6 +31,13 @@ public sealed partial class UITabStripComponent : UIComponent
     public float TabHeight { get; set; } = 28;
     /// <summary>Text size of the tab labels.</summary>
     public float LabelFontSize { get; set; } = 12;
+    /// <summary>
+    /// The icon font of the tab icons (<see cref="UITabItem.Icon"/>). Set it before the first
+    /// <see cref="SetTabs"/> call. When null, tabs show no icons.
+    /// </summary>
+    public FontGlyphSet? IconFont { get; set; }
+    private const float IconSize = 13.0f;
+    private const float IconInset = 10.0f;
     /// <summary>
     /// Style of a tab that is not selected. When null, tabs use a flat gray fill. Set the styles before the
     /// first <see cref="SetTabs"/> call; a later change applies at the next call.
@@ -141,6 +149,16 @@ public sealed partial class UITabStripComponent : UIComponent
             slot.Label.Text = (tab.IsOpen ? string.Empty : "+ ") + (tab.Title ?? string.Empty);
             if (IsDestroyed || IsDestroyQueued)
                 return;
+            // An icon sits at the left of the tab, and the title moves right of it.
+            string icon = IconFont is null ? string.Empty : tab.Icon ?? string.Empty;
+            if (slot.Icon.Text != icon)
+                slot.Icon.Text = icon;
+            float labelLeft = icon.Length > 0 ? IconInset + IconSize + 2.0f : 6.0f;
+            Vector4 labelMargins = slot.Label.BoundableTransform.Margins;
+            if (labelMargins.X != labelLeft)
+                slot.Label.BoundableTransform.Margins = labelMargins with { X = labelLeft };
+            if (IsDestroyed || IsDestroyQueued)
+                return;
             slot.Button.AccessibilityLabel = tab.Title;
             slot.Button.AccessibilityDescription = tab.IsOpen ? null : "Closed tab. Activate to reopen.";
             bool isSelected = tab.Id == selectedId;
@@ -215,7 +233,23 @@ public sealed partial class UITabStripComponent : UIComponent
             label.VerticalAlignment = EVerticalAlignment.Center;
             if (TabStyle is not null)
                 label.HorizontalAlignment = EHorizontalAlignment.Center;
-            Slot slot = new() { Bounds = bounds, Button = button, Label = label };
+            SceneNode iconNode = new(node) { Name = "TabIcon" };
+            UIBoundableTransform iconBounds = iconNode.SetTransform<UIBoundableTransform>();
+            iconBounds.MinAnchor = new Vector2(0.0f, 0.5f);
+            iconBounds.MaxAnchor = new Vector2(0.0f, 0.5f);
+            iconBounds.NormalizedPivot = new Vector2(0.0f, 0.5f);
+            iconBounds.Translation = new Vector2(IconInset, 0.0f);
+            iconBounds.Width = IconSize;
+            iconBounds.Height = IconSize;
+            iconBounds.BlocksInputBehind = false;
+            UITextComponent iconText = iconNode.AddComponent<UITextComponent>()!;
+            if (IconFont is { } iconFont)
+                iconText.Font = iconFont;
+            iconText.FontSize = IconSize;
+            iconText.Color = new ColorF4(1.0f, 1.0f, 1.0f, 0.8f);
+            iconText.HorizontalAlignment = EHorizontalAlignment.Center;
+            iconText.VerticalAlignment = EVerticalAlignment.Center;
+            Slot slot = new() { Bounds = bounds, Button = button, Label = label, Icon = iconText };
             button.InteractAction += _ =>
             {
                 if (slot.Id != 0)

@@ -530,6 +530,7 @@ internal sealed class NativeDockTreeHost
         strip.TabWidth = EditorGlassTheme.TabWidth;
         strip.TabHeight = EditorGlassTheme.TabHeight;
         strip.LabelFontSize = EditorGlassTheme.CaptionFontSize + 1.0f;
+        strip.IconFont = EditorIcons.Font;
         strip.TabStyle = SharedTabStyle;
         strip.SelectedTabStyle = SharedSelectedTabStyle;
         UIButtonComponent dropProbe = tabsNode.AddComponent<UIButtonComponent>()!;
@@ -602,8 +603,12 @@ internal sealed class NativeDockTreeHost
             CommitStructure();
         };
 
-        var actionsButton = NativeUIElements.CreateButton(actionsNode, "...", width: 28,
-            height: EditorGlassTheme.TabHeight, margins: new Vector4(1.0f, 2.0f, 1.0f, 2.0f)).Button;
+        // The panel actions and drag grip show Lucide icons instead of text marks.
+        var actionsCreated = NativeUIElements.CreateButton(actionsNode, string.Empty, width: 28,
+            height: EditorGlassTheme.TabHeight, margins: new Vector4(1.0f, 2.0f, 1.0f, 2.0f));
+        EditorIcons.CreateGlyph(actionsCreated.Node, EditorIcons.Ellipsis, new Vector2(0.5f, 0.5f), Vector2.Zero,
+            14.0f, EditorGlassTheme.TextSecondary);
+        var actionsButton = actionsCreated.Button;
         actionsButton.AccessibilityLabel = "Panel actions";
         actionsButton.InteractAction += _ =>
         {
@@ -633,8 +638,11 @@ internal sealed class NativeDockTreeHost
                 new ContextMenuItem("Move to window", () => MoveToWindow(stack, revision)));
         };
         // The grip starts a drag of the shown panel to another stack or window.
-        var drag = NativeUIElements.CreateButton(actionsNode, "::", width: 28,
-            height: EditorGlassTheme.TabHeight, margins: new Vector4(1.0f, 2.0f, 1.0f, 2.0f)).Button;
+        var dragCreated = NativeUIElements.CreateButton(actionsNode, string.Empty, width: 28,
+            height: EditorGlassTheme.TabHeight, margins: new Vector4(1.0f, 2.0f, 1.0f, 2.0f));
+        EditorIcons.CreateGlyph(dragCreated.Node, EditorIcons.GripVertical, new Vector2(0.5f, 0.5f), Vector2.Zero,
+            14.0f, EditorGlassTheme.TextSecondary);
+        var drag = dragCreated.Button;
         drag.AccessibilityLabel = "Drag panel";
         drag.NeedsMouseMove = true;
         Vector2? dragStart = null;
@@ -661,7 +669,7 @@ internal sealed class NativeDockTreeHost
         void Refresh()
         {
             UITabItem[] items = stack.Tabs.Select(panel =>
-                new UITabItem((ulong)(Array.IndexOf(NativeDockPanel.All, panel) + 1), Title(panel))).ToArray();
+                new UITabItem((ulong)(Array.IndexOf(NativeDockPanel.All, panel) + 1), Title(panel), Icon: Icon(panel))).ToArray();
             ulong? selectedId = stack.Selected is { } selected
                 ? (ulong)(Array.IndexOf(NativeDockPanel.All, selected) + 1) : null;
             strip.SetTabs(items, selectedId);
@@ -1261,6 +1269,19 @@ internal sealed class NativeDockTreeHost
             First = source.First is null ? null : CopyDockNode(source.First),
             Second = source.Second is null ? null : CopyDockNode(source.Second),
         };
+
+    /// <summary>The Lucide icon of a panel tab.</summary>
+    private static string Icon(string panel) => panel switch
+    {
+        NativeDockPanel.Hierarchy => EditorIcons.ListTree,
+        NativeDockPanel.Scene => EditorIcons.Cuboid,
+        NativeDockPanel.Inspector => EditorIcons.SlidersHorizontal,
+        NativeDockPanel.Assets => EditorIcons.Folder,
+        NativeDockPanel.Console => EditorIcons.Terminal,
+        NativeDockPanel.Profiler => EditorIcons.Activity,
+        NativeDockPanel.Animation => EditorIcons.Film,
+        _ => EditorIcons.Box,
+    };
 
     private static string Title(string panel)
         => panel.Length == 0 ? panel : char.ToUpperInvariant(panel[0]) + panel[1..];

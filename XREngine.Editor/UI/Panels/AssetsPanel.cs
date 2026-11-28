@@ -12,6 +12,29 @@ public partial class AssetsPanel : NativeVirtualTextPanel
 {
     private sealed record AssetRow(string Path, string Name, bool IsDirectory);
 
+    /// <summary>
+    /// Picks the Lucide icon of an asset row from its kind and file extension: a folder, an image, audio, source
+    /// or shader text, a model or engine asset, plain text, or a generic file. A row without a path is an error row.
+    /// </summary>
+    private static string AssetIcon(AssetRow row)
+    {
+        if (row.Path.Length == 0)
+            return EditorIcons.CircleX;
+        if (row.IsDirectory)
+            return EditorIcons.Folder;
+        return Path.GetExtension(row.Name).ToLowerInvariant() switch
+        {
+            ".png" or ".jpg" or ".jpeg" or ".tga" or ".bmp" or ".exr" or ".hdr" or ".dds" or ".ktx" or ".ktx2" or ".tif" or ".tiff" => EditorIcons.FileImage,
+            ".wav" or ".ogg" or ".mp3" or ".flac" => EditorIcons.FileAudio,
+            ".cs" or ".glsl" or ".glslinc" or ".fs" or ".vs" or ".gs" or ".cs.glsl" or ".comp" or ".slang" or ".json" or ".jsonc" or ".xml" or ".yaml" or ".yml" => EditorIcons.FileCode,
+            ".fbx" or ".obj" or ".gltf" or ".glb" or ".prefab" or ".unity" or ".unitypackage" => EditorIcons.Cuboid,
+            ".asset" => EditorIcons.Package,
+            ".txt" or ".md" or ".log" => EditorIcons.FileText,
+            ".riv" or ".mp4" or ".webm" => EditorIcons.Film,
+            _ => EditorIcons.File,
+        };
+    }
+
     private readonly List<(ulong Id, AssetRow Item)> _rows = [];
     private readonly NativeTableRows<AssetRow> _tableRows = new();
     private readonly UIVirtualTableProvider<AssetRow> _table;
@@ -153,9 +176,7 @@ public partial class AssetsPanel : NativeVirtualTextPanel
         _table = new UIVirtualTableProvider<AssetRow>(_tableRows,
             UIVirtualTableColumn<AssetRow>.Text("kind", "Type", 76, row => row.Path.Length == 0 ? "Error" : row.IsDirectory ? "Folder" : "Asset"),
             // Like the ImGui asset explorer, a row shows a folder or file icon before its name.
-            NativeIconTextColumn.Create<AssetRow>("name", "Name", 420, row => row.Name,
-                row => row.Path.Length == 0 ? SvgEditorIcons.IconError
-                    : row.IsDirectory ? SvgEditorIcons.IconFolder : SvgEditorIcons.IconFile));
+            NativeIconTextColumn.Create<AssetRow>("name", "Name", 420, row => row.Name, AssetIcon));
         RowProviderOverride = _table;
     }
 
