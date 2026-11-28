@@ -60,7 +60,12 @@ inputs, and constraint. Measurements from a collapsed subtree are not reused
 when that subtree opens. Text beneath a collapsed ancestor does not participate
 in convergence checks. Hidden nodes still participate in measurement.
 Arrange reuse also requires matching child edges,
-allocated slot, placement, visibility, and geometry. Topology-stable capture
+allocated slot, placement, visibility, and geometry. A node can be measured
+again while its arrange slot stays the same, for example when a window resize
+changes the constraint below a fixed-width dock. Measure then keeps the accepted
+arrangement values of that node and resets only its measured sizes. If the sizes
+of the node or of any node below it change, the measure pass marks that subtree,
+and arrange does not reuse it. Topology-stable capture
 uses immutable pages of 256 nodes. A changed page is copied before writing;
 unchanged input and output pages remain shared. The worker skips cached subtrees,
 and owner application visits changed output pages. Page-table copies still scale
