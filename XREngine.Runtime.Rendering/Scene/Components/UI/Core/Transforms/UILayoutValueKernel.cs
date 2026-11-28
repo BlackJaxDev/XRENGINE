@@ -186,13 +186,30 @@ internal static class UILayoutValueKernel
         {
             return outputs[index].DesiredSize;
         }
+        // A seeded page holds the accepted arrangement of the same node. Keep those values, because the arrange
+        // pass can skip this node when its slot did not change, and then it reads them unchanged.
+        bool keepArrangement = current is not null && previous is not null && previousOutputs is not null &&
+            index < previous.Nodes.Length && index < previousOutputs.Length &&
+            current.Identities[index] == previous.Identities[index];
         ref UILayoutNodeOutput output = ref outputs.Edit(index);
-        output = default;
+        Vector2 priorRawSize = output.RawSize;
+        Vector2 priorDesiredSize = output.DesiredSize;
+        if (keepArrangement)
+        {
+            output.MeasureConstraint = default;
+            output.RawSize = default;
+            output.DesiredSize = default;
+        }
+        else
+            output = default;
         if (node.Collapsed)
         {
             output.MeasureConstraint = constraint;
+            if (!keepArrangement || priorRawSize != Vector2.Zero || priorDesiredSize != Vector2.Zero)
+                outputs.MarkMeasureChanged(index);
             return Vector2.Zero;
         }
+        bool measureChanged = !keepArrangement;
 
         Vector2 innerConstraint = new(
             MathF.Max(0, (node.Width ?? constraint.X) - node.Padding.X - node.Padding.Z),
@@ -216,6 +233,7 @@ internal static class UILayoutValueKernel
                 continue;
             Measure(childIndex, childConstraint, nodes, children, outputs,
                 current, previous, previousOutputs, cancellation, arranged);
+            measureChanged |= outputs.IsMeasureChanged(childIndex);
         }
 
         if (node.TextInput is { FontSize: null } &&
@@ -235,6 +253,8 @@ internal static class UILayoutValueKernel
         if (node.Operator != UILayoutOperator.Transform && node.Operator != UILayoutOperator.Rotation)
             desired += new Vector2(node.Margins.X + node.Margins.Z, node.Margins.Y + node.Margins.W);
         output.DesiredSize = desired;
+        if (measureChanged || output.RawSize != priorRawSize || desired != priorDesiredSize)
+            outputs.MarkMeasureChanged(index);
         return desired;
     }
 
@@ -333,6 +353,7 @@ internal static class UILayoutValueKernel
             !cache.Current.IsDirtySince(previous, index) &&
             index < previous.Nodes.Length && index < prior.Length &&
             cache.Current.Identities[index] == previous.Identities[index] &&
+            !outputs.IsMeasureChanged(index) &&
             cache.Current.ArrangeVersions[index] == previous.ArrangeVersions[index] &&
             cache.Current.MeasureVersions[index] == previous.MeasureVersions[index] &&
             previous.Nodes[index].Operator == nodes[index].Operator &&
@@ -401,6 +422,7 @@ internal static class UILayoutValueKernel
                     int childIndex = children[node.FirstChild + i].NodeIndex;
                     if (cache?.Previous is { } oldSnapshot && cache.PreviousOutputs is { } priorOutputs &&
                         !cache.Current.IsDirtySince(oldSnapshot, childIndex) &&
+                        !outputs.IsMeasureChanged(childIndex) &&
                         index < priorOutputs.Length && childIndex < priorOutputs.Length &&
                         oldSnapshot.Nodes[index].Padding == node.Padding &&
                         priorOutputs[index].ActualSize == output.ActualSize &&

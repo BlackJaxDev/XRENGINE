@@ -5,6 +5,9 @@ internal sealed class UILayoutOutputPageBuilder
 {
     private readonly UILayoutNodeOutput[][] _pages;
     private readonly bool[] _owned;
+    // One flag for each node. A set flag means that the measure pass changed the sizes of the node or of a node
+    // below it, so the arrange pass must not reuse the accepted arrangement of that subtree.
+    private readonly bool[] _measureChanged;
     private bool _frozen;
     private int _copiedNodes;
     private int _visitedNodes;
@@ -17,6 +20,7 @@ internal sealed class UILayoutOutputPageBuilder
         _pages = previous?.CopyPageTable() ?? new UILayoutNodeOutput[(length + UILayoutOutputPageView.PageSize - 1) /
             UILayoutOutputPageView.PageSize][];
         _owned = new bool[_pages.Length];
+        _measureChanged = new bool[length];
     }
 
     internal int Length { get; }
@@ -63,6 +67,12 @@ internal sealed class UILayoutOutputPageBuilder
     }
 
     internal void RecordVisit() => _visitedNodes++;
+
+    /// <summary>Records that the measure pass changed the sizes of this node or of a node in its subtree.</summary>
+    internal void MarkMeasureChanged(int index) => _measureChanged[index] = true;
+
+    /// <summary>Gets whether the measure pass changed the sizes of this node or of a node in its subtree.</summary>
+    internal bool IsMeasureChanged(int index) => _measureChanged[index];
 
     internal void ValidateChangedPages()
     {
