@@ -259,6 +259,44 @@ public sealed class UILayoutValueKernelTests
     }
 
     [Test]
+    public void ResizeKeepsArrangementOfUnchangedSlotWhenMeasureConstraintChanges()
+    {
+        UICanvasTransform canvas = new() { Width = 100, Height = 100 };
+        UIDualSplitTransform split = new() { Parent = canvas, FirstFixedSize = true, FixedSize = 40 };
+        UIBoundableTransform panel = new() { Parent = split };
+        UIBoundableTransform rest = new() { Parent = split };
+        UIBoundableTransform label = new() { Parent = panel, Width = 20, Height = 10, MaxAnchor = Vector2.Zero };
+        try
+        {
+            List<UITransform> targets = [];
+            UILayoutSnapshot before = UILayoutSnapshot.Capture(canvas, targets);
+            UILayoutOutputPageView accepted = UILayoutValueKernel.RunPaged(before, null, null);
+            int panelIndex = targets.IndexOf(panel);
+            int labelIndex = targets.IndexOf(label);
+            Vector2 panelSize = accepted[panelIndex].ActualSize;
+            panelSize.X.ShouldBe(40f);
+
+            // The fixed split keeps the panel slot, but the panel is measured again with the narrower canvas.
+            canvas.Width = 80;
+            UILayoutSnapshot after = UILayoutSnapshot.Capture(canvas, []);
+            UILayoutOutputPageView result = UILayoutValueKernel.RunPaged(after, before, accepted);
+
+            result[panelIndex].ActualSize.ShouldBe(panelSize);
+            result[panelIndex].Visible.ShouldBeTrue();
+            result[labelIndex].ActualSize.ShouldBe(new Vector2(20, 10));
+            result[labelIndex].Visible.ShouldBeTrue();
+        }
+        finally
+        {
+            label.Destroy(true);
+            rest.Destroy(true);
+            panel.Destroy(true);
+            split.Destroy(true);
+            canvas.Destroy(true);
+        }
+    }
+
+    [Test]
     public void PendingCapturesRebaseBothSiblingEditsAgainstAcceptedOutput()
     {
         UICanvasTransform canvas = new() { Width = 100, Height = 100 };
