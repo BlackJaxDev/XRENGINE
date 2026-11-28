@@ -12,7 +12,7 @@ using XREngine.Scene.Transforms;
 namespace XREngine.Editor;
 
 /// <summary>Renders the persisted native dock tree in the primary editor canvas.</summary>
-internal sealed class NativeDockTreeHost
+internal sealed partial class NativeDockTreeHost
 {
     private readonly SceneNode _root;
     private readonly RuntimeWorld? _world;
@@ -251,7 +251,7 @@ internal sealed class NativeDockTreeHost
 
     private bool TryHitDockTarget(EditorDragDropUtility.DragPayload payload,
         NativeDockNode stack, ulong revision, UIButtonComponent probe,
-        UIListTransform probeTransform, ObjectConstructionIdentity probeIdentity,
+        UIBoundableTransform probeTransform, ObjectConstructionIdentity probeIdentity,
         ObjectConstructionIdentity probeNodeIdentity,
         ObjectConstructionIdentity probeTransformIdentity,
         EditorDesktopDropPoint point)
@@ -519,7 +519,7 @@ internal sealed class NativeDockTreeHost
         header.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.StaticChrome;
         headerSplit.VerticalSplit = false;
         headerSplit.FirstFixedSize = false;
-        headerSplit.FixedSize = 64;
+        headerSplit.FixedSize = 32;
         headerSplit.SplitterSize = 0;
         SceneNode tabsNode = header.NewChildWithTransform(out UIListTransform tabList, "DockTabs");
         tabsNode.AddComponent<UICompositionLayerComponent>()!.Kind = EUICompositionLayerKind.Overlay;
@@ -591,6 +591,20 @@ internal sealed class NativeDockTreeHost
             if (_tree.Close(panel))
                 CommitStructure();
         };
+        // Dragging a tab starts a panel drag, like an ImGui dock tab. The drag needs the panel to be the shown one.
+        strip.TabDragRequested += (id, source, point) =>
+        {
+            if (!IsCurrentStack(stack, revision)) return;
+            string panel = NativeDockPanel.All[(int)id - 1];
+            if (!stack.Tabs.Contains(panel))
+                return;
+            if (stack.Selected != panel)
+            {
+                stack.Selected = panel;
+                Refresh();
+            }
+            BeginTabDrag(source, stack, revision, panel, point);
+        };
         strip.MoveRequested += (id, direction) =>
         {
             if (!IsCurrentStack(stack, revision)) return;
@@ -603,7 +617,7 @@ internal sealed class NativeDockTreeHost
             CommitStructure();
         };
 
-        // The panel actions and drag grip show Lucide icons instead of text marks.
+        // The panel actions button shows a Lucide icon instead of a text mark.
         var actionsCreated = NativeUIElements.CreateButton(actionsNode, string.Empty, width: 28,
             height: EditorGlassTheme.TabHeight, margins: new Vector4(1.0f, 2.0f, 1.0f, 2.0f));
         EditorIcons.CreateGlyph(actionsCreated.Node, EditorIcons.Ellipsis, new Vector2(0.5f, 0.5f), Vector2.Zero,
@@ -637,33 +651,7 @@ internal sealed class NativeDockTreeHost
                 new ContextMenuItem("Detach", () => DetachSelected(stack, revision)),
                 new ContextMenuItem("Move to window", () => MoveToWindow(stack, revision)));
         };
-        // The grip starts a drag of the shown panel to another stack or window.
-        var dragCreated = NativeUIElements.CreateButton(actionsNode, string.Empty, width: 28,
-            height: EditorGlassTheme.TabHeight, margins: new Vector4(1.0f, 2.0f, 1.0f, 2.0f));
-        EditorIcons.CreateGlyph(dragCreated.Node, EditorIcons.GripVertical, new Vector2(0.5f, 0.5f), Vector2.Zero,
-            14.0f, EditorGlassTheme.TextSecondary);
-        var drag = dragCreated.Button;
-        drag.AccessibilityLabel = "Drag panel";
-        drag.NeedsMouseMove = true;
-        Vector2? dragStart = null;
-        drag.MouseMove += (x, y, source) =>
-        {
-            if (!EditorDragDropUtility.IsLeftMouseButtonHeldFor(source))
-            {
-                dragStart = null;
-                return;
-            }
-            Vector2 point = source.BoundableTransform.LocalToCanvas(new Vector2(x, y));
-            if (dragStart is null)
-            {
-                dragStart = point;
-                return;
-            }
-            if (IsCurrentStack(stack, revision) && stack.Selected is { } panel &&
-                Vector2.Distance(dragStart.Value, point) >= EditorDragDropUtility.DefaultActivationDistance)
-                BeginTabDrag(source, stack, revision, panel, point);
-        };
-        drag.MouseDirectOverlapLeave += _ => dragStart = null;
+        CreateDropOverlay(cardNode, stack, revision);
         Refresh();
 
         void Refresh()
@@ -829,6 +817,27 @@ internal sealed class NativeDockTreeHost
         if (NativeDetachedDockWindows.Open(_window, panel) && !_disposed && _tree.Close(panel))
             CommitStructure();
     }
+
+    /// <summary>
+    /// Moves the dragged panel of <paramref name="tab"/> into a new window at <paramref name="screenPosition"/>. The
+    /// drag code calls it when the pointer releases the tab outside every editor window.
+    /// </summary>
+    internal void FloatPanel(NativeDockTabPayload tab, Vector2 screenPosition)
+    {
+        if (!ReferenceEquals(tab.Source, this) || !tab.IsSourceCurrent || _window is null)
+            return;
+        string panel = tab.Panel;
+        // The new window opens under the pointer, with the pointer over its top-left area.
+        int x = (int)MathF.Round(screenPosition.X) - FloatPointerInset;
+        int y = (int)MathF.Round(screenPosition.Y) - FloatPointerInset;
+        if (NativeDetachedDockWindows.Open(_window, panel, x, y, FloatWidth, FloatHeight) && !_disposed &&
+            _tree.Close(panel))
+            CommitStructure();
+    }
+
+    private const int FloatPointerInset = 24;
+    private const int FloatWidth = 720;
+    private const int FloatHeight = 520;
 
     private void MoveToWindow(NativeDockNode source, ulong revision)
     {

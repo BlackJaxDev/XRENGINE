@@ -51,6 +51,18 @@ internal static class NativeDetachedDockWindows
     public static bool Open(XRWindow source, string panel)
         => OpenCore(source, panel, "detached:" + Guid.NewGuid().ToString("N"), restoring: false);
 
+    /// <summary>
+    /// Opens <paramref name="panel"/> in a new window whose client area starts at the screen point
+    /// (<paramref name="x"/>, <paramref name="y"/>), such as the point where a dragged tab was dropped outside the
+    /// editor windows. The placement is clamped to the monitors like a saved placement.
+    /// </summary>
+    public static bool Open(XRWindow source, string panel, int x, int y, int width, int height)
+    {
+        string key = "detached:" + Guid.NewGuid().ToString("N");
+        return OpenCore(source, panel, key, restoring: false,
+            new NativeDockSavedWindow(key, X: x, Y: y, Width: width, Height: height));
+    }
+
     private static bool OpenCore(XRWindow source, string panel, string key, bool restoring,
         NativeDockSavedWindow? saved = null)
     {

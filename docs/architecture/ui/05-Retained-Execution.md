@@ -615,6 +615,19 @@ runs, and their stack is still in the tree. Slot deactivation callbacks can
 reparent, replace, or destroy a slot; the host then detaches only the registered
 slot and recreates a slot that teardown destroyed. Closing the last tab keeps an
 empty stack with its Actions menu, so the panel can be reopened.
+
+Panels dock like ImGui windows. Dragging a tab past
+`UITabStripComponent.DragActivationDistance` raises `TabDragRequested`, and the
+host shows that panel and starts the dock drag. While a dock drag is active,
+`NativeDockDropOverlayComponent` shows the drop overlay of each stack; at other
+times the overlay is collapsed and takes no input. The overlay has five targets
+(`ENativeDockDropZone`) in a cross at the stack center and a translucent preview
+of the area that the panel gets. The center target adds the panel as a tab. The
+side targets split the stack (`NativeDockTree.SplitPanel`) and put the panel on
+that side; they accept only a panel of the same dock, and only when the split
+leaves a panel on the other side. A native dock drag that is released outside
+every editor window calls `NativeDockTreeHost.FloatPanel`, which opens the panel
+in a new detached window at the release point.
 Existing tool search and scroll state survive. The window layout also stores the
 selected profiler view and the console category and auto-scroll setting. The host
 restores them before the panels activate. An unknown profiler view falls back to

@@ -208,14 +208,14 @@ public static class EditorDragDropUtility
 
     internal static IDisposable RegisterNativeDockTarget(UIBoundableTransform transform,
         Func<DragPayload, bool> onDrop, Func<DragPayload, bool> canAccept,
-        Func<DragPayload, EditorDesktopDropPoint, bool> contains)
+        Func<DragPayload, EditorDesktopDropPoint, bool> contains, Action<bool>? hoverChanged = null)
     {
         ArgumentNullException.ThrowIfNull(transform);
         ArgumentNullException.ThrowIfNull(onDrop);
         ArgumentNullException.ThrowIfNull(canAccept);
         ArgumentNullException.ThrowIfNull(contains);
         var registration = new DropTargetRegistration(transform, onDrop, canAccept,
-            null, contains);
+            hoverChanged, contains);
         _dropTargets.Add(registration);
         return new DropTargetHandle(registration);
     }
@@ -342,6 +342,15 @@ public static class EditorDragDropUtility
         try
         {
             SetHoveredTarget(session, null);
+            if (target is null && IsCurrentDockRelease(session, terminal) &&
+                NativeDockTabPayload.Read(session.Payload) is { } tab &&
+                !tab.TryGetWindow(releasePoint.TargetWindowHandle, out _))
+            {
+                // A tab released outside every editor window opens in its own window there, like an ImGui
+                // dock tab dropped outside the main viewport.
+                tab.Source.FloatPanel(tab, releasePoint.ScreenPosition);
+                return;
+            }
             if (target is null || !target.IsValid ||
                 !IsCurrentDockRelease(session, terminal))
                 return;

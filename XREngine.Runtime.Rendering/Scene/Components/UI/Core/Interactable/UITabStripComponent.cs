@@ -16,6 +16,10 @@ public sealed partial class UITabStripComponent : UIComponent
         public required UITextComponent Label;
         public required UITextComponent Icon;
         public ulong Id;
+        /// <summary>The canvas point where the current press on this tab started, or null when no press is active.</summary>
+        public Vector2? PressStart;
+        /// <summary>True after this press raised <see cref="TabDragRequested"/>, so one press starts one drag.</summary>
+        public bool DragRaised;
     }
 
     private readonly List<Slot> _slots = [];
@@ -52,6 +56,14 @@ public sealed partial class UITabStripComponent : UIComponent
     public event Action<ulong>? TabActivated;
     public event Action<ulong>? CloseRequested;
     public event Action<ulong, int>? MoveRequested;
+    /// <summary>
+    /// Fires once per press when the pointer drags a pressed tab farther than <see cref="DragActivationDistance"/>.
+    /// The arguments are the tab ID, the tab button that the press holds, and the current pointer point in canvas
+    /// space. A dock host uses it to start a panel drag from the tab itself, like an ImGui dock tab.
+    /// </summary>
+    public event Action<ulong, UIInteractableComponent, Vector2>? TabDragRequested;
+    /// <summary>The pointer distance, in canvas units, that turns a tab press into a <see cref="TabDragRequested"/> drag.</summary>
+    public float DragActivationDistance { get; set; } = 8.0f;
 
     /// <summary>Updates tab order and state. The caller owns panel visibility and persistence.</summary>
     public void SetTabs(ReadOnlySpan<UITabItem> tabs, ulong? selectedId)
@@ -206,6 +218,26 @@ public sealed partial class UITabStripComponent : UIComponent
         return -1;
     }
 
+    private void TrackTabDrag(Slot slot, UIInteractableComponent source, Vector2 localPoint)
+    {
+        if (!source.IsPressed || slot.Id == 0)
+        {
+            slot.PressStart = null;
+            slot.DragRaised = false;
+            return;
+        }
+        Vector2 point = source.BoundableTransform.LocalToCanvas(localPoint);
+        if (slot.PressStart is not { } start)
+        {
+            slot.PressStart = point;
+            return;
+        }
+        if (slot.DragRaised || Vector2.Distance(start, point) < DragActivationDistance)
+            return;
+        slot.DragRaised = true;
+        TabDragRequested?.Invoke(slot.Id, source, point);
+    }
+
     private Slot CreateSlot(UIListTransform list)
     {
         SceneNode node = new(list.SceneNode!) { Name = "Tab" };
@@ -255,6 +287,9 @@ public sealed partial class UITabStripComponent : UIComponent
                 if (slot.Id != 0)
                     TabActivated?.Invoke(slot.Id);
             };
+            // A tab tracks its own press so the host can start a drag without a separate grip control.
+            button.NeedsMouseMove = true;
+            button.MouseMove += (x, y, source) => TrackTabDrag(slot, source, new Vector2(x, y));
             button.KeyboardCloseRequested += sender =>
             {
                 if (ReferenceEquals(sender, slot.Button) && slot.Id != 0 && FindIndex(slot.Id) >= 0)

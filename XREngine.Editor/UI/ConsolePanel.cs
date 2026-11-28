@@ -358,6 +358,9 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         _categoryLabel = categoryLabel;
         categoryLabel.Text = _category?.ToString() ?? "All";
         categoryLabel.VerticalAlignment = EVerticalAlignment.Center;
+        // A fixed size keeps the label at the theme text size; without it, the text fits the row height.
+        categoryLabel.FontSize = EditorGlassTheme.FontSize;
+        categoryLabel.Color = EditorGlassTheme.TextPrimary;
 
         SceneNode filterNode = commands.NewChild();
         filterNode.SetTransform<UIBoundableTransform>().Width = 144;
@@ -449,6 +452,8 @@ public partial class ConsolePanel : NativeVirtualTextPanel
         _statusLabel = status;
         status.Text = "0 entries";
         status.VerticalAlignment = EVerticalAlignment.Center;
+        status.FontSize = EditorGlassTheme.CaptionFontSize;
+        status.Color = EditorGlassTheme.TextSecondary;
     }
 
     private void FilterSubmitted(UITextInputComponent field)
