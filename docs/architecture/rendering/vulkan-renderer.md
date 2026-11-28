@@ -1011,6 +1011,7 @@ Metadata:      Build/Cache/Vulkan/ShaderArtifacts/{artifactIdentity}.spv.json
 - `VkShader` rehydrates cached SPIR-V, descriptor binding metadata, vertex input locations, and the rewritten-source identity, then creates `VkShaderModule` on the Vulkan device thread.
 - Metadata carries a schema version and runtime/compiler fingerprint so stale, corrupt, or incompatible entries are deleted instead of reused. The fingerprint includes the Vulkan 1.4 / SPIR-V 1.6 target, shader ABI, managed Shaderc assembly, and exact native Shaderc binary identity.
 - Cold compile misses write `.spv` payloads asynchronously, similar to the OpenGL binary shader cache pattern.
+- A fragment shader that writes the editor picking color needs a shaderc preprocess in `Prepare()`, because the finalized source is part of the artifact identity. `VulkanEditorPickingSourceCache` keeps that finalized source in memory and in `Build/Cache/Vulkan/ShaderArtifacts/EditorPicking/{key}.glsl`. The key is a hash of the input source, the shader stage, the native Shaderc identity, and the identity of the compiler assemblies. Without the cache, the first selection after launch ran this preprocess on the render thread and held the frame for up to 1.2 s.
 - For `XRMeshRenderer.GenerateAsync` renderers, CPU shader preparation and shaderc compilation run on a worker task. Command-buffer recording sees the renderer as pending until the worker artifact is ready and the device-thread module/layout work completes.
 
 Desktop PresentNow mesh admission limits cold preparation to approximately 4 ms
